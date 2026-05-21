@@ -7,6 +7,7 @@
 #include "MultitrackRecorder.h"
 #include "SessionPlayer.h"
 #include "StripColours.h"
+#include "StripNames.h"
 
 namespace zynforge
 {
@@ -36,6 +37,10 @@ namespace zynforge
         // Pass an empty colour (alpha == 0) to revert to the default.
         void setTrackColour (int channelIndex, juce::Colour);
 
+        // Updates TrackState::name AND persists via StripNames.
+        // Empty string reverts to the default "In N" label.
+        void setTrackName (int channelIndex, const juce::String&);
+
         // Phase correlation between two input channels (live, smoothed).
         // Channels are 1-based for display, stored 0-based.
         void setPhasePair (int leftCh1Based, int rightCh1Based) noexcept;
@@ -61,6 +66,7 @@ namespace zynforge
         SessionPlayer            player;
         MarkersManager           markers;
         StripColours             stripColours;
+        StripNames               stripNames;
 
         std::atomic<int>   phaseLeft         { 0 };  // 0-based
         std::atomic<int>   phaseRight        { 1 };

@@ -104,11 +104,17 @@ void MainComponent::rebuildStrips()
     strips.reserve ((std::size_t) n);
     for (int i = 0; i < n; ++i)
     {
-        auto cb = [this, i] (juce::Colour chosen)
+        auto colourCb = [this, i] (juce::Colour chosen)
         {
             engine.setTrackColour (i, chosen);
         };
-        auto s = std::make_unique<ChannelStrip> (i, recorder.getTrack (i), std::move (cb));
+        auto nameCb = [this, i] (juce::String chosen)
+        {
+            engine.setTrackName (i, chosen);
+        };
+        auto s = std::make_unique<ChannelStrip> (i, recorder.getTrack (i),
+                                                 std::move (colourCb),
+                                                 std::move (nameCb));
         addAndMakeVisible (*s);
         strips.push_back (std::move (s));
     }

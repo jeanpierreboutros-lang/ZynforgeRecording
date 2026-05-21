@@ -62,6 +62,47 @@ namespace zynforge
         return personality;
     }
 
+    void ChannelStrip::mouseDown (const juce::MouseEvent& e)
+    {
+        if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
+            showContextMenu();
+    }
+
+    void ChannelStrip::showContextMenu()
+    {
+        juce::PopupMenu menu;
+        menu.addItem (1, "Rename…");
+        menu.addItem (2, "Change colour…");
+        menu.addItem (3, "Reset colour");
+        menu.addSeparator();
+        menu.addItem (4, "Reset name");
+
+        menu.showMenuAsync (juce::PopupMenu::Options(),
+                            [this] (int chosen)
+        {
+            switch (chosen)
+            {
+                case 1: openRenameDialog();           break;
+                case 2: openColourPicker();           break;
+                case 3: if (colourCb) colourCb (juce::Colour ((juce::uint32) 0)); break;
+                case 4: if (renameCb)
+                        {
+                            renameCb ({});
+                            state.name = "In " + juce::String (stripIndex + 1);
+                            nameLabel.setText (state.name, juce::dontSendNotification);
+                        }
+                        break;
+                default: break;
+            }
+        });
+    }
+
+    void ChannelStrip::openRenameDialog()
+    {
+        // Trigger the Label's inline editor — same UX as double-click.
+        nameLabel.showEditor();
+    }
+
     void ChannelStrip::openColourPicker()
     {
         if (! colourCb) return;
@@ -84,11 +125,14 @@ namespace zynforge
         juce::CallOutBox::launchAsynchronously (std::move (picker), screenBounds, nullptr);
     }
 
-    ChannelStrip::ChannelStrip (int index, TrackState& s, ColourCallback cb)
+    ChannelStrip::ChannelStrip (int index, TrackState& s,
+                                ColourCallback colourCallback,
+                                NameCallback   nameCallback)
         : stripIndex (index),
           state (s),
           personality (brand::stripColour (index)),
-          colourCb (std::move (cb)),
+          colourCb (std::move (colourCallback)),
+          renameCb (std::move (nameCallback)),
           spectrum (s),
           meter (s)
     {
@@ -96,6 +140,16 @@ namespace zynforge
         nameLabel.setJustificationType (juce::Justification::centred);
         nameLabel.setColour (juce::Label::textColourId, brand::textPrimary);
         nameLabel.setFont (juce::Font (juce::FontOptions().withHeight (13.0f).withStyle ("Bold")));
+        // Double-click to rename inline; single-click does nothing.
+        nameLabel.setEditable (false, true, false);
+        nameLabel.onTextChange = [this]
+        {
+            const auto newName = nameLabel.getText().trim();
+            state.name = newName.isEmpty() ? juce::String ("In " + juce::String (stripIndex + 1))
+                                            : newName;
+            nameLabel.setText (state.name, juce::dontSendNotification);
+            if (renameCb) renameCb (newName);
+        };
         addAndMakeVisible (nameLabel);
 
         armButton.setToggleState (s.armed.load(), juce::dontSendNotification);

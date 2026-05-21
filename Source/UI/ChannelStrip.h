@@ -15,9 +15,14 @@ namespace zynforge
     {
     public:
         using ColourCallback = std::function<void (juce::Colour)>;
+        using NameCallback   = std::function<void (juce::String)>;
 
-        ChannelStrip (int index, TrackState& state, ColourCallback onColourPicked = {});
+        ChannelStrip (int index, TrackState& state,
+                      ColourCallback onColourPicked = {},
+                      NameCallback   onRename       = {});
         ~ChannelStrip() override;
+
+        void mouseDown (const juce::MouseEvent&) override;
 
         juce::Colour getResolvedColour() const;
 
@@ -28,11 +33,14 @@ namespace zynforge
         class Swatch;
 
         void openColourPicker();
+        void openRenameDialog();
+        void showContextMenu();
 
         int          stripIndex;
         TrackState&  state;
         juce::Colour personality;
         ColourCallback colourCb;
+        NameCallback   renameCb;
 
         juce::Label   nameLabel;
         juce::ToggleButton armButton  { "ARM" };

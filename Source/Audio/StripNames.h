@@ -1,0 +1,27 @@
+#pragma once
+
+#include <juce_data_structures/juce_data_structures.h>
+
+#include <memory>
+
+namespace zynforge
+{
+    // Persists per-channel display-name overrides via a juce::PropertiesFile
+    // in the user's application support folder. Keys are
+    // "strip_name_<channelIndex>". Absent key means "use the default
+    // 'In N' label".
+    class StripNames
+    {
+    public:
+        StripNames();
+
+        bool         hasName (int channelIndex) const;
+        juce::String getName (int channelIndex) const;
+        void         setName (int channelIndex, const juce::String&);
+        void         clearName (int channelIndex);
+
+    private:
+        static juce::String keyFor (int channelIndex);
+        std::unique_ptr<juce::PropertiesFile> props;
+    };
+}

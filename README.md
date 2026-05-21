@@ -30,6 +30,7 @@ A focused recording surface for engineers running front-of-house or monitors who
 - [x] Marker rename / delete via right-click menu
 - [x] Loop-between-markers (set Loop In / Out on two markers; player wraps automatically)
 - [x] Per-track colour palette — click the swatch on a strip → 10 presets + Custom (full colour picker), persists across launches
+- [x] Per-track rename — double-click the name label OR right-click strip → Rename… (persists, click "Reset name" in the menu to revert)
 - [ ] System Lock (prevent accidental keypresses during record)
 - [ ] LTC timecode input
 - [ ] Console name sync (Dante / A&H / SSL)
@@ -101,6 +102,12 @@ Cycle the **PRE** button: `0 / 5 / 10 / 30 s`. When pre-roll is non-zero, every 
 ## Monitor
 
 Each channel strip has a **MON** toggle. Engaged channels are summed (post-input) into the device's stereo monitor bus (outputs 0 and 1) so you can soloed-check signals into headphones without affecting recording or playback.
+
+## Track names
+
+- **Double-click** a strip's name label to edit it inline.
+- **Right-click** anywhere on the strip body to open a context menu with **Rename…**, **Change colour…**, **Reset colour**, and **Reset name**.
+- Names are saved via `juce::PropertiesFile` next to the colour overrides and re-applied to each `TrackState::name` when the audio device starts.
 
 ## Track colours
 
