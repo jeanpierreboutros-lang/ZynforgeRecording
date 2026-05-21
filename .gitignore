@@ -1,0 +1,29 @@
+# Build artifacts
+build/
+build-*/
+cmake-build-*/
+out/
+
+# IDE
+.idea/
+.vs/
+.vscode/
+*.xcodeproj/
+*.xcworkspace/
+
+# macOS
+.DS_Store
+
+# JUCE-generated
+JuceLibraryCode/
+Builds/
+
+# Recordings (local sessions)
+Sessions/
+*.wav
+*.aif
+*.aiff
+*.flac
+
+# Logs
+*.log
