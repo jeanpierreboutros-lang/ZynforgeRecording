@@ -82,23 +82,26 @@ namespace zynforge
 
     void ChannelStrip::paint (juce::Graphics& g)
     {
-        auto r = getLocalBounds().toFloat();
-        g.setColour (brand::bgStrip);
-        g.fillRoundedRectangle (r.reduced (2.0f), 6.0f);
+        auto r = getLocalBounds().toFloat().reduced (2.0f);
 
-        // top "personality" band
-        auto top = r.reduced (2.0f).removeFromTop (4.0f);
+        // Whole-strip personality wash (matches ZynForge Live's INS strips).
         g.setColour (personality);
-        g.fillRoundedRectangle (top, 2.0f);
+        g.fillRoundedRectangle (r, 6.0f);
+
+        // Faintly darker bottom half so meters/labels read a little better.
+        g.setGradientFill (juce::ColourGradient (
+            personality, r.getCentreX(), r.getY(),
+            personality.darker (0.25f), r.getCentreX(), r.getBottom(),
+            false));
+        g.fillRoundedRectangle (r, 6.0f);
 
         g.setColour (brand::edge);
-        g.drawRoundedRectangle (r.reduced (2.0f), 6.0f, 1.0f);
+        g.drawRoundedRectangle (r, 6.0f, 1.0f);
     }
 
     void ChannelStrip::resized()
     {
         auto r = getLocalBounds().reduced (6, 10);
-        r.removeFromTop (4); // leave room for the personality band
 
         nameLabel.setBounds (r.removeFromTop (18));
         armButton.setBounds (r.removeFromTop (20).reduced (4, 1));

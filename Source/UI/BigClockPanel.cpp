@@ -116,7 +116,7 @@ namespace zynforge
         // Centre: huge timer
         g.setColour (mode == Mode::Recording ? brand::accentRecord
                    : mode == Mode::Playing   ? brand::accentPlay
-                                             : brand::textPrimary);
+                                             : brand::accentStatus);
         g.setFont (juce::FontOptions().withHeight (juce::jmin (inner.getHeight() * 0.95f, 56.0f))
                                        .withStyle ("Bold"));
         g.drawText (elapsedText, inner, juce::Justification::centred, false);

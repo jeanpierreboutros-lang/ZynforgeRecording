@@ -48,12 +48,13 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. Set `CMAKE_OSX_DEPLOYMENT
 
 ## Visual identity
 
-Part of the ZynForge family. Shared aesthetic with the ZynForge Live host:
+Part of the ZynForge family — palette directly matches ZynForge Live:
 
-- Near-black canvas (`#07080a` / `#0f1014`)
-- Each channel strip carries a personality colour (azure, coral, violet, mint, amber, pink, teal, lemon — rotates by strip index)
-- LED-segment meters (peak + RMS, exponential decay, clip hold)
-- Bold, typographic transport controls
+- Near-black canvas (`#0a0a0c` / `#12131 6`)
+- Every channel strip is washed end-to-end with a muted personality colour (dusty blue, moss, olive, violet, wine, teal, amber, mustard — rotates by strip index, mirrors Live's INS 1–8)
+- LED-segment meters (20 segments, green/amber/red, exponential decay, click to clear clip)
+- Bright signal-green session clock (`#5dd87a`) reused from Live
+- Status accents reserved for state, not decoration: red = record, green = play, amber = virtual soundcheck
 
 ## Layout
 
