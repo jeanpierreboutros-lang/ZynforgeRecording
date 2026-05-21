@@ -48,6 +48,11 @@ MainComponent::MainComponent()
     deviceButton.onClick = [this] { onDeviceClicked(); };
     addAndMakeVisible (deviceButton);
 
+    addAndMakeVisible (bigClock);
+
+    setWantsKeyboardFocus (true);
+    addKeyListener (this);
+
     startTimerHz (10);  // poll for input-channel count + transport position
     rebuildStrips();
     updateTransportLabels();
@@ -55,7 +60,24 @@ MainComponent::MainComponent()
 
 MainComponent::~MainComponent()
 {
+    removeKeyListener (this);
     setLookAndFeel (nullptr);
+}
+
+bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
+{
+    if (key.getTextCharacter() == 'm' || key.getTextCharacter() == 'M')
+    {
+        const int n = engine.dropMarkerAtCurrentPosition();
+        if (n >= 0)
+            statusLabel.setText ("Marker " + juce::String (n) + " dropped",
+                                 juce::dontSendNotification);
+        else
+            statusLabel.setText ("No active session — can't drop marker",
+                                 juce::dontSendNotification);
+        return true;
+    }
+    return false;
 }
 
 void MainComponent::rebuildStrips()
@@ -86,6 +108,56 @@ void MainComponent::timerCallback()
     const bool playing = engine.isPlaying();
     if (! playing && playButton.getButtonText() == "PAUSE")
         playButton.setButtonText ("PLAY");
+
+    // Drive BigClockPanel
+    auto& recorder = engine.getRecorder();
+    auto& player   = engine.getPlayer();
+    auto& markers  = engine.getMarkers();
+
+    const double deviceSR = [this]() -> double
+    {
+        if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())
+            return d->getCurrentSampleRate();
+        return 48000.0;
+    }();
+
+    BigClockPanel::Mode m = BigClockPanel::Mode::Idle;
+    juce::int64 elapsed = 0;
+    double      timerSR = deviceSR;
+
+    if (engine.isRecording())
+    {
+        m = BigClockPanel::Mode::Recording;
+        elapsed = recorder.getSamplesSinceStart();
+    }
+    else if (engine.isPlaying())
+    {
+        m = BigClockPanel::Mode::Playing;
+        elapsed = player.getPositionSamples();
+        timerSR = player.getSampleRate();
+    }
+
+    bigClock.setMode (m);
+    bigClock.setElapsed (elapsed, timerSR);
+    bigClock.setMarkers (markers.getCount());
+
+    // Disk-health calc
+    const auto sessRoot = juce::File::getSpecialLocation (juce::File::userMusicDirectory)
+                              .getChildFile ("Zynforge Sessions");
+    const auto bytesFree = sessRoot.exists() ? sessRoot.getBytesFreeOnVolume()
+                                              : juce::File ("/").getBytesFreeOnVolume();
+    const double freeGB = (double) bytesFree / (1024.0 * 1024.0 * 1024.0);
+
+    const int    bitDepth     = 24;
+    const int    bytesPerSamp = bitDepth / 8;
+    const int    channels     = juce::jmax (1, recorder.getNumTracks());
+    const double bytesPerSec  = deviceSR * bytesPerSamp * channels;
+    const double remainingSec = bytesPerSec > 0 ? (double) bytesFree / bytesPerSec : 0.0;
+
+    bigClock.setDiskInfo (freeGB,
+                          recorder.getLastWriteMs(),
+                          recorder.getMissedSamples(),
+                          remainingSec);
 }
 
 static juce::String samplesToTimecode (juce::int64 samples, double sr)
@@ -262,6 +334,9 @@ void MainComponent::resized()
     row2.removeFromLeft (10);
     transportLabel.setBounds (row2.removeFromLeft (140));
     sessionLabel  .setBounds (row2);
+
+    // Big clock banner
+    bigClock.setBounds (r.removeFromTop (96).reduced (12, 6));
 
     if (strips.empty()) return;
 

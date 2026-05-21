@@ -8,7 +8,7 @@ A focused recording surface for engineers running front-of-house or monitors who
 
 ## Status
 
-`v0.2.0` — recording + virtual soundcheck playback.
+`v0.3.0` — reliability bundle.
 
 - [x] Project structure (CMake, JUCE 8 via `FetchContent`)
 - [x] ZynForge visual identity (near-black panels, per-strip personality colours, LED-segment meters)
@@ -16,9 +16,10 @@ A focused recording surface for engineers running front-of-house or monitors who
 - [x] Channel strips with live input metering
 - [x] Audio device selector
 - [x] Virtual soundcheck playback (LOAD SESSION + PLAY / STOP, each track → matching output)
-- [ ] Crash-safe BWF writing (periodic header flush + timestamp/scene chunks)
-- [ ] Big record-state indicator + disk-health overlay
-- [ ] Markers (drop with `M` during record/playback)
+- [x] BWF metadata (bext chunk) + periodic header flush every ~5 s (crash-safe)
+- [x] Big record indicator: huge HH:MM:SS timer, REC/PLAY/IDLE lamp, visible across the room
+- [x] Disk-health overlay: free GB, record time remaining, last write ms, missed-write counter, marker count
+- [x] Markers — press **M** during record/playback to drop, auto-persisted to `markers.json` per session
 - [ ] Pre-roll buffer (capture audio before record is pressed)
 - [ ] System Lock (prevent accidental keypresses during record)
 - [ ] FLAC / 32-bit float capture options
@@ -52,11 +53,13 @@ Source/
 ├── Main.cpp                  — JUCE app entry + window
 ├── Audio/
 │   ├── AudioEngine.*         — AudioDeviceManager + AudioIODeviceCallback
-│   ├── MultitrackRecorder.*  — lock-free FIFO + background WAV writer
+│   ├── MultitrackRecorder.*  — lock-free FIFO + background WAV writer (BWF + periodic flush + counters)
 │   ├── SessionPlayer.*       — per-track BufferingAudioReader playback for VSC
+│   ├── Markers.*             — per-session marker list, persisted as markers.json
 │   └── TrackState.h          — per-track atomic meter + arm state
 ├── UI/
-│   ├── MainComponent.*       — header (record + transport) + channel-strip grid
+│   ├── MainComponent.*       — header + Big Clock banner + channel-strip grid + M-key handler
+│   ├── BigClockPanel.*       — large state lamp, huge timer, disk-health strip
 │   ├── ChannelStrip.*        — name, ARM, meter
 │   └── LedMeter.*            — segment meter
 └── Theme/
@@ -75,3 +78,11 @@ Recordings are written to `~/Music/Zynforge Sessions/Session_YYYY-MM-DD_HH-MM-SS
 3. The console can now treat the recorder outputs as its source bank instead of the live mics, so the band can leave and you keep mixing.
 
 Playback uses non-blocking `juce::BufferingAudioReader` per track; disk I/O happens on a background thread, the audio thread only copies pre-fetched samples.
+
+## Markers
+
+Press **M** at any time during record or playback to drop a marker at the current position. Markers are persisted to `markers.json` inside the session folder and re-loaded automatically when the session is opened. The Big Clock shows the running marker count.
+
+## Crash-safe recording
+
+WAV files are written with BWF (`bext`) metadata — originator, originator reference, origination date/time — so a hard crash still leaves an identifiable file. The writer thread flushes the WAV header every ~5 seconds of audio so a power loss mid-record leaves a playable file with current-size headers (only the last few seconds are at risk).

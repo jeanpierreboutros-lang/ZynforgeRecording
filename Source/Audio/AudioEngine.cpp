@@ -2,6 +2,40 @@
 
 namespace zynforge
 {
+    bool AudioEngine::startRecording (const juce::File& sessionDir)
+    {
+        if (! recorder.startRecording (sessionDir)) return false;
+        if (auto* device = deviceManager.getCurrentAudioDevice())
+            markers.setContext (sessionDir, device->getCurrentSampleRate());
+        else
+            markers.setContext (sessionDir, 48000.0);
+        return true;
+    }
+
+    int AudioEngine::loadSession (const juce::File& sessionDir)
+    {
+        const auto n = player.loadSession (sessionDir);
+        if (n > 0)
+            markers.setContext (sessionDir, player.getSampleRate());
+        return n;
+    }
+
+    int AudioEngine::dropMarkerAtCurrentPosition()
+    {
+        if (! markers.hasContext()) return -1;
+
+        juce::int64 pos = 0;
+        if (recorder.isRecording())
+            pos = recorder.getSamplesSinceStart();
+        else if (player.isLoaded())
+            pos = player.getPositionSamples();
+        else
+            return -1;
+
+        markers.drop (pos);
+        return markers.getCount();
+    }
+
     AudioEngine::AudioEngine()
     {
         // Open with up to 32 inputs / 2 outputs by default — adjust later from UI.

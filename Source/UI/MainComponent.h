@@ -4,6 +4,7 @@
 
 #include "../Audio/AudioEngine.h"
 #include "../Theme/ZynForgeLookAndFeel.h"
+#include "BigClockPanel.h"
 #include "ChannelStrip.h"
 
 #include <memory>
@@ -12,6 +13,7 @@
 namespace zynforge { class ChannelStrip; }
 
 class MainComponent final : public juce::Component,
+                            public juce::KeyListener,
                             private juce::Timer
 {
 public:
@@ -20,6 +22,8 @@ public:
 
     void paint (juce::Graphics&) override;
     void resized() override;
+
+    bool keyPressed (const juce::KeyPress&, juce::Component*) override;
 
 private:
     void rebuildStrips();
@@ -47,6 +51,8 @@ private:
     juce::TextButton stopButton    { "STOP" };
 
     std::unique_ptr<juce::FileChooser> chooser;
+
+    zynforge::BigClockPanel bigClock;
 
     std::vector<std::unique_ptr<zynforge::ChannelStrip>> strips;
     int  lastTrackCount { -1 };

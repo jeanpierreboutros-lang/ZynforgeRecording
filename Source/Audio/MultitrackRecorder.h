@@ -36,6 +36,12 @@ namespace zynforge
         int          getNumTracks() const noexcept { return (int) tracks.size(); }
         TrackState&  getTrack (int i) noexcept     { return *tracks[(std::size_t) i]; }
 
+        // Health + position counters — all RT-safe to read.
+        juce::int64 getSamplesSinceStart() const noexcept { return samplesSinceStart.load(std::memory_order_relaxed); }
+        juce::int64 getMissedSamples()     const noexcept { return missedSamples    .load(std::memory_order_relaxed); }
+        int         getLastWriteMs()       const noexcept { return lastWriteMs      .load(std::memory_order_relaxed); }
+        juce::File  getActiveSessionDir()  const          { return activeSessionDir; }
+
     private:
         int useTimeSlice() override;
 
@@ -70,9 +76,14 @@ namespace zynforge
         juce::AudioFormatManager formatManager;
         juce::TimeSliceThread    writerThread { "ZF Recorder Writer" };
 
-        std::atomic<bool> recording { false };
-        std::atomic<bool> writersReady { false };
+        std::atomic<bool>        recording          { false };
+        std::atomic<bool>        writersReady       { false };
+        std::atomic<juce::int64> samplesSinceStart  { 0 };
+        std::atomic<juce::int64> missedSamples      { 0 };
+        std::atomic<int>         lastWriteMs        { 0 };
+        juce::int64              samplesSinceFlush  { 0 };
 
+        juce::File activeSessionDir;
         std::vector<float> scratch;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MultitrackRecorder)

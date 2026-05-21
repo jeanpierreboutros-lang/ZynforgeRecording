@@ -3,6 +3,7 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <juce_audio_utils/juce_audio_utils.h>
 
+#include "Markers.h"
 #include "MultitrackRecorder.h"
 #include "SessionPlayer.h"
 
@@ -18,14 +19,20 @@ namespace zynforge
         MultitrackRecorder&       getRecorder()      noexcept { return recorder; }
         SessionPlayer&            getPlayer()        noexcept { return player; }
 
-        bool startRecording (const juce::File& sessionDir) { return recorder.startRecording (sessionDir); }
+        bool startRecording (const juce::File& sessionDir);
         void stopRecording()                               { recorder.stopRecording(); }
         bool isRecording() const noexcept                  { return recorder.isRecording(); }
 
-        int  loadSession (const juce::File& sessionDir)    { return player.loadSession (sessionDir); }
+        int  loadSession (const juce::File& sessionDir);
         void startPlayback()                               { player.start(); }
         void stopPlayback()                                { player.stop(); }
         bool isPlaying() const noexcept                    { return player.isPlaying(); }
+
+        MarkersManager& getMarkers() noexcept              { return markers; }
+
+        // Drops a marker at the current record or playback position.
+        // Returns the new marker count, or -1 if no session active.
+        int dropMarkerAtCurrentPosition();
 
         // AudioIODeviceCallback
         void audioDeviceAboutToStart (juce::AudioIODevice*) override;
@@ -39,6 +46,7 @@ namespace zynforge
         juce::AudioDeviceManager deviceManager;
         MultitrackRecorder       recorder;
         SessionPlayer            player;
+        MarkersManager           markers;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AudioEngine)
     };

@@ -57,6 +57,7 @@ namespace zynforge
                                            int numSamples) noexcept
     {
         const int n = juce::jmin (numChannels, (int) fifos.size());
+        const bool rec = recording.load (std::memory_order_acquire);
 
         for (int ch = 0; ch < n; ++ch)
         {
@@ -74,17 +75,17 @@ namespace zynforge
             }
             const float rms = std::sqrt (sumSq / (float) juce::jmax (1, numSamples));
             auto& t = *tracks[(std::size_t) ch];
-            // peak-hold style: replace if louder, else decay
             const float prevPeak = t.peak.load (std::memory_order_relaxed);
             t.peak.store (juce::jmax (peak, prevPeak * 0.92f), std::memory_order_relaxed);
             t.rms .store (rms,  std::memory_order_relaxed);
             if (peak >= 0.999f) t.clipped.store (true, std::memory_order_relaxed);
 
             // Push to ring buffer when recording
-            if (recording.load (std::memory_order_acquire) && t.armed.load (std::memory_order_relaxed))
+            if (rec && t.armed.load (std::memory_order_relaxed))
             {
                 auto& cf = *fifos[(std::size_t) ch];
                 const auto scope = cf.fifo.write (numSamples);
+                const int wrote = scope.blockSize1 + scope.blockSize2;
 
                 if (scope.blockSize1 > 0)
                     std::memcpy (cf.data.data() + scope.startIndex1,
@@ -94,8 +95,14 @@ namespace zynforge
                     std::memcpy (cf.data.data() + scope.startIndex2,
                                  src + scope.blockSize1,
                                  (std::size_t) scope.blockSize2 * sizeof (float));
+
+                if (wrote < numSamples)
+                    missedSamples.fetch_add (numSamples - wrote, std::memory_order_relaxed);
             }
         }
+
+        if (rec)
+            samplesSinceStart.fetch_add (numSamples, std::memory_order_relaxed);
     }
 
     bool MultitrackRecorder::startRecording (const juce::File& sessionDir)
@@ -104,6 +111,7 @@ namespace zynforge
         if (tracks.empty())   return false;
 
         sessionDir.createDirectory();
+        activeSessionDir = sessionDir;
 
         writers.clear();
         writers.reserve (tracks.size());
@@ -111,8 +119,22 @@ namespace zynforge
         juce::WavAudioFormat wav;
         const int bitDepth = 24;
 
+        const auto now = juce::Time::getCurrentTime();
+
         for (std::size_t i = 0; i < tracks.size(); ++i)
         {
+            // BWF (bext) metadata — survives reading even if header isn't
+            // finalised due to a crash.
+            juce::StringPairArray meta;
+            meta.set (juce::WavAudioFormat::bwavDescription,
+                      "Zynforge Recording — " + sessionDir.getFileName()
+                        + " — track " + juce::String ((int) i + 1));
+            meta.set (juce::WavAudioFormat::bwavOriginator,      "Zynforge Recording");
+            meta.set (juce::WavAudioFormat::bwavOriginatorRef,   sessionDir.getFileName());
+            meta.set (juce::WavAudioFormat::bwavOriginationDate, now.formatted ("%Y-%m-%d"));
+            meta.set (juce::WavAudioFormat::bwavOriginationTime, now.formatted ("%H:%M:%S"));
+            meta.set (juce::WavAudioFormat::bwavTimeReference,   "0");
+
             WriterChannel w;
             const auto name = juce::String::formatted ("Track_%02d.wav", (int) i + 1);
             auto file = sessionDir.getChildFile (name);
@@ -121,7 +143,7 @@ namespace zynforge
             if (auto* out = file.createOutputStream().release())
             {
                 std::unique_ptr<juce::AudioFormatWriter> aw (
-                    wav.createWriterFor (out, sampleRate, 1, bitDepth, {}, 0));
+                    wav.createWriterFor (out, sampleRate, 1, (unsigned int) bitDepth, meta, 0));
                 if (aw == nullptr) { delete out; }
                 w.writer = std::move (aw);
             }
@@ -129,6 +151,10 @@ namespace zynforge
 
             fifos[i]->fifo.reset();
         }
+
+        samplesSinceStart.store (0, std::memory_order_relaxed);
+        missedSamples    .store (0, std::memory_order_relaxed);
+        samplesSinceFlush = 0;
 
         writersReady.store (true,  std::memory_order_release);
         recording   .store (true,  std::memory_order_release);
@@ -162,6 +188,9 @@ namespace zynforge
     {
         if (! writersReady.load (std::memory_order_acquire)) return;
 
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        juce::int64 totalWritten = 0;
+
         for (std::size_t i = 0; i < fifos.size() && i < writers.size(); ++i)
         {
             auto& cf = *fifos[i];
@@ -178,12 +207,31 @@ namespace zynforge
                 const float* ptr = cf.data.data() + scope.startIndex1;
                 const float* const channels[] = { ptr };
                 w.writer->writeFromFloatArrays (channels, 1, scope.blockSize1);
+                totalWritten += scope.blockSize1;
             }
             if (scope.blockSize2 > 0)
             {
                 const float* ptr = cf.data.data() + scope.startIndex2;
                 const float* const channels[] = { ptr };
                 w.writer->writeFromFloatArrays (channels, 1, scope.blockSize2);
+                totalWritten += scope.blockSize2;
+            }
+        }
+
+        if (totalWritten > 0)
+        {
+            const auto elapsed = juce::Time::getMillisecondCounterHiRes() - t0;
+            lastWriteMs.store ((int) elapsed, std::memory_order_relaxed);
+
+            samplesSinceFlush += totalWritten;
+            // Flush WAV headers every ~5 s of audio so a crash mid-record
+            // still leaves a playable file with current data sizes.
+            if (samplesSinceFlush >= (juce::int64) (sampleRate * 5.0))
+            {
+                for (auto& w : writers)
+                    if (w.writer != nullptr)
+                        w.writer->flush();
+                samplesSinceFlush = 0;
             }
         }
     }
