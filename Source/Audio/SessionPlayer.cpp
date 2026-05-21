@@ -113,6 +113,26 @@ namespace zynforge
         position.store (juce::jlimit<juce::int64> (0, total, s), std::memory_order_release);
     }
 
+    void SessionPlayer::setLoopRegion (juce::int64 s, juce::int64 e) noexcept
+    {
+        if (e <= s) { clearLoopRegion(); return; }
+        loopStart.store (s, std::memory_order_release);
+        loopEnd  .store (e, std::memory_order_release);
+    }
+
+    void SessionPlayer::clearLoopRegion() noexcept
+    {
+        loopStart.store (-1, std::memory_order_release);
+        loopEnd  .store (-1, std::memory_order_release);
+    }
+
+    bool SessionPlayer::hasLoopRegion() const noexcept
+    {
+        const auto s = loopStart.load (std::memory_order_relaxed);
+        const auto e = loopEnd  .load (std::memory_order_relaxed);
+        return s >= 0 && e > s;
+    }
+
     void SessionPlayer::processBlock (float* const* outputs, int numOutputs, int numSamples) noexcept
     {
         if (! playing.load (std::memory_order_acquire)) return;
@@ -120,8 +140,18 @@ namespace zynforge
         const auto numTracks = readerCount.load (std::memory_order_acquire);
         if (numTracks == 0) return;
 
-        const juce::int64 startPos = position.load (std::memory_order_relaxed);
+        juce::int64       startPos = position.load (std::memory_order_relaxed);
         const juce::int64 total    = totalLength.load (std::memory_order_relaxed);
+
+        const juce::int64 lStart = loopStart.load (std::memory_order_relaxed);
+        const juce::int64 lEnd   = loopEnd  .load (std::memory_order_relaxed);
+        const bool        looping = (lStart >= 0 && lEnd > lStart);
+
+        if (looping && startPos >= lEnd)
+        {
+            startPos = lStart;
+            position.store (startPos, std::memory_order_release);
+        }
 
         if (startPos >= total)
         {
@@ -129,7 +159,9 @@ namespace zynforge
             return;
         }
 
-        const int playableThisBlock = (int) juce::jmin ((juce::int64) numSamples, total - startPos);
+        juce::int64 cap = total - startPos;
+        if (looping) cap = juce::jmin (cap, lEnd - startPos);
+        const int playableThisBlock = (int) juce::jmin ((juce::int64) numSamples, cap);
         const int n                 = juce::jmin (numOutputs, numTracks);
 
         if (scratch.getNumSamples() < playableThisBlock)

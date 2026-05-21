@@ -42,6 +42,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/LedMeter.cpp
     Source/UI/MiniSpectrum.cpp
     Source/UI/PhaseMeter.cpp
+    Source/UI/TimelineStrip.cpp
     Source/UI/BigClockPanel.cpp
     Source/Audio/AudioEngine.cpp
     Source/Audio/MultitrackRecorder.cpp

@@ -44,6 +44,14 @@ namespace zynforge
         void rewind();
         void setPositionSamples (juce::int64 s);
 
+        // Loop region. When both ends are valid (start < end), playback
+        // wraps from end → start each pass. clearLoopRegion() disables.
+        void setLoopRegion   (juce::int64 startSample, juce::int64 endSample) noexcept;
+        void clearLoopRegion()                                                noexcept;
+        bool hasLoopRegion() const noexcept;
+        juce::int64 getLoopStart() const noexcept { return loopStart.load(std::memory_order_relaxed); }
+        juce::int64 getLoopEnd()   const noexcept { return loopEnd  .load(std::memory_order_relaxed); }
+
         // RT-safe: fills outputs[i] with samples from track i, position advances.
         void processBlock (float* const* outputs, int numOutputs, int numSamples) noexcept;
 
@@ -64,6 +72,8 @@ namespace zynforge
         std::atomic<int>         readerCount { 0 };
         std::atomic<juce::int64> position    { 0 };
         std::atomic<juce::int64> totalLength { 0 };
+        std::atomic<juce::int64> loopStart   { -1 };
+        std::atomic<juce::int64> loopEnd     { -1 };
 
         double deviceSampleRate { 48000.0 };
         double fileSampleRate   { 48000.0 };

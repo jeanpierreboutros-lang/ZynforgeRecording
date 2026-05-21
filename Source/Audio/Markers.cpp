@@ -43,6 +43,33 @@ namespace zynforge
         return markers.back();
     }
 
+    Marker MarkersManager::getMarker (int i) const
+    {
+        if (i < 0 || i >= (int) markers.size()) return {};
+        return markers[(std::size_t) i];
+    }
+
+    void MarkersManager::removeMarker (int i)
+    {
+        if (i < 0 || i >= (int) markers.size()) return;
+        markers.erase (markers.begin() + i);
+        save();
+    }
+
+    void MarkersManager::renameMarker (int i, const juce::String& newName)
+    {
+        if (i < 0 || i >= (int) markers.size()) return;
+        markers[(std::size_t) i].name = newName;
+        save();
+    }
+
+    void MarkersManager::setMarkerSample (int i, juce::int64 sample)
+    {
+        if (i < 0 || i >= (int) markers.size()) return;
+        markers[(std::size_t) i].sampleOffset = sample;
+        save();
+    }
+
     bool MarkersManager::save() const
     {
         if (! sessionDir.isDirectory()) return false;

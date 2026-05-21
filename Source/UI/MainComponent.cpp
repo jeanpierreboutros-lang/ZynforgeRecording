@@ -62,6 +62,9 @@ MainComponent::MainComponent()
     phaseMeter = std::make_unique<zynforge::PhaseMeter> (engine);
     addAndMakeVisible (*phaseMeter);
 
+    timeline = std::make_unique<zynforge::TimelineStrip> (engine);
+    addAndMakeVisible (*timeline);
+
     setWantsKeyboardFocus (true);
     addKeyListener (this);
 
@@ -407,6 +410,10 @@ void MainComponent::resized()
     if (phaseMeter != nullptr)
         phaseMeter->setBounds (clockRow.removeFromRight (200).reduced (4, 4));
     bigClock.setBounds (clockRow);
+
+    // Timeline strip
+    if (timeline != nullptr)
+        timeline->setBounds (r.removeFromTop (52).reduced (12, 4));
 
     if (strips.empty()) return;
 

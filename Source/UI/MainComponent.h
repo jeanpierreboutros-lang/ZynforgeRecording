@@ -7,6 +7,7 @@
 #include "BigClockPanel.h"
 #include "ChannelStrip.h"
 #include "PhaseMeter.h"
+#include "TimelineStrip.h"
 
 #include <memory>
 #include <vector>
@@ -60,7 +61,8 @@ private:
     std::unique_ptr<juce::FileChooser> chooser;
 
     zynforge::BigClockPanel bigClock;
-    std::unique_ptr<zynforge::PhaseMeter> phaseMeter;
+    std::unique_ptr<zynforge::PhaseMeter>    phaseMeter;
+    std::unique_ptr<zynforge::TimelineStrip> timeline;
 
     std::vector<std::unique_ptr<zynforge::ChannelStrip>> strips;
     int  lastTrackCount { -1 };

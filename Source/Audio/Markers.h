@@ -32,6 +32,12 @@ namespace zynforge
         int   getCount() const                 { return (int) markers.size(); }
         Marker getLast() const;
 
+        const std::vector<Marker>& getAll() const noexcept { return markers; }
+        Marker getMarker (int i) const;
+        void   removeMarker (int i);
+        void   renameMarker (int i, const juce::String& newName);
+        void   setMarkerSample (int i, juce::int64 sample);
+
         bool save() const;
         bool load();
 

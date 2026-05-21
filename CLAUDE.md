@@ -24,8 +24,8 @@ JUCE 8.0.4 is pulled via `FetchContent` on first configure. The artefact lives a
 
 - `AudioEngine` — owns `juce::AudioDeviceManager`, registers itself as the `AudioIODeviceCallback`. On every callback: clears outputs, runs `MultitrackRecorder::processBlock` (input path), runs `SessionPlayer::processBlock` (output path), computes phase correlation between the selected input pair (normalised cross-correlation at zero lag, smoothed 0.85/0.15), then sums monitored input channels into outputs 0+1 (the stereo monitor bus). Owns the `MarkersManager` and routes M-key drops to the recorder's `samplesSinceStart` or the player's playback position.
 - `MultitrackRecorder` — real-time-safe input path. Per-channel `juce::AbstractFifo` ring buffer (~4 s at sample rate), drained by a `TimeSliceThread` that writes the configured format per track. `CaptureFormat` enum: `Wav24` (BWF), `Wav32Float` (BWF, IEEE float — bits=32 makes JUCE's `WavAudioFormatWriter` set `usesFloatingPointData`), `Flac24` (`juce::FlacAudioFormat`, quality 5). Writer flushes header every ~5 s of audio so a crash leaves a playable file. Per-channel `PreRollBuffer` (always-on rolling ring sized to `preRollSeconds + 2s` safety) is fed every audio block; `startRecording` dumps the history into each writer BEFORE setting `recording=true` so audio that preceded the record button is captured. Meters (peak + RMS + clip) live on `TrackState` and are read by the UI thread via `std::atomic`. Atomic counters: `samplesSinceStart`, `missedSamples` (FIFO overflow), `lastWriteMs` (drain latency).
-- `SessionPlayer` — real-time-safe output path for virtual soundcheck. Scans a session dir for `Track_*.wav`, wraps each in a non-blocking `juce::BufferingAudioReader` (2-second pre-fetch on its own `TimeSliceThread`, read timeout = 0). On `processBlock`, copies samples from each reader to the matching output channel index. Position + length + playing flag are `std::atomic`. Session swap path: store `playing=false`, sleep 40 ms for in-flight callbacks to drain, then mutate the reader vector.
-- `MarkersManager` — per-session marker list. Persisted as `markers.json` in the session dir. Mutated only from the message thread. `setContext` re-binds + auto-loads on session open. `drop(sampleOffset)` saves immediately.
+- `SessionPlayer` — real-time-safe output path for virtual soundcheck. Scans a session dir for `Track_*.wav`, wraps each in a non-blocking `juce::BufferingAudioReader` (2-second pre-fetch on its own `TimeSliceThread`, read timeout = 0). On `processBlock`, copies samples from each reader to the matching output channel index. Position + length + playing flag are `std::atomic`. Loop region (`loopStart` / `loopEnd` atomics): when both ≥ 0 and end > start, `processBlock` wraps position back to start on hitting end, and caps the per-block playback length so the loop boundary lands cleanly on a buffer edge. Session swap path: store `playing=false`, sleep 40 ms for in-flight callbacks to drain, then mutate the reader vector.
+- `MarkersManager` — per-session marker list. Persisted as `markers.json` in the session dir. Mutated only from the message thread. `setContext` re-binds + auto-loads on session open. `drop(sampleOffset)` saves immediately. CRUD: `getMarker(i)`, `removeMarker(i)`, `renameMarker(i, name)`, `setMarkerSample(i, sample)`. `getAll()` exposes the underlying vector for UI iteration.
 - `TrackState` — atomic meter values, armed flag, monitor flag, clip counter, last-clip sample offset, FFT FIFO/snapshot (1024-point), name. One per input channel.
 - `MainComponent` — two-row header (title / status / DEVICE / RECORD on top; LOAD / PLAY / STOP / transport / session info on bottom) + `BigClockPanel` banner + horizontal grid of `ChannelStrip`s. 10 Hz timer drives transport labels + Big Clock + disk-health calc (free GB, remaining record time). Acts as `juce::KeyListener` — M drops a marker.
 - `BigClockPanel` — wide banner: state lamp (REC/PLAY/IDLE), huge 56pt HH:MM:SS timer, disk-health column on the right (FREE / RECORD TIME LEFT / LAST WRITE / MISSED / MARKERS). Background tints red when recording, green when playing.
@@ -33,6 +33,7 @@ JUCE 8.0.4 is pulled via `FetchContent` on first configure. The artefact lives a
 - `LedMeter` — 20-segment vertical meter, peak + RMS, click anywhere to clear clip + clip count.
 - `MiniSpectrum` — log-frequency magnitude bars. Polls `TrackState::fftBlockReady` at 24 Hz; on ready, copies the snapshot, applies a Hann window, runs `juce::dsp::FFT` (size 1024), reduces to 28 log-spaced visible bins, fades-down via exponential decay.
 - `PhaseMeter` — horizontal correlation bar with channel-pair cycler. Reads smoothed value from `AudioEngine::getPhaseCorrelation()` at 20 Hz. Indicator colour: red below −0.2, amber up to +0.4, green above.
+- `TimelineStrip` — horizontal session timeline. Reads `SessionPlayer` position/total at 20 Hz; paints background trough, progress fill, loop band (yellow), playhead, and a red triangle + label per marker. Left-click empty area seeks; left-click a marker seeks to it; right-click a marker opens a popup (Rename / Delete / Set Loop In / Set Loop Out / Clear Loop). Rename uses a modal `juce::AlertWindow` text editor.
 - `ZynForgeLookAndFeel` + `BrandColors` — shared visual identity.
 
 ## Real-time discipline
@@ -49,9 +50,11 @@ The audio callback **never** allocates, locks, or calls anything that can. Recor
 - OSC / Mackie control for transport
 - LTC timecode chase
 - Console name sync (Dante / A&H / SSL)
-- Timeline strip with clickable markers + seek
+- Auto-recover incomplete sessions on next launch
+- Redundant write to secondary drive
 - Configurable monitor bus output assignment (currently hardcoded to outs 0+1)
 - Configurable phase-correlation channel pair (currently slides L+R together)
+- Drag-to-move markers on the timeline
 
 ## Sibling project
 

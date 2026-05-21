@@ -8,7 +8,7 @@ A focused recording surface for engineers running front-of-house or monitors who
 
 ## Status
 
-`v0.5.0` — diagnostics.
+`v0.6.0` — timeline + marker workflow.
 
 - [x] Project structure (CMake, JUCE 8 via `FetchContent`)
 - [x] ZynForge visual identity (near-black panels, per-strip personality colours, LED-segment meters)
@@ -26,11 +26,15 @@ A focused recording surface for engineers running front-of-house or monitors who
 - [x] Per-strip mini-spectrum (log-frequency FFT, 24 Hz refresh)
 - [x] Phase correlation meter (selectable pair, smoothed)
 - [x] dBFS numeric readout + per-channel clip counter (click meter to clear)
+- [x] Timeline strip with marker dots + click-to-seek
+- [x] Marker rename / delete via right-click menu
+- [x] Loop-between-markers (set Loop In / Out on two markers; player wraps automatically)
 - [ ] System Lock (prevent accidental keypresses during record)
 - [ ] LTC timecode input
 - [ ] Console name sync (Dante / A&H / SSL)
 - [ ] OSC / Mackie HUI remote
-- [ ] Timeline + take management
+- [ ] Auto-recover incomplete sessions on next launch
+- [ ] Redundant write to secondary drive
 
 ## Build
 
@@ -111,9 +115,28 @@ Each channel strip has a **MON** toggle. Engaged channels are summed (post-input
 
 Playback uses non-blocking `juce::BufferingAudioReader` per track; disk I/O happens on a background thread, the audio thread only copies pre-fetched samples.
 
-## Markers
+## Markers + timeline
 
-Press **M** at any time during record or playback to drop a marker at the current position. Markers are persisted to `markers.json` inside the session folder and re-loaded automatically when the session is opened. The Big Clock shows the running marker count.
+Press **M** at any time during record or playback to drop a marker at the current position. Markers are persisted to `markers.json` inside the session folder and re-loaded automatically when the session is opened.
+
+The timeline strip beneath the Big Clock shows:
+
+- The session length end-to-end
+- A green playhead at the current position
+- A red triangle dot for each marker, labelled with its name
+- A yellow band over the loop region (when one is set)
+
+Interactions:
+
+- **Click** anywhere on the strip to seek
+- **Click a marker dot** to seek to it
+- **Right-click a marker** to bring up:
+    - **Rename…** — edit the marker label
+    - **Delete** — remove it
+    - **Set as Loop In / Out** — define a loop region between two markers
+    - **Clear Loop** — disable looping
+
+Once Loop In + Out are set, the player wraps from Out back to In every pass.
 
 ## Crash-safe recording
 
