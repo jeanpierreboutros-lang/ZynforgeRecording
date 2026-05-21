@@ -68,6 +68,7 @@ namespace zynforge
             tracks.push_back (std::move (t));
         }
 
+        this->sessionDir = sessionDir;
         sessionName    = sessionDir.getFileName();
         fileSampleRate = sr;
         totalLength.store (maxLen, std::memory_order_release);
@@ -87,6 +88,7 @@ namespace zynforge
         readerCount.store (0, std::memory_order_release);
         loaded     .store (false, std::memory_order_release);
         sessionName.clear();
+        sessionDir = juce::File();
         totalLength.store (0, std::memory_order_release);
         position   .store (0, std::memory_order_release);
     }

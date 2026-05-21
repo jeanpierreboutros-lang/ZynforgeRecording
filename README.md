@@ -31,6 +31,7 @@ A focused recording surface for engineers running front-of-house or monitors who
 - [x] Loop-between-markers (set Loop In / Out on two markers; player wraps automatically)
 - [x] Per-track colour palette — click the swatch on a strip → 10 presets + Custom (full colour picker), persists across launches
 - [x] Per-track rename — double-click the name label OR right-click strip → Rename… (persists, click "Reset name" in the menu to revert)
+- [x] **FILE** menu — Open Session…, Save Session State, Save Session As…, and Export ▶ (Export All Tracks…, Export Individual Track ▶ per channel)
 - [ ] System Lock (prevent accidental keypresses during record)
 - [ ] LTC timecode input
 - [ ] Console name sync (Dante / A&H / SSL)
@@ -102,6 +103,19 @@ Cycle the **PRE** button: `0 / 5 / 10 / 30 s`. When pre-roll is non-zero, every 
 ## Monitor
 
 Each channel strip has a **MON** toggle. Engaged channels are summed (post-input) into the device's stereo monitor bus (outputs 0 and 1) so you can soloed-check signals into headphones without affecting recording or playback.
+
+## FILE menu
+
+The **FILE** button (header row 2) opens a popup with everything session-level:
+
+- **Open Session…** — pick a `Session_*` folder for VSC playback (same as the old LOAD button)
+- **Save Session State** — writes a `session_settings.json` next to the audio files containing the current capture format, pre-roll, phase pair, loop region, and per-track names + colours. Auto-greyed when no session is active.
+- **Save Session As…** — pick a destination folder; the entire active session (audio + `markers.json` + state) is copied there. Useful for archiving before tweaking.
+- **Export ▶**
+    - **Export All Tracks…** — pick a destination folder; every `Track_*` file from the active session is copied there.
+    - **Export Individual Track ▶** — submenu lists every track by its name; pick one, pick a destination, copy.
+
+"Active session" = the recording in progress, or (if not recording) the session currently loaded for playback.
 
 ## Track names
 

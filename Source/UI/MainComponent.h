@@ -34,6 +34,14 @@ private:
     void onLoadSessionClicked();
     void onPlayClicked();
     void onStopClicked();
+    void onFileMenuClicked();
+    void onSaveSessionState();
+    void onSaveSessionAs();
+    void onExportAllTracks();
+    void onExportIndividualTrack (int channelIndex);
+    bool saveSessionStateTo (const juce::File& dir);
+    int  exportTracksTo (const juce::File& dir, const std::vector<int>& channelIndices);
+    void showStatus (const juce::String& msg);
     void onFormatClicked();
     void onPreRollClicked();
     void refreshFormatButton();
@@ -52,7 +60,7 @@ private:
     juce::Label  transportLabel    { {}, "00:00 / 00:00" };
     juce::TextButton recordButton  { "RECORD" };
     juce::TextButton deviceButton  { "AUDIO DEVICE" };
-    juce::TextButton loadButton    { "LOAD SESSION" };
+    juce::TextButton loadButton    { "FILE" };
     juce::TextButton playButton    { "PLAY" };
     juce::TextButton stopButton    { "STOP" };
     juce::TextButton formatButton  { "WAV 24" };

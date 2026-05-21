@@ -38,6 +38,7 @@ namespace zynforge
         juce::int64 getPositionSamples()    const noexcept { return position   .load(); }
         double      getSampleRate()         const noexcept { return fileSampleRate; }
         juce::String getSessionName()       const          { return sessionName; }
+        juce::File   getSessionDir()        const          { return sessionDir; }
 
         void start();
         void stop();
@@ -79,6 +80,7 @@ namespace zynforge
         double fileSampleRate   { 48000.0 };
         int    blockSize        { 512 };
         juce::String sessionName;
+        juce::File   sessionDir;
 
         juce::AudioBuffer<float> scratch;
 

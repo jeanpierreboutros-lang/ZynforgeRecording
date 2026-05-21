@@ -81,6 +81,15 @@ namespace zynforge
         }
     }
 
+    juce::File AudioEngine::getActiveSessionDir() const
+    {
+        if (recorder.isRecording())
+            return recorder.getActiveSessionDir();
+        if (player.isLoaded())
+            return player.getSessionDir();
+        return {};
+    }
+
     void AudioEngine::setTrackName (int channelIndex, const juce::String& name)
     {
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;

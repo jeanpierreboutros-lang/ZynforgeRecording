@@ -42,7 +42,7 @@ MainComponent::MainComponent()
 
     loadButton.setColour (juce::TextButton::buttonColourId, brand::accentVS.withAlpha (0.18f));
     loadButton.setColour (juce::TextButton::textColourOffId, brand::accentVS);
-    loadButton.onClick = [this] { onLoadSessionClicked(); };
+    loadButton.onClick = [this] { onFileMenuClicked(); };
     addAndMakeVisible (loadButton);
 
     deviceButton.onClick = [this] { onDeviceClicked(); };
@@ -317,6 +317,215 @@ void MainComponent::refreshPreRollButton()
 {
     const int s = engine.getRecorder().getPreRollSeconds();
     preRollButton.setButtonText ("PRE " + juce::String (s) + "s");
+}
+
+void MainComponent::onFileMenuClicked()
+{
+    const auto activeDir   = engine.getActiveSessionDir();
+    const bool hasActive   = activeDir.isDirectory();
+
+    juce::PopupMenu menu;
+    menu.addItem (1, "Open Session…");
+    menu.addSeparator();
+    menu.addItem (2, "Save Session State",      hasActive);
+    menu.addItem (3, "Save Session As…",   hasActive);
+    menu.addSeparator();
+
+    juce::PopupMenu exportMenu;
+    exportMenu.addItem (10, "Export All Tracks…", hasActive);
+
+    juce::PopupMenu individualMenu;
+    const int trackCount = engine.getRecorder().getNumTracks();
+    for (int i = 0; i < trackCount; ++i)
+    {
+        const auto& t   = engine.getRecorder().getTrack (i);
+        const auto name = t.name.isNotEmpty() ? t.name
+                                              : juce::String ("In " + juce::String (i + 1));
+        individualMenu.addItem (100 + i, name, hasActive);
+    }
+    exportMenu.addSubMenu ("Export Individual Track", individualMenu, hasActive && trackCount > 0);
+    menu.addSubMenu ("Export", exportMenu);
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&loadButton),
+                        [this] (int chosen)
+    {
+        if (chosen == 0) return;
+        if (chosen == 1)           onLoadSessionClicked();
+        else if (chosen == 2)      onSaveSessionState();
+        else if (chosen == 3)      onSaveSessionAs();
+        else if (chosen == 10)     onExportAllTracks();
+        else if (chosen >= 100)    onExportIndividualTrack (chosen - 100);
+    });
+}
+
+void MainComponent::showStatus (const juce::String& msg)
+{
+    statusLabel.setText (msg, juce::dontSendNotification);
+}
+
+bool MainComponent::saveSessionStateTo (const juce::File& dir)
+{
+    if (! dir.isDirectory()) return false;
+
+    auto& recorder = engine.getRecorder();
+    auto& player   = engine.getPlayer();
+
+    juce::DynamicObject::Ptr root (new juce::DynamicObject());
+    root->setProperty ("captureFormat",  (int) recorder.getCaptureFormat());
+    root->setProperty ("preRollSeconds", recorder.getPreRollSeconds());
+    root->setProperty ("phaseLeft",      engine.getPhaseLeftChannel());
+    root->setProperty ("phaseRight",     engine.getPhaseRightChannel());
+
+    if (player.hasLoopRegion())
+    {
+        root->setProperty ("loopStart", (juce::int64) player.getLoopStart());
+        root->setProperty ("loopEnd",   (juce::int64) player.getLoopEnd());
+    }
+
+    juce::Array<juce::var> trackArr;
+    for (int i = 0; i < recorder.getNumTracks(); ++i)
+    {
+        juce::DynamicObject::Ptr t (new juce::DynamicObject());
+        t->setProperty ("index", i);
+        t->setProperty ("name",  recorder.getTrack (i).name);
+        t->setProperty ("colourARGB",
+                        (int) recorder.getTrack (i).colourARGB.load (std::memory_order_relaxed));
+        trackArr.add (juce::var (t.get()));
+    }
+    root->setProperty ("tracks", trackArr);
+
+    const auto json = juce::JSON::toString (juce::var (root.get()), true);
+    return dir.getChildFile ("session_settings.json").replaceWithText (json);
+}
+
+int MainComponent::exportTracksTo (const juce::File& destDir,
+                                   const std::vector<int>& channelIndices)
+{
+    auto sourceDir = engine.getActiveSessionDir();
+    if (! sourceDir.isDirectory() || ! destDir.isDirectory()) return 0;
+
+    destDir.createDirectory();
+
+    int copied = 0;
+    auto allFiles = sourceDir.findChildFiles (juce::File::findFiles, false, "Track_*");
+
+    auto matchesIndex = [] (const juce::File& f, int index1Based) -> bool
+    {
+        const auto base = f.getFileNameWithoutExtension();
+        const auto suffix = juce::String::formatted ("Track_%02d", index1Based);
+        return base == suffix;
+    };
+
+    for (int i : channelIndices)
+    {
+        for (auto& src : allFiles)
+        {
+            if (matchesIndex (src, i + 1))
+            {
+                auto dest = destDir.getChildFile (src.getFileName());
+                if (src.copyFileTo (dest)) ++copied;
+                break;
+            }
+        }
+    }
+    return copied;
+}
+
+void MainComponent::onSaveSessionState()
+{
+    const auto dir = engine.getActiveSessionDir();
+    if (! dir.isDirectory()) { showStatus ("No active session"); return; }
+    if (saveSessionStateTo (dir))
+        showStatus ("Saved session state → " + dir.getFileName());
+    else
+        showStatus ("Save failed");
+}
+
+void MainComponent::onSaveSessionAs()
+{
+    const auto source = engine.getActiveSessionDir();
+    if (! source.isDirectory()) { showStatus ("No active session"); return; }
+
+    chooser = std::make_unique<juce::FileChooser> (
+        "Save session copy in…",
+        getSessionsRoot(),
+        "");
+
+    const auto flags = juce::FileBrowserComponent::saveMode
+                     | juce::FileBrowserComponent::canSelectDirectories;
+
+    chooser->launchAsync (flags, [this, source] (const juce::FileChooser& fc)
+    {
+        auto dest = fc.getResult();
+        if (dest.getFullPathName().isEmpty()) return;
+
+        if (! dest.exists()) dest.createDirectory();
+        if (! dest.isDirectory()) { showStatus ("Save As destination invalid"); return; }
+
+        // Copy every file inside the source session dir (audio + markers + settings).
+        if (! source.copyDirectoryTo (dest))
+        {
+            showStatus ("Save As failed");
+            return;
+        }
+
+        // Refresh the per-session state JSON in the new location.
+        saveSessionStateTo (dest);
+        showStatus ("Saved As → " + dest.getFileName());
+    });
+}
+
+void MainComponent::onExportAllTracks()
+{
+    const auto source = engine.getActiveSessionDir();
+    if (! source.isDirectory()) { showStatus ("No active session"); return; }
+
+    chooser = std::make_unique<juce::FileChooser> (
+        "Export all tracks to…",
+        getSessionsRoot(),
+        "");
+
+    const auto flags = juce::FileBrowserComponent::saveMode
+                     | juce::FileBrowserComponent::canSelectDirectories;
+
+    chooser->launchAsync (flags, [this] (const juce::FileChooser& fc)
+    {
+        auto dest = fc.getResult();
+        if (dest.getFullPathName().isEmpty()) return;
+        if (! dest.exists()) dest.createDirectory();
+
+        std::vector<int> all;
+        for (int i = 0; i < engine.getRecorder().getNumTracks(); ++i) all.push_back (i);
+        const int n = exportTracksTo (dest, all);
+        showStatus ("Exported " + juce::String (n) + " tracks → " + dest.getFileName());
+    });
+}
+
+void MainComponent::onExportIndividualTrack (int channelIndex)
+{
+    const auto source = engine.getActiveSessionDir();
+    if (! source.isDirectory()) { showStatus ("No active session"); return; }
+
+    chooser = std::make_unique<juce::FileChooser> (
+        "Export track to…",
+        getSessionsRoot(),
+        "");
+
+    const auto flags = juce::FileBrowserComponent::saveMode
+                     | juce::FileBrowserComponent::canSelectDirectories;
+
+    chooser->launchAsync (flags, [this, channelIndex] (const juce::FileChooser& fc)
+    {
+        auto dest = fc.getResult();
+        if (dest.getFullPathName().isEmpty()) return;
+        if (! dest.exists()) dest.createDirectory();
+
+        const int n = exportTracksTo (dest, { channelIndex });
+        showStatus (n > 0
+                    ? "Exported track " + juce::String (channelIndex + 1)
+                       + " → " + dest.getFileName()
+                    : "Track file not found");
+    });
 }
 
 void MainComponent::onLoadSessionClicked()

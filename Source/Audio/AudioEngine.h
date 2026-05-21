@@ -41,6 +41,10 @@ namespace zynforge
         // Empty string reverts to the default "In N" label.
         void setTrackName (int channelIndex, const juce::String&);
 
+        // Returns recording dir if recording, else loaded playback session,
+        // else an empty File.
+        juce::File getActiveSessionDir() const;
+
         // Phase correlation between two input channels (live, smoothed).
         // Channels are 1-based for display, stored 0-based.
         void setPhasePair (int leftCh1Based, int rightCh1Based) noexcept;
