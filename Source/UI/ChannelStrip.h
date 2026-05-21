@@ -43,8 +43,10 @@ namespace zynforge
         NameCallback   renameCb;
 
         juce::Label   nameLabel;
-        juce::ToggleButton armButton  { "ARM" };
-        juce::ToggleButton monButton  { "MON" };
+        juce::ToggleButton armButton   { "ARM" };
+        juce::ToggleButton monButton   { "MON" };
+        juce::ToggleButton muteButton  { "MUTE" };
+        juce::ToggleButton soloButton  { "SOLO" };
         juce::Label   dbLabel;
         juce::Label   clipLabel;
         MiniSpectrum  spectrum;

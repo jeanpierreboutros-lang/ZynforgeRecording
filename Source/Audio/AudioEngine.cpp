@@ -141,6 +141,27 @@ namespace zynforge
         recorder.processBlock (inputs, numInputs, numSamples);
         player  .processBlock (outputs, numOutputs, numSamples);
 
+        // Mute / solo: when any channel is soloed, only soloed channels pass.
+        // Otherwise muted channels are silenced. Applies to both VSC playback
+        // outputs (channel N played out N) and to the monitor sum below.
+        bool anySolo = false;
+        const int trackCount = recorder.getNumTracks();
+        for (int i = 0; i < trackCount; ++i)
+            if (recorder.getTrack (i).soloed.load (std::memory_order_relaxed))
+            { anySolo = true; break; }
+
+        auto channelAudible = [&] (int i) -> bool
+        {
+            auto& t = recorder.getTrack (i);
+            if (anySolo) return t.soloed.load (std::memory_order_relaxed);
+            return ! t.muted.load (std::memory_order_relaxed);
+        };
+
+        // Apply mute/solo to playback outputs (VSC pass-through routing).
+        for (int i = 0; i < trackCount && i < numOutputs; ++i)
+            if (! channelAudible (i) && outputs[i] != nullptr)
+                juce::FloatVectorOperations::clear (outputs[i], numSamples);
+
         // Phase correlation between the selected pair (smoothed).
         {
             const int li = phaseLeft .load (std::memory_order_relaxed);
@@ -166,12 +187,14 @@ namespace zynforge
         }
 
         // Sum monitored inputs into the stereo monitor bus (outputs 0 + 1).
+        // Mute/solo gate applies to monitoring the same as to playback.
         const int monL = 0, monR = 1;
-        const int numTracks = recorder.getNumTracks();
-        for (int ch = 0; ch < numTracks && ch < numInputs; ++ch)
+        for (int ch = 0; ch < trackCount && ch < numInputs; ++ch)
         {
-            if (! recorder.getTrack (ch).monitor.load (std::memory_order_relaxed))
-                continue;
+            auto& t = recorder.getTrack (ch);
+            if (! t.monitor.load (std::memory_order_relaxed)) continue;
+            if (! channelAudible (ch)) continue;
+
             const float* src = inputs[ch];
             if (src == nullptr) continue;
             if (monL < numOutputs && outputs[monL] != nullptr)

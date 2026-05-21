@@ -23,6 +23,7 @@ A focused recording surface for engineers running front-of-house or monitors who
 - [x] Pre-roll buffer — cycle PRE button (0 / 5 / 10 / 30 s); buffered history is dumped to each track on RECORD
 - [x] Capture format selector — cycle FMT button (WAV 24 / WAV 32-float / FLAC 24)
 - [x] Per-track monitor (MON button on each strip → sum to stereo monitor bus, outputs 0+1)
+- [x] Per-track MUTE and SOLO — applied to both VSC playback outputs and the monitor bus. Any solo engaged → only soloed channels are audible.
 - [x] Per-strip mini-spectrum (log-frequency FFT, 24 Hz refresh)
 - [x] Phase correlation meter (selectable pair, smoothed)
 - [x] dBFS numeric readout + per-channel clip counter (click meter to clear)
@@ -101,9 +102,16 @@ Format is locked while recording.
 
 Cycle the **PRE** button: `0 / 5 / 10 / 30 s`. When pre-roll is non-zero, every channel keeps a rolling history of the last N seconds. When you press RECORD, that history is dumped into the file before live capture begins — so the count-in / first hit / squawk before the first chorus is never lost.
 
-## Monitor
+## Channel buttons
 
-Each channel strip has a **MON** toggle. Engaged channels are summed (post-input) into the device's stereo monitor bus (outputs 0 and 1) so you can soloed-check signals into headphones without affecting recording or playback.
+Each strip carries a 2×2 grid of toggles:
+
+|  | Left | Right |
+|---|---|---|
+| **Row 1** | **ARM** (red) — channel is captured when RECORD is engaged | **MON** (green) — input is summed into the stereo monitor bus (outs 0+1) |
+| **Row 2** | **MUTE** (amber) — silences this channel in the monitor + VSC playback. Does NOT stop recording — the take is still written to disk. | **SOLO** (yellow) — as soon as any track is soloed, only soloed tracks are audible. Solo overrides mute. |
+
+The mute / solo logic runs inside the audio callback, so changes are instant and click-free. Recording always captures armed channels regardless of mute or solo state — both are monitoring concerns, not recording ones.
 
 ## FILE menu
 

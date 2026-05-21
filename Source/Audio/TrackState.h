@@ -15,6 +15,8 @@ namespace zynforge
         std::atomic<bool>  clipped { false };
         std::atomic<bool>  armed   { true };
         std::atomic<bool>  monitor { false };
+        std::atomic<bool>  muted   { false };
+        std::atomic<bool>  soloed  { false };
 
         std::atomic<int>          clipCount        { 0 };
         std::atomic<juce::int64>  lastClipSample   { -1 };

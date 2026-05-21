@@ -170,6 +170,25 @@ namespace zynforge
         monButton.setColour (juce::ToggleButton::tickColourId, brand::accentPlay);
         addAndMakeVisible (monButton);
 
+        muteButton.setToggleState (s.muted.load(), juce::dontSendNotification);
+        muteButton.onClick = [this]
+        {
+            state.muted.store (muteButton.getToggleState(), std::memory_order_relaxed);
+        };
+        muteButton.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
+        muteButton.setColour (juce::ToggleButton::tickColourId, brand::accentVS);
+        addAndMakeVisible (muteButton);
+
+        soloButton.setToggleState (s.soloed.load(), juce::dontSendNotification);
+        soloButton.onClick = [this]
+        {
+            state.soloed.store (soloButton.getToggleState(), std::memory_order_relaxed);
+        };
+        soloButton.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
+        soloButton.setColour (juce::ToggleButton::tickColourId,
+                              juce::Colour::fromRGB (0xff, 0xd6, 0x4d));
+        addAndMakeVisible (soloButton);
+
         dbLabel.setFont (juce::Font (juce::FontOptions().withHeight (11.0f).withStyle ("Bold")));
         dbLabel.setColour (juce::Label::textColourId, brand::textPrimary);
         dbLabel.setJustificationType (juce::Justification::centred);
@@ -217,8 +236,15 @@ namespace zynforge
         if (swatch != nullptr)
             swatch->setBounds (nameRow.removeFromLeft (16).reduced (1, 2));
         nameLabel.setBounds (nameRow);
-        armButton.setBounds (r.removeFromTop (20).reduced (4, 1));
-        monButton.setBounds (r.removeFromTop (20).reduced (4, 1));
+
+        // 2x2 button grid: ARM | MON / MUTE | SOLO.
+        auto row1 = r.removeFromTop (20);
+        auto row2 = r.removeFromTop (20);
+        const int halfW = row1.getWidth() / 2;
+        armButton .setBounds (row1.removeFromLeft (halfW).reduced (2, 1));
+        monButton .setBounds (row1.reduced (2, 1));
+        muteButton.setBounds (row2.removeFromLeft (halfW).reduced (2, 1));
+        soloButton.setBounds (row2.reduced (2, 1));
         r.removeFromTop (4);
         spectrum .setBounds (r.removeFromTop (40));
         r.removeFromTop (2);
