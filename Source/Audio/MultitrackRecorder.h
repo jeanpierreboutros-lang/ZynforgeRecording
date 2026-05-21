@@ -12,9 +12,20 @@
 
 namespace zynforge
 {
+    enum class CaptureFormat
+    {
+        Wav24,        // 24-bit PCM WAV (default)
+        Wav32Float,   // 32-bit IEEE float WAV — clip-proof at file level
+        Flac24        // 24-bit FLAC — ~50% disk size vs WAV
+    };
+
     // Lock-free per-channel ring buffer + background disk writer.
     // The audio thread only ever pushes; a dedicated TimeSliceClient
-    // drains and writes WAV files.
+    // drains and writes the configured format per track.
+    //
+    // Pre-roll: a separate per-channel ring of N seconds is always
+    // pushed (when N > 0) so RECORD can dump audio that happened
+    // BEFORE the button was pressed.
     class MultitrackRecorder final : private juce::TimeSliceClient
     {
     public:
@@ -32,6 +43,13 @@ namespace zynforge
         bool startRecording (const juce::File& sessionDir);
         void stopRecording();
         bool isRecording() const noexcept { return recording.load (std::memory_order_acquire); }
+
+        // Capture format & pre-roll are settings — only changeable while not recording.
+        void setCaptureFormat (CaptureFormat f) noexcept     { if (! isRecording()) captureFormat = f; }
+        CaptureFormat getCaptureFormat() const noexcept       { return captureFormat; }
+
+        void setPreRollSeconds (int seconds);
+        int  getPreRollSeconds() const noexcept               { return preRollSeconds; }
 
         int          getNumTracks() const noexcept { return (int) tracks.size(); }
         TrackState&  getTrack (int i) noexcept     { return *tracks[(std::size_t) i]; }
@@ -63,15 +81,39 @@ namespace zynforge
             std::unique_ptr<juce::AudioFormatWriter> writer;
         };
 
+        // Per-channel rolling history used for pre-roll. Audio thread is the
+        // only writer; UI thread reads only via dumpPreRollToWriters() before
+        // setting recording=true, so no lock is needed.
+        struct PreRollBuffer
+        {
+            std::vector<float>       data;
+            std::atomic<juce::int64> totalWritten { 0 };
+
+            void allocate (int samples) noexcept
+            {
+                data.assign ((std::size_t) samples, 0.0f);
+                totalWritten.store (0, std::memory_order_release);
+            }
+
+            void push (const float* src, int n) noexcept;
+
+            // Reads up to samplesWanted of the most recent history into dest.
+            // Returns how many were actually available.
+            int readHistory (float* dest, int samplesWanted) const noexcept;
+        };
+
         void drainOnce();
         void closeWriters();
+        void allocatePreRollBuffers();
+        void dumpPreRollToWriters();
 
         double sampleRate { 48000.0 };
         int    blockSize  { 512 };
 
-        std::vector<std::unique_ptr<TrackState>>  tracks;
-        std::vector<std::unique_ptr<ChannelFifo>> fifos;
-        std::vector<WriterChannel>                writers;
+        std::vector<std::unique_ptr<TrackState>>     tracks;
+        std::vector<std::unique_ptr<ChannelFifo>>    fifos;
+        std::vector<WriterChannel>                   writers;
+        std::vector<std::unique_ptr<PreRollBuffer>>  preRoll;
 
         juce::AudioFormatManager formatManager;
         juce::TimeSliceThread    writerThread { "ZF Recorder Writer" };
@@ -82,6 +124,9 @@ namespace zynforge
         std::atomic<juce::int64> missedSamples      { 0 };
         std::atomic<int>         lastWriteMs        { 0 };
         juce::int64              samplesSinceFlush  { 0 };
+
+        CaptureFormat captureFormat  { CaptureFormat::Wav24 };
+        int           preRollSeconds { 0 };  // 0 = disabled
 
         juce::File activeSessionDir;
         std::vector<float> scratch;

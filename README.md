@@ -8,7 +8,7 @@ A focused recording surface for engineers running front-of-house or monitors who
 
 ## Status
 
-`v0.3.0` — reliability bundle.
+`v0.4.0` — capture options.
 
 - [x] Project structure (CMake, JUCE 8 via `FetchContent`)
 - [x] ZynForge visual identity (near-black panels, per-strip personality colours, LED-segment meters)
@@ -20,12 +20,14 @@ A focused recording surface for engineers running front-of-house or monitors who
 - [x] Big record indicator: huge HH:MM:SS timer, REC/PLAY/IDLE lamp, visible across the room
 - [x] Disk-health overlay: free GB, record time remaining, last write ms, missed-write counter, marker count
 - [x] Markers — press **M** during record/playback to drop, auto-persisted to `markers.json` per session
-- [ ] Pre-roll buffer (capture audio before record is pressed)
+- [x] Pre-roll buffer — cycle PRE button (0 / 5 / 10 / 30 s); buffered history is dumped to each track on RECORD
+- [x] Capture format selector — cycle FMT button (WAV 24 / WAV 32-float / FLAC 24)
+- [x] Per-track monitor (MON button on each strip → sum to stereo monitor bus, outputs 0+1)
 - [ ] System Lock (prevent accidental keypresses during record)
-- [ ] FLAC / 32-bit float capture options
-- [ ] Per-track monitor / solo button
+- [ ] Spectrum + phase-correlation per strip
 - [ ] LTC timecode input
 - [ ] Console name sync (Dante / A&H / SSL)
+- [ ] OSC / Mackie HUI remote
 
 ## Build
 
@@ -69,7 +71,27 @@ Source/
 
 ## Sessions
 
-Recordings are written to `~/Music/Zynforge Sessions/Session_YYYY-MM-DD_HH-MM-SS/`, one `Track_NN.wav` per channel (24-bit, device sample rate).
+Recordings are written to `~/Music/Zynforge Sessions/Session_YYYY-MM-DD_HH-MM-SS/`, one `Track_NN.{wav,flac}` per channel at the device sample rate.
+
+## Capture format
+
+Cycle the **FMT** button in the header:
+
+| Setting | Bits | Container | Notes |
+|---|---|---|---|
+| WAV 24 | 24-bit PCM | WAV + BWF metadata | Default. Compatible everywhere. |
+| WAV 32F | 32-bit IEEE float | WAV + BWF metadata | Effectively clip-proof at the digital file level. Larger files. |
+| FLAC 24 | 24-bit lossless | FLAC | ~50% disk footprint vs WAV 24. |
+
+Format is locked while recording.
+
+## Pre-roll
+
+Cycle the **PRE** button: `0 / 5 / 10 / 30 s`. When pre-roll is non-zero, every channel keeps a rolling history of the last N seconds. When you press RECORD, that history is dumped into the file before live capture begins — so the count-in / first hit / squawk before the first chorus is never lost.
+
+## Monitor
+
+Each channel strip has a **MON** toggle. Engaged channels are summed (post-input) into the device's stereo monitor bus (outputs 0 and 1) so you can soloed-check signals into headphones without affecting recording or playback.
 
 ## Virtual soundcheck
 

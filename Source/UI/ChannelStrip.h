@@ -23,6 +23,7 @@ namespace zynforge
 
         juce::Label   nameLabel;
         juce::ToggleButton armButton  { "ARM" };
+        juce::ToggleButton monButton  { "MON" };
         LedMeter      meter;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChannelStrip)

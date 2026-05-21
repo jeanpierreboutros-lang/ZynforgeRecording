@@ -32,6 +32,10 @@ private:
     void onLoadSessionClicked();
     void onPlayClicked();
     void onStopClicked();
+    void onFormatClicked();
+    void onPreRollClicked();
+    void refreshFormatButton();
+    void refreshPreRollButton();
     void updateTransportLabels();
     juce::File makeNewSessionDir() const;
     juce::File getSessionsRoot() const;
@@ -49,6 +53,8 @@ private:
     juce::TextButton loadButton    { "LOAD SESSION" };
     juce::TextButton playButton    { "PLAY" };
     juce::TextButton stopButton    { "STOP" };
+    juce::TextButton formatButton  { "WAV 24" };
+    juce::TextButton preRollButton { "PRE 0s" };
 
     std::unique_ptr<juce::FileChooser> chooser;
 

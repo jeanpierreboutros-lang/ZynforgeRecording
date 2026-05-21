@@ -2,7 +2,32 @@
 
 namespace zynforge
 {
-    static constexpr int kFifoSeconds = 4;   // per-channel ring buffer length
+    static constexpr int kFifoSeconds     = 4;   // per-channel FIFO length
+    static constexpr int kPreRollSafetySec = 2;  // extra buffer beyond user setting
+
+    void MultitrackRecorder::PreRollBuffer::push (const float* src, int n) noexcept
+    {
+        const int size = (int) data.size();
+        if (size <= 0 || src == nullptr) return;
+        const auto startPos = totalWritten.load (std::memory_order_relaxed);
+        for (int i = 0; i < n; ++i)
+            data[(std::size_t) ((startPos + i) % size)] = src[i];
+        totalWritten.store (startPos + n, std::memory_order_release);
+    }
+
+    int MultitrackRecorder::PreRollBuffer::readHistory (float* dest, int samplesWanted) const noexcept
+    {
+        const int size = (int) data.size();
+        if (size <= 0 || samplesWanted <= 0) return 0;
+        const auto pos      = totalWritten.load (std::memory_order_acquire);
+        const auto cap      = (juce::int64) size;
+        const auto wanted   = juce::jmin ((juce::int64) samplesWanted,
+                                          juce::jmin (pos, cap));
+        const auto startPos = pos - wanted;
+        for (juce::int64 i = 0; i < wanted; ++i)
+            dest[(std::size_t) i] = data[(std::size_t) ((startPos + i) % size)];
+        return (int) wanted;
+    }
 
     MultitrackRecorder::MultitrackRecorder()
     {
@@ -30,6 +55,7 @@ namespace zynforge
 
         tracks.clear();
         fifos.clear();
+        preRoll.clear();
         for (int i = 0; i < numInputs; ++i)
         {
             auto t = std::make_unique<TrackState>();
@@ -39,9 +65,47 @@ namespace zynforge
             auto f = std::make_unique<ChannelFifo>();
             f->resize (fifoSize);
             fifos.push_back (std::move (f));
+
+            preRoll.push_back (std::make_unique<PreRollBuffer>());
         }
+        allocatePreRollBuffers();
 
         writerThread.addTimeSliceClient (this);
+    }
+
+    void MultitrackRecorder::setPreRollSeconds (int seconds)
+    {
+        seconds = juce::jlimit (0, 30, seconds);
+        if (seconds == preRollSeconds) return;
+        if (isRecording()) return;
+        preRollSeconds = seconds;
+        allocatePreRollBuffers();
+    }
+
+    void MultitrackRecorder::allocatePreRollBuffers()
+    {
+        const int samples = preRollSeconds > 0
+                             ? (int) (sampleRate * (preRollSeconds + kPreRollSafetySec))
+                             : 0;
+        for (auto& b : preRoll)
+            b->allocate (samples);
+    }
+
+    void MultitrackRecorder::dumpPreRollToWriters()
+    {
+        if (preRollSeconds <= 0) return;
+
+        const int wanted = (int) (sampleRate * preRollSeconds);
+        std::vector<float> tmp ((std::size_t) wanted, 0.0f);
+
+        for (std::size_t i = 0; i < writers.size() && i < preRoll.size(); ++i)
+        {
+            if (writers[i].writer == nullptr) continue;
+            const int got = preRoll[i]->readHistory (tmp.data(), wanted);
+            if (got <= 0) continue;
+            const float* const arr[] = { tmp.data() };
+            writers[i].writer->writeFromFloatArrays (arr, 1, got);
+        }
     }
 
     void MultitrackRecorder::release()
@@ -50,6 +114,7 @@ namespace zynforge
         writerThread.removeTimeSliceClient (this);
         tracks.clear();
         fifos.clear();
+        preRoll.clear();
     }
 
     void MultitrackRecorder::processBlock (const float* const* inputs,
@@ -79,6 +144,10 @@ namespace zynforge
             t.peak.store (juce::jmax (peak, prevPeak * 0.92f), std::memory_order_relaxed);
             t.rms .store (rms,  std::memory_order_relaxed);
             if (peak >= 0.999f) t.clipped.store (true, std::memory_order_relaxed);
+
+            // Always feed the pre-roll history if it's been allocated.
+            if (ch < (int) preRoll.size() && ! preRoll[(std::size_t) ch]->data.empty())
+                preRoll[(std::size_t) ch]->push (src, numSamples);
 
             // Push to ring buffer when recording
             if (rec && t.armed.load (std::memory_order_relaxed))
@@ -116,36 +185,44 @@ namespace zynforge
         writers.clear();
         writers.reserve (tracks.size());
 
-        juce::WavAudioFormat wav;
-        const int bitDepth = 24;
+        juce::WavAudioFormat  wav;
+        juce::FlacAudioFormat flac;
+
+        const bool useFlac = (captureFormat == CaptureFormat::Flac24);
+        const int  bitDepth = (captureFormat == CaptureFormat::Wav32Float) ? 32 : 24;
+        const char* ext     = useFlac ? ".flac" : ".wav";
 
         const auto now = juce::Time::getCurrentTime();
 
         for (std::size_t i = 0; i < tracks.size(); ++i)
         {
-            // BWF (bext) metadata — survives reading even if header isn't
-            // finalised due to a crash.
+            // BWF (bext) metadata — only meaningful for WAV.
             juce::StringPairArray meta;
-            meta.set (juce::WavAudioFormat::bwavDescription,
-                      "Zynforge Recording — " + sessionDir.getFileName()
-                        + " — track " + juce::String ((int) i + 1));
-            meta.set (juce::WavAudioFormat::bwavOriginator,      "Zynforge Recording");
-            meta.set (juce::WavAudioFormat::bwavOriginatorRef,   sessionDir.getFileName());
-            meta.set (juce::WavAudioFormat::bwavOriginationDate, now.formatted ("%Y-%m-%d"));
-            meta.set (juce::WavAudioFormat::bwavOriginationTime, now.formatted ("%H:%M:%S"));
-            meta.set (juce::WavAudioFormat::bwavTimeReference,   "0");
+            if (! useFlac)
+            {
+                meta.set (juce::WavAudioFormat::bwavDescription,
+                          "Zynforge Recording — " + sessionDir.getFileName()
+                            + " — track " + juce::String ((int) i + 1));
+                meta.set (juce::WavAudioFormat::bwavOriginator,      "Zynforge Recording");
+                meta.set (juce::WavAudioFormat::bwavOriginatorRef,   sessionDir.getFileName());
+                meta.set (juce::WavAudioFormat::bwavOriginationDate, now.formatted ("%Y-%m-%d"));
+                meta.set (juce::WavAudioFormat::bwavOriginationTime, now.formatted ("%H:%M:%S"));
+                meta.set (juce::WavAudioFormat::bwavTimeReference,   "0");
+            }
 
             WriterChannel w;
-            const auto name = juce::String::formatted ("Track_%02d.wav", (int) i + 1);
+            const auto name = juce::String::formatted ("Track_%02d", (int) i + 1) + ext;
             auto file = sessionDir.getChildFile (name);
             file.deleteFile();
 
             if (auto* out = file.createOutputStream().release())
             {
-                std::unique_ptr<juce::AudioFormatWriter> aw (
-                    wav.createWriterFor (out, sampleRate, 1, (unsigned int) bitDepth, meta, 0));
-                if (aw == nullptr) { delete out; }
-                w.writer = std::move (aw);
+                juce::AudioFormatWriter* awRaw = useFlac
+                    ? flac.createWriterFor (out, sampleRate, 1, bitDepth, meta, 5 /*quality*/)
+                    : wav .createWriterFor (out, sampleRate, 1, bitDepth, meta, 0);
+
+                if (awRaw == nullptr) { delete out; }
+                w.writer.reset (awRaw);
             }
             writers.push_back (std::move (w));
 
@@ -155,6 +232,9 @@ namespace zynforge
         samplesSinceStart.store (0, std::memory_order_relaxed);
         missedSamples    .store (0, std::memory_order_relaxed);
         samplesSinceFlush = 0;
+
+        // Pre-roll: dump history into each writer BEFORE enabling live capture.
+        dumpPreRollToWriters();
 
         writersReady.store (true,  std::memory_order_release);
         recording   .store (true,  std::memory_order_release);

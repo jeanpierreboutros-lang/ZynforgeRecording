@@ -11,6 +11,7 @@ namespace zynforge
         std::atomic<float> rms     { 0.0f };
         std::atomic<bool>  clipped { false };
         std::atomic<bool>  armed   { true };
+        std::atomic<bool>  monitor { false };
         juce::String       name;
 
         void reset() noexcept

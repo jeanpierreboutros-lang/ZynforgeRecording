@@ -48,6 +48,15 @@ MainComponent::MainComponent()
     deviceButton.onClick = [this] { onDeviceClicked(); };
     addAndMakeVisible (deviceButton);
 
+    formatButton.onClick = [this] { onFormatClicked(); };
+    addAndMakeVisible (formatButton);
+
+    preRollButton.onClick = [this] { onPreRollClicked(); };
+    addAndMakeVisible (preRollButton);
+
+    refreshFormatButton();
+    refreshPreRollButton();
+
     addAndMakeVisible (bigClock);
 
     setWantsKeyboardFocus (true);
@@ -140,6 +149,10 @@ void MainComponent::timerCallback()
     bigClock.setMode (m);
     bigClock.setElapsed (elapsed, timerSR);
     bigClock.setMarkers (markers.getCount());
+
+    const bool rec = engine.isRecording();
+    formatButton .setEnabled (! rec);
+    preRollButton.setEnabled (! rec);
 
     // Disk-health calc
     const auto sessRoot = juce::File::getSpecialLocation (juce::File::userMusicDirectory)
@@ -243,6 +256,53 @@ void MainComponent::onStopClicked()
     statusLabel.setText (player.isLoaded() ? "Stopped" : "Idle", juce::dontSendNotification);
 }
 
+void MainComponent::onFormatClicked()
+{
+    if (engine.isRecording()) return;
+
+    auto& recorder = engine.getRecorder();
+    using F = zynforge::CaptureFormat;
+    const auto cur = recorder.getCaptureFormat();
+    const auto next = cur == F::Wav24      ? F::Wav32Float
+                    : cur == F::Wav32Float ? F::Flac24
+                                            : F::Wav24;
+    recorder.setCaptureFormat (next);
+    refreshFormatButton();
+}
+
+void MainComponent::onPreRollClicked()
+{
+    if (engine.isRecording()) return;
+
+    auto& recorder = engine.getRecorder();
+    const int cur = recorder.getPreRollSeconds();
+    const int next = cur == 0  ? 5
+                   : cur == 5  ? 10
+                   : cur == 10 ? 30
+                               : 0;
+    recorder.setPreRollSeconds (next);
+    refreshPreRollButton();
+}
+
+void MainComponent::refreshFormatButton()
+{
+    using F = zynforge::CaptureFormat;
+    juce::String label;
+    switch (engine.getRecorder().getCaptureFormat())
+    {
+        case F::Wav24:      label = "WAV 24";   break;
+        case F::Wav32Float: label = "WAV 32F";  break;
+        case F::Flac24:     label = "FLAC 24";  break;
+    }
+    formatButton.setButtonText (label);
+}
+
+void MainComponent::refreshPreRollButton()
+{
+    const int s = engine.getRecorder().getPreRollSeconds();
+    preRollButton.setButtonText ("PRE " + juce::String (s) + "s");
+}
+
 void MainComponent::onLoadSessionClicked()
 {
     chooser = std::make_unique<juce::FileChooser> (
@@ -316,13 +376,17 @@ void MainComponent::resized()
 {
     auto r = getLocalBounds();
 
-    // Row 1 — title + status + device + record
+    // Row 1 — title + status + FMT + PRE + device + record
     auto row1 = r.removeFromTop (44).reduced (12, 8);
-    titleLabel  .setBounds (row1.removeFromLeft (260));
-    recordButton.setBounds (row1.removeFromRight (110).reduced (0, 2));
-    row1.removeFromRight (8);
-    deviceButton.setBounds (row1.removeFromRight (130).reduced (0, 2));
-    statusLabel .setBounds (row1);
+    titleLabel  .setBounds (row1.removeFromLeft (240));
+    recordButton .setBounds (row1.removeFromRight (110).reduced (0, 2));
+    row1.removeFromRight (6);
+    deviceButton .setBounds (row1.removeFromRight (130).reduced (0, 2));
+    row1.removeFromRight (6);
+    preRollButton.setBounds (row1.removeFromRight (80).reduced (0, 2));
+    row1.removeFromRight (4);
+    formatButton .setBounds (row1.removeFromRight (90).reduced (0, 2));
+    statusLabel  .setBounds (row1);
 
     // Row 2 — session label + transport
     auto row2 = r.removeFromTop (40).reduced (12, 6);

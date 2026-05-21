@@ -24,6 +24,15 @@ namespace zynforge
         armButton.setColour (juce::ToggleButton::tickColourId, brand::accentRecord);
         addAndMakeVisible (armButton);
 
+        monButton.setToggleState (s.monitor.load(), juce::dontSendNotification);
+        monButton.onClick = [this]
+        {
+            state.monitor.store (monButton.getToggleState(), std::memory_order_relaxed);
+        };
+        monButton.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
+        monButton.setColour (juce::ToggleButton::tickColourId, brand::accentPlay);
+        addAndMakeVisible (monButton);
+
         addAndMakeVisible (meter);
     }
 
@@ -48,8 +57,9 @@ namespace zynforge
         r.removeFromTop (4); // leave room for the personality band
 
         nameLabel.setBounds (r.removeFromTop (20));
-        armButton.setBounds (r.removeFromTop (24).reduced (4, 2));
-        r.removeFromTop (6);
+        armButton.setBounds (r.removeFromTop (22).reduced (4, 2));
+        monButton.setBounds (r.removeFromTop (22).reduced (4, 2));
+        r.removeFromTop (4);
         meter.setBounds (r);
     }
 }

@@ -74,12 +74,27 @@ namespace zynforge
                                                         int numSamples,
                                                         const juce::AudioIODeviceCallbackContext&)
     {
-        // Always clear outputs first; player fills them if active.
+        // Always clear outputs first; player + monitor sum into them.
         for (int ch = 0; ch < numOutputs; ++ch)
             if (outputs[ch] != nullptr)
                 juce::FloatVectorOperations::clear (outputs[ch], numSamples);
 
         recorder.processBlock (inputs, numInputs, numSamples);
         player  .processBlock (outputs, numOutputs, numSamples);
+
+        // Sum monitored inputs into the stereo monitor bus (outputs 0 + 1).
+        const int monL = 0, monR = 1;
+        const int numTracks = recorder.getNumTracks();
+        for (int ch = 0; ch < numTracks && ch < numInputs; ++ch)
+        {
+            if (! recorder.getTrack (ch).monitor.load (std::memory_order_relaxed))
+                continue;
+            const float* src = inputs[ch];
+            if (src == nullptr) continue;
+            if (monL < numOutputs && outputs[monL] != nullptr)
+                juce::FloatVectorOperations::add (outputs[monL], src, numSamples);
+            if (monR < numOutputs && outputs[monR] != nullptr)
+                juce::FloatVectorOperations::add (outputs[monR], src, numSamples);
+        }
     }
 }
