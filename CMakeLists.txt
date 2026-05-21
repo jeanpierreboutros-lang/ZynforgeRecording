@@ -42,6 +42,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/LedMeter.cpp
     Source/Audio/AudioEngine.cpp
     Source/Audio/MultitrackRecorder.cpp
+    Source/Audio/SessionPlayer.cpp
     Source/Theme/ZynForgeLookAndFeel.cpp
 )
 

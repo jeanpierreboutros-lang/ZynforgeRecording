@@ -25,7 +25,12 @@ private:
     void rebuildStrips();
     void onRecordClicked();
     void onDeviceClicked();
+    void onLoadSessionClicked();
+    void onPlayClicked();
+    void onStopClicked();
+    void updateTransportLabels();
     juce::File makeNewSessionDir() const;
+    juce::File getSessionsRoot() const;
     void timerCallback() override;
 
     zynforge::ZynForgeLookAndFeel laf;
@@ -33,8 +38,15 @@ private:
 
     juce::Label  titleLabel        { {}, "ZYNFORGE  RECORDING" };
     juce::Label  statusLabel       { {}, "Idle" };
+    juce::Label  sessionLabel      { {}, "No session loaded" };
+    juce::Label  transportLabel    { {}, "00:00 / 00:00" };
     juce::TextButton recordButton  { "RECORD" };
     juce::TextButton deviceButton  { "AUDIO DEVICE" };
+    juce::TextButton loadButton    { "LOAD SESSION" };
+    juce::TextButton playButton    { "PLAY" };
+    juce::TextButton stopButton    { "STOP" };
+
+    std::unique_ptr<juce::FileChooser> chooser;
 
     std::vector<std::unique_ptr<zynforge::ChannelStrip>> strips;
     int  lastTrackCount { -1 };

@@ -26,11 +26,13 @@ namespace zynforge
         const auto inputs    = device->getActiveInputChannels().countNumberOfSetBits();
 
         recorder.prepare (sr, blockSize, juce::jmax (1, inputs));
+        player  .prepare (sr, blockSize);
     }
 
     void AudioEngine::audioDeviceStopped()
     {
         recorder.release();
+        player  .release();
     }
 
     void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputs, int numInputs,
@@ -38,11 +40,12 @@ namespace zynforge
                                                         int numSamples,
                                                         const juce::AudioIODeviceCallbackContext&)
     {
-        recorder.processBlock (inputs, numInputs, numSamples);
-
-        // Silence outputs for now (virtual soundcheck playback comes later).
+        // Always clear outputs first; player fills them if active.
         for (int ch = 0; ch < numOutputs; ++ch)
             if (outputs[ch] != nullptr)
                 juce::FloatVectorOperations::clear (outputs[ch], numSamples);
+
+        recorder.processBlock (inputs, numInputs, numSamples);
+        player  .processBlock (outputs, numOutputs, numSamples);
     }
 }
