@@ -399,14 +399,14 @@ bool MainComponent::saveSessionStateTo (const juce::File& dir)
 }
 
 int MainComponent::exportTracksTo (const juce::File& destDir,
-                                   const std::vector<int>& channelIndices)
+                                   const std::vector<int>& channelIndices,
+                                   const zynforge::ExportOptions& opts)
 {
     auto sourceDir = engine.getActiveSessionDir();
     if (! sourceDir.isDirectory() || ! destDir.isDirectory()) return 0;
 
     destDir.createDirectory();
 
-    int copied = 0;
     auto allFiles = sourceDir.findChildFiles (juce::File::findFiles, false, "Track_*");
 
     auto matchesIndex = [] (const juce::File& f, int index1Based) -> bool
@@ -416,19 +416,35 @@ int MainComponent::exportTracksTo (const juce::File& destDir,
         return base == suffix;
     };
 
+    zynforge::TrackExporter exporter;
+    int succeeded = 0;
+    juce::String firstError;
+
     for (int i : channelIndices)
     {
         for (auto& src : allFiles)
         {
-            if (matchesIndex (src, i + 1))
-            {
-                auto dest = destDir.getChildFile (src.getFileName());
-                if (src.copyFileTo (dest)) ++copied;
-                break;
-            }
+            if (! matchesIndex (src, i + 1)) continue;
+
+            auto& trackState = engine.getRecorder().getTrack (i);
+            const auto safeName = trackState.name.replaceCharacter ('/', '_')
+                                                  .replaceCharacter ('\\', '_');
+            const auto baseName = juce::String::formatted ("Track_%02d - ", i + 1) + safeName;
+            const auto destStem = destDir.getChildFile (baseName);
+
+            juce::String err;
+            if (exporter.exportTrack (src, destStem, opts, err))
+                ++succeeded;
+            else if (firstError.isEmpty())
+                firstError = err;
+            break;
         }
     }
-    return copied;
+
+    if (succeeded == 0 && firstError.isNotEmpty())
+        showStatus ("Export failed: " + firstError);
+
+    return succeeded;
 }
 
 void MainComponent::onSaveSessionState()
@@ -480,24 +496,32 @@ void MainComponent::onExportAllTracks()
     const auto source = engine.getActiveSessionDir();
     if (! source.isDirectory()) { showStatus ("No active session"); return; }
 
-    chooser = std::make_unique<juce::FileChooser> (
-        "Export all tracks to…",
-        getSessionsRoot(),
-        "");
-
-    const auto flags = juce::FileBrowserComponent::saveMode
-                     | juce::FileBrowserComponent::canSelectDirectories;
-
-    chooser->launchAsync (flags, [this] (const juce::FileChooser& fc)
+    zynforge::ExportDialog::launch ("Export all tracks",
+        [this] (std::optional<zynforge::ExportOptions> opts)
     {
-        auto dest = fc.getResult();
-        if (dest.getFullPathName().isEmpty()) return;
-        if (! dest.exists()) dest.createDirectory();
+        if (! opts.has_value()) return;
+        const auto chosenOpts = *opts;
 
-        std::vector<int> all;
-        for (int i = 0; i < engine.getRecorder().getNumTracks(); ++i) all.push_back (i);
-        const int n = exportTracksTo (dest, all);
-        showStatus ("Exported " + juce::String (n) + " tracks → " + dest.getFileName());
+        chooser = std::make_unique<juce::FileChooser> (
+            "Export all tracks to…", getSessionsRoot(), "");
+
+        const auto flags = juce::FileBrowserComponent::saveMode
+                         | juce::FileBrowserComponent::canSelectDirectories;
+
+        chooser->launchAsync (flags,
+            [this, chosenOpts] (const juce::FileChooser& fc)
+        {
+            auto dest = fc.getResult();
+            if (dest.getFullPathName().isEmpty()) return;
+            if (! dest.exists()) dest.createDirectory();
+
+            std::vector<int> all;
+            for (int i = 0; i < engine.getRecorder().getNumTracks(); ++i) all.push_back (i);
+
+            showStatus ("Exporting " + juce::String ((int) all.size()) + " tracks…");
+            const int n = exportTracksTo (dest, all, chosenOpts);
+            showStatus ("Exported " + juce::String (n) + " tracks → " + dest.getFileName());
+        });
     });
 }
 
@@ -506,25 +530,32 @@ void MainComponent::onExportIndividualTrack (int channelIndex)
     const auto source = engine.getActiveSessionDir();
     if (! source.isDirectory()) { showStatus ("No active session"); return; }
 
-    chooser = std::make_unique<juce::FileChooser> (
-        "Export track to…",
-        getSessionsRoot(),
-        "");
-
-    const auto flags = juce::FileBrowserComponent::saveMode
-                     | juce::FileBrowserComponent::canSelectDirectories;
-
-    chooser->launchAsync (flags, [this, channelIndex] (const juce::FileChooser& fc)
+    zynforge::ExportDialog::launch ("Export track",
+        [this, channelIndex] (std::optional<zynforge::ExportOptions> opts)
     {
-        auto dest = fc.getResult();
-        if (dest.getFullPathName().isEmpty()) return;
-        if (! dest.exists()) dest.createDirectory();
+        if (! opts.has_value()) return;
+        const auto chosenOpts = *opts;
 
-        const int n = exportTracksTo (dest, { channelIndex });
-        showStatus (n > 0
-                    ? "Exported track " + juce::String (channelIndex + 1)
-                       + " → " + dest.getFileName()
-                    : "Track file not found");
+        chooser = std::make_unique<juce::FileChooser> (
+            "Export track to…", getSessionsRoot(), "");
+
+        const auto flags = juce::FileBrowserComponent::saveMode
+                         | juce::FileBrowserComponent::canSelectDirectories;
+
+        chooser->launchAsync (flags,
+            [this, channelIndex, chosenOpts] (const juce::FileChooser& fc)
+        {
+            auto dest = fc.getResult();
+            if (dest.getFullPathName().isEmpty()) return;
+            if (! dest.exists()) dest.createDirectory();
+
+            showStatus ("Exporting track " + juce::String (channelIndex + 1) + "…");
+            const int n = exportTracksTo (dest, { channelIndex }, chosenOpts);
+            showStatus (n > 0
+                        ? "Exported track " + juce::String (channelIndex + 1)
+                           + " → " + dest.getFileName()
+                        : "Export failed");
+        });
     });
 }
 

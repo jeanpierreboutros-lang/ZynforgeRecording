@@ -44,6 +44,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/PhaseMeter.cpp
     Source/UI/TimelineStrip.cpp
     Source/UI/StripColourPicker.cpp
+    Source/UI/ExportDialog.cpp
     Source/UI/BigClockPanel.cpp
     Source/Audio/AudioEngine.cpp
     Source/Audio/MultitrackRecorder.cpp
@@ -51,6 +52,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Audio/Markers.cpp
     Source/Audio/StripColours.cpp
     Source/Audio/StripNames.cpp
+    Source/Audio/TrackExporter.cpp
     Source/Theme/ZynForgeLookAndFeel.cpp
 )
 

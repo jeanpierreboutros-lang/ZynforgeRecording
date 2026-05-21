@@ -32,6 +32,7 @@ A focused recording surface for engineers running front-of-house or monitors who
 - [x] Per-track colour palette — click the swatch on a strip → 10 presets + Custom (full colour picker), persists across launches
 - [x] Per-track rename — double-click the name label OR right-click strip → Rename… (persists, click "Reset name" in the menu to revert)
 - [x] **FILE** menu — Open Session…, Save Session State, Save Session As…, and Export ▶ (Export All Tracks…, Export Individual Track ▶ per channel)
+- [x] Export dialog — pick format (WAV / AIFF / FLAC / MP3), sample rate (44.1 / 48 / 96 / 192 kHz), bit depth (16 / 24 / 32-float), MP3 bitrate (128 / 256 / 320 kbps). Resampling via `juce::ResamplingAudioSource`; MP3 via `lame`.
 - [ ] System Lock (prevent accidental keypresses during record)
 - [ ] LTC timecode input
 - [ ] Console name sync (Dante / A&H / SSL)
@@ -112,8 +113,26 @@ The **FILE** button (header row 2) opens a popup with everything session-level:
 - **Save Session State** — writes a `session_settings.json` next to the audio files containing the current capture format, pre-roll, phase pair, loop region, and per-track names + colours. Auto-greyed when no session is active.
 - **Save Session As…** — pick a destination folder; the entire active session (audio + `markers.json` + state) is copied there. Useful for archiving before tweaking.
 - **Export ▶**
-    - **Export All Tracks…** — pick a destination folder; every `Track_*` file from the active session is copied there.
-    - **Export Individual Track ▶** — submenu lists every track by its name; pick one, pick a destination, copy.
+    - **Export All Tracks…** — opens the export dialog, then a destination chooser. Every track is re-encoded to the chosen format / rate / bit depth, with the track's display name embedded in the output filename (`Track_NN - <name>.<ext>`).
+    - **Export Individual Track ▶** — submenu lists every track by its name; pick one, run through the same dialog, choose destination.
+
+### Export options
+
+| Format | Bit depths | Notes |
+|---|---|---|
+| WAV  | 16, 24, 32-float | Most compatible. 32-bit is IEEE float. |
+| AIFF | 16, 24, 32-float | Apple-native PCM container. |
+| FLAC | 16, 24            | Lossless compressed; FLAC spec maxes at 24-bit. |
+| MP3  | n/a                | Bitrate selectable (128 / 256 / 320 kbps). Needs `lame` installed (`brew install lame`). |
+
+| Sample rate | Use |
+|---|---|
+| 44.1 kHz | CD / streaming |
+| 48 kHz   | Video / broadcast |
+| 96 kHz   | High-res production |
+| 192 kHz  | Mastering archive |
+
+Resampling is done via `juce::ResamplingAudioSource`. For MP3, the track is first rendered to a temp 24-bit WAV at the target sample rate, then `lame` is invoked with `-b <bitrate> --quiet`. The temp WAV is deleted on success.
 
 "Active session" = the recording in progress, or (if not recording) the session currently loaded for playback.
 

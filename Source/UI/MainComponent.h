@@ -3,9 +3,11 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include "../Audio/AudioEngine.h"
+#include "../Audio/TrackExporter.h"
 #include "../Theme/ZynForgeLookAndFeel.h"
 #include "BigClockPanel.h"
 #include "ChannelStrip.h"
+#include "ExportDialog.h"
 #include "PhaseMeter.h"
 #include "TimelineStrip.h"
 
@@ -40,7 +42,9 @@ private:
     void onExportAllTracks();
     void onExportIndividualTrack (int channelIndex);
     bool saveSessionStateTo (const juce::File& dir);
-    int  exportTracksTo (const juce::File& dir, const std::vector<int>& channelIndices);
+    int  exportTracksTo (const juce::File& dir,
+                         const std::vector<int>& channelIndices,
+                         const zynforge::ExportOptions&);
     void showStatus (const juce::String& msg);
     void onFormatClicked();
     void onPreRollClicked();
