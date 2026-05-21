@@ -6,6 +6,7 @@
 #include "Markers.h"
 #include "MultitrackRecorder.h"
 #include "SessionPlayer.h"
+#include "StripColours.h"
 
 namespace zynforge
 {
@@ -29,6 +30,11 @@ namespace zynforge
         bool isPlaying() const noexcept                    { return player.isPlaying(); }
 
         MarkersManager& getMarkers() noexcept              { return markers; }
+        StripColours&   getStripColours() noexcept         { return stripColours; }
+
+        // Updates TrackState colour (atomic) AND persists via StripColours.
+        // Pass an empty colour (alpha == 0) to revert to the default.
+        void setTrackColour (int channelIndex, juce::Colour);
 
         // Phase correlation between two input channels (live, smoothed).
         // Channels are 1-based for display, stored 0-based.
@@ -54,6 +60,7 @@ namespace zynforge
         MultitrackRecorder       recorder;
         SessionPlayer            player;
         MarkersManager           markers;
+        StripColours             stripColours;
 
         std::atomic<int>   phaseLeft         { 0 };  // 0-based
         std::atomic<int>   phaseRight        { 1 };

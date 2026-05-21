@@ -43,11 +43,13 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/MiniSpectrum.cpp
     Source/UI/PhaseMeter.cpp
     Source/UI/TimelineStrip.cpp
+    Source/UI/StripColourPicker.cpp
     Source/UI/BigClockPanel.cpp
     Source/Audio/AudioEngine.cpp
     Source/Audio/MultitrackRecorder.cpp
     Source/Audio/SessionPlayer.cpp
     Source/Audio/Markers.cpp
+    Source/Audio/StripColours.cpp
     Source/Theme/ZynForgeLookAndFeel.cpp
 )
 

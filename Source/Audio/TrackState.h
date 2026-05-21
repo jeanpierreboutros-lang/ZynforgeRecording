@@ -19,6 +19,9 @@ namespace zynforge
         std::atomic<int>          clipCount        { 0 };
         std::atomic<juce::int64>  lastClipSample   { -1 };
 
+        // 0 means "use default personality colour for this index".
+        std::atomic<juce::uint32> colourARGB       { 0 };
+
         // FFT FIFO — audio thread fills `fftFifo`, snapshots into
         // `fftSnapshot` when full and sets `fftBlockReady`. UI thread
         // reads the snapshot, FFTs it, then clears the flag.

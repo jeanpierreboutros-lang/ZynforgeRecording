@@ -67,6 +67,31 @@ namespace zynforge
 
         recorder.prepare (sr, blockSize, juce::jmax (1, inputs));
         player  .prepare (sr, blockSize);
+
+        // Apply persisted per-channel colour overrides.
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+        {
+            if (stripColours.hasColour (i))
+                recorder.getTrack (i).colourARGB.store (
+                    stripColours.getColour (i).getARGB(),
+                    std::memory_order_relaxed);
+        }
+    }
+
+    void AudioEngine::setTrackColour (int channelIndex, juce::Colour c)
+    {
+        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
+        if (c.getAlpha() == 0)
+        {
+            stripColours.clearColour (channelIndex);
+            recorder.getTrack (channelIndex).colourARGB.store (0, std::memory_order_relaxed);
+        }
+        else
+        {
+            stripColours.setColour (channelIndex, c);
+            recorder.getTrack (channelIndex).colourARGB.store (
+                c.getARGB(), std::memory_order_relaxed);
+        }
     }
 
     void AudioEngine::audioDeviceStopped()

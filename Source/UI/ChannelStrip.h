@@ -6,6 +6,7 @@
 #include "LedMeter.h"
 #include "MiniSpectrum.h"
 
+#include <functional>
 #include <memory>
 
 namespace zynforge
@@ -13,16 +14,25 @@ namespace zynforge
     class ChannelStrip final : public juce::Component
     {
     public:
-        ChannelStrip (int index, TrackState& state);
+        using ColourCallback = std::function<void (juce::Colour)>;
+
+        ChannelStrip (int index, TrackState& state, ColourCallback onColourPicked = {});
         ~ChannelStrip() override;
+
+        juce::Colour getResolvedColour() const;
 
         void paint (juce::Graphics&) override;
         void resized() override;
 
     private:
+        class Swatch;
+
+        void openColourPicker();
+
         int          stripIndex;
         TrackState&  state;
         juce::Colour personality;
+        ColourCallback colourCb;
 
         juce::Label   nameLabel;
         juce::ToggleButton armButton  { "ARM" };
@@ -31,6 +41,7 @@ namespace zynforge
         juce::Label   clipLabel;
         MiniSpectrum  spectrum;
         LedMeter      meter;
+        std::unique_ptr<Swatch> swatch;
 
         class StripTimer;
         std::unique_ptr<StripTimer> stripTimer;

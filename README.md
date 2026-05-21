@@ -8,7 +8,7 @@ A focused recording surface for engineers running front-of-house or monitors who
 
 ## Status
 
-`v0.6.0` — timeline + marker workflow.
+`v0.7.0` — per-track colour palette.
 
 - [x] Project structure (CMake, JUCE 8 via `FetchContent`)
 - [x] ZynForge visual identity (near-black panels, per-strip personality colours, LED-segment meters)
@@ -29,6 +29,7 @@ A focused recording surface for engineers running front-of-house or monitors who
 - [x] Timeline strip with marker dots + click-to-seek
 - [x] Marker rename / delete via right-click menu
 - [x] Loop-between-markers (set Loop In / Out on two markers; player wraps automatically)
+- [x] Per-track colour palette — click the swatch on a strip → 10 presets + Custom (full colour picker), persists across launches
 - [ ] System Lock (prevent accidental keypresses during record)
 - [ ] LTC timecode input
 - [ ] Console name sync (Dante / A&H / SSL)
@@ -100,6 +101,17 @@ Cycle the **PRE** button: `0 / 5 / 10 / 30 s`. When pre-roll is non-zero, every 
 ## Monitor
 
 Each channel strip has a **MON** toggle. Engaged channels are summed (post-input) into the device's stereo monitor bus (outputs 0 and 1) so you can soloed-check signals into headphones without affecting recording or playback.
+
+## Track colours
+
+Each channel strip carries a small colour swatch to the left of its name. Click it to open a 10-swatch palette popup:
+
+- 8 ZynForge personality washes (dusty blue, moss, olive, violet, wine, teal, amber, mustard)
+- 2 neutrals (slate, graphite)
+- **Custom…** opens a full HSV / sliders colour picker
+- **Default** reverts that strip to its index-based personality colour
+
+Choices persist across launches via `juce::PropertiesFile` (stored under `~/Library/Application Support/Zynforge Recording/`), keyed by channel index. The chosen colour is read from `TrackState::colourARGB` (atomic) every paint, so changing a strip's colour is instant.
 
 ## Diagnostics
 

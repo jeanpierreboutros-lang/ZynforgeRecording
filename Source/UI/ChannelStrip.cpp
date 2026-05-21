@@ -1,8 +1,30 @@
 #include "ChannelStrip.h"
 #include "../Theme/BrandColors.h"
+#include "StripColourPicker.h"
 
 namespace zynforge
 {
+    // Small clickable colour chip embedded at the top-left of every strip.
+    class ChannelStrip::Swatch final : public juce::Component
+    {
+    public:
+        std::function<void()> onClick;
+        juce::Colour displayColour;
+
+        void setDisplayColour (juce::Colour c) { displayColour = c; repaint(); }
+
+        void paint (juce::Graphics& g) override
+        {
+            auto r = getLocalBounds().toFloat().reduced (1.5f);
+            g.setColour (displayColour);
+            g.fillRoundedRectangle (r, 3.0f);
+            g.setColour (juce::Colours::white.withAlpha (0.35f));
+            g.drawRoundedRectangle (r, 3.0f, 1.0f);
+        }
+
+        void mouseDown (const juce::MouseEvent&) override { if (onClick) onClick(); }
+    };
+
     class ChannelStrip::StripTimer final : public juce::Timer
     {
     public:
@@ -33,10 +55,40 @@ namespace zynforge
 
     ChannelStrip::~ChannelStrip() = default;
 
-    ChannelStrip::ChannelStrip (int index, TrackState& s)
+    juce::Colour ChannelStrip::getResolvedColour() const
+    {
+        const auto argb = state.colourARGB.load (std::memory_order_relaxed);
+        if (argb != 0) return juce::Colour ((juce::uint32) argb);
+        return personality;
+    }
+
+    void ChannelStrip::openColourPicker()
+    {
+        if (! colourCb) return;
+        auto current = getResolvedColour();
+
+        auto picker = std::make_unique<StripColourPicker> (
+            current,
+            [this] (juce::Colour chosen)
+            {
+                if (colourCb) colourCb (chosen);
+                if (swatch != nullptr)
+                {
+                    swatch->setDisplayColour (getResolvedColour());
+                }
+                repaint();
+            });
+
+        auto screenBounds = swatch != nullptr ? swatch->getScreenBounds()
+                                              : getScreenBounds();
+        juce::CallOutBox::launchAsynchronously (std::move (picker), screenBounds, nullptr);
+    }
+
+    ChannelStrip::ChannelStrip (int index, TrackState& s, ColourCallback cb)
         : stripIndex (index),
           state (s),
           personality (brand::stripColour (index)),
+          colourCb (std::move (cb)),
           spectrum (s),
           meter (s)
     {
@@ -77,21 +129,25 @@ namespace zynforge
         addAndMakeVisible (spectrum);
         addAndMakeVisible (meter);
 
+        swatch = std::make_unique<Swatch>();
+        swatch->setDisplayColour (getResolvedColour());
+        swatch->onClick = [this] { openColourPicker(); };
+        addAndMakeVisible (*swatch);
+
         stripTimer = std::make_unique<StripTimer> (*this);
     }
 
     void ChannelStrip::paint (juce::Graphics& g)
     {
         auto r = getLocalBounds().toFloat().reduced (2.0f);
+        const auto stripColour = getResolvedColour();
 
-        // Whole-strip personality wash (matches ZynForge Live's INS strips).
-        g.setColour (personality);
+        g.setColour (stripColour);
         g.fillRoundedRectangle (r, 6.0f);
 
-        // Faintly darker bottom half so meters/labels read a little better.
         g.setGradientFill (juce::ColourGradient (
-            personality, r.getCentreX(), r.getY(),
-            personality.darker (0.25f), r.getCentreX(), r.getBottom(),
+            stripColour, r.getCentreX(), r.getY(),
+            stripColour.darker (0.25f), r.getCentreX(), r.getBottom(),
             false));
         g.fillRoundedRectangle (r, 6.0f);
 
@@ -103,7 +159,10 @@ namespace zynforge
     {
         auto r = getLocalBounds().reduced (6, 10);
 
-        nameLabel.setBounds (r.removeFromTop (18));
+        auto nameRow = r.removeFromTop (18);
+        if (swatch != nullptr)
+            swatch->setBounds (nameRow.removeFromLeft (16).reduced (1, 2));
+        nameLabel.setBounds (nameRow);
         armButton.setBounds (r.removeFromTop (20).reduced (4, 1));
         monButton.setBounds (r.removeFromTop (20).reduced (4, 1));
         r.removeFromTop (4);
