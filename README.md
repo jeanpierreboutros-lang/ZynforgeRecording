@@ -8,7 +8,7 @@ A focused recording surface for engineers running front-of-house or monitors who
 
 ## Status
 
-`v0.4.0` — capture options.
+`v0.5.0` — diagnostics.
 
 - [x] Project structure (CMake, JUCE 8 via `FetchContent`)
 - [x] ZynForge visual identity (near-black panels, per-strip personality colours, LED-segment meters)
@@ -23,11 +23,14 @@ A focused recording surface for engineers running front-of-house or monitors who
 - [x] Pre-roll buffer — cycle PRE button (0 / 5 / 10 / 30 s); buffered history is dumped to each track on RECORD
 - [x] Capture format selector — cycle FMT button (WAV 24 / WAV 32-float / FLAC 24)
 - [x] Per-track monitor (MON button on each strip → sum to stereo monitor bus, outputs 0+1)
+- [x] Per-strip mini-spectrum (log-frequency FFT, 24 Hz refresh)
+- [x] Phase correlation meter (selectable pair, smoothed)
+- [x] dBFS numeric readout + per-channel clip counter (click meter to clear)
 - [ ] System Lock (prevent accidental keypresses during record)
-- [ ] Spectrum + phase-correlation per strip
 - [ ] LTC timecode input
 - [ ] Console name sync (Dante / A&H / SSL)
 - [ ] OSC / Mackie HUI remote
+- [ ] Timeline + take management
 
 ## Build
 
@@ -92,6 +95,13 @@ Cycle the **PRE** button: `0 / 5 / 10 / 30 s`. When pre-roll is non-zero, every 
 ## Monitor
 
 Each channel strip has a **MON** toggle. Engaged channels are summed (post-input) into the device's stereo monitor bus (outputs 0 and 1) so you can soloed-check signals into headphones without affecting recording or playback.
+
+## Diagnostics
+
+- **Mini-spectrum** on every strip — log-frequency FFT (1024-point) updated at 24 Hz. Quickly spot feedback or a microphone with the wrong polar pattern.
+- **Phase correlation meter** between any selected input pair (default 1/2). −1 = inverted, 0 = decorrelated, +1 = in phase. Use `<` and `>` to slide the pair across the input bank.
+- **dBFS numeric readout** under each strip's spectrum — peak gain in dB, refreshed at 10 Hz. Reads `-inf` when silent.
+- **Clip log** — each channel keeps a count of clip events; the strip shows `CLIP × N`. Click the meter to reset.
 
 ## Virtual soundcheck
 

@@ -59,6 +59,9 @@ MainComponent::MainComponent()
 
     addAndMakeVisible (bigClock);
 
+    phaseMeter = std::make_unique<zynforge::PhaseMeter> (engine);
+    addAndMakeVisible (*phaseMeter);
+
     setWantsKeyboardFocus (true);
     addKeyListener (this);
 
@@ -399,8 +402,11 @@ void MainComponent::resized()
     transportLabel.setBounds (row2.removeFromLeft (140));
     sessionLabel  .setBounds (row2);
 
-    // Big clock banner
-    bigClock.setBounds (r.removeFromTop (96).reduced (12, 6));
+    // Big clock banner with a phase meter docked on its right edge
+    auto clockRow = r.removeFromTop (96).reduced (12, 6);
+    if (phaseMeter != nullptr)
+        phaseMeter->setBounds (clockRow.removeFromRight (200).reduced (4, 4));
+    bigClock.setBounds (clockRow);
 
     if (strips.empty()) return;
 

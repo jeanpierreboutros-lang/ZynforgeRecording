@@ -30,7 +30,8 @@ namespace zynforge
     void LedMeter::mouseDown (const juce::MouseEvent&)
     {
         showClip = false;
-        state.clipped.store (false, std::memory_order_relaxed);
+        state.clipped  .store (false, std::memory_order_relaxed);
+        state.clipCount.store (0,     std::memory_order_relaxed);
         repaint();
     }
 

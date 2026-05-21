@@ -143,7 +143,36 @@ namespace zynforge
             const float prevPeak = t.peak.load (std::memory_order_relaxed);
             t.peak.store (juce::jmax (peak, prevPeak * 0.92f), std::memory_order_relaxed);
             t.rms .store (rms,  std::memory_order_relaxed);
-            if (peak >= 0.999f) t.clipped.store (true, std::memory_order_relaxed);
+            if (peak >= 0.999f)
+            {
+                t.clipped.store (true, std::memory_order_relaxed);
+                t.clipCount.fetch_add (1, std::memory_order_relaxed);
+                t.lastClipSample.store (samplesSinceStart.load (std::memory_order_relaxed),
+                                        std::memory_order_relaxed);
+            }
+
+            // Feed the spectrum FIFO. When full, snapshot and signal the UI.
+            {
+                int idx = t.fftIndex.load (std::memory_order_relaxed);
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    if (idx < TrackState::kFftSize)
+                    {
+                        t.fftFifo[(std::size_t) idx++] = src[i];
+                    }
+                    else
+                    {
+                        if (! t.fftBlockReady.load (std::memory_order_acquire))
+                        {
+                            std::memcpy (t.fftSnapshot.data(), t.fftFifo.data(),
+                                         sizeof (float) * TrackState::kFftSize);
+                            t.fftBlockReady.store (true, std::memory_order_release);
+                        }
+                        idx = 0;
+                    }
+                }
+                t.fftIndex.store (idx, std::memory_order_release);
+            }
 
             // Always feed the pre-roll history if it's been allocated.
             if (ch < (int) preRoll.size() && ! preRoll[(std::size_t) ch]->data.empty())

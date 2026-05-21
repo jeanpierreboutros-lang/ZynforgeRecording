@@ -30,6 +30,13 @@ namespace zynforge
 
         MarkersManager& getMarkers() noexcept              { return markers; }
 
+        // Phase correlation between two input channels (live, smoothed).
+        // Channels are 1-based for display, stored 0-based.
+        void setPhasePair (int leftCh1Based, int rightCh1Based) noexcept;
+        int  getPhaseLeftChannel()  const noexcept { return phaseLeft .load (std::memory_order_relaxed) + 1; }
+        int  getPhaseRightChannel() const noexcept { return phaseRight.load (std::memory_order_relaxed) + 1; }
+        float getPhaseCorrelation() const noexcept { return phaseCorrelation.load (std::memory_order_relaxed); }
+
         // Drops a marker at the current record or playback position.
         // Returns the new marker count, or -1 if no session active.
         int dropMarkerAtCurrentPosition();
@@ -47,6 +54,10 @@ namespace zynforge
         MultitrackRecorder       recorder;
         SessionPlayer            player;
         MarkersManager           markers;
+
+        std::atomic<int>   phaseLeft         { 0 };  // 0-based
+        std::atomic<int>   phaseRight        { 1 };
+        std::atomic<float> phaseCorrelation  { 0.0f };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AudioEngine)
     };
