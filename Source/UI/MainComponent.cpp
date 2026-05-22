@@ -273,8 +273,12 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (1, "Open Session…");
         menu.addItem (4, "Import Audio Files…",  ! engine.isRecording());
         menu.addSeparator();
-        menu.addItem (2, "Save Session State",  engine.getActiveSessionDir().isDirectory());
-        menu.addItem (3, "Save Session As…",   engine.getActiveSessionDir().isDirectory());
+        // Save / Save As are always enabled: if there's no active
+        // session yet, Save falls through to Save As (picker), and
+        // Save As is by definition a picker so it never needs prior
+        // state.
+        menu.addItem (2, "Save Session State");
+        menu.addItem (3, "Save Session As…");
         menu.addSeparator();
 
         juce::PopupMenu exportMenu;
@@ -1550,11 +1554,19 @@ int MainComponent::exportTracksTo (const juce::File& destDir,
 void MainComponent::onSaveSessionState()
 {
     const auto dir = engine.getActiveSessionDir();
-    if (! dir.isDirectory()) { showStatus ("No active session"); return; }
-    if (saveSessionStateTo (dir))
-        showStatus ("Saved session state → " + dir.getFileName());
-    else
-        showStatus ("Save failed");
+    if (dir.isDirectory())
+    {
+        if (saveSessionStateTo (dir))
+            showStatus ("Saved session state → " + dir.getFileName());
+        else
+            showStatus ("Save failed");
+        return;
+    }
+    // No active session yet — behave like Save As so the engineer
+    // can still capture the current strip / format / routing config
+    // to a brand new folder.
+    showStatus ("No active session — pick a destination…");
+    onSaveSessionAs();
 }
 
 void MainComponent::onImportAudioFiles()
@@ -1721,8 +1733,14 @@ void MainComponent::onImportAudioFiles()
 
 void MainComponent::onSaveSessionAs()
 {
+    // Source may or may not exist yet:
+    //  * If the engineer made a session via File ▸ New Session… or
+    //    loaded one with Open Session…, getActiveSessionDir() points
+    //    at it and Save As clones the whole folder to the new spot.
+    //  * If there's no active session, Save As still works as a
+    //    'save current mixer state to a new folder' flow — it just
+    //    skips the directory copy.
     const auto source = engine.getActiveSessionDir();
-    if (! source.isDirectory()) { showStatus ("No active session"); return; }
 
     chooser = std::make_unique<juce::FileChooser> (
         "Save session copy in…",
@@ -1740,15 +1758,27 @@ void MainComponent::onSaveSessionAs()
         if (! dest.exists()) dest.createDirectory();
         if (! dest.isDirectory()) { showStatus ("Save As destination invalid"); return; }
 
-        // Copy every file inside the source session dir (audio + markers + settings).
-        if (! source.copyDirectoryTo (dest))
+        // Seed the Pro Tools-style subfolder layout in the new spot.
+        dest.getChildFile ("Audio Files")         .createDirectory();
+        dest.getChildFile ("Bounced Files")       .createDirectory();
+        dest.getChildFile ("Clip Groups")         .createDirectory();
+        dest.getChildFile ("Session File Backups").createDirectory();
+        dest.getChildFile ("Video Files")         .createDirectory();
+
+        if (source.isDirectory() && source != dest)
         {
-            showStatus ("Save As failed");
-            return;
+            // Copy every file inside the source session dir (audio + markers + settings).
+            if (! source.copyDirectoryTo (dest))
+            {
+                showStatus ("Save As failed");
+                return;
+            }
         }
 
-        // Refresh the per-session state JSON in the new location.
+        // Refresh the per-session state JSON in the new location and
+        // pin it as the new active session so the next Save lands here.
         saveSessionStateTo (dest);
+        engine.setActiveSessionDir (dest);
         showStatus ("Saved As → " + dest.getFileName());
     });
 }
