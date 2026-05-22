@@ -1,5 +1,7 @@
 #include "EditPage.h"
 #include "../Theme/BrandColors.h"
+#include "LedMeter.h"
+#include "StripColourPicker.h"
 
 namespace zynforge
 {
@@ -14,7 +16,8 @@ namespace zynforge
                   juce::AudioFormatManager& formats,
                   juce::AudioThumbnailCache& cache)
             : index (trackIdx), engine (eng),
-              thumbnail (1024, formats, cache)
+              thumbnail (1024, formats, cache),
+              meter (engine.getRecorder().getTrack (index))
         {
             auto& s = engine.getRecorder().getTrack (index);
 
@@ -52,6 +55,39 @@ namespace zynforge
             addAndMakeVisible (muteButton);
             addAndMakeVisible (soloButton);
 
+            // Input + output routing combos — same wiring as the mixer.
+            auto styleCombo = [] (juce::ComboBox& c)
+            {
+                c.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep.withAlpha (0.55f));
+                c.setColour (juce::ComboBox::outlineColourId,    brand::edge);
+                c.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
+                c.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
+            };
+            styleCombo (inputCombo);
+            styleCombo (outputCombo);
+
+            inputCombo.onChange = [this]
+            {
+                const int id = inputCombo.getSelectedId();
+                const int dev = (id <= 1) ? -1 : id - 2;
+                engine.setTrackLinkedRouting (index, dev);
+            };
+            outputCombo.onChange = [this]
+            {
+                const int id = outputCombo.getSelectedId();
+                const int dev = (id <= 1) ? -1 : id - 2;
+                engine.setTrackLinkedRouting (index, dev);
+            };
+            addAndMakeVisible (inputCombo);
+            addAndMakeVisible (outputCombo);
+
+            rebuildRoutingCombos();
+            refreshRoutingSelection();
+
+            // Live signal meter on the right edge of the header.
+            addAndMakeVisible (meter);
+            meter.setTooltip ("Live signal level — click to clear clip.");
+
             updatePollState();
         }
 
@@ -65,6 +101,61 @@ namespace zynforge
             if (soloButton.getToggleState() != s.soloed.load()) soloButton.setToggleState (s.soloed.load(), juce::dontSendNotification);
             const auto curName = nameLabel.getText();
             if (curName != s.name) nameLabel.setText (s.name, juce::dontSendNotification);
+
+            // Reflect device topology + patch-page changes.
+            const int curIn  = engine.getCurrentDeviceInputCount();
+            const int curOut = engine.getCurrentDeviceOutputCount();
+            if (curIn != lastInputDeviceCount || curOut != lastOutputDeviceCount)
+            {
+                lastInputDeviceCount  = curIn;
+                lastOutputDeviceCount = curOut;
+                rebuildRoutingCombos();
+            }
+            refreshRoutingSelection();
+
+            // Stripe colour might have changed (mixer right-click → colour
+            // picker). Repaint the wash on the next paint cycle.
+            const auto argb = s.colourARGB.load();
+            if (argb != lastColourArgb)
+            {
+                lastColourArgb = argb;
+                repaint();
+            }
+        }
+
+        void rebuildRoutingCombos()
+        {
+            const int numIns  = engine.getCurrentDeviceInputCount();
+            const int numOuts = engine.getCurrentDeviceOutputCount();
+            const int visibleIn  = juce::jmax (numIns,  index + 1, 8);
+            const int visibleOut = juce::jmax (numOuts, index + 1, 8);
+
+            inputCombo.clear (juce::dontSendNotification);
+            inputCombo.addItem ("(unrouted)", 1);
+            for (int i = 0; i < visibleIn; ++i)
+                inputCombo.addItem (i < numIns ? ("In "  + juce::String (i + 1))
+                                               : ("In "  + juce::String (i + 1) + " (off)"),
+                                    i + 2);
+
+            outputCombo.clear (juce::dontSendNotification);
+            outputCombo.addItem ("(unrouted)", 1);
+            for (int i = 0; i < visibleOut; ++i)
+                outputCombo.addItem (i < numOuts ? ("Out " + juce::String (i + 1))
+                                                 : ("Out " + juce::String (i + 1) + " (off)"),
+                                     i + 2);
+        }
+
+        void refreshRoutingSelection()
+        {
+            auto& s = engine.getRecorder().getTrack (index);
+            int inR  = s.inputRouting .load();
+            int outR = s.outputRouting.load();
+            if (inR  == -2) inR  = index;
+            if (outR == -2) outR = index;
+            const int wantIn  = (inR  < 0) ? 1 : inR  + 2;
+            const int wantOut = (outR < 0) ? 1 : outR + 2;
+            if (inputCombo .getSelectedId() != wantIn ) inputCombo .setSelectedId (wantIn,  juce::dontSendNotification);
+            if (outputCombo.getSelectedId() != wantOut) outputCombo.setSelectedId (wantOut, juce::dontSendNotification);
         }
 
         void setWaveformFile (const juce::File& f)
@@ -87,9 +178,16 @@ namespace zynforge
         {
             const auto fillColour = getStripColour();
 
-            // ─── Header band (colour wash)
+            // ─── Colour swatch column (click to change track colour)
             auto header = getLocalBounds().withWidth (headerW);
+            auto swatchArea = header.removeFromLeft (swatchW);
             g.setColour (fillColour);
+            g.fillRect (swatchArea);
+            g.setColour (fillColour.darker (0.40f));
+            g.drawVerticalLine (swatchArea.getRight() - 1, 0.0f, (float) getHeight());
+
+            // ─── Header background (panel)
+            g.setColour (brand::bgPanel);
             g.fillRect (header);
             g.setColour (brand::edge);
             g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
@@ -127,16 +225,49 @@ namespace zynforge
 
         void resized() override
         {
-            auto header = getLocalBounds().withWidth (headerW).reduced (8, 6);
+            auto header = getLocalBounds().withWidth (headerW);
+            header.removeFromLeft (swatchW);              // colour swatch column
+            auto content = header.reduced (6, 6);
 
-            nameLabel.setBounds (header.removeFromTop (20));
-            header.removeFromTop (4);
+            // Right edge = small live signal meter
+            meter.setBounds (content.removeFromRight (meterW));
+            content.removeFromRight (4);
 
-            auto btnRow = header.removeFromTop (22);
-            const int w = btnRow.getWidth() / 3;
-            armButton .setBounds (btnRow.removeFromLeft (w).reduced (1));
-            muteButton.setBounds (btnRow.removeFromLeft (w).reduced (1));
+            nameLabel.setBounds (content.removeFromTop (18));
+            content.removeFromTop (2);
+
+            auto btnRow = content.removeFromTop (20);
+            const int bw = btnRow.getWidth() / 3;
+            armButton .setBounds (btnRow.removeFromLeft (bw).reduced (1));
+            muteButton.setBounds (btnRow.removeFromLeft (bw).reduced (1));
             soloButton.setBounds (btnRow.reduced (1));
+            content.removeFromTop (4);
+
+            inputCombo .setBounds (content.removeFromTop (18));
+            content.removeFromTop (2);
+            outputCombo.setBounds (content.removeFromTop (18));
+        }
+
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            // Click the coloured swatch column to open the colour picker.
+            if (e.x < swatchW)
+                openColourPicker();
+        }
+
+        void openColourPicker()
+        {
+            auto& s = engine.getRecorder().getTrack (index);
+            auto current = (s.colourARGB.load() != 0)
+                            ? juce::Colour ((juce::uint32) s.colourARGB.load())
+                            : brand::stripColour (index);
+
+            auto picker = std::make_unique<StripColourPicker> (
+                current,
+                [this] (juce::Colour chosen) { engine.setTrackColour (index, chosen); repaint(); });
+
+            const auto screenArea = getScreenBounds().withWidth (swatchW);
+            juce::CallOutBox::launchAsynchronously (std::move (picker), screenArea, nullptr);
         }
 
         int getHeaderWidth() const noexcept { return headerW; }
@@ -150,7 +281,9 @@ namespace zynforge
             return brand::stripColour (index);
         }
 
-        static constexpr int headerW = 200;
+        static constexpr int headerW = 240;
+        static constexpr int swatchW = 14;
+        static constexpr int meterW  = 16;
 
         int                       index;
         AudioEngine&              engine;
@@ -160,7 +293,13 @@ namespace zynforge
         juce::ToggleButton        armButton  { "REC"  };
         juce::ToggleButton        muteButton { "MUTE" };
         juce::ToggleButton        soloButton { "SOLO" };
-        int                       playheadX  { -1 };
+        juce::ComboBox            inputCombo;
+        juce::ComboBox            outputCombo;
+        LedMeter                  meter;
+        int                       playheadX             { -1 };
+        int                       lastInputDeviceCount  { -1 };
+        int                       lastOutputDeviceCount { -1 };
+        unsigned int              lastColourArgb        { 0 };
     };
 
     // Owner of the TrackRow vertical list. EditPage drops this into the
@@ -292,7 +431,7 @@ namespace zynforge
         int playheadX = -1;
         if (total > 0 && list->rowCount() > 0)
         {
-            const auto wavePaneWidth = juce::jmax (1, getWidth() - 200);
+            const auto wavePaneWidth = juce::jmax (1, getWidth() - 240);
             // -8 px to account for waveform reduction in paint.
             const double frac = (double) pos / (double) total;
             playheadX = (int) (frac * (wavePaneWidth - 8)) + 4;

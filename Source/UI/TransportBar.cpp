@@ -16,16 +16,17 @@ namespace zynforge
 
         void paintButton (juce::Graphics& g, bool over, bool down) override
         {
-            auto r = getLocalBounds().toFloat().reduced (3.0f);
+            // Square button body with a 1px border — matches the reference
+            // mock-up: dark mid-grey panel, faint outline, no gradients.
+            auto r = getLocalBounds().toFloat().reduced (2.0f);
 
-            // Background: subtle dark pill, slightly brighter when hot.
-            const auto bg = (down ? juce::Colour (0x2c, 0x2e, 0x34)
-                                  : over ? juce::Colour (0x24, 0x26, 0x2c)
-                                         : juce::Colour (0x1c, 0x1e, 0x24));
+            const auto bg = (down ? juce::Colour (0x3e, 0x40, 0x46)
+                                  : over ? juce::Colour (0x36, 0x38, 0x3e)
+                                         : juce::Colour (0x2a, 0x2c, 0x30));
             g.setColour (bg);
-            g.fillRoundedRectangle (r, 4.0f);
-            g.setColour (brand::edge);
-            g.drawRoundedRectangle (r, 4.0f, 1.0f);
+            g.fillRoundedRectangle (r, 3.0f);
+            g.setColour (juce::Colour (0x14, 0x15, 0x18));
+            g.drawRoundedRectangle (r, 3.0f, 1.0f);
 
             // Icon (centred inside the inner area).
             auto ic = r.reduced (8.0f, 6.0f);
@@ -189,12 +190,24 @@ namespace zynforge
         auto r = getLocalBounds();
         const int n = 6;
         const int gap = 4;
-        const int w = juce::jmax (28, (r.getWidth() - (n - 1) * gap) / n);
+
+        // Square buttons sized to the bar's height — never wider than tall,
+        // never taller than wide. Matches the reference mock-up's shape.
+        const int side = juce::jmin (r.getHeight(),
+                                     (r.getWidth() - (n - 1) * gap) / n);
+
+        // Centre the row horizontally if it ends up narrower than the bar.
+        const int totalW = n * side + (n - 1) * gap;
+        if (totalW < r.getWidth())
+            r.removeFromLeft ((r.getWidth() - totalW) / 2);
 
         for (auto* b : { gotoStart.get(), gotoEnd.get(), play.get(),
                          stop.get(), record.get(), loop.get() })
         {
-            b->setBounds (r.removeFromLeft (w));
+            // Vertically centre each square inside the bar's full height.
+            const int yOffset = (r.getHeight() - side) / 2;
+            auto cell = r.removeFromLeft (side);
+            b->setBounds (cell.withY (cell.getY() + yOffset).withHeight (side));
             r.removeFromLeft (gap);
         }
     }

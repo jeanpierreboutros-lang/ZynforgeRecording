@@ -137,6 +137,19 @@ namespace zynforge
         else             outputCombo.setSelectedId (current + 2,  juce::dontSendNotification);
     }
 
+    void ChannelStrip::refreshAppearance()
+    {
+        // Name: TrackState is authoritative; only update if it changed.
+        if (nameLabel.getText() != state.name)
+            nameLabel.setText (state.name, juce::dontSendNotification);
+
+        // Colour: re-resolve and push to the swatch + repaint the wash.
+        const auto resolved = getResolvedColour();
+        if (swatch != nullptr)
+            swatch->setDisplayColour (resolved);
+        repaint();
+    }
+
     void ChannelStrip::refreshRoutingSelection()
     {
         auto pick = [] (juce::ComboBox& box, int routing) -> int

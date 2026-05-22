@@ -572,9 +572,14 @@ void MainComponent::timerCallback()
         rebuildStrips();
 
     // Keep each strip's input/output combos in sync with engine state —
-    // the PATCH page can mutate routing behind the strip's back.
+    // the PATCH page can mutate routing behind the strip's back. Also
+    // refresh name + colour so changes made from the EDIT view show up.
     for (auto& s : strips)
-        if (s != nullptr) s->refreshRoutingSelection();
+        if (s != nullptr)
+        {
+            s->refreshRoutingSelection();
+            s->refreshAppearance();
+        }
 
     updateTransportLabels();
 

@@ -37,6 +37,10 @@ namespace zynforge
         // combos in sync when the PATCH page mutates routing.
         void refreshRoutingSelection();
 
+        // Re-reads name + colour from TrackState so changes made in the
+        // EDIT view (rename, colour swatch) propagate back to the mixer.
+        void refreshAppearance();
+
         void mouseDown (const juce::MouseEvent&) override;
 
         juce::Colour getResolvedColour() const;
