@@ -29,6 +29,11 @@ namespace zynforge
         // (Volume / Pan / Mute) the engineer has chosen.
         void setAutomationToolbar (AutomationToolbar* t);
 
+        // Force every row's lane content to follow the toolbar's
+        // Param choice. Called whenever the toolbar's onParamChanged
+        // fires.
+        void applyToolbarParamToAllRows();
+
         // True when MainComponent has dropped a metronome track; the
         // EDIT rows draw a beat-overlay on every other row when on.
         void setClickTrackPresent (bool present, int clickTrackIdx);

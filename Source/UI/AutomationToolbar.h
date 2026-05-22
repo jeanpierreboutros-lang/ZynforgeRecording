@@ -12,7 +12,7 @@ namespace zynforge
     {
     public:
         enum class Tool : int { Select = 0, AddPoint, DeletePoint };
-        enum class Param : int { Volume = 0, Pan, Mute };
+        enum class Param : int { Volume = 0, Pan, Mute, Click };
 
         AutomationToolbar();
 

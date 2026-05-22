@@ -280,7 +280,15 @@ MainComponent::MainComponent()
     automationToolbar.onToolChanged  = [this] (zynforge::AutomationToolbar::Tool)
         { if (editPage != nullptr) editPage->repaint(); };
     automationToolbar.onParamChanged = [this] (zynforge::AutomationToolbar::Param)
-        { if (editPage != nullptr) editPage->refresh(); };
+    {
+        if (editPage != nullptr)
+        {
+            // Toolbar param choice drives every row's lane content —
+            // engineer doesn't have to flip the per-row VIEW menu first.
+            editPage->applyToolbarParamToAllRows();
+            editPage->repaint();
+        }
+    };
     automationToolbar.onClearAll = [this]
     {
         showStatus ("Automation clear is recognised — point storage lands in the next pass");
@@ -363,6 +371,9 @@ MainComponent::MainComponent()
 
     editPage = std::make_unique<zynforge::EditPage> (engine);
     addChildComponent (*editPage);   // hidden by default; switchView toggles
+    // Wire the toolbar AFTER the page exists. The handlers above
+    // captured 'this' so they will still see editPage when they fire.
+    editPage->setAutomationToolbar (&automationToolbar);
     switchView (View::Mix);
 
     masterStrip = std::make_unique<zynforge::MasterStrip> (engine);

@@ -144,6 +144,7 @@ namespace zynforge
                 m.addItem (31, "volume trim", true, laneMode == LaneMode::VolumeTrim);
                 m.addItem (32, "mute",        true, laneMode == LaneMode::Mute);
                 m.addItem (33, "pan",         true, laneMode == LaneMode::Pan);
+                m.addItem (34, "click",       true, laneMode == LaneMode::Click);
 
                 juce::Component::SafePointer<TrackRow> self (this);
                 m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&viewButton),
@@ -158,6 +159,7 @@ namespace zynforge
                         case 31: self->laneMode = LaneMode::VolumeTrim; break;
                         case 32: self->laneMode = LaneMode::Mute;       break;
                         case 33: self->laneMode = LaneMode::Pan;        break;
+                        case 34: self->laneMode = LaneMode::Click;      break;
                         default: return;
                     }
                     self->repaint();
@@ -385,6 +387,51 @@ namespace zynforge
                         lineCol = muted ? brand::brandOrange : brand::textMuted;
                         label   = muted ? "MUTED" : "open";
                         break;
+                    }
+                    case LaneMode::Click:
+                    {
+                        // Beat grid for the whole lane — every quarter
+                        // note at the current session tempo. Downbeats
+                        // (every 4th) glow brighter so the engineer can
+                        // count bars at a glance.
+                        const float bpm = engine.getSessionTempoBpm();
+                        const auto& player = engine.getPlayer();
+                        const juce::int64 totalSamples = player.isLoaded()
+                            ? player.getTotalLengthSamples() : 0;
+                        const double sr = player.getSampleRate() > 0.0
+                            ? player.getSampleRate()
+                            : (engine.getDeviceManager().getCurrentAudioDevice() != nullptr
+                               ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
+                               : 48000.0);
+                        if (totalSamples > 0 && bpm > 0.0f && sr > 0.0)
+                        {
+                            const double samplesPerBeat = 60.0 * sr / bpm;
+                            int beat = 0;
+                            for (double s = 0.0; s < (double) totalSamples; s += samplesPerBeat, ++beat)
+                            {
+                                const double prop = s / (double) totalSamples;
+                                const int x = inner.getX()
+                                            + (int) (prop * inner.getWidth());
+                                const bool downbeat = (beat % 4) == 0;
+                                g.setColour (downbeat ? brand::brandOrange
+                                                       : brand::accentStatus.withAlpha (0.55f));
+                                g.drawVerticalLine (x,
+                                                    (float) inner.getY(),
+                                                    (float) inner.getBottom());
+                            }
+                        }
+                        g.setColour (brand::textTertiary);
+                        g.setFont (juce::FontOptions().withHeight (11.0f));
+                        g.drawText ("click " + juce::String (bpm, 1) + " BPM",
+                                    inner.reduced (4, 2),
+                                    juce::Justification::topLeft, false);
+                        if (playheadX >= 0 && playheadX < wavePane.getWidth())
+                        {
+                            g.setColour (brand::accentPlay.withAlpha (0.85f));
+                            g.fillRect (juce::Rectangle<int> (headerW + playheadX,
+                                                              0, 2, getHeight()));
+                        }
+                        return;
                     }
                     case LaneMode::Markers:
                     {
@@ -922,6 +969,10 @@ namespace zynforge
         }
 
     public:
+        // What this row draws in the lane area (matches the toolbar's
+        // Param, or the row's own VIEW choice when no toolbar is wired).
+        enum class LaneMode { Waveform, Markers, Volume, VolumeTrim, Mute, Pan, Click };
+        LaneMode laneMode { LaneMode::Waveform };
 
     private:
         juce::Colour getStripColour() const
@@ -956,10 +1007,6 @@ namespace zynforge
         juce::TextButton          viewButton { "VIEW" };
         LedMeter                  meter;
 
-        // What this row draws in the lane area to the right of the
-        // header. The engineer flips via the VIEW button.
-        enum class LaneMode { Waveform, Markers, Volume, VolumeTrim, Mute, Pan };
-        LaneMode laneMode { LaneMode::Waveform };
         int                       playheadX             { -1 };
         int                       lastInputDeviceCount  { -1 };
         int                       lastOutputDeviceCount { -1 };
@@ -996,6 +1043,15 @@ namespace zynforge
                 r->toolbar      = sharedToolbar;
                 r->clickOverlay = sharedClickPresent;
                 r->clickRowIdx  = sharedClickRowIdx;
+                r->repaint();
+            }
+        }
+
+        void forceLaneMode (TrackRow::LaneMode lm)
+        {
+            for (auto& r : rows)
+            {
+                r->laneMode = lm;
                 r->repaint();
             }
         }
@@ -1123,7 +1179,23 @@ namespace zynforge
             list->sharedToolbar = t;
             list->updateRowContext();
         }
+        applyToolbarParamToAllRows();
         repaint();
+    }
+
+    void EditPage::applyToolbarParamToAllRows()
+    {
+        if (toolbar == nullptr || list == nullptr) return;
+
+        TrackRow::LaneMode lm = TrackRow::LaneMode::Volume;
+        switch (toolbar->getParam())
+        {
+            case AutomationToolbar::Param::Volume: lm = TrackRow::LaneMode::Volume; break;
+            case AutomationToolbar::Param::Pan:    lm = TrackRow::LaneMode::Pan;    break;
+            case AutomationToolbar::Param::Mute:   lm = TrackRow::LaneMode::Mute;   break;
+            case AutomationToolbar::Param::Click:  lm = TrackRow::LaneMode::Click;  break;
+        }
+        list->forceLaneMode (lm);
     }
 
     void EditPage::setClickTrackPresent (bool present, int clickIdx)

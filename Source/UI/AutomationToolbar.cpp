@@ -37,6 +37,7 @@ namespace zynforge
         paramCombo.addItem ("Volume", 1);
         paramCombo.addItem ("Pan",    2);
         paramCombo.addItem ("Mute",   3);
+        paramCombo.addItem ("Click",  4);
         paramCombo.setSelectedId (1, juce::dontSendNotification);
         paramCombo.onChange = [this]
         {
