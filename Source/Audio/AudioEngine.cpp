@@ -4,9 +4,54 @@
 
 namespace zynforge
 {
+    void AudioEngine::rememberRecentSession (const juce::File& dir)
+    {
+        if (! dir.isDirectory() || appProps == nullptr) return;
+        const auto path = dir.getFullPathName();
+
+        // Pull existing list, drop any prior occurrence of this path,
+        // push this path on the front, cap at kMaxRecent.
+        juce::StringArray entries;
+        for (int i = 0; i < kMaxRecent; ++i)
+        {
+            const auto p = appProps->getValue ("recentSession_" + juce::String (i));
+            if (p.isNotEmpty() && p != path) entries.add (p);
+        }
+        entries.insert (0, path);
+        while (entries.size() > kMaxRecent) entries.remove (entries.size() - 1);
+
+        for (int i = 0; i < kMaxRecent; ++i)
+            appProps->setValue ("recentSession_" + juce::String (i),
+                                i < entries.size() ? entries[i] : juce::String());
+        appProps->saveIfNeeded();
+    }
+
+    juce::Array<juce::File> AudioEngine::getRecentSessions() const
+    {
+        juce::Array<juce::File> out;
+        if (appProps == nullptr) return out;
+        for (int i = 0; i < kMaxRecent; ++i)
+        {
+            const auto p = appProps->getValue ("recentSession_" + juce::String (i));
+            if (p.isEmpty()) continue;
+            juce::File f (p);
+            if (f.isDirectory()) out.add (f);
+        }
+        return out;
+    }
+
+    void AudioEngine::clearRecentSessions()
+    {
+        if (appProps == nullptr) return;
+        for (int i = 0; i < kMaxRecent; ++i)
+            appProps->setValue ("recentSession_" + juce::String (i), juce::String());
+        appProps->saveIfNeeded();
+    }
+
     bool AudioEngine::startRecording (const juce::File& sessionDir)
     {
         if (! recorder.startRecording (sessionDir)) return false;
+        rememberRecentSession (sessionDir);
         double sr = 48000.0;
         if (auto* device = deviceManager.getCurrentAudioDevice())
             sr = device->getCurrentSampleRate();
@@ -129,7 +174,10 @@ namespace zynforge
     {
         const auto n = player.loadSession (sessionDir);
         if (n > 0)
+        {
             markers.setContext (sessionDir, player.getSampleRate());
+            rememberRecentSession (sessionDir);
+        }
         return n;
     }
 

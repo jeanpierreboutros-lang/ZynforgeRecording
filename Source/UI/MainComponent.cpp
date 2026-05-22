@@ -251,6 +251,7 @@ MainComponent::MainComponent()
     updateTransportLabels();
 
     juce::Timer::callAfterDelay (250, [this] { offerSessionRecovery(); });
+    juce::Timer::callAfterDelay (350, [this] { showStartupWelcome(); });
 
    #if JUCE_MAC
     juce::MenuBarModel::setMacMainMenu (this);
@@ -1067,6 +1068,69 @@ void MainComponent::onBackupClicked()
         backupButton.setButtonText ("BACKUP ✓");
         showStatus ("Backup folder → " + dir.getFileName());
     });
+}
+
+void MainComponent::showStartupWelcome()
+{
+    // Three-button startup dialog: Create / Open Recent / Quit.
+    // 'Create' just dismisses (the engineer is already looking at an
+    // empty mixer ready to be configured). 'Open Recent' opens a
+    // submenu listing the last N session paths from appProps. 'Quit'
+    // gracefully terminates the app.
+    const auto recents = engine.getRecentSessions();
+    const bool hasRecent = ! recents.isEmpty();
+
+    auto* aw = new juce::AlertWindow ("Welcome to Zynforge Recording",
+                                      "Multitrack recording + playback with virtual soundcheck.\n\n"
+                                      "What would you like to do?",
+                                      juce::MessageBoxIconType::QuestionIcon);
+    aw->addButton ("Create New Session", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    if (hasRecent)
+        aw->addButton ("Open Recent",     2);
+    aw->addButton ("Quit",                3, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    aw->enterModalState (true,
+        juce::ModalCallbackFunction::create ([this, aw, recents] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+
+            if (result == 3)
+            {
+                if (auto* app = juce::JUCEApplication::getInstance())
+                    app->systemRequestedQuit();
+                return;
+            }
+
+            if (result == 2 && ! recents.isEmpty())
+            {
+                // Build a popup menu with each recent session.
+                juce::PopupMenu menu;
+                for (int i = 0; i < recents.size(); ++i)
+                    menu.addItem (10 + i, recents[i].getFileName());
+                menu.addSeparator();
+                menu.addItem (999, "Clear recent sessions");
+                menu.showMenuAsync (juce::PopupMenu::Options(),
+                                    [this, recents] (int chosen)
+                {
+                    if (chosen == 0) return;
+                    if (chosen == 999) { engine.clearRecentSessions(); return; }
+                    const int idx = chosen - 10;
+                    if (idx >= 0 && idx < recents.size())
+                    {
+                        const int n = engine.loadSession (recents[idx]);
+                        showStatus (n > 0
+                                    ? "Loaded: " + recents[idx].getFileName()
+                                    : "Failed to load " + recents[idx].getFileName());
+                    }
+                });
+                return;
+            }
+
+            // result == 1 (Create) — nothing to do; the user lands on a
+            // blank mixer they can configure + record into.
+            showStatus ("Ready — add channels with +CH and arm REC to capture");
+        }),
+        false);
 }
 
 void MainComponent::offerSessionRecovery()

@@ -147,6 +147,14 @@ namespace zynforge
         // else an empty File.
         juce::File getActiveSessionDir() const;
 
+        // Recent sessions — maintained when loadSession / startRecording
+        // succeed. Persisted in appProps as 'recentSession_<i>' (i = 0
+        // most recent). Capped at kMaxRecent entries.
+        static constexpr int kMaxRecent = 10;
+        void rememberRecentSession (const juce::File& dir);
+        juce::Array<juce::File> getRecentSessions() const;
+        void clearRecentSessions();
+
         // Forwards to MultitrackRecorder.
         void setBackupDirectory (const juce::File& dir) { recorder.setBackupDirectory (dir); }
         juce::File getBackupDirectory() const           { return recorder.getBackupDirectory(); }
