@@ -72,32 +72,34 @@ MainComponent::MainComponent()
 
     addChannelButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus.withAlpha (0.18f));
     addChannelButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus);
-    addChannelButton.setTooltip ("Add recording channels — defaults to one channel per session.");
+    addChannelButton.setTooltip ("Set the number of recording channels — opens a prompt where you type the count (1–128).");
     addChannelButton.onClick = [this]
     {
         if (engine.isRecording()) { showStatus ("Stop recording before changing channel count"); return; }
         const int cur = engine.getRecorder().getNumTracks();
 
-        juce::PopupMenu menu;
-        menu.addSectionHeader ("Add channels (current: " + juce::String (cur) + ")");
-        menu.addItem (1,  "Add 1 channel");
-        menu.addItem (2,  "Add 2 channels");
-        menu.addItem (4,  "Add 4 channels");
-        menu.addItem (8,  "Add 8 channels");
-        menu.addItem (16, "Add 16 channels");
-        menu.addSeparator();
-        menu.addItem (1000, "Remove last channel", cur > 1);
-        menu.addItem (1001, "Reset to 1 channel",  cur > 1);
+        auto* aw = new juce::AlertWindow ("Number of channels",
+                                          "How many recording channels do you want?\n"
+                                          "(current: " + juce::String (cur) + ", min 1, max 128)",
+                                          juce::MessageBoxIconType::QuestionIcon);
+        aw->addTextEditor ("count", juce::String (cur), {});
+        aw->addButton ("Apply",  1, juce::KeyPress (juce::KeyPress::returnKey));
+        aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
-        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&addChannelButton),
-            [this, cur] (int chosen)
-        {
-            if (chosen == 0) return;
-            if (chosen == 1000)      engine.setStripCount (juce::jmax (1, cur - 1));
-            else if (chosen == 1001) engine.setStripCount (1);
-            else                     engine.setStripCount (cur + chosen);
-            showStatus ("Channels: " + juce::String (engine.getRecorder().getNumTracks()));
-        });
+        aw->enterModalState (true,
+            juce::ModalCallbackFunction::create (
+                [this, aw] (int result)
+                {
+                    if (result == 1)
+                    {
+                        const int n = aw->getTextEditorContents ("count").getIntValue();
+                        const int clamped = juce::jlimit (1, 128, n);
+                        engine.setStripCount (clamped);
+                        showStatus ("Channels: " + juce::String (engine.getRecorder().getNumTracks()));
+                    }
+                    delete aw;
+                }),
+            false);
     };
     addAndMakeVisible (addChannelButton);
 
