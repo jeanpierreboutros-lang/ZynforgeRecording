@@ -352,9 +352,15 @@ namespace zynforge
 
         void mouseMove (const juce::MouseEvent& e) override
         {
-            setMouseCursor (isInResizeZone (e.getPosition())
-                            ? juce::MouseCursor::UpDownResizeCursor
-                            : juce::MouseCursor::NormalCursor);
+            // Avoid spamming setMouseCursor on every pixel of mouse motion —
+            // only flip when the resize-zone hit state changes.
+            const bool inZone = isInResizeZone (e.getPosition());
+            if (inZone != cursorIsResize)
+            {
+                cursorIsResize = inZone;
+                setMouseCursor (inZone ? juce::MouseCursor::UpDownResizeCursor
+                                       : juce::MouseCursor::NormalCursor);
+            }
         }
 
         void mouseDown (const juce::MouseEvent& e) override
@@ -362,7 +368,7 @@ namespace zynforge
             // Right-click anywhere on the row → size menu.
             if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
             {
-                showSizeMenu();
+                showSizeMenu (e.getScreenPosition());
                 return;
             }
             // Left-click in the bottom resize zone → start a drag-resize.
@@ -417,8 +423,10 @@ namespace zynforge
         }
 
     private:
-        void showSizeMenu()
+        void showSizeMenu (juce::Point<int> screenPos)
         {
+            if (menuOpen) return;   // re-entrancy guard
+
             juce::PopupMenu menu;
             auto add = [this, &menu] (int id, const juce::String& name, Size s)
             {
@@ -434,16 +442,27 @@ namespace zynforge
             menu.addSeparator();
             add (8, "fit to window", Size::FitToWindow);
 
-            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
-                                [this] (int chosen)
+            // Use a screen-area target (1x1 at the click point) so the menu's
+            // anchor doesn't depend on the row component still being alive
+            // when the callback fires. SafePointer wraps the row body so a
+            // rebuild between open and dismiss can't crash the callback.
+            menuOpen = true;
+            juce::Component::SafePointer<TrackRow> safe (this);
+            menu.showMenuAsync (juce::PopupMenu::Options()
+                                    .withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 }),
+                                [safe] (int chosen)
             {
-                static const std::array<Size, 8> map { Size::Micro, Size::Mini, Size::Small,
-                                                       Size::Medium, Size::Large, Size::Jumbo,
-                                                       Size::Extreme, Size::FitToWindow };
-                if (chosen < 1 || chosen > 8) return;
-                const auto next = map[(std::size_t) (chosen - 1)];
-                rowSize = next;
-                if (onSizeChosen) onSizeChosen (*this, next);
+                if (auto* row = safe.getComponent())
+                {
+                    row->menuOpen = false;
+                    static const std::array<Size, 8> map { Size::Micro, Size::Mini, Size::Small,
+                                                           Size::Medium, Size::Large, Size::Jumbo,
+                                                           Size::Extreme, Size::FitToWindow };
+                    if (chosen < 1 || chosen > 8) return;
+                    const auto next = map[(std::size_t) (chosen - 1)];
+                    row->rowSize = next;
+                    if (row->onSizeChosen) row->onSizeChosen (*row, next);
+                }
             });
         }
 
@@ -484,6 +503,8 @@ namespace zynforge
         int                       customH               { 80 };
         int                       dragStartHeight       { 0 };
         bool                      dragging              { false };
+        bool                      menuOpen              { false };
+        bool                      cursorIsResize        { false };
     };
 
     // Owner of the TrackRow vertical list. EditPage drops this into the
