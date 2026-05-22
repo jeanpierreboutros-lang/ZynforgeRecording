@@ -382,6 +382,17 @@ namespace zynforge
         recordStereoMixFlag.store (appProps->getBoolValue ("recordStereoMix", false),
                                    std::memory_order_release);
 
+        // Restore the active session folder (set by New Session… / Open
+        // Session…) so Save / Save As stay enabled across app restarts.
+        {
+            const auto saved = appProps->getValue ("activeSessionDir", {});
+            if (saved.isNotEmpty())
+            {
+                juce::File f (saved);
+                if (f.isDirectory()) activeSession = f;
+            }
+        }
+
         // Restore the LTC source strip (1-based stored, internal 0-based).
         ltcSourceStrip.store (appProps->getIntValue ("ltcSourceStrip", 0) - 1,
                               std::memory_order_release);
@@ -447,7 +458,19 @@ namespace zynforge
             return recorder.getActiveSessionDir();
         if (player.isLoaded())
             return player.getSessionDir();
+        if (activeSession.isDirectory())
+            return activeSession;
         return {};
+    }
+
+    void AudioEngine::setActiveSessionDir (const juce::File& dir)
+    {
+        activeSession = (dir.isDirectory() ? dir : juce::File());
+        if (appProps != nullptr)
+        {
+            appProps->setValue ("activeSessionDir", activeSession.getFullPathName());
+            appProps->saveIfNeeded();
+        }
     }
 
     bool AudioEngine::startOsc (int udpPort, int dialectIndex)

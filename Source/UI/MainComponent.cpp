@@ -1159,11 +1159,15 @@ void MainComponent::launchNewSessionDialog()
         {
             props->setValue ("sessionsRoot",      r.location.getFullPathName());
             props->setValue ("sessionName",       r.name);
-            props->setValue ("activeSessionDir",  sessionFolder.getFullPathName());
             props->setValue ("interleavedFlag",   r.interleaved);
             props->setValue ("ioPreset",          r.ioSettings);
             props->saveIfNeeded();
         }
+
+        // Pin this folder as the active session so Save / Save As light
+        // up immediately (engine.getActiveSessionDir() now reports it
+        // even before any recording or playback has started).
+        self->engine.setActiveSessionDir (sessionFolder);
 
         self->engine.getRecorder().setCaptureFormat (r.captureFormat);
         self->pendingSampleRate = r.sampleRate;
@@ -1576,12 +1580,27 @@ void MainComponent::onImportAudioFiles()
         if (picks.isEmpty()) return;
 
         // Convert each picked file into one or two Track_NN.wav files
-        // (mono per track) inside a fresh session dir. Stereo source
-        // files become a stereo PAIR — two consecutive mono WAVs whose
-        // L track gets isStereo=true so the UI collapses them into one
-        // strip. The session is then loaded for VSC playback.
+        // (mono per track) inside the active session's Audio Files/ dir.
+        // Stereo source files become a stereo PAIR — two consecutive
+        // mono WAVs whose L track gets isStereo=true so the UI collapses
+        // them into one strip. The session is then loaded for VSC playback.
         auto sessionDir = makeNewSessionDir();
         sessionDir.createDirectory();
+
+        // Pro Tools-style: imported audio lives under Audio Files/.
+        // makeNewSessionDir() either returns the engineer-named session
+        // (from appProps) or freshly auto-stamps one — either way we
+        // want Track files inside the subfolder, not loose at the root.
+        auto audioFilesDir = sessionDir.getChildFile ("Audio Files");
+        audioFilesDir.createDirectory();
+        // Also seed the rest of the Pro Tools-style layout so loose
+        // imports look like a real session if the engineer hadn't
+        // already created one via File ▸ New Session….
+        sessionDir.getChildFile ("Bounced Files")       .createDirectory();
+        sessionDir.getChildFile ("Clip Groups")         .createDirectory();
+        sessionDir.getChildFile ("Session File Backups").createDirectory();
+        sessionDir.getChildFile ("Video Files")         .createDirectory();
+        engine.setActiveSessionDir (sessionDir);
 
         juce::AudioFormatManager fm;
         fm.registerBasicFormats();
@@ -1631,7 +1650,7 @@ void MainComponent::onImportAudioFiles()
             const auto baseName = src.getFileNameWithoutExtension();
 
             const int lTrack = nextTrack;
-            const auto lDst = sessionDir.getChildFile (
+            const auto lDst = audioFilesDir.getChildFile (
                 "Track_" + juce::String (lTrack + 1).paddedLeft ('0', 2) + ".wav");
             const bool lOk = writeMono (*reader, 0, lDst, reader->sampleRate);
 
@@ -1639,7 +1658,7 @@ void MainComponent::onImportAudioFiles()
             if (isStereoFile)
             {
                 const int rTrack = nextTrack + 1;
-                const auto rDst = sessionDir.getChildFile (
+                const auto rDst = audioFilesDir.getChildFile (
                     "Track_" + juce::String (rTrack + 1).paddedLeft ('0', 2) + ".wav");
                 rOk = writeMono (*reader, 1, rDst, reader->sampleRate);
             }
@@ -1828,6 +1847,7 @@ void MainComponent::onLoadSessionClicked()
         if (! dir.isDirectory()) return;
 
         engine.stopPlayback();
+        engine.setActiveSessionDir (dir);   // pin so Save / Save As stay lit
         const int n = engine.loadSession (dir);
         if (n > 0)
             statusLabel.setText ("Loaded " + juce::String (n) + " tracks", juce::dontSendNotification);

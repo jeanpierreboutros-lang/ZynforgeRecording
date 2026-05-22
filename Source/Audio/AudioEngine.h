@@ -148,6 +148,13 @@ namespace zynforge
         // else an empty File.
         juce::File getActiveSessionDir() const;
 
+        // Pin the active session folder explicitly (used by New Session…
+        // and Open Session…). Without this, the engine reports an active
+        // session only while recording or while a player has loaded one
+        // — which left Save / Save As greyed out right after creating an
+        // empty session. Cleared by passing an empty / non-directory file.
+        void setActiveSessionDir (const juce::File& dir);
+
         // Recent sessions — maintained when loadSession / startRecording
         // succeed. Persisted in appProps as 'recentSession_<i>' (i = 0
         // most recent). Capped at kMaxRecent entries.
@@ -198,6 +205,7 @@ namespace zynforge
         MultitrackRecorder       recorder;
         SessionPlayer            player;
         MarkersManager           markers;
+        juce::File               activeSession;
         StripColours             stripColours;
         StripNames               stripNames;
         StripGains               stripGains;
