@@ -73,12 +73,10 @@ private:
     void applySessionSettings();
 
     // Edit menu actions.
-    void soloSelection();
-    void setRangeToLoopRange();
-    void toggleSnap();
-    void splitSeparate();
-    void startRange();
-    void finishRange();
+    // Old Edit-menu stubs were renamed to edit*; declarations live in
+    // the public-ish private section above (editUndo / editCutSelected
+    // / editSoloSelection / editSetRangeToLoopRange / editToggleSnap /
+    // editSplitAtPlayhead / editStartRange / editFinishRange).
     void removeLastCapture();
     void showBatchRenameDialog();
     void showBatchColourDialog();
@@ -94,6 +92,23 @@ private:
     void showSessionProperties();
 
     bool snapToMarkers { false };
+
+    // Edit-menu plumbing.
+    juce::UndoManager undoManager;
+    juce::var         stripClipboard;   // JSON of cut/copied strip settings
+    void recordUndoSnapshot (const juce::String& label);
+    void restoreUndoSnapshot (const juce::var& snapshot);
+    void editUndo();
+    void editRedo();
+    void editCutSelected (bool cut);
+    void editPasteSelected();
+    void editSoloSelection();
+    void editCropToLoopRange();
+    void editSetRangeToLoopRange();
+    void editToggleSnap();
+    void editSplitAtPlayhead();
+    void editStartRange();
+    void editFinishRange();
 
     int    pendingContainer  { 0 };       // 0 = WAV, 1 = AIFF, 2 = FLAC
     int    pendingBitDepth   { 24 };      // 16 / 24 / 32 (32 = float)

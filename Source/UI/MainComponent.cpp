@@ -455,25 +455,30 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // pulls those out and right-aligns them in the native menu.
         const bool hasContext = engine.getPlayer().isLoaded() || engine.isRecording();
 
-        menu.addItem (300, "Undo\tCmd+Z",       false);
-        menu.addItem (301, "Redo\tCmd+R",       false);
+        const bool hasSelection  = ! selectedLogical.empty();
+        const bool hasClipboard  = stripClipboard.isObject();
+        const bool playerLoaded  = engine.getPlayer().isLoaded();
+
+        menu.addItem (300, "Undo\tCmd+Z",       undoManager.canUndo());
+        menu.addItem (301, "Redo\tCmd+R",       undoManager.canRedo());
         menu.addSeparator();
-        menu.addItem (302, "Cut\tCmd+X",        false);
-        menu.addItem (303, "Copy\tCmd+C",       false);
-        menu.addItem (304, "Paste\tCmd+V",      false);
-        menu.addItem (305, "Delete",             false);
-        menu.addItem (306, "Crop\tCtrl+Cmd+C", false);
-        menu.addItem (307, "Solo Selection\tA",   true);
+        menu.addItem (302, "Cut Selected Strip(s)\tCmd+X",  hasSelection);
+        menu.addItem (303, "Copy Selected Strip(s)\tCmd+C", hasSelection);
+        menu.addItem (304, "Paste Strip Settings\tCmd+V",   hasClipboard && hasSelection);
+        menu.addItem (305, "Delete Selected Strips",        hasSelection);
+        menu.addItem (306, "Crop to Loop Range\tCtrl+Cmd+C",
+                      playerLoaded && engine.getPlayer().hasLoopRegion());
+        menu.addItem (307, "Solo Selection\tA",   hasSelection);
         menu.addSeparator();
-        menu.addItem (308, "Set Range to Loop Range",
-                      engine.getPlayer().hasLoopRegion());
+        menu.addItem (308, "Set Range to Loop Range", playerLoaded);
         menu.addSeparator();
         menu.addItem (309, "Toggle Snap\t4", true, snapToMarkers);
         menu.addSeparator();
-        menu.addItem (310, "Split/Separate\tS", hasContext);
+        menu.addItem (310, "Split / Separate at Playhead\tS",
+                      playerLoaded);
         menu.addSeparator();
-        menu.addItem (311, "Start Range\t,",  hasContext);
-        menu.addItem (312, "Finish Range\t.", hasContext);
+        menu.addItem (311, "Start Range at Playhead\t,",  playerLoaded);
+        menu.addItem (312, "Finish Range at Playhead\t.", playerLoaded);
         menu.addSeparator();
         menu.addItem (313, "Remove Last Capture", ! engine.isRecording());
         menu.addSeparator();
@@ -765,12 +770,19 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     }
     else if (id == 60)   onBackupClicked();
     // Edit menu
-    else if (id == 307)  soloSelection();
-    else if (id == 308)  setRangeToLoopRange();
-    else if (id == 309)  toggleSnap();
-    else if (id == 310)  splitSeparate();
-    else if (id == 311)  startRange();
-    else if (id == 312)  finishRange();
+    else if (id == 300)  editUndo();
+    else if (id == 301)  editRedo();
+    else if (id == 302)  editCutSelected (true);
+    else if (id == 303)  editCutSelected (false);
+    else if (id == 304)  editPasteSelected();
+    else if (id == 305)  deleteSelectedStrips();
+    else if (id == 306)  editCropToLoopRange();
+    else if (id == 307)  editSoloSelection();
+    else if (id == 308)  editSetRangeToLoopRange();
+    else if (id == 309)  editToggleSnap();
+    else if (id == 310)  editSplitAtPlayhead();
+    else if (id == 311)  editStartRange();
+    else if (id == 312)  editFinishRange();
     else if (id == 313)  removeLastCapture();
     else if (id == 320)  showBatchRenameDialog();
     else if (id == 321)  showBatchColourDialog();
@@ -814,11 +826,20 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
                             : "No active session — can't drop marker");
         return true;
     }
-    if (c == 'a') { soloSelection();        return true; }
-    if (c == 's') { splitSeparate();        return true; }
-    if (c == ',') { startRange();           return true; }
-    if (c == '.') { finishRange();          return true; }
-    if (c == '4') { toggleSnap();           return true; }
+    if (c == 'a') { editSoloSelection();    return true; }
+    if (c == 's') { editSplitAtPlayhead();  return true; }
+    if (c == ',') { editStartRange();       return true; }
+    if (c == '.') { editFinishRange();      return true; }
+    if (c == '4') { editToggleSnap();       return true; }
+    // Cmd+Z / Cmd+R / Cmd+X / Cmd+C / Cmd+V keyboard shortcuts.
+    if (key.getModifiers().isCommandDown())
+    {
+        if (c == 'z') { editUndo();          return true; }
+        if (c == 'r') { editRedo();          return true; }
+        if (c == 'x') { editCutSelected (true);  return true; }
+        if (c == 'c') { editCutSelected (false); return true; }
+        if (c == 'v') { editPasteSelected(); return true; }
+    }
     return false;
 }
 
@@ -1495,16 +1516,214 @@ void MainComponent::showStatus (const juce::String& msg)
     statusLabel.setText (msg, juce::dontSendNotification);
 }
 
-void MainComponent::soloSelection()
+namespace
 {
-    // Live-recorder interpretation: if any track is soloed, clear all
-    // solos. Otherwise solo every track that's currently armed.
+    juce::int64 currentPlayheadSamples (zynforge::AudioEngine& eng)
+    {
+        if (eng.isRecording()) return eng.getRecorder().getSamplesSinceStart();
+        if (eng.getPlayer().isLoaded()) return eng.getPlayer().getPositionSamples();
+        return 0;
+    }
+
+    // Serialise the strip's state (name, colour, gain, pan, routing,
+    // mute/solo/mon/arm) into a JSON object. Used by Cut / Copy / Paste.
+    juce::var snapshotStrip (zynforge::AudioEngine& eng, int physical)
+    {
+        if (physical < 0 || physical >= eng.getRecorder().getNumTracks())
+            return {};
+        auto& t = eng.getRecorder().getTrack (physical);
+        auto obj = new juce::DynamicObject();
+        obj->setProperty ("name",     t.name);
+        obj->setProperty ("colour",   (int) t.colourARGB.load (std::memory_order_relaxed));
+        obj->setProperty ("gainDb",   (double) t.gainDb     .load (std::memory_order_relaxed));
+        obj->setProperty ("pan",      (double) t.pan        .load (std::memory_order_relaxed));
+        obj->setProperty ("in",       t.inputRouting .load (std::memory_order_relaxed));
+        obj->setProperty ("out",      t.outputRouting.load (std::memory_order_relaxed));
+        obj->setProperty ("mute",     t.muted   .load (std::memory_order_relaxed));
+        obj->setProperty ("solo",     t.soloed  .load (std::memory_order_relaxed));
+        obj->setProperty ("mon",      t.monitor .load (std::memory_order_relaxed));
+        obj->setProperty ("rec",      t.armed   .load (std::memory_order_relaxed));
+        return juce::var (obj);
+    }
+
+    void restoreStrip (zynforge::AudioEngine& eng, int physical, const juce::var& v)
+    {
+        if (physical < 0 || physical >= eng.getRecorder().getNumTracks()) return;
+        auto* obj = v.getDynamicObject();
+        if (obj == nullptr) return;
+        auto& t = eng.getRecorder().getTrack (physical);
+        eng.setTrackName  (physical, obj->getProperty ("name").toString());
+        eng.setTrackColour(physical, juce::Colour ((juce::uint32) (int) obj->getProperty ("colour")));
+        eng.setTrackGainDb(physical, (float) (double) obj->getProperty ("gainDb"));
+        eng.setTrackPan   (physical, (float) (double) obj->getProperty ("pan"));
+        eng.setTrackInputRouting  (physical, (int) obj->getProperty ("in"));
+        eng.setTrackOutputRouting (physical, (int) obj->getProperty ("out"));
+        t.muted   .store ((bool) obj->getProperty ("mute"), std::memory_order_relaxed);
+        t.soloed  .store ((bool) obj->getProperty ("solo"), std::memory_order_relaxed);
+        t.monitor .store ((bool) obj->getProperty ("mon"),  std::memory_order_relaxed);
+        t.armed   .store ((bool) obj->getProperty ("rec"),  std::memory_order_relaxed);
+    }
+
+    int physicalFromLogical (zynforge::AudioEngine& eng, int logical)
+    {
+        int phys = 0;
+        auto& rec = eng.getRecorder();
+        for (int k = 0; k < logical && phys < rec.getNumTracks(); ++k)
+            phys += rec.getTrack (phys).isStereo.load (std::memory_order_relaxed) ? 2 : 1;
+        return phys;
+    }
+}
+
+// ─── Undo / redo ─────────────────────────────────────────────────────
+// Wrapper UndoableAction that captures + restores a full mixer-state
+// snapshot. This is coarse but always-correct for any strip-level edit.
+namespace
+{
+    struct MixerSnapshotAction final : public juce::UndoableAction
+    {
+        MixerSnapshotAction (zynforge::AudioEngine& e, juce::var before)
+            : eng (e), beforeState (std::move (before)) {}
+
+        bool perform() override
+        {
+            // First invocation: capture the 'after' state so redo works.
+            if (! afterCaptured)
+            {
+                afterState = captureAll();
+                afterCaptured = true;
+            }
+            applyAll (afterState);
+            return true;
+        }
+
+        bool undo() override
+        {
+            applyAll (beforeState);
+            return true;
+        }
+
+        juce::var captureAll() const
+        {
+            juce::Array<juce::var> arr;
+            for (int i = 0; i < eng.getRecorder().getNumTracks(); ++i)
+                arr.add (snapshotStrip (eng, i));
+            return juce::var (arr);
+        }
+
+        void applyAll (const juce::var& v) const
+        {
+            if (auto* arr = v.getArray())
+                for (int i = 0; i < arr->size(); ++i)
+                    restoreStrip (eng, i, (*arr)[i]);
+        }
+
+        zynforge::AudioEngine& eng;
+        juce::var beforeState;
+        juce::var afterState;
+        bool      afterCaptured { false };
+    };
+}
+
+void MainComponent::recordUndoSnapshot (const juce::String& label)
+{
+    juce::Array<juce::var> arr;
+    for (int i = 0; i < engine.getRecorder().getNumTracks(); ++i)
+        arr.add (snapshotStrip (engine, i));
+    undoManager.beginNewTransaction (label);
+    undoManager.perform (new MixerSnapshotAction (engine, juce::var (arr)));
+}
+
+void MainComponent::editUndo()
+{
+    if (! undoManager.canUndo()) { showStatus ("Nothing to undo"); return; }
+    undoManager.undo();
+    lastTrackCount = -1;
+    showStatus ("Undo: " + undoManager.getUndoDescription());
+}
+
+void MainComponent::editRedo()
+{
+    if (! undoManager.canRedo()) { showStatus ("Nothing to redo"); return; }
+    undoManager.redo();
+    lastTrackCount = -1;
+    showStatus ("Redo: " + undoManager.getRedoDescription());
+}
+
+// ─── Cut / copy / paste / delete on the strip selection ──────────────
+void MainComponent::editCutSelected (bool cut)
+{
+    if (selectedLogical.empty()) { showStatus ("No strip selected"); return; }
+    juce::Array<juce::var> arr;
+    for (int logical : selectedLogical)
+    {
+        const int phys = physicalFromLogical (engine, logical);
+        arr.add (snapshotStrip (engine, phys));
+    }
+    auto* obj = new juce::DynamicObject();
+    obj->setProperty ("strips", juce::var (arr));
+    stripClipboard = juce::var (obj);
+    showStatus (juce::String (cut ? "Cut " : "Copied ") + juce::String (arr.size())
+                + " strip setting(s)");
+    if (cut) deleteSelectedStrips();
+}
+
+void MainComponent::editPasteSelected()
+{
+    if (! stripClipboard.isObject()) { showStatus ("Clipboard is empty"); return; }
+    auto* obj = stripClipboard.getDynamicObject();
+    auto* arr = obj ? obj->getProperty ("strips").getArray() : nullptr;
+    if (arr == nullptr || arr->isEmpty()) { showStatus ("Clipboard is empty"); return; }
+    if (selectedLogical.empty()) { showStatus ("Pick a target strip first"); return; }
+
+    recordUndoSnapshot ("Paste strip settings");
+
+    // Round-robin: paste clipboard entries onto the selected logical
+    // strips. If selection > clipboard, wraps the clipboard.
+    int i = 0;
+    for (int logical : selectedLogical)
+    {
+        const int phys = physicalFromLogical (engine, logical);
+        restoreStrip (engine, phys, (*arr)[i % arr->size()]);
+        ++i;
+    }
+    lastTrackCount = -1;
+    showStatus ("Pasted strip settings onto " + juce::String ((int) selectedLogical.size())
+                + " strip(s)");
+}
+
+// ─── The rest of the Edit menu ───────────────────────────────────────
+void MainComponent::editSoloSelection()
+{
     auto& rec = engine.getRecorder();
+
+    // If the engineer has a selection, solo exactly those logical strips.
+    if (! selectedLogical.empty())
+    {
+        recordUndoSnapshot ("Solo selection");
+        for (int i = 0; i < rec.getNumTracks(); ++i)
+            rec.getTrack (i).soloed.store (false, std::memory_order_relaxed);
+        for (int logical : selectedLogical)
+        {
+            const int phys = physicalFromLogical (engine, logical);
+            if (phys < rec.getNumTracks())
+            {
+                rec.getTrack (phys).soloed.store (true, std::memory_order_relaxed);
+                if (rec.getTrack (phys).isStereo.load (std::memory_order_relaxed)
+                    && phys + 1 < rec.getNumTracks())
+                    rec.getTrack (phys + 1).soloed.store (true, std::memory_order_relaxed);
+            }
+        }
+        showStatus ("Soloed " + juce::String ((int) selectedLogical.size()) + " strip(s)");
+        return;
+    }
+
+    // No selection: toggle — if any solo on, clear all; else solo all armed.
     bool anySolo = false;
     for (int i = 0; i < rec.getNumTracks(); ++i)
         if (rec.getTrack (i).soloed.load (std::memory_order_relaxed))
             { anySolo = true; break; }
 
+    recordUndoSnapshot (anySolo ? "Clear solos" : "Solo armed");
     if (anySolo)
     {
         for (int i = 0; i < rec.getNumTracks(); ++i)
@@ -1521,49 +1740,71 @@ void MainComponent::soloSelection()
     }
 }
 
-void MainComponent::setRangeToLoopRange()
+void MainComponent::editCropToLoopRange()
 {
     auto& player = engine.getPlayer();
-    if (! player.hasLoopRegion()) { showStatus ("No loop region set"); return; }
+    if (! player.hasLoopRegion()) { showStatus ("No loop region to crop to"); return; }
+
+    // Drop a 'Range In' + 'Range Out' marker pair at the loop boundaries.
+    // True audio crop (rewriting Track_NN.wav) is a separate workflow we
+    // route through Save Session As for now.
+    auto& m = engine.getMarkers();
+    m.drop (player.getLoopStart(), "Crop In");
+    m.drop (player.getLoopEnd(),   "Crop Out");
+    showStatus ("Crop markers placed — use Save Session As to commit the trim");
+}
+
+void MainComponent::editSetRangeToLoopRange()
+{
+    auto& player = engine.getPlayer();
+    if (! player.hasLoopRegion())
+    {
+        // Engineer hit it without a loop set — start one at the playhead.
+        const auto pos = currentPlayheadSamples (engine);
+        player.setLoopRegion (pos, pos + (juce::int64) (player.getSampleRate() * 2.0));
+        showStatus ("No loop region set — defaulted to 2 s at the playhead");
+        return;
+    }
     auto& m = engine.getMarkers();
     m.drop (player.getLoopStart(), "Range In");
     m.drop (player.getLoopEnd(),   "Range Out");
     showStatus ("Range markers placed at loop boundaries");
 }
 
-void MainComponent::toggleSnap()
+void MainComponent::editToggleSnap()
 {
     snapToMarkers = ! snapToMarkers;
     showStatus (snapToMarkers ? "Snap to markers: ON" : "Snap to markers: OFF");
 }
 
-namespace
-{
-    juce::int64 currentPlayheadSamples (zynforge::AudioEngine& eng)
-    {
-        if (eng.isRecording()) return eng.getRecorder().getSamplesSinceStart();
-        if (eng.getPlayer().isLoaded()) return eng.getPlayer().getPositionSamples();
-        return 0;
-    }
-}
-
-void MainComponent::splitSeparate()
+void MainComponent::editSplitAtPlayhead()
 {
     const auto pos = currentPlayheadSamples (engine);
     engine.getMarkers().drop (pos, "Split");
-    showStatus ("Split marker dropped");
+    showStatus ("Split marker dropped at "
+                + juce::String ((double) pos
+                                / juce::jmax (1.0, engine.getPlayer().getSampleRate()), 2) + " s");
 }
 
-void MainComponent::startRange()
+void MainComponent::editStartRange()
 {
-    engine.getMarkers().drop (currentPlayheadSamples (engine), "Range In");
-    showStatus ("Range In marker dropped");
+    const auto pos = currentPlayheadSamples (engine);
+    auto& player = engine.getPlayer();
+    const auto end = player.hasLoopRegion() ? player.getLoopEnd()
+                                            : pos + (juce::int64) (player.getSampleRate() * 2.0);
+    player.setLoopRegion (pos, end);
+    engine.getMarkers().drop (pos, "Range In");
+    showStatus ("Range In set at playhead");
 }
 
-void MainComponent::finishRange()
+void MainComponent::editFinishRange()
 {
-    engine.getMarkers().drop (currentPlayheadSamples (engine), "Range Out");
-    showStatus ("Range Out marker dropped");
+    const auto pos = currentPlayheadSamples (engine);
+    auto& player = engine.getPlayer();
+    const auto start = player.hasLoopRegion() ? player.getLoopStart() : juce::int64 (0);
+    player.setLoopRegion (start, pos);
+    engine.getMarkers().drop (pos, "Range Out");
+    showStatus ("Range Out set at playhead");
 }
 
 // ─── Setlist plumbing ────────────────────────────────────────────────
