@@ -29,6 +29,7 @@ juce_add_gui_app(ZynforgeRecording
     BUNDLE_ID                     "com.zynforge.recording"
     VERSION                       0.1.0
     HARDENED_RUNTIME_ENABLED      TRUE
+    HARDENED_RUNTIME_OPTIONS      "com.apple.security.device.audio-input"
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT    "Zynforge Recording needs audio input access to record."
 )
