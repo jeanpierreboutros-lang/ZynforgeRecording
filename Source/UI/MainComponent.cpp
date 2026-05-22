@@ -1,5 +1,6 @@
 #include "MainComponent.h"
 #include "../Theme/BrandColors.h"
+#include "AddTracksDialog.h"
 #include "AudioDeviceDialog.h"
 #include "Meterbridge.h"
 #include "PatchPage.h"
@@ -100,70 +101,59 @@ MainComponent::MainComponent()
     addChannelButton.setTooltip ("Set the number of recording channels — opens a prompt where you type the count (1–256).");
     addChannelButton.onClick = [this]
     {
-        if (engine.isRecording()) { showStatus ("Stop recording before changing channel count"); return; }
-        const int cur = engine.getRecorder().getNumTracks();
+        if (engine.isRecording())
+        {
+            showStatus ("Stop recording before changing channel count");
+            return;
+        }
 
-        auto* aw = new juce::AlertWindow ("Number of channels",
-                                          "How many recording channels do you want?\n"
-                                          "(current: " + juce::String (cur) + ", min 0, max 256)\n"
-                                          "Stereo creates two linked strips per channel "
-                                          "(L + R), so '4 stereo' = 8 strips.",
-                                          juce::MessageBoxIconType::QuestionIcon);
-        aw->addTextEditor ("count", juce::String (cur), {});
+        zynforge::AddTracksDialog::launch (
+            [this] (const std::vector<zynforge::AddTracksDialog::Entry>& entries)
+        {
+            if (entries.empty()) return;
 
-        juce::StringArray modes { "Mono", "Stereo" };
-        aw->addComboBox ("mode", modes, "Channel mode");
-        if (auto* cb = aw->getComboBoxComponent ("mode"))
-            cb->setSelectedItemIndex (0, juce::dontSendNotification);
+            const int existing = engine.getRecorder().getNumTracks();
+            int firstNew = existing;
+            int newTracks = 0;
+            for (const auto& e : entries)
+                newTracks += e.count * (e.stereo ? 2 : 1);
+            const int target = juce::jlimit (0, 256, existing + newTracks);
+            engine.setStripCount (target);
 
-        aw->addButton ("Apply",  1, juce::KeyPress (juce::KeyPress::returnKey));
-        aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-
-        aw->enterModalState (true,
-            juce::ModalCallbackFunction::create (
-                [this, aw] (int result)
+            // Apply per-row naming + stereo flags to the just-added strips.
+            int cursor = firstNew;
+            int totalStereo = 0;
+            for (const auto& e : entries)
+            {
+                for (int i = 0; i < e.count && cursor < target; ++i)
                 {
-                    if (result == 1)
+                    const int suffix = e.count > 1 ? i + 1 : 0;
+                    const auto base  = e.baseName.isNotEmpty() ? e.baseName
+                                                               : juce::String (cursor + 1);
+                    if (e.stereo && cursor + 1 < target)
                     {
-                        const int requested = aw->getTextEditorContents ("count").getIntValue();
-                        const bool stereo = aw->getComboBoxComponent ("mode") != nullptr
-                                          && aw->getComboBoxComponent ("mode")->getSelectedItemIndex() == 1;
-
-                        // Stereo mode creates two strips per requested channel.
-                        const int rawCount = stereo ? requested * 2 : requested;
-                        const int clamped  = juce::jlimit (0, 256, rawCount);
-                        engine.setStripCount (clamped);
-
-                        // Mark each L track in a stereo pair so the UI knows
-                        // to collapse the L+R pair into one stereo strip.
-                        // setTrackStereo also persists the flag to appProps.
-                        const int total = engine.getRecorder().getNumTracks();
-                        for (int i = 0; i < total; ++i)
-                        {
-                            const bool isLeftOfPair = stereo && (i % 2 == 0) && (i + 1 < total);
-                            engine.setTrackStereo (i, isLeftOfPair);
-                        }
-
-                        if (stereo)
-                        {
-                            // Auto-name pair: only the L track is exposed in
-                            // the mixer (the R partner is hidden), so give
-                            // the L track a clean pair label.
-                            for (int i = 0; i < total; i += 2)
-                            {
-                                const int pairNum = i / 2 + 1;
-                                engine.setTrackName (i, "Stereo " + juce::String (pairNum));
-                                if (i + 1 < total)
-                                    engine.setTrackName (i + 1, "  (R)");
-                            }
-                        }
-
-                        showStatus ("Channels: " + juce::String (engine.getRecorder().getNumTracks())
-                                    + (stereo ? " (stereo pairs)" : ""));
+                        const auto label = suffix > 0 ? base + " " + juce::String (suffix) : base;
+                        engine.setTrackName  (cursor,     label);
+                        engine.setTrackName  (cursor + 1, label + " R");
+                        engine.setTrackStereo (cursor,     true);
+                        engine.setTrackStereo (cursor + 1, false);
+                        cursor += 2;
+                        ++totalStereo;
                     }
-                    delete aw;
-                }),
-            false);
+                    else
+                    {
+                        engine.setTrackName  (cursor, suffix > 0 ? base + " " + juce::String (suffix)
+                                                                  : base);
+                        engine.setTrackStereo (cursor, false);
+                        ++cursor;
+                    }
+                }
+            }
+            lastTrackCount = -1;   // force rebuild for stereo collapse
+            showStatus ("Added " + juce::String (cursor - firstNew) + " track(s)"
+                        + (totalStereo > 0 ? " (" + juce::String (totalStereo) + " stereo)"
+                                            : juce::String()));
+        });
     };
     addAndMakeVisible (addChannelButton);
 

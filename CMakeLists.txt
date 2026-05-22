@@ -50,6 +50,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/EditPage.cpp
     Source/UI/AudioDeviceDialog.cpp
     Source/UI/MasterStrip.cpp
+    Source/UI/AddTracksDialog.cpp
     Source/Network/CompanionServer.cpp
     Source/UI/Meterbridge.cpp
     Source/UI/TransportBar.cpp
