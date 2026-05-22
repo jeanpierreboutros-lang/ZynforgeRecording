@@ -152,6 +152,10 @@ private:
     void jumpToCue (int index);
     void addCueAtTransport();
     void updateCueAtTransport();
+    void renameCurrentCue();
+    void promptCueName (const juce::String& title,
+                        const juce::String& initial,
+                        std::function<void (const juce::String&)> onAccept);
     std::unique_ptr<zynforge::TimelineStrip> timeline;
     std::unique_ptr<zynforge::TransportBar>  transportBar;
 

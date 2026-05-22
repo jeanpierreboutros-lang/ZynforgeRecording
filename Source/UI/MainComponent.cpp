@@ -258,6 +258,17 @@ MainComponent::MainComponent()
                                                               currentCueIndex + 1)); };
     setlistBar.onAddCue     = [this] { addCueAtTransport(); };
     setlistBar.onUpdateCue  = [this] { updateCueAtTransport(); };
+    setlistBar.onRenameCue  = [this] { renameCurrentCue(); };
+    setlistBar.onDeleteCue  = [this]
+    {
+        if (currentCueIndex < 0 || currentCueIndex >= (int) cues.size()) return;
+        const auto gone = cues[(size_t) currentCueIndex].name;
+        cues.erase (cues.begin() + currentCueIndex);
+        currentCueIndex = juce::jmin (currentCueIndex, (int) cues.size() - 1);
+        setlistBar.setCues (cues, currentCueIndex);
+        saveSetlistToActiveSession();
+        showStatus ("Deleted cue '" + gone + "'");
+    };
     addAndMakeVisible (setlistBar);
 
 
@@ -1511,6 +1522,28 @@ void MainComponent::jumpToCue (int index)
     showStatus ("Cue " + juce::String (index + 1) + " — " + cues[(size_t) index].name);
 }
 
+void MainComponent::promptCueName (const juce::String& title,
+                                   const juce::String& initial,
+                                   std::function<void (const juce::String&)> onAccept)
+{
+    auto* aw = new juce::AlertWindow (title,
+                                      "Cue name:",
+                                      juce::MessageBoxIconType::QuestionIcon);
+    aw->addTextEditor ("cueName", initial, juce::String{});
+    aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    aw->enterModalState (true,
+        juce::ModalCallbackFunction::create ([aw, accept = std::move (onAccept)] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            if (result != 1) return;
+            const auto name = aw->getTextEditorContents ("cueName").trim();
+            if (accept) accept (name);
+        }),
+        false);
+}
+
 void MainComponent::addCueAtTransport()
 {
     if (! engine.getActiveSessionDir().isDirectory())
@@ -1520,16 +1553,43 @@ void MainComponent::addCueAtTransport()
     }
     auto& player = engine.getPlayer();
     const auto pos = player.isLoaded() ? player.getPositionSamples() : juce::int64 (0);
+    const auto suggested = "Song " + juce::String ((int) cues.size() + 1);
 
-    zynforge::SetlistBar::Cue c;
-    c.name      = "Song " + juce::String ((int) cues.size() + 1);
-    c.samplePos = pos;
-    cues.push_back (std::move (c));
-    currentCueIndex = (int) cues.size() - 1;
-    setlistBar.setCues (cues, currentCueIndex);
-    saveSetlistToActiveSession();
-    showStatus ("Added cue '" + cues.back().name + "' at "
-                + juce::String ((double) pos / juce::jmax (1.0, player.getSampleRate()), 2) + " s");
+    promptCueName ("Add Cue", suggested, [this, pos, &player] (const juce::String& name)
+    {
+        zynforge::SetlistBar::Cue c;
+        c.name      = name.isEmpty()
+                         ? juce::String ("Song " + juce::String ((int) cues.size() + 1))
+                         : name;
+        c.samplePos = pos;
+        cues.push_back (std::move (c));
+        currentCueIndex = (int) cues.size() - 1;
+        setlistBar.setCues (cues, currentCueIndex);
+        saveSetlistToActiveSession();
+        showStatus ("Added cue '" + cues.back().name + "' at "
+                    + juce::String ((double) pos / juce::jmax (1.0, player.getSampleRate()), 2) + " s");
+    });
+}
+
+void MainComponent::renameCurrentCue()
+{
+    if (currentCueIndex < 0 || currentCueIndex >= (int) cues.size())
+    {
+        showStatus ("Pick a cue first, then right-click to rename");
+        return;
+    }
+    const auto idx     = currentCueIndex;
+    const auto current = cues[(size_t) idx].name;
+
+    promptCueName ("Rename Cue", current, [this, idx] (const juce::String& name)
+    {
+        if (name.isEmpty()) return;
+        if (idx < 0 || idx >= (int) cues.size()) return;
+        cues[(size_t) idx].name = name;
+        setlistBar.setCues (cues, currentCueIndex);
+        saveSetlistToActiveSession();
+        showStatus ("Renamed cue → '" + name + "'");
+    });
 }
 
 void MainComponent::updateCueAtTransport()

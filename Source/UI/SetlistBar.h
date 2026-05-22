@@ -38,6 +38,13 @@ namespace zynforge
         std::function<void()>     onNext;
         std::function<void()>     onAddCue;
         std::function<void()>     onUpdateCue;
+        // Triggered by the right-click menu on the bar or combo. The
+        // engineer picks the cue first (combo selection or step), then
+        // right-clicks for Rename / Delete.
+        std::function<void()>     onRenameCue;
+        std::function<void()>     onDeleteCue;
+
+        void mouseDown (const juce::MouseEvent&) override;
 
         void paint (juce::Graphics&) override;
         void resized() override;

@@ -52,9 +52,35 @@ namespace zynforge
         updateButton.setButtonText ("Update");
         updateButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
         updateButton.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
-        updateButton.setTooltip ("Overwrite the current cue's position with the live transport");
+        updateButton.setTooltip ("Overwrite the current cue's position with the live transport. "
+                                 "Right-click for Rename / Delete.");
         updateButton.onClick = [this] { if (onUpdateCue) onUpdateCue(); };
         addAndMakeVisible (updateButton);
+
+        // Listen for mouse events bubbling up from every child so a
+        // right-click anywhere on the bar — combo, arrow, button —
+        // opens the same context menu.
+        addMouseListener (this, true);
+    }
+
+    void SetlistBar::mouseDown (const juce::MouseEvent& e)
+    {
+        if (! (e.mods.isPopupMenu() || e.mods.isRightButtonDown()))
+            return;
+
+        // Don't fight the combo's own dropdown — it owns the left-click
+        // popup. Right-click on it still opens our menu.
+        juce::PopupMenu menu;
+        menu.addItem (1, "Rename cue\xe2\x80\xa6", onRenameCue != nullptr);
+        menu.addItem (2, "Delete cue",            onDeleteCue != nullptr);
+
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (
+                                juce::Rectangle<int> (e.getScreenPosition(), e.getScreenPosition())),
+                            [this] (int chosen)
+        {
+            if      (chosen == 1 && onRenameCue) onRenameCue();
+            else if (chosen == 2 && onDeleteCue) onDeleteCue();
+        });
     }
 
     void SetlistBar::setCues (const std::vector<Cue>& cues, int selectedIndex)
@@ -85,22 +111,22 @@ namespace zynforge
 
     void SetlistBar::resized()
     {
+        // Compact, left-anchored layout:
+        //   SETLIST | ◂ | combo(260px) | ▸ | + Cue | Update | Rename
+        // The combo is fixed-width — the engineer doesn't want it
+        // swallowing the whole row. Empty space sits to the right.
         auto r = getLocalBounds().reduced (8, 4);
 
         titleLabel  .setBounds (r.removeFromLeft (64));
         r.removeFromLeft (4);
         prevButton  .setBounds (r.removeFromLeft (28).reduced (0, 2));
         r.removeFromLeft (4);
-
-        // Action buttons pinned right; combo fills what's left in the
-        // middle so long cue names breathe.
-        updateButton.setBounds (r.removeFromRight (74).reduced (0, 2));
-        r.removeFromRight (4);
-        addCueButton.setBounds (r.removeFromRight (64).reduced (0, 2));
-        r.removeFromRight (8);
-        nextButton  .setBounds (r.removeFromRight (28).reduced (0, 2));
-        r.removeFromRight (4);
-
-        cueCombo    .setBounds (r.reduced (0, 2));
+        cueCombo    .setBounds (r.removeFromLeft (260).reduced (0, 2));
+        r.removeFromLeft (4);
+        nextButton  .setBounds (r.removeFromLeft (28).reduced (0, 2));
+        r.removeFromLeft (10);
+        addCueButton.setBounds (r.removeFromLeft (64).reduced (0, 2));
+        r.removeFromLeft (4);
+        updateButton.setBounds (r.removeFromLeft (74).reduced (0, 2));
     }
 }
