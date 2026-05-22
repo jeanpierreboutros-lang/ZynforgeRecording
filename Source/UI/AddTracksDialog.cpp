@@ -92,17 +92,17 @@ namespace zynforge
             {
                 auto r = getLocalBounds().reduced (brand::space::md, brand::space::xs);
 
+                // ── Left block (count + mode) ────────────────────────────
                 createLabel.setBounds (r.removeFromLeft (54));
-                r.removeFromLeft (brand::space::xs);
-                countEditor.setBounds (r.removeFromLeft (52).reduced (0, 2));
                 r.removeFromLeft (brand::space::sm);
-                newLabel   .setBounds (r.removeFromLeft (32));
-                r.removeFromLeft (brand::space::xs);
-                modeCombo  .setBounds (r.removeFromLeft (120).reduced (0, 2));
-                r.removeFromLeft (brand::space::md);
+                countEditor.setBounds (r.removeFromLeft (48).reduced (0, 2));
+                r.removeFromLeft (brand::space::sm);
+                newLabel   .setBounds (r.removeFromLeft (28));
+                r.removeFromLeft (brand::space::sm);
+                modeCombo  .setBounds (r.removeFromLeft (110).reduced (0, 2));
 
-                // Right edge: [+/-] then name editor expands to fill the rest.
-                plusButton .setBounds (r.removeFromRight (32).reduced (0, 2));
+                // ── Right block (+/-) ────────────────────────────────────
+                plusButton .setBounds (r.removeFromRight (28).reduced (0, 2));
                 r.removeFromRight (brand::space::xs);
                 if (isFirstRow)
                 {
@@ -116,9 +116,13 @@ namespace zynforge
                     r.removeFromRight (brand::space::xs);
                 }
 
-                nameLabel  .setBounds (r.removeFromLeft (48));
-                r.removeFromLeft (brand::space::xs);
-                nameEditor .setBounds (r.reduced (0, 2));
+                // ── Name block (fixed width, not stretched) ──────────────
+                r.removeFromRight (brand::space::md);
+                nameEditor .setBounds (r.removeFromRight (200).reduced (0, 2));
+                r.removeFromRight (brand::space::xs);
+                nameLabel  .setBounds (r.removeFromRight (44));
+                // Any leftover space sits between modeCombo and nameLabel
+                // as breathing room.
             }
 
             int  count()  const { return juce::jlimit (1, 256, countEditor.getText().getIntValue()); }
@@ -160,7 +164,7 @@ namespace zynforge
                 addAndMakeVisible (cancelButton);
 
                 addRow();   // start with one row
-                setSize (980, 150);
+                setSize (680, 150);
             }
 
             void paint (juce::Graphics& g) override
