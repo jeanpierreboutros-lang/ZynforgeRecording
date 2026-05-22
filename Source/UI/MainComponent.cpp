@@ -213,6 +213,7 @@ MainComponent::MainComponent()
     refreshPreRollButton();
 
     addAndMakeVisible (bigClock);
+    addAndMakeVisible (perfDashboard);
 
     phaseMeter = std::make_unique<zynforge::PhaseMeter> (engine);
     addAndMakeVisible (*phaseMeter);
@@ -848,6 +849,13 @@ void MainComponent::timerCallback()
                           recorder.getLastWriteMs(),
                           recorder.getMissedSamples(),
                           remainingSec);
+
+    // CPU / disk / buffer dashboard — driven directly from engine atomics
+    // so the read is lock-free even at 256 channels under load.
+    perfDashboard.setMetrics (engine.getAudioLoadPct(),
+                              engine.getDiskMBPerSec(),
+                              engine.getRingFillPct(),
+                              recorder.getMissedSamples());
 }
 
 static juce::String samplesToTimecode (juce::int64 samples, double sr)
@@ -2049,10 +2057,13 @@ void MainComponent::resized()
     playButton   .setBounds ({});
     stopButton   .setBounds ({});
 
-    // Big clock banner with a phase meter docked on its right edge
+    // Big clock banner with a phase meter docked on its right edge, and
+    // the CPU / disk / buffer dashboard tucked between them so the
+    // engineer can see headroom without leaving the mixer view.
     auto clockRow = r.removeFromTop (96).reduced (12, 6);
     if (phaseMeter != nullptr)
         phaseMeter->setBounds (clockRow.removeFromRight (200).reduced (4, 4));
+    perfDashboard.setBounds (clockRow.removeFromRight (220).reduced (4, 4));
     bigClock.setBounds (clockRow);
 
     // Timeline strip

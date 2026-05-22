@@ -427,6 +427,15 @@ namespace zynforge
         const auto sr        = device->getCurrentSampleRate();
         const auto blockSize = device->getCurrentBufferSizeSamples();
 
+        deviceSampleRate.store (sr, std::memory_order_relaxed);
+        audioLoadPct    .store (0.0f, std::memory_order_relaxed);
+
+        // Hand the device's audio workgroup to the recorder so its
+        // writer threads can join it. On Apple Silicon the macOS
+        // scheduler then co-schedules the writers with the CoreAudio
+        // IO thread — no priority inversion under load.
+        recorder.setAudioWorkgroup (device->getWorkgroup());
+
         // Strip count is user-controlled (persisted; defaults to 1) —
         // it's no longer tied to the device's input channel count.
         recorder.prepare (sr, blockSize, getStripCount());
@@ -604,6 +613,11 @@ namespace zynforge
                                                         int numSamples,
                                                         const juce::AudioIODeviceCallbackContext&)
     {
+        // CPU-load measurement: capture start time so we can report
+        // (callback time / available time) as a load percentage. The
+        // dashboard polls audioLoadPct at 4 Hz to drive the LED.
+        const auto cbStart = juce::Time::getHighResolutionTicks();
+
         // Always clear outputs first; player + monitor sum into them.
         for (int ch = 0; ch < numOutputs; ++ch)
             if (outputs[ch] != nullptr)
@@ -929,6 +943,23 @@ namespace zynforge
             const float* L = (numOutputs > 0) ? outputs[0] : nullptr;
             const float* R = (numOutputs > 1) ? outputs[1] : nullptr;
             companion->feedStreamSamples (L, R, numSamples);
+        }
+
+        // CPU-load: (callback wall time) / (block period). EMA-smoothed
+        // with a fast attack and slower release so the engineer sees
+        // spikes immediately but the meter doesn't twitch on each block.
+        {
+            const auto cbEnd       = juce::Time::getHighResolutionTicks();
+            const double cbSeconds = juce::Time::highResolutionTicksToSeconds (cbEnd - cbStart);
+            const double sr        = deviceSampleRate.load (std::memory_order_relaxed);
+            const double available = (sr > 0.0) ? ((double) numSamples / sr) : 0.0;
+            if (available > 0.0)
+            {
+                const float pct  = (float) juce::jlimit (0.0, 100.0, (cbSeconds / available) * 100.0);
+                const float prev = audioLoadPct.load (std::memory_order_relaxed);
+                const float ema  = (pct > prev) ? pct : (prev * 0.85f + pct * 0.15f);
+                audioLoadPct.store (ema, std::memory_order_relaxed);
+            }
         }
     }
 }

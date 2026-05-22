@@ -78,6 +78,23 @@ namespace zynforge
         juce::int64 getSamplesSinceStart() const noexcept { return samplesSinceStart.load(std::memory_order_relaxed); }
         juce::int64 getMissedSamples()     const noexcept { return missedSamples    .load(std::memory_order_relaxed); }
         int         getLastWriteMs()       const noexcept { return lastWriteMs      .load(std::memory_order_relaxed); }
+
+        // Apple-Silicon scheduling: when the engine learns about a new
+        // audio device, it forwards the device's AudioWorkgroup here so
+        // every writer worker can join it — the macOS scheduler then
+        // co-schedules them with the CoreAudio IO thread (no priority
+        // inversion, no jitter under load). Pass an empty/disengaged
+        // workgroup to revert to the default scheduler.
+        void setAudioWorkgroup (juce::AudioWorkgroup);
+
+        // Live telemetry for the CPU/disk dashboard:
+        //   - bytesPerSec: rolling 1 s window of bytes pushed to disk
+        //     (across primary + backup writers, all channels).
+        //   - ringFillPct: 0..100, max over channels of FIFO occupancy.
+        // Both are updated by drainOnce() on the writer thread(s); the UI
+        // polls them via these accessors.
+        float getDiskBytesPerSec() const noexcept;
+        float getRingFillPct()     const noexcept;
         juce::File  getActiveSessionDir()  const          { return activeSessionDir; }
 
         // Optional second copy of every track to a backup folder.
@@ -88,7 +105,33 @@ namespace zynforge
         bool       hasBackupFailed() const noexcept         { return backupFailed.load (std::memory_order_relaxed); }
 
     private:
+        // Inherited but no longer used directly — drain logic moves into
+        // per-shard ShardClients (see below). Kept as a stub returning a
+        // long delay so the base class doesn't compile-error.
         int useTimeSlice() override;
+
+        // One drain worker per writer-thread shard. Each owns a range of
+        // channel indices [firstChannel, lastChannel) and drains only
+        // those FIFOs on its own juce::TimeSliceThread. This is the
+        // change that lets disk I/O scale linearly with track count at
+        // 64 / 128 / 256 channels instead of being serialised through a
+        // single writer thread.
+        struct ShardClient final : public juce::TimeSliceClient
+        {
+            MultitrackRecorder* owner          { nullptr };
+            int                 firstChannel   { 0 };
+            int                 lastChannel    { 0 };
+
+            // Per-shard throughput accumulator + per-shard publish atomic
+            // so the global getDiskBytesPerSec() can sum without ever
+            // taking a lock.
+            std::atomic<float>  shardBytesPerSec      { 0.0f };
+            juce::int64         throughputAccumBytes  { 0 };
+            double              throughputWindowMs    { 0.0 };
+            std::atomic<int>    shardRingFillPct      { 0 };
+
+            int useTimeSlice() override;
+        };
 
         struct ChannelFifo
         {
@@ -131,6 +174,8 @@ namespace zynforge
         };
 
         void drainOnce();
+        void drainShard (ShardClient&);
+        void rebuildShards();
         void closeWriters();
         void allocatePreRollBuffers();
         void dumpPreRollToWriters();
@@ -144,7 +189,20 @@ namespace zynforge
         std::vector<std::unique_ptr<PreRollBuffer>>  preRoll;
 
         juce::AudioFormatManager formatManager;
-        juce::TimeSliceThread    writerThread { "ZF Recorder Writer" };
+
+        // Writer-thread pool. We start min(8, max(2, hardware/2)) worker
+        // threads — one TimeSliceThread per shard — and each one drains
+        // a contiguous slice of channels. rebuildShards() reshapes the
+        // assignment when the track count changes.
+        std::vector<std::unique_ptr<juce::TimeSliceThread>> writerThreads;
+        std::vector<std::unique_ptr<ShardClient>>           shards;
+
+        // Current audio device workgroup + a generation counter so the
+        // shard threads know when to (re-)join.
+        juce::CriticalSection workgroupLock;
+        juce::AudioWorkgroup  currentWorkgroup;
+        std::atomic<int>      workgroupGeneration { 0 };
+        void joinAudioWorkgroupOnCurrentThread (juce::WorkgroupToken&);
 
         std::atomic<bool>        recording          { false };
         std::atomic<bool>        writersReady       { false };
@@ -152,6 +210,10 @@ namespace zynforge
         std::atomic<juce::int64> missedSamples      { 0 };
         std::atomic<int>         lastWriteMs        { 0 };
         juce::int64              samplesSinceFlush  { 0 };
+
+        // (Disk throughput + ring-fill accumulators now live per-shard in
+        // ShardClient. The public getters in this class sum / max across
+        // shards each time the UI polls them — see the .cpp.)
 
         CaptureFormat captureFormat        { CaptureFormat::Wav24 };
         CaptureFormat backupCaptureFormat  { CaptureFormat::Wav24 };

@@ -246,6 +246,20 @@ namespace zynforge
         std::unique_ptr<CompanionServer> companion;
         std::unique_ptr<juce::PropertiesFile> appProps;
 
+        // Live performance telemetry — written from the audio thread
+        // (audioLoadPct) and the writer threads (diskMBPerSec /
+        // ringFillPct), polled from the UI to drive the header dashboard.
+        // 0–100 % units.
+        std::atomic<double> deviceSampleRate { 0.0 };
+        std::atomic<float>  audioLoadPct     { 0.0f };
+        std::atomic<float>  diskMBPerSec     { 0.0f };
+        std::atomic<float>  ringFillPct      { 0.0f };
+    public:
+        float  getAudioLoadPct() const noexcept { return audioLoadPct.load (std::memory_order_relaxed); }
+        float  getDiskMBPerSec() const noexcept { return recorder.getDiskBytesPerSec() / (1024.0f * 1024.0f); }
+        float  getRingFillPct()  const noexcept { return recorder.getRingFillPct(); }
+    private:
+
         void applyPersistedStripState();
 
         // Audio-thread scratch for routed VSC playback: track i fills

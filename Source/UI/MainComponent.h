@@ -11,6 +11,7 @@
 #include "ExportDialog.h"
 #include "MasterStrip.h"
 #include "NewSessionDialog.h"
+#include "PerfDashboard.h"
 #include "PhaseMeter.h"
 #include "TimelineStrip.h"
 #include "TransportBar.h"
@@ -124,6 +125,7 @@ private:
     std::unique_ptr<juce::FileChooser> chooser;
 
     zynforge::BigClockPanel bigClock;
+    zynforge::PerfDashboard perfDashboard;
     std::unique_ptr<zynforge::PhaseMeter>    phaseMeter;
     std::unique_ptr<zynforge::TimelineStrip> timeline;
     std::unique_ptr<zynforge::TransportBar>  transportBar;

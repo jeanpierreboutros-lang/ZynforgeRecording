@@ -29,23 +29,49 @@ namespace zynforge
         return (int) wanted;
     }
 
+    // Writer-thread pool sizing: one worker per ~32 channels, capped at 8.
+    // M-series performance-cores beyond 8 give diminishing returns for
+    // small-block I/O and we don't want to starve other UI work.
+    static int chooseShardCount()
+    {
+        const int hw = juce::SystemStats::getNumPhysicalCpus();
+        return juce::jlimit (2, 8, hw > 0 ? hw / 2 : 4);
+    }
+
     MultitrackRecorder::MultitrackRecorder()
     {
         formatManager.registerBasicFormats();
-        writerThread.startThread();
+
+        const int n = chooseShardCount();
+        for (int i = 0; i < n; ++i)
+        {
+            auto t = std::make_unique<juce::TimeSliceThread> (
+                "ZF Recorder Writer " + juce::String (i + 1));
+            t->startThread();
+            writerThreads.push_back (std::move (t));
+        }
     }
 
     MultitrackRecorder::~MultitrackRecorder()
     {
         stopRecording();
-        writerThread.removeTimeSliceClient (this);
-        writerThread.stopThread (2000);
+        // Unhook clients before joining so a thread isn't iterating a
+        // stale client list while the destructor unwinds.
+        for (auto& sh : shards)
+            for (auto& th : writerThreads)
+                th->removeTimeSliceClient (sh.get());
+        for (auto& th : writerThreads)
+            th->stopThread (2000);
     }
 
     void MultitrackRecorder::prepare (double sr, int maxBlock, int numInputs)
     {
         stopRecording();
-        writerThread.removeTimeSliceClient (this);
+        // Detach existing shards from their threads — they'll be rebuilt.
+        for (auto& sh : shards)
+            for (auto& th : writerThreads)
+                th->removeTimeSliceClient (sh.get());
+        shards.clear();
 
         sampleRate = sr;
         blockSize  = maxBlock;
@@ -88,7 +114,41 @@ namespace zynforge
         }
         allocatePreRollBuffers();
 
-        writerThread.addTimeSliceClient (this);
+        rebuildShards();
+    }
+
+    void MultitrackRecorder::rebuildShards()
+    {
+        // Detach + recreate. We never resize the thread pool itself —
+        // only the per-shard channel ranges change, so the engineer
+        // doesn't pay a thread-creation cost on every track count change.
+        for (auto& sh : shards)
+            for (auto& th : writerThreads)
+                th->removeTimeSliceClient (sh.get());
+        shards.clear();
+
+        const int total = (int) fifos.size();
+        const int nThreads = (int) writerThreads.size();
+        if (total <= 0 || nThreads <= 0) return;
+
+        const int perShard = juce::jmax (1, (total + nThreads - 1) / nThreads);
+        int first = 0;
+        int shardIndex = 0;
+        while (first < total)
+        {
+            const int last = juce::jmin (total, first + perShard);
+            auto sc = std::make_unique<ShardClient>();
+            sc->owner        = this;
+            sc->firstChannel = first;
+            sc->lastChannel  = last;
+            // Round-robin shards onto threads so each thread gets at
+            // most one shard but the pool itself is reusable across
+            // restarts without thread churn.
+            writerThreads[shardIndex % nThreads]->addTimeSliceClient (sc.get());
+            shards.push_back (std::move (sc));
+            first = last;
+            ++shardIndex;
+        }
     }
 
     void MultitrackRecorder::setBackupDirectory (const juce::File& dir)
@@ -113,6 +173,7 @@ namespace zynforge
 
         preRoll.push_back (std::make_unique<PreRollBuffer>());
         allocatePreRollBuffers();
+        rebuildShards();
     }
 
     void MultitrackRecorder::removeLastTrack()
@@ -121,6 +182,7 @@ namespace zynforge
         tracks.pop_back();
         fifos.pop_back();
         preRoll.pop_back();
+        rebuildShards();
     }
 
     void MultitrackRecorder::removeTrackAt (int index)
@@ -130,6 +192,7 @@ namespace zynforge
         tracks.erase (tracks.begin() + index);
         fifos.erase  (fifos.begin()  + index);
         preRoll.erase(preRoll.begin()+ index);
+        rebuildShards();
     }
 
     void MultitrackRecorder::setTrackCount (int n)
@@ -178,7 +241,10 @@ namespace zynforge
     void MultitrackRecorder::release()
     {
         stopRecording();
-        writerThread.removeTimeSliceClient (this);
+        for (auto& sh : shards)
+            for (auto& th : writerThreads)
+                th->removeTimeSliceClient (sh.get());
+        shards.clear();
         tracks.clear();
         fifos.clear();
         preRoll.clear();
@@ -486,22 +552,104 @@ namespace zynforge
 
     int MultitrackRecorder::useTimeSlice()
     {
-        drainOnce();
+        // Recorder is no longer registered as a client itself — drain
+        // work runs on ShardClient instances. This is here only because
+        // we still inherit from TimeSliceClient (compat shim) and JUCE
+        // requires the override to be present.
+        return 1000;
+    }
+
+    int MultitrackRecorder::ShardClient::useTimeSlice()
+    {
+        // Re-join the audio device's workgroup whenever the generation
+        // counter changes (set on every device start / restart). Token
+        // is thread_local so its lifetime matches the worker thread.
+        thread_local juce::WorkgroupToken token;
+        thread_local int                  lastJoinedGen = -1;
+        if (owner != nullptr)
+        {
+            const int gen = owner->workgroupGeneration.load (std::memory_order_acquire);
+            if (gen != lastJoinedGen)
+            {
+                lastJoinedGen = gen;
+                owner->joinAudioWorkgroupOnCurrentThread (token);
+            }
+            owner->drainShard (*this);
+        }
         return 5; // ms
     }
 
+    void MultitrackRecorder::setAudioWorkgroup (juce::AudioWorkgroup wg)
+    {
+        {
+            const juce::ScopedLock sl (workgroupLock);
+            currentWorkgroup = std::move (wg);
+        }
+        workgroupGeneration.fetch_add (1, std::memory_order_release);
+    }
+
+    void MultitrackRecorder::joinAudioWorkgroupOnCurrentThread (juce::WorkgroupToken& token)
+    {
+        const juce::ScopedLock sl (workgroupLock);
+        currentWorkgroup.join (token);
+    }
+
+    float MultitrackRecorder::getDiskBytesPerSec() const noexcept
+    {
+        float total = 0.0f;
+        for (auto& sh : shards)
+            total += sh->shardBytesPerSec.load (std::memory_order_relaxed);
+        return total;
+    }
+
+    float MultitrackRecorder::getRingFillPct() const noexcept
+    {
+        int worst = 0;
+        for (auto& sh : shards)
+        {
+            const int v = sh->shardRingFillPct.load (std::memory_order_relaxed);
+            if (v > worst) worst = v;
+        }
+        return (float) worst;
+    }
+
     void MultitrackRecorder::drainOnce()
+    {
+        // Legacy entry-point — when called from anywhere other than the
+        // shard clients, fan out to every shard so behaviour is identical
+        // to the pre-shard implementation (mostly used by stopRecording's
+        // final flush).
+        for (auto& sh : shards) drainShard (*sh);
+    }
+
+    void MultitrackRecorder::drainShard (ShardClient& shard)
     {
         if (! writersReady.load (std::memory_order_acquire)) return;
 
         const auto t0 = juce::Time::getMillisecondCounterHiRes();
         juce::int64 totalWritten = 0;
+        int         worstFillPct = 0;
 
-        for (std::size_t i = 0; i < fifos.size() && i < writers.size(); ++i)
+        const std::size_t first = (std::size_t) juce::jmax (0, shard.firstChannel);
+        const std::size_t last  = (std::size_t) juce::jmax (0, shard.lastChannel);
+
+        for (std::size_t i = first;
+             i < last && i < fifos.size() && i < writers.size();
+             ++i)
         {
             auto& cf = *fifos[i];
             auto& w  = writers[i];
             if (w.writer == nullptr) continue;
+
+            // Track FIFO occupancy so the dashboard can warn the engineer
+            // BEFORE samples are dropped — at 80%+ the disk is falling
+            // behind the audio thread.
+            const int cap = (int) cf.data.size();
+            if (cap > 0)
+            {
+                const int pct = (cf.fifo.getNumReady() * 100) / cap;
+                if (pct > worstFillPct) worstFillPct = pct;
+            }
 
             const int available = cf.fifo.getNumReady();
             if (available <= 0) continue;
@@ -534,6 +682,48 @@ namespace zynforge
                 }
                 totalWritten += scope.blockSize2;
             }
+        }
+
+        // Publish this shard's worst FIFO fill so the global aggregator
+        // can report the max across shards. EMA release so it doesn't
+        // twitch on every drain.
+        {
+            const int prev = shard.shardRingFillPct.load (std::memory_order_relaxed);
+            const int next = (worstFillPct > prev)
+                                ? worstFillPct
+                                : (int) (prev * 0.8f + worstFillPct * 0.2f);
+            shard.shardRingFillPct.store (next, std::memory_order_relaxed);
+        }
+
+        // Disk throughput: count bytes written in a rolling 1 s window.
+        // bitsPerSample is derived from the active capture format below.
+        auto bitsForFormat = [] (CaptureFormat f) -> int
+        {
+            switch (f)
+            {
+                case CaptureFormat::Wav16:  case CaptureFormat::Aiff16: case CaptureFormat::Flac16: return 16;
+                case CaptureFormat::Wav32Float: case CaptureFormat::Aiff32Float:                   return 32;
+                default: return 24;
+            }
+        };
+        const int  bytesPerSampPrimary = bitsForFormat (captureFormat)       / 8;
+        const int  bytesPerSampBackup  = bitsForFormat (backupCaptureFormat) / 8;
+        const bool backupActiveNow     = backupActive.load (std::memory_order_relaxed) && ! backupFailed.load (std::memory_order_relaxed);
+        const juce::int64 bytesThisDrain = totalWritten *
+                                           (bytesPerSampPrimary + (backupActiveNow ? bytesPerSampBackup : 0));
+        shard.throughputAccumBytes += bytesThisDrain;
+
+        const auto now = juce::Time::getMillisecondCounterHiRes();
+        if (shard.throughputWindowMs <= 0.0) shard.throughputWindowMs = now;
+        const double dtMs = now - shard.throughputWindowMs;
+        if (dtMs >= 250.0)
+        {
+            const double bps = (dtMs > 0.0)
+                                  ? ((double) shard.throughputAccumBytes * 1000.0 / dtMs)
+                                  : 0.0;
+            shard.shardBytesPerSec.store ((float) bps, std::memory_order_relaxed);
+            shard.throughputAccumBytes = 0;
+            shard.throughputWindowMs   = now;
         }
 
         if (totalWritten > 0)
