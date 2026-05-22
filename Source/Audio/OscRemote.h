@@ -62,6 +62,12 @@ namespace zynforge
         void setChannelArm    (int oneBasedIndex, bool armed);
         void setChannelColour (int oneBasedIndex, juce::uint32 rgb);
 
+        // Shared channel-op dispatch — returns true if the {ch1, key}
+        // pair matched a known action (name / mute / arm / colour).
+        bool dispatchChannelOp (int oneBasedIndex,
+                                const juce::String& key,
+                                const juce::OSCMessage&);
+
         AudioEngine& engine;
         Dialect      dialect    { Dialect::Generic };
         int          port       { 8000 };

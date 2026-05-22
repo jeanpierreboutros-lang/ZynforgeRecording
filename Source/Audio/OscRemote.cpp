@@ -168,32 +168,46 @@ namespace zynforge
         return false;
     }
 
+    // Shared channel-op dispatch — every dialect supports the same
+    // set of per-channel actions, so once the dialect's path prefix
+    // has been stripped down to {<channel-number>, <key>}, the actual
+    // setter call is identical.
+    bool OscRemote::dispatchChannelOp (int ch1, const juce::String& key,
+                                       const juce::OSCMessage& m)
+    {
+        if (m.size() < 1) return false;
+        const auto k = key.toLowerCase();
+        if (k == "name")   { setChannelName   (ch1, toString (m[0])); return true; }
+        if (k == "mute")   { setChannelMute   (ch1, toBool   (m[0])); return true; }
+        if (k == "arm")    { setChannelArm    (ch1, toBool   (m[0])); return true; }
+        if (k == "colour" || k == "color")
+        {
+            setChannelColour (ch1, (juce::uint32) toInt (m[0]));
+            return true;
+        }
+        return false;
+    }
+
     bool OscRemote::handleDiGiCo (const juce::OSCMessage& m)
     {
         const auto path = m.getAddressPattern().toString();
 
-        // Snapshots fired on the console → mark in our session.
         if (path == "/Console/Snapshots/recall" && m.size() >= 1)
-        {
-            dropSceneMarker (toInt (m[0]));
-            return true;
-        }
-        // Transport sync
+        { dropSceneMarker (toInt (m[0])); return true; }
         if (path == "/Console/Transport/record" && m.size() >= 1)
         { if (toBool (m[0])) recordStart(); else recordStop(); return true; }
         if (path == "/Console/Transport/play"   && m.size() >= 1)
         { if (toBool (m[0])) playStart();   else playStop();   return true; }
+        if (path == "/Console/Transport/stop")
+        { playStop(); recordStop(); return true; }
+        if (path == "/Console/Marker")
+        { dropMarker (m.size() > 0 ? toString (m[0]) : juce::String()); return true; }
 
-        // Channel name / mute sync. /Console/Channels/N/name
         if (path.startsWith ("/Console/Channels/"))
         {
             const auto parts = juce::StringArray::fromTokens (path.substring (18), "/", "");
-            if (parts.size() >= 2 && m.size() >= 1)
-            {
-                const int ch1 = parts[0].getIntValue();
-                if (parts[1] == "name") { setChannelName (ch1, toString (m[0])); return true; }
-                if (parts[1] == "mute") { setChannelMute (ch1, toBool   (m[0])); return true; }
-            }
+            if (parts.size() >= 2)
+                return dispatchChannelOp (parts[0].getIntValue(), parts[1], m);
         }
         return false;
     }
@@ -202,26 +216,26 @@ namespace zynforge
     {
         const auto path = m.getAddressPattern().toString();
 
-        // SQ / Avantis OSC: /sq/scene/recall, /sq/ch{N}/name, /sq/ch{N}/mute
         if (path == "/sq/scene/recall" && m.size() >= 1)
         { dropSceneMarker (toInt (m[0])); return true; }
         if (path == "/sq/transport/record" && m.size() >= 1)
         { if (toBool (m[0])) recordStart(); else recordStop(); return true; }
         if (path == "/sq/transport/play" && m.size() >= 1)
         { if (toBool (m[0])) playStart();   else playStop();   return true; }
+        if (path == "/sq/transport/stop")
+        { playStop(); recordStop(); return true; }
+        if (path == "/sq/marker")
+        { dropMarker (m.size() > 0 ? toString (m[0]) : juce::String()); return true; }
 
         if (path.startsWith ("/sq/ch"))
         {
-            // /sq/chN/key  →  N is digits right after 'ch'
+            // /sq/chN/key — N is the digit run immediately after "ch".
             const auto rest = path.substring (6);
-            int idx = 0; while (idx < rest.length() && juce::CharacterFunctions::isDigit (rest[idx])) ++idx;
+            int idx = 0;
+            while (idx < rest.length() && juce::CharacterFunctions::isDigit (rest[idx])) ++idx;
             const int ch1 = rest.substring (0, idx).getIntValue();
             const auto key = rest.substring (idx + 1);
-            if (m.size() >= 1)
-            {
-                if (key == "name") { setChannelName (ch1, toString (m[0])); return true; }
-                if (key == "mute") { setChannelMute (ch1, toBool   (m[0])); return true; }
-            }
+            return dispatchChannelOp (ch1, key, m);
         }
         return false;
     }
@@ -230,54 +244,54 @@ namespace zynforge
     {
         const auto path = m.getAddressPattern().toString();
 
-        // SSL Live: /sslnet/snapshot/recall, /sslnet/channel/N/name, etc.
         if (path == "/sslnet/snapshot/recall" && m.size() >= 1)
         { dropSceneMarker (toInt (m[0])); return true; }
         if (path == "/sslnet/transport/record" && m.size() >= 1)
         { if (toBool (m[0])) recordStart(); else recordStop(); return true; }
         if (path == "/sslnet/transport/play" && m.size() >= 1)
         { if (toBool (m[0])) playStart();   else playStop();   return true; }
+        if (path == "/sslnet/transport/stop")
+        { playStop(); recordStop(); return true; }
+        if (path == "/sslnet/marker")
+        { dropMarker (m.size() > 0 ? toString (m[0]) : juce::String()); return true; }
 
         if (path.startsWith ("/sslnet/channel/"))
         {
             const auto parts = juce::StringArray::fromTokens (path.substring (16), "/", "");
-            if (parts.size() >= 2 && m.size() >= 1)
-            {
-                const int ch1 = parts[0].getIntValue();
-                if (parts[1] == "name") { setChannelName (ch1, toString (m[0])); return true; }
-                if (parts[1] == "mute") { setChannelMute (ch1, toBool   (m[0])); return true; }
-            }
+            if (parts.size() >= 2)
+                return dispatchChannelOp (parts[0].getIntValue(), parts[1], m);
         }
         return false;
     }
 
     bool OscRemote::handleYamaha (const juce::OSCMessage& m)
     {
-        // DM7 / RIVAGE PM OSC: vendor uses /Yamaha/* and sometimes /RIVAGE/*.
+        // DM7 / RIVAGE PM expose both /Yamaha/* and /RIVAGE/* prefixes.
         const auto path = m.getAddressPattern().toString();
 
-        if ((path == "/Yamaha/Scene/recall" || path == "/RIVAGE/Scene/recall") && m.size() >= 1)
-        { dropSceneMarker (toInt (m[0])); return true; }
-        if ((path == "/Yamaha/Transport/record" || path == "/RIVAGE/Transport/record") && m.size() >= 1)
-        { if (toBool (m[0])) recordStart(); else recordStop(); return true; }
-        if ((path == "/Yamaha/Transport/play"   || path == "/RIVAGE/Transport/play")   && m.size() >= 1)
-        { if (toBool (m[0])) playStart();   else playStop();   return true; }
+        auto eitherIs = [&] (const juce::String& y, const juce::String& r) -> bool
+        { return path == y || path == r; };
 
-        // /Yamaha/CH/N/Name  /RIVAGE/CH/N/Name
+        if (eitherIs ("/Yamaha/Scene/recall",  "/RIVAGE/Scene/recall")  && m.size() >= 1)
+        { dropSceneMarker (toInt (m[0])); return true; }
+        if (eitherIs ("/Yamaha/Transport/record", "/RIVAGE/Transport/record") && m.size() >= 1)
+        { if (toBool (m[0])) recordStart(); else recordStop(); return true; }
+        if (eitherIs ("/Yamaha/Transport/play",   "/RIVAGE/Transport/play")   && m.size() >= 1)
+        { if (toBool (m[0])) playStart();   else playStop();   return true; }
+        if (eitherIs ("/Yamaha/Transport/stop",   "/RIVAGE/Transport/stop"))
+        { playStop(); recordStop(); return true; }
+        if (eitherIs ("/Yamaha/Marker",           "/RIVAGE/Marker"))
+        { dropMarker (m.size() > 0 ? toString (m[0]) : juce::String()); return true; }
+
         auto handleChannel = [&] (const juce::String& prefix) -> bool
         {
             if (! path.startsWith (prefix)) return false;
             const auto parts = juce::StringArray::fromTokens (path.substring (prefix.length()), "/", "");
-            if (parts.size() < 2 || m.size() < 1) return false;
-            const int ch1 = parts[0].getIntValue();
-            const auto k  = parts[1].toLowerCase();
-            if (k == "name") { setChannelName (ch1, toString (m[0])); return true; }
-            if (k == "mute") { setChannelMute (ch1, toBool   (m[0])); return true; }
-            return false;
+            if (parts.size() < 2) return false;
+            return dispatchChannelOp (parts[0].getIntValue(), parts[1], m);
         };
         if (handleChannel ("/Yamaha/CH/")) return true;
         if (handleChannel ("/RIVAGE/CH/")) return true;
-
         return false;
     }
 }
