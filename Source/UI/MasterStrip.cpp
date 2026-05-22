@@ -17,31 +17,23 @@ namespace zynforge
         gainLabel.setJustificationType (juce::Justification::centred);
         addAndMakeVisible (gainLabel);
 
-        auto styleCombo = [] (juce::ComboBox& c)
+        outputCombo.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep);
+        outputCombo.setColour (juce::ComboBox::outlineColourId,    brand::edge);
+        outputCombo.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
+        outputCombo.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
+        outputCombo.setTooltip ("Master output device channel(s) — pair like 'Out 1-2' "
+                                "in stereo mode, single 'Out N' in mono.");
+        outputCombo.onChange = [this]
         {
-            c.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep);
-            c.setColour (juce::ComboBox::outlineColourId,    brand::edge);
-            c.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
-            c.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
+            const int id = outputCombo.getSelectedId();
+            if (id < 1) return;
+            const int devL = id - 1;
+            if (engine.getMasterStereo())
+                engine.setMasterOutputs (devL, devL + 1);
+            else
+                engine.setMasterOutputs (devL, devL);   // R unused in mono
         };
-        styleCombo (outLCombo);
-        styleCombo (outRCombo);
-        outLCombo.setTooltip ("Master output — LEFT channel.");
-        outRCombo.setTooltip ("Master output — RIGHT channel.");
-        outLCombo.onChange = [this]
-        {
-            const int id = outLCombo.getSelectedId();
-            if (id > 0)
-                engine.setMasterOutputs (id - 1, engine.getMasterOutputR());
-        };
-        outRCombo.onChange = [this]
-        {
-            const int id = outRCombo.getSelectedId();
-            if (id > 0)
-                engine.setMasterOutputs (engine.getMasterOutputL(), id - 1);
-        };
-        addAndMakeVisible (outLCombo);
-        addAndMakeVisible (outRCombo);
+        addAndMakeVisible (outputCombo);
 
         // Mono / stereo mode toggle. Reuses the toggle-button pill style;
         // text flips between 'MONO' and 'ST', tick colour goes brand-orange
@@ -60,8 +52,11 @@ namespace zynforge
             engine.setMasterStereo (stereo);
             modeButton.setButtonText (stereo ? "ST" : "MONO");
             meter.setStereoPartner (stereo ? &engine.getMasterStateR() : nullptr);
-            outRCombo.setEnabled (stereo);
-            resized();   // hide / show the R output combo
+            // Mode flip changes the combo's item set (pairs vs singles)
+            // so force refreshOutputs to rebuild it next tick.
+            lastNumOutputs = -1;
+            refreshOutputs();
+            resized();
         };
         addAndMakeVisible (modeButton);
 
@@ -110,25 +105,23 @@ namespace zynforge
         int dev = 0;
         if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())
             dev = d->getActiveOutputChannels().countNumberOfSetBits();
-        if (dev == lastNumOutputs) return;
-        lastNumOutputs = dev;
+        const bool stereo = engine.getMasterStereo();
 
-        const int visible = juce::jmax (dev, 8);
-        auto fill = [&] (juce::ComboBox& box)
+        // Always rebuild on stereo-mode change OR device-count change so
+        // the single combo reflects the right kind of items.
+        outputCombo.clear (juce::dontSendNotification);
+        const int visible = juce::jmax (dev, stereo ? 16 : 8);
+        const int step    = stereo ? 2 : 1;
+        for (int i = 0; i < visible; i += step)
         {
-            box.clear (juce::dontSendNotification);
-            for (int i = 0; i < visible; ++i)
-            {
-                const bool live = (i < dev);
-                box.addItem (live ? ("Out " + juce::String (i + 1))
-                                  : ("Out " + juce::String (i + 1) + " (off)"),
-                             i + 1);
-            }
-        };
-        fill (outLCombo);
-        fill (outRCombo);
-        outLCombo.setSelectedId (engine.getMasterOutputL() + 1, juce::dontSendNotification);
-        outRCombo.setSelectedId (engine.getMasterOutputR() + 1, juce::dontSendNotification);
+            const bool live = stereo ? (i + 1 < dev) : (i < dev);
+            const auto label = stereo
+                ? juce::String ("Out ") + juce::String (i + 1) + "-" + juce::String (i + 2)
+                : juce::String ("Out ") + juce::String (i + 1);
+            outputCombo.addItem (live ? label : (label + " (off)"), i + 1);
+        }
+        outputCombo.setSelectedId (engine.getMasterOutputL() + 1, juce::dontSendNotification);
+        lastNumOutputs = dev;
     }
 
     void MasterStrip::timerCallback()
@@ -142,10 +135,9 @@ namespace zynforge
         gainLabel.setText (juce::String (dB, 1) + " dB", juce::dontSendNotification);
         if (muteButton.getToggleState() != engine.getMasterMuted())
             muteButton.setToggleState (engine.getMasterMuted(), juce::dontSendNotification);
-        const int lId = engine.getMasterOutputL() + 1;
-        const int rId = engine.getMasterOutputR() + 1;
-        if (outLCombo.getSelectedId() != lId) outLCombo.setSelectedId (lId, juce::dontSendNotification);
-        if (outRCombo.getSelectedId() != rId) outRCombo.setSelectedId (rId, juce::dontSendNotification);
+        const int devL = engine.getMasterOutputL();
+        if (outputCombo.getSelectedId() != devL + 1)
+            outputCombo.setSelectedId (devL + 1, juce::dontSendNotification);
 
         const bool stereo = engine.getMasterStereo();
         if (stereo != cachedStereo)
@@ -154,7 +146,9 @@ namespace zynforge
             modeButton.setToggleState (stereo, juce::dontSendNotification);
             modeButton.setButtonText (stereo ? "ST" : "MONO");
             meter.setStereoPartner (stereo ? &engine.getMasterStateR() : nullptr);
-            outRCombo.setEnabled (stereo);
+            // Mode change means the combo's item set (pairs vs singles)
+            // has to be rebuilt — force a full refresh.
+            lastNumOutputs = -1;
             resized();
         }
 
@@ -177,36 +171,16 @@ namespace zynforge
 
         title    .setBounds (r.removeFromTop (20));
         r.removeFromTop (brand::space::sm);
-
-        // Mode pill takes the full strip width so the label (ST / MONO)
-        // is always readable. Sits above the output combos.
         modeButton.setBounds (r.removeFromTop (22));
         r.removeFromTop (brand::space::xs);
-
-        outLCombo.setBounds (r.removeFromTop (22));
-        r.removeFromTop (brand::space::xs);
-
-        // R combo only shown in stereo mode; in mono we collapse the
-        // slot so the rest of the layout moves up.
-        if (stereo)
-        {
-            outRCombo.setVisible (true);
-            outRCombo.setBounds (r.removeFromTop (22));
-            r.removeFromTop (brand::space::sm);
-        }
-        else
-        {
-            outRCombo.setVisible (false);
-            outRCombo.setBounds ({});
-        }
-
+        outputCombo.setBounds (r.removeFromTop (22));
+        r.removeFromTop (brand::space::sm);
         muteButton.setBounds (r.removeFromTop (24));
         r.removeFromTop (brand::space::sm);
         gainLabel.setBounds (r.removeFromTop (16));
         r.removeFromTop (brand::space::xs);
 
-        // Meter on right, fader on left. Meter width shrinks slightly
-        // in mono mode since only one bar is needed.
+        // Meter shrinks in mono since only one bar is needed.
         const int meterW = stereo ? 40 : 26;
         auto meterArea = r.removeFromRight (meterW);
         meter.setBounds (meterArea);

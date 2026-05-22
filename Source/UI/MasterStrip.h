@@ -30,8 +30,7 @@ namespace zynforge
         AudioEngine&     engine;
         juce::Label      title { {}, "MASTER" };
         juce::Label      gainLabel;
-        juce::ComboBox   outLCombo;
-        juce::ComboBox   outRCombo;
+        juce::ComboBox   outputCombo;
         juce::ToggleButton modeButton { "ST" };   // toggles between MONO and STEREO
         juce::ToggleButton muteButton { "MUTE" };
         juce::Slider     fader { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };

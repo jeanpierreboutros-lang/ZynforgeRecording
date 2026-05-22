@@ -254,7 +254,11 @@ namespace zynforge
 
             t.inputRouting .store (stripRouting.hasInput  (i) ? stripRouting.getInput  (i) : i,
                                    std::memory_order_relaxed);
-            t.outputRouting.store (stripRouting.hasOutput (i) ? stripRouting.getOutput (i) : i,
+            // Default per-channel output is -1 (unrouted) → audio only
+            // reaches the hardware via the master bus. Engineer picks a
+            // specific output explicitly (e.g. for Virtual Soundcheck)
+            // when they need a dedicated per-track destination.
+            t.outputRouting.store (stripRouting.hasOutput (i) ? stripRouting.getOutput (i) : -1,
                                    std::memory_order_relaxed);
 
             // Restore the mono / stereo flag from appProps. The key is

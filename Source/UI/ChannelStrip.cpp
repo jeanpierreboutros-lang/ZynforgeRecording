@@ -135,11 +135,13 @@ namespace zynforge
     {
         const bool stereoStrip = (pairState != nullptr);
         int current = state.outputRouting.load (std::memory_order_relaxed);
-        if (current == -2) current = stripIndex;   // identity default
+        // -2 default now resolves to -1 (master-only) so a fresh strip
+        // shows '→ Master' instead of routing to a hardware output.
+        if (current == -2) current = -1;
 
         const int visible = juce::jmax (n, stripIndex + 1, stereoStrip ? 16 : 8);
         outputCombo.clear (juce::dontSendNotification);
-        outputCombo.addItem ("(unrouted)", 1);
+        outputCombo.addItem (juce::String::fromUTF8 ("\xe2\x86\x92 Master"), 1);
         const int stepCh = stereoStrip ? 2 : 1;
         for (int i = 0; i < visible; i += stepCh)
         {
