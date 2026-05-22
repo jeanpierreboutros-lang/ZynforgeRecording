@@ -97,9 +97,17 @@ MainComponent::MainComponent()
 
         auto* aw = new juce::AlertWindow ("Number of channels",
                                           "How many recording channels do you want?\n"
-                                          "(current: " + juce::String (cur) + ", min 1, max 256)",
+                                          "(current: " + juce::String (cur) + ", min 1, max 256)\n"
+                                          "Stereo creates two linked strips per channel "
+                                          "(L + R), so '4 stereo' = 8 strips.",
                                           juce::MessageBoxIconType::QuestionIcon);
         aw->addTextEditor ("count", juce::String (cur), {});
+
+        juce::StringArray modes { "Mono", "Stereo" };
+        aw->addComboBox ("mode", modes, "Channel mode");
+        if (auto* cb = aw->getComboBoxComponent ("mode"))
+            cb->setSelectedItemIndex (0, juce::dontSendNotification);
+
         aw->addButton ("Apply",  1, juce::KeyPress (juce::KeyPress::returnKey));
         aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
@@ -109,10 +117,31 @@ MainComponent::MainComponent()
                 {
                     if (result == 1)
                     {
-                        const int n = aw->getTextEditorContents ("count").getIntValue();
-                        const int clamped = juce::jlimit (1, 256, n);
+                        const int requested = aw->getTextEditorContents ("count").getIntValue();
+                        const bool stereo = aw->getComboBoxComponent ("mode") != nullptr
+                                          && aw->getComboBoxComponent ("mode")->getSelectedItemIndex() == 1;
+
+                        // Stereo mode creates two strips per requested channel.
+                        const int rawCount = stereo ? requested * 2 : requested;
+                        const int clamped  = juce::jlimit (1, 256, rawCount);
                         engine.setStripCount (clamped);
-                        showStatus ("Channels: " + juce::String (engine.getRecorder().getNumTracks()));
+
+                        // Auto-name strips when stereo mode is chosen so the
+                        // pairing is visible in the mixer + EDIT views.
+                        if (stereo)
+                        {
+                            const int total = engine.getRecorder().getNumTracks();
+                            for (int i = 0; i < total; i += 2)
+                            {
+                                const int pairNum = i / 2 + 1;
+                                engine.setTrackName (i,     "In " + juce::String (pairNum) + " L");
+                                if (i + 1 < total)
+                                    engine.setTrackName (i + 1, "In " + juce::String (pairNum) + " R");
+                            }
+                        }
+
+                        showStatus ("Channels: " + juce::String (engine.getRecorder().getNumTracks())
+                                    + (stereo ? " (stereo pairs)" : ""));
                     }
                     delete aw;
                 }),
