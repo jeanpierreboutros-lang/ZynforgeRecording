@@ -38,6 +38,18 @@ namespace zynforge
 
         bool  isEnabled()  const noexcept           { return enabled  .load (std::memory_order_relaxed); }
         float getTempoBpm() const noexcept          { return tempoBpm .load (std::memory_order_relaxed); }
+        Voice getVoice1()  const noexcept           { return (Voice) voice1.load (std::memory_order_relaxed); }
+        Voice getVoice2()  const noexcept           { return (Voice) voice2.load (std::memory_order_relaxed); }
+        float getVol1Db()  const noexcept           { return vol1Db  .load (std::memory_order_relaxed); }
+        float getVol2Db()  const noexcept           { return vol2Db  .load (std::memory_order_relaxed); }
+        Subdivision getSub1() const noexcept        { return (Subdivision) sub1.load (std::memory_order_relaxed); }
+        Subdivision getSub2() const noexcept        { return (Subdivision) sub2.load (std::memory_order_relaxed); }
+
+        // Public so offline render can use the same beat-schedule math
+        // and per-voice tone presets as the real-time path.
+        static double subFactor (Subdivision) noexcept;
+        struct VoicePreset { double freq; double decay; };
+        static VoicePreset getVoicePreset (Voice) noexcept;
 
     private:
         std::atomic<bool>  enabled  { false };
@@ -70,7 +82,6 @@ namespace zynforge
         Burst voice1Burst;
         Burst voice2Burst;
 
-        static double subFactor (Subdivision s) noexcept;
         static void   triggerBurst (Burst&, Voice, double gainLin) noexcept;
         static float  renderBurst (Burst&, double sampleRate) noexcept;
     };

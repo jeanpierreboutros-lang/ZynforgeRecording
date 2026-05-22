@@ -3,6 +3,19 @@
 
 namespace zynforge
 {
+    ClickEngine::VoicePreset ClickEngine::getVoicePreset (Voice v) noexcept
+    {
+        switch (v)
+        {
+            case Voice::Sine:      return { 880.0,   30.0 };
+            case Voice::Beep:      return { 1500.0,  80.0 };
+            case Voice::Cowbell:   return { 540.0,   18.0 };
+            case Voice::WoodBlock: return { 1200.0, 100.0 };
+            case Voice::Click:     return { 2200.0, 140.0 };
+        }
+        return { 1000.0, 60.0 };
+    }
+
     double ClickEngine::subFactor (Subdivision s) noexcept
     {
         switch (s)

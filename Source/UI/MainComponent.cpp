@@ -1814,13 +1814,20 @@ void MainComponent::generateOrRefreshClickTrack()
     if (totalSamples <= 0)
         totalSamples = (juce::int64) (sr * 60.0 * 60.0 * 4.0);   // 4 hours fallback
 
-    // Click voice: short 1 kHz (downbeat 1.5 kHz) sine burst, ~30 ms,
-    // exponential decay so it sits without smearing across beats.
-    const double clickLenSec = 0.030;
-    const int    clickLenSamples = juce::jmax (8, (int) (sr * clickLenSec));
+    // Render the offline click using the same per-voice tone presets
+    // + subdivision factors the real-time engine uses, so the file
+    // matches what the engineer was hearing live before they hit
+    // Generate.
+    auto& cl = engine.getClickEngine();
+    const auto preset1 = ClickEngine::getVoicePreset (cl.getVoice1());
+    const auto preset2 = ClickEngine::getVoicePreset (cl.getVoice2());
+    const auto sub1    = cl.getSub1();
+    const auto sub2    = cl.getSub2();
+    const double f1    = ClickEngine::subFactor (sub1);
+    const double f2    = ClickEngine::subFactor (sub2);
+    const float lin1   = juce::Decibels::decibelsToGain (cl.getVol1Db());
+    const float lin2   = juce::Decibels::decibelsToGain (cl.getVol2Db());
 
-    // Walk the tempo map to lay beats. If empty we just use the current
-    // tempo for the whole 10 minutes.
     const auto& tempoMap = engine.getTempoMap();
     auto bpmAtSample = [&] (juce::int64 sample) -> float
     {
@@ -1848,10 +1855,18 @@ void MainComponent::generateOrRefreshClickTrack()
         constexpr int kChunk = 4096;
         juce::AudioBuffer<float> buf (1, kChunk);
 
-        juce::int64 written = 0;
-        int     beatIdx     = 0;
-        juce::int64 nextBeatAt = 0;
+        // Per-voice burst envelope state. We render a damped sine for
+        // each active burst, decaying over ~50 ms.
+        struct Burst { double phase=0, tSec=0, freq=1000, decay=60, gain=0; bool active=false; };
+        Burst v1Burst, v2Burst;
 
+        // Beat-scheduling counters, identical to ClickEngine's runtime.
+        double samplesUntil1 = 0.0;
+        double samplesUntil2 = 0.0;
+        int    beat1Counter  = 0;
+        int    beat2Counter  = 0;
+
+        juce::int64 written = 0;
         while (written < totalSamples)
         {
             const int thisChunk = (int) juce::jmin ((juce::int64) kChunk, totalSamples - written);
@@ -1861,31 +1876,51 @@ void MainComponent::generateOrRefreshClickTrack()
             for (int i = 0; i < thisChunk; ++i)
             {
                 const juce::int64 here = written + i;
+                const float bpm = bpmAtSample (here);
+                const double samplesPerQuarter = 60.0 * sr / juce::jmax (20.0f, bpm);
+                const double samplesPerClick1  = (f1 > 0.0) ? (samplesPerQuarter / f1) : 0.0;
+                const double samplesPerClick2  = (f2 > 0.0) ? (samplesPerQuarter / f2) : 0.0;
 
-                // Check if a beat lands inside this sample-block window
-                // for this chunk; spawn click voices for any.
-                if (here == nextBeatAt)
+                if (samplesPerClick1 > 0.0)
                 {
-                    const float bpm = bpmAtSample (here);
-                    const double secondsPerBeat = 60.0 / juce::jmax (20.0f, bpm);
-                    // Downbeat (beat 1 of 4) is a higher pitch
-                    const bool isDownbeat = (beatIdx % 4) == 0;
-                    const double freq    = isDownbeat ? 1500.0 : 1000.0;
-                    const float  amp     = isDownbeat ? 0.85f  : 0.55f;
-
-                    for (int s = 0; s < clickLenSamples; ++s)
+                    samplesUntil1 -= 1.0;
+                    if (samplesUntil1 <= 0.0)
                     {
-                        const int idx = i + s;
-                        if (idx >= thisChunk) break;     // crosses chunk; fine, next beat will continue if needed
-                        const double t      = s / sr;
-                        const double env    = std::exp (-t * 80.0);
-                        dst[idx] += (float) (std::sin (juce::MathConstants<double>::twoPi * freq * t)
-                                              * env * amp);
+                        samplesUntil1 += samplesPerClick1;
+                        if ((beat1Counter % 4) == 0)
+                        {
+                            v1Burst = { 0.0, 0.0, preset1.freq, preset1.decay, lin1, true };
+                        }
+                        ++beat1Counter;
                     }
-
-                    ++beatIdx;
-                    nextBeatAt = here + (juce::int64) (sr * secondsPerBeat);
                 }
+                if (samplesPerClick2 > 0.0)
+                {
+                    samplesUntil2 -= 1.0;
+                    if (samplesUntil2 <= 0.0)
+                    {
+                        samplesUntil2 += samplesPerClick2;
+                        const bool downAligned =
+                            (sub2 == ClickEngine::Subdivision::Quarter) && (beat2Counter % 4) == 0;
+                        if (! downAligned)
+                            v2Burst = { 0.0, 0.0, preset2.freq, preset2.decay, lin2, true };
+                        ++beat2Counter;
+                    }
+                }
+
+                auto renderBurst = [sr] (Burst& b) -> float
+                {
+                    if (! b.active) return 0.0f;
+                    const double dt   = 1.0 / sr;
+                    const double env  = std::exp (-b.tSec * b.decay);
+                    const double samp = std::sin (b.phase) * env * b.gain;
+                    b.phase += juce::MathConstants<double>::twoPi * b.freq * dt;
+                    b.tSec  += dt;
+                    if (env < 0.001) b.active = false;
+                    return (float) samp;
+                };
+
+                dst[i] = renderBurst (v1Burst) + renderBurst (v2Burst);
             }
 
             writer->writeFromFloatArrays (buf.getArrayOfReadPointers(), 1, thisChunk);
