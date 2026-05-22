@@ -52,11 +52,6 @@ namespace zynforge
                 styleCombo (modeCombo);
                 addAndMakeVisible (modeCombo);
 
-                kindCombo.addItem ("Audio Track", 1);
-                kindCombo.setSelectedItemIndex (0, juce::dontSendNotification);
-                styleCombo (kindCombo);
-                addAndMakeVisible (kindCombo);
-
                 nameLabel.setText ("Name:", juce::dontSendNotification);
                 nameLabel.setColour (juce::Label::textColourId, brand::textPrimary);
                 nameLabel.setFont (brand::type::uiBody());
@@ -103,9 +98,7 @@ namespace zynforge
                 r.removeFromLeft (brand::space::sm);
                 newLabel   .setBounds (r.removeFromLeft (32));
                 r.removeFromLeft (brand::space::xs);
-                modeCombo  .setBounds (r.removeFromLeft (96).reduced (0, 2));
-                r.removeFromLeft (brand::space::xs);
-                kindCombo  .setBounds (r.removeFromLeft (140).reduced (0, 2));
+                modeCombo  .setBounds (r.removeFromLeft (120).reduced (0, 2));
                 r.removeFromLeft (brand::space::md);
 
                 // Right edge: [+/-] then name editor expands to fill the rest.
@@ -137,7 +130,6 @@ namespace zynforge
             juce::TextEditor countEditor;
             juce::Label      newLabel;
             juce::ComboBox   modeCombo;
-            juce::ComboBox   kindCombo;
             juce::Label      nameLabel;
             juce::TextEditor nameEditor;
             juce::TextButton plusButton;
