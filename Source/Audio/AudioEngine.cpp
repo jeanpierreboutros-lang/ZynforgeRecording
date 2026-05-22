@@ -734,8 +734,12 @@ namespace zynforge
                     }
             }
 
-            // (b) Live input — only when MON is on (per-channel monitor).
-            if (t.monitor.load (std::memory_order_relaxed))
+            // (b) Live input — reaches the master when the channel is
+            //     armed (so the engineer hears what's about to hit disk)
+            //     OR monitor is on (live audition without recording).
+            const bool wantInput = t.armed  .load (std::memory_order_relaxed)
+                                || t.monitor.load (std::memory_order_relaxed);
+            if (wantInput)
             {
                 const float* isrc = (ch < kMaxStrips) ? routedInputs[ch] : nullptr;
                 if (isrc != nullptr)
