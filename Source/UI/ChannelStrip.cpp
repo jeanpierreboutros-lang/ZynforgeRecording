@@ -122,6 +122,26 @@ namespace zynforge
         else                              outputCombo.setSelectedId (current + 2, juce::dontSendNotification);
     }
 
+    void ChannelStrip::refreshRoutingSelection()
+    {
+        auto pick = [] (juce::ComboBox& box, int routing) -> int
+        {
+            // Map routing-int back to the combo's item id system:
+            // id 1 = unrouted, id 2..N+1 = device channel 0..N-1
+            if (routing < 0) return 1;
+            return routing + 2;
+        };
+        const int inR  = state.inputRouting .load (std::memory_order_relaxed);
+        const int outR = state.outputRouting.load (std::memory_order_relaxed);
+        const int wantedIn  = (inR  == -2) ? stripIndex + 2 : pick (inputCombo,  inR);
+        const int wantedOut = (outR == -2) ? stripIndex + 2 : pick (outputCombo, outR);
+
+        if (inputCombo .getSelectedId() != wantedIn)
+            inputCombo .setSelectedId (wantedIn,  juce::dontSendNotification);
+        if (outputCombo.getSelectedId() != wantedOut)
+            outputCombo.setSelectedId (wantedOut, juce::dontSendNotification);
+    }
+
     juce::Colour ChannelStrip::getResolvedColour() const
     {
         const auto argb = state.colourARGB.load (std::memory_order_relaxed);

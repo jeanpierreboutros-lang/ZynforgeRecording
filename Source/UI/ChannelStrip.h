@@ -32,6 +32,11 @@ namespace zynforge
         void setAvailableInputs  (int n);
         void setAvailableOutputs (int n);
 
+        // Re-reads TrackState routing atomics and updates the combo
+        // selection without firing onChange. Used to keep the strip
+        // combos in sync when the PATCH page mutates routing.
+        void refreshRoutingSelection();
+
         void mouseDown (const juce::MouseEvent&) override;
 
         juce::Colour getResolvedColour() const;

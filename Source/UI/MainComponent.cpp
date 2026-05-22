@@ -523,6 +523,11 @@ void MainComponent::timerCallback()
     if (n != lastTrackCount)
         rebuildStrips();
 
+    // Keep each strip's input/output combos in sync with engine state —
+    // the PATCH page can mutate routing behind the strip's back.
+    for (auto& s : strips)
+        if (s != nullptr) s->refreshRoutingSelection();
+
     updateTransportLabels();
 
     const bool playing = engine.isPlaying();
