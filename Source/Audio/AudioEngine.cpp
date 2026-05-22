@@ -93,7 +93,11 @@ namespace zynforge
             if (! mixWriterThread.isThreadRunning())
                 mixWriterThread.startThread();
 
-            const auto path = sessionDir.getChildFile ("StereoMix.wav");
+            // Stereo bus mix lands in Bounced Files/ — that's the
+            // intended Pro Tools-style location for any rendered mix.
+            auto bouncedDir = sessionDir.getChildFile ("Bounced Files");
+            bouncedDir.createDirectory();
+            const auto path = bouncedDir.getChildFile ("StereoMix.wav");
             path.deleteFile();
 
             juce::WavAudioFormat wav;

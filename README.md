@@ -65,6 +65,8 @@ Active development. Software ships **multitrack recording**, **playback**, and *
 - [x] Chosen sessions root persists in appProps (`sessionsRoot`) and is used by every subsequent record / save / export path
 - [x] Chosen file type + bit depth feeds straight into `MultitrackRecorder::setCaptureFormat`; sample rate is applied to the audio device immediately
 - [x] Per-strip overrides (names, colours, gains, routing) are wiped so every new session starts from defaults
+- [x] Builds the **named session folder** immediately: `<Local Storage>/<Name>/` containing `<Name>.zfproj` + `Audio Files/` + `Bounced Files/` + `Clip Groups/` + `Session File Backups/` + `Video Files/` + `WaveCache.wfm` (Pro Tools-style layout)
+- [x] Recording writes `Track_NN.wav` into `Audio Files/`; `StereoMix.wav` lands in `Bounced Files/`; backup copies mirror the same layout under the chosen backup root
 
 ### Audio file import
 - [x] **File → Import Audio Files…** — multi-select WAV / AIFF / FLAC / MP3 / OGG / M4A / CAF

@@ -10,6 +10,7 @@
 #include "EditPage.h"
 #include "ExportDialog.h"
 #include "MasterStrip.h"
+#include "NewSessionDialog.h"
 #include "PhaseMeter.h"
 #include "TimelineStrip.h"
 #include "TransportBar.h"
@@ -58,6 +59,7 @@ private:
     void offerSessionRecovery();
     void showStartupWelcome();
     void launchNewSessionDialog();
+    juce::File createSessionFolderStructure (const zynforge::NewSessionDialog::Result&);
     bool saveSessionStateTo (const juce::File& dir);
     int  exportTracksTo (const juce::File& dir,
                          const std::vector<int>& channelIndices,

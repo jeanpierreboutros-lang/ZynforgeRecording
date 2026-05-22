@@ -1139,15 +1139,29 @@ void MainComponent::launchNewSessionDialog()
     {
         if (self == nullptr) return;
 
+        // Build the named session folder right away (Pro Tools-style):
+        //   <Local Storage>/<Name>/
+        //       <Name>.zfproj
+        //       Audio Files/
+        //       Bounced Files/
+        //       Clip Groups/
+        //       Session File Backups/
+        //       Video Files/
+        //       WaveCache.wfm
+        // Subsequent record / save / export operations all live inside
+        // this folder.
+        const auto sessionFolder = self->createSessionFolderStructure (r);
+
         // Persist the new sessions root (used by makeNewSessionDir +
         // every future file dialog) and remember the chosen format
         // so the dB readout / capture matches.
         if (auto* props = self->engine.getAppProps())
         {
-            props->setValue ("sessionsRoot",     r.location.getFullPathName());
-            props->setValue ("sessionName",      r.name);
-            props->setValue ("interleavedFlag",  r.interleaved);
-            props->setValue ("ioPreset",         r.ioSettings);
+            props->setValue ("sessionsRoot",      r.location.getFullPathName());
+            props->setValue ("sessionName",       r.name);
+            props->setValue ("activeSessionDir",  sessionFolder.getFullPathName());
+            props->setValue ("interleavedFlag",   r.interleaved);
+            props->setValue ("ioPreset",          r.ioSettings);
             props->saveIfNeeded();
         }
 
@@ -1731,8 +1745,13 @@ void MainComponent::onExportAllTracks()
         if (! opts.has_value()) return;
         const auto chosenOpts = *opts;
 
+        const auto activeSession = engine.getActiveSessionDir();
+        const auto bouncedDir    = activeSession.isDirectory()
+                                       ? activeSession.getChildFile ("Bounced Files")
+                                       : getSessionsRoot();
+        bouncedDir.createDirectory();
         chooser = std::make_unique<juce::FileChooser> (
-            "Export all tracks to…", getSessionsRoot(), "");
+            "Export all tracks to…", bouncedDir, "");
 
         const auto flags = juce::FileBrowserComponent::saveMode
                          | juce::FileBrowserComponent::canSelectDirectories;
@@ -1765,8 +1784,13 @@ void MainComponent::onExportIndividualTrack (int channelIndex)
         if (! opts.has_value()) return;
         const auto chosenOpts = *opts;
 
+        const auto activeSession = engine.getActiveSessionDir();
+        const auto bouncedDir    = activeSession.isDirectory()
+                                       ? activeSession.getChildFile ("Bounced Files")
+                                       : getSessionsRoot();
+        bouncedDir.createDirectory();
         chooser = std::make_unique<juce::FileChooser> (
-            "Export track to…", getSessionsRoot(), "");
+            "Export track to…", bouncedDir, "");
 
         const auto flags = juce::FileBrowserComponent::saveMode
                          | juce::FileBrowserComponent::canSelectDirectories;
@@ -1840,8 +1864,69 @@ void MainComponent::onDeviceClicked()
 
 juce::File MainComponent::makeNewSessionDir() const
 {
+    // If the engineer has created a named session via File ▸ New Session…,
+    // every RECORD lands inside that folder (Audio Files/ subdirectory is
+    // handled by MultitrackRecorder::startRecording). Otherwise we fall
+    // back to the legacy auto-stamped folder so a bare RECORD click still
+    // produces a session.
+    if (auto* props = engine.getAppProps())
+    {
+        const auto saved = props->getValue ("activeSessionDir", {});
+        if (saved.isNotEmpty())
+        {
+            juce::File f (saved);
+            if (f.isDirectory() || f.createDirectory().wasOk())
+                return f;
+        }
+    }
     const auto stamp = juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S");
     return getSessionsRoot().getChildFile ("Session_" + stamp);
+}
+
+juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessionDialog::Result& r)
+{
+    // Resolve a safe folder name even if the engineer typed something
+    // with slashes / colons in the picker.
+    auto safeName = juce::File::createLegalFileName (r.name);
+    if (safeName.isEmpty()) safeName = "Untitled-1";
+
+    // Ensure the chosen Local Storage exists, then make the session
+    // folder underneath it. If that name already exists, append a
+    // numeric suffix so we don't trample on an existing session.
+    r.location.createDirectory();
+
+    juce::File sessionFolder = r.location.getChildFile (safeName);
+    for (int i = 2; sessionFolder.exists() && i < 9999; ++i)
+        sessionFolder = r.location.getChildFile (safeName + "-" + juce::String (i));
+    sessionFolder.createDirectory();
+
+    // Subfolders mirror Pro Tools' session layout.
+    sessionFolder.getChildFile ("Audio Files")         .createDirectory();
+    sessionFolder.getChildFile ("Bounced Files")       .createDirectory();
+    sessionFolder.getChildFile ("Clip Groups")         .createDirectory();
+    sessionFolder.getChildFile ("Session File Backups").createDirectory();
+    sessionFolder.getChildFile ("Video Files")         .createDirectory();
+
+    // Session document — a small JSON file that ties the folder together.
+    // (Equivalent of Pro Tools' .ptx; we use .zfproj for clarity.)
+    {
+        juce::DynamicObject::Ptr m (new juce::DynamicObject());
+        m->setProperty ("zynforgeSession", true);
+        m->setProperty ("name",            safeName);
+        m->setProperty ("createdAt",       juce::Time::getCurrentTime().toISO8601 (true));
+        m->setProperty ("sampleRate",      r.sampleRate);
+        m->setProperty ("captureFormat",   (int) r.captureFormat);
+        m->setProperty ("interleaved",     r.interleaved);
+        m->setProperty ("ioPreset",        r.ioSettings);
+        sessionFolder.getChildFile (safeName + ".zfproj")
+                     .replaceWithText (juce::JSON::toString (juce::var (m.get())));
+    }
+
+    // Waveform cache placeholder — engine will populate it as the engineer
+    // records / scrubs.
+    sessionFolder.getChildFile ("WaveCache.wfm").create();
+
+    return sessionFolder;
 }
 
 void MainComponent::paint (juce::Graphics& g)

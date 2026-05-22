@@ -293,6 +293,17 @@ namespace zynforge
         sessionDir.createDirectory();
         activeSessionDir = sessionDir;
 
+        // Pro Tools-style folder layout: tracks live under "Audio Files/",
+        // mixdowns under "Bounced Files/", backups under
+        // "Session File Backups/". Session-level metadata (recording.session,
+        // session.report.json, the .zfproj document) stays at the root.
+        const auto audioFilesDir = sessionDir.getChildFile ("Audio Files");
+        audioFilesDir.createDirectory();
+        sessionDir.getChildFile ("Bounced Files")       .createDirectory();
+        sessionDir.getChildFile ("Clip Groups")         .createDirectory();
+        sessionDir.getChildFile ("Session File Backups").createDirectory();
+        sessionDir.getChildFile ("Video Files")         .createDirectory();
+
         writers.clear();
         writers.reserve (tracks.size());
 
@@ -357,16 +368,19 @@ namespace zynforge
             WriterChannel w;
             const auto trackName = juce::String::formatted ("Track_%02d", (int) i + 1);
 
-            // Primary writer.
-            const auto primaryFile = sessionDir.getChildFile (trackName + primary.ext);
+            // Primary writer — under <session>/Audio Files/Track_NN.<ext>.
+            const auto primaryFile = audioFilesDir.getChildFile (trackName + primary.ext);
             w.writer.reset (openWriter (primaryFile, primary.container, primary.bitDepth));
 
             // Optional second copy — may be in a different format from
             // the primary, so the engineer can run e.g. WAV/24 to the
             // main drive AND FLAC/24 to the backup drive simultaneously.
+            // Backups mirror the same Audio Files/ layout under the chosen
+            // backup root.
             if (backupDir.isDirectory())
             {
-                auto backupSession = backupDir.getChildFile (sessionDir.getFileName());
+                auto backupSession = backupDir.getChildFile (sessionDir.getFileName())
+                                              .getChildFile ("Audio Files");
                 backupSession.createDirectory();
                 const auto backupFile = backupSession.getChildFile (trackName + backup.ext);
                 w.backupWriter.reset (openWriter (backupFile, backup.container, backup.bitDepth));

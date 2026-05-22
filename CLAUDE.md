@@ -62,12 +62,27 @@ The audio callback never allocates / locks / calls anything that can. Recording 
 
 ## Sessions
 
-- `~/Music/Zynforge Sessions/Session_YYYY-MM-DD_HH-MM-SS/`
-- `Track_NN.wav` — one file per **physical** track, 24-bit, device sample rate, **mono** (stereo strips write L and R as separate mono files)
-- `markers.json`, `recording.session` (auto-deleted on clean stop)
-- `session.report.json` — written on `stopRecording` (stop time, totals, miss count, backup status, per-track stats)
-- `StereoMix.wav` — when `recordStereoMix` is on, the engine's stream-bus output captured live to a 2-channel WAV
-- `<backup_root>/<session>/Track_NN.<ext>` — backup copy in primary or alternate format
+Pro Tools-style named session folder. **File ▸ New Session…** builds the layout up front; subsequent record / save / export operations all live inside it.
+
+```
+<Local Storage>/<SessionName>/
+├── <SessionName>.zfproj        ← session document (JSON: name, sr, format, ioPreset, …)
+├── Audio Files/                ← Track_NN.wav per physical track
+├── Bounced Files/              ← StereoMix.wav + every Export ▶ destination defaults here
+├── Clip Groups/                ← reserved for grouped clips
+├── Session File Backups/       ← reserved for `.zfproj` snapshots
+├── Video Files/                ← reserved for video reference
+├── WaveCache.wfm               ← waveform cache placeholder
+├── markers.json
+├── recording.session           ← auto-deleted on clean stop
+└── session.report.json         ← stop time, totals, miss count, backup status, per-track stats
+```
+
+- `Track_NN.wav` — one file per **physical** track, configured bit depth, device sample rate, **mono** (stereo strips write L and R as separate mono files). When a session was created before the named-folder refactor `SessionPlayer::loadSession` falls back to the session root for legacy scans.
+- `StereoMix.wav` — when `recordStereoMix` is on, the engine's stream-bus output captured live to a 2-channel WAV inside `Bounced Files/`.
+- `<backup_root>/<SessionName>/Audio Files/Track_NN.<ext>` — backup copy in primary or alternate format, mirroring the same Audio Files/ layout.
+
+The active session folder is persisted in `appProps` as `activeSessionDir`, so `RECORD` after a new-session pick always lands inside the named folder (no more auto-stamped `Session_YYYY-MM-DD_HH-MM-SS` unless the engineer hits RECORD without creating a session first).
 
 ## OSC remote
 

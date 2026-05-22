@@ -41,7 +41,16 @@ namespace zynforge
 
         if (! sessionDir.isDirectory()) return 0;
 
-        auto files = sessionDir.findChildFiles (juce::File::findFiles, false, "Track_*.wav");
+        // Pro Tools-style: tracks live under <session>/Audio Files/. Older
+        // sessions written before the named-folder refactor kept them at
+        // the root, so fall back to the root scan when the subfolder is
+        // empty / absent.
+        const auto audioFiles = sessionDir.getChildFile ("Audio Files");
+        auto files = audioFiles.isDirectory()
+                       ? audioFiles.findChildFiles (juce::File::findFiles, false, "Track_*.wav")
+                       : juce::Array<juce::File>();
+        if (files.isEmpty())
+            files = sessionDir.findChildFiles (juce::File::findFiles, false, "Track_*.wav");
         files.sort();
 
         juce::int64 maxLen = 0;
