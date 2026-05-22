@@ -95,8 +95,12 @@ namespace zynforge
 
     void LedMeter::paint (juce::Graphics& g)
     {
-        auto bounds = getLocalBounds().toFloat().reduced (2.0f);
-        const bool stereo = (stereoR != nullptr);
+        // Inset the bar area vertically so the extreme labels (0 dB at the
+        // top, the floor at the bottom) have room to render without being
+        // clipped at the widget edges.
+        const int   vPad  = 7;
+        auto bounds = getLocalBounds().toFloat().reduced (2.0f, (float) vPad);
+        const bool  stereo = (stereoR != nullptr);
 
         // Reserve a dedicated left-hand gutter for the dB labels so they
         // never overlap the meter segments. The bar(s) get the right side.
@@ -130,9 +134,14 @@ namespace zynforge
             g.drawHorizontalLine ((int) y, labelCol.getRight() - 2.0f, labelCol.getRight() + 1.0f);
 
             // Label — right-aligned inside the dedicated label column.
+            // Clamp the label box to the widget bounds so the extreme labels
+            // (0 dB at top, floor at bottom) don't get clipped off-screen.
+            const float labelY = juce::jlimit (0.0f,
+                                               (float) getHeight() - 10.0f,
+                                               y - 5.0f);
             g.setColour (brand::textPrimary);
             g.drawText (juce::String (std::abs ((int) dB)),
-                        labelCol.withY (y - 5.0f).withHeight (10.0f).toNearestInt(),
+                        labelCol.withY (labelY).withHeight (10.0f).toNearestInt(),
                         juce::Justification::centredRight, false);
         }
 
