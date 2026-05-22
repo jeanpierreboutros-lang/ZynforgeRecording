@@ -250,8 +250,16 @@ MainComponent::MainComponent()
     addAndMakeVisible (bigClock);
     addAndMakeVisible (perfDashboard);
 
-    phaseMeter = std::make_unique<zynforge::PhaseMeter> (engine);
-    addAndMakeVisible (*phaseMeter);
+    // Setlist + cue bar. Wires the three engineer actions back into
+    // helpers that read/write the session's .zfproj.
+    setlistBar.onPick       = [this] (int idx) { jumpToCue (idx); };
+    setlistBar.onPrev       = [this] { jumpToCue (juce::jmax (0, currentCueIndex - 1)); };
+    setlistBar.onNext       = [this] { jumpToCue (juce::jmin ((int) cues.size() - 1,
+                                                              currentCueIndex + 1)); };
+    setlistBar.onAddCue     = [this] { addCueAtTransport(); };
+    setlistBar.onUpdateCue  = [this] { updateCueAtTransport(); };
+    addAndMakeVisible (setlistBar);
+
 
     timeline = std::make_unique<zynforge::TimelineStrip> (engine);
     addAndMakeVisible (*timeline);
@@ -278,6 +286,9 @@ MainComponent::MainComponent()
     updateTransportLabels();
 
     juce::Timer::callAfterDelay (250, [this] { offerSessionRecovery(); });
+    // If the previous run had a session pinned, rehydrate its setlist.
+    loadSetlistFromActiveSession();
+
     juce::Timer::callAfterDelay (350, [this] { showStartupWelcome(); });
 
    #if JUCE_MAC
@@ -1248,6 +1259,7 @@ void MainComponent::launchNewSessionDialog()
         // up immediately (engine.getActiveSessionDir() now reports it
         // even before any recording or playback has started).
         self->engine.setActiveSessionDir (sessionFolder);
+        self->loadSetlistFromActiveSession();
 
         self->engine.getRecorder().setCaptureFormat (r.captureFormat);
         self->pendingSampleRate = r.sampleRate;
@@ -1414,6 +1426,127 @@ void MainComponent::finishRange()
 {
     engine.getMarkers().drop (currentPlayheadSamples (engine), "Range Out");
     showStatus ("Range Out marker dropped");
+}
+
+// ─── Setlist plumbing ────────────────────────────────────────────────
+//
+// Cues live as a JSON array under the session's .zfproj document:
+//   "setlist": [ {"name": "Intro", "samplePos": 0}, ... ]
+// Loaded on session swap, persisted on every add / update so a crash
+// mid-show doesn't lose what the engineer just dialled in.
+
+static juce::File findSessionProj (const juce::File& dir)
+{
+    if (! dir.isDirectory()) return {};
+    for (auto& f : dir.findChildFiles (juce::File::findFiles, false, "*.zfproj"))
+        return f;
+    return dir.getChildFile (dir.getFileName() + ".zfproj");
+}
+
+void MainComponent::loadSetlistFromActiveSession()
+{
+    cues.clear();
+    currentCueIndex = -1;
+
+    const auto proj = findSessionProj (engine.getActiveSessionDir());
+    if (proj.existsAsFile())
+    {
+        const auto parsed = juce::JSON::parse (proj);
+        if (auto* obj = parsed.getDynamicObject())
+        {
+            const auto v = obj->getProperty ("setlist");
+            if (auto* arr = v.getArray())
+            {
+                for (const auto& item : *arr)
+                {
+                    if (auto* c = item.getDynamicObject())
+                    {
+                        zynforge::SetlistBar::Cue cue;
+                        cue.name      = c->getProperty ("name").toString();
+                        cue.samplePos = (juce::int64) (double) c->getProperty ("samplePos");
+                        cues.push_back (std::move (cue));
+                    }
+                }
+            }
+        }
+    }
+    setlistBar.setCues (cues, currentCueIndex);
+}
+
+void MainComponent::saveSetlistToActiveSession() const
+{
+    const auto proj = findSessionProj (engine.getActiveSessionDir());
+    if (proj == juce::File{}) return;
+
+    // Preserve the existing .zfproj fields (createdAt, sampleRate, etc.)
+    // when we rewrite — only the 'setlist' key is touched.
+    juce::DynamicObject::Ptr obj;
+    const auto parsed = juce::JSON::parse (proj);
+    if (parsed.isObject()) obj = parsed.getDynamicObject();
+    if (obj == nullptr)    obj = new juce::DynamicObject();
+
+    juce::Array<juce::var> arr;
+    for (const auto& c : cues)
+    {
+        juce::DynamicObject::Ptr entry (new juce::DynamicObject());
+        entry->setProperty ("name",      c.name);
+        entry->setProperty ("samplePos", (double) c.samplePos);
+        arr.add (juce::var (entry.get()));
+    }
+    obj->setProperty ("setlist",   juce::var (arr));
+    obj->setProperty ("updatedAt", juce::Time::getCurrentTime().toISO8601 (true));
+
+    proj.replaceWithText (juce::JSON::toString (juce::var (obj.get())));
+}
+
+void MainComponent::jumpToCue (int index)
+{
+    if (index < 0 || index >= (int) cues.size()) return;
+    currentCueIndex = index;
+    setlistBar.setCues (cues, currentCueIndex);
+
+    auto& player = engine.getPlayer();
+    player.setPositionSamples (cues[(size_t) index].samplePos);
+    updateTransportLabels();
+    showStatus ("Cue " + juce::String (index + 1) + " — " + cues[(size_t) index].name);
+}
+
+void MainComponent::addCueAtTransport()
+{
+    if (! engine.getActiveSessionDir().isDirectory())
+    {
+        showStatus ("Open or create a session before adding cues");
+        return;
+    }
+    auto& player = engine.getPlayer();
+    const auto pos = player.isLoaded() ? player.getPositionSamples() : juce::int64 (0);
+
+    zynforge::SetlistBar::Cue c;
+    c.name      = "Song " + juce::String ((int) cues.size() + 1);
+    c.samplePos = pos;
+    cues.push_back (std::move (c));
+    currentCueIndex = (int) cues.size() - 1;
+    setlistBar.setCues (cues, currentCueIndex);
+    saveSetlistToActiveSession();
+    showStatus ("Added cue '" + cues.back().name + "' at "
+                + juce::String ((double) pos / juce::jmax (1.0, player.getSampleRate()), 2) + " s");
+}
+
+void MainComponent::updateCueAtTransport()
+{
+    if (currentCueIndex < 0 || currentCueIndex >= (int) cues.size())
+    {
+        showStatus ("Pick a cue first, then Update to move it");
+        return;
+    }
+    auto& player = engine.getPlayer();
+    const auto pos = player.isLoaded() ? player.getPositionSamples() : juce::int64 (0);
+    cues[(size_t) currentCueIndex].samplePos = pos;
+    setlistBar.setCues (cues, currentCueIndex);
+    saveSetlistToActiveSession();
+    showStatus ("Cue '" + cues[(size_t) currentCueIndex].name
+                + "' moved to "
+                + juce::String ((double) pos / juce::jmax (1.0, player.getSampleRate()), 2) + " s");
 }
 
 void MainComponent::showSessionProperties()
@@ -1773,8 +1906,6 @@ bool MainComponent::saveSessionStateTo (const juce::File& dir)
     juce::DynamicObject::Ptr root (new juce::DynamicObject());
     root->setProperty ("captureFormat",  (int) recorder.getCaptureFormat());
     root->setProperty ("preRollSeconds", recorder.getPreRollSeconds());
-    root->setProperty ("phaseLeft",      engine.getPhaseLeftChannel());
-    root->setProperty ("phaseRight",     engine.getPhaseRightChannel());
 
     if (player.hasLoopRegion())
     {
@@ -2174,6 +2305,7 @@ void MainComponent::onLoadSessionClicked()
 
         engine.stopPlayback();
         engine.setActiveSessionDir (dir);   // pin so Save / Save As stay lit
+        loadSetlistFromActiveSession();
         const int n = engine.loadSession (dir);
         if (n > 0)
             statusLabel.setText ("Loaded " + juce::String (n) + " tracks", juce::dontSendNotification);
@@ -2355,14 +2487,16 @@ void MainComponent::resized()
     playButton   .setBounds ({});
     stopButton   .setBounds ({});
 
-    // Big clock banner with a phase meter docked on its right edge, and
-    // the CPU / disk / buffer dashboard tucked between them so the
-    // engineer can see headroom without leaving the mixer view.
+    // Big clock banner + the CPU / disk / buffer dashboard docked on
+    // the right so the engineer can see headroom without leaving the
+    // mixer view. (Phase meter removed — not relevant for a pure
+    // multitrack recorder + virtual soundcheck workflow.)
     auto clockRow = r.removeFromTop (96).reduced (12, 6);
-    if (phaseMeter != nullptr)
-        phaseMeter->setBounds (clockRow.removeFromRight (200).reduced (4, 4));
-    perfDashboard.setBounds (clockRow.removeFromRight (220).reduced (4, 4));
+    perfDashboard.setBounds (clockRow.removeFromRight (240).reduced (4, 4));
     bigClock.setBounds (clockRow);
+
+    // Setlist bar — slim row between the BigClock banner and the timeline.
+    setlistBar.setBounds (r.removeFromTop (36).reduced (12, 2));
 
     // Timeline strip
     if (timeline != nullptr)

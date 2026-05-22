@@ -42,7 +42,6 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/ChannelStrip.cpp
     Source/UI/LedMeter.cpp
     Source/UI/MiniSpectrum.cpp
-    Source/UI/PhaseMeter.cpp
     Source/UI/TimelineStrip.cpp
     Source/UI/StripColourPicker.cpp
     Source/UI/ExportDialog.cpp
@@ -54,6 +53,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/NewSessionDialog.cpp
     Source/UI/PerfDashboard.cpp
     Source/UI/SessionPropertiesDialog.cpp
+    Source/UI/SetlistBar.cpp
     Source/Network/CompanionServer.cpp
     Source/UI/Meterbridge.cpp
     Source/UI/TransportBar.cpp

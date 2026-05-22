@@ -12,7 +12,7 @@
 #include "MasterStrip.h"
 #include "NewSessionDialog.h"
 #include "PerfDashboard.h"
-#include "PhaseMeter.h"
+#include "SetlistBar.h"
 #include "TimelineStrip.h"
 #include "TransportBar.h"
 
@@ -140,7 +140,18 @@ private:
 
     zynforge::BigClockPanel bigClock;
     zynforge::PerfDashboard perfDashboard;
-    std::unique_ptr<zynforge::PhaseMeter>    phaseMeter;
+    zynforge::SetlistBar    setlistBar;
+
+    // Per-session cue list — populated from <SessionName>.zfproj on
+    // every session swap, persisted on every add / pick / update.
+    std::vector<zynforge::SetlistBar::Cue> cues;
+    int currentCueIndex { -1 };
+
+    void loadSetlistFromActiveSession();
+    void saveSetlistToActiveSession() const;
+    void jumpToCue (int index);
+    void addCueAtTransport();
+    void updateCueAtTransport();
     std::unique_ptr<zynforge::TimelineStrip> timeline;
     std::unique_ptr<zynforge::TransportBar>  transportBar;
 
