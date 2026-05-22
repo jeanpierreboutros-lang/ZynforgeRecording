@@ -79,16 +79,25 @@ namespace zynforge
                 b.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
                 b.setColour (juce::ToggleButton::tickColourId, onCol);
             };
-            armButton .setToggleState (s.armed .load(), juce::dontSendNotification);
-            muteButton.setToggleState (s.muted .load(), juce::dontSendNotification);
-            soloButton.setToggleState (s.soloed.load(), juce::dontSendNotification);
+            armButton .setToggleState (s.armed  .load(), juce::dontSendNotification);
+            monButton .setToggleState (s.monitor.load(), juce::dontSendNotification);
+            muteButton.setToggleState (s.muted  .load(), juce::dontSendNotification);
+            soloButton.setToggleState (s.soloed .load(), juce::dontSendNotification);
+            // Per-button gradient colours match the mixer:
+            //   I → green, R → red, M → orange, S → yellow.
             styleBtn (armButton,  brand::accentRecord);
-            styleBtn (muteButton, brand::accentRecord);
+            styleBtn (monButton,  brand::accentPlay);
+            styleBtn (muteButton, brand::brandOrange);
             styleBtn (soloButton, brand::accentSolo);
             armButton .onClick = [this]
             {
                 engine.getRecorder().getTrack (index).armed.store (armButton.getToggleState());
                 if (stereo) engine.getRecorder().getTrack (index + 1).armed.store (armButton.getToggleState());
+            };
+            monButton.onClick = [this]
+            {
+                engine.getRecorder().getTrack (index).monitor.store (monButton.getToggleState());
+                if (stereo) engine.getRecorder().getTrack (index + 1).monitor.store (monButton.getToggleState());
             };
             muteButton.onClick = [this]
             {
@@ -101,6 +110,7 @@ namespace zynforge
                 if (stereo) engine.getRecorder().getTrack (index + 1).soloed.store (soloButton.getToggleState());
             };
             addAndMakeVisible (armButton);
+            addAndMakeVisible (monButton);
             addAndMakeVisible (muteButton);
             addAndMakeVisible (soloButton);
 
@@ -336,11 +346,16 @@ namespace zynforge
             nameLabel.setBounds (content.removeFromTop (18));
             content.removeFromTop (2);
 
-            auto btnRow = content.removeFromTop (20);
-            const int bw = btnRow.getWidth() / 3;
-            armButton .setBounds (btnRow.removeFromLeft (bw).reduced (1));
-            muteButton.setBounds (btnRow.removeFromLeft (bw).reduced (1));
-            soloButton.setBounds (btnRow.reduced (1));
+            // 2×2 grid matching the mixer: [ I | R ] / [ S | M ].
+            const int btnH = 22;
+            auto row1 = content.removeFromTop (btnH);
+            content.removeFromTop (3);
+            auto row2 = content.removeFromTop (btnH);
+            const int halfW = row1.getWidth() / 2;
+            monButton .setBounds (row1.removeFromLeft (halfW).reduced (1));
+            armButton .setBounds (row1.reduced (1));
+            soloButton.setBounds (row2.removeFromLeft (halfW).reduced (1));
+            muteButton.setBounds (row2.reduced (1));
             content.removeFromTop (4);
 
             inputCombo .setBounds (content.removeFromTop (18));
@@ -492,9 +507,13 @@ namespace zynforge
         juce::File                currentFileR;
         bool                      stereo;
         juce::Label               nameLabel;
-        juce::ToggleButton        armButton  { "REC"  };
-        juce::ToggleButton        muteButton { "MUTE" };
-        juce::ToggleButton        soloButton { "SOLO" };
+        // Same single-letter glyphs as the mixer strips: R / I / M / S.
+        // LookAndFeel::drawToggleButton paints the pill in the colour
+        // pinned via ToggleButton::tickColourId when toggled on.
+        juce::ToggleButton        armButton  { "R" };
+        juce::ToggleButton        monButton  { "I" };
+        juce::ToggleButton        muteButton { "M" };
+        juce::ToggleButton        soloButton { "S" };
         juce::ComboBox            inputCombo;
         juce::ComboBox            outputCombo;
         LedMeter                  meter;
