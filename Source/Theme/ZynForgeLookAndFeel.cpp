@@ -127,40 +127,54 @@ namespace zynforge
         g.drawRoundedRectangle (trackX, trackY, trackW, trackH, 2.0f, 1.0f);
 
         // Long thumb with grip lines and a brighter centre stripe.
-        const float thumbW = juce::jmin (28.0f, bounds.getWidth() - 4.0f);
-        const float thumbH = 38.0f;
+        // Bumped to a more substantial cap with proper rounded shoulders —
+        // matches ZynForge Live's fader rounded.lg (5 px) finish.
+        const float thumbW = juce::jmin (40.0f, bounds.getWidth() - 2.0f);
+        const float thumbH = 56.0f;
         const auto  thumb  = juce::Rectangle<float> (
                                 bounds.getCentreX() - thumbW * 0.5f,
                                 thumbY - thumbH * 0.5f,
                                 thumbW, thumbH);
 
-        // Body — gradient between the two fader-thumb tokens.
+        // Drop shadow under the cap so it lifts off the track.
+        g.setColour (juce::Colours::black.withAlpha (0.30f));
+        g.fillRoundedRectangle (thumb.translated (0.0f, 2.0f).expanded (1.0f, 1.0f),
+                                brand::radius::lg);
+
+        // Body — vertical gradient between the two fader-thumb tokens.
         g.setGradientFill (juce::ColourGradient (
             brand::faderThumbHi, thumb.getCentreX(), thumb.getY(),
             brand::faderThumbLo, thumb.getCentreX(), thumb.getBottom(),
             false));
-        g.fillRoundedRectangle (thumb, brand::radius::sm);
+        g.fillRoundedRectangle (thumb, brand::radius::lg);
 
+        // Bevel — bright outer edge + subtle inner stroke gives the cap depth.
         g.setColour (brand::faderThumbEdge);
-        g.drawRoundedRectangle (thumb, brand::radius::sm, 1.0f);
+        g.drawRoundedRectangle (thumb, brand::radius::lg, 1.2f);
+        g.setColour (juce::Colours::white.withAlpha (0.06f));
+        g.drawRoundedRectangle (thumb.reduced (1.5f), brand::radius::lg - 1.0f, 1.0f);
 
-        // Grip lines.
+        // Grip lines — five evenly-spaced ridges.
         g.setColour (brand::faderThumbGrip);
         const int   numGrips = 5;
-        const float gripPad  = 6.0f;
+        const float gripPad  = 8.0f;
         for (int i = 0; i < numGrips; ++i)
         {
-            const float ly = thumb.getY() + 8.0f + (float) i * 4.5f;
+            const float ly = thumb.getCentreY() - 16.0f + (float) i * 5.0f;
+            if (i == 2) continue;   // skip the centre — that's the stripe
             g.drawHorizontalLine ((int) ly,
                                   thumb.getX() + gripPad,
                                   thumb.getRight() - gripPad);
         }
 
-        // Centre highlight stripe.
-        g.setColour (juce::Colours::white);
-        const float stripeH = 3.0f;
-        g.fillRect (juce::Rectangle<float> (thumb.getX() + 2.0f,
-                                            thumb.getCentreY() - stripeH * 0.5f,
-                                            thumb.getWidth() - 4.0f, stripeH));
+        // Centre highlight stripe — coloured by the slider's thumb colour
+        // so each channel's cap accent matches its personality.
+        g.setColour (s.findColour (juce::Slider::thumbColourId).brighter (0.30f));
+        const float stripeH = 4.0f;
+        g.fillRoundedRectangle (
+            juce::Rectangle<float> (thumb.getX() + 3.0f,
+                                    thumb.getCentreY() - stripeH * 0.5f,
+                                    thumb.getWidth() - 6.0f, stripeH),
+            1.5f);
     }
 }
