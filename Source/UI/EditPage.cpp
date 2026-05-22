@@ -391,9 +391,11 @@ namespace zynforge
                     case LaneMode::Click:
                     {
                         // Beat grid for the whole lane — every quarter
-                        // note at the current session tempo. Downbeats
-                        // (every 4th) glow brighter so the engineer can
-                        // count bars at a glance.
+                        // note at the current session tempo. The lane
+                        // adapts its density: if beats would pack closer
+                        // than ~6 px we drop to bar markers, then to
+                        // 4-bar markers, etc., so the lane never moires
+                        // into a solid stripe at long zoom-outs.
                         const float bpm = engine.getSessionTempoBpm();
                         const auto& player = engine.getPlayer();
                         const juce::int64 totalSamples = player.isLoaded()
@@ -406,8 +408,20 @@ namespace zynforge
                         if (totalSamples > 0 && bpm > 0.0f && sr > 0.0)
                         {
                             const double samplesPerBeat = 60.0 * sr / bpm;
+                            const double pxPerBeat = samplesPerBeat
+                                * (double) inner.getWidth()
+                                / (double) totalSamples;
+
+                            // Pick a stride: 1 beat / 1 bar (4) / 4 bars
+                            // (16) / 16 bars (64). Keeps adjacent ticks
+                            // at least ~6 px apart for visual clarity.
+                            int stride = 1;
+                            while (pxPerBeat * stride < 6.0 && stride < 4096)
+                                stride *= 4;
+
                             int beat = 0;
-                            for (double s = 0.0; s < (double) totalSamples; s += samplesPerBeat, ++beat)
+                            for (double s = 0.0; s < (double) totalSamples;
+                                 s += samplesPerBeat * stride, beat += stride)
                             {
                                 const double prop = s / (double) totalSamples;
                                 const int x = inner.getX()
@@ -639,8 +653,15 @@ namespace zynforge
                     const auto inner2 = wavePane.reduced (4, 6);
                     const int  paneL  = inner2.getX();
                     const int  paneW  = juce::jmax (1, inner2.getWidth());
+                    const double pxPerBeat = samplesPerBeat * (double) paneW
+                                           / (double) totalSamples;
+                    int stride = 1;
+                    while (pxPerBeat * stride < 6.0 && stride < 4096)
+                        stride *= 4;
+
                     int beat = 0;
-                    for (double s = 0.0; s < (double) totalSamples; s += samplesPerBeat, ++beat)
+                    for (double s = 0.0; s < (double) totalSamples;
+                         s += samplesPerBeat * stride, beat += stride)
                     {
                         const double prop = s / (double) totalSamples;
                         const int x = paneL + (int) (prop * paneW);

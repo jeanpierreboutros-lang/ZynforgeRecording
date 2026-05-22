@@ -1890,7 +1890,9 @@ void MainComponent::generateOrRefreshClickTrack()
     auto& player = engine.getPlayer();
     juce::int64 totalSamples = player.isLoaded() ? player.getTotalLengthSamples() : 0;
     if (totalSamples <= 0)
-        totalSamples = (juce::int64) (sr * 60.0 * 60.0 * 4.0);   // 4 hours fallback
+        // 1-hour fallback when there's nothing loaded yet — plenty for
+        // any single show, 4× faster to render than the old 4-hour cap.
+        totalSamples = (juce::int64) (sr * 60.0 * 60.0);
 
     // Render the offline click using the same per-voice tone presets
     // + subdivision factors the real-time engine uses, so the file
@@ -1930,7 +1932,8 @@ void MainComponent::generateOrRefreshClickTrack()
             wav.createWriterFor (out, sr, 1, 24, meta, 0));
         if (writer == nullptr) { delete out; showStatus ("Click write failed"); return; }
 
-        constexpr int kChunk = 4096;
+        // Larger render chunks → fewer disk writes (8× the old size).
+        constexpr int kChunk = 32768;
         juce::AudioBuffer<float> buf (1, kChunk);
 
         // Per-voice burst envelope state. We render a damped sine for
@@ -1944,6 +1947,17 @@ void MainComponent::generateOrRefreshClickTrack()
         int    beat1Counter  = 0;
         int    beat2Counter  = 0;
 
+        // Hoist tempo / per-click sample counts out of the sample loop.
+        // bpmAtSample() does a tempoMap scan; running it once per sample
+        // at 60M+ samples was the main reason Generate felt slow. We
+        // recompute when the map says the tempo changes (rare) and
+        // otherwise leave the cached values alone.
+        const bool tempoIsConstant = tempoMap.empty();
+        float  cachedBpm           = engine.getSessionTempoBpm();
+        double samplesPerQuarter   = 60.0 * sr / juce::jmax (20.0f, cachedBpm);
+        double samplesPerClick1    = (f1 > 0.0) ? (samplesPerQuarter / f1) : 0.0;
+        double samplesPerClick2    = (f2 > 0.0) ? (samplesPerQuarter / f2) : 0.0;
+
         juce::int64 written = 0;
         while (written < totalSamples)
         {
@@ -1951,13 +1965,24 @@ void MainComponent::generateOrRefreshClickTrack()
             buf.clear();
             auto* dst = buf.getWritePointer (0);
 
+            // If the session has tempo changes, refresh the cached
+            // per-click sample counts once per chunk (samples per block,
+            // not per sample). For a typical session with no tempo map
+            // this branch never executes.
+            if (! tempoIsConstant)
+            {
+                const float bpm = bpmAtSample (written);
+                if (bpm != cachedBpm)
+                {
+                    cachedBpm        = bpm;
+                    samplesPerQuarter = 60.0 * sr / juce::jmax (20.0f, cachedBpm);
+                    samplesPerClick1  = (f1 > 0.0) ? (samplesPerQuarter / f1) : 0.0;
+                    samplesPerClick2  = (f2 > 0.0) ? (samplesPerQuarter / f2) : 0.0;
+                }
+            }
+
             for (int i = 0; i < thisChunk; ++i)
             {
-                const juce::int64 here = written + i;
-                const float bpm = bpmAtSample (here);
-                const double samplesPerQuarter = 60.0 * sr / juce::jmax (20.0f, bpm);
-                const double samplesPerClick1  = (f1 > 0.0) ? (samplesPerQuarter / f1) : 0.0;
-                const double samplesPerClick2  = (f2 > 0.0) ? (samplesPerQuarter / f2) : 0.0;
 
                 if (samplesPerClick1 > 0.0)
                 {
