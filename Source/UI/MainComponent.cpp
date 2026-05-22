@@ -72,7 +72,7 @@ MainComponent::MainComponent()
 
     addChannelButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus.withAlpha (0.18f));
     addChannelButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus);
-    addChannelButton.setTooltip ("Set the number of recording channels — opens a prompt where you type the count (1–128).");
+    addChannelButton.setTooltip ("Set the number of recording channels — opens a prompt where you type the count (1–256).");
     addChannelButton.onClick = [this]
     {
         if (engine.isRecording()) { showStatus ("Stop recording before changing channel count"); return; }
@@ -80,7 +80,7 @@ MainComponent::MainComponent()
 
         auto* aw = new juce::AlertWindow ("Number of channels",
                                           "How many recording channels do you want?\n"
-                                          "(current: " + juce::String (cur) + ", min 1, max 128)",
+                                          "(current: " + juce::String (cur) + ", min 1, max 256)",
                                           juce::MessageBoxIconType::QuestionIcon);
         aw->addTextEditor ("count", juce::String (cur), {});
         aw->addButton ("Apply",  1, juce::KeyPress (juce::KeyPress::returnKey));
@@ -93,7 +93,7 @@ MainComponent::MainComponent()
                     if (result == 1)
                     {
                         const int n = aw->getTextEditorContents ("count").getIntValue();
-                        const int clamped = juce::jlimit (1, 128, n);
+                        const int clamped = juce::jlimit (1, 256, n);
                         engine.setStripCount (clamped);
                         showStatus ("Channels: " + juce::String (engine.getRecorder().getNumTracks()));
                     }

@@ -45,13 +45,13 @@ namespace zynforge
 
     int AudioEngine::getStripCount() const
     {
-        return appProps ? juce::jlimit (1, 128, appProps->getIntValue ("stripCount", 1)) : 1;
+        return appProps ? juce::jlimit (1, 256, appProps->getIntValue ("stripCount", 1)) : 1;
     }
 
     void AudioEngine::setStripCount (int n)
     {
         if (recorder.isRecording()) return;
-        n = juce::jlimit (1, 128, n);
+        n = juce::jlimit (1, 256, n);
 
         if (appProps != nullptr)
         {
@@ -97,8 +97,8 @@ namespace zynforge
         opts.storageFormat       = juce::PropertiesFile::storeAsXML;
         appProps = std::make_unique<juce::PropertiesFile> (opts);
 
-        // Open with up to 128 inputs / 64 outputs by default — adjust later from UI.
-        auto err = deviceManager.initialise (/*numInputs*/ 128, /*numOutputs*/ 64,
+        // Open with up to 256 inputs / 64 outputs by default — adjust later from UI.
+        auto err = deviceManager.initialise (/*numInputs*/ 256, /*numOutputs*/ 64,
                                              /*savedState*/ nullptr,
                                              /*selectDefault*/ true);
         if (err.isNotEmpty())
@@ -278,7 +278,7 @@ namespace zynforge
         // Build a routed-input pointer array: routedInputs[stripIndex] points
         // to the device input that strip is patched from, or nullptr if -1.
         const int numTracks = recorder.getNumTracks();
-        constexpr int kMaxStrips = 128;
+        constexpr int kMaxStrips = 256;
         const float* routedInputs[kMaxStrips] = {};
         for (int i = 0; i < numTracks && i < kMaxStrips; ++i)
         {
