@@ -8,6 +8,7 @@ namespace zynforge
 {
     // Vertical LED-segment meter, peak + RMS, with brand styling.
     class LedMeter final : public juce::Component,
+                           public juce::SettableTooltipClient,
                            private juce::Timer
     {
     public:

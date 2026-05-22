@@ -56,7 +56,11 @@ namespace zynforge
         IntCallback    inputCb;
         IntCallback    outputCb;
 
+        class DbRuler;
+        std::unique_ptr<DbRuler> dbRuler;
+
         juce::Label   nameLabel;
+        juce::Label   outLabel;
         juce::ComboBox inputCombo;
         juce::ComboBox outputCombo;
         juce::ToggleButton armButton   { "ARM" };

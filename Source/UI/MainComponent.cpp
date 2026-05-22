@@ -68,6 +68,19 @@ MainComponent::MainComponent()
     patchButton.onClick = [this] { zynforge::PatchPage::launch (engine); };
     addAndMakeVisible (patchButton);
 
+    // Tooltips on header controls.
+    recordButton .setTooltip ("Start / stop multitrack recording.");
+    deviceButton .setTooltip ("Choose the audio device, sample rate and buffer size.");
+    formatButton .setTooltip ("Capture format: WAV 24, WAV 32-float, or FLAC 24.");
+    preRollButton.setTooltip ("Pre-roll: 0 / 5 / 10 / 30 seconds. When RECORD is pressed, this much already-buffered audio is dumped to disk first.");
+    lockButton   .setTooltip ("System Lock: disables every other control so a stray click can't kill a take.");
+    loadButton   .setTooltip ("FILE menu: Open / Save / Save As / Export.");
+    playButton   .setTooltip ("Play the loaded session through the matching output of each strip (virtual soundcheck).");
+    stopButton   .setTooltip ("Stop playback and rewind to the start.");
+    backupButton .setTooltip ("Pick a second drive — every track is mirrored there as you record.");
+    patchButton  .setTooltip ("Open the patch matrix: route hardware inputs / outputs to channel strips.");
+    titleLabel   .setTooltip ("Zynforge Recording — JUCE 8 multitrack recorder + virtual soundcheck.");
+
     refreshFormatButton();
     refreshPreRollButton();
 
@@ -293,9 +306,11 @@ void MainComponent::onPlayClicked()
 void MainComponent::onStopClicked()
 {
     auto& player = engine.getPlayer();
+    if (engine.isRecording()) engine.stopRecording();
     engine.stopPlayback();
     player.rewind();
     playButton.setButtonText ("PLAY");
+    recordButton.setButtonText ("RECORD");
     statusLabel.setText (player.isLoaded() ? "Stopped" : "Idle", juce::dontSendNotification);
 }
 

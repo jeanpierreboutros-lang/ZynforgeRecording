@@ -5,11 +5,11 @@
 
 namespace zynforge
 {
-    static constexpr int   kNumSegments    = 20;
+    static constexpr int   kNumSegments    = 32;
     static constexpr float kMinDb          = -60.0f;
     static constexpr float kMaxDb          =   0.0f;
-    static constexpr int   kRedSegments    = 2;   // top N segments are red
-    static constexpr int   kAmberSegments  = 4;   // next N segments are amber
+    static constexpr int   kRedSegments    = 3;   // top N segments are red
+    static constexpr int   kAmberSegments  = 6;   // next N segments are amber
 
     LedMeter::LedMeter (TrackState& s) : state (s) { startTimerHz (30); }
     LedMeter::~LedMeter() = default;
@@ -75,6 +75,16 @@ namespace zynforge
             else if (litByPeak)  g.setColour (base.withAlpha (0.45f));
             else                 g.setColour (brand::meterIdle);
             g.fillRoundedRectangle (seg, 1.5f);
+        }
+
+        // Side tick marks at standard dB values, on the right edge.
+        const float dBTicks[] = { -3.0f, -6.0f, -12.0f, -20.0f, -40.0f };
+        g.setColour (brand::textMuted);
+        for (float dB : dBTicks)
+        {
+            const float frac = (dB - kMinDb) / (kMaxDb - kMinDb);
+            const float y = r.getBottom() - r.getHeight() * frac;
+            g.drawHorizontalLine ((int) y, r.getRight() - 4.0f, r.getRight());
         }
 
         // Clip pip

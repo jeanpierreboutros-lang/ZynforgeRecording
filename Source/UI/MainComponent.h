@@ -88,6 +88,8 @@ private:
     juce::Viewport  stripsViewport;
     juce::Component stripsContainer;
 
+    juce::TooltipWindow tooltipWindow { this, 500 };
+
     std::vector<std::unique_ptr<zynforge::ChannelStrip>> strips;
     int  lastTrackCount { -1 };
 

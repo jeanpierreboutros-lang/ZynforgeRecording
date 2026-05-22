@@ -13,6 +13,7 @@ namespace zynforge
     // FFT FIFO. UI thread polls fftBlockReady, runs the FFT, reduces to
     // visible bins, repaints.
     class MiniSpectrum final : public juce::Component,
+                               public juce::SettableTooltipClient,
                                private juce::Timer
     {
     public:

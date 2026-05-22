@@ -4,8 +4,51 @@
 
 namespace zynforge
 {
+    // dB scale strip: paints tick + label at the standard fader dB values,
+    // mapped to its own height with the same skew as the fader slider.
+    class ChannelStrip::DbRuler final : public juce::Component
+    {
+    public:
+        explicit DbRuler (juce::Slider& s) : slider (s) {}
+
+        void paint (juce::Graphics& g) override
+        {
+            const float minDb = -60.0f;
+            const float maxDb = 12.0f;
+            const int top    = 4;
+            const int bottom = getHeight() - 4;
+            const int trackH = bottom - top;
+
+            auto yForDb = [&] (float dB) -> int
+            {
+                // Match juce::Slider mid-skew (0 dB at mid).
+                const double prop = slider.valueToProportionOfLength ((double) dB);
+                // Slider: 0 prop = bottom, 1 prop = top.
+                return (int) (bottom - prop * (double) trackH);
+            };
+
+            g.setColour (brand::textMuted);
+            g.setFont (juce::Font (juce::FontOptions().withHeight (9.0f)));
+
+            const int dBValues[] = { 12, 6, 0, -6, -10, -20, -30, -40, -50, -60 };
+            for (int dB : dBValues)
+            {
+                if ((float) dB < minDb || (float) dB > maxDb) continue;
+                const int y = yForDb ((float) dB);
+                g.drawHorizontalLine (y, 0.0f, 4.0f);
+                g.drawText (juce::String (dB),
+                            6, y - 6, getWidth() - 6, 12,
+                            juce::Justification::centredLeft, false);
+            }
+        }
+
+    private:
+        juce::Slider& slider;
+    };
+
     // Small clickable colour chip embedded at the top-left of every strip.
-    class ChannelStrip::Swatch final : public juce::Component
+    class ChannelStrip::Swatch final : public juce::Component,
+                                       public juce::SettableTooltipClient
     {
     public:
         std::function<void()> onClick;
@@ -57,7 +100,8 @@ namespace zynforge
 
     void ChannelStrip::setAvailableInputs (int n)
     {
-        const int current = state.inputRouting.load (std::memory_order_relaxed);
+        int current = state.inputRouting.load (std::memory_order_relaxed);
+        if (current == -2) current = stripIndex;   // identity default
         inputCombo.clear (juce::dontSendNotification);
         inputCombo.addItem ("(unrouted)", 1);
         for (int i = 0; i < n; ++i)
@@ -68,7 +112,8 @@ namespace zynforge
 
     void ChannelStrip::setAvailableOutputs (int n)
     {
-        const int current = state.outputRouting.load (std::memory_order_relaxed);
+        int current = state.outputRouting.load (std::memory_order_relaxed);
+        if (current == -2) current = stripIndex;   // identity default
         outputCombo.clear (juce::dontSendNotification);
         outputCombo.addItem ("(unrouted)", 1);
         for (int i = 0; i < n; ++i)
@@ -233,7 +278,7 @@ namespace zynforge
             state.muted.store (muteButton.getToggleState(), std::memory_order_relaxed);
         };
         muteButton.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-        muteButton.setColour (juce::ToggleButton::tickColourId, brand::accentVS);
+        muteButton.setColour (juce::ToggleButton::tickColourId, brand::accentRecord);
         addAndMakeVisible (muteButton);
 
         soloButton.setToggleState (s.soloed.load(), juce::dontSendNotification);
@@ -257,6 +302,18 @@ namespace zynforge
         addAndMakeVisible (clipLabel);
 
         addAndMakeVisible (spectrum);
+
+        nameLabel  .setTooltip ("Channel name — double-click to rename, right-click for more.");
+        inputCombo .setTooltip ("Hardware input this strip records from.");
+        outputCombo.setTooltip ("Hardware output this strip plays VSC audio to.");
+        armButton  .setTooltip ("ARM — include this channel when RECORD is rolling.");
+        monButton  .setTooltip ("Input monitor — sum this input into the stereo monitor bus (outputs 1 + 2).");
+        muteButton .setTooltip ("Mute — silence this channel in monitor + playback. Recording still hits disk.");
+        soloButton .setTooltip ("Solo — when any track is soloed, only soloed tracks are audible.");
+        spectrum   .setTooltip ("Live FFT spectrum of this channel's input signal.");
+        meter      .setTooltip ("Peak + RMS LED meter — click to clear the clip indicator.");
+        if (swatch != nullptr)
+            swatch->setTooltip ("Click for a colour palette. Right-click the strip for more options.");
 
         panSlider.setSliderStyle (juce::Slider::LinearHorizontal);
         panSlider.setRange (-1.0, 1.0, 0.01);
@@ -295,6 +352,16 @@ namespace zynforge
             if (gainCb) gainCb (v);
         };
         addAndMakeVisible (gainFader);
+
+        // dB scale label strip between the fader and the LED meter.
+        dbRuler = std::make_unique<DbRuler> (gainFader);
+        addAndMakeVisible (*dbRuler);
+
+        outLabel.setText ("OUT", juce::dontSendNotification);
+        outLabel.setFont (juce::Font (juce::FontOptions().withHeight (10.0f).withStyle ("Bold")));
+        outLabel.setColour (juce::Label::textColourId, brand::textMuted);
+        outLabel.setJustificationType (juce::Justification::centred);
+        addAndMakeVisible (outLabel);
 
         addAndMakeVisible (meter);
 
@@ -355,9 +422,15 @@ namespace zynforge
         panSlider.setBounds (r.removeFromTop (16).reduced (4, 0));
         r.removeFromTop (4);
 
-        // Fader on left, LED meter on right.
-        const int meterW = 18;
+        outLabel.setBounds (r.removeFromTop (14));
+
+        // Fader | dB ruler | LED meter (left → right).
+        const int meterW = 20;
+        const int rulerW = 26;
         meter    .setBounds (r.removeFromRight (meterW));
+        r.removeFromRight (2);
+        if (dbRuler != nullptr)
+            dbRuler->setBounds (r.removeFromRight (rulerW));
         r.removeFromRight (2);
         gainFader.setBounds (r);
     }
