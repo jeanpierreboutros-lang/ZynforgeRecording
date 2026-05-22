@@ -159,6 +159,26 @@ namespace zynforge
         if (nameLabel.getText() != state.name)
             nameLabel.setText (state.name, juce::dontSendNotification);
 
+        // Mirror toggle-button visual state from TrackState atomics so
+        // OSC / MIDI / EDIT-view changes flip the buttons here too.
+        const bool armed  = state.armed .load (std::memory_order_relaxed);
+        const bool mon    = state.monitor.load (std::memory_order_relaxed);
+        const bool muted  = state.muted .load (std::memory_order_relaxed);
+        const bool soloed = state.soloed.load (std::memory_order_relaxed);
+        if (armButton .getToggleState() != armed)  armButton .setToggleState (armed,  juce::dontSendNotification);
+        if (monButton .getToggleState() != mon)    monButton .setToggleState (mon,    juce::dontSendNotification);
+        if (muteButton.getToggleState() != muted)  muteButton.setToggleState (muted,  juce::dontSendNotification);
+        if (soloButton.getToggleState() != soloed) soloButton.setToggleState (soloed, juce::dontSendNotification);
+
+        // Mirror fader + pan slider value from TrackState too so OSC
+        // gain / pan changes (and stereo-pair sync) appear in the UI.
+        const float gainDb = state.gainDb.load (std::memory_order_relaxed);
+        const float pan    = state.pan   .load (std::memory_order_relaxed);
+        if (std::abs ((float) gainFader.getValue() - gainDb) > 0.05f)
+            gainFader.setValue (gainDb, juce::dontSendNotification);
+        if (std::abs ((float) panSlider.getValue() - pan) > 0.01f)
+            panSlider.setValue (pan, juce::dontSendNotification);
+
         // Colour: re-resolve and push to the swatch + sliders so the
         // fader fill / pan thumb track the live channel colour.
         const auto resolved = getResolvedColour();
