@@ -357,18 +357,22 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     // previous open-ended `>= 100` which was swallowing 110..115
     // (OSC dialects), 200..230 (settings menu), and 250 (Session
     // Settings) — sending all of them to onExportIndividualTrack.
-    else if (id >= 100 && id < 200) onExportIndividualTrack (id - 100);
-    else if (id == 50)   zynforge::PatchPage::launch (engine);
-    else if (id == 51)   zynforge::Meterbridge::launch (engine);
-    // OSC dialect picks under Session ▶ OSC ▶
+    // OSC dialect picks under Session ▶ OSC ▶ — must be checked BEFORE
+    // the export range below, otherwise IDs 110..115 fall through to
+    // onExportIndividualTrack(10..15) and silently no-op.
     else if (id >= 110 && id <= 114)
     {
         const int dialect = id - 110;
         if (engine.startOsc (8000, dialect))
             showStatus ("OSC listening on 8000 (" +
                         juce::StringArray ({"Generic","DiGiCo","A&H","SSL","Yamaha"})[dialect] + ")");
+        else
+            showStatus ("OSC failed to bind UDP 8000 — port already in use?");
     }
     else if (id == 115)  { engine.stopOsc(); showStatus ("OSC stopped"); }
+    else if (id >= 100 && id < 200) onExportIndividualTrack (id - 100);
+    else if (id == 50)   zynforge::PatchPage::launch (engine);
+    else if (id == 51)   zynforge::Meterbridge::launch (engine);
     else if (id == 250)
     {
         struct StubContent final : public juce::Component
