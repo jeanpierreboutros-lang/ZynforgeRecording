@@ -499,10 +499,15 @@ namespace zynforge
                 }
                 const float rms = std::sqrt (sumSq / juce::jmax (1, numSamples));
                 auto& t = recorder.getTrack (ch);
-                const float prevPk = t.peak.load (std::memory_order_relaxed);
-                const float prevRms = t.rms.load (std::memory_order_relaxed);
-                t.peak.store (juce::jmax (pk,  prevPk),  std::memory_order_relaxed);
-                t.rms .store (juce::jmax (rms, prevRms), std::memory_order_relaxed);
+                // Apply the same 0.92 release decay the recorder uses, so
+                // when a transient passes the meter falls back to the
+                // ambient level instead of latching at the loudest peak
+                // ever observed. Without this, any stereo track whose R
+                // partner had no input routing would stick at full scale.
+                const float prevPk  = t.peak.load (std::memory_order_relaxed);
+                const float prevRms = t.rms .load (std::memory_order_relaxed);
+                t.peak.store (juce::jmax (pk,  prevPk  * 0.92f), std::memory_order_relaxed);
+                t.rms .store (juce::jmax (rms, prevRms * 0.85f), std::memory_order_relaxed);
                 if (pk >= 0.999f)
                 {
                     t.clipped.store (true, std::memory_order_relaxed);
