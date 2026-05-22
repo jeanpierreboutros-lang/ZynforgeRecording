@@ -268,6 +268,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
     if (topLevelIndex == 0)  // File
     {
         menu.addItem (1, "Open Session…");
+        menu.addItem (4, "Import Audio Files…",  ! engine.isRecording());
         menu.addSeparator();
         menu.addItem (2, "Save Session State",  engine.getActiveSessionDir().isDirectory());
         menu.addItem (3, "Save Session As…",   engine.getActiveSessionDir().isDirectory());
@@ -359,6 +360,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     if (id == 1)         onLoadSessionClicked();
     else if (id == 2)    onSaveSessionState();
     else if (id == 3)    onSaveSessionAs();
+    else if (id == 4)    onImportAudioFiles();
     else if (id == 10)   onExportAllTracks();
     else if (id == 99)   confirmAndQuit();
     // Track-export sub-menu uses ids 100..199. Tightened from the
@@ -1043,6 +1045,7 @@ void MainComponent::onFileMenuClicked()
 
     juce::PopupMenu menu;
     menu.addItem (1, "Open Session…");
+    menu.addItem (4, "Import Audio Files…",   ! engine.isRecording());
     menu.addSeparator();
     menu.addItem (2, "Save Session State",      hasActive);
     menu.addItem (3, "Save Session As…",   hasActive);
@@ -1070,6 +1073,7 @@ void MainComponent::onFileMenuClicked()
         if (chosen == 1)           onLoadSessionClicked();
         else if (chosen == 2)      onSaveSessionState();
         else if (chosen == 3)      onSaveSessionAs();
+        else if (chosen == 4)      onImportAudioFiles();
         else if (chosen == 10)     onExportAllTracks();
         else if (chosen >= 100)    onExportIndividualTrack (chosen - 100);
     });
@@ -1370,6 +1374,84 @@ void MainComponent::onSaveSessionState()
         showStatus ("Saved session state → " + dir.getFileName());
     else
         showStatus ("Save failed");
+}
+
+void MainComponent::onImportAudioFiles()
+{
+    if (engine.isRecording()) { showStatus ("Stop recording before importing"); return; }
+
+    // Accept anything the JUCE basic format manager + FLAC can read.
+    // (WavAudioFormat, AiffAudioFormat, FlacAudioFormat, OggVorbisAudioFormat,
+    //  MP3AudioFormat — read-only — when JUCE_USE_MP3AUDIOFORMAT is on.)
+    const juce::String filters = "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg;*.m4a;*.caf";
+
+    chooser = std::make_unique<juce::FileChooser> (
+        "Pick audio files to import as a new session",
+        juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+        filters);
+
+    chooser->launchAsync (juce::FileBrowserComponent::openMode
+                          | juce::FileBrowserComponent::canSelectFiles
+                          | juce::FileBrowserComponent::canSelectMultipleItems,
+        [this] (const juce::FileChooser& fc)
+    {
+        const auto picks = fc.getResults();
+        if (picks.isEmpty()) return;
+
+        // Convert each picked file into a Track_NN.wav inside a fresh
+        // session dir. The session is then loaded for VSC playback.
+        auto sessionDir = makeNewSessionDir();
+        sessionDir.createDirectory();
+
+        juce::AudioFormatManager fm;
+        fm.registerBasicFormats();   // WAV, AIFF, FLAC, OGG, MP3 (read-only)
+
+        int imported = 0;
+        int failed   = 0;
+        for (int i = 0; i < picks.size(); ++i)
+        {
+            const auto& src = picks.getReference (i);
+            std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (src));
+            if (reader == nullptr) { ++failed; continue; }
+
+            const auto dst = sessionDir.getChildFile (
+                "Track_" + juce::String (i + 1).paddedLeft ('0', 2) + ".wav");
+            dst.deleteFile();
+
+            // Write as 24-bit WAV at the source sample rate so the
+            // SessionPlayer's BufferingAudioReader path picks it up like
+            // any other recorded track.
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::FileOutputStream> out (dst.createOutputStream());
+            if (out == nullptr) { ++failed; continue; }
+
+            juce::StringPairArray meta;
+            std::unique_ptr<juce::AudioFormatWriter> writer (
+                wav.createWriterFor (out.get(), reader->sampleRate,
+                                     juce::jmax (1, (int) reader->numChannels),
+                                     24, meta, 0));
+            if (writer == nullptr) { ++failed; continue; }
+            out.release();   // writer now owns the stream
+
+            if (! writer->writeFromAudioReader (*reader, 0, reader->lengthInSamples))
+                ++failed;
+            else
+                ++imported;
+        }
+
+        if (imported == 0)
+        {
+            showStatus ("Import failed — no readable audio files");
+            return;
+        }
+
+        // Load the freshly-built session for virtual soundcheck playback.
+        const int loaded = engine.loadSession (sessionDir);
+        showStatus ("Imported " + juce::String (imported)
+                    + (failed > 0 ? " (skipped " + juce::String (failed) + ")"
+                                  : juce::String())
+                    + " — loaded " + juce::String (loaded) + " for playback");
+    });
 }
 
 void MainComponent::onSaveSessionAs()

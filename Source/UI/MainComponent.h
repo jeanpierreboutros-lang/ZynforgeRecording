@@ -49,6 +49,7 @@ private:
     void onSaveSessionAs();
     void onExportAllTracks();
     void onExportIndividualTrack (int channelIndex);
+    void onImportAudioFiles();
     void onLockToggled();
     void onBackupClicked();
     void applyLockState();
