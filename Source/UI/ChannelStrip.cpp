@@ -137,12 +137,16 @@ namespace zynforge
 
     void ChannelStrip::showContextMenu()
     {
+        const bool streaming = state.streamSend.load (std::memory_order_relaxed);
+
         juce::PopupMenu menu;
         menu.addItem (1, "Rename…");
         menu.addItem (2, "Change colour…");
         menu.addItem (3, "Reset colour");
         menu.addSeparator();
         menu.addItem (4, "Reset name");
+        menu.addSeparator();
+        menu.addItem (5, "Send to STREAM bus", true, streaming);
 
         menu.showMenuAsync (juce::PopupMenu::Options(),
                             [this] (int chosen)
@@ -158,6 +162,9 @@ namespace zynforge
                             state.name = "In " + juce::String (stripIndex + 1);
                             nameLabel.setText (state.name, juce::dontSendNotification);
                         }
+                        break;
+                case 5: state.streamSend.store (! state.streamSend.load (std::memory_order_relaxed),
+                                                std::memory_order_relaxed);
                         break;
                 default: break;
             }

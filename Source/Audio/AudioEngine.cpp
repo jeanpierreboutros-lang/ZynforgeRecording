@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "OscRemote.h"
 
 namespace zynforge
 {
@@ -44,8 +45,8 @@ namespace zynforge
 
     AudioEngine::AudioEngine()
     {
-        // Open with up to 32 inputs / 2 outputs by default — adjust later from UI.
-        auto err = deviceManager.initialise (/*numInputs*/ 32, /*numOutputs*/ 2,
+        // Open with up to 128 inputs / 64 outputs by default — adjust later from UI.
+        auto err = deviceManager.initialise (/*numInputs*/ 128, /*numOutputs*/ 64,
                                              /*savedState*/ nullptr,
                                              /*selectDefault*/ true);
         if (err.isNotEmpty())
@@ -112,6 +113,41 @@ namespace zynforge
         if (player.isLoaded())
             return player.getSessionDir();
         return {};
+    }
+
+    bool AudioEngine::startOsc (int udpPort, int dialectIndex)
+    {
+        if (osc == nullptr) osc = std::make_unique<OscRemote> (*this);
+        osc->setDialect ((OscRemote::Dialect) juce::jlimit (0, 4, dialectIndex));
+        return osc->start (udpPort);
+    }
+    void AudioEngine::stopOsc()
+    {
+        if (osc != nullptr) osc->stop();
+    }
+    bool AudioEngine::isOscListening() const
+    {
+        return osc != nullptr && osc->isListening();
+    }
+    int AudioEngine::getOscPort() const
+    {
+        return osc != nullptr ? osc->getPort() : 0;
+    }
+    int AudioEngine::getOscDialect() const
+    {
+        return osc != nullptr ? (int) osc->getDialect() : 0;
+    }
+
+    void AudioEngine::setStreamOutputs (int l, int r)
+    {
+        streamOutL.store (l, std::memory_order_relaxed);
+        streamOutR.store (r, std::memory_order_relaxed);
+    }
+
+    void AudioEngine::setTrackStream (int channelIndex, bool enabled)
+    {
+        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
+        recorder.getTrack (channelIndex).streamSend.store (enabled, std::memory_order_relaxed);
     }
 
     int AudioEngine::getCurrentDeviceInputCount() const
@@ -211,7 +247,7 @@ namespace zynforge
         // Build a routed-input pointer array: routedInputs[stripIndex] points
         // to the device input that strip is patched from, or nullptr if -1.
         const int numTracks = recorder.getNumTracks();
-        constexpr int kMaxStrips = 64;
+        constexpr int kMaxStrips = 128;
         const float* routedInputs[kMaxStrips] = {};
         for (int i = 0; i < numTracks && i < kMaxStrips; ++i)
         {
@@ -264,6 +300,33 @@ namespace zynforge
         }
 
         const int trackCount = numTracks;
+
+        // Dedicated streaming stereo bus: sum every strip flagged as
+        // streamSend into the configured outputs with their gain+pan.
+        const int sL = streamOutL.load (std::memory_order_relaxed);
+        const int sR = streamOutR.load (std::memory_order_relaxed);
+        if (sL >= 0 && sR >= 0 && sL < numOutputs && sR < numOutputs)
+        {
+            for (int i = 0; i < trackCount; ++i)
+            {
+                auto& t = recorder.getTrack (i);
+                if (! t.streamSend.load (std::memory_order_relaxed)) continue;
+                if (! channelAudible (i)) continue;
+
+                const float dB   = t.gainDb.load (std::memory_order_relaxed);
+                const float gain = juce::Decibels::decibelsToGain (dB, -60.0f);
+                const float pan  = juce::jlimit (-1.0f, 1.0f, t.pan.load (std::memory_order_relaxed));
+                const float panNorm = (pan + 1.0f) * 0.5f;
+                const float gL = gain * std::cos (panNorm * juce::MathConstants<float>::halfPi);
+                const float gR = gain * std::sin (panNorm * juce::MathConstants<float>::halfPi);
+
+                const float* src = playerScratch.getReadPointer (i);
+                if (outputs[sL] != nullptr && gL > 0.0001f)
+                    juce::FloatVectorOperations::addWithMultiply (outputs[sL], src, gL, numSamples);
+                if (outputs[sR] != nullptr && gR > 0.0001f)
+                    juce::FloatVectorOperations::addWithMultiply (outputs[sR], src, gR, numSamples);
+            }
+        }
 
         // Phase correlation between the selected pair (smoothed). The
         // pair refers to strip indices, so we use the routed input pointers.

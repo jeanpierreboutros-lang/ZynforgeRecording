@@ -11,8 +11,12 @@
 #include "StripNames.h"
 #include "StripRouting.h"
 
+#include <memory>
+
 namespace zynforge
 {
+    class OscRemote;
+
     class AudioEngine final : public juce::AudioIODeviceCallback
     {
     public:
@@ -52,6 +56,22 @@ namespace zynforge
         void  setTrackOutputRouting (int channelIndex, int deviceCh);
         int   getCurrentDeviceInputCount()  const;
         int   getCurrentDeviceOutputCount() const;
+
+        // Dedicated streaming stereo bus. setStreamOutputs(-1, -1) disables.
+        // Tracks with TrackState::streamSend=true mix into these outputs.
+        void  setStreamOutputs (int leftCh, int rightCh);
+        int   getStreamOutputL() const noexcept { return streamOutL.load (std::memory_order_relaxed); }
+        int   getStreamOutputR() const noexcept { return streamOutR.load (std::memory_order_relaxed); }
+        void  setTrackStream   (int channelIndex, bool enabled);
+
+        // OSC remote: starts/stops a juce::OSCReceiver bound to UDP port,
+        // with a dialect parser for DiGiCo / A&H / SSL / Yamaha consoles
+        // plus a generic /zynforge/* schema for tablet apps.
+        bool  startOsc (int udpPort, int dialectIndex);
+        void  stopOsc();
+        bool  isOscListening() const;
+        int   getOscPort() const;
+        int   getOscDialect() const;
 
         // Returns recording dir if recording, else loaded playback session,
         // else an empty File.
@@ -100,6 +120,11 @@ namespace zynforge
         std::atomic<int>   phaseLeft         { 0 };  // 0-based
         std::atomic<int>   phaseRight        { 1 };
         std::atomic<float> phaseCorrelation  { 0.0f };
+
+        std::atomic<int> streamOutL { -1 };
+        std::atomic<int> streamOutR { -1 };
+
+        std::unique_ptr<OscRemote> osc;
 
         // Audio-thread scratch for routed VSC playback: track i fills
         // channel i, then engine copies into the real device output that

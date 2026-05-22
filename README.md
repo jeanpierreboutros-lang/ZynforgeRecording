@@ -33,6 +33,10 @@ A focused recording surface for engineers running front-of-house or monitors who
 - [x] **Pill-shaped toggle buttons** — ARM / MON / MUTE / SOLO get the Live look: dark gradient body, no tick, accent-coloured text that brightens when engaged.
 - [x] **Fixed-width channel strips** in a horizontally scrollable viewport (~150 px per strip).
 - [x] **PATCH page** — INPUT PATCH / OUTPUT PATCH matrix tabs. Rows = hardware channels, columns = strips. Click a circle to route, click again to clear. Wired directly to the engine's input/output routing.
+- [x] **128-channel capacity** — opens up to 128 inputs / 64 outputs on the audio device.
+- [x] **STREAM bus** — per-strip "Send to STREAM bus" toggle in the right-click menu. Engine sums all stream-enabled strips into the configured stereo output pair (constant-power pan, post-fader, post-mute/solo).
+- [x] **Meterbridge window** — `METERS` button opens a floating window with one large LedMeter + name per strip; drag it onto a second display.
+- [x] **OSC remote with console dialects** — `OSC` button starts a UDP listener on port 8000 in your choice of dialect: Generic / **DiGiCo** / **Allen & Heath (SQ / Avantis)** / **SSL Live** / **Yamaha (DM7 / RIVAGE PM)**. Handles transport (record/play/stop), snapshot recall → scene marker drop, channel name / mute sync from the desk.
 - [x] Per-strip mini-spectrum (log-frequency FFT, 24 Hz refresh)
 - [x] Phase correlation meter (selectable pair, smoothed)
 - [x] dBFS numeric readout + per-channel clip counter (click meter to clear)
@@ -158,6 +162,28 @@ The backup writer is fed from the same FIFO drain as the primary, so the two fil
 When recording starts, the app writes a `recording.session` marker (JSON: start timestamp, sample rate, track count) into the session folder. On clean stop the marker is removed.
 
 If the app or machine dies mid-take, that marker remains. On next launch, ~250 ms after the window appears, the app scans `~/Music/Zynforge Sessions/` and pops up a menu of any session that didn't stop cleanly. Pick one → marker is cleared, session is loaded for playback so you can inspect or export it. WAV / FLAC headers are flushed every 5 s of audio (see *Crash-safe recording* below), so files remain playable up to that boundary regardless of how the previous run ended.
+
+## OSC remote (console integration)
+
+Click **OSC** in the header → pick a dialect → the app listens on UDP port 8000. All major mixing consoles can fire OSC over the same network — point them at this Mac's IP:8000.
+
+| Dialect | Snapshot/scene → marker | Transport sync | Channel name sync | Channel mute sync |
+|---|:-:|:-:|:-:|:-:|
+| Generic `/zynforge/*` | `/zynforge/scene <int>` | `/zynforge/record <0\|1>` `/zynforge/play <0\|1>` `/zynforge/stop` | `/zynforge/channel/<N>/name <string>` | `/zynforge/channel/<N>/mute <0\|1>` |
+| **DiGiCo** | `/Console/Snapshots/recall <int>` | `/Console/Transport/record` `/Console/Transport/play` | `/Console/Channels/<N>/name` | `/Console/Channels/<N>/mute` |
+| **Allen & Heath** (SQ / Avantis) | `/sq/scene/recall <int>` | `/sq/transport/record` `/sq/transport/play` | `/sq/ch<N>/name` | `/sq/ch<N>/mute` |
+| **SSL Live** | `/sslnet/snapshot/recall <int>` | `/sslnet/transport/record` `/sslnet/transport/play` | `/sslnet/channel/<N>/name` | `/sslnet/channel/<N>/mute` |
+| **Yamaha** (DM7 / RIVAGE PM) | `/Yamaha/Scene/recall <int>` or `/RIVAGE/Scene/recall` | `/Yamaha/Transport/record` `/RIVAGE/Transport/record` … | `/Yamaha/CH/<N>/Name` `/RIVAGE/CH/<N>/Name` | `/Yamaha/CH/<N>/Mute` `/RIVAGE/CH/<N>/Mute` |
+
+So a DiGiCo Quantum console firing snapshot 17 will drop a marker named "Scene 17" in the current session. Allen & Heath SQ-7 / Avantis sending `/sq/ch3/name "BD In"` retitles strip 3 to "BD In" on the fly.
+
+## STREAM bus
+
+Right-click any strip → **Send to STREAM bus**. The strip's playback (post-fader, post-mute/solo, with its pan) is summed into a dedicated stereo pair that you can route to a streaming encoder, a broadcast feed, or a separate amp. The output pair is set programmatically via `AudioEngine::setStreamOutputs(L, R)`; defaults to disabled until configured.
+
+## Meterbridge
+
+Click **METERS** → a floating window opens with one big LED meter + name per strip. Drag it to a second screen. Engineers can keep this dedicated to gain-staging while running the rest of the app on the main display.
 
 ## Patch page
 

@@ -1,5 +1,6 @@
 #include "MainComponent.h"
 #include "../Theme/BrandColors.h"
+#include "Meterbridge.h"
 #include "PatchPage.h"
 
 using namespace zynforge;
@@ -67,6 +68,44 @@ MainComponent::MainComponent()
     patchButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus);
     patchButton.onClick = [this] { zynforge::PatchPage::launch (engine); };
     addAndMakeVisible (patchButton);
+
+    metersButton.onClick = [this] { zynforge::Meterbridge::launch (engine); };
+    metersButton.setTooltip ("Open the floating meterbridge — drag onto a second display.");
+    addAndMakeVisible (metersButton);
+
+    oscButton.onClick = [this]
+    {
+        // Quick menu: pick a console dialect and start listening on 8000.
+        juce::PopupMenu menu;
+        menu.addSectionHeader (engine.isOscListening()
+                                ? "OSC listening on port " + juce::String (engine.getOscPort())
+                                : "OSC idle");
+        menu.addSeparator();
+        menu.addItem (1, "Listen — Generic /zynforge");
+        menu.addItem (2, "Listen — DiGiCo");
+        menu.addItem (3, "Listen — Allen & Heath (SQ / Avantis)");
+        menu.addItem (4, "Listen — SSL Live");
+        menu.addItem (5, "Listen — Yamaha (DM7 / RIVAGE)");
+        menu.addSeparator();
+        menu.addItem (10, "Stop", engine.isOscListening());
+
+        menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&oscButton),
+                            [this] (int chosen)
+        {
+            if (chosen <= 0) return;
+            if (chosen == 10) { engine.stopOsc(); oscButton.setButtonText ("OSC"); showStatus ("OSC stopped"); return; }
+            const int dialect = chosen - 1;
+            if (engine.startOsc (8000, dialect))
+            {
+                oscButton.setButtonText ("OSC •");
+                showStatus ("OSC listening on 8000 (" +
+                            juce::StringArray ({"Generic","DiGiCo","A&H","SSL","Yamaha"})[dialect] + ")");
+            }
+            else showStatus ("OSC failed to bind port 8000");
+        });
+    };
+    oscButton.setTooltip ("OSC remote: receive transport / scene / marker / channel-name messages from DiGiCo / A&H / SSL / Yamaha consoles or any OSC app.");
+    addAndMakeVisible (oscButton);
 
     // Tooltips on header controls.
     recordButton .setTooltip ("Start / stop multitrack recording.");
@@ -380,6 +419,8 @@ void MainComponent::applyLockState()
     stopButton   .setEnabled (e);
     backupButton .setEnabled (e);
     patchButton  .setEnabled (e);
+    metersButton .setEnabled (e);
+    oscButton    .setEnabled (e);
 
     for (auto& s : strips) if (s != nullptr) s->setEnabled (e);
 
@@ -779,9 +820,13 @@ void MainComponent::resized()
     row2.removeFromLeft (4);
     stopButton    .setBounds (row2.removeFromLeft (68).reduced (0, 2));
     row2.removeFromLeft (10);
-    patchButton   .setBounds (row2.removeFromRight (90).reduced (0, 2));
+    oscButton     .setBounds (row2.removeFromRight (70).reduced (0, 2));
     row2.removeFromRight (4);
-    backupButton  .setBounds (row2.removeFromRight (100).reduced (0, 2));
+    metersButton  .setBounds (row2.removeFromRight (84).reduced (0, 2));
+    row2.removeFromRight (4);
+    patchButton   .setBounds (row2.removeFromRight (78).reduced (0, 2));
+    row2.removeFromRight (4);
+    backupButton  .setBounds (row2.removeFromRight (90).reduced (0, 2));
     row2.removeFromRight (8);
     transportLabel.setBounds (row2.removeFromLeft (130));
     sessionLabel  .setBounds (row2);

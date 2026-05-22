@@ -76,6 +76,8 @@ private:
     juce::TextButton lockButton    { "LOCK" };
     juce::TextButton backupButton  { "BACKUP" };
     juce::TextButton patchButton   { "PATCH" };
+    juce::TextButton metersButton  { "METERS" };
+    juce::TextButton oscButton     { "OSC" };
 
     bool sessionLocked { false };
 

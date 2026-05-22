@@ -27,6 +27,9 @@ namespace zynforge
         std::atomic<int> inputRouting  { -2 };
         std::atomic<int> outputRouting { -2 };
 
+        // Stream bus send (post-fader, post-mute/solo).
+        std::atomic<bool> streamSend  { false };
+
         std::atomic<int>          clipCount        { 0 };
         std::atomic<juce::int64>  lastClipSample   { -1 };
 

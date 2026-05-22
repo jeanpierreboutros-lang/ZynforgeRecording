@@ -46,6 +46,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/StripColourPicker.cpp
     Source/UI/ExportDialog.cpp
     Source/UI/PatchPage.cpp
+    Source/UI/Meterbridge.cpp
     Source/UI/BigClockPanel.cpp
     Source/Audio/AudioEngine.cpp
     Source/Audio/MultitrackRecorder.cpp
@@ -56,6 +57,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Audio/StripNames.cpp
     Source/Audio/StripRouting.cpp
     Source/Audio/TrackExporter.cpp
+    Source/Audio/OscRemote.cpp
     Source/Theme/ZynForgeLookAndFeel.cpp
 )
 
@@ -76,6 +78,7 @@ target_link_libraries(ZynforgeRecording PRIVATE
     juce::juce_audio_formats
     juce::juce_gui_extra
     juce::juce_dsp
+    juce::juce_osc
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags
