@@ -1505,19 +1505,33 @@ void MainComponent::onImportAudioFiles()
         if (nextTrack > engine.getRecorder().getNumTracks())
             engine.setStripCount (nextTrack);
 
-        // Apply stereo pair flags + names to each imported strip.
+        // Apply stereo pair flags + names + routing to each imported strip.
         for (auto& rec : records)
         {
-            engine.setTrackName (rec.trackIndex, rec.name);
-            engine.setTrackStereo (rec.trackIndex, rec.stereo);
+            engine.setTrackName    (rec.trackIndex, rec.name);
+            engine.setTrackStereo  (rec.trackIndex, rec.stereo);
             if (rec.stereo)
             {
-                // R partner gets a helper label so it's recognisable if
-                // the pair is ever unlinked back to mono.
                 engine.setTrackName  (rec.trackIndex + 1, rec.name + " R");
                 engine.setTrackStereo (rec.trackIndex + 1, false);
+
+                // Route the stereo pair to a sensible pair of inputs +
+                // outputs so the strip's combos read 'In 1-2' / 'Out 1-2'
+                // rather than (unrouted). L gets the even slot, R gets
+                // the next one up.
+                engine.setTrackLinkedRouting (rec.trackIndex,     rec.trackIndex);
+                engine.setTrackLinkedRouting (rec.trackIndex + 1, rec.trackIndex + 1);
+            }
+            else
+            {
+                engine.setTrackLinkedRouting (rec.trackIndex, rec.trackIndex);
             }
         }
+
+        // setTrackStereo doesn't change the track count, so the mixer
+        // wouldn't otherwise rebuild — force the next timer tick to
+        // re-iterate logical strips (collapse stereo pairs into one).
+        lastTrackCount = -1;
 
         const int loaded = engine.loadSession (sessionDir);
         const int stereoCount = (int) std::count_if (records.begin(), records.end(),

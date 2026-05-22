@@ -19,6 +19,11 @@ namespace zynforge
         // leaves the meter mono. Safe to call after construction.
         void setStereoPartner (TrackState* r) noexcept { stereoR = r; repaint(); }
 
+        // Toggle the dB-label gutter on the left edge. The EDIT view rows
+        // turn this off because the meter widget is too narrow to fit
+        // labels and a bar — they want a pure-bar meter.
+        void setShowDbLabels (bool s) noexcept { showLabels = s; repaint(); }
+
         void paint (juce::Graphics&) override;
         void mouseDown (const juce::MouseEvent&) override;
 
@@ -29,6 +34,7 @@ namespace zynforge
 
         TrackState& state;
         TrackState* stereoR     { nullptr };
+        bool        showLabels  { true };
         float displayPeak       { 0.0f };
         float displayRms        { 0.0f };
         float displayPeakR      { 0.0f };

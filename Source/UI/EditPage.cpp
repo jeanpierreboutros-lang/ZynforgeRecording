@@ -137,7 +137,10 @@ namespace zynforge
             rebuildRoutingCombos();
             refreshRoutingSelection();
 
-            // Live signal meter on the right edge of the header.
+            // Live signal meter on the right edge of the header. The
+            // strip header is narrow (16 px reserved), so disable the
+            // dB-label gutter — the bar gets the full widget width.
+            meter.setShowDbLabels (false);
             addAndMakeVisible (meter);
             meter.setTooltip ("Live signal level — click to clear clip.");
 

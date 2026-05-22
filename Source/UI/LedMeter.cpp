@@ -104,9 +104,12 @@ namespace zynforge
 
         // Reserve a dedicated left-hand gutter for the dB labels so they
         // never overlap the meter segments. The bar(s) get the right side.
-        const float labelW = 14.0f;
+        // When the host turned labels off (narrow meter — EDIT view),
+        // the bar gets the full width.
+        const float labelW = showLabels ? 14.0f : 0.0f;
+        const float gap    = showLabels ? 2.0f  : 0.0f;
         auto labelCol = bounds.withWidth (labelW);
-        auto barArea  = bounds.withTrimmedLeft (labelW + 2.0f);
+        auto barArea  = bounds.withTrimmedLeft (labelW + gap);
 
         if (stereo)
         {
