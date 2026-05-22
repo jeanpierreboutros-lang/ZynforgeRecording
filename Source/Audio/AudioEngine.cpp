@@ -475,12 +475,15 @@ namespace zynforge
                              juce::jmin (playerScratch.getNumChannels(), numTracks),
                              numSamples);
 
-        // Drive per-strip meters from the player's output when the
-        // session is loaded (VSC playback / file import). The recorder
-        // already updates peaks when input is flowing — but on playback
-        // there's no input signal to meter, so without this the meters
-        // sit at zero even though audio is playing.
-        if (player.isPlaying() || player.isLoaded())
+        // Drive per-strip meters from the player's output ONLY when the
+        // player is actually rolling. The recorder has already written
+        // the input-side peak / rms for this block; we max the player
+        // contribution on top so a strip with BOTH input AND playback
+        // shows whichever is louder. When the player is stopped we
+        // leave the recorder's values alone — otherwise this would
+        // clobber the live input meters with zeros from an idle
+        // playerScratch buffer.
+        if (player.isPlaying())
         {
             const int playerTracks = juce::jmin (playerScratch.getNumChannels(), numTracks);
             for (int ch = 0; ch < playerTracks; ++ch)
@@ -497,8 +500,9 @@ namespace zynforge
                 const float rms = std::sqrt (sumSq / juce::jmax (1, numSamples));
                 auto& t = recorder.getTrack (ch);
                 const float prevPk = t.peak.load (std::memory_order_relaxed);
-                t.peak.store (juce::jmax (pk, prevPk * 0.92f), std::memory_order_relaxed);
-                t.rms .store (rms, std::memory_order_relaxed);
+                const float prevRms = t.rms.load (std::memory_order_relaxed);
+                t.peak.store (juce::jmax (pk,  prevPk),  std::memory_order_relaxed);
+                t.rms .store (juce::jmax (rms, prevRms), std::memory_order_relaxed);
                 if (pk >= 0.999f)
                 {
                     t.clipped.store (true, std::memory_order_relaxed);

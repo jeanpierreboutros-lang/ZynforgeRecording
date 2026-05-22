@@ -1420,67 +1420,111 @@ void MainComponent::onImportAudioFiles()
         const auto picks = fc.getResults();
         if (picks.isEmpty()) return;
 
-        // Convert each picked file into a Track_NN.wav inside a fresh
-        // session dir. The session is then loaded for VSC playback.
+        // Convert each picked file into one or two Track_NN.wav files
+        // (mono per track) inside a fresh session dir. Stereo source
+        // files become a stereo PAIR — two consecutive mono WAVs whose
+        // L track gets isStereo=true so the UI collapses them into one
+        // strip. The session is then loaded for VSC playback.
         auto sessionDir = makeNewSessionDir();
         sessionDir.createDirectory();
 
         juce::AudioFormatManager fm;
-        fm.registerBasicFormats();   // WAV, AIFF, FLAC, OGG, MP3 (read-only)
+        fm.registerBasicFormats();
 
-        int imported = 0;
-        int failed   = 0;
+        // Per imported file: remember (start_strip_index, was_stereo).
+        struct ImportRecord { int trackIndex; bool stereo; juce::String name; };
+        std::vector<ImportRecord> records;
+        int nextTrack = 0;
+        int failed    = 0;
+
+        auto writeMono = [] (juce::AudioFormatReader& reader, int channelIndex,
+                             const juce::File& dst, double sr) -> bool
+        {
+            dst.deleteFile();
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::FileOutputStream> out (dst.createOutputStream());
+            if (out == nullptr) return false;
+            juce::StringPairArray meta;
+            std::unique_ptr<juce::AudioFormatWriter> writer (
+                wav.createWriterFor (out.get(), sr, 1, 24, meta, 0));
+            if (writer == nullptr) return false;
+            out.release();
+
+            // Stream samples in chunks so we don't allocate a huge buffer.
+            constexpr int chunk = 16384;
+            juce::AudioBuffer<float> buf ((int) reader.numChannels, chunk);
+            juce::int64 pos = 0;
+            while (pos < reader.lengthInSamples)
+            {
+                const int n = (int) juce::jmin ((juce::int64) chunk,
+                                                reader.lengthInSamples - pos);
+                if (! reader.read (&buf, 0, n, pos, true, true)) return false;
+                const float* mono[1] = { buf.getReadPointer (channelIndex) };
+                if (! writer->writeFromFloatArrays (mono, 1, n)) return false;
+                pos += n;
+            }
+            return true;
+        };
+
         for (int i = 0; i < picks.size(); ++i)
         {
             const auto& src = picks.getReference (i);
             std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (src));
             if (reader == nullptr) { ++failed; continue; }
 
-            const auto dst = sessionDir.getChildFile (
-                "Track_" + juce::String (i + 1).paddedLeft ('0', 2) + ".wav");
-            dst.deleteFile();
+            const bool isStereoFile = (reader->numChannels >= 2);
+            const auto baseName = src.getFileNameWithoutExtension();
 
-            // Write as 24-bit WAV at the source sample rate so the
-            // SessionPlayer's BufferingAudioReader path picks it up like
-            // any other recorded track.
-            juce::WavAudioFormat wav;
-            std::unique_ptr<juce::FileOutputStream> out (dst.createOutputStream());
-            if (out == nullptr) { ++failed; continue; }
+            const int lTrack = nextTrack;
+            const auto lDst = sessionDir.getChildFile (
+                "Track_" + juce::String (lTrack + 1).paddedLeft ('0', 2) + ".wav");
+            const bool lOk = writeMono (*reader, 0, lDst, reader->sampleRate);
 
-            juce::StringPairArray meta;
-            std::unique_ptr<juce::AudioFormatWriter> writer (
-                wav.createWriterFor (out.get(), reader->sampleRate,
-                                     juce::jmax (1, (int) reader->numChannels),
-                                     24, meta, 0));
-            if (writer == nullptr) { ++failed; continue; }
-            out.release();   // writer now owns the stream
+            bool rOk = true;
+            if (isStereoFile)
+            {
+                const int rTrack = nextTrack + 1;
+                const auto rDst = sessionDir.getChildFile (
+                    "Track_" + juce::String (rTrack + 1).paddedLeft ('0', 2) + ".wav");
+                rOk = writeMono (*reader, 1, rDst, reader->sampleRate);
+            }
 
-            if (! writer->writeFromAudioReader (*reader, 0, reader->lengthInSamples))
-                ++failed;
-            else
-                ++imported;
+            if (! lOk || ! rOk) { ++failed; continue; }
+
+            records.push_back ({ lTrack, isStereoFile, baseName });
+            nextTrack += isStereoFile ? 2 : 1;
         }
 
-        if (imported == 0)
+        if (records.empty())
         {
             showStatus ("Import failed — no readable audio files");
             return;
         }
 
-        // Make sure the mixer has a strip per imported track — so every
-        // imported file gets a fader, meter, name, colour, and routing.
-        // Existing strips above the import count are left intact.
-        if (imported > engine.getRecorder().getNumTracks())
-            engine.setStripCount (imported);
+        // Resize the mixer to fit every imported strip.
+        if (nextTrack > engine.getRecorder().getNumTracks())
+            engine.setStripCount (nextTrack);
 
-        // Name each strip after the source file so the import shows up
-        // with meaningful labels in the mixer + EDIT views.
-        for (int i = 0; i < imported && i < picks.size(); ++i)
-            engine.setTrackName (i, picks.getReference (i).getFileNameWithoutExtension());
+        // Apply stereo pair flags + names to each imported strip.
+        for (auto& rec : records)
+        {
+            engine.setTrackName (rec.trackIndex, rec.name);
+            engine.setTrackStereo (rec.trackIndex, rec.stereo);
+            if (rec.stereo)
+            {
+                // R partner gets a helper label so it's recognisable if
+                // the pair is ever unlinked back to mono.
+                engine.setTrackName  (rec.trackIndex + 1, rec.name + " R");
+                engine.setTrackStereo (rec.trackIndex + 1, false);
+            }
+        }
 
-        // Load the freshly-built session for virtual soundcheck playback.
         const int loaded = engine.loadSession (sessionDir);
-        showStatus ("Imported " + juce::String (imported)
+        const int stereoCount = (int) std::count_if (records.begin(), records.end(),
+                                                     [] (const ImportRecord& r) { return r.stereo; });
+        showStatus ("Imported " + juce::String ((int) records.size())
+                    + " file(s), " + juce::String (stereoCount) + " stereo, "
+                    + juce::String ((int) records.size() - stereoCount) + " mono"
                     + (failed > 0 ? " (skipped " + juce::String (failed) + ")"
                                   : juce::String())
                     + " — loaded " + juce::String (loaded) + " for playback");
