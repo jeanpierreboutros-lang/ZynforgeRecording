@@ -62,7 +62,10 @@ namespace zynforge
         // S → yellow). Off state stays the dark control-bg pill.
         if (on)
         {
-            const auto base = b.findColour (juce::ToggleButton::buttonOnColourId);
+            // ToggleButton has no buttonOnColourId — repurpose
+            // tickColourId (already set per button: R red, I green,
+            // M red, S yellow) as the active fill source.
+            const auto base = b.findColour (juce::ToggleButton::tickColourId);
             const auto top  = base.brighter (down ? 0.50f : 0.30f);
             const auto bot  = base.darker   (down ? 0.10f : 0.30f);
             g.setGradientFill (juce::ColourGradient (top, r.getCentreX(), r.getY(),

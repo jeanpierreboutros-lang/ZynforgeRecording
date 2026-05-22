@@ -396,8 +396,7 @@ namespace zynforge
                                                    std::memory_order_relaxed);
         };
         // R (record arm) → red gradient when armed.
-        armButton.setColour (juce::ToggleButton::buttonOnColourId, brand::accentRecord);
-        armButton.setColour (juce::ToggleButton::tickColourId,     brand::accentRecord);
+        armButton.setColour (juce::ToggleButton::tickColourId, brand::accentRecord);
         addAndMakeVisible (armButton);
 
         monButton.setToggleState (s.monitor.load(), juce::dontSendNotification);
@@ -408,8 +407,7 @@ namespace zynforge
                                                      std::memory_order_relaxed);
         };
         // I (input monitor) → green gradient when on.
-        monButton.setColour (juce::ToggleButton::buttonOnColourId, brand::accentPlay);
-        monButton.setColour (juce::ToggleButton::tickColourId,     brand::accentPlay);
+        monButton.setColour (juce::ToggleButton::tickColourId, brand::accentPlay);
         addAndMakeVisible (monButton);
 
         muteButton.setToggleState (s.muted.load(), juce::dontSendNotification);
@@ -420,8 +418,7 @@ namespace zynforge
                                                    std::memory_order_relaxed);
         };
         // M (mute) → red gradient when on.
-        muteButton.setColour (juce::ToggleButton::buttonOnColourId, brand::accentRecord);
-        muteButton.setColour (juce::ToggleButton::tickColourId,     brand::accentRecord);
+        muteButton.setColour (juce::ToggleButton::tickColourId, brand::accentRecord);
         addAndMakeVisible (muteButton);
 
         soloButton.setToggleState (s.soloed.load(), juce::dontSendNotification);
@@ -432,8 +429,7 @@ namespace zynforge
                                                     std::memory_order_relaxed);
         };
         // S (solo) → yellow gradient when on.
-        soloButton.setColour (juce::ToggleButton::buttonOnColourId, brand::accentSolo);
-        soloButton.setColour (juce::ToggleButton::tickColourId,     brand::accentSolo);
+        soloButton.setColour (juce::ToggleButton::tickColourId, brand::accentSolo);
         addAndMakeVisible (soloButton);
 
         dbLabel.setFont (juce::Font (juce::FontOptions().withHeight (11.0f).withStyle ("Bold")));
