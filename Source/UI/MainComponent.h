@@ -7,6 +7,7 @@
 #include "../Theme/ZynForgeLookAndFeel.h"
 #include "BigClockPanel.h"
 #include "ChannelStrip.h"
+#include "EditPage.h"
 #include "ExportDialog.h"
 #include "PhaseMeter.h"
 #include "TimelineStrip.h"
@@ -103,6 +104,12 @@ private:
     juce::TextButton metersButton  { "METERS" };
     juce::TextButton oscButton     { "OSC" };
     juce::TextButton addChannelButton { "+ CH" };
+    juce::TextButton mixViewButton    { "MIX" };
+    juce::TextButton editViewButton   { "EDIT" };
+
+    enum class View { Mix, Edit };
+    View currentView { View::Mix };
+    void switchView (View v);
 
     bool sessionLocked { false };
 
@@ -115,6 +122,7 @@ private:
 
     juce::Viewport  stripsViewport;
     juce::Component stripsContainer;
+    std::unique_ptr<zynforge::EditPage> editPage;
 
     juce::TooltipWindow tooltipWindow { this, 500 };
 

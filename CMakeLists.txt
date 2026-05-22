@@ -46,6 +46,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/StripColourPicker.cpp
     Source/UI/ExportDialog.cpp
     Source/UI/PatchPage.cpp
+    Source/UI/EditPage.cpp
     Source/UI/Meterbridge.cpp
     Source/UI/TransportBar.cpp
     Source/UI/SessionSettingsDialog.cpp

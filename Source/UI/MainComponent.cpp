@@ -70,6 +70,23 @@ MainComponent::MainComponent()
     patchButton.onClick = [this] { zynforge::PatchPage::launch (engine); };
     addAndMakeVisible (patchButton);
 
+    auto styleViewBtn = [] (juce::TextButton& b, bool engaged)
+    {
+        b.setColour (juce::TextButton::buttonColourId,
+                     engaged ? brand::accentStatus.withAlpha (0.32f)
+                             : brand::bgElevated);
+        b.setColour (juce::TextButton::textColourOffId,
+                     engaged ? brand::accentStatus : brand::textSecondary);
+    };
+    styleViewBtn (mixViewButton,  true);
+    styleViewBtn (editViewButton, false);
+    mixViewButton .setTooltip ("Mixer view — channel strips with faders and meters.");
+    editViewButton.setTooltip ("Edit view — waveforms of the loaded/recorded tracks.");
+    mixViewButton .onClick = [this] { switchView (View::Mix);  };
+    editViewButton.onClick = [this] { switchView (View::Edit); };
+    addAndMakeVisible (mixViewButton);
+    addAndMakeVisible (editViewButton);
+
     addChannelButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus.withAlpha (0.18f));
     addChannelButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus);
     addChannelButton.setTooltip ("Set the number of recording channels — opens a prompt where you type the count (1–256).");
@@ -171,6 +188,10 @@ MainComponent::MainComponent()
     stripsViewport.setViewedComponent (&stripsContainer, false);
     stripsViewport.setScrollBarsShown (false, true);     // h-scroll only
     addAndMakeVisible (stripsViewport);
+
+    editPage = std::make_unique<zynforge::EditPage> (engine);
+    addChildComponent (*editPage);   // hidden by default; switchView toggles
+    switchView (View::Mix);
 
     setWantsKeyboardFocus (true);
     addKeyListener (this);
@@ -468,6 +489,33 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
     if (c == '.') { finishRange();          return true; }
     if (c == '4') { toggleSnap();           return true; }
     return false;
+}
+
+void MainComponent::switchView (View v)
+{
+    currentView = v;
+    const bool mix = (v == View::Mix);
+
+    stripsViewport.setVisible (mix);
+    if (editPage != nullptr)
+    {
+        editPage->setVisible (! mix);
+        if (! mix) editPage->refresh();   // rescan session dir on entry
+    }
+
+    // Reflect active state in the button tinting.
+    auto colour = [] (juce::TextButton& b, bool engaged)
+    {
+        b.setColour (juce::TextButton::buttonColourId,
+                     engaged ? brand::accentStatus.withAlpha (0.32f)
+                             : brand::bgElevated);
+        b.setColour (juce::TextButton::textColourOffId,
+                     engaged ? brand::accentStatus : brand::textSecondary);
+    };
+    colour (mixViewButton,  mix);
+    colour (editViewButton, ! mix);
+
+    resized();
 }
 
 void MainComponent::rebuildStrips()
@@ -1353,9 +1401,12 @@ void MainComponent::resized()
     // the macOS system menu bar. Keep loadButton out of the layout.
     loadButton.setBounds ({});
 
-    // PATCH is the only quick-access in-app button — BACKUP / METERS / OSC
-    // are all accessible from the Session menu in the macOS menu bar.
-    patchButton .setBounds (row2.removeFromRight (90).reduced (0, 2));
+    // PATCH + MIX / EDIT view toggle are the quick-access in-app buttons.
+    patchButton    .setBounds (row2.removeFromRight (90).reduced (0, 2));
+    row2.removeFromRight (8);
+    editViewButton .setBounds (row2.removeFromRight (60).reduced (0, 2));
+    row2.removeFromRight (4);
+    mixViewButton  .setBounds (row2.removeFromRight (60).reduced (0, 2));
     row2.removeFromRight (10);
     transportLabel.setBounds (row2.removeFromLeft (140));
     sessionLabel  .setBounds (row2);
@@ -1386,6 +1437,8 @@ void MainComponent::resized()
 
     auto viewportArea = r.reduced (margin);
     stripsViewport.setBounds (viewportArea);
+    if (editPage != nullptr)
+        editPage->setBounds (viewportArea);
 
     const int containerW = total > 0
                             ? total * stripW + (total - 1) * gap
