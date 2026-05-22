@@ -20,5 +20,10 @@ namespace zynforge
         void drawLinearSlider (juce::Graphics&, int x, int y, int width, int height,
                                float sliderPos, float minSliderPos, float maxSliderPos,
                                juce::Slider::SliderStyle, juce::Slider&) override;
+
+        // Wide pill-shaped toggle button: dark gradient body, accent-coloured
+        // bold text whose colour reflects the toggle state.
+        void drawToggleButton (juce::Graphics&, juce::ToggleButton&,
+                               bool over, bool down) override;
     };
 }

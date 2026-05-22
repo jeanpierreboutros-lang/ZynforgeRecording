@@ -30,6 +30,9 @@ A focused recording surface for engineers running front-of-house or monitors who
 - [x] **Redundant write** — pick a backup folder via the BACKUP button; every track is mirrored to `<backup>/<session>/Track_NN.<ext>` as you record. If the backup drive fails mid-take, the primary write keeps going untouched.
 - [x] **Per-strip input + output routing** — two dropdowns at the top of each strip pick which device input the strip captures from and which device output its VSC playback lands on. Defaults to identity (strip N ↔ device N). Persists per channel index.
 - [x] **Live-style fader** — long thumb with horizontal grip lines + bright centre stripe, green track fill below the thumb, matches the ZynForge Live look.
+- [x] **Pill-shaped toggle buttons** — ARM / MON / MUTE / SOLO get the Live look: dark gradient body, no tick, accent-coloured text that brightens when engaged.
+- [x] **Fixed-width channel strips** in a horizontally scrollable viewport (~150 px per strip).
+- [x] **PATCH page** — INPUT PATCH / OUTPUT PATCH matrix tabs. Rows = hardware channels, columns = strips. Click a circle to route, click again to clear. Wired directly to the engine's input/output routing.
 - [x] Per-strip mini-spectrum (log-frequency FFT, 24 Hz refresh)
 - [x] Phase correlation meter (selectable pair, smoothed)
 - [x] dBFS numeric readout + per-channel clip counter (click meter to clear)
@@ -155,6 +158,17 @@ The backup writer is fed from the same FIFO drain as the primary, so the two fil
 When recording starts, the app writes a `recording.session` marker (JSON: start timestamp, sample rate, track count) into the session folder. On clean stop the marker is removed.
 
 If the app or machine dies mid-take, that marker remains. On next launch, ~250 ms after the window appears, the app scans `~/Music/Zynforge Sessions/` and pops up a menu of any session that didn't stop cleanly. Pick one → marker is cleared, session is loaded for playback so you can inspect or export it. WAV / FLAC headers are flushed every 5 s of audio (see *Crash-safe recording* below), so files remain playable up to that boundary regardless of how the previous run ended.
+
+## Patch page
+
+Click **PATCH** (header row 2, far right) to open a modal patch matrix with two tabs:
+
+- **INPUT PATCH** — rows are the device's hardware inputs (IN 1…N), columns are the channel strips. Click a circle to route that hardware input to the corresponding strip. Click the active circle again to clear (strip becomes unrouted → no audio captured).
+- **OUTPUT PATCH** — same layout but rows are hardware outputs and columns route VSC playback. Each strip plays Track_NN.wav out the chosen hardware output.
+
+Each column is radio-style: a strip can be patched to at most one hardware channel at a time. Strip header in the matrix is coloured to match the strip's personality colour for quick visual matching.
+
+The matrix reads / writes the same `inputRouting` / `outputRouting` state on `TrackState` that the per-strip dropdowns at the top of each channel strip use, persisted via `StripRouting` across launches.
 
 ## FILE menu
 

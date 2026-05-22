@@ -75,6 +75,7 @@ private:
     juce::TextButton preRollButton { "PRE 0s" };
     juce::TextButton lockButton    { "LOCK" };
     juce::TextButton backupButton  { "BACKUP" };
+    juce::TextButton patchButton   { "PATCH" };
 
     bool sessionLocked { false };
 
@@ -83,6 +84,9 @@ private:
     zynforge::BigClockPanel bigClock;
     std::unique_ptr<zynforge::PhaseMeter>    phaseMeter;
     std::unique_ptr<zynforge::TimelineStrip> timeline;
+
+    juce::Viewport  stripsViewport;
+    juce::Component stripsContainer;
 
     std::vector<std::unique_ptr<zynforge::ChannelStrip>> strips;
     int  lastTrackCount { -1 };

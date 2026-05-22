@@ -1,5 +1,6 @@
 #include "MainComponent.h"
 #include "../Theme/BrandColors.h"
+#include "PatchPage.h"
 
 using namespace zynforge;
 
@@ -62,6 +63,11 @@ MainComponent::MainComponent()
     backupButton.onClick = [this] { onBackupClicked(); };
     addAndMakeVisible (backupButton);
 
+    patchButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus.withAlpha (0.18f));
+    patchButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus);
+    patchButton.onClick = [this] { zynforge::PatchPage::launch (engine); };
+    addAndMakeVisible (patchButton);
+
     refreshFormatButton();
     refreshPreRollButton();
 
@@ -72,6 +78,10 @@ MainComponent::MainComponent()
 
     timeline = std::make_unique<zynforge::TimelineStrip> (engine);
     addAndMakeVisible (*timeline);
+
+    stripsViewport.setViewedComponent (&stripsContainer, false);
+    stripsViewport.setScrollBarsShown (false, true);     // h-scroll only
+    addAndMakeVisible (stripsViewport);
 
     setWantsKeyboardFocus (true);
     addKeyListener (this);
@@ -132,7 +142,7 @@ void MainComponent::rebuildStrips()
                                                  std::move (outCb));
         s->setAvailableInputs  (numIns);
         s->setAvailableOutputs (numOuts);
-        addAndMakeVisible (*s);
+        stripsContainer.addAndMakeVisible (*s);
         strips.push_back (std::move (s));
     }
     lastTrackCount = n;
@@ -354,6 +364,7 @@ void MainComponent::applyLockState()
     playButton   .setEnabled (e);
     stopButton   .setEnabled (e);
     backupButton .setEnabled (e);
+    patchButton  .setEnabled (e);
 
     for (auto& s : strips) if (s != nullptr) s->setEnabled (e);
 
@@ -753,6 +764,8 @@ void MainComponent::resized()
     row2.removeFromLeft (4);
     stopButton    .setBounds (row2.removeFromLeft (68).reduced (0, 2));
     row2.removeFromLeft (10);
+    patchButton   .setBounds (row2.removeFromRight (90).reduced (0, 2));
+    row2.removeFromRight (4);
     backupButton  .setBounds (row2.removeFromRight (100).reduced (0, 2));
     row2.removeFromRight (8);
     transportLabel.setBounds (row2.removeFromLeft (130));
@@ -768,17 +781,27 @@ void MainComponent::resized()
     if (timeline != nullptr)
         timeline->setBounds (r.removeFromTop (52).reduced (12, 4));
 
-    if (strips.empty()) return;
+    // Strips area — fixed width per strip, horizontal scroll if they
+    // overflow the visible viewport.
+    const int margin    = 12;
+    const int gap       = 6;
+    const int stripW    = 150;   // Live-style strip width
+    const int total     = (int) strips.size();
 
-    const int gap = 6;
-    const int margin = 12;
-    auto strip = r.reduced (margin);
-    const int total = (int) strips.size();
-    const int w = juce::jmax (60, (strip.getWidth() - (total - 1) * gap) / total);
+    auto viewportArea = r.reduced (margin);
+    stripsViewport.setBounds (viewportArea);
 
+    const int containerW = total > 0
+                            ? total * stripW + (total - 1) * gap
+                            : viewportArea.getWidth();
+    stripsContainer.setSize (juce::jmax (containerW, viewportArea.getWidth()),
+                              viewportArea.getHeight());
+
+    int x = 0;
     for (int i = 0; i < total; ++i)
     {
-        strips[(std::size_t) i]->setBounds (strip.removeFromLeft (w));
-        if (i < total - 1) strip.removeFromLeft (gap);
+        strips[(std::size_t) i]->setBounds (x, 0, stripW,
+                                            stripsContainer.getHeight());
+        x += stripW + gap;
     }
 }

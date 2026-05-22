@@ -41,6 +41,37 @@ namespace zynforge
         g.drawRoundedRectangle (r, 4.0f, 1.0f);
     }
 
+    void ZynForgeLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b,
+                                                bool over, bool down)
+    {
+        auto r = b.getLocalBounds().toFloat().reduced (1.0f);
+
+        // Dark gradient pill body.
+        const auto top = juce::Colour (0x35, 0x35, 0x39);
+        const auto bot = juce::Colour (0x18, 0x18, 0x1c);
+        g.setGradientFill (juce::ColourGradient (top, r.getCentreX(), r.getY(),
+                                                 bot, r.getCentreX(), r.getBottom(), false));
+        g.fillRoundedRectangle (r, 4.0f);
+
+        if (down)
+            g.setColour (juce::Colours::white.withAlpha (0.06f));
+        else if (over)
+            g.setColour (juce::Colours::white.withAlpha (0.03f));
+        else
+            g.setColour (juce::Colours::transparentBlack);
+        g.fillRoundedRectangle (r, 4.0f);
+
+        g.setColour (brand::edge);
+        g.drawRoundedRectangle (r, 4.0f, 1.0f);
+
+        // Letter / label — coloured by toggle state.
+        const auto active = b.findColour (juce::ToggleButton::tickColourId);
+        const auto txt    = b.getToggleState() ? active : brand::textMuted;
+        g.setColour (txt);
+        g.setFont (juce::Font (juce::FontOptions().withHeight (11.5f).withStyle ("Bold")));
+        g.drawText (b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, false);
+    }
+
     void ZynForgeLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int w, int h,
                                                 float sliderPos, float /*minPos*/, float /*maxPos*/,
                                                 juce::Slider::SliderStyle style, juce::Slider& s)

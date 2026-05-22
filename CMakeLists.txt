@@ -45,6 +45,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/TimelineStrip.cpp
     Source/UI/StripColourPicker.cpp
     Source/UI/ExportDialog.cpp
+    Source/UI/PatchPage.cpp
     Source/UI/BigClockPanel.cpp
     Source/Audio/AudioEngine.cpp
     Source/Audio/MultitrackRecorder.cpp
