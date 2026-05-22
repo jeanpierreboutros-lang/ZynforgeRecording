@@ -80,14 +80,15 @@ namespace zynforge
                             juce::Rectangle<int> (0, 34, L.rowHeaderW, 18),
                             juce::Justification::centred, false);
 
-                // ─── Column headers (coloured band + M button band)
+                // ─── Column headers (coloured band + M / ST pill)
                 for (int c = 0; c < numStrips; ++c)
                 {
-                    auto& t = engine.getRecorder().getTrack (logical[(std::size_t) c].trackIndex);
-                    const bool stereoCol = logical[(std::size_t) c].stereo;
+                    const auto& ls = logical[(std::size_t) c];
+                    auto& t = engine.getRecorder().getTrack (ls.trackIndex);
+                    const bool stereoCol = ls.stereo;
                     const auto stripCol = t.colourARGB.load() != 0
                                           ? juce::Colour ((juce::uint32) t.colourARGB.load())
-                                          : brand::stripColour (logical[(std::size_t) c].trackIndex);
+                                          : brand::stripColour (ls.trackIndex);
 
                     // Coloured band
                     juce::Rectangle<int> head (L.rowHeaderW + c * L.colW, 0, L.colW, L.colorBandH);
@@ -99,29 +100,28 @@ namespace zynforge
                     g.setColour (stripCol.brighter (0.30f).withAlpha (0.60f));
                     g.drawRoundedRectangle (inner.toFloat(), 5.0f, 1.0f);
 
-                    // Channel number / pair label
+                    // Big number (logical position)
                     g.setColour (juce::Colours::white);
                     g.setFont (juce::Font (juce::FontOptions().withHeight (22.0f).withStyle ("Bold")));
                     g.drawText (juce::String (c + 1),
                                 juce::Rectangle<int> (inner.getX(), inner.getY() + 4, inner.getWidth(), 26),
                                 juce::Justification::centred, false);
 
-                    // INS label — "INS N" for mono, "INS N L+R" for stereo
+                    // Actual track name — same string as mixer + edit view.
                     g.setFont (juce::Font (juce::FontOptions().withHeight (11.0f).withStyle ("Bold")));
-                    const auto subLabel = stereoCol
-                        ? juce::String ("INS ") + juce::String (c + 1) + " (L+R)"
-                        : juce::String ("INS ") + juce::String (c + 1);
-                    g.drawText (subLabel,
-                                juce::Rectangle<int> (inner.getX(), inner.getY() + 32, inner.getWidth(), 18),
+                    const auto displayName = t.name.isNotEmpty() ? t.name
+                                                                  : juce::String ("In ") + juce::String (ls.trackIndex + 1);
+                    g.drawText (displayName,
+                                juce::Rectangle<int> (inner.getX() + 2, inner.getY() + 32,
+                                                      inner.getWidth() - 4, 18),
                                 juce::Justification::centred, false);
 
-                    // M (mute) pill under header
-                    juce::Rectangle<int> muteCell (L.rowHeaderW + c * L.colW, L.colorBandH, L.colW, L.muteBandH);
-                    auto pill = muteCell.reduced (10, 4);
-                    const bool isMuted = t.muted.load();
-                    if (isMuted)
+                    // Mono / stereo indicator pill — click to toggle.
+                    juce::Rectangle<int> pillCell (L.rowHeaderW + c * L.colW, L.colorBandH, L.colW, L.muteBandH);
+                    auto pill = pillCell.reduced (10, 4);
+                    if (stereoCol)
                     {
-                        g.setColour (brand::accentRecord);
+                        g.setColour (stripCol);
                         g.fillRoundedRectangle (pill.toFloat(), pill.getHeight() * 0.5f);
                         g.setColour (juce::Colours::white);
                     }
@@ -133,8 +133,8 @@ namespace zynforge
                         g.drawRoundedRectangle (pill.toFloat(), pill.getHeight() * 0.5f, 1.0f);
                         g.setColour (brand::textSecondary);
                     }
-                    g.setFont (juce::Font (juce::FontOptions().withHeight (12.0f).withStyle ("Bold")));
-                    g.drawText ("M", pill, juce::Justification::centred, false);
+                    g.setFont (juce::Font (juce::FontOptions().withHeight (11.0f).withStyle ("Bold")));
+                    g.drawText (stereoCol ? "ST" : "M", pill, juce::Justification::centred, false);
                 }
 
                 // ─── Rows
@@ -164,14 +164,13 @@ namespace zynforge
                         const auto cell = juce::Rectangle<int> (x, y, L.colW, L.rowH);
                         const auto dot  = cell.withSizeKeepingCentre (22, 22).toFloat();
 
-                        const int trackIdx = logical[(std::size_t) c].trackIndex;
-                        const bool stereoCol = logical[(std::size_t) c].stereo;
-                        const int rtL = currentRoutingForTrack (trackIdx);
-                        const int rtR = stereoCol ? currentRoutingForTrack (trackIdx + 1) : -99;
-                        const bool activeL = (rtL == row);
-                        const bool activeR = (rtR == row);
+                        const int trackIdx   = logical[(std::size_t) c].trackIndex;
+                        const int rtL        = currentRoutingForTrack (trackIdx);
+                        // For stereo columns only the L position is drawn;
+                        // R is implicit (always L+1).
+                        const bool active = (rtL == row);
 
-                        if (activeL || activeR)
+                        if (active)
                         {
                             auto& t = engine.getRecorder().getTrack (trackIdx);
                             const auto stripCol = t.colourARGB.load() != 0
@@ -181,17 +180,6 @@ namespace zynforge
                             g.fillEllipse (dot);
                             g.setColour (juce::Colours::white);
                             g.drawEllipse (dot, 2.0f);
-
-                            // L / R glyph on stereo dots so users see which
-                            // side of the pair this row feeds.
-                            if (stereoCol)
-                            {
-                                g.setColour (juce::Colours::white);
-                                g.setFont (juce::Font (juce::FontOptions().withHeight (10.0f).withStyle ("Bold")));
-                                g.drawText (activeL ? "L" : "R",
-                                            dot.toNearestInt(),
-                                            juce::Justification::centred, false);
-                            }
                         }
                         else
                         {
@@ -210,7 +198,7 @@ namespace zynforge
                                               : engine.getCurrentDeviceOutputCount();
                 const auto L = computeLayout();
 
-                // Mute pill click?
+                // Mono / stereo pill click — toggles isStereo on this column.
                 if (e.y >= L.colorBandH && e.y < L.colHeaderH)
                 {
                     const int x = e.x - L.rowHeaderW;
@@ -219,10 +207,17 @@ namespace zynforge
                     if (col < 0 || col >= numStrips) return;
                     const auto& ls = logical[(std::size_t) col];
                     auto& t = engine.getRecorder().getTrack (ls.trackIndex);
-                    const bool newMute = ! t.muted.load();
-                    t.muted.store (newMute);
-                    if (ls.stereo)
-                        engine.getRecorder().getTrack (ls.trackIndex + 1).muted.store (newMute);
+                    const int totalTracks = engine.getRecorder().getNumTracks();
+                    if (! ls.stereo)
+                    {
+                        // Going mono → stereo. Need a right partner.
+                        if (ls.trackIndex + 1 >= totalTracks) return;
+                        t.isStereo.store (true, std::memory_order_release);
+                    }
+                    else
+                    {
+                        t.isStereo.store (false, std::memory_order_release);
+                    }
                     dragActive = false;
                     repaint();
                     return;
@@ -285,11 +280,11 @@ namespace zynforge
 
             bool isRowRoutedToAnyStrip (int row, const std::vector<LogicalStrip>& logical) const
             {
+                // Only the L position of a stereo strip activates a row
+                // label — R is implicit, so leaving its row dim keeps the
+                // visual in sync with the dot-rendering rule.
                 for (auto& ls : logical)
-                {
                     if (currentRoutingForTrack (ls.trackIndex) == row) return true;
-                    if (ls.stereo && currentRoutingForTrack (ls.trackIndex + 1) == row) return true;
-                }
                 return false;
             }
 
