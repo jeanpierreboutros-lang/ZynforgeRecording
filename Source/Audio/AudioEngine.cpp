@@ -65,6 +65,36 @@ namespace zynforge
         return companion != nullptr ? companion->getPort() : -1;
     }
 
+    void AudioEngine::setMasterGainDb (float dB)
+    {
+        masterState.gainDb.store (dB, std::memory_order_relaxed);
+        if (appProps != nullptr)
+        {
+            appProps->setValue ("masterGainDb", (double) dB);
+            appProps->saveIfNeeded();
+        }
+    }
+    void AudioEngine::setMasterMuted (bool m)
+    {
+        masterState.muted.store (m, std::memory_order_relaxed);
+        if (appProps != nullptr)
+        {
+            appProps->setValue ("masterMuted", m);
+            appProps->saveIfNeeded();
+        }
+    }
+    void AudioEngine::setMasterOutputs (int l, int r)
+    {
+        masterOutL.store (l, std::memory_order_relaxed);
+        masterOutR.store (r, std::memory_order_relaxed);
+        if (appProps != nullptr)
+        {
+            appProps->setValue ("masterOutL", l);
+            appProps->setValue ("masterOutR", r);
+            appProps->saveIfNeeded();
+        }
+    }
+
     void AudioEngine::setLtcSourceStrip (int oneBasedIndex) noexcept
     {
         ltcSourceStrip.store (oneBasedIndex - 1, std::memory_order_release);
@@ -260,6 +290,13 @@ namespace zynforge
         // Restore the LTC source strip (1-based stored, internal 0-based).
         ltcSourceStrip.store (appProps->getIntValue ("ltcSourceStrip", 0) - 1,
                               std::memory_order_release);
+
+        // Master bus state — gain + mute + L/R output routing.
+        masterState.name = "MASTER";
+        masterState.gainDb.store ((float) appProps->getDoubleValue ("masterGainDb", 0.0));
+        masterState.muted .store (appProps->getBoolValue ("masterMuted", false));
+        masterOutL.store (appProps->getIntValue ("masterOutL", 0));
+        masterOutR.store (appProps->getIntValue ("masterOutR", 1));
 
         // Open with up to 256 inputs / 64 outputs by default — adjust later from UI.
         auto err = deviceManager.initialise (/*numInputs*/ 256, /*numOutputs*/ 64,
@@ -641,12 +678,14 @@ namespace zynforge
             }
         }
 
-        // Sum monitored inputs into the stereo monitor bus (outputs 0 + 1)
-        // with constant-power pan and per-channel gain. Internal sum is
-        // double-precision so summing N hot channels can't accumulate
-        // round-off above 0 dBFS; we convert to float when writing out.
-        const int monL = 0, monR = 1;
-        const int blk  = juce::jmin (numSamples, monitorAccum.getNumSamples());
+        // ── Master bus ────────────────────────────────────────────────
+        // Every audible channel's VSC playback contributes to the master
+        // by default. Channels with MON=on ALSO contribute their live
+        // input on top, so the engineer can hear mics during a take.
+        // Mute / solo gates apply: if any channel is soloed, only soloed
+        // channels contribute (this is what gives the user "solo a track
+        // and hear it via the master fader" behaviour).
+        const int blk = juce::jmin (numSamples, monitorAccum.getNumSamples());
         monitorAccum.clear (0, 0, blk);
         monitorAccum.clear (1, 0, blk);
 
@@ -656,34 +695,83 @@ namespace zynforge
         for (int ch = 0; ch < trackCount; ++ch)
         {
             auto& t = recorder.getTrack (ch);
-            if (! t.monitor.load (std::memory_order_relaxed)) continue;
             if (! channelAudible (ch)) continue;
-
-            const float* src = (ch < kMaxStrips) ? routedInputs[ch] : nullptr;
-            if (src == nullptr) continue;
 
             const double dB   = t.gainDb.load (std::memory_order_relaxed);
             const double gain = juce::Decibels::decibelsToGain (dB, -60.0);
-            const double pan  = juce::jlimit (-1.0, 1.0, (double) t.pan.load (std::memory_order_relaxed));
+            const double pan  = juce::jlimit (-1.0, 1.0,
+                                              (double) t.pan.load (std::memory_order_relaxed));
             const double panNorm = (pan + 1.0) * 0.5;
             const double gL = gain * std::cos (panNorm * juce::MathConstants<double>::halfPi);
             const double gR = gain * std::sin (panNorm * juce::MathConstants<double>::halfPi);
 
-            for (int i = 0; i < blk; ++i)
+            // (a) VSC playback — always summed to master when audible.
+            if (ch < playerScratch.getNumChannels())
             {
-                const double s = (double) src[i];
-                accL[i] += s * gL;
-                accR[i] += s * gR;
+                const float* psrc = playerScratch.getReadPointer (ch);
+                if (psrc != nullptr)
+                    for (int i = 0; i < blk; ++i)
+                    {
+                        const double s = (double) psrc[i];
+                        accL[i] += s * gL;
+                        accR[i] += s * gR;
+                    }
+            }
+
+            // (b) Live input — only when MON is on (per-channel monitor).
+            if (t.monitor.load (std::memory_order_relaxed))
+            {
+                const float* isrc = (ch < kMaxStrips) ? routedInputs[ch] : nullptr;
+                if (isrc != nullptr)
+                    for (int i = 0; i < blk; ++i)
+                    {
+                        const double s = (double) isrc[i];
+                        accL[i] += s * gL;
+                        accR[i] += s * gR;
+                    }
             }
         }
 
-        // Mix down to the device output buffers (float).
-        if (monL < numOutputs && outputs[monL] != nullptr)
+        // Master fader + master mute act on the summed bus.
+        const bool   mMute = masterState.muted.load (std::memory_order_relaxed);
+        const double mGain = mMute ? 0.0
+                                   : juce::Decibels::decibelsToGain (
+                                         (double) masterState.gainDb.load (std::memory_order_relaxed),
+                                         -60.0);
+
+        // Drive the master meter (peak + RMS) from the accumulator BEFORE
+        // mGain so the meter shows what's hitting the bus, then write to
+        // the configured master outputs scaled by mGain.
+        {
+            double mPeakL = 0.0, mPeakR = 0.0;
+            double mRmsL  = 0.0, mRmsR  = 0.0;
             for (int i = 0; i < blk; ++i)
-                outputs[monL][i] += (float) accL[i];
-        if (monR < numOutputs && outputs[monR] != nullptr)
+            {
+                const double aL = std::abs (accL[i]);
+                const double aR = std::abs (accR[i]);
+                if (aL > mPeakL) mPeakL = aL;
+                if (aR > mPeakR) mPeakR = aR;
+                mRmsL += accL[i] * accL[i];
+                mRmsR += accR[i] * accR[i];
+            }
+            const double inv = 1.0 / (double) juce::jmax (1, blk);
+            const float pk  = (float) juce::jmax (mPeakL, mPeakR);
+            const float rms = (float) std::sqrt (juce::jmax (mRmsL, mRmsR) * inv);
+            const float prevPk  = masterState.peak.load (std::memory_order_relaxed);
+            const float prevRms = masterState.rms .load (std::memory_order_relaxed);
+            masterState.peak.store (juce::jmax (pk,  prevPk  * 0.92f), std::memory_order_relaxed);
+            masterState.rms .store (juce::jmax (rms, prevRms * 0.85f), std::memory_order_relaxed);
+            if (pk >= 0.999f) masterState.clipped.store (true, std::memory_order_relaxed);
+        }
+
+        const int outL = juce::jlimit (0, numOutputs - 1, masterOutL.load (std::memory_order_relaxed));
+        const int outR = juce::jlimit (0, numOutputs - 1, masterOutR.load (std::memory_order_relaxed));
+        if (outL < numOutputs && outputs[outL] != nullptr)
             for (int i = 0; i < blk; ++i)
-                outputs[monR][i] += (float) accR[i];
+                outputs[outL][i] += (float) (accL[i] * mGain);
+        if (outR < numOutputs && outputs[outR] != nullptr && outR != outL)
+            for (int i = 0; i < blk; ++i)
+                outputs[outR][i] += (float) (accR[i] * mGain);
 
         // Companion stream feed — runs at the very end so it captures
         // EVERYTHING the engineer hears at outputs 0+1 (per-channel

@@ -49,6 +49,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/PatchPage.cpp
     Source/UI/EditPage.cpp
     Source/UI/AudioDeviceDialog.cpp
+    Source/UI/MasterStrip.cpp
     Source/Network/CompanionServer.cpp
     Source/UI/Meterbridge.cpp
     Source/UI/TransportBar.cpp

@@ -42,6 +42,20 @@ namespace zynforge
         bool isCompanionServerRunning() const noexcept;
         int  getCompanionServerPort() const noexcept;
 
+        // ── Master bus ────────────────────────────────────────────────
+        // The master sums every audible channel's VSC playback plus every
+        // channel whose MON flag is on (live input monitoring). Mute and
+        // solo gates apply: any solo engaged → only soloed channels reach
+        // the master.
+        TrackState& getMasterState() noexcept { return masterState; }
+        float getMasterGainDb() const noexcept { return masterState.gainDb.load(); }
+        bool  getMasterMuted()  const noexcept { return masterState.muted.load(); }
+        void  setMasterGainDb (float dB);
+        void  setMasterMuted  (bool m);
+        int   getMasterOutputL() const noexcept { return masterOutL.load(); }
+        int   getMasterOutputR() const noexcept { return masterOutR.load(); }
+        void  setMasterOutputs (int l, int r);
+
         bool startRecording (const juce::File& sessionDir);
         void stopRecording();
         bool isRecording() const noexcept                  { return recorder.isRecording(); }
@@ -181,10 +195,18 @@ namespace zynforge
         std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> stereoMixWriter;
         juce::AudioBuffer<float>                                stereoMixScratch;
 
-        // Double-precision accumulator for the monitor sum so summing N
+        // Double-precision accumulator for the master sum so summing N
         // hot channels can't overshoot float headroom on the way to the
-        // stereo monitor bus.
+        // stereo master bus.
         juce::AudioBuffer<double>                               monitorAccum;
+
+        // Master bus state. masterState is just a TrackState so the
+        // master meter / fader / mute can reuse LedMeter + the strip
+        // gain/pan paths without a parallel implementation. Output
+        // routing is engineer-configurable and persists in appProps.
+        TrackState        masterState;
+        std::atomic<int>  masterOutL { 0 };
+        std::atomic<int>  masterOutR { 1 };
 
         std::unique_ptr<OscRemote> osc;
         std::unique_ptr<CompanionServer> companion;

@@ -240,6 +240,9 @@ MainComponent::MainComponent()
     addChildComponent (*editPage);   // hidden by default; switchView toggles
     switchView (View::Mix);
 
+    masterStrip = std::make_unique<zynforge::MasterStrip> (engine);
+    addAndMakeVisible (*masterStrip);
+
     setWantsKeyboardFocus (true);
     addKeyListener (this);
 
@@ -1812,6 +1815,26 @@ void MainComponent::resized()
     const int total  = (int) strips.size();
 
     auto viewportArea = r.reduced (margin);
+
+    // Master strip sits on the right edge of the mix area, fixed, never
+    // scrolls with the channel viewport. Hidden in the EDIT view so the
+    // waveforms get the full width.
+    const int masterW = 140;
+    if (masterStrip != nullptr)
+    {
+        masterStrip->setVisible (currentView == View::Mix);
+        if (currentView == View::Mix)
+        {
+            auto masterArea = viewportArea.removeFromRight (masterW);
+            viewportArea.removeFromRight (8);   // gap between strips and master
+            masterStrip->setBounds (masterArea);
+        }
+        else
+        {
+            masterStrip->setBounds ({});
+        }
+    }
+
     stripsViewport.setBounds (viewportArea);
     if (editPage != nullptr)
         editPage->setBounds (viewportArea);

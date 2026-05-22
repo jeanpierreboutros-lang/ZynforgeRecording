@@ -9,6 +9,7 @@
 #include "ChannelStrip.h"
 #include "EditPage.h"
 #include "ExportDialog.h"
+#include "MasterStrip.h"
 #include "PhaseMeter.h"
 #include "TimelineStrip.h"
 #include "TransportBar.h"
@@ -125,7 +126,8 @@ private:
 
     juce::Viewport  stripsViewport;
     juce::Component stripsContainer;
-    std::unique_ptr<zynforge::EditPage> editPage;
+    std::unique_ptr<zynforge::EditPage>     editPage;
+    std::unique_ptr<zynforge::MasterStrip>  masterStrip;
 
     juce::TooltipWindow tooltipWindow { this, 500 };
 
