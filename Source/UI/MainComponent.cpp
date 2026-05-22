@@ -6,6 +6,7 @@
 #include "NewSessionDialog.h"
 #include "PatchPage.h"
 #include "ClickSettingsDialog.h"
+#include "../Audio/SpectralClassifier.h"
 #include "SessionPropertiesDialog.h"
 #include "SessionSettingsDialog.h"
 
@@ -526,6 +527,11 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addSeparator();
         menu.addItem (250, "Session Settings…", ! engine.isRecording());
         menu.addItem (251, "Properties…",       engine.getActiveSessionDir().isDirectory());
+        menu.addSeparator();
+        menu.addItem (280, "Spectral auto-name strips",
+                      engine.getRecorder().getNumTracks() > 0);
+        menu.addItem (281, "Write soundcheck report",
+                      engine.getActiveSessionDir().isDirectory());
     }
 
     return menu;
@@ -636,6 +642,8 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 51)   zynforge::Meterbridge::launch (engine);
     else if (id == 52)   onVscClicked();
     else if (id == 251) showSessionProperties();
+    else if (id == 280) runSpectralAutoName();
+    else if (id == 281) writeSoundcheckReport();
     else if (id == 250)
     {
         struct StubContent final : public juce::Component
@@ -1014,6 +1022,10 @@ void MainComponent::timerCallback()
     const int n = engine.getRecorder().getNumTracks();
     if (n != lastTrackCount)
         rebuildStrips();
+
+    // Tick the cue-fade ramp if one is in flight — interpolates gain
+    // and pan from the live mix toward the cue's target snapshot.
+    if (cueRamp.active) updateCueRamp();
 
     // Keep each strip's input/output combos in sync with engine state —
     // the PATCH page can mutate routing behind the strip's back. Also
@@ -1857,7 +1869,10 @@ void MainComponent::loadSetlistFromActiveSession()
                         zynforge::SetlistBar::Cue cue;
                         cue.name      = c->getProperty ("name").toString();
                         cue.samplePos = (juce::int64) (double) c->getProperty ("samplePos");
-                        cue.tempoBpm  = (float) (double) c->getProperty ("tempoBpm");
+                        cue.tempoBpm   = (float) (double) c->getProperty ("tempoBpm");
+                        cue.transition = (zynforge::SetlistBar::Transition)
+                                            (int) c->getProperty ("transition");
+                        cue.fadeBeats  = (float) (double) c->getProperty ("fadeBeats");
 
                         // Deserialize per-strip snapshot if present
                         // (cues saved by older builds without snapshots
@@ -1910,7 +1925,9 @@ void MainComponent::saveSetlistToActiveSession() const
         juce::DynamicObject::Ptr entry (new juce::DynamicObject());
         entry->setProperty ("name",      c.name);
         entry->setProperty ("samplePos", (double) c.samplePos);
-        entry->setProperty ("tempoBpm",  (double) c.tempoBpm);
+        entry->setProperty ("tempoBpm",    (double) c.tempoBpm);
+        entry->setProperty ("transition",  (int) c.transition);
+        entry->setProperty ("fadeBeats",   (double) c.fadeBeats);
 
         juce::Array<juce::var> stripArr;
         for (const auto& s : c.strips)
@@ -1957,6 +1974,16 @@ void MainComponent::jumpToCue (int index)
         // the metronome lines up with the recalled cue.
         if (clickTrackIndex >= 0 && std::abs (oldBpm - cue.tempoBpm) > 0.05f)
             generateOrRefreshClickTrack();
+    }
+
+    // Fade transition? — start a ramp instead of instant restore.
+    if (cue.transition == zynforge::SetlistBar::Transition::Fade && cue.fadeBeats > 0.0f)
+    {
+        startCueRampTo (cue);
+        updateTransportLabels();
+        showStatus ("Cue " + juce::String (index + 1) + " — fading mix over "
+                    + juce::String (cue.fadeBeats, 1) + " beats");
+        return;
     }
 
     // Recall the mixer state captured with this cue: gain / pan /
@@ -2297,6 +2324,145 @@ void MainComponent::generateOrRefreshClickTrack()
         editPage->setClickTrackPresent (true, clickTrackIndex);
 }
 
+void MainComponent::startCueRampTo (const zynforge::SetlistBar::Cue& cue)
+{
+    auto& rec = engine.getRecorder();
+    const int n = rec.getNumTracks();
+    cueRamp.gainStartTarget.clear();
+    cueRamp.panStartTarget .clear();
+    cueRamp.gainStartTarget.reserve ((size_t) n);
+    cueRamp.panStartTarget .reserve ((size_t) n);
+
+    auto& player = engine.getPlayer();
+    player.setPositionSamples (cue.samplePos);
+
+    for (int i = 0; i < n; ++i)
+    {
+        const auto curG = rec.getTrack (i).gainDb.load (std::memory_order_relaxed);
+        const auto curP = rec.getTrack (i).pan   .load (std::memory_order_relaxed);
+        float tgtG = curG, tgtP = curP;
+        if (i < (int) cue.strips.size())
+        {
+            tgtG = cue.strips[(size_t) i].gainDb;
+            tgtP = cue.strips[(size_t) i].pan;
+        }
+        cueRamp.gainStartTarget.push_back ({ curG, tgtG });
+        cueRamp.panStartTarget .push_back ({ curP, tgtP });
+    }
+
+    // Other state (mute / solo / mon / arm / routing / tempo) snaps
+    // immediately — only continuous parameters interpolate.
+    if (cue.tempoBpm > 0.0f) { engine.setSessionTempoBpm (cue.tempoBpm); tempoBar.setBpm (cue.tempoBpm); }
+    for (int i = 0; i < (int) cue.strips.size() && i < n; ++i)
+    {
+        const auto& s = cue.strips[(size_t) i];
+        engine.setTrackInputRouting (i, s.inputRouting);
+        engine.setTrackOutputRouting(i, s.outputRouting);
+        auto& t = rec.getTrack (i);
+        t.muted  .store (s.muted,   std::memory_order_relaxed);
+        t.soloed .store (s.soloed,  std::memory_order_relaxed);
+        t.monitor.store (s.monitor, std::memory_order_relaxed);
+        t.armed  .store (s.armed,   std::memory_order_relaxed);
+    }
+
+    const float bpm = engine.getSessionTempoBpm();
+    cueRamp.durationMs = (cue.fadeBeats * 60000.0) / juce::jmax (20.0f, bpm);
+    cueRamp.startMs    = juce::Time::getMillisecondCounterHiRes();
+    cueRamp.active     = true;
+    lastTrackCount = -1;
+}
+
+void MainComponent::updateCueRamp()
+{
+    if (! cueRamp.active) return;
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    const double t   = juce::jlimit (0.0, 1.0,
+                                     (now - cueRamp.startMs) / juce::jmax (1.0, cueRamp.durationMs));
+    auto& rec = engine.getRecorder();
+    const int n = juce::jmin ((int) cueRamp.gainStartTarget.size(), rec.getNumTracks());
+    for (int i = 0; i < n; ++i)
+    {
+        const auto [gA, gB] = cueRamp.gainStartTarget[(size_t) i];
+        const auto [pA, pB] = cueRamp.panStartTarget [(size_t) i];
+        engine.setTrackGainDb (i, (float) (gA + (gB - gA) * t));
+        engine.setTrackPan    (i, (float) (pA + (pB - pA) * t));
+    }
+    if (t >= 1.0)
+        cueRamp.active = false;
+}
+
+void MainComponent::runSpectralAutoName()
+{
+    auto& rec = engine.getRecorder();
+    const int n = rec.getNumTracks();
+    if (n <= 0) { showStatus ("No tracks to classify"); return; }
+
+    const double sr = engine.getDeviceManager().getCurrentAudioDevice() != nullptr
+        ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
+        : 48000.0;
+
+    int hits = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        const auto r = SpectralClassifier::classify (rec.getTrack (i), sr);
+        if (r.name != "other")
+        {
+            engine.setTrackName (i, r.name + " " + juce::String (i + 1));
+            ++hits;
+        }
+    }
+    lastTrackCount = -1;
+    showStatus ("Spectral auto-name: confident guesses on "
+                + juce::String (hits) + " of " + juce::String (n) + " strip(s)");
+}
+
+void MainComponent::writeSoundcheckReport()
+{
+    const auto sessionDir = engine.getActiveSessionDir();
+    if (! sessionDir.isDirectory())
+    {
+        showStatus ("Open or create a session before writing a soundcheck report");
+        return;
+    }
+
+    auto& rec = engine.getRecorder();
+    const double sr = engine.getDeviceManager().getCurrentAudioDevice() != nullptr
+        ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
+        : 48000.0;
+
+    juce::DynamicObject::Ptr root (new juce::DynamicObject());
+    root->setProperty ("generatedAt", juce::Time::getCurrentTime().toISO8601 (true));
+    root->setProperty ("sampleRate",  sr);
+    root->setProperty ("bpm",         engine.getSessionTempoBpm());
+
+    juce::Array<juce::var> arr;
+    for (int i = 0; i < rec.getNumTracks(); ++i)
+    {
+        const auto& t = rec.getTrack (i);
+        const auto r  = SpectralClassifier::classify (t, sr);
+
+        juce::DynamicObject::Ptr o (new juce::DynamicObject());
+        o->setProperty ("track",        i + 1);
+        o->setProperty ("name",         t.name);
+        o->setProperty ("guess",        r.name);
+        o->setProperty ("peak",         (double) t.peak.load());
+        o->setProperty ("rms",          (double) t.rms .load());
+        o->setProperty ("clipCount",    t.clipCount.load());
+        o->setProperty ("bandSub",      (double) r.bands.sub);
+        o->setProperty ("bandLow",      (double) r.bands.low);
+        o->setProperty ("bandMid",      (double) r.bands.mid);
+        o->setProperty ("bandHigh",     (double) r.bands.high);
+        o->setProperty ("bandAir",      (double) r.bands.air);
+        o->setProperty ("stereo",       t.isStereo.load());
+        arr.add (juce::var (o.get()));
+    }
+    root->setProperty ("strips", juce::var (arr));
+
+    const auto reportFile = sessionDir.getChildFile ("soundcheck.report.json");
+    reportFile.replaceWithText (juce::JSON::toString (juce::var (root.get())));
+    showStatus ("Soundcheck report → " + reportFile.getFileName());
+}
+
 void MainComponent::showSessionProperties()
 {
     const auto sessionDir = engine.getActiveSessionDir();
@@ -2500,13 +2666,61 @@ void MainComponent::colourSelectedStrips()
     showStatus ("Picking colour for " + juce::String ((int) selectedLogical.size()) + " strip(s)…");
 }
 
-void MainComponent::moveSelectedStrips (int /*delta*/)
+int MainComponent::physicalFromLogicalIdx (int logical)
 {
-    // True audio-file reorder would shuffle Track_NN.wav files on disk
-    // and renumber persisted overrides — non-trivial and out of scope
-    // for the current pass. For now we flag the request so the engineer
-    // knows it's recognised but deferred.
-    showStatus ("Reorder is in progress — for now, delete + re-import in the desired order");
+    int phys = 0;
+    auto& rec = engine.getRecorder();
+    for (int k = 0; k < logical && phys < rec.getNumTracks(); ++k)
+        phys += rec.getTrack (phys).isStereo.load (std::memory_order_relaxed) ? 2 : 1;
+    return phys;
+}
+
+void MainComponent::moveSelectedStrips (int delta)
+{
+    if (selectedLogical.empty() || engine.isRecording()) return;
+
+    recordUndoSnapshot ("Move selection");
+
+    // Order the move: up (delta < 0) sweeps low-to-high; down sweeps
+    // high-to-low — so we never trample a target slot mid-sweep.
+    std::vector<int> sorted (selectedLogical.begin(), selectedLogical.end());
+    if (delta < 0) std::sort (sorted.begin(),  sorted.end());
+    else           std::sort (sorted.rbegin(), sorted.rend());
+
+    std::set<int> newSelection;
+    int moved = 0;
+    for (int logical : sorted)
+    {
+        const int target = logical + delta;
+        if (target < 0 || target >= (int) strips.size()) { newSelection.insert (logical); continue; }
+
+        const int physA = physicalFromLogicalIdx (logical);
+        const int physB = physicalFromLogicalIdx (target);
+
+        auto& rec = engine.getRecorder();
+        const bool stereoA = (physA < rec.getNumTracks())
+                              && rec.getTrack (physA).isStereo.load (std::memory_order_relaxed);
+        const bool stereoB = (physB < rec.getNumTracks())
+                              && rec.getTrack (physB).isStereo.load (std::memory_order_relaxed);
+
+        // Swap each physical-track pair. Mono-mono / stereo-stereo
+        // moves swap the matching halves; mono-stereo asymmetric
+        // pairs fall back to swapping only the first half and let
+        // the engineer adjust (rare in practice).
+        engine.swapTracks (physA, physB);
+        if (stereoA && stereoB
+            && physA + 1 < rec.getNumTracks()
+            && physB + 1 < rec.getNumTracks())
+        {
+            engine.swapTracks (physA + 1, physB + 1);
+        }
+        newSelection.insert (target);
+        ++moved;
+    }
+    selectedLogical = std::move (newSelection);
+    lastTrackCount = -1;
+    showStatus ("Moved " + juce::String (moved) + " strip(s) "
+                + (delta < 0 ? "up" : "down"));
 }
 
 void MainComponent::showBatchRenameDialog()

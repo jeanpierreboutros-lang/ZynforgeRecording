@@ -447,6 +447,77 @@ namespace zynforge
                         }
                         return;
                     }
+                    case LaneMode::Tempo:
+                    {
+                        // Shared tempo curve — one lane for the whole
+                        // session, drawn identically on every row. Each
+                        // point in engine.getTempoMap() is rendered as
+                        // a handle on a stepped curve (40..240 BPM
+                        // mapped to bottom..top of the lane).
+                        const auto& tempoMap = engine.getTempoMap();
+                        const auto& player   = engine.getPlayer();
+                        const juce::int64 totalSamples = player.isLoaded()
+                            ? player.getTotalLengthSamples()
+                            : (juce::int64) (48000.0 * 60.0);
+
+                        auto bpmToY = [&] (float bpm) -> int
+                        {
+                            const float clamped = juce::jlimit (40.0f, 240.0f, bpm);
+                            const float yp = 1.0f - (clamped - 40.0f) / 200.0f;
+                            return inner.getY() + juce::roundToInt (yp * inner.getHeight());
+                        };
+                        auto sampleToX = [&] (juce::int64 sp) -> int
+                        {
+                            const double prop = juce::jlimit (0.0, 1.0,
+                                (double) sp / juce::jmax<double> (1.0, (double) totalSamples));
+                            return inner.getX() + juce::roundToInt (prop * inner.getWidth());
+                        };
+
+                        const float sessionBpm = engine.getSessionTempoBpm();
+                        g.setColour (brand::brandOrange);
+
+                        if (tempoMap.empty())
+                        {
+                            const int y = bpmToY (sessionBpm);
+                            g.drawHorizontalLine (y, (float) inner.getX(), (float) inner.getRight());
+                        }
+                        else
+                        {
+                            juce::Path path;
+                            int prevY = bpmToY (sessionBpm);
+                            path.startNewSubPath ((float) inner.getX(), (float) prevY);
+                            for (const auto& tc : tempoMap)
+                            {
+                                const int x = sampleToX (tc.samplePos);
+                                const int y = bpmToY  (tc.bpm);
+                                path.lineTo ((float) x, (float) prevY);
+                                path.lineTo ((float) x, (float) y);
+                                prevY = y;
+                            }
+                            path.lineTo ((float) inner.getRight(), (float) prevY);
+                            g.strokePath (path, juce::PathStrokeType (1.8f));
+
+                            for (const auto& tc : tempoMap)
+                            {
+                                const int x = sampleToX (tc.samplePos);
+                                const int y = bpmToY  (tc.bpm);
+                                g.fillEllipse ((float) x - 4.0f, (float) y - 4.0f, 8.0f, 8.0f);
+                            }
+                        }
+
+                        g.setColour (brand::textTertiary);
+                        g.setFont (juce::FontOptions().withHeight (11.0f));
+                        g.drawText ("tempo " + juce::String (sessionBpm, 1) + " BPM",
+                                    inner.reduced (6, 2),
+                                    juce::Justification::topLeft, false);
+                        if (playheadX >= 0 && playheadX < wavePane.getWidth())
+                        {
+                            g.setColour (brand::accentPlay.withAlpha (0.85f));
+                            g.fillRect (juce::Rectangle<int> (headerW + playheadX,
+                                                              0, 2, getHeight()));
+                        }
+                        return;
+                    }
                     case LaneMode::Markers:
                     {
                         // Markers are session-wide; draw vertical ticks
@@ -837,6 +908,40 @@ namespace zynforge
                 const auto coord = laneCoordAt (e.getPosition());
                 const auto p     = toEngineParam (toolbar->getParam());
 
+                // Special case: Tempo param edits the engine's shared
+                // tempo map instead of the per-track point store.
+                if (toolbar->getParam() == AutomationToolbar::Param::Tempo)
+                {
+                    const auto& player = engine.getPlayer();
+                    const juce::int64 totalSamples = player.isLoaded()
+                        ? player.getTotalLengthSamples()
+                        : (juce::int64) (48000.0 * 60.0);
+                    const juce::int64 tol = juce::jmax<juce::int64> (1,
+                        totalSamples / juce::jmax (1, getWidth() - headerW) * 8);
+                    // Y → BPM (40..240 range mirrors the paint mapping).
+                    const auto inner2 = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+                    const float yProp = juce::jlimit (0.0f, 1.0f,
+                        (float) (e.y - inner2.getY()) / juce::jmax (1, inner2.getHeight()));
+                    const float bpm = juce::jlimit (40.0f, 240.0f,
+                                                    40.0f + (1.0f - yProp) * 200.0f);
+
+                    switch (toolbar->getTool())
+                    {
+                        case AutomationToolbar::Tool::AddPoint:
+                            engine.addTempoChange (coord.samplePos, bpm);
+                            break;
+                        case AutomationToolbar::Tool::DeletePoint:
+                            engine.removeTempoChangeNear (coord.samplePos, tol);
+                            break;
+                        case AutomationToolbar::Tool::Select:
+                            // Tempo drag isn't wired yet — Select on
+                            // the Tempo lane just records nothing.
+                            break;
+                    }
+                    repaint();
+                    return;
+                }
+
                 switch (toolbar->getTool())
                 {
                     case AutomationToolbar::Tool::AddPoint:
@@ -992,7 +1097,7 @@ namespace zynforge
     public:
         // What this row draws in the lane area (matches the toolbar's
         // Param, or the row's own VIEW choice when no toolbar is wired).
-        enum class LaneMode { Waveform, Markers, Volume, VolumeTrim, Mute, Pan, Click };
+        enum class LaneMode { Waveform, Markers, Volume, VolumeTrim, Mute, Pan, Click, Tempo };
         LaneMode laneMode { LaneMode::Waveform };
 
     private:
@@ -1215,6 +1320,7 @@ namespace zynforge
             case AutomationToolbar::Param::Pan:    lm = TrackRow::LaneMode::Pan;    break;
             case AutomationToolbar::Param::Mute:   lm = TrackRow::LaneMode::Mute;   break;
             case AutomationToolbar::Param::Click:  lm = TrackRow::LaneMode::Click;  break;
+            case AutomationToolbar::Param::Tempo:  lm = TrackRow::LaneMode::Tempo;  break;
         }
         list->forceLaneMode (lm);
     }

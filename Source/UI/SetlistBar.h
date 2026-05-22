@@ -30,12 +30,20 @@ namespace zynforge
             bool  armed        { false };
         };
 
+        // How the cue transitions in — Snap is instant (the prior
+        // behaviour); Fade ramps every strip's gain + pan from the
+        // current value to the captured value across N beats at the
+        // cue's tempo.
+        enum class Transition : int { Snap = 0, Fade };
+
         struct Cue
         {
             juce::String name;
             juce::int64  samplePos { 0 };
             std::vector<StripSnapshot> strips;   // length = recorder.getNumTracks() at capture time
             float        tempoBpm  { 0.0f };     // 0 = 'use session default' (older cues)
+            Transition   transition { Transition::Snap };
+            float        fadeBeats { 0.0f };     // > 0 only meaningful for Fade
         };
 
         SetlistBar();

@@ -367,6 +367,94 @@ namespace zynforge
         }
     }
 
+    bool AudioEngine::swapTracks (int a, int b)
+    {
+        if (recorder.isRecording()) return false;
+        const int n = recorder.getNumTracks();
+        if (a == b || a < 0 || b < 0 || a >= n || b >= n) return false;
+
+        // ── Swap on-disk Track_NN.wav (and any backup mirror) ────────
+        auto sessionDir = activeSession.isDirectory() ? activeSession : juce::File();
+        if (sessionDir.isDirectory())
+        {
+            auto audioDir = sessionDir.getChildFile ("Audio Files");
+            if (! audioDir.isDirectory()) audioDir = sessionDir;
+            const auto nameOf = [] (int idx) {
+                return juce::String::formatted ("Track_%02d.wav", idx + 1);
+            };
+            auto fA  = audioDir.getChildFile (nameOf (a));
+            auto fB  = audioDir.getChildFile (nameOf (b));
+            auto tmp = audioDir.getChildFile (juce::String::formatted ("Track_%02d_swap.wav", a + 1));
+            // 3-step rename so the OS never sees a name collision.
+            if (fA.existsAsFile() && fB.existsAsFile())
+            {
+                fA .moveFileTo (tmp);
+                fB .moveFileTo (fA);
+                tmp.moveFileTo (fB);
+            }
+            else if (fA.existsAsFile())
+            {
+                fA.moveFileTo (fB);
+            }
+            else if (fB.existsAsFile())
+            {
+                fB.moveFileTo (fA);
+            }
+        }
+
+        // ── Swap persisted overrides (PropertiesFile keys are 1-based) ──
+        const int oneA = a + 1, oneB = b + 1;
+        auto swapProp = [&] (const juce::String& keyA, const juce::String& keyB)
+        {
+            if (appProps == nullptr) return;
+            const auto va = appProps->getValue (keyA, {});
+            const auto vb = appProps->getValue (keyB, {});
+            appProps->setValue (keyA, vb);
+            appProps->setValue (keyB, va);
+        };
+        // Names / colours / gains / pan / routings / stereo flag.
+        swapProp ("strip_name_"   + juce::String (oneA), "strip_name_"   + juce::String (oneB));
+        swapProp ("strip_colour_" + juce::String (oneA), "strip_colour_" + juce::String (oneB));
+        swapProp ("strip_gain_"   + juce::String (oneA), "strip_gain_"   + juce::String (oneB));
+        swapProp ("strip_pan_"    + juce::String (oneA), "strip_pan_"    + juce::String (oneB));
+        swapProp ("strip_in_"     + juce::String (oneA), "strip_in_"     + juce::String (oneB));
+        swapProp ("strip_out_"    + juce::String (oneA), "strip_out_"    + juce::String (oneB));
+        swapProp ("strip_stereo_" + juce::String (a),    "strip_stereo_" + juce::String (b));
+        if (appProps != nullptr) appProps->saveIfNeeded();
+
+        // ── Swap the live TrackState contents (NOT the objects: the UI
+        //    holds references and must keep them valid). ──
+        auto& ta = recorder.getTrack (a);
+        auto& tb = recorder.getTrack (b);
+
+        std::swap (ta.name, tb.name);
+        const auto cA = ta.colourARGB.load();
+        const auto cB = tb.colourARGB.load();
+        ta.colourARGB.store (cB); tb.colourARGB.store (cA);
+        const auto gA = ta.gainDb.load(), gB = tb.gainDb.load();
+        ta.gainDb.store (gB); tb.gainDb.store (gA);
+        const auto pA = ta.pan.load(), pB = tb.pan.load();
+        ta.pan.store (pB); tb.pan.store (pA);
+        const auto inA = ta.inputRouting.load(),  inB = tb.inputRouting.load();
+        ta.inputRouting.store (inB); tb.inputRouting.store (inA);
+        const auto outA = ta.outputRouting.load(), outB = tb.outputRouting.load();
+        ta.outputRouting.store (outB); tb.outputRouting.store (outA);
+        const auto sA = ta.isStereo.load(),  sB = tb.isStereo.load();
+        ta.isStereo.store (sB); tb.isStereo.store (sA);
+        const auto mA = ta.muted .load(),    mB = tb.muted .load();
+        ta.muted .store (mB); tb.muted .store (mA);
+        const auto soA = ta.soloed.load(),   soB = tb.soloed.load();
+        ta.soloed.store (soB); tb.soloed.store (soA);
+        const auto onA = ta.monitor.load(),  onB = tb.monitor.load();
+        ta.monitor.store (onB); tb.monitor.store (onA);
+        const auto arA = ta.armed .load(),   arB = tb.armed .load();
+        ta.armed .store (arB); tb.armed .store (arA);
+
+        // ── Re-load player so it picks up the renamed audio files ───
+        if (sessionDir.isDirectory()) loadSession (sessionDir);
+        return true;
+    }
+
     AudioEngine::AudioEngine()
     {
         juce::PropertiesFile::Options opts;
@@ -526,6 +614,19 @@ namespace zynforge
         tempoMap.push_back ({ samplePos, bpm });
         std::sort (tempoMap.begin(), tempoMap.end(),
                    [] (const auto& a, const auto& b) { return a.samplePos < b.samplePos; });
+    }
+
+    void AudioEngine::removeTempoChangeNear (juce::int64 samplePos, juce::int64 tolerance)
+    {
+        if (tempoMap.empty()) return;
+        auto best = tempoMap.end();
+        juce::int64 bestDist = tolerance + 1;
+        for (auto it = tempoMap.begin(); it != tempoMap.end(); ++it)
+        {
+            const auto d = std::abs (it->samplePos - samplePos);
+            if (d < bestDist) { bestDist = d; best = it; }
+        }
+        if (best != tempoMap.end()) tempoMap.erase (best);
     }
 
     void AudioEngine::clearTempoMap()

@@ -7,6 +7,7 @@
 #include "../Theme/ZynForgeLookAndFeel.h"
 #include "AutomationToolbar.h"
 #include "BigClockPanel.h"
+#include "IconButton.h"
 #include "ChannelStrip.h"
 #include "EditPage.h"
 #include "ExportDialog.h"
@@ -85,11 +86,14 @@ private:
     void colourSelectedStrips();
     void moveSelectedStrips (int delta);
     void clearStripSelection();
+    int  physicalFromLogicalIdx (int logical);
 
     // Multi-select: indices are LOGICAL strip indices (stereo pairs
     // counted as one). Engineer toggles via shift/cmd-click on a strip.
     std::set<int> selectedLogical;
     void showSessionProperties();
+    void runSpectralAutoName();
+    void writeSoundcheckReport();
 
     bool snapToMarkers { false };
 
@@ -129,22 +133,24 @@ private:
     juce::Label  statusLabel       { {}, "Idle" };
     juce::Label  sessionLabel      { {}, "No session loaded" };
     juce::Label  transportLabel    { {}, "00:00 / 00:00" };
-    juce::TextButton recordButton  { "RECORD" };
-    juce::TextButton deviceButton  { "AUDIO DEVICE" };
-    juce::TextButton loadButton    { "FILE" };
-    juce::TextButton playButton    { "PLAY" };
-    juce::TextButton stopButton    { "STOP" };
-    juce::TextButton formatButton  { "WAV 24" };
-    juce::TextButton preRollButton { "PRE 0s" };
-    juce::TextButton lockButton    { "LOCK" };
-    juce::TextButton backupButton  { "BACKUP" };
-    juce::TextButton patchButton   { "PATCH" };
-    juce::TextButton vscButton     { "VSC" };
-    juce::TextButton metersButton  { "METERS" };
-    juce::TextButton oscButton     { "OSC" };
-    juce::TextButton addChannelButton { "+ CH" };
-    juce::TextButton mixViewButton    { "MIXER" };
-    juce::TextButton editViewButton   { "EDIT" };
+    // Header chrome — IconButton paints a glyph next to each label so
+    // the chrome reads as icons + words instead of monospace SHOUTING.
+    zynforge::IconButton recordButton  { zynforge::icons::Glyph::Record, "RECORD" };
+    zynforge::IconButton deviceButton  { zynforge::icons::Glyph::Device, "DEVICE" };
+    zynforge::IconButton loadButton    { zynforge::icons::Glyph::File,   "FILE" };
+    juce::TextButton     playButton    { "PLAY" };
+    juce::TextButton     stopButton    { "STOP" };
+    zynforge::IconButton formatButton  { zynforge::icons::Glyph::Disk,   "WAV 24" };
+    juce::TextButton     preRollButton { "PRE 0s" };
+    zynforge::IconButton lockButton    { zynforge::icons::Glyph::Lock,   "LOCK" };
+    zynforge::IconButton backupButton  { zynforge::icons::Glyph::Disk,   "BACKUP" };
+    zynforge::IconButton patchButton   { zynforge::icons::Glyph::Patch,  "PATCH" };
+    zynforge::IconButton vscButton     { zynforge::icons::Glyph::Vsc,    "VSC" };
+    zynforge::IconButton metersButton  { zynforge::icons::Glyph::Meters, "METERS" };
+    zynforge::IconButton oscButton     { zynforge::icons::Glyph::Osc,    "OSC" };
+    zynforge::IconButton addChannelButton { zynforge::icons::Glyph::Plus, "CH" };
+    zynforge::IconButton mixViewButton    { zynforge::icons::Glyph::Mix,  "MIXER" };
+    zynforge::IconButton editViewButton   { zynforge::icons::Glyph::Edit, "EDIT" };
 
     enum class View { Mix, Edit };
     View currentView { View::Mix };
@@ -175,6 +181,22 @@ private:
     // every session swap, persisted on every add / pick / update.
     std::vector<zynforge::SetlistBar::Cue> cues;
     int currentCueIndex { -1 };
+
+    // Cue-transition ramp state. Active while a Fade-mode cue is in
+    // flight; updated by the existing 24 Hz timerCallback. Each strip
+    // gets its own (start, target) pair and we lerp gain + pan toward
+    // the target proportionally to elapsed beats.
+    struct RampState
+    {
+        bool        active { false };
+        double      startMs { 0.0 };
+        double      durationMs { 0.0 };
+        std::vector<std::pair<float, float>> gainStartTarget; // per-track
+        std::vector<std::pair<float, float>> panStartTarget;  // per-track
+    };
+    RampState cueRamp;
+    void startCueRampTo (const zynforge::SetlistBar::Cue&);
+    void updateCueRamp();
 
     void loadSetlistFromActiveSession();
     void saveSetlistToActiveSession() const;

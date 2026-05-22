@@ -136,6 +136,14 @@ namespace zynforge
         // the flag; R partner is implicit at trackIndex + 1.
         void setTrackStereo (int channelIndex, bool isStereoPair);
 
+        // Swap two physical tracks completely: state fields (name,
+        // colour, gain, pan, routing, mute/solo/mon/arm, stereo flag),
+        // persisted overrides, and the underlying Track_NN.wav files in
+        // the active session's Audio Files/ folder. UI keeps holding the
+        // same TrackState references — only their contents swap — so
+        // strips don't dangle. Returns true on success.
+        bool swapTracks (int a, int b);
+
         // OSC remote: starts/stops a juce::OSCReceiver bound to UDP port,
         // with a dialect parser for DiGiCo / A&H / SSL / Yamaha consoles
         // plus a generic /zynforge/* schema for tablet apps.
@@ -169,6 +177,7 @@ namespace zynforge
         const std::vector<TempoChange>& getTempoMap() const noexcept { return tempoMap; }
         void   setTempoMap (std::vector<TempoChange> newMap);
         void   addTempoChange (juce::int64 samplePos, float bpm);
+        void   removeTempoChangeNear (juce::int64 samplePos, juce::int64 tolerance);
         void   clearTempoMap();
 
         // Per-track automation. Three discrete parameter lanes:
