@@ -1,5 +1,6 @@
 #include "ZynForgeLookAndFeel.h"
 #include "BrandColors.h"
+#include "BrandTokens.h"
 
 namespace zynforge
 {
@@ -37,15 +38,17 @@ namespace zynforge
                                                     bool over, bool down)
     {
         auto r = b.getLocalBounds().toFloat().reduced (1.0f);
-        auto fill = bg;
-        if (down) fill = fill.brighter (0.15f);
-        else if (over) fill = fill.brighter (0.07f);
+        auto base = bg;
+        if (down) base = base.brighter (0.15f);
+        else if (over) base = base.brighter (0.07f);
 
-        g.setColour (fill);
-        g.fillRoundedRectangle (r, 4.0f);
+        // Every button surface gets a subtle vertical gradient so the chrome
+        // reads as 3D, matching ZynForge Live's button finish.
+        g.setGradientFill (brand::verticalGradient (base, r));
+        g.fillRoundedRectangle (r, brand::radius::md);
 
         g.setColour (brand::edge);
-        g.drawRoundedRectangle (r, 4.0f, 1.0f);
+        g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
     }
 
     void ZynForgeLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& b,
@@ -53,29 +56,20 @@ namespace zynforge
     {
         auto r = b.getLocalBounds().toFloat().reduced (1.0f);
 
-        // Dark gradient pill body.
-        const auto top = juce::Colour (0x35, 0x35, 0x39);
-        const auto bot = juce::Colour (0x18, 0x18, 0x1c);
-        g.setGradientFill (juce::ColourGradient (top, r.getCentreX(), r.getY(),
-                                                 bot, r.getCentreX(), r.getBottom(), false));
-        g.fillRoundedRectangle (r, 4.0f);
-
-        if (down)
-            g.setColour (juce::Colours::white.withAlpha (0.06f));
-        else if (over)
-            g.setColour (juce::Colours::white.withAlpha (0.03f));
-        else
-            g.setColour (juce::Colours::transparentBlack);
-        g.fillRoundedRectangle (r, 4.0f);
+        // Pill body — dark gradient, brightens on hover / press.
+        const float lift   = down ? 0.18f : (over ? 0.08f : 0.0f);
+        const auto  base   = brand::controlBg.brighter (lift);
+        g.setGradientFill (brand::verticalGradient (base, r, 0.20f, 0.30f));
+        g.fillRoundedRectangle (r, brand::radius::md);
 
         g.setColour (brand::edge);
-        g.drawRoundedRectangle (r, 4.0f, 1.0f);
+        g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
 
         // Letter / label — coloured by toggle state.
         const auto active = b.findColour (juce::ToggleButton::tickColourId);
         const auto txt    = b.getToggleState() ? active : brand::textMuted;
         g.setColour (txt);
-        g.setFont (juce::Font (juce::FontOptions().withHeight (11.5f).withStyle ("Bold")));
+        g.setFont (brand::type::uiLabel());
         g.drawText (b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, false);
     }
 
@@ -140,18 +134,18 @@ namespace zynforge
                                 thumbY - thumbH * 0.5f,
                                 thumbW, thumbH);
 
-        // Body
+        // Body — gradient between the two fader-thumb tokens.
         g.setGradientFill (juce::ColourGradient (
-            juce::Colour (0x33, 0x35, 0x3c), thumb.getCentreX(), thumb.getY(),
-            juce::Colour (0x1c, 0x1e, 0x23), thumb.getCentreX(), thumb.getBottom(),
+            brand::faderThumbHi, thumb.getCentreX(), thumb.getY(),
+            brand::faderThumbLo, thumb.getCentreX(), thumb.getBottom(),
             false));
-        g.fillRoundedRectangle (thumb, 3.0f);
+        g.fillRoundedRectangle (thumb, brand::radius::sm);
 
-        g.setColour (juce::Colour (0x55, 0x57, 0x60));
-        g.drawRoundedRectangle (thumb, 3.0f, 1.0f);
+        g.setColour (brand::faderThumbEdge);
+        g.drawRoundedRectangle (thumb, brand::radius::sm, 1.0f);
 
         // Grip lines.
-        g.setColour (juce::Colour (0xa0, 0xa3, 0xad));
+        g.setColour (brand::faderThumbGrip);
         const int   numGrips = 5;
         const float gripPad  = 6.0f;
         for (int i = 0; i < numGrips; ++i)

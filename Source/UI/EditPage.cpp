@@ -1,5 +1,6 @@
 #include "EditPage.h"
 #include "../Theme/BrandColors.h"
+#include "../Theme/BrandTokens.h"
 #include "LedMeter.h"
 #include "StripColourPicker.h"
 
@@ -52,7 +53,7 @@ namespace zynforge
             soloButton.setToggleState (s.soloed.load(), juce::dontSendNotification);
             styleBtn (armButton,  brand::accentRecord);
             styleBtn (muteButton, brand::accentRecord);
-            styleBtn (soloButton, juce::Colour::fromRGB (0xff, 0xd6, 0x4d));
+            styleBtn (soloButton, brand::accentSolo);
             armButton .onClick = [this]
             {
                 engine.getRecorder().getTrack (index).armed.store (armButton.getToggleState());
@@ -215,7 +216,7 @@ namespace zynforge
             // ─── Colour swatch column (click to change track colour)
             auto header = getLocalBounds().withWidth (headerW);
             auto swatchArea = header.removeFromLeft (swatchW);
-            g.setColour (fillColour);
+            g.setGradientFill (brand::verticalGradient (fillColour, swatchArea.toFloat(), 0.18f, 0.28f));
             g.fillRect (swatchArea);
             g.setColour (fillColour.darker (0.40f));
             g.drawVerticalLine (swatchArea.getRight() - 1, 0.0f, (float) getHeight());

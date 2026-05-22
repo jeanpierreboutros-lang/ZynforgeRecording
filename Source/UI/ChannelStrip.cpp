@@ -1,5 +1,6 @@
 #include "ChannelStrip.h"
 #include "../Theme/BrandColors.h"
+#include "../Theme/BrandTokens.h"
 #include "StripColourPicker.h"
 
 namespace zynforge
@@ -390,8 +391,7 @@ namespace zynforge
                                                     std::memory_order_relaxed);
         };
         soloButton.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-        soloButton.setColour (juce::ToggleButton::tickColourId,
-                              juce::Colour::fromRGB (0xff, 0xd6, 0x4d));
+        soloButton.setColour (juce::ToggleButton::tickColourId, brand::accentSolo);
         addAndMakeVisible (soloButton);
 
         dbLabel.setFont (juce::Font (juce::FontOptions().withHeight (11.0f).withStyle ("Bold")));
@@ -493,12 +493,14 @@ namespace zynforge
         auto r = getLocalBounds().toFloat().reduced (2.0f);
         const auto stripColour = getResolvedColour();
 
-        // Flat personality wash (matches Live — no darkening gradient).
-        g.setColour (stripColour);
-        g.fillRoundedRectangle (r, 6.0f);
+        // Vertical gradient wash in the personality colour — matches
+        // ZynForge Live's strip finish and gives every channel a sense
+        // of depth instead of a flat block.
+        g.setGradientFill (brand::verticalGradient (stripColour, r, 0.18f, 0.28f));
+        g.fillRoundedRectangle (r, brand::radius::xl);
 
-        g.setColour (brand::edge);
-        g.drawRoundedRectangle (r, 6.0f, 1.0f);
+        g.setColour (stripColour.brighter (0.40f).withAlpha (0.30f));
+        g.drawRoundedRectangle (r, brand::radius::xl, 1.0f);
     }
 
     void ChannelStrip::resized()

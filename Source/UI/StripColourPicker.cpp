@@ -12,8 +12,8 @@ namespace zynforge
         presets = {
             brand::personality[0], brand::personality[1], brand::personality[2], brand::personality[3], brand::personality[4],
             brand::personality[5], brand::personality[6], brand::personality[7],
-            juce::Colour::fromRGB (0x40, 0x45, 0x50),  // slate
-            juce::Colour::fromRGB (0x55, 0x55, 0x5a),  // graphite
+            brand::swatchSlate,
+            brand::swatchGraphite,
         };
 
         customButton.onClick = [this] { openCustomSelector(); };

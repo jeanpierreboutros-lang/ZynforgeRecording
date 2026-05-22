@@ -12,7 +12,11 @@ namespace zynforge
     static constexpr int   kRedSegments    = 3;   // top 15%
     static constexpr int   kAmberSegments  = 3;   // next 15%
 
-    LedMeter::LedMeter (TrackState& s) : state (s) { startTimerHz (30); }
+    LedMeter::LedMeter (TrackState& s) : state (s)
+    {
+        setTooltip ("Peak + RMS LED meter. Click to clear the clip indicator.");
+        startTimerHz (30);
+    }
     LedMeter::~LedMeter() = default;
 
     void LedMeter::timerCallback()

@@ -1,5 +1,6 @@
 #include "TransportBar.h"
 #include "../Theme/BrandColors.h"
+#include "../Theme/BrandTokens.h"
 
 namespace zynforge
 {
@@ -16,17 +17,17 @@ namespace zynforge
 
         void paintButton (juce::Graphics& g, bool over, bool down) override
         {
-            // Square button body with a 1px border — matches the reference
-            // mock-up: dark mid-grey panel, faint outline, no gradients.
+            // Square button body — gradient fill, 1px border. Matches the
+            // ZynForge Live transport button finish.
             auto r = getLocalBounds().toFloat().reduced (2.0f);
 
-            const auto bg = (down ? juce::Colour (0x3e, 0x40, 0x46)
-                                  : over ? juce::Colour (0x36, 0x38, 0x3e)
-                                         : juce::Colour (0x2a, 0x2c, 0x30));
-            g.setColour (bg);
-            g.fillRoundedRectangle (r, 3.0f);
-            g.setColour (juce::Colour (0x14, 0x15, 0x18));
-            g.drawRoundedRectangle (r, 3.0f, 1.0f);
+            const auto base = (down ? brand::controlBgDown
+                                    : over ? brand::controlBgHover
+                                           : brand::controlBg);
+            g.setGradientFill (brand::verticalGradient (base, r, 0.10f, 0.18f));
+            g.fillRoundedRectangle (r, brand::radius::md);
+            g.setColour (brand::controlBorder);
+            g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
 
             // Icon (centred inside the inner area).
             auto ic = r.reduced (8.0f, 6.0f);
