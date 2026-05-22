@@ -148,22 +148,31 @@ namespace zynforge
         {
             const int numIns  = engine.getCurrentDeviceInputCount();
             const int numOuts = engine.getCurrentDeviceOutputCount();
-            const int visibleIn  = juce::jmax (numIns,  index + 1, 8);
-            const int visibleOut = juce::jmax (numOuts, index + 1, 8);
+            const int visibleIn  = juce::jmax (numIns,  index + 1, stereo ? 16 : 8);
+            const int visibleOut = juce::jmax (numOuts, index + 1, stereo ? 16 : 8);
+            const int step = stereo ? 2 : 1;
 
             inputCombo.clear (juce::dontSendNotification);
             inputCombo.addItem ("(unrouted)", 1);
-            for (int i = 0; i < visibleIn; ++i)
-                inputCombo.addItem (i < numIns ? ("In "  + juce::String (i + 1))
-                                               : ("In "  + juce::String (i + 1) + " (off)"),
-                                    i + 2);
+            for (int i = 0; i < visibleIn; i += step)
+            {
+                const bool live = stereo ? (i + 1 < numIns) : (i < numIns);
+                const auto label = stereo
+                    ? juce::String ("In ") + juce::String (i + 1) + "-" + juce::String (i + 2)
+                    : juce::String ("In ") + juce::String (i + 1);
+                inputCombo.addItem (live ? label : (label + " (off)"), i + 2);
+            }
 
             outputCombo.clear (juce::dontSendNotification);
             outputCombo.addItem ("(unrouted)", 1);
-            for (int i = 0; i < visibleOut; ++i)
-                outputCombo.addItem (i < numOuts ? ("Out " + juce::String (i + 1))
-                                                 : ("Out " + juce::String (i + 1) + " (off)"),
-                                     i + 2);
+            for (int i = 0; i < visibleOut; i += step)
+            {
+                const bool live = stereo ? (i + 1 < numOuts) : (i < numOuts);
+                const auto label = stereo
+                    ? juce::String ("Out ") + juce::String (i + 1) + "-" + juce::String (i + 2)
+                    : juce::String ("Out ") + juce::String (i + 1);
+                outputCombo.addItem (live ? label : (label + " (off)"), i + 2);
+            }
         }
 
         void refreshRoutingSelection()

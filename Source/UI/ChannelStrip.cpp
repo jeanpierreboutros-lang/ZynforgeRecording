@@ -100,41 +100,49 @@ namespace zynforge
 
     void ChannelStrip::setAvailableInputs (int n)
     {
+        const bool stereoStrip = (pairState != nullptr);
         int current = state.inputRouting.load (std::memory_order_relaxed);
         if (current == -2) current = stripIndex;   // identity default
+
         // Populate enough items so a strip's identity input always has
-        // a visible entry, even when the active audio device exposes
-        // fewer hardware channels than the user has created strips.
-        const int visible = juce::jmax (n, stripIndex + 1, 8);
+        // a visible entry. For stereo strips we list pairs ("In 1-2",
+        // "In 3-4", …); the underlying ID is still the L channel index.
+        const int visible = juce::jmax (n, stripIndex + 1, stereoStrip ? 16 : 8);
         inputCombo.clear (juce::dontSendNotification);
         inputCombo.addItem ("(unrouted)", 1);
-        for (int i = 0; i < visible; ++i)
+        const int stepCh = stereoStrip ? 2 : 1;
+        for (int i = 0; i < visible; i += stepCh)
         {
-            const bool live = (i < n);
-            inputCombo.addItem (live ? ("In " + juce::String (i + 1))
-                                     : ("In " + juce::String (i + 1) + " (off)"),
-                                i + 2);
+            const bool live = stereoStrip ? (i + 1 < n) : (i < n);
+            const auto label = stereoStrip
+                ? juce::String ("In ") + juce::String (i + 1) + "-" + juce::String (i + 2)
+                : juce::String ("In ") + juce::String (i + 1);
+            inputCombo.addItem (live ? label : (label + " (off)"), i + 2);
         }
-        if (current < 0) inputCombo.setSelectedId (1,             juce::dontSendNotification);
-        else             inputCombo.setSelectedId (current + 2,  juce::dontSendNotification);
+        if (current < 0) inputCombo.setSelectedId (1,            juce::dontSendNotification);
+        else             inputCombo.setSelectedId (current + 2, juce::dontSendNotification);
     }
 
     void ChannelStrip::setAvailableOutputs (int n)
     {
+        const bool stereoStrip = (pairState != nullptr);
         int current = state.outputRouting.load (std::memory_order_relaxed);
         if (current == -2) current = stripIndex;   // identity default
-        const int visible = juce::jmax (n, stripIndex + 1, 8);
+
+        const int visible = juce::jmax (n, stripIndex + 1, stereoStrip ? 16 : 8);
         outputCombo.clear (juce::dontSendNotification);
         outputCombo.addItem ("(unrouted)", 1);
-        for (int i = 0; i < visible; ++i)
+        const int stepCh = stereoStrip ? 2 : 1;
+        for (int i = 0; i < visible; i += stepCh)
         {
-            const bool live = (i < n);
-            outputCombo.addItem (live ? ("Out " + juce::String (i + 1))
-                                      : ("Out " + juce::String (i + 1) + " (off)"),
-                                 i + 2);
+            const bool live = stereoStrip ? (i + 1 < n) : (i < n);
+            const auto label = stereoStrip
+                ? juce::String ("Out ") + juce::String (i + 1) + "-" + juce::String (i + 2)
+                : juce::String ("Out ") + juce::String (i + 1);
+            outputCombo.addItem (live ? label : (label + " (off)"), i + 2);
         }
-        if (current < 0) outputCombo.setSelectedId (1,             juce::dontSendNotification);
-        else             outputCombo.setSelectedId (current + 2,  juce::dontSendNotification);
+        if (current < 0) outputCombo.setSelectedId (1,            juce::dontSendNotification);
+        else             outputCombo.setSelectedId (current + 2, juce::dontSendNotification);
     }
 
     void ChannelStrip::refreshAppearance()
