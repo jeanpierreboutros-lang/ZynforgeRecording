@@ -60,6 +60,13 @@ namespace zynforge
         int         getLastWriteMs()       const noexcept { return lastWriteMs      .load(std::memory_order_relaxed); }
         juce::File  getActiveSessionDir()  const          { return activeSessionDir; }
 
+        // Optional second copy of every track to a backup folder.
+        // Pass an empty File to disable. Only effective for the next session.
+        void setBackupDirectory (const juce::File& dir);
+        juce::File getBackupDirectory() const               { return backupDir; }
+        bool       isBackupActive() const noexcept          { return backupActive.load (std::memory_order_relaxed); }
+        bool       hasBackupFailed() const noexcept         { return backupFailed.load (std::memory_order_relaxed); }
+
     private:
         int useTimeSlice() override;
 
@@ -79,6 +86,7 @@ namespace zynforge
         struct WriterChannel
         {
             std::unique_ptr<juce::AudioFormatWriter> writer;
+            std::unique_ptr<juce::AudioFormatWriter> backupWriter;
         };
 
         // Per-channel rolling history used for pre-roll. Audio thread is the
@@ -129,6 +137,10 @@ namespace zynforge
         int           preRollSeconds { 0 };  // 0 = disabled
 
         juce::File activeSessionDir;
+        juce::File backupDir;
+        std::atomic<bool> backupActive { false };
+        std::atomic<bool> backupFailed { false };
+
         std::vector<float> scratch;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MultitrackRecorder)

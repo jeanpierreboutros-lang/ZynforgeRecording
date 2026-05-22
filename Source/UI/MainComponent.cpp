@@ -54,6 +54,14 @@ MainComponent::MainComponent()
     preRollButton.onClick = [this] { onPreRollClicked(); };
     addAndMakeVisible (preRollButton);
 
+    lockButton.setColour (juce::TextButton::buttonColourId, brand::accentRecord.withAlpha (0.18f));
+    lockButton.setColour (juce::TextButton::textColourOffId, brand::accentRecord);
+    lockButton.onClick = [this] { onLockToggled(); };
+    addAndMakeVisible (lockButton);
+
+    backupButton.onClick = [this] { onBackupClicked(); };
+    addAndMakeVisible (backupButton);
+
     refreshFormatButton();
     refreshPreRollButton();
 
@@ -71,6 +79,8 @@ MainComponent::MainComponent()
     startTimerHz (10);  // poll for input-channel count + transport position
     rebuildStrips();
     updateTransportLabels();
+
+    juce::Timer::callAfterDelay (250, [this] { offerSessionRecovery(); });
 }
 
 MainComponent::~MainComponent()
@@ -315,6 +325,88 @@ void MainComponent::refreshPreRollButton()
 {
     const int s = engine.getRecorder().getPreRollSeconds();
     preRollButton.setButtonText ("PRE " + juce::String (s) + "s");
+}
+
+void MainComponent::onLockToggled()
+{
+    sessionLocked = ! sessionLocked;
+    applyLockState();
+}
+
+void MainComponent::applyLockState()
+{
+    const bool e = ! sessionLocked;
+
+    recordButton .setEnabled (e);
+    deviceButton .setEnabled (e);
+    formatButton .setEnabled (e && ! engine.isRecording());
+    preRollButton.setEnabled (e && ! engine.isRecording());
+    loadButton   .setEnabled (e);
+    playButton   .setEnabled (e);
+    stopButton   .setEnabled (e);
+    backupButton .setEnabled (e);
+
+    for (auto& s : strips) if (s != nullptr) s->setEnabled (e);
+
+    lockButton.setButtonText (sessionLocked ? "UNLOCK" : "LOCK");
+    showStatus (sessionLocked ? "LOCKED — click UNLOCK to resume control"
+                              : engine.isRecording()  ? "Recording"
+                              : engine.isPlaying()    ? "Playing"
+                                                      : "Idle");
+}
+
+void MainComponent::onBackupClicked()
+{
+    if (engine.isRecording())
+    {
+        showStatus ("Stop recording to change the backup folder");
+        return;
+    }
+
+    chooser = std::make_unique<juce::FileChooser> (
+        "Pick a backup folder (recordings are mirrored here)",
+        engine.getBackupDirectory().exists() ? engine.getBackupDirectory()
+                                              : getSessionsRoot(),
+        "");
+
+    const auto flags = juce::FileBrowserComponent::openMode
+                     | juce::FileBrowserComponent::canSelectDirectories;
+
+    chooser->launchAsync (flags, [this] (const juce::FileChooser& fc)
+    {
+        auto dir = fc.getResult();
+        if (dir.getFullPathName().isEmpty()) return;
+        engine.setBackupDirectory (dir);
+        backupButton.setButtonText ("BACKUP ✓");
+        showStatus ("Backup folder → " + dir.getFileName());
+    });
+}
+
+void MainComponent::offerSessionRecovery()
+{
+    const auto incomplete = zynforge::AudioEngine::findIncompleteSessions (getSessionsRoot());
+    if (incomplete.isEmpty()) return;
+
+    juce::PopupMenu menu;
+    menu.addSectionHeader (juce::String (incomplete.size()) +
+                           " session(s) didn't stop cleanly");
+    for (int i = 0; i < incomplete.size(); ++i)
+        menu.addItem (i + 1, incomplete[i].getFileName());
+    menu.addSeparator();
+    menu.addItem (1000, "Dismiss");
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&statusLabel),
+                        [this, incomplete] (int chosen)
+    {
+        if (chosen <= 0 || chosen >= 1000) return;
+        const auto& dir = incomplete[chosen - 1];
+        // Clear the marker; the WAV files are intact thanks to periodic
+        // header flush. Load the session so the engineer can inspect it.
+        dir.getChildFile ("recording.session").deleteFile();
+        engine.loadSession (dir);
+        showStatus ("Recovered: " + dir.getFileName());
+        updateTransportLabels();
+    });
 }
 
 void MainComponent::onFileMenuClicked()
@@ -630,27 +722,31 @@ void MainComponent::resized()
 {
     auto r = getLocalBounds();
 
-    // Row 1 — title + status + FMT + PRE + device + record
+    // Row 1 — title + status + LOCK + FMT + PRE + DEVICE + RECORD
     auto row1 = r.removeFromTop (44).reduced (12, 8);
-    titleLabel  .setBounds (row1.removeFromLeft (240));
-    recordButton .setBounds (row1.removeFromRight (110).reduced (0, 2));
+    titleLabel  .setBounds (row1.removeFromLeft (220));
+    recordButton .setBounds (row1.removeFromRight (104).reduced (0, 2));
     row1.removeFromRight (6);
-    deviceButton .setBounds (row1.removeFromRight (130).reduced (0, 2));
+    deviceButton .setBounds (row1.removeFromRight (118).reduced (0, 2));
     row1.removeFromRight (6);
-    preRollButton.setBounds (row1.removeFromRight (80).reduced (0, 2));
+    preRollButton.setBounds (row1.removeFromRight (74).reduced (0, 2));
     row1.removeFromRight (4);
-    formatButton .setBounds (row1.removeFromRight (90).reduced (0, 2));
+    formatButton .setBounds (row1.removeFromRight (82).reduced (0, 2));
+    row1.removeFromRight (4);
+    lockButton   .setBounds (row1.removeFromRight (76).reduced (0, 2));
     statusLabel  .setBounds (row1);
 
-    // Row 2 — session label + transport
+    // Row 2 — FILE / PLAY / STOP / transport / session / BACKUP
     auto row2 = r.removeFromTop (40).reduced (12, 6);
-    loadButton    .setBounds (row2.removeFromLeft (130).reduced (0, 2));
+    loadButton    .setBounds (row2.removeFromLeft (90).reduced (0, 2));
     row2.removeFromLeft (6);
-    playButton    .setBounds (row2.removeFromLeft (80).reduced (0, 2));
+    playButton    .setBounds (row2.removeFromLeft (78).reduced (0, 2));
     row2.removeFromLeft (4);
-    stopButton    .setBounds (row2.removeFromLeft (70).reduced (0, 2));
+    stopButton    .setBounds (row2.removeFromLeft (68).reduced (0, 2));
     row2.removeFromLeft (10);
-    transportLabel.setBounds (row2.removeFromLeft (140));
+    backupButton  .setBounds (row2.removeFromRight (100).reduced (0, 2));
+    row2.removeFromRight (8);
+    transportLabel.setBounds (row2.removeFromLeft (130));
     sessionLabel  .setBounds (row2);
 
     // Big clock banner with a phase meter docked on its right edge

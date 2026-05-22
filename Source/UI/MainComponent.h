@@ -41,6 +41,10 @@ private:
     void onSaveSessionAs();
     void onExportAllTracks();
     void onExportIndividualTrack (int channelIndex);
+    void onLockToggled();
+    void onBackupClicked();
+    void applyLockState();
+    void offerSessionRecovery();
     bool saveSessionStateTo (const juce::File& dir);
     int  exportTracksTo (const juce::File& dir,
                          const std::vector<int>& channelIndices,
@@ -69,6 +73,10 @@ private:
     juce::TextButton stopButton    { "STOP" };
     juce::TextButton formatButton  { "WAV 24" };
     juce::TextButton preRollButton { "PRE 0s" };
+    juce::TextButton lockButton    { "LOCK" };
+    juce::TextButton backupButton  { "BACKUP" };
+
+    bool sessionLocked { false };
 
     std::unique_ptr<juce::FileChooser> chooser;
 

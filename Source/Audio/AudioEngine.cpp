@@ -88,6 +88,18 @@ namespace zynforge
         }
     }
 
+    juce::Array<juce::File> AudioEngine::findIncompleteSessions (const juce::File& sessionsRoot)
+    {
+        juce::Array<juce::File> incomplete;
+        if (! sessionsRoot.isDirectory()) return incomplete;
+
+        const auto dirs = sessionsRoot.findChildFiles (juce::File::findDirectories, false, "Session_*");
+        for (auto& d : dirs)
+            if (d.getChildFile ("recording.session").existsAsFile())
+                incomplete.add (d);
+        return incomplete;
+    }
+
     juce::File AudioEngine::getActiveSessionDir() const
     {
         if (recorder.isRecording())

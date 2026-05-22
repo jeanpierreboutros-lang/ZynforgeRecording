@@ -73,6 +73,12 @@ namespace zynforge
         writerThread.addTimeSliceClient (this);
     }
 
+    void MultitrackRecorder::setBackupDirectory (const juce::File& dir)
+    {
+        if (isRecording()) return;
+        backupDir = dir;
+    }
+
     void MultitrackRecorder::setPreRollSeconds (int seconds)
     {
         seconds = juce::jlimit (0, 30, seconds);
@@ -253,9 +259,40 @@ namespace zynforge
                 if (awRaw == nullptr) { delete out; }
                 w.writer.reset (awRaw);
             }
+
+            // Optional second copy to a backup directory.
+            if (backupDir.isDirectory())
+            {
+                auto backupSession = backupDir.getChildFile (sessionDir.getFileName());
+                backupSession.createDirectory();
+                auto backupFile = backupSession.getChildFile (name);
+                backupFile.deleteFile();
+                if (auto* bout = backupFile.createOutputStream().release())
+                {
+                    juce::AudioFormatWriter* bw = useFlac
+                        ? flac.createWriterFor (bout, sampleRate, 1, bitDepth, meta, 5)
+                        : wav .createWriterFor (bout, sampleRate, 1, bitDepth, meta, 0);
+                    if (bw == nullptr) { delete bout; }
+                    w.backupWriter.reset (bw);
+                }
+            }
+
             writers.push_back (std::move (w));
 
             fifos[i]->fifo.reset();
+        }
+
+        backupActive.store (backupDir.isDirectory(), std::memory_order_relaxed);
+        backupFailed.store (false, std::memory_order_relaxed);
+
+        // Recovery marker — deleted on clean stop.
+        {
+            juce::DynamicObject::Ptr m (new juce::DynamicObject());
+            m->setProperty ("startedAt",  now.toISO8601 (true));
+            m->setProperty ("sampleRate", sampleRate);
+            m->setProperty ("numTracks",  (int) tracks.size());
+            sessionDir.getChildFile ("recording.session")
+                      .replaceWithText (juce::JSON::toString (juce::var (m.get())));
         }
 
         samplesSinceStart.store (0, std::memory_order_relaxed);
@@ -279,6 +316,11 @@ namespace zynforge
         for (int i = 0; i < 8; ++i) drainOnce();
 
         closeWriters();
+        backupActive.store (false, std::memory_order_relaxed);
+
+        // Clean stop — remove the recovery marker.
+        if (activeSessionDir.isDirectory())
+            activeSessionDir.getChildFile ("recording.session").deleteFile();
     }
 
     void MultitrackRecorder::closeWriters()
@@ -316,6 +358,12 @@ namespace zynforge
                 const float* ptr = cf.data.data() + scope.startIndex1;
                 const float* const channels[] = { ptr };
                 w.writer->writeFromFloatArrays (channels, 1, scope.blockSize1);
+                if (w.backupWriter != nullptr
+                    && ! w.backupWriter->writeFromFloatArrays (channels, 1, scope.blockSize1))
+                {
+                    w.backupWriter.reset();
+                    backupFailed.store (true, std::memory_order_relaxed);
+                }
                 totalWritten += scope.blockSize1;
             }
             if (scope.blockSize2 > 0)
@@ -323,6 +371,12 @@ namespace zynforge
                 const float* ptr = cf.data.data() + scope.startIndex2;
                 const float* const channels[] = { ptr };
                 w.writer->writeFromFloatArrays (channels, 1, scope.blockSize2);
+                if (w.backupWriter != nullptr
+                    && ! w.backupWriter->writeFromFloatArrays (channels, 1, scope.blockSize2))
+                {
+                    w.backupWriter.reset();
+                    backupFailed.store (true, std::memory_order_relaxed);
+                }
                 totalWritten += scope.blockSize2;
             }
         }
@@ -338,8 +392,10 @@ namespace zynforge
             if (samplesSinceFlush >= (juce::int64) (sampleRate * 5.0))
             {
                 for (auto& w : writers)
-                    if (w.writer != nullptr)
-                        w.writer->flush();
+                {
+                    if (w.writer       != nullptr) w.writer      ->flush();
+                    if (w.backupWriter != nullptr) w.backupWriter->flush();
+                }
                 samplesSinceFlush = 0;
             }
         }

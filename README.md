@@ -25,6 +25,9 @@ A focused recording surface for engineers running front-of-house or monitors who
 - [x] Per-track monitor (MON button on each strip → sum to stereo monitor bus, outputs 0+1)
 - [x] Per-track MUTE and SOLO — applied to both VSC playback outputs and the monitor bus. Any solo engaged → only soloed channels are audible.
 - [x] Per-channel fader (−60 .. +12 dB) and pan (L .. C .. R) — applied to VSC playback and monitor sum (constant-power pan). Recording stays pre-fader. Both persist across launches.
+- [x] **System Lock** — LOCK button on the header disables every other control (recording included) so a stray click can't kill a take. Click again to UNLOCK.
+- [x] **Auto-recover** — a `recording.session` marker is written when RECORD starts and deleted on clean stop. On next launch the app scans the Sessions root and offers to load any session that didn't stop cleanly. WAV/FLAC headers were already crash-safe (5-second periodic flush) so the audio itself is intact.
+- [x] **Redundant write** — pick a backup folder via the BACKUP button; every track is mirrored to `<backup>/<session>/Track_NN.<ext>` as you record. If the backup drive fails mid-take, the primary write keeps going untouched.
 - [x] Per-strip mini-spectrum (log-frequency FFT, 24 Hz refresh)
 - [x] Phase correlation meter (selectable pair, smoothed)
 - [x] dBFS numeric readout + per-channel clip counter (click meter to clear)
@@ -127,6 +130,29 @@ Each strip carries a 2×2 grid of toggles:
 | **Row 2** | **MUTE** (amber) — silences this channel in the monitor + VSC playback. Does NOT stop recording — the take is still written to disk. | **SOLO** (yellow) — as soon as any track is soloed, only soloed tracks are audible. Solo overrides mute. |
 
 The mute / solo logic runs inside the audio callback, so changes are instant and click-free. Recording always captures armed channels regardless of mute or solo state — both are monitoring concerns, not recording ones.
+
+## Show-day reliability
+
+### System Lock
+
+The **LOCK** button (header row 1, between status and FMT) disables every other control — RECORD included — so a stray bump or accidental click cannot stop a take. The button itself stays clickable; click it again to UNLOCK.
+
+While locked, the status line shows `LOCKED — click UNLOCK to resume control`. Strip mute/solo/fader/pan/buttons are all blocked; markers (the M key) still work.
+
+### Redundant write
+
+Click **BACKUP** (header row 2, right side) and pick a folder — ideally on a separate physical drive. From that point on, every track is written to **both** locations in parallel:
+
+- Primary: `~/Music/Zynforge Sessions/Session_*/Track_NN.<ext>`
+- Backup:  `<your folder>/Session_*/Track_NN.<ext>`
+
+The backup writer is fed from the same FIFO drain as the primary, so the two files stay byte-for-byte in sync until a write fails. If the backup drive fills up, disconnects, or otherwise errors, that channel's backup writer is dropped; the primary keeps going and a `backupFailed` flag is set so the engineer can be informed. Backup target can only be changed when not actively recording.
+
+### Auto-recover
+
+When recording starts, the app writes a `recording.session` marker (JSON: start timestamp, sample rate, track count) into the session folder. On clean stop the marker is removed.
+
+If the app or machine dies mid-take, that marker remains. On next launch, ~250 ms after the window appears, the app scans `~/Music/Zynforge Sessions/` and pops up a menu of any session that didn't stop cleanly. Pick one → marker is cleared, session is loaded for playback so you can inspect or export it. WAV / FLAC headers are flushed every 5 s of audio (see *Crash-safe recording* below), so files remain playable up to that boundary regardless of how the previous run ended.
 
 ## FILE menu
 

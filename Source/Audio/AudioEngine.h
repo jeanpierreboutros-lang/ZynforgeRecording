@@ -50,6 +50,17 @@ namespace zynforge
         // else an empty File.
         juce::File getActiveSessionDir() const;
 
+        // Forwards to MultitrackRecorder.
+        void setBackupDirectory (const juce::File& dir) { recorder.setBackupDirectory (dir); }
+        juce::File getBackupDirectory() const           { return recorder.getBackupDirectory(); }
+        bool       isBackupActive() const noexcept       { return recorder.isBackupActive(); }
+        bool       hasBackupFailed() const noexcept      { return recorder.hasBackupFailed(); }
+
+        // Scans the standard Sessions root and returns any directories that
+        // still have a `recording.session` marker (i.e. were not stopped
+        // cleanly).
+        static juce::Array<juce::File> findIncompleteSessions (const juce::File& sessionsRoot);
+
         // Phase correlation between two input channels (live, smoothed).
         // Channels are 1-based for display, stored 0-based.
         void setPhasePair (int leftCh1Based, int rightCh1Based) noexcept;
