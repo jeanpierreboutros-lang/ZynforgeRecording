@@ -287,6 +287,21 @@ MainComponent::MainComponent()
     };
     addAndMakeVisible (automationToolbar);
 
+    if (editPage != nullptr)
+        editPage->setAutomationToolbar (&automationToolbar);
+
+    // onClearAll wipes the active parameter across every track.
+    automationToolbar.onClearAll = [this]
+    {
+        const auto p = automationToolbar.getParam();
+        engine.clearAutomation (
+            p == zynforge::AutomationToolbar::Param::Volume ? zynforge::AudioEngine::AutomationParam::Volume
+          : p == zynforge::AutomationToolbar::Param::Pan    ? zynforge::AudioEngine::AutomationParam::Pan
+                                                            : zynforge::AudioEngine::AutomationParam::Mute);
+        if (editPage != nullptr) editPage->repaint();
+        showStatus ("Cleared automation points for the active parameter");
+    };
+
     tempoBar.setBpm (engine.getSessionTempoBpm());
     tempoBar.onBpmChanged = [this] (float bpm)
     {
@@ -1998,6 +2013,11 @@ void MainComponent::generateOrRefreshClickTrack()
     showStatus ("Click track generated at "
                 + juce::String (engine.getSessionTempoBpm(), 1) + " BPM "
                 + "(routable to any output via its strip)");
+
+    // Light up the click-beat overlay on every other EDIT row so the
+    // engineer can see the metronome pulse against each track's audio.
+    if (editPage != nullptr)
+        editPage->setClickTrackPresent (true, clickTrackIndex);
 }
 
 void MainComponent::showSessionProperties()

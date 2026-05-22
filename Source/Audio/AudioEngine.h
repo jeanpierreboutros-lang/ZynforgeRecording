@@ -171,6 +171,28 @@ namespace zynforge
         void   addTempoChange (juce::int64 samplePos, float bpm);
         void   clearTempoMap();
 
+        // Per-track automation. Three discrete parameter lanes:
+        //   Volume (-60..+12 dB)
+        //   Pan    (-1..+1)
+        //   Mute   (0/1, but stored as float so the lane editor can
+        //          fade between values if we ever extend the renderer)
+        enum class AutomationParam : int { Volume = 0, Pan = 1, Mute = 2 };
+        struct AutomationPoint { juce::int64 samplePos; float value; };
+
+        // Returns the points for (track, parameter). Empty when none.
+        const std::vector<AutomationPoint>& getAutomation (int track, AutomationParam) const;
+
+        // Drop a new point. Replaces an existing one if it lands within
+        // a tolerance window (so dragging never produces fan-out clouds).
+        void addAutomationPoint (int track, AutomationParam, juce::int64 samplePos, float value);
+
+        // Remove the nearest point inside the given sample tolerance.
+        void removeAutomationPointNear (int track, AutomationParam,
+                                        juce::int64 samplePos, juce::int64 tolerance);
+
+        void clearAutomation (AutomationParam);
+        void clearAutomationForTrack (int track, AutomationParam);
+
         // Recent sessions — maintained when loadSession / startRecording
         // succeed. Persisted in appProps as 'recentSession_<i>' (i = 0
         // most recent). Capped at kMaxRecent entries.
@@ -274,6 +296,19 @@ namespace zynforge
         std::atomic<float>  audioLoadPct     { 0.0f };
         std::atomic<float>  currentTempoBpm  { 120.0f };
         std::vector<TempoChange> tempoMap;   // sorted by samplePos; UI/message-thread only
+
+        // Per-track, per-parameter automation. UI-thread only for now
+        // (audio thread doesn't yet consume these — the engineer reads
+        // them visually and they ride along in cue snapshots).
+        struct TrackAutomation
+        {
+            std::vector<AutomationPoint> volume, pan, mute;
+        };
+        std::vector<TrackAutomation> automationData;
+        std::vector<AutomationPoint> emptyAutomation;   // returned by ref when none
+
+        std::vector<AutomationPoint>* findLane (int track, AutomationParam);
+        const std::vector<AutomationPoint>* findLane (int track, AutomationParam) const;
         std::atomic<float>  diskMBPerSec     { 0.0f };
         std::atomic<float>  ringFillPct      { 0.0f };
     public:

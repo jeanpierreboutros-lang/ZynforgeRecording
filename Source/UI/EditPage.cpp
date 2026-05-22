@@ -1,4 +1,5 @@
 #include "EditPage.h"
+#include "AutomationToolbar.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "LedMeter.h"
@@ -42,6 +43,15 @@ namespace zynforge
         // Callback fired by the right-click menu so the owning TrackList
         // can recompute layout (and resolve "fit to window").
         std::function<void(TrackRow&, Size)> onSizeChosen;
+
+        // Toolbar / click-overlay context — set by the host EditPage
+        // after construction so all rows share the same global view.
+        AutomationToolbar* toolbar { nullptr };
+        bool   clickOverlay { false };
+        int    clickRowIdx  { -1 };
+        // Drag tracking — while > -1, mouseDrag moves the indexed
+        // point on the active lane.
+        int    draggingPointIdx { -1 };
 
         TrackRow (int trackIdx,
                   bool isStereoPair,
@@ -407,15 +417,103 @@ namespace zynforge
                     default: break;
                 }
 
-                // Stepped automation line — flat for the whole row,
-                // then the value label sits on the right.
-                const int y = inner.getY()
-                            + juce::roundToInt (yProp * inner.getHeight());
-                g.setColour (lineCol);
-                g.drawHorizontalLine (y, (float) inner.getX(), (float) inner.getRight());
-                // Anchor dot at start + end.
-                g.fillEllipse ((float) inner.getX() - 3.0f, (float) y - 3.0f, 6.0f, 6.0f);
-                g.fillEllipse ((float) inner.getRight() - 3.0f, (float) y - 3.0f, 6.0f, 6.0f);
+                // Resolve the active parameter from the toolbar (falls
+                // back to the per-row laneMode chosen via VIEW menu).
+                auto chosenParam = AudioEngine::AutomationParam::Volume;
+                if (toolbar != nullptr)
+                {
+                    switch (toolbar->getParam())
+                    {
+                        case AutomationToolbar::Param::Volume: chosenParam = AudioEngine::AutomationParam::Volume; break;
+                        case AutomationToolbar::Param::Pan:    chosenParam = AudioEngine::AutomationParam::Pan;    break;
+                        case AutomationToolbar::Param::Mute:   chosenParam = AudioEngine::AutomationParam::Mute;   break;
+                    }
+                }
+                else
+                {
+                    switch (laneMode)
+                    {
+                        case LaneMode::Pan:  chosenParam = AudioEngine::AutomationParam::Pan;  break;
+                        case LaneMode::Mute: chosenParam = AudioEngine::AutomationParam::Mute; break;
+                        default:             chosenParam = AudioEngine::AutomationParam::Volume; break;
+                    }
+                }
+
+                const auto& points = engine.getAutomation (index, chosenParam);
+
+                // Value-to-y mapping (mirrors laneCoordAt above).
+                auto valueToY = [&] (float v) -> int
+                {
+                    float yp = 0.5f;
+                    switch (chosenParam)
+                    {
+                        case AudioEngine::AutomationParam::Volume:
+                            yp = 1.0f - juce::jlimit (0.0f, 1.0f, (v + 60.0f) / 72.0f);
+                            break;
+                        case AudioEngine::AutomationParam::Pan:
+                            yp = (1.0f - juce::jlimit (-1.0f, 1.0f, v)) * 0.5f;
+                            break;
+                        case AudioEngine::AutomationParam::Mute:
+                            yp = v > 0.5f ? 0.05f : 0.95f;
+                            break;
+                    }
+                    return inner.getY() + juce::roundToInt (yp * inner.getHeight());
+                };
+
+                const auto& player = engine.getPlayer();
+                const juce::int64 totalSamples = player.isLoaded() ? player.getTotalLengthSamples()
+                                                                   : (juce::int64) (48000.0 * 60.0);
+                auto sampleToX = [&] (juce::int64 sp) -> int
+                {
+                    if (totalSamples <= 0) return inner.getX();
+                    const double prop = juce::jlimit (0.0, 1.0,
+                                                      (double) sp / (double) totalSamples);
+                    return inner.getX() + juce::roundToInt (prop * inner.getWidth());
+                };
+
+                if (points.empty())
+                {
+                    // No automation yet — fall back to the flat reference
+                    // line for the current parameter value, so the lane
+                    // still reads at a glance.
+                    const int y = inner.getY()
+                                + juce::roundToInt (yProp * inner.getHeight());
+                    g.setColour (lineCol);
+                    g.drawHorizontalLine (y, (float) inner.getX(), (float) inner.getRight());
+                }
+                else
+                {
+                    // Render the point sequence as a stepped polyline +
+                    // round handles. Step style (no interpolation) for
+                    // now — easier to read for the engineer when there
+                    // are only a handful of points.
+                    g.setColour (lineCol);
+                    juce::Path path;
+                    int prevY = valueToY (points.front().value);
+                    int prevX = inner.getX();
+                    path.startNewSubPath ((float) prevX, (float) prevY);
+                    for (const auto& pt : points)
+                    {
+                        const int x = sampleToX (pt.samplePos);
+                        const int y = valueToY  (pt.value);
+                        path.lineTo ((float) x, (float) prevY);
+                        path.lineTo ((float) x, (float) y);
+                        prevY = y;
+                        prevX = x;
+                    }
+                    path.lineTo ((float) inner.getRight(), (float) prevY);
+                    g.strokePath (path, juce::PathStrokeType (1.6f));
+
+                    for (const auto& pt : points)
+                    {
+                        const int x = sampleToX (pt.samplePos);
+                        const int y = valueToY  (pt.value);
+                        g.setColour (lineCol);
+                        g.fillEllipse ((float) x - 3.5f, (float) y - 3.5f, 7.0f, 7.0f);
+                        g.setColour (juce::Colours::black.withAlpha (0.6f));
+                        g.drawEllipse ((float) x - 3.5f, (float) y - 3.5f, 7.0f, 7.0f, 1.0f);
+                    }
+                }
 
                 g.setColour (brand::textPrimary);
                 g.setFont (juce::FontOptions().withHeight (11.0f).withStyle ("Bold"));
@@ -473,6 +571,43 @@ namespace zynforge
                 g.setFont (juce::Font (juce::FontOptions().withHeight (12.0f)));
                 g.drawText ("(no recording yet — start a session and record to see waveforms)",
                             wavePane, juce::Justification::centred, false);
+            }
+
+            // ─── Click-beat overlay (waveform mode only) ───────────
+            // When the engineer has dropped a metronome track, every
+            // OTHER row gets faint vertical ticks at every beat so the
+            // click pulse is visible against the recorded audio.
+            if (clickOverlay && index != clickRowIdx)
+            {
+                const float bpm = engine.getSessionTempoBpm();
+                const auto& player = engine.getPlayer();
+                const juce::int64 totalSamples = player.isLoaded() ? player.getTotalLengthSamples()
+                                                                   : 0;
+                const double sr = player.getSampleRate() > 0.0
+                                    ? player.getSampleRate()
+                                    : (engine.getDeviceManager().getCurrentAudioDevice() != nullptr
+                                       ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
+                                       : 48000.0);
+                if (totalSamples > 0 && bpm > 0.0f && sr > 0.0)
+                {
+                    const double samplesPerBeat = 60.0 * sr / bpm;
+                    const auto inner2 = wavePane.reduced (4, 6);
+                    const int  paneL  = inner2.getX();
+                    const int  paneW  = juce::jmax (1, inner2.getWidth());
+                    int beat = 0;
+                    for (double s = 0.0; s < (double) totalSamples; s += samplesPerBeat, ++beat)
+                    {
+                        const double prop = s / (double) totalSamples;
+                        const int x = paneL + (int) (prop * paneW);
+                        const bool downbeat = (beat % 4) == 0;
+                        g.setColour (downbeat
+                            ? brand::brandOrange.withAlpha (0.40f)
+                            : brand::accentStatus.withAlpha (0.18f));
+                        g.drawVerticalLine (x,
+                                            (float) inner2.getY(),
+                                            (float) inner2.getBottom());
+                    }
+                }
             }
 
             // ─── Playhead overlay
@@ -559,6 +694,54 @@ namespace zynforge
             }
         }
 
+        // Map an (x,y) inside the lane area to (samplePos, value) so
+        // mouse interactions can place / move automation points.
+        struct LaneCoord { juce::int64 samplePos; float value; };
+        LaneCoord laneCoordAt (juce::Point<int> p) const
+        {
+            const auto inner = getLocalBounds().withTrimmedLeft (headerW)
+                                                .reduced (4, 6);
+            const auto& player = engine.getPlayer();
+            const juce::int64 total = player.isLoaded() ? player.getTotalLengthSamples()
+                                                        : (juce::int64) (engine.getDeviceManager().getCurrentAudioDevice() != nullptr
+                                                            ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate() * 60.0
+                                                            : 48000.0 * 60.0);
+            const double prop = (double) (p.x - inner.getX()) / juce::jmax (1, inner.getWidth());
+            const juce::int64 samplePos = (juce::int64) (juce::jlimit (0.0, 1.0, prop) * (double) total);
+
+            // Y → value depends on the active param.
+            float value = 0.0f;
+            if (toolbar != nullptr)
+            {
+                const float yProp = juce::jlimit (0.0f, 1.0f,
+                                                  (float) (p.y - inner.getY()) / juce::jmax (1, inner.getHeight()));
+                switch (toolbar->getParam())
+                {
+                    case AutomationToolbar::Param::Volume:
+                        value = (1.0f - yProp) * 72.0f - 60.0f; // 1..0 → -60..+12
+                        break;
+                    case AutomationToolbar::Param::Pan:
+                        value = 1.0f - yProp * 2.0f;            // 1..0 → -1..+1 inverted
+                        break;
+                    case AutomationToolbar::Param::Mute:
+                        value = yProp < 0.5f ? 1.0f : 0.0f;
+                        break;
+                }
+            }
+            return { samplePos, value };
+        }
+
+        static AudioEngine::AutomationParam toEngineParam (AutomationToolbar::Param p)
+        {
+            switch (p)
+            {
+                case AutomationToolbar::Param::Volume: return AudioEngine::AutomationParam::Volume;
+                case AutomationToolbar::Param::Pan:    return AudioEngine::AutomationParam::Pan;
+                case AutomationToolbar::Param::Mute:   return AudioEngine::AutomationParam::Mute;
+            }
+            return AudioEngine::AutomationParam::Volume;
+        }
+
         void mouseDown (const juce::MouseEvent& e) override
         {
             // Right-click anywhere on the row → size menu.
@@ -576,20 +759,98 @@ namespace zynforge
             }
             // Left-click on the coloured swatch column → colour picker.
             if (e.x < swatchW)
+            {
                 openColourPicker();
+                return;
+            }
+
+            // Lane-area interaction — only when the toolbar is wired and
+            // this row isn't the Click track itself.
+            if (toolbar != nullptr && index != clickRowIdx && e.x >= headerW)
+            {
+                const auto coord = laneCoordAt (e.getPosition());
+                const auto p     = toEngineParam (toolbar->getParam());
+
+                switch (toolbar->getTool())
+                {
+                    case AutomationToolbar::Tool::AddPoint:
+                        engine.addAutomationPoint (index, p, coord.samplePos, coord.value);
+                        repaint();
+                        return;
+                    case AutomationToolbar::Tool::DeletePoint:
+                    {
+                        const auto& player = engine.getPlayer();
+                        const juce::int64 totalSamples = player.isLoaded() ? player.getTotalLengthSamples()
+                                                                           : (juce::int64) (48000.0 * 60.0);
+                        const juce::int64 tol = juce::jmax<juce::int64> (1, totalSamples / juce::jmax (1, getWidth() - headerW) * 8);
+                        engine.removeAutomationPointNear (index, p, coord.samplePos, tol);
+                        repaint();
+                        return;
+                    }
+                    case AutomationToolbar::Tool::Select:
+                    {
+                        // Try to grab the nearest point — drag will move
+                        // it if mouseDrag fires after this.
+                        const auto& lane = engine.getAutomation (index, p);
+                        const auto& player = engine.getPlayer();
+                        const juce::int64 totalSamples = player.isLoaded() ? player.getTotalLengthSamples()
+                                                                           : (juce::int64) (48000.0 * 60.0);
+                        const juce::int64 tol = juce::jmax<juce::int64> (1, totalSamples / juce::jmax (1, getWidth() - headerW) * 6);
+                        draggingPointIdx = -1;
+                        for (size_t i = 0; i < lane.size(); ++i)
+                        {
+                            if (std::abs (lane[i].samplePos - coord.samplePos) < tol)
+                            {
+                                draggingPointIdx = (int) i;
+                                break;
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
         }
 
         void mouseDrag (const juce::MouseEvent& e) override
         {
-            if (! dragging) return;
-            const int target = juce::jlimit (kMinRowH, kMaxRowH,
-                                             dragStartHeight + e.getDistanceFromDragStartY());
-            rowSize = Size::Custom;
-            customH = target;
-            if (onSizeChosen) onSizeChosen (*this, Size::Custom);
+            // Resize drag wins if it's already in flight.
+            if (dragging)
+            {
+                const int target = juce::jlimit (kMinRowH, kMaxRowH,
+                                                 dragStartHeight + e.getDistanceFromDragStartY());
+                rowSize = Size::Custom;
+                customH = target;
+                if (onSizeChosen) onSizeChosen (*this, Size::Custom);
+                return;
+            }
+
+            // Otherwise: drag a held automation point with the Select tool.
+            if (toolbar != nullptr
+                && toolbar->getTool() == AutomationToolbar::Tool::Select
+                && draggingPointIdx >= 0)
+            {
+                const auto p     = toEngineParam (toolbar->getParam());
+                const auto coord = laneCoordAt (e.getPosition());
+                // Easiest path: re-add with the new (samplePos, value);
+                // addAutomationPoint replaces inside its tolerance, so
+                // we just delete the old + add new to allow position to
+                // move freely.
+                const auto& lane = engine.getAutomation (index, p);
+                if (draggingPointIdx < (int) lane.size())
+                {
+                    const auto oldPos = lane[(size_t) draggingPointIdx].samplePos;
+                    engine.removeAutomationPointNear (index, p, oldPos, 1);
+                    engine.addAutomationPoint        (index, p, coord.samplePos, coord.value);
+                    repaint();
+                }
+            }
         }
 
-        void mouseUp (const juce::MouseEvent&) override { dragging = false; }
+        void mouseUp (const juce::MouseEvent&) override
+        {
+            dragging         = false;
+            draggingPointIdx = -1;
+        }
 
         void openColourPicker()
         {
@@ -723,6 +984,24 @@ namespace zynforge
                    juce::AudioThumbnailCache& cache)
             : engine (eng), formats (fm), thumbCache (cache) {}
 
+        // Push-down configuration: toolbar pointer + click-overlay state.
+        // Stored here so newly-created rows pick them up automatically;
+        // existing rows are mutated through updateRowContext().
+        AutomationToolbar* sharedToolbar       { nullptr };
+        bool               sharedClickPresent  { false };
+        int                sharedClickRowIdx   { -1 };
+
+        void updateRowContext()
+        {
+            for (auto& r : rows)
+            {
+                r->toolbar      = sharedToolbar;
+                r->clickOverlay = sharedClickPresent;
+                r->clickRowIdx  = sharedClickRowIdx;
+                r->repaint();
+            }
+        }
+
         // The viewport's visible height — needed to resolve "fit to window".
         // EditPage sets this on every resize.
         void setViewportHeight (int h) { viewportHeight = juce::jmax (60, h); }
@@ -740,6 +1019,9 @@ namespace zynforge
                 const bool stereo = tL.isStereo.load() && (i + 1 < numTracks);
                 auto r = std::make_unique<TrackRow> (i, stereo, engine, formats, thumbCache);
                 r->onSizeChosen = [this] (TrackRow&, TrackRow::Size) { resized(); };
+                r->toolbar      = sharedToolbar;
+                r->clickOverlay = sharedClickPresent;
+                r->clickRowIdx  = sharedClickRowIdx;
                 addAndMakeVisible (*r);
                 rows.push_back (std::move (r));
                 i += stereo ? 2 : 1;
@@ -834,6 +1116,30 @@ namespace zynforge
     }
 
     EditPage::~EditPage() { stopTimer(); }
+
+    void EditPage::setAutomationToolbar (AutomationToolbar* t)
+    {
+        toolbar = t;
+        if (list != nullptr)
+        {
+            list->sharedToolbar = t;
+            list->updateRowContext();
+        }
+        repaint();
+    }
+
+    void EditPage::setClickTrackPresent (bool present, int clickIdx)
+    {
+        clickPresent  = present;
+        clickTrackIdx = clickIdx;
+        if (list != nullptr)
+        {
+            list->sharedClickPresent = present;
+            list->sharedClickRowIdx  = clickIdx;
+            list->updateRowContext();
+        }
+        repaint();
+    }
 
     void EditPage::refresh()
     {

@@ -533,6 +533,97 @@ namespace zynforge
         tempoMap.clear();
     }
 
+    // ─── Automation storage ──────────────────────────────────────────
+    std::vector<AudioEngine::AutomationPoint>* AudioEngine::findLane (int track, AutomationParam p)
+    {
+        if (track < 0) return nullptr;
+        if (track >= (int) automationData.size())
+            automationData.resize ((size_t) track + 1);
+        auto& a = automationData[(size_t) track];
+        switch (p)
+        {
+            case AutomationParam::Volume: return &a.volume;
+            case AutomationParam::Pan:    return &a.pan;
+            case AutomationParam::Mute:   return &a.mute;
+        }
+        return nullptr;
+    }
+
+    const std::vector<AudioEngine::AutomationPoint>* AudioEngine::findLane (int track, AutomationParam p) const
+    {
+        if (track < 0 || track >= (int) automationData.size()) return nullptr;
+        auto& a = automationData[(size_t) track];
+        switch (p)
+        {
+            case AutomationParam::Volume: return &a.volume;
+            case AutomationParam::Pan:    return &a.pan;
+            case AutomationParam::Mute:   return &a.mute;
+        }
+        return nullptr;
+    }
+
+    const std::vector<AudioEngine::AutomationPoint>&
+    AudioEngine::getAutomation (int track, AutomationParam p) const
+    {
+        if (auto* lane = findLane (track, p)) return *lane;
+        return emptyAutomation;
+    }
+
+    void AudioEngine::addAutomationPoint (int track, AutomationParam p,
+                                          juce::int64 samplePos, float value)
+    {
+        auto* lane = findLane (track, p);
+        if (lane == nullptr) return;
+
+        constexpr juce::int64 kSnap = 4096;   // ~85 ms at 48 k — replaces nearby points
+        for (auto& pt : *lane)
+        {
+            if (std::abs (pt.samplePos - samplePos) < kSnap)
+            {
+                pt.value = value;
+                return;
+            }
+        }
+        lane->push_back ({ samplePos, value });
+        std::sort (lane->begin(), lane->end(),
+                   [] (const auto& a, const auto& b) { return a.samplePos < b.samplePos; });
+    }
+
+    void AudioEngine::removeAutomationPointNear (int track, AutomationParam p,
+                                                 juce::int64 samplePos, juce::int64 tolerance)
+    {
+        auto* lane = findLane (track, p);
+        if (lane == nullptr || lane->empty()) return;
+
+        // Pick the single closest point inside the tolerance window.
+        auto best = lane->end();
+        juce::int64 bestDist = tolerance + 1;
+        for (auto it = lane->begin(); it != lane->end(); ++it)
+        {
+            const auto d = std::abs (it->samplePos - samplePos);
+            if (d < bestDist) { bestDist = d; best = it; }
+        }
+        if (best != lane->end()) lane->erase (best);
+    }
+
+    void AudioEngine::clearAutomation (AutomationParam p)
+    {
+        for (auto& a : automationData)
+        {
+            switch (p)
+            {
+                case AutomationParam::Volume: a.volume.clear(); break;
+                case AutomationParam::Pan:    a.pan   .clear(); break;
+                case AutomationParam::Mute:   a.mute  .clear(); break;
+            }
+        }
+    }
+
+    void AudioEngine::clearAutomationForTrack (int track, AutomationParam p)
+    {
+        if (auto* lane = findLane (track, p)) lane->clear();
+    }
+
     bool AudioEngine::startOsc (int udpPort, int dialectIndex)
     {
         if (osc == nullptr) osc = std::make_unique<OscRemote> (*this);
