@@ -189,6 +189,7 @@ namespace zynforge
             swatch->setDisplayColour (resolved);
         gainFader.setColour (juce::Slider::thumbColourId, knobCol);
         panSlider.setColour (juce::Slider::thumbColourId, knobCol);
+        panSlider.setColour (juce::Slider::rotarySliderFillColourId, knobCol);
         repaint();
     }
 
@@ -448,15 +449,41 @@ namespace zynforge
         if (swatch != nullptr)
             swatch->setTooltip ("Click for a colour palette. Right-click the strip for more options.");
 
-        panSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+        // Pan as a rotary knob with a live value readout below.
+        // -1.0 → 'L 100', 0.0 → 'C', +1.0 → 'R 100' (integer % to either side).
+        panSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+        panSlider.setRotaryParameters (juce::MathConstants<float>::pi * 1.20f,
+                                       juce::MathConstants<float>::pi * 2.80f,
+                                       true);
         panSlider.setRange (-1.0, 1.0, 0.01);
         panSlider.setDoubleClickReturnValue (true, 0.0);
-        panSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-        panSlider.setColour (juce::Slider::trackColourId,    brand::edge);
-        panSlider.setColour (juce::Slider::thumbColourId,    getResolvedColour().brighter (0.30f));
-        // Touch-friendly drag — slightly higher sensitivity so the thumb
-        // tracks finger movement 1:1 instead of accelerating away.
+        panSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 14);
+        panSlider.setTextValueSuffix ({});
+        panSlider.textFromValueFunction = [] (double v)
+        {
+            const int pct = juce::jlimit (0, 100, juce::roundToInt (std::abs (v) * 100.0));
+            if (pct == 0)        return juce::String ("C");
+            if (v < 0.0)         return juce::String ("L ") + juce::String (pct);
+            return juce::String ("R ") + juce::String (pct);
+        };
+        panSlider.valueFromTextFunction = [] (const juce::String& s)
+        {
+            const auto t = s.trim().toUpperCase();
+            if (t == "C" || t.isEmpty()) return 0.0;
+            const double v = t.retainCharacters ("0123456789.-").getDoubleValue() / 100.0;
+            return t.startsWithChar ('L') ? -std::abs (v) : std::abs (v);
+        };
+        panSlider.setColour (juce::Slider::rotarySliderFillColourId,
+                             getResolvedColour().brighter (0.30f));
+        panSlider.setColour (juce::Slider::rotarySliderOutlineColourId, brand::edge);
+        panSlider.setColour (juce::Slider::thumbColourId,
+                             getResolvedColour().brighter (0.30f));
+        panSlider.setColour (juce::Slider::textBoxTextColourId,        brand::textPrimary);
+        panSlider.setColour (juce::Slider::textBoxOutlineColourId,     juce::Colours::transparentBlack);
+        panSlider.setColour (juce::Slider::textBoxBackgroundColourId,
+                             brand::bgDeep.withAlpha (0.35f));
         panSlider.setMouseDragSensitivity (160);
+        panSlider.setTooltip ("Pan — drag to set L100..C..R100. Double-click for centre.");
         panSlider.setValue (s.pan.load(), juce::dontSendNotification);
         panSlider.onValueChange = [this]
         {
@@ -560,7 +587,10 @@ namespace zynforge
         dbLabel  .setBounds (r.removeFromTop (14));
         clipLabel.setBounds (r.removeFromTop (12));
         r.removeFromTop (2);
-        panSlider.setBounds (r.removeFromTop (16).reduced (4, 0));
+        // Rotary pan: knob area on top + value readout below (centred,
+        // ~42 px tall total so the knob has room to be readable on a
+        // ~150 px wide strip).
+        panSlider.setBounds (r.removeFromTop (44).reduced (8, 0));
         r.removeFromTop (4);
 
         outLabel.setBounds (r.removeFromTop (14));
