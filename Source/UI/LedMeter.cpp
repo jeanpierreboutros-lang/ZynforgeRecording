@@ -110,14 +110,27 @@ namespace zynforge
             paintBar (g, r, displayPeak, displayRms);
         }
 
-        // Side tick marks at standard dB values, on the right edge.
-        const float dBTicks[] = { -3.0f, -6.0f, -12.0f, -20.0f, -40.0f };
-        g.setColour (brand::textMuted);
-        for (float dB : dBTicks)
+        // dB scale labels alongside the bar — matches the reference
+        // screenshot's tight peak scale. Numbers represent dB below 0 dBFS;
+        // positives at the top of the range are unused on a digital meter.
+        const float dBLabels[] = { 0.0f, -3.0f, -6.0f, -10.0f, -16.0f, -22.0f, -32.0f, -60.0f };
+        g.setColour (brand::textTertiary);
+        g.setFont (juce::Font (juce::FontOptions().withHeight (8.5f).withStyle ("Bold")));
+        for (float dB : dBLabels)
         {
             const float frac = (dB - kMinDb) / (kMaxDb - kMinDb);
             const float y = r.getBottom() - r.getHeight() * frac;
-            g.drawHorizontalLine ((int) y, r.getRight() - 4.0f, r.getRight());
+            // White tick mark on the right edge
+            g.setColour (brand::textTertiary);
+            g.drawHorizontalLine ((int) y, r.getRight() - 3.0f, r.getRight());
+            // Number painted just inside the bar, right-aligned to the bar's
+            // inner edge so it sits ON the meter like the screenshot.
+            g.setColour (juce::Colours::white);
+            g.drawText (juce::String (std::abs ((int) dB)),
+                        juce::Rectangle<float> (r.getX(), y - 5.0f,
+                                                r.getWidth() - 4.0f, 10.0f).toNearestInt(),
+                        juce::Justification::centredRight, false);
+            g.setColour (brand::textTertiary);
         }
 
         // Clip pip

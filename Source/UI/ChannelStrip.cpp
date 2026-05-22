@@ -15,9 +15,7 @@ namespace zynforge
         void paint (juce::Graphics& g) override
         {
             const float minDb = -60.0f;
-            const float maxDb =   0.0f;
-            // Match the fader's 6 px track inset so the labels line up
-            // exactly with the slider's track top/bottom (0 dB at top).
+            const float maxDb =  12.0f;
             const int top    = 6;
             const int bottom = getHeight() - 6;
             const int trackH = bottom - top;
@@ -29,18 +27,27 @@ namespace zynforge
             };
 
             g.setColour (brand::textMuted);
-            g.setFont (juce::Font (juce::FontOptions().withHeight (9.0f)));
+            g.setFont (brand::type::label());
 
-            const int dBValues[] = { 0, -6, -10, -20, -30, -40, -50, -60 };
+            // dB tick values (top → bottom) — matches the reference
+            // screenshot. Positive values keep the '+' sign, negatives
+            // drop the minus to keep the column tight.
+            const int dBValues[] = { 12, 6, 0, -5, -10, -15, -20, -30, -40, -60 };
             for (int dB : dBValues)
             {
                 if ((float) dB < minDb || (float) dB > maxDb) continue;
                 const int y = yForDb ((float) dB);
                 g.drawHorizontalLine (y, 0.0f, 4.0f);
-                g.drawText (juce::String (dB),
-                            6, y - 6, getWidth() - 6, 12,
+                const auto txt = (dB > 0) ? "+" + juce::String (dB)
+                                          : juce::String (std::abs (dB));
+                g.drawText (txt, 6, y - 6, getWidth() - 6, 12,
                             juce::Justification::centredLeft, false);
             }
+
+            // Infinity glyph at the bottom of the range.
+            g.drawText (juce::String::fromUTF8 ("\xe2\x88\x9e"),
+                        6, bottom - 12, getWidth() - 6, 12,
+                        juce::Justification::centredLeft, false);
         }
 
     private:
@@ -439,8 +446,8 @@ namespace zynforge
         addAndMakeVisible (panSlider);
 
         gainFader.setSliderStyle (juce::Slider::LinearVertical);
-        gainFader.setRange (-60.0, 0.0, 0.1);
-        gainFader.setSkewFactorFromMidPoint (-12.0);
+        gainFader.setRange (-60.0, 12.0, 0.1);
+        gainFader.setSkewFactorFromMidPoint (-15.0);   // log-ish console feel
         gainFader.setDoubleClickReturnValue (true, 0.0);
         gainFader.setTextValueSuffix (" dB");
         gainFader.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 56, 14);
@@ -537,8 +544,8 @@ namespace zynforge
         outLabel.setBounds (r.removeFromTop (14));
 
         // Fader | dB ruler | LED meter (left → right).
-        const int meterW    = 20;
-        const int rulerW    = 26;
+        const int meterW    = 30;   // wider so the meter's own dB labels fit
+        const int rulerW    = 28;
         const int headroomH = 32;   // empty space above the fader so the
                                     // 0 dB mark sits where the thumb rests,
                                     // not at the absolute top of the strip.
