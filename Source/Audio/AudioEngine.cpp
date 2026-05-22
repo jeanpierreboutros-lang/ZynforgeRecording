@@ -48,6 +48,36 @@ namespace zynforge
         appProps->saveIfNeeded();
     }
 
+    void AudioEngine::resetAllStripState()
+    {
+        const int n = recorder.getNumTracks();
+        for (int i = 0; i < n; ++i)
+        {
+            // Clear persistent overrides — name, colour, gain, pan, routing.
+            stripNames  .clearName   (i);
+            stripColours.clearColour (i);
+            // Gains has no clear-by-index helper; just reset to defaults
+            // via the engine setters so the persistent file is rewritten.
+            setTrackGainDb (i, 0.0f);
+            setTrackPan    (i, 0.0f);
+            setTrackInputRouting  (i, i);   // identity
+            setTrackOutputRouting (i, -1);  // master-only
+
+            // Live atomics so the UI flips back immediately.
+            auto& t = recorder.getTrack (i);
+            t.name = juce::String (i + 1);
+            t.colourARGB.store (0, std::memory_order_relaxed);
+            t.armed   .store (false, std::memory_order_relaxed);
+            t.muted   .store (false, std::memory_order_relaxed);
+            t.soloed  .store (false, std::memory_order_relaxed);
+            t.monitor .store (false, std::memory_order_relaxed);
+            t.isStereo.store (false, std::memory_order_relaxed);
+            if (appProps != nullptr)
+                appProps->setValue (juce::String ("strip_stereo_") + juce::String (i), false);
+        }
+        if (appProps != nullptr) appProps->saveIfNeeded();
+    }
+
     bool AudioEngine::startRecording (const juce::File& sessionDir)
     {
         if (! recorder.startRecording (sessionDir)) return false;

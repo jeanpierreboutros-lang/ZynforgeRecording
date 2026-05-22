@@ -1126,9 +1126,15 @@ void MainComponent::showStartupWelcome()
                 return;
             }
 
-            // result == 1 (Create) — nothing to do; the user lands on a
-            // blank mixer they can configure + record into.
-            showStatus ("Ready — add channels with +CH and arm REC to capture");
+            // result == 1 (Create) — start clean. Wipe every per-strip
+            // persisted override so the mixer is reset to defaults: names
+            // are bare numbers, no colour overrides, no leftover I/O
+            // routing, fader at 0 dB, REC off. Strip count drops to 0;
+            // engineer uses +CH to dial in what they actually want.
+            engine.resetAllStripState();
+            engine.setStripCount (0);
+            lastTrackCount = -1;   // force MainComponent to rebuild the strip list
+            showStatus ("New session — add channels with +CH and arm REC to capture");
         }),
         false);
 }

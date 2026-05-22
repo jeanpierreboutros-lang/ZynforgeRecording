@@ -155,6 +155,13 @@ namespace zynforge
         juce::Array<juce::File> getRecentSessions() const;
         void clearRecentSessions();
 
+        // Wipe every per-strip persisted override so all strips read
+        // their defaults (name = '1', '2', '3' …, no colour override,
+        // 0 dB gain, centre pan, master routing). Used by the welcome
+        // dialog's 'Create New Session' so the engineer starts with a
+        // truly clean board.
+        void resetAllStripState();
+
         // Forwards to MultitrackRecorder.
         void setBackupDirectory (const juce::File& dir) { recorder.setBackupDirectory (dir); }
         juce::File getBackupDirectory() const           { return recorder.getBackupDirectory(); }
