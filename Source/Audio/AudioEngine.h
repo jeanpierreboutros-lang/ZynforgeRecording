@@ -78,6 +78,12 @@ namespace zynforge
         int  getStripCount() const;
         void setStripCount (int n);
 
+        // Add / remove a single strip without disturbing the others.
+        // The audio callback is briefly detached while the recorder
+        // mutates its track vector.
+        void addOneStrip();
+        void removeStripAt (int index);
+
         // OSC remote: starts/stops a juce::OSCReceiver bound to UDP port,
         // with a dialect parser for DiGiCo / A&H / SSL / Yamaha consoles
         // plus a generic /zynforge/* schema for tablet apps.

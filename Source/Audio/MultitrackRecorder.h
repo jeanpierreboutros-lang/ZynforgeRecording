@@ -61,6 +61,7 @@ namespace zynforge
         // each strip captures. No-op while recording.
         void addTrack();
         void removeLastTrack();
+        void removeTrackAt (int index);
         void setTrackCount (int n);
 
         int          getNumTracks() const noexcept { return (int) tracks.size(); }

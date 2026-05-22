@@ -183,12 +183,29 @@ namespace zynforge
             showContextMenu();
     }
 
+    void ChannelStrip::setMenuCallbacks (VoidCallback onDelete,
+                                         VoidCallback onAdd,
+                                         VoidCallback onLinkStereo,
+                                         IntCallback  onLinkToOther)
+    {
+        deleteCb     = std::move (onDelete);
+        addCb        = std::move (onAdd);
+        linkStereoCb = std::move (onLinkStereo);
+        linkOtherCb  = std::move (onLinkToOther);
+    }
+
     void ChannelStrip::showContextMenu()
     {
         const bool streaming = state.streamSend.load (std::memory_order_relaxed);
+        const bool isStereo  = state.isStereo .load (std::memory_order_relaxed);
 
         juce::PopupMenu menu;
         menu.addItem (1, "Rename…");
+        menu.addItem (10, "Add channel");
+        menu.addItem (11, "Delete channel");
+        menu.addSeparator();
+        menu.addItem (12, isStereo ? "Unlink stereo pair" : "Link to next channel (stereo)");
+        menu.addSeparator();
         menu.addItem (2, "Change colour…");
         menu.addItem (3, "Reset colour");
         menu.addSeparator();
@@ -214,6 +231,9 @@ namespace zynforge
                 case 5: state.streamSend.store (! state.streamSend.load (std::memory_order_relaxed),
                                                 std::memory_order_relaxed);
                         break;
+                case 10: if (addCb)        addCb();        break;
+                case 11: if (deleteCb)     deleteCb();     break;
+                case 12: if (linkStereoCb) linkStereoCb(); break;
                 default: break;
             }
         });

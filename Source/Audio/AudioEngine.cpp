@@ -65,6 +65,66 @@ namespace zynforge
         deviceManager.addAudioCallback (this);
     }
 
+    void AudioEngine::addOneStrip()
+    {
+        setStripCount (recorder.getNumTracks() + 1);
+    }
+
+    void AudioEngine::removeStripAt (int index)
+    {
+        if (recorder.isRecording()) return;
+        const int n = recorder.getNumTracks();
+        if (index < 0 || index >= n)  return;
+        if (n <= 1) return;   // must keep at least one strip
+
+        deviceManager.removeAudioCallback (this);
+        recorder.removeTrackAt (index);
+
+        // The persistent stores key by index, so shift everything after the
+        // removed slot down by one to keep colour / name / gain / routing
+        // consistent with the new track positions.
+        for (int i = index; i < recorder.getNumTracks(); ++i)
+        {
+            // Pull entry (i + 1)'s persistent values into slot i.
+            if (stripColours.hasColour (i + 1))
+                setTrackColour (i, stripColours.getColour (i + 1));
+            else
+                setTrackColour (i, juce::Colour ((juce::uint32) 0));
+
+            if (stripNames.hasName (i + 1))
+                setTrackName (i, stripNames.getName (i + 1));
+            else
+                setTrackName (i, {});
+
+            if (stripGains.hasGain (i + 1))
+                setTrackGainDb (i, stripGains.getGainDb (i + 1));
+            else
+                setTrackGainDb (i, 0.0f);
+
+            setTrackPan (i, stripGains.hasPan (i + 1) ? stripGains.getPan (i + 1) : 0.0f);
+
+            if (stripRouting.hasInput (i + 1))
+                setTrackInputRouting (i, stripRouting.getInput (i + 1));
+            if (stripRouting.hasOutput (i + 1))
+                setTrackOutputRouting (i, stripRouting.getOutput (i + 1));
+        }
+
+        // Clear the now-orphan slot at the end of the persistent stores.
+        const int lastIdx = recorder.getNumTracks();
+        setTrackColour       (lastIdx, juce::Colour ((juce::uint32) 0));
+        setTrackName         (lastIdx, {});
+        setTrackGainDb       (lastIdx, 0.0f);
+        setTrackPan          (lastIdx, 0.0f);
+
+        if (appProps != nullptr)
+        {
+            appProps->setValue ("stripCount", recorder.getNumTracks());
+            appProps->saveIfNeeded();
+        }
+
+        deviceManager.addAudioCallback (this);
+    }
+
     void AudioEngine::applyPersistedStripState()
     {
         for (int i = 0; i < recorder.getNumTracks(); ++i)

@@ -30,6 +30,12 @@ namespace zynforge
         // Stream bus send (post-fader, post-mute/solo).
         std::atomic<bool> streamSend  { false };
 
+        // True if this track is the LEFT half of a logical stereo strip.
+        // The RIGHT half is at trackIndex + 1. The UI uses this flag to
+        // render a single ChannelStrip controlling both underlying tracks
+        // (linked mute / solo / gain / pan / colour / name).
+        std::atomic<bool> isStereo    { false };
+
         std::atomic<int>          clipCount        { 0 };
         std::atomic<juce::int64>  lastClipSample   { -1 };
 

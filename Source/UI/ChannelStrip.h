@@ -19,6 +19,11 @@ namespace zynforge
         using FloatCallback  = std::function<void (float)>;
         using IntCallback    = std::function<void (int)>;
 
+        // Optional callbacks for context-menu actions that go beyond a
+        // single strip's state (delete / add / stereo link). The strip
+        // doesn't know about the engine; MainComponent wires these.
+        using VoidCallback = std::function<void()>;
+
         ChannelStrip (int index, TrackState& state,
                       ColourCallback onColourPicked  = {},
                       NameCallback   onRename        = {},
@@ -27,6 +32,11 @@ namespace zynforge
                       IntCallback    onInputRouted   = {},
                       IntCallback    onOutputRouted  = {});
         ~ChannelStrip() override;
+
+        void setMenuCallbacks (VoidCallback onDelete,
+                               VoidCallback onAdd,
+                               VoidCallback onLinkStereo,
+                               IntCallback  onLinkToOther);
 
         // Populate routing combo boxes — call after device topology changes.
         void setAvailableInputs  (int n);
@@ -64,6 +74,10 @@ namespace zynforge
         FloatCallback  panCb;
         IntCallback    inputCb;
         IntCallback    outputCb;
+        VoidCallback   deleteCb;
+        VoidCallback   addCb;
+        VoidCallback   linkStereoCb;
+        IntCallback    linkOtherCb;
 
         class DbRuler;
         std::unique_ptr<DbRuler> dbRuler;

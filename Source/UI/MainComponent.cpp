@@ -126,17 +126,27 @@ MainComponent::MainComponent()
                         const int clamped  = juce::jlimit (1, 256, rawCount);
                         engine.setStripCount (clamped);
 
-                        // Auto-name strips when stereo mode is chosen so the
-                        // pairing is visible in the mixer + EDIT views.
+                        // Mark each L track in a stereo pair so the UI knows
+                        // to collapse the L+R pair into one stereo strip.
+                        const int total = engine.getRecorder().getNumTracks();
+                        for (int i = 0; i < total; ++i)
+                        {
+                            auto& t = engine.getRecorder().getTrack (i);
+                            const bool isLeftOfPair = stereo && (i % 2 == 0) && (i + 1 < total);
+                            t.isStereo.store (isLeftOfPair, std::memory_order_release);
+                        }
+
                         if (stereo)
                         {
-                            const int total = engine.getRecorder().getNumTracks();
+                            // Auto-name pair: only the L track is exposed in
+                            // the mixer (the R partner is hidden), so give
+                            // the L track a clean pair label.
                             for (int i = 0; i < total; i += 2)
                             {
                                 const int pairNum = i / 2 + 1;
-                                engine.setTrackName (i,     "In " + juce::String (pairNum) + " L");
+                                engine.setTrackName (i, "Stereo " + juce::String (pairNum));
                                 if (i + 1 < total)
-                                    engine.setTrackName (i + 1, "In " + juce::String (pairNum) + " R");
+                                    engine.setTrackName (i + 1, "  (R)");
                             }
                         }
 
@@ -585,6 +595,29 @@ void MainComponent::rebuildStrips()
                                                  std::move (panCb),
                                                  std::move (inCb),
                                                  std::move (outCb));
+
+        // Wire the right-click menu actions to engine-level operations.
+        auto deleteCb     = [this, i] { engine.removeStripAt (i); };
+        auto addCb        = [this]    { engine.addOneStrip(); };
+        auto linkStereoCb = [this, i]
+        {
+            const int n = engine.getRecorder().getNumTracks();
+            if (i + 1 >= n) return;   // need a right partner
+            auto& tL = engine.getRecorder().getTrack (i);
+            const bool wasStereo = tL.isStereo.load();
+            tL.isStereo.store (! wasStereo, std::memory_order_release);
+        };
+        auto linkOtherCb  = [this, i] (int other)
+        {
+            // Reserved for future "link to channel N" grouping. For now this
+            // forwards stereo linking to the chosen channel pair.
+            juce::ignoreUnused (i, other);
+        };
+        s->setMenuCallbacks (std::move (deleteCb),
+                             std::move (addCb),
+                             std::move (linkStereoCb),
+                             std::move (linkOtherCb));
+
         s->setAvailableInputs  (numIns);
         s->setAvailableOutputs (numOuts);
         stripsContainer.addAndMakeVisible (*s);

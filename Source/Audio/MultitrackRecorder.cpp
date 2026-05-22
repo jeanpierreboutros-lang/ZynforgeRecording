@@ -105,6 +105,15 @@ namespace zynforge
         preRoll.pop_back();
     }
 
+    void MultitrackRecorder::removeTrackAt (int index)
+    {
+        if (isRecording()) return;
+        if (index < 0 || index >= (int) tracks.size()) return;
+        tracks.erase (tracks.begin() + index);
+        fifos.erase  (fifos.begin()  + index);
+        preRoll.erase(preRoll.begin()+ index);
+    }
+
     void MultitrackRecorder::setTrackCount (int n)
     {
         if (isRecording()) return;
