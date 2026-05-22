@@ -31,7 +31,8 @@ namespace zynforge
                       FloatCallback  onPan           = {},
                       IntCallback    onInputRouted   = {},
                       IntCallback    onOutputRouted  = {},
-                      TrackState*    stereoPartner   = nullptr);
+                      TrackState*    stereoPartner   = nullptr,
+                      FloatCallback  onPanR          = {});
         ~ChannelStrip() override;
 
         void setMenuCallbacks (VoidCallback onDelete,
@@ -74,6 +75,7 @@ namespace zynforge
         NameCallback   renameCb;
         FloatCallback  gainCb;
         FloatCallback  panCb;
+        FloatCallback  panRCb;
         IntCallback    inputCb;
         IntCallback    outputCb;
         VoidCallback   deleteCb;

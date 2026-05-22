@@ -327,7 +327,8 @@ namespace zynforge
                                 FloatCallback  panCallback,
                                 IntCallback    inputCallback,
                                 IntCallback    outputCallback,
-                                TrackState*    stereoPartner)
+                                TrackState*    stereoPartner,
+                                FloatCallback  panRCallback)
         : stripIndex (index),
           state (s),
           pairState (stereoPartner),
@@ -336,6 +337,7 @@ namespace zynforge
           renameCb (std::move (nameCallback)),
           gainCb   (std::move (gainCallback)),
           panCb    (std::move (panCallback)),
+          panRCb   (std::move (panRCallback)),
           inputCb  (std::move (inputCallback)),
           outputCb (std::move (outputCallback)),
           spectrum (s),
@@ -527,6 +529,9 @@ namespace zynforge
                 const float v = (float) panSliderR.getValue();
                 if (pairState != nullptr)
                     pairState->pan.store (v, std::memory_order_relaxed);
+                // Persist the R-side pan via its own callback so the
+                // L/R values are independent and both survive a relaunch.
+                if (panRCb) panRCb (v);
                 panLabelR.setText (formatPanText (v, true), juce::dontSendNotification);
             };
             addAndMakeVisible (panSliderR);

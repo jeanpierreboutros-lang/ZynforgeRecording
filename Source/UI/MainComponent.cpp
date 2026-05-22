@@ -707,11 +707,12 @@ void MainComponent::rebuildStrips()
             engine.setTrackGainDb (i, dB);
             if (step == 2) engine.setTrackGainDb (i + 1, dB);
         };
-        auto panCb    = [this, i, step] (float pan)
-        {
-            engine.setTrackPan (i, pan);
-            if (step == 2) engine.setTrackPan (i + 1, pan);
-        };
+        // L pan persists to track i. For a stereo strip, the R pan
+        // travels through its own panRCb (below) — the two sides are
+        // INDEPENDENT, not mirrored, so the engineer can pan the L
+        // channel hard-left and R hard-right (or whatever they want).
+        auto panCb  = [this, i] (float pan) { engine.setTrackPan (i,     pan); };
+        auto panRCb = [this, i] (float pan) { engine.setTrackPan (i + 1, pan); };
 
         // Stereo routing: L → device[N], R → device[N+1].
         auto inCb = [this, i, step] (int dev)
@@ -734,7 +735,9 @@ void MainComponent::rebuildStrips()
                                                  std::move (panCb),
                                                  std::move (inCb),
                                                  std::move (outCb),
-                                                 tR);
+                                                 tR,
+                                                 (step == 2) ? std::move (panRCb)
+                                                             : ChannelStrip::FloatCallback{});
 
         // Right-click menu wiring.
         auto deleteCb     = [this, i, step]
