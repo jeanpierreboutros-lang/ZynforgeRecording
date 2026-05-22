@@ -497,22 +497,48 @@ namespace zynforge
             content.removeFromTop (2);
 
             // 2×2 grid matching the mixer: [ I | R ] / [ S | M ].
+            // The Click row hides R and I (playback-only track) and shows
+            // a single [ S | M ] row instead.
+            const bool isClickRow =
+                engine.getRecorder().getTrack (index).name == "Click";
             const int btnH = 22;
-            auto row1 = content.removeFromTop (btnH);
-            content.removeFromTop (3);
-            auto row2 = content.removeFromTop (btnH);
-            const int halfW = row1.getWidth() / 2;
-            monButton .setBounds (row1.removeFromLeft (halfW).reduced (1));
-            armButton .setBounds (row1.reduced (1));
-            soloButton.setBounds (row2.removeFromLeft (halfW).reduced (1));
-            muteButton.setBounds (row2.reduced (1));
+            if (isClickRow)
+            {
+                armButton .setVisible (false); armButton .setBounds ({});
+                monButton .setVisible (false); monButton .setBounds ({});
+                auto row = content.removeFromTop (btnH);
+                const int halfW = row.getWidth() / 2;
+                soloButton.setBounds (row.removeFromLeft (halfW).reduced (1));
+                muteButton.setBounds (row.reduced (1));
+            }
+            else
+            {
+                armButton.setVisible (true);
+                monButton.setVisible (true);
+                auto row1 = content.removeFromTop (btnH);
+                content.removeFromTop (3);
+                auto row2 = content.removeFromTop (btnH);
+                const int halfW = row1.getWidth() / 2;
+                monButton .setBounds (row1.removeFromLeft (halfW).reduced (1));
+                armButton .setBounds (row1.reduced (1));
+                soloButton.setBounds (row2.removeFromLeft (halfW).reduced (1));
+                muteButton.setBounds (row2.reduced (1));
+            }
             content.removeFromTop (4);
 
             inputCombo .setBounds (content.removeFromTop (18));
             content.removeFromTop (2);
             outputCombo.setBounds (content.removeFromTop (18));
             content.removeFromTop (3);
-            viewButton .setBounds (content.removeFromTop (18));
+            // Hide the VIEW button on the Click row — its lane is the
+            // metronome waveform, no automation choices apply.
+            const bool clickRow =
+                engine.getRecorder().getTrack (index).name == "Click";
+            viewButton.setVisible (! clickRow);
+            if (! clickRow)
+                viewButton.setBounds (content.removeFromTop (18));
+            else
+                viewButton.setBounds ({});
         }
 
         bool isInResizeZone (juce::Point<int> p) const noexcept

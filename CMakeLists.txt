@@ -50,6 +50,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/AudioDeviceDialog.cpp
     Source/UI/MasterStrip.cpp
     Source/UI/AddTracksDialog.cpp
+    Source/UI/AutomationToolbar.cpp
     Source/UI/NewSessionDialog.cpp
     Source/UI/PerfDashboard.cpp
     Source/UI/SessionPropertiesDialog.cpp

@@ -5,6 +5,7 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/TrackExporter.h"
 #include "../Theme/ZynForgeLookAndFeel.h"
+#include "AutomationToolbar.h"
 #include "BigClockPanel.h"
 #include "ChannelStrip.h"
 #include "EditPage.h"
@@ -153,6 +154,7 @@ private:
     zynforge::PerfDashboard perfDashboard;
     zynforge::SetlistBar    setlistBar;
     zynforge::TempoBar      tempoBar;
+    zynforge::AutomationToolbar automationToolbar;
 
     // Per-session cue list — populated from <SessionName>.zfproj on
     // every session swap, persisted on every add / pick / update.

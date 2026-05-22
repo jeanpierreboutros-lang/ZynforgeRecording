@@ -272,6 +272,21 @@ MainComponent::MainComponent()
     };
     addAndMakeVisible (setlistBar);
 
+    // Automation toolbar — visible only when the EDIT view is active.
+    // Tool / parameter changes are exposed to the EDIT rows via the
+    // engine + a simple poll (TrackRow::resized + paint pick the
+    // current laneMode from the toolbar's param choice).
+    automationToolbar.setVisible (false);
+    automationToolbar.onToolChanged  = [this] (zynforge::AutomationToolbar::Tool)
+        { if (editPage != nullptr) editPage->repaint(); };
+    automationToolbar.onParamChanged = [this] (zynforge::AutomationToolbar::Param)
+        { if (editPage != nullptr) editPage->refresh(); };
+    automationToolbar.onClearAll = [this]
+    {
+        showStatus ("Automation clear is recognised — point storage lands in the next pass");
+    };
+    addAndMakeVisible (automationToolbar);
+
     tempoBar.setBpm (engine.getSessionTempoBpm());
     tempoBar.onBpmChanged = [this] (float bpm)
     {
@@ -813,6 +828,10 @@ void MainComponent::switchView (View v)
         editPage->setVisible (! mix);
         if (! mix) editPage->refresh();   // rescan session dir on entry
     }
+
+    // Automation toolbar is part of the EDIT-view chrome.
+    automationToolbar.setVisible (! mix);
+    resized();   // re-flow the layout for the new state
 
     // Reflect active state in the button tinting.
     auto colour = [] (juce::TextButton& b, bool engaged)
@@ -3094,6 +3113,19 @@ void MainComponent::resized()
         {
             masterStrip->setBounds ({});
         }
+    }
+
+    // In EDIT view the automation toolbar takes the top 28 px of the
+    // viewport area. In MIX view it's hidden so the strips get the
+    // full height.
+    if (automationToolbar.isVisible())
+    {
+        automationToolbar.setBounds (viewportArea.removeFromTop (28).reduced (2, 0));
+        viewportArea.removeFromTop (4);
+    }
+    else
+    {
+        automationToolbar.setBounds ({});
     }
 
     stripsViewport.setBounds (viewportArea);

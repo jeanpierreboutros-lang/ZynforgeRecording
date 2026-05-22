@@ -691,17 +691,36 @@ namespace zynforge
         }
         r.removeFromTop (6);
 
-        // ── 3. Two rows of two buttons each: [ I | ● ] / [ S | M ] ──
+        // ── 3. Two rows of two buttons each: [ I | R ] / [ S | M ] ──
+        //   …except on the metronome strip ("Click"), which is
+        //   playback-only — record-arm and input-monitor make no sense
+        //   so those two pills are hidden, and the SOLO + MUTE row sits
+        //   alone with no gap above it.
+        const bool isClickStrip = (state.name == "Click");
         const int btnH = 24;
         const int btnGap = 3;
-        auto row1 = r.removeFromTop (btnH);
-        r.removeFromTop (btnGap);
-        auto row2 = r.removeFromTop (btnH);
-        const int halfW = row1.getWidth() / 2;
-        monButton.setBounds (row1.removeFromLeft (halfW).reduced (2, 0));
-        armButton.setBounds (row1.reduced (2, 0));
-        soloButton.setBounds (row2.removeFromLeft (halfW).reduced (2, 0));
-        muteButton.setBounds (row2.reduced (2, 0));
+        if (isClickStrip)
+        {
+            armButton.setVisible (false); armButton.setBounds ({});
+            monButton.setVisible (false); monButton.setBounds ({});
+            auto row = r.removeFromTop (btnH);
+            const int halfW = row.getWidth() / 2;
+            soloButton.setBounds (row.removeFromLeft (halfW).reduced (2, 0));
+            muteButton.setBounds (row.reduced (2, 0));
+        }
+        else
+        {
+            armButton.setVisible (true);
+            monButton.setVisible (true);
+            auto row1 = r.removeFromTop (btnH);
+            r.removeFromTop (btnGap);
+            auto row2 = r.removeFromTop (btnH);
+            const int halfW = row1.getWidth() / 2;
+            monButton.setBounds (row1.removeFromLeft (halfW).reduced (2, 0));
+            armButton.setBounds (row1.reduced (2, 0));
+            soloButton.setBounds (row2.removeFromLeft (halfW).reduced (2, 0));
+            muteButton.setBounds (row2.reduced (2, 0));
+        }
         r.removeFromTop (6);
 
         spectrum .setBounds ({});  // hidden
