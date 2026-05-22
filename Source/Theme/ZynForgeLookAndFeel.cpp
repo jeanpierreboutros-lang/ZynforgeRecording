@@ -102,7 +102,7 @@ namespace zynforge
         }
 
         // Vertical fader (the channel-strip gain fader).
-        const float trackW   = 6.0f;
+        const float trackW   = 12.0f;
         const float trackX   = bounds.getCentreX() - trackW * 0.5f;
         const float trackY   = bounds.getY() + 6.0f;
         const float trackB   = bounds.getBottom() - 6.0f;

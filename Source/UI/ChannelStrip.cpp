@@ -15,8 +15,10 @@ namespace zynforge
         {
             const float minDb = -60.0f;
             const float maxDb =   0.0f;
-            const int top    = 4;
-            const int bottom = getHeight() - 4;
+            // Match the fader's 6 px track inset so the labels line up
+            // exactly with the slider's track top/bottom (0 dB at top).
+            const int top    = 6;
+            const int bottom = getHeight() - 6;
             const int trackH = bottom - top;
 
             auto yForDb = [&] (float dB) -> int
