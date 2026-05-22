@@ -63,7 +63,7 @@ namespace zynforge
         juce::Label   outLabel;
         juce::ComboBox inputCombo;
         juce::ComboBox outputCombo;
-        juce::ToggleButton armButton   { "ARM" };
+        juce::ToggleButton armButton   { "REC" };
         juce::ToggleButton monButton   { "MON" };
         juce::ToggleButton muteButton  { "MUTE" };
         juce::ToggleButton soloButton  { "SOLO" };

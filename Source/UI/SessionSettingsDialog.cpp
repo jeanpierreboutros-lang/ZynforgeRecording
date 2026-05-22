@@ -146,7 +146,24 @@ namespace zynforge
                 }
                 auto setup = engine.getDeviceManager().getAudioDeviceSetup();
                 setup.sampleRate = sr;
-                engine.getDeviceManager().setAudioDeviceSetup (setup, true);
+                const auto err = engine.getDeviceManager().setAudioDeviceSetup (setup, true);
+
+                juce::Logger::writeToLog ("[ZF] Session settings applied — format="
+                                         + juce::String ((int) fmt)
+                                         + " sr=" + juce::String (sr)
+                                         + (err.isEmpty() ? juce::String() : juce::String (" err=") + err));
+
+                if (err.isNotEmpty())
+                {
+                    juce::AlertWindow::showAsync (
+                        juce::MessageBoxOptions()
+                            .withIconType (juce::MessageBoxIconType::WarningIcon)
+                            .withTitle ("Could not apply sample rate")
+                            .withMessage ("Audio device error:\n\n" + err
+                                + "\n\nThe capture format has still been changed; the device kept its previous sample rate.")
+                            .withButton ("OK"),
+                        nullptr);
+                }
 
                 closeDialog (true);
             }
@@ -166,15 +183,32 @@ namespace zynforge
 
     void SessionSettingsDialog::launch (AudioEngine& engine)
     {
-        auto content = std::make_unique<SettingsContent> (engine);
+        juce::Logger::writeToLog ("[ZF] SessionSettingsDialog::launch — entered");
 
-        juce::DialogWindow::LaunchOptions opts;
-        opts.content.setOwned (content.release());
-        opts.dialogTitle                  = "Session Settings";
-        opts.dialogBackgroundColour       = brand::bgPanel;
-        opts.escapeKeyTriggersCloseButton = true;
-        opts.useNativeTitleBar            = true;
-        opts.resizable                    = false;
-        opts.launchAsync();
+        // Defer to the next message-thread tick so the menu has fully
+        // torn down before we open the modal.
+        juce::MessageManager::callAsync ([engineRef = std::ref (engine)]
+        {
+            juce::Logger::writeToLog ("[ZF] SessionSettingsDialog::launch — opening window");
+            auto& engine = engineRef.get();
+
+            auto content = std::make_unique<SettingsContent> (engine);
+
+            juce::DialogWindow::LaunchOptions opts;
+            opts.content.setOwned (content.release());
+            opts.dialogTitle                  = "Session Settings";
+            opts.dialogBackgroundColour       = brand::bgPanel;
+            opts.escapeKeyTriggersCloseButton = true;
+            opts.useNativeTitleBar            = true;
+            opts.resizable                    = false;
+            auto* dw = opts.launchAsync();
+            juce::Logger::writeToLog (juce::String ("[ZF] launchAsync returned ")
+                                       + (dw != nullptr ? "valid window" : "nullptr"));
+            if (dw != nullptr)
+            {
+                dw->setAlwaysOnTop (true);
+                dw->toFront (true);
+            }
+        });
     }
 }

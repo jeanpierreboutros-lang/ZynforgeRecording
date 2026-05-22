@@ -252,6 +252,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
 
 void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
 {
+    juce::Logger::writeToLog ("[ZF] menuItemSelected id=" + juce::String (id));
+
     if (id == 1)         onLoadSessionClicked();
     else if (id == 2)    onSaveSessionState();
     else if (id == 3)    onSaveSessionAs();
@@ -1148,30 +1150,32 @@ void MainComponent::resized()
     lockButton   .setBounds (row1.removeFromRight (76).reduced (0, 2));
     statusLabel  .setBounds (row1);
 
-    // Row 2 — FILE / transport bar / session label / BACKUP / PATCH / METERS / OSC
-    auto row2 = r.removeFromTop (40).reduced (12, 6);
-    loadButton    .setBounds (row2.removeFromLeft (90).reduced (0, 2));
-    row2.removeFromLeft (8);
-    // Six-button transport bar (gotoStart, gotoEnd, play, stop, record, loop).
-    if (transportBar != nullptr)
-        transportBar->setBounds (row2.removeFromLeft (220).reduced (0, 2));
-    row2.removeFromLeft (10);
+    // Row 2 — Transport bar (taller, wider) | transport label | session label | BACKUP / PATCH / METERS / OSC
+    auto row2 = r.removeFromTop (52).reduced (12, 4);
 
-    oscButton     .setBounds (row2.removeFromRight (70).reduced (0, 2));
-    row2.removeFromRight (4);
-    metersButton  .setBounds (row2.removeFromRight (84).reduced (0, 2));
-    row2.removeFromRight (4);
-    patchButton   .setBounds (row2.removeFromRight (78).reduced (0, 2));
-    row2.removeFromRight (4);
-    backupButton  .setBounds (row2.removeFromRight (90).reduced (0, 2));
-    row2.removeFromRight (8);
-    transportLabel.setBounds (row2.removeFromLeft (130));
+    // Six-button transport bar — bigger, since the FILE button moved to
+    // the macOS menu bar.
+    if (transportBar != nullptr)
+        transportBar->setBounds (row2.removeFromLeft (340).reduced (0, 2));
+    row2.removeFromLeft (16);
+
+    // The old FILE TextButton is no longer shown; the File menu lives in
+    // the macOS system menu bar. Keep loadButton out of the layout.
+    loadButton.setBounds ({});
+
+    // PATCH is the only quick-access in-app button — BACKUP / METERS / OSC
+    // are all accessible from the Session menu in the macOS menu bar.
+    patchButton .setBounds (row2.removeFromRight (90).reduced (0, 2));
+    row2.removeFromRight (10);
+    transportLabel.setBounds (row2.removeFromLeft (140));
     sessionLabel  .setBounds (row2);
 
-    // Old PLAY/STOP TextButtons are kept alive for backward-compat in
-    // applyLockState but not laid out — they're invisible now.
-    playButton.setBounds ({});
-    stopButton.setBounds ({});
+    // Hidden duplicates of menu-bar items.
+    backupButton .setBounds ({});
+    metersButton .setBounds ({});
+    oscButton    .setBounds ({});
+    playButton   .setBounds ({});
+    stopButton   .setBounds ({});
 
     // Big clock banner with a phase meter docked on its right edge
     auto clockRow = r.removeFromTop (96).reduced (12, 6);

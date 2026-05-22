@@ -183,7 +183,7 @@ namespace zynforge
     void AudioEngine::setTrackGainDb (int channelIndex, float dB)
     {
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
-        dB = juce::jlimit (-60.0f, 12.0f, dB);
+        dB = juce::jlimit (-60.0f, 0.0f, dB);
         recorder.getTrack (channelIndex).gainDb.store (dB, std::memory_order_relaxed);
         stripGains.setGainDb (channelIndex, dB);
     }

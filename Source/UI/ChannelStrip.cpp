@@ -14,23 +14,21 @@ namespace zynforge
         void paint (juce::Graphics& g) override
         {
             const float minDb = -60.0f;
-            const float maxDb = 12.0f;
+            const float maxDb =   0.0f;
             const int top    = 4;
             const int bottom = getHeight() - 4;
             const int trackH = bottom - top;
 
             auto yForDb = [&] (float dB) -> int
             {
-                // Match juce::Slider mid-skew (0 dB at mid).
                 const double prop = slider.valueToProportionOfLength ((double) dB);
-                // Slider: 0 prop = bottom, 1 prop = top.
                 return (int) (bottom - prop * (double) trackH);
             };
 
             g.setColour (brand::textMuted);
             g.setFont (juce::Font (juce::FontOptions().withHeight (9.0f)));
 
-            const int dBValues[] = { 12, 6, 0, -6, -10, -20, -30, -40, -50, -60 };
+            const int dBValues[] = { 0, -6, -10, -20, -30, -40, -50, -60 };
             for (int dB : dBValues)
             {
                 if ((float) dB < minDb || (float) dB > maxDb) continue;
@@ -308,7 +306,8 @@ namespace zynforge
         clipLabel.setJustificationType (juce::Justification::centred);
         addAndMakeVisible (clipLabel);
 
-        addAndMakeVisible (spectrum);
+        // FFT spectrum removed per user request — keep the component
+        // alive (it feeds off TrackState) but don't show it.
 
         nameLabel  .setTooltip ("Channel name — double-click to rename, right-click for more.");
         inputCombo .setTooltip ("Hardware input this strip records from.");
@@ -338,8 +337,8 @@ namespace zynforge
         addAndMakeVisible (panSlider);
 
         gainFader.setSliderStyle (juce::Slider::LinearVertical);
-        gainFader.setRange (-60.0, 12.0, 0.1);
-        gainFader.setSkewFactorFromMidPoint (0.0);
+        gainFader.setRange (-60.0, 0.0, 0.1);
+        gainFader.setSkewFactorFromMidPoint (-12.0);
         gainFader.setDoubleClickReturnValue (true, 0.0);
         gainFader.setTextValueSuffix (" dB");
         gainFader.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 56, 14);
@@ -421,7 +420,7 @@ namespace zynforge
         muteButton.setBounds (row2.removeFromLeft (halfW).reduced (2, 1));
         soloButton.setBounds (row2.reduced (2, 1));
         r.removeFromTop (4);
-        spectrum .setBounds (r.removeFromTop (40));
+        spectrum.setBounds ({});  // hidden
         r.removeFromTop (2);
         dbLabel  .setBounds (r.removeFromTop (14));
         clipLabel.setBounds (r.removeFromTop (12));
