@@ -180,24 +180,68 @@ namespace zynforge
                     if (col < 0 || col >= numStrips) return;
                     auto& t = engine.getRecorder().getTrack (col);
                     t.muted.store (! t.muted.load());
+                    dragActive = false;
                     repaint();
                     return;
                 }
 
                 const int x = e.x - L.rowHeaderW;
                 const int y = e.y - L.colHeaderH;
-                if (x < 0 || y < 0) return;
+                if (x < 0 || y < 0) { dragActive = false; return; }
 
                 const int col = x / L.colW;
                 const int row = y / L.rowH;
-                if (col < 0 || col >= numStrips) return;
-                if (row < 0 || row >= numHw)     return;
+                if (col < 0 || col >= numStrips) { dragActive = false; return; }
+                if (row < 0 || row >= numHw)     { dragActive = false; return; }
 
+                // Toggle the clicked cell — same as before.
                 const int current = currentRouting (col);
                 const int newVal  = (current == row) ? -1 : row;
                 setRouting (col, newVal);
+
+                // Start a drag-patch from here so that dragging down/up
+                // auto-patches consecutive strips to consecutive inputs.
+                dragActive   = (newVal >= 0);   // only auto-patch when ACTIVATING
+                dragStartCol = col;
+                dragStartRow = row;
+                dragLastDr   = 0;
+
                 repaint();
             }
+
+            void mouseDrag (const juce::MouseEvent& e) override
+            {
+                if (! dragActive) return;
+
+                const int numStrips = engine.getRecorder().getNumTracks();
+                const int numHw     = isInput ? engine.getCurrentDeviceInputCount()
+                                              : engine.getCurrentDeviceOutputCount();
+                const auto L = computeLayout();
+
+                const int y = e.y - L.colHeaderH;
+                if (y < 0) return;
+                int row = y / L.rowH;
+                row = juce::jlimit (0, numHw - 1, row);
+
+                const int dr = row - dragStartRow;
+                if (dr == dragLastDr) return;
+                dragLastDr = dr;
+
+                // Walk diagonally from the start cell to the current row,
+                // patching every (col+i, row+i) pair along the way.
+                const int sign = (dr >= 0) ? 1 : -1;
+                for (int i = 0; i <= std::abs (dr); ++i)
+                {
+                    const int targetCol = dragStartCol + i * sign;
+                    const int targetRow = dragStartRow + i * sign;
+                    if (targetCol < 0 || targetCol >= numStrips) break;
+                    if (targetRow < 0 || targetRow >= numHw)     break;
+                    setRouting (targetCol, targetRow);
+                }
+                repaint();
+            }
+
+            void mouseUp (const juce::MouseEvent&) override { dragActive = false; }
 
             bool isRowRoutedToAnyStrip (int row, int numStrips) const
             {
@@ -222,6 +266,12 @@ namespace zynforge
 
             AudioEngine& engine;
             bool         isInput;
+
+            // Drag-patch state — set in mouseDown, consumed in mouseDrag.
+            bool dragActive   = false;
+            int  dragStartCol = 0;
+            int  dragStartRow = 0;
+            int  dragLastDr   = 0;
         };
 
         class PatchPageContent final : public juce::Component
