@@ -267,34 +267,43 @@ namespace zynforge
         juce::AiffAudioFormat aiff;
         juce::FlacAudioFormat flac;
 
-        enum class Container { Wav, Aiff, Flac } container;
-        int bitDepth;
-        switch (captureFormat)
+        // Resolves a CaptureFormat to its container + bit-depth + file
+        // extension so primary and backup writers can use different
+        // formats and the rest of the open-writer code stays uniform.
+        enum class Container { Wav, Aiff, Flac };
+        auto resolve = [] (CaptureFormat f)
         {
-            case CaptureFormat::Wav16:       container = Container::Wav;  bitDepth = 16; break;
-            case CaptureFormat::Wav24:       container = Container::Wav;  bitDepth = 24; break;
-            case CaptureFormat::Wav32Float:  container = Container::Wav;  bitDepth = 32; break;
-            case CaptureFormat::Aiff16:      container = Container::Aiff; bitDepth = 16; break;
-            case CaptureFormat::Aiff24:      container = Container::Aiff; bitDepth = 24; break;
-            case CaptureFormat::Aiff32Float: container = Container::Aiff; bitDepth = 32; break;
-            case CaptureFormat::Flac16:      container = Container::Flac; bitDepth = 16; break;
-            case CaptureFormat::Flac24:      container = Container::Flac; bitDepth = 24; break;
-        }
-        const bool useFlac = (container == Container::Flac);
-        const bool useAiff = (container == Container::Aiff);
-        const char* ext = useFlac ? ".flac" : (useAiff ? ".aif" : ".wav");
+            struct Resolved { Container container; int bitDepth; const char* ext; };
+            switch (f)
+            {
+                case CaptureFormat::Wav16:       return Resolved { Container::Wav,  16, ".wav" };
+                case CaptureFormat::Wav24:       return Resolved { Container::Wav,  24, ".wav" };
+                case CaptureFormat::Wav32Float:  return Resolved { Container::Wav,  32, ".wav" };
+                case CaptureFormat::Aiff16:      return Resolved { Container::Aiff, 16, ".aif" };
+                case CaptureFormat::Aiff24:      return Resolved { Container::Aiff, 24, ".aif" };
+                case CaptureFormat::Aiff32Float: return Resolved { Container::Aiff, 32, ".aif" };
+                case CaptureFormat::Flac16:      return Resolved { Container::Flac, 16, ".flac" };
+                case CaptureFormat::Flac24:      return Resolved { Container::Flac, 24, ".flac" };
+            }
+            return Resolved { Container::Wav, 24, ".wav" };
+        };
+        const auto primary = resolve (captureFormat);
+        const auto backup  = resolve (backupCaptureFormat);
 
         const auto now = juce::Time::getCurrentTime();
 
-        for (std::size_t i = 0; i < tracks.size(); ++i)
+        auto openWriter = [&] (const juce::File& target, Container c, int bits) -> juce::AudioFormatWriter*
         {
-            // BWF (bext) metadata — only meaningful for WAV.
+            target.deleteFile();
+            auto* out = target.createOutputStream().release();
+            if (out == nullptr) return nullptr;
+
             juce::StringPairArray meta;
-            if (! useFlac && ! useAiff)
+            if (c == Container::Wav)
             {
                 meta.set (juce::WavAudioFormat::bwavDescription,
                           "Zynforge Recording — " + sessionDir.getFileName()
-                            + " — track " + juce::String ((int) i + 1));
+                            + " — " + target.getFileNameWithoutExtension());
                 meta.set (juce::WavAudioFormat::bwavOriginator,      "Zynforge Recording");
                 meta.set (juce::WavAudioFormat::bwavOriginatorRef,   sessionDir.getFileName());
                 meta.set (juce::WavAudioFormat::bwavOriginationDate, now.formatted ("%Y-%m-%d"));
@@ -302,38 +311,32 @@ namespace zynforge
                 meta.set (juce::WavAudioFormat::bwavTimeReference,   "0");
             }
 
+            juce::AudioFormatWriter* w = nullptr;
+            if      (c == Container::Flac) w = flac.createWriterFor (out, sampleRate, 1, bits, meta, 5);
+            else if (c == Container::Aiff) w = aiff.createWriterFor (out, sampleRate, 1, bits, meta, 0);
+            else                           w = wav .createWriterFor (out, sampleRate, 1, bits, meta, 0);
+            if (w == nullptr) delete out;
+            return w;
+        };
+
+        for (std::size_t i = 0; i < tracks.size(); ++i)
+        {
             WriterChannel w;
-            const auto name = juce::String::formatted ("Track_%02d", (int) i + 1) + ext;
-            auto file = sessionDir.getChildFile (name);
-            file.deleteFile();
+            const auto trackName = juce::String::formatted ("Track_%02d", (int) i + 1);
 
-            if (auto* out = file.createOutputStream().release())
-            {
-                juce::AudioFormatWriter* awRaw = nullptr;
-                if      (useFlac) awRaw = flac.createWriterFor (out, sampleRate, 1, bitDepth, meta, 5);
-                else if (useAiff) awRaw = aiff.createWriterFor (out, sampleRate, 1, bitDepth, meta, 0);
-                else              awRaw = wav .createWriterFor (out, sampleRate, 1, bitDepth, meta, 0);
+            // Primary writer.
+            const auto primaryFile = sessionDir.getChildFile (trackName + primary.ext);
+            w.writer.reset (openWriter (primaryFile, primary.container, primary.bitDepth));
 
-                if (awRaw == nullptr) { delete out; }
-                w.writer.reset (awRaw);
-            }
-
-            // Optional second copy to a backup directory.
+            // Optional second copy — may be in a different format from
+            // the primary, so the engineer can run e.g. WAV/24 to the
+            // main drive AND FLAC/24 to the backup drive simultaneously.
             if (backupDir.isDirectory())
             {
                 auto backupSession = backupDir.getChildFile (sessionDir.getFileName());
                 backupSession.createDirectory();
-                auto backupFile = backupSession.getChildFile (name);
-                backupFile.deleteFile();
-                if (auto* bout = backupFile.createOutputStream().release())
-                {
-                    juce::AudioFormatWriter* bw = nullptr;
-                    if      (useFlac) bw = flac.createWriterFor (bout, sampleRate, 1, bitDepth, meta, 5);
-                    else if (useAiff) bw = aiff.createWriterFor (bout, sampleRate, 1, bitDepth, meta, 0);
-                    else              bw = wav .createWriterFor (bout, sampleRate, 1, bitDepth, meta, 0);
-                    if (bw == nullptr) { delete bout; }
-                    w.backupWriter.reset (bw);
-                }
+                const auto backupFile = backupSession.getChildFile (trackName + backup.ext);
+                w.backupWriter.reset (openWriter (backupFile, backup.container, backup.bitDepth));
             }
 
             writers.push_back (std::move (w));
@@ -374,8 +377,54 @@ namespace zynforge
         // Drain remaining samples before closing.
         for (int i = 0; i < 8; ++i) drainOnce();
 
+        const auto stoppedAt        = juce::Time::getCurrentTime();
+        const auto totalSamples     = samplesSinceStart.load (std::memory_order_relaxed);
+        const auto totalMissed      = missedSamples    .load (std::memory_order_relaxed);
+        const auto totalSeconds     = sampleRate > 0.0 ? (double) totalSamples / sampleRate : 0.0;
+        const bool backupWasRunning = backupDir.isDirectory();
+        const bool backupHadFailure = backupFailed.load (std::memory_order_relaxed);
+
         closeWriters();
         backupActive.store (false, std::memory_order_relaxed);
+
+        // Post-show JSON report — one file per session that captures every
+        // datum a mix engineer / producer needs after the gig: total time,
+        // per-track clip count, missed samples, backup status. Drop-in
+        // alongside the WAVs in the session directory.
+        if (activeSessionDir.isDirectory())
+        {
+            juce::DynamicObject::Ptr report (new juce::DynamicObject());
+            report->setProperty ("stoppedAt",      stoppedAt.toISO8601 (true));
+            report->setProperty ("sampleRate",     sampleRate);
+            report->setProperty ("numTracks",      (int) tracks.size());
+            report->setProperty ("totalSamples",   (juce::int64) totalSamples);
+            report->setProperty ("totalSeconds",   totalSeconds);
+            report->setProperty ("missedSamples",  (juce::int64) totalMissed);
+            report->setProperty ("backupActive",   backupWasRunning);
+            report->setProperty ("backupFailed",   backupHadFailure);
+            report->setProperty ("captureFormat",  (int) captureFormat);
+            report->setProperty ("preRollSeconds", preRollSeconds);
+
+            juce::Array<juce::var> trackArray;
+            for (std::size_t i = 0; i < tracks.size(); ++i)
+            {
+                juce::DynamicObject::Ptr t (new juce::DynamicObject());
+                const auto& ts = *tracks[i];
+                t->setProperty ("index",          (int) i);
+                t->setProperty ("name",           ts.name);
+                t->setProperty ("clipCount",      ts.clipCount.load (std::memory_order_relaxed));
+                t->setProperty ("lastClipSample",
+                                (juce::int64) ts.lastClipSample.load (std::memory_order_relaxed));
+                t->setProperty ("inputRouting",   ts.inputRouting .load (std::memory_order_relaxed));
+                t->setProperty ("outputRouting",  ts.outputRouting.load (std::memory_order_relaxed));
+                t->setProperty ("isStereo",       ts.isStereo.load (std::memory_order_relaxed));
+                trackArray.add (juce::var (t.get()));
+            }
+            report->setProperty ("tracks", juce::var (trackArray));
+
+            activeSessionDir.getChildFile ("session.report.json")
+                            .replaceWithText (juce::JSON::toString (juce::var (report.get()), true));
+        }
 
         // Clean stop — remove the recovery marker.
         if (activeSessionDir.isDirectory())

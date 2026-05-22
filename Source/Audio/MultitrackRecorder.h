@@ -53,6 +53,13 @@ namespace zynforge
         void setCaptureFormat (CaptureFormat f) noexcept     { if (! isRecording()) captureFormat = f; }
         CaptureFormat getCaptureFormat() const noexcept       { return captureFormat; }
 
+        // Optional second format for the backup writer. When set to a
+        // different value than the primary, recording produces TWO files
+        // per channel — e.g., 24-bit WAV to the main drive AND 24-bit
+        // FLAC to the backup drive. Default mirrors the primary.
+        void setBackupCaptureFormat (CaptureFormat f) noexcept { if (! isRecording()) backupCaptureFormat = f; }
+        CaptureFormat getBackupCaptureFormat() const noexcept  { return backupCaptureFormat; }
+
         void setPreRollSeconds (int seconds);
         int  getPreRollSeconds() const noexcept               { return preRollSeconds; }
 
@@ -146,7 +153,8 @@ namespace zynforge
         std::atomic<int>         lastWriteMs        { 0 };
         juce::int64              samplesSinceFlush  { 0 };
 
-        CaptureFormat captureFormat  { CaptureFormat::Wav24 };
+        CaptureFormat captureFormat        { CaptureFormat::Wav24 };
+        CaptureFormat backupCaptureFormat  { CaptureFormat::Wav24 };
         int           preRollSeconds { 0 };  // 0 = disabled
 
         juce::File activeSessionDir;
