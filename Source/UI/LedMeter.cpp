@@ -5,11 +5,12 @@
 
 namespace zynforge
 {
-    static constexpr int   kNumSegments    = 32;
+    // Spec: 20 discrete segments, 70 / 15 / 15 split (green / amber / red).
+    static constexpr int   kNumSegments    = 20;
     static constexpr float kMinDb          = -60.0f;
     static constexpr float kMaxDb          =   0.0f;
-    static constexpr int   kRedSegments    = 3;   // top N segments are red
-    static constexpr int   kAmberSegments  = 6;   // next N segments are amber
+    static constexpr int   kRedSegments    = 3;   // top 15%
+    static constexpr int   kAmberSegments  = 3;   // next 15%
 
     LedMeter::LedMeter (TrackState& s) : state (s) { startTimerHz (30); }
     LedMeter::~LedMeter() = default;

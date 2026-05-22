@@ -1136,19 +1136,20 @@ void MainComponent::resized()
 {
     auto r = getLocalBounds();
 
-    // Row 1 — title + status + LOCK + FMT + PRE + DEVICE + RECORD
+    // Row 1 — title + status + LOCK + DEVICE + RECORD
+    // FMT / PRE moved into Session Settings.
     auto row1 = r.removeFromTop (44).reduced (12, 8);
-    titleLabel  .setBounds (row1.removeFromLeft (220));
+    titleLabel   .setBounds (row1.removeFromLeft (220));
     recordButton .setBounds (row1.removeFromRight (104).reduced (0, 2));
     row1.removeFromRight (6);
     deviceButton .setBounds (row1.removeFromRight (118).reduced (0, 2));
     row1.removeFromRight (6);
-    preRollButton.setBounds (row1.removeFromRight (74).reduced (0, 2));
-    row1.removeFromRight (4);
-    formatButton .setBounds (row1.removeFromRight (82).reduced (0, 2));
-    row1.removeFromRight (4);
     lockButton   .setBounds (row1.removeFromRight (76).reduced (0, 2));
     statusLabel  .setBounds (row1);
+
+    // FMT and PRE buttons are kept alive (still wired) but not laid out.
+    formatButton .setBounds ({});
+    preRollButton.setBounds ({});
 
     // Row 2 — Transport bar (taller, wider) | transport label | session label | BACKUP / PATCH / METERS / OSC
     auto row2 = r.removeFromTop (52).reduced (12, 4);

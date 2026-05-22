@@ -5,24 +5,36 @@
 
 namespace zynforge::brand
 {
-    // Shared with ZynForge Live: near-black canvas, muted per-strip
-    // personality washes, bright cyan/green/amber accents reserved for
-    // status and important toggles.
+    // Tokens taken verbatim from the shared ZynForge design system
+    // (DESIGN.md). The Live and Recording apps must stay byte-aligned
+    // here so the family reads as one product.
+
+    // Backgrounds (3 + elevated)
     inline const auto bgDeep      = juce::Colour::fromRGB (0x0a, 0x0a, 0x0c);
     inline const auto bgPanel     = juce::Colour::fromRGB (0x12, 0x13, 0x16);
     inline const auto bgStrip     = juce::Colour::fromRGB (0x18, 0x19, 0x1d);
+    inline const auto bgElevated  = juce::Colour::fromRGB (0x30, 0x30, 0x30);
     inline const auto edge        = juce::Colour::fromRGB (0x26, 0x28, 0x2e);
-    inline const auto textPrimary = juce::Colour::fromRGB (0xe8, 0xe8, 0xee);
-    inline const auto textMuted   = juce::Colour::fromRGB (0x88, 0x8a, 0x94);
 
-    inline const auto accentRecord = juce::Colour::fromRGB (0xff, 0x3b, 0x3b);
-    inline const auto accentPlay   = juce::Colour::fromRGB (0x4a, 0xd8, 0x78);  // brighter — matches Live's status green
-    inline const auto accentVS     = juce::Colour::fromRGB (0xff, 0xb4, 0x2a);
-    inline const auto accentStatus = juce::Colour::fromRGB (0x5d, 0xd8, 0x7a);  // session-clock green
+    // Text (4-step)
+    inline const auto textPrimary   = juce::Colour::fromRGB (0xe8, 0xe8, 0xee);
+    inline const auto textSecondary = juce::Colour::fromRGB (0xb8, 0xc2, 0xcc);
+    inline const auto textTertiary  = juce::Colour::fromRGB (0x7a, 0x8a, 0x9a);
+    inline const auto textMuted     = juce::Colour::fromRGB (0x88, 0x8a, 0x94);
 
-    inline const auto meterGreen   = juce::Colour::fromRGB (0x4a, 0xd8, 0x78);
-    inline const auto meterAmber   = juce::Colour::fromRGB (0xff, 0xb4, 0x2a);
-    inline const auto meterRed     = juce::Colour::fromRGB (0xff, 0x3b, 0x3b);
+    // Semantic signal accents
+    inline const auto accentRecord    = juce::Colour::fromRGB (0xff, 0x3b, 0x3b);  // record / danger
+    inline const auto accentPlay      = juce::Colour::fromRGB (0x4a, 0xd8, 0x78);  // transport active
+    inline const auto accentVS        = juce::Colour::fromRGB (0xff, 0xb4, 0x2a);  // virtual soundcheck / macros
+    inline const auto accentStatus    = juce::Colour::fromRGB (0x5d, 0xd8, 0x7a);  // session-clock green
+    inline const auto alertAmber      = juce::Colour::fromRGB (0xe8, 0x98, 0x27);
+    inline const auto engagedAmber    = juce::Colour::fromRGB (0xff, 0x9e, 0x2c);  // BYPASS / LIVE / LOCK
+    inline const auto featureEngaged  = juce::Colour::fromRGB (0x33, 0xc4, 0xd4);  // cool-teal toggle-on
+
+    // Meter colours (deliberately duller than the play/record accents)
+    inline const auto meterGreen   = juce::Colour::fromRGB (0x3c, 0xb8, 0x78);
+    inline const auto meterAmber   = juce::Colour::fromRGB (0xf0, 0xc0, 0x60);
+    inline const auto meterRed     = juce::Colour::fromRGB (0xdc, 0x38, 0x38);
     inline const auto meterIdle    = juce::Colour::fromRGB (0x1c, 0x1f, 0x26);
 
     // Muted, desaturated washes — sampled from ZynForge Live's INS 1–8.
