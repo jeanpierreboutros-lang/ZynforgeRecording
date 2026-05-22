@@ -28,6 +28,8 @@ A focused recording surface for engineers running front-of-house or monitors who
 - [x] **System Lock** — LOCK button on the header disables every other control (recording included) so a stray click can't kill a take. Click again to UNLOCK.
 - [x] **Auto-recover** — a `recording.session` marker is written when RECORD starts and deleted on clean stop. On next launch the app scans the Sessions root and offers to load any session that didn't stop cleanly. WAV/FLAC headers were already crash-safe (5-second periodic flush) so the audio itself is intact.
 - [x] **Redundant write** — pick a backup folder via the BACKUP button; every track is mirrored to `<backup>/<session>/Track_NN.<ext>` as you record. If the backup drive fails mid-take, the primary write keeps going untouched.
+- [x] **Per-strip input + output routing** — two dropdowns at the top of each strip pick which device input the strip captures from and which device output its VSC playback lands on. Defaults to identity (strip N ↔ device N). Persists per channel index.
+- [x] **Live-style fader** — long thumb with horizontal grip lines + bright centre stripe, green track fill below the thumb, matches the ZynForge Live look.
 - [x] Per-strip mini-spectrum (log-frequency FFT, 24 Hz refresh)
 - [x] Phase correlation meter (selectable pair, smoothed)
 - [x] dBFS numeric readout + per-channel clip counter (click meter to clear)

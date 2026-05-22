@@ -13,5 +13,12 @@ namespace zynforge
         void drawButtonBackground (juce::Graphics&, juce::Button&,
                                    const juce::Colour& bg,
                                    bool over, bool down) override;
+
+        // Live-style linear fader: thin track with green fill below the
+        // thumb, long dark thumb with white grip lines + a brighter centre
+        // stripe.
+        void drawLinearSlider (juce::Graphics&, int x, int y, int width, int height,
+                               float sliderPos, float minSliderPos, float maxSliderPos,
+                               juce::Slider::SliderStyle, juce::Slider&) override;
     };
 }

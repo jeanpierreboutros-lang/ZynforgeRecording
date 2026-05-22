@@ -9,6 +9,7 @@
 #include "StripColours.h"
 #include "StripGains.h"
 #include "StripNames.h"
+#include "StripRouting.h"
 
 namespace zynforge
 {
@@ -45,6 +46,12 @@ namespace zynforge
         // Per-channel playback gain (dB) + pan (-1..+1). Both persist.
         void  setTrackGainDb (int channelIndex, float dB);
         void  setTrackPan    (int channelIndex, float pan);
+
+        // Routing. -1 = unrouted; values clamped to current device's range.
+        void  setTrackInputRouting  (int channelIndex, int deviceCh);
+        void  setTrackOutputRouting (int channelIndex, int deviceCh);
+        int   getCurrentDeviceInputCount()  const;
+        int   getCurrentDeviceOutputCount() const;
 
         // Returns recording dir if recording, else loaded playback session,
         // else an empty File.
@@ -88,10 +95,16 @@ namespace zynforge
         StripColours             stripColours;
         StripNames               stripNames;
         StripGains               stripGains;
+        StripRouting             stripRouting;
 
         std::atomic<int>   phaseLeft         { 0 };  // 0-based
         std::atomic<int>   phaseRight        { 1 };
         std::atomic<float> phaseCorrelation  { 0.0f };
+
+        // Audio-thread scratch for routed VSC playback: track i fills
+        // channel i, then engine copies into the real device output that
+        // strip i is routed to.
+        juce::AudioBuffer<float> playerScratch { 32, 4096 };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AudioEngine)
     };

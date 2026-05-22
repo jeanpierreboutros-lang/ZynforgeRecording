@@ -55,6 +55,28 @@ namespace zynforge
 
     ChannelStrip::~ChannelStrip() = default;
 
+    void ChannelStrip::setAvailableInputs (int n)
+    {
+        const int current = state.inputRouting.load (std::memory_order_relaxed);
+        inputCombo.clear (juce::dontSendNotification);
+        inputCombo.addItem ("(unrouted)", 1);
+        for (int i = 0; i < n; ++i)
+            inputCombo.addItem ("In " + juce::String (i + 1), i + 2);
+        if (current < 0 || current >= n) inputCombo.setSelectedId (1,             juce::dontSendNotification);
+        else                              inputCombo.setSelectedId (current + 2, juce::dontSendNotification);
+    }
+
+    void ChannelStrip::setAvailableOutputs (int n)
+    {
+        const int current = state.outputRouting.load (std::memory_order_relaxed);
+        outputCombo.clear (juce::dontSendNotification);
+        outputCombo.addItem ("(unrouted)", 1);
+        for (int i = 0; i < n; ++i)
+            outputCombo.addItem ("Out " + juce::String (i + 1), i + 2);
+        if (current < 0 || current >= n) outputCombo.setSelectedId (1,             juce::dontSendNotification);
+        else                              outputCombo.setSelectedId (current + 2, juce::dontSendNotification);
+    }
+
     juce::Colour ChannelStrip::getResolvedColour() const
     {
         const auto argb = state.colourARGB.load (std::memory_order_relaxed);
@@ -129,7 +151,9 @@ namespace zynforge
                                 ColourCallback colourCallback,
                                 NameCallback   nameCallback,
                                 FloatCallback  gainCallback,
-                                FloatCallback  panCallback)
+                                FloatCallback  panCallback,
+                                IntCallback    inputCallback,
+                                IntCallback    outputCallback)
         : stripIndex (index),
           state (s),
           personality (brand::stripColour (index)),
@@ -137,6 +161,8 @@ namespace zynforge
           renameCb (std::move (nameCallback)),
           gainCb   (std::move (gainCallback)),
           panCb    (std::move (panCallback)),
+          inputCb  (std::move (inputCallback)),
+          outputCb (std::move (outputCallback)),
           spectrum (s),
           meter (s)
     {
@@ -155,6 +181,33 @@ namespace zynforge
             if (renameCb) renameCb (newName);
         };
         addAndMakeVisible (nameLabel);
+
+        // Input + output routing combos.
+        auto styleCombo = [] (juce::ComboBox& c)
+        {
+            c.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep);
+            c.setColour (juce::ComboBox::outlineColourId,    brand::edge);
+            c.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
+            c.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
+        };
+        styleCombo (inputCombo);
+        styleCombo (outputCombo);
+
+        // id 1 = unrouted, id 2..N+1 = device channel index (0..N-1).
+        inputCombo.onChange = [this]
+        {
+            const int id = inputCombo.getSelectedId();
+            const int dev = (id <= 1) ? -1 : id - 2;
+            if (inputCb) inputCb (dev);
+        };
+        outputCombo.onChange = [this]
+        {
+            const int id = outputCombo.getSelectedId();
+            const int dev = (id <= 1) ? -1 : id - 2;
+            if (outputCb) outputCb (dev);
+        };
+        addAndMakeVisible (inputCombo);
+        addAndMakeVisible (outputCombo);
 
         armButton.setToggleState (s.armed.load(), juce::dontSendNotification);
         armButton.onClick = [this]
@@ -279,6 +332,11 @@ namespace zynforge
         if (swatch != nullptr)
             swatch->setBounds (nameRow.removeFromLeft (16).reduced (1, 2));
         nameLabel.setBounds (nameRow);
+
+        // Input / output routing combos.
+        inputCombo .setBounds (r.removeFromTop (20).reduced (2, 1));
+        outputCombo.setBounds (r.removeFromTop (20).reduced (2, 1));
+        r.removeFromTop (3);
 
         // 2x2 button grid: ARM | MON / MUTE | SOLO.
         auto row1 = r.removeFromTop (20);

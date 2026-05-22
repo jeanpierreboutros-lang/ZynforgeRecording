@@ -22,6 +22,11 @@ namespace zynforge
         std::atomic<float> gainDb  { 0.0f };           // -60 .. +12
         std::atomic<float> pan     { 0.0f };           // -1 = L, 0 = C, +1 = R
 
+        // Routing. -1 = unrouted (no input captured / no output played).
+        // Default of -2 means "use identity routing" (resolved at init).
+        std::atomic<int> inputRouting  { -2 };
+        std::atomic<int> outputRouting { -2 };
+
         std::atomic<int>          clipCount        { 0 };
         std::atomic<juce::int64>  lastClipSample   { -1 };
 

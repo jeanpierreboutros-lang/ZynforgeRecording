@@ -68,23 +68,28 @@ namespace zynforge
         recorder.prepare (sr, blockSize, juce::jmax (1, inputs));
         player  .prepare (sr, blockSize);
 
-        // Apply persisted per-channel colour + name + gain/pan overrides.
+        // Apply persisted per-channel colour + name + gain/pan + routing.
         for (int i = 0; i < recorder.getNumTracks(); ++i)
         {
+            auto& t = recorder.getTrack (i);
+
             if (stripColours.hasColour (i))
-                recorder.getTrack (i).colourARGB.store (
-                    stripColours.getColour (i).getARGB(),
-                    std::memory_order_relaxed);
+                t.colourARGB.store (stripColours.getColour (i).getARGB(),
+                                    std::memory_order_relaxed);
 
             if (stripNames.hasName (i))
-                recorder.getTrack (i).name = stripNames.getName (i);
+                t.name = stripNames.getName (i);
 
             if (stripGains.hasGain (i))
-                recorder.getTrack (i).gainDb.store (stripGains.getGainDb (i),
-                                                    std::memory_order_relaxed);
+                t.gainDb.store (stripGains.getGainDb (i), std::memory_order_relaxed);
             if (stripGains.hasPan (i))
-                recorder.getTrack (i).pan.store (stripGains.getPan (i),
-                                                 std::memory_order_relaxed);
+                t.pan   .store (stripGains.getPan    (i), std::memory_order_relaxed);
+
+            // Identity routing by default; override if persisted.
+            t.inputRouting .store (stripRouting.hasInput  (i) ? stripRouting.getInput  (i) : i,
+                                   std::memory_order_relaxed);
+            t.outputRouting.store (stripRouting.hasOutput (i) ? stripRouting.getOutput (i) : i,
+                                   std::memory_order_relaxed);
         }
     }
 
@@ -107,6 +112,36 @@ namespace zynforge
         if (player.isLoaded())
             return player.getSessionDir();
         return {};
+    }
+
+    int AudioEngine::getCurrentDeviceInputCount() const
+    {
+        if (auto* d = deviceManager.getCurrentAudioDevice())
+            return d->getActiveInputChannels().countNumberOfSetBits();
+        return 0;
+    }
+
+    int AudioEngine::getCurrentDeviceOutputCount() const
+    {
+        if (auto* d = deviceManager.getCurrentAudioDevice())
+            return d->getActiveOutputChannels().countNumberOfSetBits();
+        return 0;
+    }
+
+    void AudioEngine::setTrackInputRouting (int channelIndex, int deviceCh)
+    {
+        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
+        deviceCh = juce::jmax (-1, deviceCh);
+        recorder.getTrack (channelIndex).inputRouting.store (deviceCh, std::memory_order_relaxed);
+        stripRouting.setInput (channelIndex, deviceCh);
+    }
+
+    void AudioEngine::setTrackOutputRouting (int channelIndex, int deviceCh)
+    {
+        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
+        deviceCh = juce::jmax (-1, deviceCh);
+        recorder.getTrack (channelIndex).outputRouting.store (deviceCh, std::memory_order_relaxed);
+        stripRouting.setOutput (channelIndex, deviceCh);
     }
 
     void AudioEngine::setTrackGainDb (int channelIndex, float dB)
@@ -173,15 +208,32 @@ namespace zynforge
             if (outputs[ch] != nullptr)
                 juce::FloatVectorOperations::clear (outputs[ch], numSamples);
 
-        recorder.processBlock (inputs, numInputs, numSamples);
-        player  .processBlock (outputs, numOutputs, numSamples);
+        // Build a routed-input pointer array: routedInputs[stripIndex] points
+        // to the device input that strip is patched from, or nullptr if -1.
+        const int numTracks = recorder.getNumTracks();
+        constexpr int kMaxStrips = 64;
+        const float* routedInputs[kMaxStrips] = {};
+        for (int i = 0; i < numTracks && i < kMaxStrips; ++i)
+        {
+            const int dev = recorder.getTrack (i).inputRouting.load (std::memory_order_relaxed);
+            routedInputs[i] = (dev >= 0 && dev < numInputs) ? inputs[dev] : nullptr;
+        }
+
+        recorder.processBlock (routedInputs, juce::jmin (numTracks, kMaxStrips), numSamples);
+
+        // Have the player render into a scratch buffer per track, then we
+        // route each track to its configured output channel.
+        if (playerScratch.getNumChannels() < numTracks || playerScratch.getNumSamples() < numSamples)
+            playerScratch.setSize (juce::jmax (numTracks, 1), juce::jmax (numSamples, 64),
+                                   false, false, true);
+        playerScratch.clear (0, numSamples);
+        player.processBlock (playerScratch.getArrayOfWritePointers(),
+                             juce::jmin (playerScratch.getNumChannels(), numTracks),
+                             numSamples);
 
         // Mute / solo: when any channel is soloed, only soloed channels pass.
-        // Otherwise muted channels are silenced. Applies to both VSC playback
-        // outputs (channel N played out N) and to the monitor sum below.
         bool anySolo = false;
-        const int trackCount = recorder.getNumTracks();
-        for (int i = 0; i < trackCount; ++i)
+        for (int i = 0; i < numTracks; ++i)
             if (recorder.getTrack (i).soloed.load (std::memory_order_relaxed))
             { anySolo = true; break; }
 
@@ -192,31 +244,37 @@ namespace zynforge
             return ! t.muted.load (std::memory_order_relaxed);
         };
 
-        // Apply mute/solo to playback outputs (VSC pass-through routing).
-        for (int i = 0; i < trackCount && i < numOutputs; ++i)
-            if (! channelAudible (i) && outputs[i] != nullptr)
-                juce::FloatVectorOperations::clear (outputs[i], numSamples);
-
-        // Per-channel playback gain on the VSC outputs.
-        for (int i = 0; i < trackCount && i < numOutputs; ++i)
+        // Mix the routed track scratch onto the device outputs honoring
+        // mute/solo and per-channel gain.
+        for (int i = 0; i < numTracks; ++i)
         {
             if (! channelAudible (i)) continue;
-            const float dB   = recorder.getTrack (i).gainDb.load (std::memory_order_relaxed);
-            if (juce::approximatelyEqual (dB, 0.0f)) continue;
+
+            auto& t = recorder.getTrack (i);
+            const int devOut = t.outputRouting.load (std::memory_order_relaxed);
+            if (devOut < 0 || devOut >= numOutputs || outputs[devOut] == nullptr) continue;
+
+            const float dB   = t.gainDb.load (std::memory_order_relaxed);
             const float gain = juce::Decibels::decibelsToGain (dB, -60.0f);
-            if (outputs[i] != nullptr)
-                juce::FloatVectorOperations::multiply (outputs[i], gain, numSamples);
+            const float* src = playerScratch.getReadPointer (i);
+            if (juce::approximatelyEqual (gain, 1.0f))
+                juce::FloatVectorOperations::add (outputs[devOut], src, numSamples);
+            else
+                juce::FloatVectorOperations::addWithMultiply (outputs[devOut], src, gain, numSamples);
         }
 
-        // Phase correlation between the selected pair (smoothed).
+        const int trackCount = numTracks;
+
+        // Phase correlation between the selected pair (smoothed). The
+        // pair refers to strip indices, so we use the routed input pointers.
         {
             const int li = phaseLeft .load (std::memory_order_relaxed);
             const int ri = phaseRight.load (std::memory_order_relaxed);
-            if (li < numInputs && ri < numInputs
-                && inputs[li] != nullptr && inputs[ri] != nullptr)
+            if (li < numTracks && ri < numTracks
+                && routedInputs[li] != nullptr && routedInputs[ri] != nullptr)
             {
-                const float* L = inputs[li];
-                const float* R = inputs[ri];
+                const float* L = routedInputs[li];
+                const float* R = routedInputs[ri];
                 float lr = 0.0f, ll = 0.0f, rr = 0.0f;
                 for (int i = 0; i < numSamples; ++i)
                 {
@@ -233,15 +291,16 @@ namespace zynforge
         }
 
         // Sum monitored inputs into the stereo monitor bus (outputs 0 + 1)
-        // with constant-power pan and per-channel gain.
+        // with constant-power pan and per-channel gain. Uses the routed
+        // device input pointer.
         const int monL = 0, monR = 1;
-        for (int ch = 0; ch < trackCount && ch < numInputs; ++ch)
+        for (int ch = 0; ch < trackCount; ++ch)
         {
             auto& t = recorder.getTrack (ch);
             if (! t.monitor.load (std::memory_order_relaxed)) continue;
             if (! channelAudible (ch)) continue;
 
-            const float* src = inputs[ch];
+            const float* src = (ch < kMaxStrips) ? routedInputs[ch] : nullptr;
             if (src == nullptr) continue;
 
             const float dB   = t.gainDb.load (std::memory_order_relaxed);

@@ -17,13 +17,20 @@ namespace zynforge
         using ColourCallback = std::function<void (juce::Colour)>;
         using NameCallback   = std::function<void (juce::String)>;
         using FloatCallback  = std::function<void (float)>;
+        using IntCallback    = std::function<void (int)>;
 
         ChannelStrip (int index, TrackState& state,
-                      ColourCallback onColourPicked = {},
-                      NameCallback   onRename       = {},
-                      FloatCallback  onGainDb       = {},
-                      FloatCallback  onPan          = {});
+                      ColourCallback onColourPicked  = {},
+                      NameCallback   onRename        = {},
+                      FloatCallback  onGainDb        = {},
+                      FloatCallback  onPan           = {},
+                      IntCallback    onInputRouted   = {},
+                      IntCallback    onOutputRouted  = {});
         ~ChannelStrip() override;
+
+        // Populate routing combo boxes — call after device topology changes.
+        void setAvailableInputs  (int n);
+        void setAvailableOutputs (int n);
 
         void mouseDown (const juce::MouseEvent&) override;
 
@@ -46,8 +53,12 @@ namespace zynforge
         NameCallback   renameCb;
         FloatCallback  gainCb;
         FloatCallback  panCb;
+        IntCallback    inputCb;
+        IntCallback    outputCb;
 
         juce::Label   nameLabel;
+        juce::ComboBox inputCombo;
+        juce::ComboBox outputCombo;
         juce::ToggleButton armButton   { "ARM" };
         juce::ToggleButton monButton   { "MON" };
         juce::ToggleButton muteButton  { "MUTE" };
