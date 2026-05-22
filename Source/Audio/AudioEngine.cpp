@@ -46,6 +46,17 @@ namespace zynforge
         stereoMixWriter.reset();
     }
 
+    void AudioEngine::setLtcSourceStrip (int oneBasedIndex) noexcept
+    {
+        ltcSourceStrip.store (oneBasedIndex - 1, std::memory_order_release);
+        if (oneBasedIndex <= 0) timecodeChase.reset();
+        if (appProps != nullptr)
+        {
+            appProps->setValue ("ltcSourceStrip", oneBasedIndex);
+            appProps->saveIfNeeded();
+        }
+    }
+
     void AudioEngine::setRecordStereoMix (bool enabled)
     {
         recordStereoMixFlag.store (enabled, std::memory_order_release);
@@ -226,6 +237,10 @@ namespace zynforge
         // engineer's preference survives restart.
         recordStereoMixFlag.store (appProps->getBoolValue ("recordStereoMix", false),
                                    std::memory_order_release);
+
+        // Restore the LTC source strip (1-based stored, internal 0-based).
+        ltcSourceStrip.store (appProps->getIntValue ("ltcSourceStrip", 0) - 1,
+                              std::memory_order_release);
 
         // Open with up to 256 inputs / 64 outputs by default — adjust later from UI.
         auto err = deviceManager.initialise (/*numInputs*/ 256, /*numOutputs*/ 64,
@@ -524,6 +539,20 @@ namespace zynforge
             const float* chans[2] = { stereoMixScratch.getReadPointer (0),
                                       stereoMixScratch.getReadPointer (1) };
             stereoMixWriter->write (chans, numSamples);
+        }
+
+        // LTC presence detection — analyzes the input of a designated
+        // strip every block. Engineer routes the desk's timecode line
+        // to that strip and toggles 'LTC source' to it from the UI.
+        {
+            const int srcStrip = ltcSourceStrip.load (std::memory_order_relaxed);
+            if (srcStrip >= 0 && srcStrip < trackCount && routedInputs[srcStrip] != nullptr)
+            {
+                const auto sr = deviceManager.getCurrentAudioDevice() != nullptr
+                                ? deviceManager.getCurrentAudioDevice()->getCurrentSampleRate()
+                                : 48000.0;
+                timecodeChase.feedLtc (routedInputs[srcStrip], numSamples, sr);
+            }
         }
 
         // Phase correlation between the selected pair (smoothed). The

@@ -10,6 +10,7 @@
 #include "StripGains.h"
 #include "StripNames.h"
 #include "StripRouting.h"
+#include "TimecodeChase.h"
 
 #include <memory>
 
@@ -26,6 +27,13 @@ namespace zynforge
         juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
         MultitrackRecorder&       getRecorder()      noexcept { return recorder; }
         SessionPlayer&            getPlayer()        noexcept { return player; }
+        juce::PropertiesFile*     getAppProps()      noexcept { return appProps.get(); }
+        TimecodeChase&            getTimecodeChase() noexcept { return timecodeChase; }
+
+        // -1 = no LTC source. Otherwise the strip whose device input
+        // feeds the LTC zero-crossing analyzer once per audio block.
+        void setLtcSourceStrip (int oneBasedIndex) noexcept;
+        int  getLtcSourceStrip() const noexcept { return ltcSourceStrip.load() + 1; }
 
         bool startRecording (const juce::File& sessionDir);
         void stopRecording();
@@ -156,6 +164,9 @@ namespace zynforge
 
         std::atomic<int> streamOutL { -1 };
         std::atomic<int> streamOutR { -1 };
+
+        TimecodeChase    timecodeChase;
+        std::atomic<int> ltcSourceStrip { -1 };   // 0-based strip index, -1 = none
 
         // Stereo mix bus → file recorder.
         std::atomic<bool>                                       recordStereoMixFlag { false };

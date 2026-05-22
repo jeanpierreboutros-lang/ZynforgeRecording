@@ -338,6 +338,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addSubMenu ("OSC", oscMenu);
 
         menu.addSeparator();
+        menu.addItem (260, "Upload session to cloud…", ! engine.isRecording());
+        menu.addItem (261, "Configure cloud upload command…");
+        menu.addSeparator();
         menu.addItem (250, "Session Settings…", ! engine.isRecording());
     }
 
@@ -370,6 +373,62 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
             showStatus ("OSC failed to bind UDP 8000 — port already in use?");
     }
     else if (id == 115)  { engine.stopOsc(); showStatus ("OSC stopped"); }
+    else if (id == 260)
+    {
+        // Run the configured cloud-upload command with {SESSION} expanded.
+        const auto sessionDir = engine.getActiveSessionDir();
+        if (! sessionDir.isDirectory()) { showStatus ("No session active — load or record first"); return; }
+        auto* props = engine.getAppProps();
+        const auto tmpl = props != nullptr ? props->getValue ("cloudUploadCommand") : juce::String();
+        if (tmpl.isEmpty())
+        {
+            showStatus ("No upload command configured — pick \"Configure cloud upload command…\" first");
+            return;
+        }
+        const auto cmd = tmpl.replace ("{SESSION}", sessionDir.getFullPathName().quoted(), false);
+        juce::ChildProcess cp;
+        if (cp.start (cmd))
+        {
+            showStatus ("Cloud upload started: " + sessionDir.getFileName());
+        }
+        else
+        {
+            showStatus ("Cloud upload failed to launch — check the configured command");
+        }
+    }
+    else if (id == 261)
+    {
+        // Edit the upload command template.
+        auto* aw = new juce::AlertWindow ("Cloud upload command",
+                                          "Shell command to upload a session. Use {SESSION} as a "
+                                          "placeholder for the session directory's absolute path. "
+                                          "Examples:\n"
+                                          "  rclone copy {SESSION} myremote:zynforge-sessions/\n"
+                                          "  aws s3 sync {SESSION} s3://my-bucket/sessions/\n"
+                                          "  rsync -a {SESSION} engineer@studio:/sessions/",
+                                          juce::MessageBoxIconType::QuestionIcon);
+        const auto current = engine.getAppProps() != nullptr
+                              ? engine.getAppProps()->getValue ("cloudUploadCommand")
+                              : juce::String();
+        aw->addTextEditor ("cmd", current, {});
+        aw->addButton ("Save",   1, juce::KeyPress (juce::KeyPress::returnKey));
+        aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        aw->enterModalState (true,
+            juce::ModalCallbackFunction::create (
+                [this, aw] (int result)
+                {
+                    if (result == 1 && engine.getAppProps() != nullptr)
+                    {
+                        const auto v = aw->getTextEditorContents ("cmd").trim();
+                        engine.getAppProps()->setValue ("cloudUploadCommand", v);
+                        engine.getAppProps()->saveIfNeeded();
+                        showStatus (v.isEmpty() ? juce::String ("Cloud upload command cleared")
+                                                : juce::String ("Cloud upload command saved"));
+                    }
+                    delete aw;
+                }),
+            false);
+    }
     else if (id >= 100 && id < 200) onExportIndividualTrack (id - 100);
     else if (id == 50)   zynforge::PatchPage::launch (engine);
     else if (id == 51)   zynforge::Meterbridge::launch (engine);
