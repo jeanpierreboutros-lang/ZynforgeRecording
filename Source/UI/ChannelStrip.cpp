@@ -175,11 +175,17 @@ namespace zynforge
         // Mirror fader + pan slider value from TrackState too so OSC
         // gain / pan changes (and stereo-pair sync) appear in the UI.
         const float gainDb = state.gainDb.load (std::memory_order_relaxed);
-        const float pan    = state.pan   .load (std::memory_order_relaxed);
+        const float panL   = state.pan   .load (std::memory_order_relaxed);
         if (std::abs ((float) gainFader.getValue() - gainDb) > 0.05f)
             gainFader.setValue (gainDb, juce::dontSendNotification);
-        if (std::abs ((float) panSlider.getValue() - pan) > 0.01f)
-            panSlider.setValue (pan, juce::dontSendNotification);
+        if (std::abs ((float) panSlider.getValue() - panL) > 0.01f)
+            panSlider.setValue (panL, juce::dontSendNotification);
+        if (pairState != nullptr)
+        {
+            const float panR = pairState->pan.load (std::memory_order_relaxed);
+            if (std::abs ((float) panSliderR.getValue() - panR) > 0.01f)
+                panSliderR.setValue (panR, juce::dontSendNotification);
+        }
 
         // Colour: re-resolve and push to the swatch + sliders so the
         // fader fill / pan thumb track the live channel colour.
@@ -190,6 +196,8 @@ namespace zynforge
         gainFader.setColour (juce::Slider::thumbColourId, knobCol);
         panSlider.setColour (juce::Slider::thumbColourId, knobCol);
         panSlider.setColour (juce::Slider::rotarySliderFillColourId, knobCol);
+        panSliderR.setColour (juce::Slider::thumbColourId, knobCol);
+        panSliderR.setColour (juce::Slider::rotarySliderFillColourId, knobCol);
         repaint();
     }
 
@@ -387,7 +395,9 @@ namespace zynforge
             if (pairState) pairState->armed.store (armButton.getToggleState(),
                                                    std::memory_order_relaxed);
         };
-        armButton.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
+        // The REC glyph is a filled red dot; tinting both text+tick to
+        // brand::accentRecord makes it glow when armed.
+        armButton.setColour (juce::ToggleButton::textColourId, brand::accentRecord);
         armButton.setColour (juce::ToggleButton::tickColourId, brand::accentRecord);
         addAndMakeVisible (armButton);
 
@@ -449,50 +459,86 @@ namespace zynforge
         if (swatch != nullptr)
             swatch->setTooltip ("Click for a colour palette. Right-click the strip for more options.");
 
-        // Pan as a rotary knob with a live value readout below.
-        // -1.0 → 'L 100', 0.0 → 'C', +1.0 → 'R 100' (integer % to either side).
-        panSlider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
-        panSlider.setRotaryParameters (juce::MathConstants<float>::pi * 1.20f,
-                                       juce::MathConstants<float>::pi * 2.80f,
-                                       true);
-        panSlider.setRange (-1.0, 1.0, 0.01);
-        panSlider.setDoubleClickReturnValue (true, 0.0);
-        panSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 60, 14);
-        panSlider.setTextValueSuffix ({});
-        panSlider.textFromValueFunction = [] (double v)
+        // Reference-screenshot pan readouts:
+        //   mono   → "pan  ◂  N  ▸"
+        //   stereo → "◂  100  ▸"  on each of two knobs
+        auto formatPanText = [] (double v, bool compact)
         {
             const int pct = juce::jlimit (0, 100, juce::roundToInt (std::abs (v) * 100.0));
-            if (pct == 0)        return juce::String ("C");
-            if (v < 0.0)         return juce::String ("L ") + juce::String (pct);
-            return juce::String ("R ") + juce::String (pct);
+            const juce::String mid = (pct == 0)
+                                       ? juce::String ("0")
+                                       : (v < 0.0 ? juce::String ("L") + juce::String (pct)
+                                                  : juce::String ("R") + juce::String (pct));
+            const auto core = juce::String::fromUTF8 ("\xe2\x97\x82") + "  "
+                            + mid + "  "
+                            + juce::String::fromUTF8 ("\xe2\x96\xb8");
+            return compact ? core : juce::String ("pan  ") + core;
         };
-        panSlider.valueFromTextFunction = [] (const juce::String& s)
+
+        // Helper to style a pan rotary identically for L (and optional R).
+        auto stylePanKnob = [this] (juce::Slider& s)
         {
-            const auto t = s.trim().toUpperCase();
-            if (t == "C" || t.isEmpty()) return 0.0;
-            const double v = t.retainCharacters ("0123456789.-").getDoubleValue() / 100.0;
-            return t.startsWithChar ('L') ? -std::abs (v) : std::abs (v);
+            s.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+            s.setRotaryParameters (juce::MathConstants<float>::pi * 1.20f,
+                                   juce::MathConstants<float>::pi * 2.80f,
+                                   true);
+            s.setRange (-1.0, 1.0, 0.01);
+            s.setDoubleClickReturnValue (true, 0.0);
+            s.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+            s.setColour (juce::Slider::rotarySliderFillColourId,
+                         getResolvedColour().brighter (0.30f));
+            s.setColour (juce::Slider::rotarySliderOutlineColourId, brand::edge);
+            s.setColour (juce::Slider::thumbColourId,
+                         getResolvedColour().brighter (0.30f));
+            s.setMouseDragSensitivity (160);
         };
-        panSlider.setColour (juce::Slider::rotarySliderFillColourId,
-                             getResolvedColour().brighter (0.30f));
-        panSlider.setColour (juce::Slider::rotarySliderOutlineColourId, brand::edge);
-        panSlider.setColour (juce::Slider::thumbColourId,
-                             getResolvedColour().brighter (0.30f));
-        panSlider.setColour (juce::Slider::textBoxTextColourId,        brand::textPrimary);
-        panSlider.setColour (juce::Slider::textBoxOutlineColourId,     juce::Colours::transparentBlack);
-        panSlider.setColour (juce::Slider::textBoxBackgroundColourId,
-                             brand::bgDeep.withAlpha (0.35f));
-        panSlider.setMouseDragSensitivity (160);
-        panSlider.setTooltip ("Pan — drag to set L100..C..R100. Double-click for centre.");
+
+        stylePanKnob (panSlider);
+        panSlider.setTooltip ("Pan L — drag to set L100..0..R100. Double-click for centre.");
         panSlider.setValue (s.pan.load(), juce::dontSendNotification);
-        panSlider.onValueChange = [this]
+        panSlider.onValueChange = [this, formatPanText]
         {
             const float v = (float) panSlider.getValue();
             state.pan.store (v, std::memory_order_relaxed);
-            if (pairState) pairState->pan.store (v, std::memory_order_relaxed);
+            // Mono strips broadcast to the pair sibling so the partner
+            // mirrors. Stereo strips have independent L+R pans.
+            if (pairState != nullptr)
+            {
+                // independent → don't sync R
+            }
             if (panCb) panCb (v);
+            panLabel.setText (formatPanText (v, pairState != nullptr), juce::dontSendNotification);
         };
         addAndMakeVisible (panSlider);
+
+        // Pan label below the knob(s).
+        panLabel.setFont (juce::Font (juce::FontOptions().withHeight (11.0f).withStyle ("Bold")));
+        panLabel.setColour (juce::Label::textColourId, brand::accentStatus);
+        panLabel.setJustificationType (juce::Justification::centred);
+        panLabel.setText (formatPanText (s.pan.load(), pairState != nullptr), juce::dontSendNotification);
+        addAndMakeVisible (panLabel);
+
+        // For stereo strips: a second pan knob + label for R.
+        if (pairState != nullptr)
+        {
+            stylePanKnob (panSliderR);
+            panSliderR.setTooltip ("Pan R — drag to set L100..0..R100. Double-click for centre.");
+            panSliderR.setValue (pairState->pan.load(), juce::dontSendNotification);
+            panSliderR.onValueChange = [this, formatPanText]
+            {
+                const float v = (float) panSliderR.getValue();
+                if (pairState != nullptr)
+                    pairState->pan.store (v, std::memory_order_relaxed);
+                panLabelR.setText (formatPanText (v, true), juce::dontSendNotification);
+            };
+            addAndMakeVisible (panSliderR);
+
+            panLabelR.setFont (juce::Font (juce::FontOptions().withHeight (11.0f).withStyle ("Bold")));
+            panLabelR.setColour (juce::Label::textColourId, brand::accentStatus);
+            panLabelR.setJustificationType (juce::Justification::centred);
+            panLabelR.setText (formatPanText (pairState->pan.load(), true), juce::dontSendNotification);
+            addAndMakeVisible (panLabelR);
+        }
 
         gainFader.setSliderStyle (juce::Slider::LinearVertical);
         gainFader.setRange (-60.0, 12.0, 0.1);
@@ -561,53 +607,80 @@ namespace zynforge
 
     void ChannelStrip::resized()
     {
-        auto r = getLocalBounds().reduced (6, 10);
+        auto r = getLocalBounds().reduced (6, 8);
 
+        // ── 1. Name + colour swatch (top of strip) ─────────────────
         auto nameRow = r.removeFromTop (18);
         if (swatch != nullptr)
             swatch->setBounds (nameRow.removeFromLeft (16).reduced (1, 2));
         nameLabel.setBounds (nameRow);
+        r.removeFromTop (4);
 
-        // Input / output routing combos.
-        inputCombo .setBounds (r.removeFromTop (20).reduced (2, 1));
-        outputCombo.setBounds (r.removeFromTop (20).reduced (2, 1));
-        r.removeFromTop (3);
+        // Routing combos: keep them in flow but small — they live above
+        // the pan section in the existing UX (engineer can also use the
+        // PATCH page). 18px each.
+        inputCombo .setBounds (r.removeFromTop (18).reduced (2, 1));
+        outputCombo.setBounds (r.removeFromTop (18).reduced (2, 1));
+        r.removeFromTop (6);
 
-        // 2x2 button grid: ARM | MON / MUTE | SOLO.
-        auto row1 = r.removeFromTop (20);
-        auto row2 = r.removeFromTop (20);
+        // ── 2. Pan section ─────────────────────────────────────────
+        // Mono: one knob (44 px) centred, then "pan  ◂ N ▸" readout.
+        // Stereo: two knobs side by side, then two compact "◂ N ▸"
+        // readouts under each.
+        const int knobH = 44;
+        const int panLabelH = 16;
+        auto panKnobs = r.removeFromTop (knobH);
+        auto panText  = r.removeFromTop (panLabelH);
+        if (pairState != nullptr)
+        {
+            const int colW = panKnobs.getWidth() / 2;
+            panSlider .setBounds (panKnobs.removeFromLeft (colW).reduced (2, 0));
+            panSliderR.setBounds (panKnobs.reduced (2, 0));
+            panLabel  .setBounds (panText .removeFromLeft (colW));
+            panLabelR .setBounds (panText);
+        }
+        else
+        {
+            const int knobW = juce::jmin (54, panKnobs.getWidth());
+            panSlider.setBounds (panKnobs.withSizeKeepingCentre (knobW, knobH));
+            panLabel .setBounds (panText);
+        }
+        r.removeFromTop (6);
+
+        // ── 3. Two rows of two buttons each: [ I | ● ] / [ S | M ] ──
+        const int btnH = 24;
+        const int btnGap = 3;
+        auto row1 = r.removeFromTop (btnH);
+        r.removeFromTop (btnGap);
+        auto row2 = r.removeFromTop (btnH);
         const int halfW = row1.getWidth() / 2;
-        armButton .setBounds (row1.removeFromLeft (halfW).reduced (2, 1));
-        monButton .setBounds (row1.reduced (2, 1));
-        muteButton.setBounds (row2.removeFromLeft (halfW).reduced (2, 1));
-        soloButton.setBounds (row2.reduced (2, 1));
-        r.removeFromTop (4);
-        spectrum.setBounds ({});  // hidden
-        r.removeFromTop (2);
-        dbLabel  .setBounds (r.removeFromTop (14));
+        monButton.setBounds (row1.removeFromLeft (halfW).reduced (2, 0));
+        armButton.setBounds (row1.reduced (2, 0));
+        soloButton.setBounds (row2.removeFromLeft (halfW).reduced (2, 0));
+        muteButton.setBounds (row2.reduced (2, 0));
+        r.removeFromTop (6);
+
+        spectrum .setBounds ({});  // hidden
         clipLabel.setBounds (r.removeFromTop (12));
-        r.removeFromTop (2);
-        // Rotary pan — bigger knob so the engineer can read its
-        // position at a glance. 64 px tall total: ~48 px for the knob
-        // and 14 px for the value readout underneath, with only 4 px
-        // of horizontal padding so the dial fills the strip width.
-        panSlider.setBounds (r.removeFromTop (64).reduced (4, 0));
-        r.removeFromTop (4);
 
-        outLabel.setBounds (r.removeFromTop (14));
+        // ── 4. Fader area: [ ruler | fader | meter ] ───────────────
+        // dB readout sits at the bottom; reserve 16 px before laying
+        // out the column.
+        auto bottom = r.removeFromBottom (16);
+        dbLabel.setBounds (bottom);
 
-        // Fader | dB ruler | LED meter (left → right). All three share the
-        // same vertical extent now that the fader has positive headroom
-        // (-60..+12 dB), so the cap at +12 dB lines up with the meter's
-        // 0 dBFS at the top of the strip.
-        const int meterW = 40;   // 14 px label gutter + 24 px bar (12 + 12 for stereo)
-        const int rulerW = 26;
+        // Ruler is now on the LEFT (matches the reference: numbers
+        // 12/6/0/5/10/.../60/∞ to the left of the fader cap).
+        const int meterW = (pairState != nullptr) ? 38 : 30;
+        const int rulerW = 24;
 
+        if (dbRuler != nullptr)
+            dbRuler->setBounds (r.removeFromLeft (rulerW));
+        r.removeFromLeft (2);
         meter.setBounds (r.removeFromRight (meterW));
         r.removeFromRight (2);
-        if (dbRuler != nullptr)
-            dbRuler->setBounds (r.removeFromRight (rulerW));
-        r.removeFromRight (2);
         gainFader.setBounds (r);
+
+        outLabel.setBounds ({});  // collapsed — output combo serves the role
     }
 }

@@ -88,14 +88,21 @@ namespace zynforge
         juce::Label   outLabel;
         juce::ComboBox inputCombo;
         juce::ComboBox outputCombo;
-        juce::ToggleButton armButton   { "REC" };
-        juce::ToggleButton monButton   { "MON" };
-        juce::ToggleButton muteButton  { "MUTE" };
-        juce::ToggleButton soloButton  { "SOLO" };
+        // Single-letter glyphs match the reference: R = record arm,
+        // I = input monitor, M = mute, S = solo.
+        juce::ToggleButton armButton   { "R" };
+        juce::ToggleButton monButton   { "I" };
+        juce::ToggleButton muteButton  { "M" };
+        juce::ToggleButton soloButton  { "S" };
         juce::Label   dbLabel;
         juce::Label   clipLabel;
         MiniSpectrum  spectrum;
+        // Mono: panSlider + panLabel ('pan  <  0  >'). Stereo: two
+        // knobs panSlider/panSliderR, two compact labels ('<  100  >').
         juce::Slider  panSlider;
+        juce::Slider  panSliderR;
+        juce::Label   panLabel;
+        juce::Label   panLabelR;
         juce::Slider  gainFader;
         LedMeter      meter;
         std::unique_ptr<Swatch> swatch;
