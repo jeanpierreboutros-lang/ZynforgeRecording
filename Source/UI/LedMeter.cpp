@@ -1,5 +1,6 @@
 #include "LedMeter.h"
 #include "../Theme/BrandColors.h"
+#include "../Theme/BrandTokens.h"
 
 #include <juce_audio_basics/juce_audio_basics.h>
 
@@ -94,50 +95,52 @@ namespace zynforge
 
     void LedMeter::paint (juce::Graphics& g)
     {
-        auto r = getLocalBounds().toFloat().reduced (2.0f);
+        auto bounds = getLocalBounds().toFloat().reduced (2.0f);
         const bool stereo = (stereoR != nullptr);
+
+        // Reserve a dedicated left-hand gutter for the dB labels so they
+        // never overlap the meter segments. The bar(s) get the right side.
+        const float labelW = 14.0f;
+        auto labelCol = bounds.withWidth (labelW);
+        auto barArea  = bounds.withTrimmedLeft (labelW + 2.0f);
 
         if (stereo)
         {
-            const float half = r.getWidth() * 0.5f;
-            auto leftBar  = r.withWidth (half - 1.0f);
-            auto rightBar = r.withTrimmedLeft (half + 1.0f);
+            const float half = barArea.getWidth() * 0.5f;
+            auto leftBar  = barArea.withWidth (half - 1.0f);
+            auto rightBar = barArea.withTrimmedLeft (half + 1.0f);
             paintBar (g, leftBar,  displayPeak,  displayRms);
             paintBar (g, rightBar, displayPeakR, displayRmsR);
         }
         else
         {
-            paintBar (g, r, displayPeak, displayRms);
+            paintBar (g, barArea, displayPeak, displayRms);
         }
 
-        // dB scale labels alongside the bar — matches the reference
-        // screenshot's tight peak scale. Numbers represent dB below 0 dBFS;
-        // positives at the top of the range are unused on a digital meter.
+        // dB scale — labels live in their own column, ticks bridge the gap.
         const float dBLabels[] = { 0.0f, -3.0f, -6.0f, -10.0f, -16.0f, -22.0f, -32.0f, -60.0f };
-        g.setColour (brand::textTertiary);
-        g.setFont (juce::Font (juce::FontOptions().withHeight (8.5f).withStyle ("Bold")));
+        g.setFont (brand::type::label());
         for (float dB : dBLabels)
         {
             const float frac = (dB - kMinDb) / (kMaxDb - kMinDb);
-            const float y = r.getBottom() - r.getHeight() * frac;
-            // White tick mark on the right edge
+            const float y    = bounds.getBottom() - bounds.getHeight() * frac;
+
+            // Tick — short line bridging the label column and the bar.
             g.setColour (brand::textTertiary);
-            g.drawHorizontalLine ((int) y, r.getRight() - 3.0f, r.getRight());
-            // Number painted just inside the bar, right-aligned to the bar's
-            // inner edge so it sits ON the meter like the screenshot.
-            g.setColour (juce::Colours::white);
+            g.drawHorizontalLine ((int) y, labelCol.getRight() - 2.0f, labelCol.getRight() + 1.0f);
+
+            // Label — right-aligned inside the dedicated label column.
+            g.setColour (brand::textPrimary);
             g.drawText (juce::String (std::abs ((int) dB)),
-                        juce::Rectangle<float> (r.getX(), y - 5.0f,
-                                                r.getWidth() - 4.0f, 10.0f).toNearestInt(),
+                        labelCol.withY (y - 5.0f).withHeight (10.0f).toNearestInt(),
                         juce::Justification::centredRight, false);
-            g.setColour (brand::textTertiary);
         }
 
-        // Clip pip
+        // Clip pip — only over the bar area, not the label column.
         if (showClip)
         {
             g.setColour (brand::meterRed);
-            g.fillRoundedRectangle (r.removeFromTop (5.0f).reduced (2.0f, 0.0f), 1.5f);
+            g.fillRoundedRectangle (barArea.removeFromTop (5.0f).reduced (1.0f, 0.0f), 1.5f);
         }
     }
 }
