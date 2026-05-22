@@ -9,18 +9,19 @@ namespace zynforge::brand
     // (DESIGN.md). The Live and Recording apps must stay byte-aligned
     // here so the family reads as one product.
 
-    // Backgrounds (3 + elevated)
-    inline const auto bgDeep      = juce::Colour::fromRGB (0x0a, 0x0a, 0x0c);
+    // Backgrounds — values taken byte-for-byte from ZynForge Live's
+    // ZynForgeColors.h so Recording paints the same dark surface.
+    inline const auto bgDeep      = juce::Colour::fromRGB (0x0d, 0x0d, 0x12);
     inline const auto bgPanel     = juce::Colour::fromRGB (0x12, 0x13, 0x16);
-    inline const auto bgStrip     = juce::Colour::fromRGB (0x18, 0x19, 0x1d);
+    inline const auto bgStrip     = juce::Colour::fromRGB (0x1e, 0x1e, 0x1e);   // Live's bg-surface
     inline const auto bgElevated  = juce::Colour::fromRGB (0x30, 0x30, 0x30);
     inline const auto edge        = juce::Colour::fromRGB (0x26, 0x28, 0x2e);
 
-    // Text (4-step)
-    inline const auto textPrimary   = juce::Colour::fromRGB (0xe8, 0xe8, 0xee);
+    // Text (4-step) — Live values exactly.
+    inline const auto textPrimary   = juce::Colour::fromRGB (0xff, 0xff, 0xff);
     inline const auto textSecondary = juce::Colour::fromRGB (0xb8, 0xc2, 0xcc);
     inline const auto textTertiary  = juce::Colour::fromRGB (0x7a, 0x8a, 0x9a);
-    inline const auto textMuted     = juce::Colour::fromRGB (0x88, 0x8a, 0x94);
+    inline const auto textMuted     = juce::Colour::fromRGB (0x7a, 0x8a, 0x9a);
 
     // Semantic signal accents
     inline const auto accentRecord    = juce::Colour::fromRGB (0xff, 0x3b, 0x3b);  // record / danger

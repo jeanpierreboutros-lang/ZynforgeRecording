@@ -386,13 +386,8 @@ namespace zynforge
         auto r = getLocalBounds().toFloat().reduced (2.0f);
         const auto stripColour = getResolvedColour();
 
+        // Flat personality wash (matches Live — no darkening gradient).
         g.setColour (stripColour);
-        g.fillRoundedRectangle (r, 6.0f);
-
-        g.setGradientFill (juce::ColourGradient (
-            stripColour, r.getCentreX(), r.getY(),
-            stripColour.darker (0.25f), r.getCentreX(), r.getBottom(),
-            false));
         g.fillRoundedRectangle (r, 6.0f);
 
         g.setColour (brand::edge);
