@@ -56,6 +56,7 @@ private:
                          const std::vector<int>& channelIndices,
                          const zynforge::ExportOptions&);
     void showStatus (const juce::String& msg);
+    void confirmAndQuit();
     void onFormatClicked();
     void onPreRollClicked();
     void refreshFormatButton();

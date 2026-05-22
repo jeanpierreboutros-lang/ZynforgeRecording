@@ -190,6 +190,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         }
         exportMenu.addSubMenu ("Export Individual Track", indiv, hasActive && n > 0);
         menu.addSubMenu ("Export", exportMenu);
+        menu.addSeparator();
+        menu.addItem (99, "Quit Zynforge Recording…");
     }
     else if (topLevelIndex == 1)  // Session
     {
@@ -215,6 +217,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 2)    onSaveSessionState();
     else if (id == 3)    onSaveSessionAs();
     else if (id == 10)   onExportAllTracks();
+    else if (id == 99)   confirmAndQuit();
     else if (id >= 100)  onExportIndividualTrack (id - 100);
     else if (id == 50)   zynforge::PatchPage::launch (engine);
     else if (id == 51)   zynforge::Meterbridge::launch (engine);
@@ -605,6 +608,78 @@ void MainComponent::onFileMenuClicked()
 void MainComponent::showStatus (const juce::String& msg)
 {
     statusLabel.setText (msg, juce::dontSendNotification);
+}
+
+void MainComponent::confirmAndQuit()
+{
+    const bool recording = engine.isRecording();
+    const auto activeDir = engine.getActiveSessionDir();
+    const bool hasActiveSession = activeDir.isDirectory();
+
+    juce::String title, message;
+    juce::String b1, b2, b3;  // primary (positive), alt (Don't save), cancel
+
+    if (recording)
+    {
+        title   = "Recording is still rolling";
+        message = "A recording is in progress.\n"
+                  "Stop the recording cleanly and quit?";
+        b1 = "Stop & Quit";
+        b2 = juce::String();   // no alt
+        b3 = "Cancel";
+    }
+    else if (hasActiveSession)
+    {
+        title   = "Quit Zynforge Recording?";
+        message = "Save session state for \"" + activeDir.getFileName() + "\" before quitting?";
+        b1 = "Save & Quit";
+        b2 = "Don't Save";
+        b3 = "Cancel";
+    }
+    else
+    {
+        title   = "Quit Zynforge Recording?";
+        message = "Any unsaved app state will be lost.";
+        b1 = "Quit";
+        b2 = juce::String();
+        b3 = "Cancel";
+    }
+
+    auto options = juce::MessageBoxOptions()
+                     .withIconType (juce::MessageBoxIconType::QuestionIcon)
+                     .withTitle (title)
+                     .withMessage (message)
+                     .withButton (b1)
+                     .withAssociatedComponent (this);
+    if (b2.isNotEmpty()) options = options.withButton (b2);
+    options = options.withButton (b3);
+
+    juce::AlertWindow::showAsync (options,
+        [this, recording, hasActiveSession, b2nonEmpty = b2.isNotEmpty(), activeDir]
+        (int result)
+    {
+        // JUCE numbers buttons from 1 in the order they're added.
+        // Result 0 = first (primary), 1 = second, 2 = third.
+        // With 2 buttons (primary + cancel): cancel = 1.
+        // With 3 buttons (save + don't save + cancel): cancel = 2.
+
+        const int cancelIndex = b2nonEmpty ? 2 : 1;
+        if (result == cancelIndex) return;
+
+        if (recording)
+        {
+            // Single primary action: stop and quit.
+            engine.stopRecording();
+        }
+        else if (hasActiveSession)
+        {
+            if (result == 0)        // Save & Quit
+                saveSessionStateTo (activeDir);
+            // result == 1 → Don't Save → fall through
+        }
+
+        juce::JUCEApplication::getInstance()->systemRequestedQuit();
+    });
 }
 
 bool MainComponent::saveSessionStateTo (const juce::File& dir)
