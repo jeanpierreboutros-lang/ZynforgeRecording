@@ -67,24 +67,78 @@ namespace zynforge
         const float litPeak = linearToNormalisedDb (displayPeakLocal);
         const float litRms  = linearToNormalisedDb (displayRmsLocal);
 
-        const float segH = r.getHeight() / (float) kNumSegments;
+        // Pick a colour for any height-fraction (0..1) along the meter.
+        auto colourAt = [] (float frac)
+        {
+            // Top 15% red, next 15% amber, rest green — same proportions as
+            // the segmented mode below.
+            if (frac > 0.85f) return brand::meterRed;
+            if (frac > 0.70f) return brand::meterAmber;
+            return brand::meterGreen;
+        };
+
+        // ── Adaptive rendering ──────────────────────────────────────────
+        // At small heights, 20 LED segments smear into a solid block.
+        // Below ~60 px paint a smooth gradient bar; above ~80 px use the
+        // full 20-segment LED look; in between, scale the segment count.
+        const float h = r.getHeight();
+
+        if (h < 60.0f)
+        {
+            // Smooth gradient bar — bottom green, top red.
+            juce::ColourGradient grad (brand::meterGreen, r.getX(), r.getBottom(),
+                                       brand::meterRed,   r.getX(), r.getY(), false);
+            grad.addColour (0.70, brand::meterAmber);
+            grad.addColour (0.85, brand::meterRed);
+
+            // Background — idle bar.
+            g.setColour (brand::meterIdle);
+            g.fillRoundedRectangle (r.reduced (1.0f), 2.0f);
+
+            // RMS region: solid, peak above it: half-alpha.
+            const float rmsH  = h * litRms;
+            const float peakH = h * litPeak;
+            if (peakH > rmsH)
+            {
+                auto peakRect = juce::Rectangle<float> (
+                    r.getX(), r.getBottom() - peakH, r.getWidth(), peakH - rmsH);
+                g.setGradientFill (grad);
+                g.fillRect (peakRect.reduced (1.0f, 0.0f));
+                g.setColour (juce::Colours::black.withAlpha (0.55f));
+                g.fillRect (peakRect.reduced (1.0f, 0.0f));
+            }
+            if (rmsH > 0.0f)
+            {
+                auto rmsRect = juce::Rectangle<float> (
+                    r.getX(), r.getBottom() - rmsH, r.getWidth(), rmsH);
+                g.setGradientFill (grad);
+                g.fillRect (rmsRect.reduced (1.0f, 0.0f));
+            }
+            return;
+        }
+
+        // ── Discrete LED segments ──────────────────────────────────────
+        // Scale segment count so each segment is at least ~3 px tall.
+        const int nSegments = juce::jlimit (8, kNumSegments,
+                                            (int) std::round (h / 4.0f));
+        const int red    = juce::jmax (1, nSegments * 15 / 100);
+        const int amber  = juce::jmax (1, nSegments * 15 / 100);
+        const float segH = h / (float) nSegments;
         const float gap  = juce::jmax (1.0f, segH * 0.15f);
 
-        for (int i = 0; i < kNumSegments; ++i)
+        for (int i = 0; i < nSegments; ++i)
         {
             const float yTop = r.getBottom() - segH * (float) (i + 1);
             juce::Rectangle<float> seg (r.getX() + 1.0f, yTop + gap * 0.5f,
                                         r.getWidth() - 2.0f, segH - gap);
 
-            const float frac = (float) (i + 1) / (float) kNumSegments;
+            const float frac = (float) (i + 1) / (float) nSegments;
             const bool  litByPeak = frac <= litPeak;
             const bool  litByRms  = frac <= litRms;
 
-            juce::Colour base;
-            if (i >= kNumSegments - kRedSegments)        base = brand::meterRed;
-            else if (i >= kNumSegments - kRedSegments - kAmberSegments)
-                                                          base = brand::meterAmber;
-            else                                          base = brand::meterGreen;
+            const auto base = (i >= nSegments - red) ? brand::meterRed
+                            : (i >= nSegments - red - amber) ? brand::meterAmber
+                            : brand::meterGreen;
 
             if (litByRms)        g.setColour (base);
             else if (litByPeak)  g.setColour (base.withAlpha (0.45f));
