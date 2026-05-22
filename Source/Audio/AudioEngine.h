@@ -28,8 +28,17 @@ namespace zynforge
         SessionPlayer&            getPlayer()        noexcept { return player; }
 
         bool startRecording (const juce::File& sessionDir);
-        void stopRecording()                               { recorder.stopRecording(); }
+        void stopRecording();
         bool isRecording() const noexcept                  { return recorder.isRecording(); }
+
+        // Stereo mix bus → file. When enabled, every startRecording also
+        // opens a stereo StereoMix.wav writer in the session dir which
+        // captures the engine's stream-bus summing block-by-block from
+        // the audio thread. Engineer uses this for archive-quality
+        // streaming bounces or to hand a stereo mix to a streaming
+        // platform without re-mixing.
+        void setRecordStereoMix (bool enabled);
+        bool getRecordStereoMix() const noexcept           { return recordStereoMixFlag.load(); }
 
         int  loadSession (const juce::File& sessionDir);
         void startPlayback()                               { player.start(); }
@@ -147,6 +156,12 @@ namespace zynforge
 
         std::atomic<int> streamOutL { -1 };
         std::atomic<int> streamOutR { -1 };
+
+        // Stereo mix bus → file recorder.
+        std::atomic<bool>                                       recordStereoMixFlag { false };
+        juce::TimeSliceThread                                   mixWriterThread { "ZF Mix Writer" };
+        std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> stereoMixWriter;
+        juce::AudioBuffer<float>                                stereoMixScratch;
 
         std::unique_ptr<OscRemote> osc;
         std::unique_ptr<juce::PropertiesFile> appProps;

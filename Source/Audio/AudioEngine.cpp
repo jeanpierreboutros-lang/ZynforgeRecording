@@ -6,11 +6,54 @@ namespace zynforge
     bool AudioEngine::startRecording (const juce::File& sessionDir)
     {
         if (! recorder.startRecording (sessionDir)) return false;
+        double sr = 48000.0;
         if (auto* device = deviceManager.getCurrentAudioDevice())
-            markers.setContext (sessionDir, device->getCurrentSampleRate());
-        else
-            markers.setContext (sessionDir, 48000.0);
+            sr = device->getCurrentSampleRate();
+        markers.setContext (sessionDir, sr);
+
+        // Open the stereo mix file if the user opted in via setRecordStereoMix.
+        if (recordStereoMixFlag.load (std::memory_order_acquire))
+        {
+            if (! mixWriterThread.isThreadRunning())
+                mixWriterThread.startThread();
+
+            const auto path = sessionDir.getChildFile ("StereoMix.wav");
+            path.deleteFile();
+
+            juce::WavAudioFormat wav;
+            if (auto* out = path.createOutputStream().release())
+            {
+                juce::StringPairArray meta;
+                if (auto* w = wav.createWriterFor (out, sr, 2, 24, meta, 0))
+                {
+                    stereoMixWriter = std::make_unique<juce::AudioFormatWriter::ThreadedWriter>
+                                          (w, mixWriterThread, 32768);
+                }
+                else
+                {
+                    delete out;
+                }
+            }
+        }
         return true;
+    }
+
+    void AudioEngine::stopRecording()
+    {
+        recorder.stopRecording();
+        // Drop the threaded writer — its destructor flushes the queue and
+        // closes the underlying AudioFormatWriter cleanly.
+        stereoMixWriter.reset();
+    }
+
+    void AudioEngine::setRecordStereoMix (bool enabled)
+    {
+        recordStereoMixFlag.store (enabled, std::memory_order_release);
+        if (appProps != nullptr)
+        {
+            appProps->setValue ("recordStereoMix", enabled);
+            appProps->saveIfNeeded();
+        }
     }
 
     int AudioEngine::loadSession (const juce::File& sessionDir)
@@ -179,6 +222,11 @@ namespace zynforge
         opts.storageFormat       = juce::PropertiesFile::storeAsXML;
         appProps = std::make_unique<juce::PropertiesFile> (opts);
 
+        // Restore the stereo-mix-recording flag from the prefs file so the
+        // engineer's preference survives restart.
+        recordStereoMixFlag.store (appProps->getBoolValue ("recordStereoMix", false),
+                                   std::memory_order_release);
+
         // Open with up to 256 inputs / 64 outputs by default — adjust later from UI.
         auto err = deviceManager.initialise (/*numInputs*/ 256, /*numOutputs*/ 64,
                                              /*savedState*/ nullptr,
@@ -203,6 +251,10 @@ namespace zynforge
         // it's no longer tied to the device's input channel count.
         recorder.prepare (sr, blockSize, getStripCount());
         player  .prepare (sr, blockSize);
+
+        // Pre-allocate the stereo mix scratch buffer at the device block
+        // size so the audio thread never allocates when mix capture is on.
+        stereoMixScratch.setSize (2, blockSize, false, true, true);
 
         applyPersistedStripState();
     }
@@ -424,8 +476,18 @@ namespace zynforge
 
         // Dedicated streaming stereo bus: sum every strip flagged as
         // streamSend into the configured outputs with their gain+pan.
+        // Also captured to StereoMix.wav when recordStereoMix is on, so
+        // the bounce hits disk alongside the per-channel multitrack.
         const int sL = streamOutL.load (std::memory_order_relaxed);
         const int sR = streamOutR.load (std::memory_order_relaxed);
+        const bool wantMixCapture = (stereoMixWriter != nullptr);
+
+        if (wantMixCapture)
+        {
+            stereoMixScratch.setSize (2, numSamples, false, false, true);
+            stereoMixScratch.clear();
+        }
+
         if (sL >= 0 && sR >= 0 && sL < numOutputs && sR < numOutputs)
         {
             for (int i = 0; i < trackCount; ++i)
@@ -446,7 +508,22 @@ namespace zynforge
                     juce::FloatVectorOperations::addWithMultiply (outputs[sL], src, gL, numSamples);
                 if (outputs[sR] != nullptr && gR > 0.0001f)
                     juce::FloatVectorOperations::addWithMultiply (outputs[sR], src, gR, numSamples);
+
+                if (wantMixCapture)
+                {
+                    juce::FloatVectorOperations::addWithMultiply (stereoMixScratch.getWritePointer (0),
+                                                                  src, gL, numSamples);
+                    juce::FloatVectorOperations::addWithMultiply (stereoMixScratch.getWritePointer (1),
+                                                                  src, gR, numSamples);
+                }
             }
+        }
+
+        if (wantMixCapture)
+        {
+            const float* chans[2] = { stereoMixScratch.getReadPointer (0),
+                                      stereoMixScratch.getReadPointer (1) };
+            stereoMixWriter->write (chans, numSamples);
         }
 
         // Phase correlation between the selected pair (smoothed). The
