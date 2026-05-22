@@ -55,21 +55,50 @@ namespace zynforge
                                                 bool over, bool down)
     {
         auto r = b.getLocalBounds().toFloat().reduced (1.0f);
+        const bool on = b.getToggleState();
 
-        // Pill body — dark gradient, brightens on hover / press.
-        const float lift   = down ? 0.18f : (over ? 0.08f : 0.0f);
-        const auto  base   = brand::controlBg.brighter (lift);
-        g.setGradientFill (brand::verticalGradient (base, r, 0.20f, 0.30f));
-        g.fillRoundedRectangle (r, brand::radius::md);
+        // When toggled on the button glows in the colour pinned via
+        // ToggleButton::buttonOnColourId (R → red, I → green, M → red,
+        // S → yellow). Off state stays the dark control-bg pill.
+        if (on)
+        {
+            const auto base = b.findColour (juce::ToggleButton::buttonOnColourId);
+            const auto top  = base.brighter (down ? 0.50f : 0.30f);
+            const auto bot  = base.darker   (down ? 0.10f : 0.30f);
+            g.setGradientFill (juce::ColourGradient (top, r.getCentreX(), r.getY(),
+                                                     bot, r.getCentreX(), r.getBottom(),
+                                                     false));
+            g.fillRoundedRectangle (r, brand::radius::md);
 
-        g.setColour (brand::edge);
-        g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
+            // Soft inner highlight at the top so the pill has depth.
+            auto hi = r.withTrimmedBottom (r.getHeight() * 0.55f);
+            g.setGradientFill (juce::ColourGradient (
+                juce::Colours::white.withAlpha (0.20f), hi.getCentreX(), hi.getY(),
+                juce::Colours::white.withAlpha (0.0f),  hi.getCentreX(), hi.getBottom(),
+                false));
+            g.fillRoundedRectangle (hi, brand::radius::md);
 
-        // Letter / label — coloured by toggle state.
-        const auto active = b.findColour (juce::ToggleButton::tickColourId);
-        const auto txt    = b.getToggleState() ? active : brand::textMuted;
+            g.setColour (base.darker (0.55f));
+            g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
+        }
+        else
+        {
+            const float lift = down ? 0.18f : (over ? 0.08f : 0.0f);
+            const auto  base = brand::controlBg.brighter (lift);
+            g.setGradientFill (brand::verticalGradient (base, r, 0.20f, 0.30f));
+            g.fillRoundedRectangle (r, brand::radius::md);
+            g.setColour (brand::edge);
+            g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
+        }
+
+        // Letter — white-ish when on for max contrast against the
+        // saturated background; muted grey when off.
+        const auto txt = on ? juce::Colours::white.withAlpha (0.95f)
+                            : brand::textMuted;
         g.setColour (txt);
-        g.setFont (brand::type::uiLabel());
+        // Heavier, slightly larger glyph than the default uiLabel so
+        // the single-letter chips read at a glance.
+        g.setFont (juce::Font (juce::FontOptions().withHeight (13.5f).withStyle ("Bold")));
         g.drawText (b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, false);
     }
 

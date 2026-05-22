@@ -395,10 +395,9 @@ namespace zynforge
             if (pairState) pairState->armed.store (armButton.getToggleState(),
                                                    std::memory_order_relaxed);
         };
-        // The REC glyph is a filled red dot; tinting both text+tick to
-        // brand::accentRecord makes it glow when armed.
-        armButton.setColour (juce::ToggleButton::textColourId, brand::accentRecord);
-        armButton.setColour (juce::ToggleButton::tickColourId, brand::accentRecord);
+        // R (record arm) → red gradient when armed.
+        armButton.setColour (juce::ToggleButton::buttonOnColourId, brand::accentRecord);
+        armButton.setColour (juce::ToggleButton::tickColourId,     brand::accentRecord);
         addAndMakeVisible (armButton);
 
         monButton.setToggleState (s.monitor.load(), juce::dontSendNotification);
@@ -408,8 +407,9 @@ namespace zynforge
             if (pairState) pairState->monitor.store (monButton.getToggleState(),
                                                      std::memory_order_relaxed);
         };
-        monButton.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-        monButton.setColour (juce::ToggleButton::tickColourId, brand::accentPlay);
+        // I (input monitor) → green gradient when on.
+        monButton.setColour (juce::ToggleButton::buttonOnColourId, brand::accentPlay);
+        monButton.setColour (juce::ToggleButton::tickColourId,     brand::accentPlay);
         addAndMakeVisible (monButton);
 
         muteButton.setToggleState (s.muted.load(), juce::dontSendNotification);
@@ -419,8 +419,9 @@ namespace zynforge
             if (pairState) pairState->muted.store (muteButton.getToggleState(),
                                                    std::memory_order_relaxed);
         };
-        muteButton.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-        muteButton.setColour (juce::ToggleButton::tickColourId, brand::accentRecord);
+        // M (mute) → red gradient when on.
+        muteButton.setColour (juce::ToggleButton::buttonOnColourId, brand::accentRecord);
+        muteButton.setColour (juce::ToggleButton::tickColourId,     brand::accentRecord);
         addAndMakeVisible (muteButton);
 
         soloButton.setToggleState (s.soloed.load(), juce::dontSendNotification);
@@ -430,8 +431,9 @@ namespace zynforge
             if (pairState) pairState->soloed.store (soloButton.getToggleState(),
                                                     std::memory_order_relaxed);
         };
-        soloButton.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-        soloButton.setColour (juce::ToggleButton::tickColourId, brand::accentSolo);
+        // S (solo) → yellow gradient when on.
+        soloButton.setColour (juce::ToggleButton::buttonOnColourId, brand::accentSolo);
+        soloButton.setColour (juce::ToggleButton::tickColourId,     brand::accentSolo);
         addAndMakeVisible (soloButton);
 
         dbLabel.setFont (juce::Font (juce::FontOptions().withHeight (11.0f).withStyle ("Bold")));
@@ -624,25 +626,28 @@ namespace zynforge
         r.removeFromTop (6);
 
         // ── 2. Pan section ─────────────────────────────────────────
-        // Mono: one knob (44 px) centred, then "pan  ◂ N ▸" readout.
-        // Stereo: two knobs side by side, then two compact "◂ N ▸"
-        // readouts under each.
-        const int knobH = 44;
+        // Bigger knobs — engineers wanted them obvious at a glance.
+        // Mono: one knob (72 px) centred + "pan  ◂ N ▸" readout.
+        // Stereo: two knobs (56 px each) side by side + two compact
+        // "◂ N ▸" readouts under each.
+        const int knobH    = (pairState != nullptr) ? 56 : 72;
         const int panLabelH = 16;
         auto panKnobs = r.removeFromTop (knobH);
         auto panText  = r.removeFromTop (panLabelH);
         if (pairState != nullptr)
         {
             const int colW = panKnobs.getWidth() / 2;
-            panSlider .setBounds (panKnobs.removeFromLeft (colW).reduced (2, 0));
-            panSliderR.setBounds (panKnobs.reduced (2, 0));
+            const int knobSize = juce::jmin (knobH, colW - 4);
+            panSlider .setBounds (panKnobs.removeFromLeft (colW)
+                                          .withSizeKeepingCentre (knobSize, knobSize));
+            panSliderR.setBounds (panKnobs.withSizeKeepingCentre (knobSize, knobSize));
             panLabel  .setBounds (panText .removeFromLeft (colW));
             panLabelR .setBounds (panText);
         }
         else
         {
-            const int knobW = juce::jmin (54, panKnobs.getWidth());
-            panSlider.setBounds (panKnobs.withSizeKeepingCentre (knobW, knobH));
+            const int knobSize = juce::jmin (knobH, panKnobs.getWidth() - 4);
+            panSlider.setBounds (panKnobs.withSizeKeepingCentre (knobSize, knobSize));
             panLabel .setBounds (panText);
         }
         r.removeFromTop (6);
