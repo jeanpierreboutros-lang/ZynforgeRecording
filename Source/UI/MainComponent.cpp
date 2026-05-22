@@ -5,6 +5,7 @@
 #include "Meterbridge.h"
 #include "NewSessionDialog.h"
 #include "PatchPage.h"
+#include "SessionPropertiesDialog.h"
 #include "SessionSettingsDialog.h"
 
 using namespace zynforge;
@@ -96,6 +97,40 @@ MainComponent::MainComponent()
     editViewButton.onClick = [this] { switchView (View::Edit); };
     addAndMakeVisible (mixViewButton);
     addAndMakeVisible (editViewButton);
+
+    // Strip-width preset toggle (XS / S / M / L). Tooltips describe how
+    // many channel strips fit on a single screen page at each setting.
+    auto styleStripBtn = [] (juce::TextButton& b, const char* tt)
+    {
+        b.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
+        b.setColour (juce::TextButton::buttonOnColourId,  brand::accentStatus);
+        b.setColour (juce::TextButton::textColourOffId,   brand::textSecondary);
+        b.setColour (juce::TextButton::textColourOnId,    juce::Colours::black);
+        b.setClickingTogglesState (false);
+        b.setTooltip (tt);
+    };
+    styleStripBtn (stripXsButton, "XS strip width — 24 strips per page (tightest)");
+    styleStripBtn (stripSButton,  "S  strip width — 16 strips per page");
+    styleStripBtn (stripMButton,  "M  strip width — 12 strips per page (default)");
+    styleStripBtn (stripLButton,  "L  strip width — 8 strips per page (largest)");
+    stripXsButton.onClick = [this] { setStripWidthPreset (StripWidth::XS); };
+    stripSButton .onClick = [this] { setStripWidthPreset (StripWidth::S);  };
+    stripMButton .onClick = [this] { setStripWidthPreset (StripWidth::M);  };
+    stripLButton .onClick = [this] { setStripWidthPreset (StripWidth::L);  };
+    addAndMakeVisible (stripXsButton);
+    addAndMakeVisible (stripSButton);
+    addAndMakeVisible (stripMButton);
+    addAndMakeVisible (stripLButton);
+
+    // Restore the engineer's preferred width from prefs.
+    if (auto* props = engine.getAppProps())
+    {
+        const auto saved = props->getValue ("stripWidthPreset", "M");
+        if      (saved == "XS") stripWidthPreset = StripWidth::XS;
+        else if (saved == "S")  stripWidthPreset = StripWidth::S;
+        else if (saved == "L")  stripWidthPreset = StripWidth::L;
+        else                    stripWidthPreset = StripWidth::M;
+    }
 
     addChannelButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus.withAlpha (0.18f));
     addChannelButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus);
@@ -329,6 +364,11 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (312, "Finish Range\t.", hasContext);
         menu.addSeparator();
         menu.addItem (313, "Remove Last Capture", ! engine.isRecording());
+        menu.addSeparator();
+        // Batch ops — let the engineer sweep a range of channels in one
+        // dialog instead of renaming/recolouring 24 strips by hand.
+        menu.addItem (320, "Batch Rename Channels…",  engine.getRecorder().getNumTracks() > 0);
+        menu.addItem (321, "Batch Colour Channels…",  engine.getRecorder().getNumTracks() > 0);
     }
     else if (topLevelIndex == 2)  // Session
     {
@@ -357,6 +397,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                             : juce::String ("Start companion server on :9000…"));
         menu.addSeparator();
         menu.addItem (250, "Session Settings…", ! engine.isRecording());
+        menu.addItem (251, "Properties…",       engine.getActiveSessionDir().isDirectory());
     }
 
     return menu;
@@ -466,6 +507,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 50)   zynforge::PatchPage::launch (engine);
     else if (id == 51)   zynforge::Meterbridge::launch (engine);
     else if (id == 52)   onVscClicked();
+    else if (id == 251) showSessionProperties();
     else if (id == 250)
     {
         struct StubContent final : public juce::Component
@@ -607,6 +649,8 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 311)  startRange();
     else if (id == 312)  finishRange();
     else if (id == 313)  removeLastCapture();
+    else if (id == 320)  showBatchRenameDialog();
+    else if (id == 321)  showBatchColourDialog();
 }
 
 bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
@@ -648,6 +692,27 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
     if (c == '.') { finishRange();          return true; }
     if (c == '4') { toggleSnap();           return true; }
     return false;
+}
+
+void MainComponent::setStripWidthPreset (StripWidth p)
+{
+    if (p == stripWidthPreset) return;
+    stripWidthPreset = p;
+    if (auto* props = engine.getAppProps())
+    {
+        const auto code = (p == StripWidth::XS) ? "XS"
+                        : (p == StripWidth::S)  ? "S"
+                        : (p == StripWidth::L)  ? "L" : "M";
+        props->setValue ("stripWidthPreset", code);
+        props->saveIfNeeded();
+    }
+    // Reflect the active preset in the button toggle visuals + relayout
+    // the strip viewport so the engineer sees the new density right away.
+    stripXsButton.setToggleState (p == StripWidth::XS, juce::dontSendNotification);
+    stripSButton .setToggleState (p == StripWidth::S,  juce::dontSendNotification);
+    stripMButton .setToggleState (p == StripWidth::M,  juce::dontSendNotification);
+    stripLButton .setToggleState (p == StripWidth::L,  juce::dontSendNotification);
+    resized();
 }
 
 void MainComponent::switchView (View v)
@@ -1351,6 +1416,226 @@ void MainComponent::finishRange()
     showStatus ("Range Out marker dropped");
 }
 
+void MainComponent::showSessionProperties()
+{
+    const auto sessionDir = engine.getActiveSessionDir();
+    if (! sessionDir.isDirectory())
+    {
+        showStatus ("Open or create a session first");
+        return;
+    }
+
+    // Find the .zfproj inside the active session folder. If there's
+    // more than one (shouldn't happen), pick the first match.
+    juce::File proj;
+    for (auto& f : sessionDir.findChildFiles (juce::File::findFiles, false, "*.zfproj"))
+    {
+        proj = f;
+        break;
+    }
+    if (! proj.existsAsFile())
+        proj = sessionDir.getChildFile (sessionDir.getFileName() + ".zfproj");
+
+    juce::var parsed;
+    if (proj.existsAsFile())
+        parsed = juce::JSON::parse (proj);
+    juce::DynamicObject::Ptr obj;
+    if (parsed.isObject())
+        obj = parsed.getDynamicObject();
+    else
+        obj = new juce::DynamicObject();
+
+    auto readString = [&] (const juce::Identifier& k, const juce::String& fallback = {}) -> juce::String
+    {
+        if (obj == nullptr) return fallback;
+        const auto v = obj->getProperty (k);
+        if (v.isString()) return v.toString();
+        return fallback;
+    };
+
+    // Convert the persisted captureFormat int back to a readable label.
+    auto formatLabel = [] (int code) -> juce::String
+    {
+        using F = CaptureFormat;
+        switch ((F) code)
+        {
+            case F::Wav16:        return "WAV 16-bit";
+            case F::Wav24:        return "WAV 24-bit";
+            case F::Wav32Float:   return "WAV 32-bit float";
+            case F::Aiff16:       return "AIFF 16-bit";
+            case F::Aiff24:       return "AIFF 24-bit";
+            case F::Aiff32Float:  return "AIFF 32-bit float";
+            case F::Flac16:       return "FLAC 16-bit";
+            case F::Flac24:       return "FLAC 24-bit";
+        }
+        return "—";
+    };
+
+    SessionPropertiesDialog::Fields fields;
+    fields.name        = readString ("name", sessionDir.getFileName());
+    fields.artist      = readString ("artist");
+    fields.venue       = readString ("venue");
+    fields.fohEngineer = readString ("fohEngineer");
+    fields.date        = readString ("date",
+                                     juce::Time::getCurrentTime().formatted ("%Y-%m-%d"));
+    fields.notes       = readString ("notes");
+    {
+        const auto sr = obj ? (double) obj->getProperty ("sampleRate") : 0.0;
+        fields.sampleRate = sr > 0.0
+            ? juce::String (sr / 1000.0, 1) + " kHz"
+            : juce::String ("—");
+    }
+    {
+        const int fmt = obj ? (int) obj->getProperty ("captureFormat") : (int) CaptureFormat::Wav24;
+        fields.captureFormat = formatLabel (fmt);
+        fields.bitDepth = (fmt == (int) CaptureFormat::Wav16 || fmt == (int) CaptureFormat::Aiff16 || fmt == (int) CaptureFormat::Flac16) ? "16-bit"
+                        : (fmt == (int) CaptureFormat::Wav32Float || fmt == (int) CaptureFormat::Aiff32Float)              ? "32-bit float"
+                                                                                                                          : "24-bit";
+    }
+
+    SessionPropertiesDialog::launch (fields,
+        [this, proj, sessionDir, obj] (const SessionPropertiesDialog::Fields& edited)
+        {
+            // Merge back into the existing JSON (preserves sampleRate /
+            // captureFormat / createdAt that the dialog doesn't edit).
+            juce::DynamicObject::Ptr merged = obj;
+            if (merged == nullptr) merged = new juce::DynamicObject();
+            merged->setProperty ("zynforgeSession", true);
+            merged->setProperty ("name",            edited.name);
+            merged->setProperty ("artist",          edited.artist);
+            merged->setProperty ("venue",           edited.venue);
+            merged->setProperty ("fohEngineer",     edited.fohEngineer);
+            merged->setProperty ("date",            edited.date);
+            merged->setProperty ("notes",           edited.notes);
+            merged->setProperty ("updatedAt",
+                                 juce::Time::getCurrentTime().toISO8601 (true));
+
+            proj.replaceWithText (juce::JSON::toString (juce::var (merged.get())));
+            showStatus ("Saved session properties — " + sessionDir.getFileName());
+        });
+}
+
+void MainComponent::showBatchRenameDialog()
+{
+    const int total = engine.getRecorder().getNumTracks();
+    if (total <= 0) { showStatus ("No channels to rename"); return; }
+
+    auto* aw = new juce::AlertWindow ("Batch Rename Channels",
+                                      "Apply a numbered name to a range of channels.\n"
+                                      "Example: prefix 'Drums', first 1, last 8, start 1\n"
+                                      "         → 'Drums 1', 'Drums 2', ... 'Drums 8'.",
+                                      juce::MessageBoxIconType::QuestionIcon);
+    aw->addTextEditor ("prefix", "Drums",              "Prefix:");
+    aw->addTextEditor ("first",  "1",                  "First channel:");
+    aw->addTextEditor ("last",   juce::String (total), "Last channel:");
+    aw->addTextEditor ("start",  "1",                  "Start number:");
+    aw->addButton ("Apply",  1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    aw->enterModalState (true,
+        juce::ModalCallbackFunction::create ([this, aw, total] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            if (result != 1) return;
+
+            const auto prefix = aw->getTextEditorContents ("prefix").trim();
+            const int firstCh = juce::jlimit (1, total,
+                                              aw->getTextEditorContents ("first").getIntValue());
+            const int lastCh  = juce::jlimit (firstCh, total,
+                                              aw->getTextEditorContents ("last").getIntValue());
+            const int startN  = juce::jmax (0,
+                                            aw->getTextEditorContents ("start").getIntValue());
+
+            int suffix = startN;
+            for (int ch = firstCh - 1; ch < lastCh; ++ch, ++suffix)
+            {
+                const auto name = prefix.isEmpty()
+                                     ? juce::String (suffix)
+                                     : prefix + " " + juce::String (suffix);
+                engine.setTrackName (ch, name);
+            }
+            showStatus ("Renamed channels " + juce::String (firstCh)
+                        + "–" + juce::String (lastCh)
+                        + " (" + prefix + " " + juce::String (startN) + "…)");
+            lastTrackCount = -1;   // force strip rebuild so names show up
+        }),
+        false);
+}
+
+void MainComponent::showBatchColourDialog()
+{
+    const int total = engine.getRecorder().getNumTracks();
+    if (total <= 0) { showStatus ("No channels to colour"); return; }
+
+    // Two-step: range picker, then colour picker. Keeps the AlertWindow
+    // simple (numeric inputs only) and reuses StripColourPicker.
+    auto* aw = new juce::AlertWindow ("Batch Colour Channels",
+                                      "Apply a colour to a contiguous range of channels.",
+                                      juce::MessageBoxIconType::QuestionIcon);
+    aw->addTextEditor ("first", "1",                  "First channel:");
+    aw->addTextEditor ("last",  juce::String (total), "Last channel:");
+    aw->addButton ("Pick colour…", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel",       0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    aw->enterModalState (true,
+        juce::ModalCallbackFunction::create ([this, aw, total] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            if (result != 1) return;
+
+            const int firstCh = juce::jlimit (1, total,
+                                              aw->getTextEditorContents ("first").getIntValue());
+            const int lastCh  = juce::jlimit (firstCh, total,
+                                              aw->getTextEditorContents ("last").getIntValue());
+
+            auto picker = std::make_unique<juce::ColourSelector>(
+                juce::ColourSelector::showColourspace
+                | juce::ColourSelector::showSliders);
+            picker->setSize (300, 280);
+            picker->setCurrentColour (juce::Colours::orange);
+
+            // ColourSelector is a Component; juce::CallOutBox wraps it
+            // and fires onColourChanged via a Listener. Quickest path:
+            // poll the colour on dismiss via a Timer + simple modal pump.
+            // Pragmatic shortcut: hand the picker out, apply on dismissal
+            // through a ChangeListener.
+            struct ColourApplyListener : public juce::ChangeListener
+            {
+                MainComponent* owner; int first, last;
+                void changeListenerCallback (juce::ChangeBroadcaster* src) override
+                {
+                    if (auto* cs = dynamic_cast<juce::ColourSelector*> (src))
+                    {
+                        const auto c = cs->getCurrentColour();
+                        for (int ch = first - 1; ch < last; ++ch)
+                            owner->engine.setTrackColour (ch, c);
+                        owner->lastTrackCount = -1;
+                    }
+                }
+            };
+            auto listener = std::make_shared<ColourApplyListener>();
+            listener->owner = this;
+            listener->first = firstCh;
+            listener->last  = lastCh;
+            picker->addChangeListener (listener.get());
+
+            juce::CallOutBox::launchAsynchronously (
+                std::move (picker),
+                juce::Rectangle<int>{ getScreenBounds().getCentreX(),
+                                      getScreenBounds().getCentreY(), 1, 1 },
+                nullptr);
+
+            // Keep the listener alive until the CallOutBox closes.
+            // Easiest: stash it in a member; for now leak benignly —
+            // colour-pickers are infrequent.
+            batchColourListenerHandle = listener;
+
+            showStatus ("Colouring channels " + juce::String (firstCh)
+                        + "–" + juce::String (lastCh) + "…");
+        }),
+        false);
+}
+
 void MainComponent::removeLastCapture()
 {
     const auto root = getSessionsRoot();
@@ -2046,6 +2331,19 @@ void MainComponent::resized()
     editViewButton .setBounds (row2.removeFromRight (60).reduced (0, 2));
     row2.removeFromRight (4);
     mixViewButton  .setBounds (row2.removeFromRight (70).reduced (0, 2));
+    row2.removeFromRight (16);
+
+    // Strip-width preset pill, right next to MIX/EDIT.
+    stripLButton .setBounds (row2.removeFromRight (30).reduced (0, 2));
+    stripMButton .setBounds (row2.removeFromRight (30).reduced (0, 2));
+    stripSButton .setBounds (row2.removeFromRight (30).reduced (0, 2));
+    stripXsButton.setBounds (row2.removeFromRight (32).reduced (0, 2));
+
+    // Drive the toggle visuals from the persisted preset.
+    stripXsButton.setToggleState (stripWidthPreset == StripWidth::XS, juce::dontSendNotification);
+    stripSButton .setToggleState (stripWidthPreset == StripWidth::S,  juce::dontSendNotification);
+    stripMButton .setToggleState (stripWidthPreset == StripWidth::M,  juce::dontSendNotification);
+    stripLButton .setToggleState (stripWidthPreset == StripWidth::L,  juce::dontSendNotification);
     row2.removeFromRight (10);
     transportLabel.setBounds (row2.removeFromLeft (140));
     sessionLabel  .setBounds (row2);
@@ -2074,9 +2372,21 @@ void MainComponent::resized()
     // matching the Live app convention. Beyond 12 strips, the viewport
     // scrolls horizontally and the strip width stays at the same 12-fit
     // value so panning reveals additional banks without changing scale.
-    constexpr int kStripsPerPage = 12;
-    constexpr int kMinStripW     = 90;     // floor so 12 stays usable
-    constexpr int kMaxStripW     = 160;
+    // Strip-width presets — engineer can flip via the XS/S/M/L pill in
+    // the header. The numbers are the target strips-per-page; the actual
+    // strip width is the viewport width divided by that.
+    int targetPerPage = 12;
+    int floorW = 90;
+    switch (stripWidthPreset)
+    {
+        case StripWidth::XS: targetPerPage = 24; floorW = 56;  break;
+        case StripWidth::S:  targetPerPage = 16; floorW = 72;  break;
+        case StripWidth::M:  targetPerPage = 12; floorW = 90;  break;
+        case StripWidth::L:  targetPerPage = 8;  floorW = 130; break;
+    }
+    const int kStripsPerPage = targetPerPage;
+    const int kMinStripW     = floorW;
+    const int kMaxStripW     = 220;
     const int margin = 12;
     const int gap    = 6;
     const int total  = (int) strips.size();

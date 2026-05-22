@@ -77,6 +77,9 @@ private:
     void startRange();
     void finishRange();
     void removeLastCapture();
+    void showBatchRenameDialog();
+    void showBatchColourDialog();
+    void showSessionProperties();
 
     bool snapToMarkers { false };
 
@@ -120,9 +123,20 @@ private:
     View currentView { View::Mix };
     void switchView (View v);
 
+    // XS=24 strips/page, S=16, M=12 (default), L=8. Persists in appProps
+    // so the engineer's preferred density survives restarts.
+    enum class StripWidth { XS, S, M, L };
+    StripWidth stripWidthPreset { StripWidth::M };
+    void setStripWidthPreset (StripWidth);
+    juce::TextButton stripXsButton { "XS" };
+    juce::TextButton stripSButton  { "S"  };
+    juce::TextButton stripMButton  { "M"  };
+    juce::TextButton stripLButton  { "L"  };
+
     bool sessionLocked { false };
 
     std::unique_ptr<juce::FileChooser> chooser;
+    std::shared_ptr<juce::ChangeListener> batchColourListenerHandle;
 
     zynforge::BigClockPanel bigClock;
     zynforge::PerfDashboard perfDashboard;
