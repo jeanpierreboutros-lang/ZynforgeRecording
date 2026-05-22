@@ -475,6 +475,38 @@ namespace zynforge
                              juce::jmin (playerScratch.getNumChannels(), numTracks),
                              numSamples);
 
+        // Drive per-strip meters from the player's output when the
+        // session is loaded (VSC playback / file import). The recorder
+        // already updates peaks when input is flowing — but on playback
+        // there's no input signal to meter, so without this the meters
+        // sit at zero even though audio is playing.
+        if (player.isPlaying() || player.isLoaded())
+        {
+            const int playerTracks = juce::jmin (playerScratch.getNumChannels(), numTracks);
+            for (int ch = 0; ch < playerTracks; ++ch)
+            {
+                const float* src = playerScratch.getReadPointer (ch);
+                if (src == nullptr) continue;
+                float pk = 0.0f, sumSq = 0.0f;
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    const float a = std::abs (src[i]);
+                    if (a > pk) pk = a;
+                    sumSq += src[i] * src[i];
+                }
+                const float rms = std::sqrt (sumSq / juce::jmax (1, numSamples));
+                auto& t = recorder.getTrack (ch);
+                const float prevPk = t.peak.load (std::memory_order_relaxed);
+                t.peak.store (juce::jmax (pk, prevPk * 0.92f), std::memory_order_relaxed);
+                t.rms .store (rms, std::memory_order_relaxed);
+                if (pk >= 0.999f)
+                {
+                    t.clipped.store (true, std::memory_order_relaxed);
+                    t.clipCount.fetch_add (1, std::memory_order_relaxed);
+                }
+            }
+        }
+
         // Mute / solo: when any channel is soloed, only soloed channels pass.
         bool anySolo = false;
         for (int i = 0; i < numTracks; ++i)

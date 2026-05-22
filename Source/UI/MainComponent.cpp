@@ -1467,6 +1467,17 @@ void MainComponent::onImportAudioFiles()
             return;
         }
 
+        // Make sure the mixer has a strip per imported track — so every
+        // imported file gets a fader, meter, name, colour, and routing.
+        // Existing strips above the import count are left intact.
+        if (imported > engine.getRecorder().getNumTracks())
+            engine.setStripCount (imported);
+
+        // Name each strip after the source file so the import shows up
+        // with meaningful labels in the mixer + EDIT views.
+        for (int i = 0; i < imported && i < picks.size(); ++i)
+            engine.setTrackName (i, picks.getReference (i).getFileNameWithoutExtension());
+
         // Load the freshly-built session for virtual soundcheck playback.
         const int loaded = engine.loadSession (sessionDir);
         showStatus ("Imported " + juce::String (imported)
