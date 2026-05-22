@@ -1512,22 +1512,30 @@ void MainComponent::resized()
     if (timeline != nullptr)
         timeline->setBounds (r.removeFromTop (52).reduced (12, 4));
 
-    // Strips area — fixed width per strip, horizontal scroll if they
-    // overflow the visible viewport.
-    const int margin    = 12;
-    const int gap       = 6;
-    const int stripW    = 150;   // Live-style strip width
-    const int total     = (int) strips.size();
+    // Strips area — width adapts so 12 strips always fit on one page,
+    // matching the Live app convention. Beyond 12 strips, the viewport
+    // scrolls horizontally and the strip width stays at the same 12-fit
+    // value so panning reveals additional banks without changing scale.
+    constexpr int kStripsPerPage = 12;
+    constexpr int kMinStripW     = 90;     // floor so 12 stays usable
+    constexpr int kMaxStripW     = 160;
+    const int margin = 12;
+    const int gap    = 6;
+    const int total  = (int) strips.size();
 
     auto viewportArea = r.reduced (margin);
     stripsViewport.setBounds (viewportArea);
     if (editPage != nullptr)
         editPage->setBounds (viewportArea);
 
+    const int pageW  = viewportArea.getWidth();
+    const int stripW = juce::jlimit (kMinStripW, kMaxStripW,
+                                     (pageW - (kStripsPerPage - 1) * gap) / kStripsPerPage);
+
     const int containerW = total > 0
                             ? total * stripW + (total - 1) * gap
-                            : viewportArea.getWidth();
-    stripsContainer.setSize (juce::jmax (containerW, viewportArea.getWidth()),
+                            : pageW;
+    stripsContainer.setSize (juce::jmax (containerW, pageW),
                               viewportArea.getHeight());
 
     int x = 0;
