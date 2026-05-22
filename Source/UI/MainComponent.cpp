@@ -5,6 +5,7 @@
 #include "Meterbridge.h"
 #include "NewSessionDialog.h"
 #include "PatchPage.h"
+#include "ClickSettingsDialog.h"
 #include "SessionPropertiesDialog.h"
 #include "SessionSettingsDialog.h"
 
@@ -282,7 +283,41 @@ MainComponent::MainComponent()
         if (clickTrackIndex >= 0)
             generateOrRefreshClickTrack();
     };
-    tempoBar.onCreateClickTrack = [this] { generateOrRefreshClickTrack(); };
+    tempoBar.onCreateClickTrack = [this]
+    {
+        // CLICK button now opens the Click II dialog. The real-time
+        // click engine runs in the audio thread so tempo / voice /
+        // subdivision changes take effect on the next beat without
+        // ever stopping playback.
+        auto& cl = engine.getClickEngine();
+        zynforge::ClickSettings init;
+        init.on              = cl.isEnabled();
+        init.click1.volumeDb = 0.0f;     // engine doesn't currently round-trip these values back
+        init.click1.voice    = zynforge::ClickSettings::Voice::Click;
+        init.click1.sub      = zynforge::ClickSettings::Subdivision::Quarter;
+        init.click2.volumeDb = -3.0f;
+        init.click2.voice    = zynforge::ClickSettings::Voice::Click;
+        init.click2.sub      = zynforge::ClickSettings::Subdivision::Quarter;
+
+        zynforge::ClickSettingsDialog::launch (init, engine.getSessionTempoBpm(),
+            [this] (const zynforge::ClickSettings& s)
+            {
+                auto& c = engine.getClickEngine();
+                c.setEnabled    (s.on);
+                c.setVolume1Db  (s.click1.volumeDb);
+                c.setVolume2Db  (s.click2.volumeDb);
+                c.setVoice1     ((zynforge::ClickEngine::Voice) s.click1.voice);
+                c.setVoice2     ((zynforge::ClickEngine::Voice) s.click2.voice);
+                c.setSub1       ((zynforge::ClickEngine::Subdivision) s.click1.sub);
+                c.setSub2       ((zynforge::ClickEngine::Subdivision) s.click2.sub);
+            },
+            [this]
+            {
+                // 'Generate click track' button — render an audio file
+                // of the click for offline workflows (mixdown / export).
+                generateOrRefreshClickTrack();
+            });
+    };
     addAndMakeVisible (tempoBar);
 
 
@@ -1771,8 +1806,13 @@ void MainComponent::generateOrRefreshClickTrack()
             return d->getCurrentSampleRate();
         return 48000.0;
     }());
-    const double totalSeconds = 600.0;   // 10 minutes; plenty for one show
-    const juce::int64 totalSamples = (juce::int64) (sr * totalSeconds);
+    // Match the session's playback length, falling back to 4 hours when
+    // the session is empty so the engineer always has more than enough
+    // click for a show.
+    auto& player = engine.getPlayer();
+    juce::int64 totalSamples = player.isLoaded() ? player.getTotalLengthSamples() : 0;
+    if (totalSamples <= 0)
+        totalSamples = (juce::int64) (sr * 60.0 * 60.0 * 4.0);   // 4 hours fallback
 
     // Click voice: short 1 kHz (downbeat 1.5 kHz) sine burst, ~30 ms,
     // exponential decay so it sits without smearing across beats.

@@ -55,12 +55,14 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/SessionPropertiesDialog.cpp
     Source/UI/SetlistBar.cpp
     Source/UI/TempoBar.cpp
+    Source/UI/ClickSettingsDialog.cpp
     Source/Network/CompanionServer.cpp
     Source/UI/Meterbridge.cpp
     Source/UI/TransportBar.cpp
     Source/UI/SessionSettingsDialog.cpp
     Source/UI/BigClockPanel.cpp
     Source/Audio/AudioEngine.cpp
+    Source/Audio/ClickEngine.cpp
     Source/Audio/MultitrackRecorder.cpp
     Source/Audio/SessionPlayer.cpp
     Source/Audio/Markers.cpp

@@ -439,6 +439,9 @@ namespace zynforge
         // IO thread — no priority inversion under load.
         recorder.setAudioWorkgroup (device->getWorkgroup());
 
+        click.prepare (sr);
+        click.setTempoBpm (currentTempoBpm.load (std::memory_order_relaxed));
+
         // Strip count is user-controlled (persisted; defaults to 1) —
         // it's no longer tied to the device's input channel count.
         recorder.prepare (sr, blockSize, getStripCount());
@@ -489,6 +492,9 @@ namespace zynforge
     {
         bpm = juce::jlimit (20.0f, 999.0f, bpm);
         currentTempoBpm.store (bpm, std::memory_order_relaxed);
+        // Hand the new tempo to the real-time click immediately — atomic
+        // store, so the audio thread picks it up at the next block.
+        click.setTempoBpm (bpm);
         if (appProps != nullptr)
         {
             appProps->setValue ("sessionTempoBpm", (double) bpm);
@@ -983,6 +989,19 @@ namespace zynforge
         // EVERYTHING the engineer hears at outputs 0+1 (per-channel
         // routing + stream-bus + monitor sum, all collapsed into the
         // float output buffers by now).
+        // ── Real-time click mix ────────────────────────────────────
+        // Click runs on the audio thread so a tempo / voice change
+        // takes effect on the next beat — no file reload, no glitch.
+        // Mixed into outputs 0+1 (the engineer's monitor bus). The
+        // strip's OUT combo doesn't apply to this real-time path —
+        // route via Master output channel selection.
+        if (click.isEnabled())
+        {
+            float* L = (numOutputs > 0) ? outputs[0] : nullptr;
+            float* R = (numOutputs > 1) ? outputs[1] : nullptr;
+            click.processBlock (L, R, numSamples);
+        }
+
         if (companion != nullptr && companion->isRunning())
         {
             const float* L = (numOutputs > 0) ? outputs[0] : nullptr;

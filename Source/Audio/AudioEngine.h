@@ -4,6 +4,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "Markers.h"
+#include "ClickEngine.h"
 #include "MultitrackRecorder.h"
 #include "SessionPlayer.h"
 #include "StripColours.h"
@@ -257,6 +258,10 @@ namespace zynforge
         std::atomic<int>  masterOutR    { 1 };
         std::atomic<bool> masterStereo  { true };
 
+        ClickEngine        click;
+    public:
+        ClickEngine& getClickEngine() noexcept { return click; }
+    private:
         std::unique_ptr<OscRemote> osc;
         std::unique_ptr<CompanionServer> companion;
         std::unique_ptr<juce::PropertiesFile> appProps;

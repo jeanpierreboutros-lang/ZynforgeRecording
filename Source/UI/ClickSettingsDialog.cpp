@@ -1,0 +1,281 @@
+#include "ClickSettingsDialog.h"
+#include "../Theme/BrandColors.h"
+#include "../Theme/BrandTokens.h"
+
+namespace zynforge
+{
+    namespace
+    {
+        static const juce::StringArray voiceLabels = {
+            "Sine",  "Beep",  "Cowbell",  "Wood Block",  "Classic Click"
+        };
+
+        // UTF-8 glyphs for the note-value buttons in the reference.
+        static const char* subdivisionGlyphs[] = {
+            "\xf0\x9d\x85\x9d",   // whole note
+            "\xf0\x9d\x85\x9e",   // half
+            "\xf0\x9d\x85\x9f",   // quarter
+            "\xf0\x9d\x85\xa0",   // eighth
+            "\xf0\x9d\x85\xa1",   // sixteenth
+            "3",                  // triplet
+            "\xe2\x80\xa2"        // rest / silent dot
+        };
+
+        class VoiceRow final : public juce::Component
+        {
+        public:
+            VoiceRow (const juce::String& heading,
+                      ClickSettings::Voice1Then2 init,
+                      std::function<void (const ClickSettings::Voice1Then2&)> onChange)
+                : changed (std::move (onChange))
+            {
+                title.setText (heading, juce::dontSendNotification);
+                title.setFont (juce::FontOptions().withHeight (12.0f).withStyle ("Bold"));
+                title.setColour (juce::Label::textColourId, brand::textPrimary);
+                addAndMakeVisible (title);
+
+                volume.setSliderStyle (juce::Slider::LinearHorizontal);
+                volume.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+                volume.setRange (-60.0, 12.0, 0.1);
+                volume.setDoubleClickReturnValue (true, 0.0);
+                volume.setValue (init.volumeDb, juce::dontSendNotification);
+                volume.setColour (juce::Slider::thumbColourId,        brand::accentStatus);
+                volume.setColour (juce::Slider::trackColourId,        brand::edge);
+                volume.setColour (juce::Slider::backgroundColourId,   brand::bgDeep);
+                volume.onValueChange = [this] { broadcast(); };
+                addAndMakeVisible (volume);
+
+                voice.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff000000));
+                voice.setColour (juce::ComboBox::outlineColourId,    brand::edge);
+                voice.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
+                voice.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
+                for (int i = 0; i < voiceLabels.size(); ++i)
+                    voice.addItem (voiceLabels[i], i + 1);
+                voice.setSelectedId ((int) init.voice + 1, juce::dontSendNotification);
+                voice.onChange = [this] { broadcast(); };
+                addAndMakeVisible (voice);
+
+                for (int i = 0; i < (int) std::size (subdivisionGlyphs); ++i)
+                {
+                    auto* b = new juce::TextButton (juce::String::fromUTF8 (subdivisionGlyphs[i]));
+                    b->setClickingTogglesState (true);
+                    b->setRadioGroupId (1001);
+                    b->setColour (juce::TextButton::buttonColourId,   brand::bgElevated);
+                    b->setColour (juce::TextButton::buttonOnColourId, brand::accentSolo);
+                    b->setColour (juce::TextButton::textColourOffId,  brand::textPrimary);
+                    b->setColour (juce::TextButton::textColourOnId,   juce::Colours::black);
+                    if (i == (int) init.sub)
+                        b->setToggleState (true, juce::dontSendNotification);
+                    b->onClick = [this, i]
+                    {
+                        sub = (ClickSettings::Subdivision) i;
+                        broadcast();
+                    };
+                    subButtons.add (b);
+                    addAndMakeVisible (*b);
+                }
+
+                vol1   = init.volumeDb;
+                voice1 = init.voice;
+                sub    = init.sub;
+            }
+
+            void paint (juce::Graphics& g) override
+            {
+                auto r = getLocalBounds().toFloat().reduced (1.0f);
+                g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.04f, 0.10f));
+                g.fillRoundedRectangle (r, brand::radius::md);
+                g.setColour (brand::edge);
+                g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
+            }
+
+            void resized() override
+            {
+                auto r = getLocalBounds().reduced (10, 6);
+
+                auto topRow = r.removeFromTop (24);
+                title  .setBounds (topRow.removeFromLeft (60));
+                topRow.removeFromLeft (10);
+                voice  .setBounds (topRow.removeFromRight (160));
+                topRow.removeFromRight (10);
+                volume .setBounds (topRow);
+
+                r.removeFromTop (4);
+                auto btnRow = r;
+                const int n  = subButtons.size();
+                const int bw = btnRow.getWidth() / juce::jmax (1, n);
+                for (auto* b : subButtons)
+                    b->setBounds (btnRow.removeFromLeft (bw).reduced (2, 2));
+            }
+
+        private:
+            void broadcast()
+            {
+                ClickSettings::Voice1Then2 cur;
+                cur.volumeDb = (float) volume.getValue();
+                cur.voice    = (ClickSettings::Voice) (voice.getSelectedId() - 1);
+                cur.sub      = sub;
+                if (changed) changed (cur);
+            }
+
+            juce::Label  title;
+            juce::Slider volume;
+            juce::ComboBox voice;
+            juce::OwnedArray<juce::TextButton> subButtons;
+            ClickSettings::Subdivision sub { ClickSettings::Subdivision::Quarter };
+            float vol1 { 0.0f };
+            ClickSettings::Voice voice1 { ClickSettings::Voice::Click };
+
+            std::function<void (const ClickSettings::Voice1Then2&)> changed;
+            JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VoiceRow)
+        };
+
+        class Content final : public juce::Component
+        {
+        public:
+            Content (ClickSettings initial,
+                     float bpm,
+                     ClickSettingsDialog::SaveCallback save,
+                     ClickSettingsDialog::GenerateCallback gen)
+                : settings (initial),
+                  onSave   (std::move (save)),
+                  onGenerate (std::move (gen))
+            {
+                beatLabel.setText ("BEAT", juce::dontSendNotification);
+                beatLabel.setFont (juce::FontOptions().withHeight (16.0f).withStyle ("Bold"));
+                beatLabel.setColour (juce::Label::textColourId, brand::accentStatus);
+                addAndMakeVisible (beatLabel);
+
+                followMeter.setButtonText ("FOLLOW METER");
+                followMeter.setEnabled (false);   // reserved
+                followMeter.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
+                followMeter.setColour (juce::TextButton::textColourOffId, brand::textMuted);
+                addAndMakeVisible (followMeter);
+
+                bpmLabel.setText ("BPM", juce::dontSendNotification);
+                bpmLabel.setFont (juce::FontOptions().withHeight (14.0f).withStyle ("Bold"));
+                bpmLabel.setColour (juce::Label::textColourId, brand::textMuted);
+                addAndMakeVisible (bpmLabel);
+
+                bpmValue.setText (juce::String (bpm, 0), juce::dontSendNotification);
+                bpmValue.setFont (juce::FontOptions().withHeight (44.0f).withStyle ("Bold"));
+                bpmValue.setColour (juce::Label::textColourId, brand::accentStatus);
+                bpmValue.setJustificationType (juce::Justification::centredRight);
+                addAndMakeVisible (bpmValue);
+
+                onButton.setButtonText (initial.on ? "ON" : "OFF");
+                onButton.setClickingTogglesState (true);
+                onButton.setToggleState (initial.on, juce::dontSendNotification);
+                onButton.setColour (juce::TextButton::buttonOnColourId, brand::accentStatus);
+                onButton.setColour (juce::TextButton::buttonColourId,   brand::bgElevated);
+                onButton.setColour (juce::TextButton::textColourOnId,   juce::Colours::black);
+                onButton.setColour (juce::TextButton::textColourOffId,  brand::textPrimary);
+                onButton.onClick = [this]
+                {
+                    settings.on = onButton.getToggleState();
+                    onButton.setButtonText (settings.on ? "ON" : "OFF");
+                    if (onSave) onSave (settings);
+                };
+                addAndMakeVisible (onButton);
+
+                row1 = std::make_unique<VoiceRow> ("CLICK 1", initial.click1,
+                    [this] (const ClickSettings::Voice1Then2& v)
+                {
+                    settings.click1 = v;
+                    if (onSave) onSave (settings);
+                });
+                addAndMakeVisible (*row1);
+
+                row2 = std::make_unique<VoiceRow> ("CLICK 2", initial.click2,
+                    [this] (const ClickSettings::Voice1Then2& v)
+                {
+                    settings.click2 = v;
+                    if (onSave) onSave (settings);
+                });
+                addAndMakeVisible (*row2);
+
+                generateButton.setButtonText ("Generate click track");
+                generateButton.setColour (juce::TextButton::buttonColourId,  brand::accentRecord);
+                generateButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+                generateButton.onClick = [this] { if (onGenerate) onGenerate(); };
+                addAndMakeVisible (generateButton);
+
+                closeButton.setButtonText ("Close");
+                closeButton.setColour (juce::TextButton::buttonColourId,  brand::bgElevated);
+                closeButton.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
+                closeButton.onClick = [this]
+                {
+                    if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
+                        dw->exitModalState (0);
+                };
+                addAndMakeVisible (closeButton);
+
+                setSize (640, 460);
+            }
+
+            void paint (juce::Graphics& g) override
+            {
+                auto r = getLocalBounds().toFloat();
+                g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.04f, 0.14f));
+                g.fillAll();
+            }
+
+            void resized() override
+            {
+                auto r = getLocalBounds().reduced (16, 12);
+
+                // Top banner: BEAT + FOLLOW METER | BPM number | ON.
+                auto banner = r.removeFromTop (80);
+                auto left   = banner.removeFromLeft (200);
+                beatLabel  .setBounds (left.removeFromTop (24));
+                left.removeFromTop (4);
+                followMeter.setBounds (left.removeFromTop (28));
+
+                auto onArea = banner.removeFromRight (90);
+                onButton.setBounds (onArea.reduced (4, 10));
+
+                bpmLabel  .setBounds (banner.removeFromTop (20));
+                bpmValue  .setBounds (banner.reduced (8, 0));
+
+                r.removeFromTop (12);
+                row1->setBounds (r.removeFromTop (80));
+                r.removeFromTop (8);
+                row2->setBounds (r.removeFromTop (80));
+
+                auto footer = r.removeFromBottom (40);
+                closeButton   .setBounds (footer.removeFromLeft (90));
+                footer.removeFromLeft (8);
+                generateButton.setBounds (footer.removeFromRight (180));
+            }
+
+        private:
+            ClickSettings settings;
+            ClickSettingsDialog::SaveCallback     onSave;
+            ClickSettingsDialog::GenerateCallback onGenerate;
+
+            juce::Label beatLabel, bpmLabel, bpmValue;
+            juce::TextButton followMeter;
+            juce::TextButton onButton { "ON" };
+            std::unique_ptr<VoiceRow> row1, row2;
+            juce::TextButton generateButton, closeButton;
+
+            JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Content)
+        };
+    }
+
+    void ClickSettingsDialog::launch (ClickSettings  initial,
+                                      float          bpm,
+                                      SaveCallback   onSave,
+                                      GenerateCallback onGenerate)
+    {
+        auto* content = new Content (initial, bpm, std::move (onSave), std::move (onGenerate));
+        juce::DialogWindow::LaunchOptions opts;
+        opts.dialogTitle                  = "CLICK II";
+        opts.content.setOwned (content);
+        opts.dialogBackgroundColour       = brand::bgPanel;
+        opts.escapeKeyTriggersCloseButton = true;
+        opts.useNativeTitleBar            = true;
+        opts.resizable                    = false;
+        opts.launchAsync();
+    }
+}
