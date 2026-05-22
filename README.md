@@ -8,51 +8,106 @@ A focused recording surface for engineers running front-of-house or monitors who
 
 ## Status
 
-`v0.7.0` — per-track colour palette.
+Active development. Software ships **multitrack recording**, **playback**, and **virtual soundcheck** as a single coherent surface.
 
-- [x] Project structure (CMake, JUCE 8 via `FetchContent`)
-- [x] ZynForge visual identity (near-black panels, per-strip personality colours, LED-segment meters)
-- [x] Audio engine (multichannel input capture, lock-free per-channel FIFO, background WAV writer)
-- [x] Channel strips with live input metering
-- [x] Audio device selector
-- [x] Virtual soundcheck playback (LOAD SESSION + PLAY / STOP, each track → matching output)
-- [x] BWF metadata (bext chunk) + periodic header flush every ~5 s (crash-safe)
-- [x] Big record indicator: huge HH:MM:SS timer, REC/PLAY/IDLE lamp, visible across the room
-- [x] Disk-health overlay: free GB, record time remaining, last write ms, missed-write counter, marker count
-- [x] Markers — press **M** during record/playback to drop, auto-persisted to `markers.json` per session
-- [x] Pre-roll buffer — cycle PRE button (0 / 5 / 10 / 30 s); buffered history is dumped to each track on RECORD
-- [x] Capture format selector — cycle FMT button (WAV 24 / WAV 32-float / FLAC 24)
-- [x] Per-track monitor (MON button on each strip → sum to stereo monitor bus, outputs 0+1)
-- [x] Per-track MUTE and SOLO — applied to both VSC playback outputs and the monitor bus. Any solo engaged → only soloed channels are audible.
-- [x] Per-channel fader (−60 .. +12 dB) and pan (L .. C .. R) — applied to VSC playback and monitor sum (constant-power pan). Recording stays pre-fader. Both persist across launches.
-- [x] **System Lock** — LOCK button on the header disables every other control (recording included) so a stray click can't kill a take. Click again to UNLOCK.
-- [x] **Auto-recover** — a `recording.session` marker is written when RECORD starts and deleted on clean stop. On next launch the app scans the Sessions root and offers to load any session that didn't stop cleanly. WAV/FLAC headers were already crash-safe (5-second periodic flush) so the audio itself is intact.
-- [x] **Redundant write** — pick a backup folder via the BACKUP button; every track is mirrored to `<backup>/<session>/Track_NN.<ext>` as you record. If the backup drive fails mid-take, the primary write keeps going untouched.
-- [x] **Per-strip input + output routing** — two dropdowns at the top of each strip pick which device input the strip captures from and which device output its VSC playback lands on. Defaults to identity (strip N ↔ device N). Persists per channel index.
-- [x] **Live-style fader** — long thumb with horizontal grip lines + bright centre stripe, green track fill below the thumb, matches the ZynForge Live look.
-- [x] **Pill-shaped toggle buttons** — ARM / MON / MUTE / SOLO get the Live look: dark gradient body, no tick, accent-coloured text that brightens when engaged.
-- [x] **Fixed-width channel strips** in a horizontally scrollable viewport (~150 px per strip).
-- [x] **PATCH page** — INPUT PATCH / OUTPUT PATCH matrix tabs. Rows = hardware channels, columns = strips. Click a circle to route, click again to clear. Wired directly to the engine's input/output routing.
-- [x] **128-channel capacity** — opens up to 128 inputs / 64 outputs on the audio device.
-- [x] **STREAM bus** — per-strip "Send to STREAM bus" toggle in the right-click menu. Engine sums all stream-enabled strips into the configured stereo output pair (constant-power pan, post-fader, post-mute/solo).
-- [x] **Meterbridge window** — `METERS` button opens a floating window with one large LedMeter + name per strip; drag it onto a second display.
-- [x] **OSC remote with console dialects** — `OSC` button starts a UDP listener on port 8000 in your choice of dialect: Generic / **DiGiCo** / **Allen & Heath (SQ / Avantis)** / **SSL Live** / **Yamaha (DM7 / RIVAGE PM)**. Handles transport (record/play/stop), snapshot recall → scene marker drop, channel name / mute sync from the desk.
-- [x] Per-strip mini-spectrum (log-frequency FFT, 24 Hz refresh)
-- [x] Phase correlation meter (selectable pair, smoothed)
-- [x] dBFS numeric readout + per-channel clip counter (click meter to clear)
-- [x] Timeline strip with marker dots + click-to-seek
+### Capture
+- [x] Lock-free per-channel ring + background WAV writer (256-channel cap)
+- [x] BWF (`bext`) metadata + 5 s header flush — crashes leave playable files
+- [x] Pre-roll buffer — last N seconds dumped into every track when RECORD is pressed
+- [x] Capture formats: WAV 16 / 24 / 32-float, AIFF 16 / 24 / 32-float, FLAC 16 / 24
+- [x] **Multi-format simultaneous capture** — primary in one format, backup in another (e.g. WAV 24 main drive + FLAC 24 backup drive)
+- [x] Redundant write — pick a backup folder; every track mirrored to `<backup>/<session>/Track_NN.<ext>`. Backup failure doesn't affect primary.
+- [x] Auto-recover — `recording.session` marker scanned on launch, incomplete sessions can be re-opened
+- [x] **Post-show JSON report** — `session.report.json` per session with stop time, totals, missed samples, backup status, per-track clip count + routing + isStereo
+- [x] **Stereo mix bus → file** — opt in via `setRecordStereoMix(true)` to capture a `StereoMix.wav` alongside the multitrack
+- [x] System Lock — LOCK button disables every other control so a stray click can't kill a take
+
+### Playback / Virtual soundcheck
+- [x] Virtual soundcheck — load any session, each track plays through the matching output
+- [x] **Spacebar** — universal play/pause toggle
+- [x] Loop region between markers (set Loop In / Out on two markers; player wraps automatically)
+- [x] Click-to-seek timeline + marker dots
+- [x] Markers — press **M** during record/playback to drop, persisted to `markers.json`
 - [x] Marker rename / delete via right-click menu
-- [x] Loop-between-markers (set Loop In / Out on two markers; player wraps automatically)
-- [x] Per-track colour palette — click the swatch on a strip → 10 presets + Custom (full colour picker), persists across launches
-- [x] Per-track rename — double-click the name label OR right-click strip → Rename… (persists, click "Reset name" in the menu to revert)
-- [x] **FILE** menu — Open Session…, Save Session State, Save Session As…, and Export ▶ (Export All Tracks…, Export Individual Track ▶ per channel)
-- [x] Export dialog — pick format (WAV / AIFF / FLAC / MP3), sample rate (44.1 / 48 / 96 / 192 kHz), bit depth (16 / 24 / 32-float), MP3 bitrate (128 / 256 / 320 kbps). Resampling via `juce::ResamplingAudioSource`; MP3 via `lame`.
-- [ ] System Lock (prevent accidental keypresses during record)
-- [ ] LTC timecode input
-- [ ] Console name sync (Dante / A&H / SSL)
-- [ ] OSC / Mackie HUI remote
-- [ ] Auto-recover incomplete sessions on next launch
-- [ ] Redundant write to secondary drive
+
+### Mixer view
+- [x] **12 strips per page** (adaptive width 90..160 px)
+- [x] Per-track fader (−60 .. +12 dB) with wide horizontal cap and channel-coloured gradient fill
+- [x] Per-track pan (constant-power) with channel-coloured thumb
+- [x] Adaptive LED meter — gradient bar at small heights, 20-segment LEDs at full size, stereo bars side-by-side for stereo strips
+- [x] dB ruler labels (+12 / +6 / 0 / 5 / 10 / 15 / 20 / 30 / 40 / 60 / ∞) and embedded peak scale on the meter (0 / 3 / 6 / 10 / 16 / 22 / 32 / 60)
+- [x] REC / MON / MUTE / SOLO buttons per strip — **REC defaults to off** on new tracks for safety
+- [x] Per-strip input + output routing combos (stereo strips list pairs: In 1-2 / Out 1-2)
+- [x] Per-track colour palette — click swatch → 10 presets + Custom (full colour picker)
+- [x] Per-track rename — double-click the name label OR right-click → Rename…
+- [x] Right-click any strip for context menu: Rename / Add / Delete channel, Link/Unlink stereo pair, Change colour, Send to STREAM bus
+- [x] **+ CH** prompt — pick channel count + Mono / Stereo mode
+
+### EDIT view
+- [x] Per-track waveform from each Track_NN.wav (drawn in the channel's colour)
+- [x] Stereo pairs collapse to **ONE row with two stacked waveform lanes** + 2-bar meter
+- [x] Per-row size menu — Pro Tools-style micro / mini / small / medium / large / jumbo / extreme / fit to window
+- [x] **Drag the bottom edge of any row** for a pixel-precise custom height
+- [x] Click the colour swatch to recolour from the row
+- [x] Per-row I/O routing combos, REC/MUTE/SOLO buttons, live signal meter
+- [x] Playhead bar synced to playback position
+
+### PATCH view
+- [x] INPUT PATCH / OUTPUT PATCH tabs — rows = hardware channels, columns = strips
+- [x] Stereo pairs collapse to **one column** labelled `INS N (L+R)`
+- [x] M / ST pill per column — click to toggle mono ↔ stereo
+- [x] Click a dot to route; click-and-drag diagonally for incremental patching across multiple strips
+- [x] Column header shows the strip's colour + actual track name (mirrors mixer/EDIT)
+
+### Audio file import
+- [x] **File → Import Audio Files…** — multi-select WAV / AIFF / FLAC / MP3 / OGG / M4A / CAF
+- [x] Auto-detects mono vs stereo per file: mono → single track, stereo → L + R as two mono Track_NN.wav files with `isStereo=true` on the L
+- [x] Strips named from the source file; collapsed in the mixer / EDIT view automatically
+
+### OSC console remote
+- [x] Five dialects with **full action parity**: Generic / DiGiCo / Allen & Heath (SQ / Avantis) / SSL Live / Yamaha (DM7 / RIVAGE PM)
+- [x] Transport (record / play / stop), marker drop, snapshot/scene recall → marker
+- [x] Per-channel name / mute / arm / colour from the desk
+- [x] 1-based channel indices to match console numbering
+
+### Companion server (HTTP + WS streaming)
+- [x] Session → Start companion server on :9000 — browser / iPad / phone opens `http://<this-mac>:9000/`
+- [x] Dark ZynForge-themed page with channel cards, transport, mute/solo/arm buttons (touch-sized)
+- [x] `GET /state.json` — current state, polled every 500 ms
+- [x] `POST /cmd` — mute / solo / arm / transport
+- [x] **`GET /stream.wav` — remote audition** — continuous PCM stereo stream of the monitor bus, plays in any browser `<audio>` element
+
+### Cloud upload
+- [x] Configure a shell template like `rclone copy {SESSION} myremote:bucket/` (or AWS / rsync / s3cmd)
+- [x] One-click `Upload session to cloud…` runs the configured command on the active session
+
+### Audio device dialog
+- [x] Custom card / tile layout (OUTPUT / INPUT / SAMPLE RATE / BUFFER SIZE)
+- [x] Apply / Cancel — snapshot on open, restore on cancel
+- [x] Live input meter on the INPUT card
+
+### Timecode chase (LTC + MTC)
+- [x] Pick an LTC source strip; the engine analyzes its input every block and flags `timecodeChase.isRunning()` when a valid LTC bit-clock rate is detected (Phase 1: presence)
+- [x] MTC quarter-frame + full-frame ingress hooks (Phase 2: hr/mn/sc/fr decode pending)
+
+### Performance / quality
+- [x] 64-bit-float double-precision monitor accumulator — clip-proof internal summing of N hot channels into the stereo monitor bus
+- [x] Touch-friendly mixer (drag sensitivity tuned for iPad / external touch displays)
+- [x] Universal binary (Apple Silicon + Intel)
+
+### Visual identity / design system
+- [x] Tokenised colour palette aligned with ZynForge Live's `DESIGN.md` — zero raw hex literals in component code
+- [x] `BrandTokens.h` — radius / spacing / typography scale
+- [x] `verticalGradient()` helper applied to every painted surface
+- [x] Phase correlation meter, per-strip mini-spectrum (log-frequency FFT, 24 Hz refresh)
+
+### Roadmap (not yet)
+- [ ] LTC Phase 2 — bit-perfect SMPTE recovery (hr/mn/sc/fr decoding from the 80-bit frame)
+- [ ] AI-assisted noise / hum / mic-bump detection post-record
+- [ ] WebRTC remote audition (currently HTTP-streamed WAV)
+- [ ] 64-bit float on the full audio path (currently only the monitor sum)
+- [ ] Configurable monitor bus outputs (currently hardcoded 0+1)
+- [ ] Encryption / auth for the companion server (LAN-only for now)
 
 ## Build
 

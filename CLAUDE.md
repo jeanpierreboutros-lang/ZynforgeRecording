@@ -2,7 +2,9 @@
 
 ## Project
 
-JUCE 8 / C++20 / CMake, macOS-first (Universal). Live multitrack recorder + virtual soundcheck. Sibling project to the ZynForge Live plugin-insert host.
+JUCE 8 / C++20 / CMake, macOS-first (Universal). Live **multitrack recording + playback** software with **virtual soundcheck**. Sibling project to the ZynForge Live plugin-insert host.
+
+The engineer's surface: record every input on the desk, play those tracks back through the same outputs during soundcheck, never lose a take.
 
 ## Workflow rules (always)
 
@@ -18,53 +20,97 @@ cmake -B build -G Xcode
 cmake --build build --config Release
 ```
 
-JUCE 8.0.4 is pulled via `FetchContent` on first configure. The artefact lives at `build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app`.
+JUCE 8.0.4 is pulled via `FetchContent` on first configure. Artefact: `build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app`.
 
 ## Architecture map
 
-- `AudioEngine` — owns `juce::AudioDeviceManager`, registers itself as the `AudioIODeviceCallback`. On every callback: clears outputs, runs `MultitrackRecorder::processBlock` (input path), runs `SessionPlayer::processBlock` (output path), computes phase correlation between the selected input pair (normalised cross-correlation at zero lag, smoothed 0.85/0.15), applies the mute/solo gate (any-solo-engaged → only soloed channels audible; else muted channels silenced) to both the VSC playback outputs and the monitor bus, applies per-channel playback **gain** to the VSC outputs, then sums monitored + audible input channels into outputs 0+1 with **constant-power pan** + per-channel gain. Owns the `MarkersManager` and routes M-key drops to the recorder's `samplesSinceStart` or the player's playback position.
-- `MultitrackRecorder` — real-time-safe input path. Per-channel `juce::AbstractFifo` ring buffer (~4 s at sample rate), drained by a `TimeSliceThread` that writes the configured format per track. `CaptureFormat` enum: `Wav24` (BWF), `Wav32Float` (BWF, IEEE float — bits=32 makes JUCE's `WavAudioFormatWriter` set `usesFloatingPointData`), `Flac24` (`juce::FlacAudioFormat`, quality 5). Writer flushes header every ~5 s of audio so a crash leaves a playable file. Per-channel `PreRollBuffer` (always-on rolling ring sized to `preRollSeconds + 2s` safety) is fed every audio block; `startRecording` dumps the history into each writer BEFORE setting `recording=true` so audio that preceded the record button is captured. **Optional `backupWriter` per channel mirrors every drain to a secondary directory (`setBackupDirectory`); a failed backup write drops just that channel's backup writer and flags `backupFailed`. The primary write keeps going.** **`startRecording` writes a `recording.session` JSON marker (start time, sample rate, track count) into the session dir; `stopRecording` deletes it. `AudioEngine::findIncompleteSessions` scans the Sessions root for any directory that still has this marker.** Meters (peak + RMS + clip) live on `TrackState` and are read by the UI thread via `std::atomic`. Atomic counters: `samplesSinceStart`, `missedSamples` (FIFO overflow), `lastWriteMs` (drain latency), `backupActive`, `backupFailed`.
-- `SessionPlayer` — real-time-safe output path for virtual soundcheck. Scans a session dir for `Track_*.wav`, wraps each in a non-blocking `juce::BufferingAudioReader` (2-second pre-fetch on its own `TimeSliceThread`, read timeout = 0). On `processBlock`, copies samples from each reader to the matching output channel index. Position + length + playing flag are `std::atomic`. Loop region (`loopStart` / `loopEnd` atomics): when both ≥ 0 and end > start, `processBlock` wraps position back to start on hitting end, and caps the per-block playback length so the loop boundary lands cleanly on a buffer edge. Session swap path: store `playing=false`, sleep 40 ms for in-flight callbacks to drain, then mutate the reader vector.
-- `MarkersManager` — per-session marker list. Persisted as `markers.json` in the session dir. Mutated only from the message thread. `setContext` re-binds + auto-loads on session open. `drop(sampleOffset)` saves immediately. CRUD: `getMarker(i)`, `removeMarker(i)`, `renameMarker(i, name)`, `setMarkerSample(i, sample)`. `getAll()` exposes the underlying vector for UI iteration.
-- `StripColours` — per-channel colour overrides, persisted via `juce::PropertiesFile` (`~/Library/Application Support/Zynforge Recording/`). Keys `strip_color_<channelIndex>` → ARGB int. Owned by `AudioEngine`; `setTrackColour (channelIndex, juce::Colour)` updates both the persistent store and the live `TrackState::colourARGB` atomic. Pass an alpha-0 colour to revert to the default personality.
-- `StripNames` — per-channel display-name overrides, persisted via the same `juce::PropertiesFile`. Keys `strip_name_<channelIndex>` → string. `AudioEngine::setTrackName (channelIndex, juce::String)` writes both `TrackState::name` and the persistent store; an empty string reverts to the default "In N" label. Names are reapplied on `audioDeviceAboutToStart`.
-- `StripGains` — per-channel playback gain (dB) + pan (-1..+1), persisted via the same `juce::PropertiesFile`. Keys `strip_gain_<channelIndex>` (double) and `strip_pan_<channelIndex>` (double). `AudioEngine::setTrackGainDb` / `setTrackPan` write the live atomic AND the persistent file; both are reapplied on `audioDeviceAboutToStart`.
-- `StripRouting` — per-channel input + output device-channel routing, persisted via the same `juce::PropertiesFile`. Keys `strip_in_<channelIndex>` / `strip_out_<channelIndex>` (int). -1 means unrouted. `AudioEngine::setTrackInputRouting` / `setTrackOutputRouting` write the live atomic AND the file. Defaults to identity (strip N ↔ device N). On every audio callback the engine builds a `routedInputs[]` pointer array (strip i → device input `inputRouting[i]`) and passes it to the recorder; player output is rendered into `playerScratch[i]` then summed into `outputs[outputRouting[i]]` honouring mute/solo and per-channel gain.
-- `OscRemote` — wraps `juce::OSCReceiver` (juce_osc module). Listens on a UDP port set by `AudioEngine::startOsc`. Dispatches each incoming message through one of five dialect parsers — `Generic` (`/zynforge/*`), `DiGiCo` (`/Console/*`), `AllenHeath` (`/sq/*`), `SSL` (`/sslnet/*`), `Yamaha` (`/Yamaha/*` and `/RIVAGE/*`). Each parser maps console-specific paths to engine actions: snapshot recall → `dropSceneMarker`, transport messages → `startRecording`/`startPlayback`/etc., channel name/mute → `setTrackName`/`muted`. All callbacks fire on the message thread so engine setters are safe to call. Channel cap is now 128 inputs / 64 outputs (was 32 / 2).
-- `TrackState` — atomic meter values, armed flag, monitor flag, mute flag, solo flag, gainDb (−60..+12, default 0), pan (−1..+1, default 0), clip counter, last-clip sample offset, FFT FIFO/snapshot (1024-point), colour override (`colourARGB`, 0 = default), name. One per input channel. Mute / solo / gain / pan are monitoring-only concerns — none affects the recording path (armed channels still hit disk pre-fader).
-- `MainComponent` — two-row header (title / status / LOCK / FMT / PRE / DEVICE / RECORD on top; FILE (popup menu) / PLAY / STOP / transport / session info / BACKUP on bottom) + `BigClockPanel` banner + `TimelineStrip` + horizontal grid of `ChannelStrip`s. 10 Hz timer drives transport labels + Big Clock + disk-health calc (free GB, remaining record time). Acts as `juce::KeyListener` — M drops a marker. The FILE popup hosts: Open Session…, Save Session State (writes `session_settings.json` with capture format / pre-roll / phase pair / loop region / per-track names+colours), Save Session As… (`juce::File::copyDirectoryTo`), Export All Tracks → `ExportDialog` → destination chooser → `TrackExporter` loop, Export Individual Track ▶ (same pipeline for one channel). **System Lock** (`sessionLocked` flag, LOCK button) disables every other control including RECORD until the engineer clicks UNLOCK; status line reflects the locked state. **BACKUP** button picks a folder; forwarded to `AudioEngine::setBackupDirectory`. On startup, 250 ms after the window appears, `offerSessionRecovery` calls `AudioEngine::findIncompleteSessions` and pops a menu of any sessions that didn't stop cleanly; picking one clears the marker and loads the session for playback.
-- `ExportDialog` — modal `juce::DialogWindow` content with combo boxes for format / sample rate / bit depth / MP3 bitrate. Disables bit-depth combo when MP3 is chosen and clamps to 16/24 for FLAC. Returns `std::optional<ExportOptions>` via callback.
-- `TrackExporter` — owns its own `juce::AudioFormatManager` (basic formats + FLAC). `exportTrack` builds a `juce::AudioFormatReaderSource` + `juce::ResamplingAudioSource` chain, writes to a target `WavAudioFormat` / `AiffAudioFormat` / `FlacAudioFormat` writer at the chosen bit depth. For MP3 it renders to a temp 24-bit WAV at the target sample rate then `juce::ChildProcess` launches `lame -b <bitrate> --quiet <src> <dest>`. `findLameBinary()` checks `/opt/homebrew/bin/lame`, `/usr/local/bin/lame`, `/usr/bin/lame`, then `which lame`.
-- `BigClockPanel` — wide banner: state lamp (REC/PLAY/IDLE), huge 56pt HH:MM:SS timer, disk-health column on the right (FREE / RECORD TIME LEFT / LAST WRITE / MISSED / MARKERS). Background tints red when recording, green when playing.
-- `ChannelStrip` — colour swatch + name label (double-click to rename inline via `Label::setEditable(false, true)`), 2×2 button grid (ARM red + MON green / MUTE amber + SOLO yellow), `MiniSpectrum`, dBFS numeric readout, clip-count badge, horizontal **pan** slider, vertical **fader** (`-60..+12 dB`), `LedMeter` to the right of the fader. Right-click on the strip body opens a context popup: Rename…, Change colour…, Reset colour, Reset name. Full-strip personality wash (resolved from `TrackState::colourARGB` if non-zero, else the default rotation). Clicking the swatch opens a `StripColourPicker` via `juce::CallOutBox`. Owns a private `StripTimer` (10 Hz) that updates the dB readout and clip badge text from atomics.
-- `StripColourPicker` — popup component shown via `CallOutBox`. 10 fixed preset swatches (8 personalities + slate + graphite), a `Default` reset button (sends a transparent colour to revert), and a `Custom…` button that opens a `juce::ColourSelector` in a second `CallOutBox`. Reports the chosen colour through the supplied `Callback`.
-- `LedMeter` — 20-segment vertical meter, peak + RMS, click anywhere to clear clip + clip count.
-- `MiniSpectrum` — log-frequency magnitude bars. Polls `TrackState::fftBlockReady` at 24 Hz; on ready, copies the snapshot, applies a Hann window, runs `juce::dsp::FFT` (size 1024), reduces to 28 log-spaced visible bins, fades-down via exponential decay.
-- `PhaseMeter` — horizontal correlation bar with channel-pair cycler. Reads smoothed value from `AudioEngine::getPhaseCorrelation()` at 20 Hz. Indicator colour: red below −0.2, amber up to +0.4, green above.
-- `TimelineStrip` — horizontal session timeline. Reads `SessionPlayer` position/total at 20 Hz; paints background trough, progress fill, loop band (yellow), playhead, and a red triangle + label per marker. Left-click empty area seeks; left-click a marker seeks to it; right-click a marker opens a popup (Rename / Delete / Set Loop In / Set Loop Out / Clear Loop). Rename uses a modal `juce::AlertWindow` text editor.
-- `ZynForgeLookAndFeel` + `BrandColors` — shared visual identity. `drawLinearSlider` is overridden to draw the ZynForge Live fader: thin track, green fill from thumb to bottom, long dark thumb (~38 px tall) with 5 horizontal grip lines + a white centre stripe. Horizontal style is repurposed for the pan slider. `drawToggleButton` is overridden to give ARM / MON / MUTE / SOLO the pill look: dark vertical gradient body, rounded edges, no tick — the button text is rendered centred with the colour switching from `textMuted` to the button's `tickColourId` accent when toggled on.
-- `PatchPage` — modal `juce::DialogWindow` content with two `PatchMatrix` tabs (INPUT / OUTPUT). Each matrix is a single `Component` that paints rows (hardware channels) × columns (strips) of circles, reads/writes `AudioEngine::setTrackInputRouting` / `setTrackOutputRouting`. Strip column headers are tinted with the strip's personality colour. Click toggles routing for that column (radio per column: clicking the same dot clears it).
-- `Meterbridge` — floating `juce::DialogWindow` (modal off, resizable on) opened by the METERS header button. Owns one `LedMeter` + name `juce::Label` per strip; the meters point at the live `TrackState`s so they keep updating alongside the main window. Designed to be dragged onto a second display.
-- `AudioEngine` STREAM bus — `streamOutL/R` atomics + `TrackState::streamSend`. In the callback, after VSC routing + mute/solo gate, any track with `streamSend == true` is mixed into `outputs[streamOutL]` and `outputs[streamOutR]` with the strip's fader gain and constant-power pan. UI exposes this via a right-click menu entry on each strip ("Send to STREAM bus").
+- `AudioEngine` — owns `juce::AudioDeviceManager`, registers as the `AudioIODeviceCallback`. Per callback: clears outputs, runs `MultitrackRecorder::processBlock` (input path), runs `SessionPlayer::processBlock` into a per-track scratch buffer, applies mute / solo gate to both VSC outputs and monitor bus, sums monitored + audible channels into outputs 0+1 with constant-power pan + per-channel gain (the monitor accumulator is `juce::AudioBuffer<double>` for clip-proof internal precision), feeds the stream bus into outputs `streamOutL/R` AND the optional `StereoMix.wav` writer AND the optional `CompanionServer` audition stream, drives meter peak/RMS from playerScratch when `player.isPlaying()` (recorder always drives meters from inputs), runs `TimecodeChase::feedLtc` on the configured LTC source strip, computes phase correlation between the selected input pair. Owns `MarkersManager` + the persistent stores + `CompanionServer` + `OscRemote` + `TimecodeChase`.
+- `MultitrackRecorder` — real-time-safe input path. Per-channel `juce::AbstractFifo` ring buffer, drained by a `TimeSliceThread` writing the configured format. `CaptureFormat` enum: `Wav16/24/32Float`, `Aiff16/24/32Float`, `Flac16/24`. Periodic header flush every ~5 s so a crash leaves playable files. Per-channel `PreRollBuffer` rings for buffered history dumped to writers before `recording=true`. **Backup writer per channel** (`backupWriter`) mirrors every drain to a secondary directory AND can use a **different `CaptureFormat`** from the primary via `setBackupCaptureFormat` — engineer runs WAV/24 primary + FLAC/24 backup. `recording.session` JSON marker for crash recovery. **`stopRecording` also writes `session.report.json`** with stop time, total samples + seconds, missed samples, backup status, per-track clip count + routing + isStereo. Meters (peak + RMS + clip) live on `TrackState`. `removeTrackAt(int)` deletes a single track and shifts state down; `setTrackCount` is the bulk path.
+- `SessionPlayer` — real-time-safe output path. Scans a session dir for `Track_*.wav`, wraps each in a non-blocking `juce::BufferingAudioReader`. Loop region (`loopStart/End` atomics) wraps from end → start cleanly. Session swap defers the reader-vector mutation until in-flight callbacks drain.
+- `MarkersManager` — per-session marker list, `markers.json`. CRUD: drop/get/remove/rename/setSample. Mutated only from the message thread.
+- `StripColours / StripNames / StripGains / StripRouting` — per-channel overrides persisted via `juce::PropertiesFile` (`~/Library/Application Support/Zynforge Recording/`). Re-applied on `audioDeviceAboutToStart` and inside `setStripCount`. `appProps` also holds `recordStereoMix`, `ltcSourceStrip`, `cloudUploadCommand`, `strip_stereo_<n>` (logical stereo pair flag).
+- `OscRemote` — `juce::OSCReceiver`. Five dialect parsers — `Generic` (`/zynforge/*`), `DiGiCo` (`/Console/*`), `AllenHeath` (`/sq/*`), `SSL` (`/sslnet/*`), `Yamaha` (`/Yamaha/*` + `/RIVAGE/*`). **Full feature parity across dialects** via the shared `dispatchChannelOp` helper: every dialect supports `record / play / stop` transport, `marker` drop, snapshot/scene recall, and per-channel `name / mute / arm / colour`. 1-based channel indices on the wire to match console conventions.
+- `TimecodeChase` (`Source/Audio/TimecodeChase.h`, header-only) — LTC + MTC chase. Phase 1: LTC PRESENCE via zero-crossing rate (per-second count in 1500..5000 → LTC bit clock range). MTC quarter-frame + full-frame hooks. Exposes `isRunning()` + last MTC hr/mn/sc/fr atomics.
+- `CompanionServer` (`Source/Network/CompanionServer.{h,cpp}`) — embedded HTTP server on user-chosen port (default 9000). Listener thread + worker-per-connection. Endpoints:
+  - `GET /` → embedded HTML / JS bundle (dark ZynForge theme, touch-sized 48px hit targets, polls every 500 ms)
+  - `GET /state.json` → channels (name, colour, armed/muted/soloed, peak) + transport state
+  - `POST /cmd` → `{action, channel?, value?}` — mute / solo / arm per channel; play / stop / record transport
+  - `GET /stream.wav` → continuous 48 kHz 16-bit stereo PCM with 24-h fake-length WAV header so any browser / iOS Safari `<audio>` element plays it as a live stream
+  - Reads use `waitUntilReady(true, 200ms)` with a 5 s overall deadline so half-open clients don't wedge workers.
+- `TrackState` — atomic meter values, armed flag (default **false** — engineer arms explicitly), monitor / mute / solo flags, gainDb (−60..+12, default 0), pan (−1..+1, default 0), clip counter, `isStereo` flag (L-of-pair marker), colourARGB, name, FFT FIFO/snapshot. Mute / solo / gain / pan affect monitoring only — recording stays pre-fader.
+- `MainComponent` — macOS native menu bar (`MenuBarModel`):
+  - **File**: Open Session…, **Import Audio Files…** (multi-select WAV/AIFF/FLAC/MP3/OGG/M4A/CAF; auto-detects mono vs stereo per file → mono goes to a single track, stereo writes L + R as two mono Track_NN.wav files with `isStereo=true` on the L), Save Session State, Save Session As…, Export ▶, Choose Backup Folder, Quit
+  - **Edit**: Solo / Snap / Split / Range / Remove last capture
+  - **Session**: Patch, Meterbridge, OSC (dialect picker + Stop), Upload session to cloud + Configure cloud upload command, Start/Stop companion server on :9000, Session Settings
+  - Header: LOCK / +CH / DEVICE / RECORD on row 1; transport bar + MIXER/EDIT toggle + PATCH on row 2. **+ CH** prompts for count + Mono / Stereo mode. **Spacebar** toggles play/pause globally.
+- `ChannelStrip` — colour swatch + name (double-click to rename inline) + 2×2 button grid (REC/MON/MUTE/SOLO) + dBFS readout + clip badge + horizontal pan + vertical fader (−60 .. +12 dB) + `LedMeter`. Right-click menu: Rename, Add channel, Delete channel, Link to next channel (stereo) / Unlink stereo pair, Change colour, Reset colour/name, Send to STREAM bus. `addMouseListener(this, true)` so right-click anywhere on the strip (including buttons/fader/combos) opens the menu. `refreshAppearance()` polls TrackState atomics every 10 Hz so changes from OSC / EDIT view / stereo-pair sibling appear in mixer button visuals. Touch-friendly drag sensitivity (160 horizontal, 250 vertical).
+- `LedMeter` — adaptive: under 60 px height paints a smooth gradient bar; 60..80 px scales segment count (≥3 px each); above 80 px uses the full 20-segment LED look. `setStereoPartner(TrackState*)` adds a second bar driven by the partner's peak/RMS atomics. `setShowDbLabels(bool)` hides the 14 px label gutter when the host widget is too narrow (EDIT view rows).
+- `EditPage` — per-track row, one entry per **logical** strip (stereo pairs collapse to a single row). Header has colour swatch (click → colour picker), name (double-click to rename), REC/MUTE/SOLO buttons, INPUT/OUTPUT routing combos (stereo strips list pairs `In 1-2 / Out 1-2`), live LedMeter (stereo when applicable). Waveform pane shows `juce::AudioThumbnail` of the matching `Track_NN.wav` (stereo: two stacked lanes painted in the channel's brightened personality colour). Right-click anywhere on the row opens a Pro Tools-style **size menu** (micro/mini/small/medium/large/jumbo/extreme/fit to window — per-row independent heights). Drag the bottom edge of any row for a custom pixel-precise height. Re-entrancy guard + `SafePointer` on the menu so a list rebuild between open and dismiss can't crash. 24 Hz playhead overlay.
+- `PatchPage` — modal `DialogWindow` with INPUT / OUTPUT tabs. **Iterates logical strips** (stereo pairs collapse to one column). Each column header has the strip's colour + number + actual track name (mirrors mixer/EDIT) + **M / ST pill** (click to toggle mono ↔ stereo). Active dot painted in the strip colour; click-and-drag diagonal patching for incremental routing.
+- `AudioDeviceDialog` — custom card / tile layout in the ZynForge palette (OUTPUT / INPUT / SAMPLE RATE / BUFFER SIZE cards, each with its own accent colour stripe). Apply / Cancel — snapshot on open via `createStateXml`; Cancel restores via `initialise(..., savedXml, true)`.
+- `BigClockPanel` — wide banner: state lamp + 56pt HH:MM:SS + disk-health (free GB, record time left, last write ms, missed-write count, marker count). Background tints red recording, green playing.
+- `ExportDialog` + `TrackExporter` — pick format (WAV / AIFF / FLAC / MP3), sample rate, bit depth, MP3 bitrate. WAV/AIFF/FLAC via JUCE writers + `ResamplingAudioSource`; MP3 via `lame` ChildProcess.
+- `Meterbridge` — floating window with one large `LedMeter` per logical strip; drag onto a second display.
+- `StripColourPicker` — `CallOutBox` with 10 presets (8 personality colours + slate + graphite tokens) + Default reset + Custom (`juce::ColourSelector`).
+- `MiniSpectrum`, `PhaseMeter`, `TimelineStrip` — FFT, correlation, marker timeline. Unchanged behavioural-wise from earlier.
+- `BrandColors.h` + `BrandTokens.h` — colour palette (matches ZynForge Live's `DESIGN.md`), `radius::{sm/md/lg/xl}`, `space::{xs/sm/md/lg/xl/ctrlH/ioH/rowH/btnH}`, `type::*` (font roles), `verticalGradient()` helper. Every painted surface goes through the gradient helper so the look stays consistent.
+- `ZynForgeLookAndFeel` — overrides `drawLinearSlider` (fader cap is a wide horizontal pill, gradient fill in the channel's colour, drop shadow, channel-coloured centre stripe) and `drawToggleButton` (pill body with hover/press gradients). Knobs / sliders use the channel's colour.
 
 ## Real-time discipline
 
-The audio callback **never** allocates, locks, or calls anything that can. Recording state transitions happen via `std::atomic` flags; writers are constructed/destroyed only on UI/background threads, with the `recording` flag opened/closed via release/acquire to fence the ring-buffer push.
+The audio callback never allocates / locks / calls anything that can. Recording state transitions happen via `std::atomic` flags; writers are constructed/destroyed only on UI/background threads. The double-precision monitor accumulator pre-allocates in `audioDeviceAboutToStart`. The companion's audio ring is pre-sized at construction. The threaded mix writer drains on its own `TimeSliceThread` so disk I/O never reaches the audio thread.
 
 ## Sessions
 
-`~/Music/Zynforge Sessions/Session_YYYY-MM-DD_HH-MM-SS/Track_NN.wav` — one file per input channel, 24-bit, device sample rate, mono.
+- `~/Music/Zynforge Sessions/Session_YYYY-MM-DD_HH-MM-SS/`
+- `Track_NN.wav` — one file per **physical** track, 24-bit, device sample rate, **mono** (stereo strips write L and R as separate mono files)
+- `markers.json`, `recording.session` (auto-deleted on clean stop)
+- `session.report.json` — written on `stopRecording` (stop time, totals, miss count, backup status, per-track stats)
+- `StereoMix.wav` — when `recordStereoMix` is on, the engine's stream-bus output captured live to a 2-channel WAV
+- `<backup_root>/<session>/Track_NN.<ext>` — backup copy in primary or alternate format
 
-## Not yet implemented (roadmap)
+## OSC remote
 
-- OSC / Mackie control for transport
-- LTC timecode chase
-- Console name sync (Dante / A&H / SSL)
-- Configurable monitor bus output assignment (currently hardcoded to outs 0+1)
-- Configurable phase-correlation channel pair (currently slides L+R together)
-- Drag-to-move markers on the timeline
-- Visual indicator in `BigClockPanel` for backup-failed state
+All five dialects support the same action set after the parity pass. 1-based channel indices.
+
+| Action | Generic | DiGiCo | A&H SQ | SSL Live | Yamaha / RIVAGE |
+|---|---|---|---|---|---|
+| Record | `/zynforge/record b` | `/Console/Transport/record b` | `/sq/transport/record b` | `/sslnet/transport/record b` | `/Yamaha/Transport/record b` |
+| Play | `/zynforge/play b` | `/Console/Transport/play b` | `/sq/transport/play b` | `/sslnet/transport/play b` | `/Yamaha/Transport/play b` |
+| Stop | `/zynforge/stop` | `/Console/Transport/stop` | `/sq/transport/stop` | `/sslnet/transport/stop` | `/Yamaha/Transport/stop` |
+| Marker | `/zynforge/marker [s]` | `/Console/Marker [s]` | `/sq/marker [s]` | `/sslnet/marker [s]` | `/Yamaha/Marker [s]` |
+| Scene | `/zynforge/scene i` | `/Console/Snapshots/recall i` | `/sq/scene/recall i` | `/sslnet/snapshot/recall i` | `/Yamaha/Scene/recall i` |
+| Channel ops | `/zynforge/channel/N/{name,mute,arm,colour}` | `/Console/Channels/N/...` | `/sq/chN/...` | `/sslnet/channel/N/...` | `/Yamaha/CH/N/...` (capitalised) |
+
+## Stereo channel collapsing
+
+A stereo pair lives as two adjacent physical tracks with `isStereo=true` on the L track. Every view collapses the pair into one logical entry:
+
+- **Mixer**: one `ChannelStrip` controls both halves; mute/solo/arm/gain/pan/colour/name mirror to the partner; LedMeter shows two bars.
+- **EDIT**: one row, two stacked waveform lanes, two-bar meter.
+- **PATCH**: one column, labelled `INS N (L+R)`. Single click patches L → row, R → row+1 simultaneously.
+
+Toggling stereo (via right-click menu, PATCH M/ST pill, or +CH dialog) calls `setTrackStereo` which persists the flag and forces a mixer rebuild on the next tick.
+
+## Companion server
+
+`Session → Start companion server on :9000`. Browser / iPad opens `http://<this-mac>:9000/` on the same LAN. State refreshes every 500 ms via polled JSON. The `<audio>` element streams the monitor bus as PCM WAV. POST endpoint accepts mute/solo/arm/transport commands.
+
+## Cloud upload
+
+`Session → Configure cloud upload command…` — store a template like `rclone copy {SESSION} myremote:bucket/` (or `aws s3 sync`, `rsync`, …). `Session → Upload session to cloud…` expands `{SESSION}` to the active session dir and `juce::ChildProcess`-launches the command.
+
+## Roadmap
+
+- LTC Phase 2 — bit-perfect SMPTE recovery (currently presence detection only)
+- MTC quarter-frame nibble accumulator → hr/mn/sc/fr decode
+- Per-snapshot per-channel auto-naming template (driven by OSC scene recall)
+- AI-assisted noise / hum / mic-bump detection post-record
+- WebRTC remote audition (currently HTTP-streamed WAV)
+- 64-bit float on the full audio path (currently only the monitor accumulator)
+- Audio-stream encryption for the companion server
+- Configurable monitor bus outputs (currently outs 0+1)
 
 ## Sibling project
 
-The ZynForge Live app (plugin-insert host) lives elsewhere on the user's machine. They share visual identity but not code.
+ZynForge Live (plugin-insert host) lives elsewhere. They share visual identity but not code.
