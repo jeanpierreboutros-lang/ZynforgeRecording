@@ -341,6 +341,11 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (260, "Upload session to cloud…", ! engine.isRecording());
         menu.addItem (261, "Configure cloud upload command…");
         menu.addSeparator();
+        const bool compRunning = engine.isCompanionServerRunning();
+        menu.addItem (270, compRunning
+                            ? juce::String ("Stop companion (port " + juce::String (engine.getCompanionServerPort()) + ")")
+                            : juce::String ("Start companion server on :9000…"));
+        menu.addSeparator();
         menu.addItem (250, "Session Settings…", ! engine.isRecording());
     }
 
@@ -394,6 +399,22 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
         else
         {
             showStatus ("Cloud upload failed to launch — check the configured command");
+        }
+    }
+    else if (id == 270)
+    {
+        if (engine.isCompanionServerRunning())
+        {
+            engine.stopCompanionServer();
+            showStatus ("Companion server stopped");
+        }
+        else if (engine.startCompanionServer (9000))
+        {
+            showStatus ("Companion server on http://localhost:9000 — open it from any browser / iPad");
+        }
+        else
+        {
+            showStatus ("Companion failed to bind port 9000 — try a different port");
         }
     }
     else if (id == 261)

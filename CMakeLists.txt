@@ -48,6 +48,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/PatchPage.cpp
     Source/UI/EditPage.cpp
     Source/UI/AudioDeviceDialog.cpp
+    Source/Network/CompanionServer.cpp
     Source/UI/Meterbridge.cpp
     Source/UI/TransportBar.cpp
     Source/UI/SessionSettingsDialog.cpp

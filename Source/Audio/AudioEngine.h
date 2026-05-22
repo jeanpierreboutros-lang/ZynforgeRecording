@@ -17,6 +17,7 @@
 namespace zynforge
 {
     class OscRemote;
+    class CompanionServer;
 
     class AudioEngine final : public juce::AudioIODeviceCallback
     {
@@ -34,6 +35,12 @@ namespace zynforge
         // feeds the LTC zero-crossing analyzer once per audio block.
         void setLtcSourceStrip (int oneBasedIndex) noexcept;
         int  getLtcSourceStrip() const noexcept { return ltcSourceStrip.load() + 1; }
+
+        // Companion HTTP server (read-only iPad / remote-audition).
+        bool startCompanionServer (int port);
+        void stopCompanionServer();
+        bool isCompanionServerRunning() const noexcept;
+        int  getCompanionServerPort() const noexcept;
 
         bool startRecording (const juce::File& sessionDir);
         void stopRecording();
@@ -174,7 +181,13 @@ namespace zynforge
         std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> stereoMixWriter;
         juce::AudioBuffer<float>                                stereoMixScratch;
 
+        // Double-precision accumulator for the monitor sum so summing N
+        // hot channels can't overshoot float headroom on the way to the
+        // stereo monitor bus.
+        juce::AudioBuffer<double>                               monitorAccum;
+
         std::unique_ptr<OscRemote> osc;
+        std::unique_ptr<CompanionServer> companion;
         std::unique_ptr<juce::PropertiesFile> appProps;
 
         void applyPersistedStripState();

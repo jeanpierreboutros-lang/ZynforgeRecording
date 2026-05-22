@@ -1,5 +1,6 @@
 #include "AudioEngine.h"
 #include "OscRemote.h"
+#include "../Network/CompanionServer.h"
 
 namespace zynforge
 {
@@ -44,6 +45,24 @@ namespace zynforge
         // Drop the threaded writer — its destructor flushes the queue and
         // closes the underlying AudioFormatWriter cleanly.
         stereoMixWriter.reset();
+    }
+
+    bool AudioEngine::startCompanionServer (int port)
+    {
+        if (companion == nullptr) companion = std::make_unique<CompanionServer> (*this);
+        return companion->start (port);
+    }
+    void AudioEngine::stopCompanionServer()
+    {
+        if (companion != nullptr) companion->stop();
+    }
+    bool AudioEngine::isCompanionServerRunning() const noexcept
+    {
+        return companion != nullptr && companion->isRunning();
+    }
+    int AudioEngine::getCompanionServerPort() const noexcept
+    {
+        return companion != nullptr ? companion->getPort() : -1;
     }
 
     void AudioEngine::setLtcSourceStrip (int oneBasedIndex) noexcept
@@ -270,6 +289,7 @@ namespace zynforge
         // Pre-allocate the stereo mix scratch buffer at the device block
         // size so the audio thread never allocates when mix capture is on.
         stereoMixScratch.setSize (2, blockSize, false, true, true);
+        monitorAccum    .setSize (2, blockSize, false, true, true);
 
         applyPersistedStripState();
     }
@@ -581,9 +601,17 @@ namespace zynforge
         }
 
         // Sum monitored inputs into the stereo monitor bus (outputs 0 + 1)
-        // with constant-power pan and per-channel gain. Uses the routed
-        // device input pointer.
+        // with constant-power pan and per-channel gain. Internal sum is
+        // double-precision so summing N hot channels can't accumulate
+        // round-off above 0 dBFS; we convert to float when writing out.
         const int monL = 0, monR = 1;
+        const int blk  = juce::jmin (numSamples, monitorAccum.getNumSamples());
+        monitorAccum.clear (0, 0, blk);
+        monitorAccum.clear (1, 0, blk);
+
+        auto* accL = monitorAccum.getWritePointer (0);
+        auto* accR = monitorAccum.getWritePointer (1);
+
         for (int ch = 0; ch < trackCount; ++ch)
         {
             auto& t = recorder.getTrack (ch);
@@ -593,17 +621,38 @@ namespace zynforge
             const float* src = (ch < kMaxStrips) ? routedInputs[ch] : nullptr;
             if (src == nullptr) continue;
 
-            const float dB   = t.gainDb.load (std::memory_order_relaxed);
-            const float gain = juce::Decibels::decibelsToGain (dB, -60.0f);
-            const float pan  = juce::jlimit (-1.0f, 1.0f, t.pan.load (std::memory_order_relaxed));
-            const float panNorm = (pan + 1.0f) * 0.5f;             // 0..1
-            const float gL = gain * std::cos (panNorm * juce::MathConstants<float>::halfPi);
-            const float gR = gain * std::sin (panNorm * juce::MathConstants<float>::halfPi);
+            const double dB   = t.gainDb.load (std::memory_order_relaxed);
+            const double gain = juce::Decibels::decibelsToGain (dB, -60.0);
+            const double pan  = juce::jlimit (-1.0, 1.0, (double) t.pan.load (std::memory_order_relaxed));
+            const double panNorm = (pan + 1.0) * 0.5;
+            const double gL = gain * std::cos (panNorm * juce::MathConstants<double>::halfPi);
+            const double gR = gain * std::sin (panNorm * juce::MathConstants<double>::halfPi);
 
-            if (monL < numOutputs && outputs[monL] != nullptr && gL > 0.0001f)
-                juce::FloatVectorOperations::addWithMultiply (outputs[monL], src, gL, numSamples);
-            if (monR < numOutputs && outputs[monR] != nullptr && gR > 0.0001f)
-                juce::FloatVectorOperations::addWithMultiply (outputs[monR], src, gR, numSamples);
+            for (int i = 0; i < blk; ++i)
+            {
+                const double s = (double) src[i];
+                accL[i] += s * gL;
+                accR[i] += s * gR;
+            }
+        }
+
+        // Mix down to the device output buffers (float).
+        if (monL < numOutputs && outputs[monL] != nullptr)
+            for (int i = 0; i < blk; ++i)
+                outputs[monL][i] += (float) accL[i];
+        if (monR < numOutputs && outputs[monR] != nullptr)
+            for (int i = 0; i < blk; ++i)
+                outputs[monR][i] += (float) accR[i];
+
+        // Companion stream feed — runs at the very end so it captures
+        // EVERYTHING the engineer hears at outputs 0+1 (per-channel
+        // routing + stream-bus + monitor sum, all collapsed into the
+        // float output buffers by now).
+        if (companion != nullptr && companion->isRunning())
+        {
+            const float* L = (numOutputs > 0) ? outputs[0] : nullptr;
+            const float* R = (numOutputs > 1) ? outputs[1] : nullptr;
+            companion->feedStreamSamples (L, R, numSamples);
         }
     }
 }
