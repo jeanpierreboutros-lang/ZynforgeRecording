@@ -1,5 +1,6 @@
 #include "MainComponent.h"
 #include "../Theme/BrandColors.h"
+#include "AudioDeviceDialog.h"
 #include "Meterbridge.h"
 #include "PatchPage.h"
 #include "SessionSettingsDialog.h"
@@ -1423,19 +1424,7 @@ juce::File MainComponent::getSessionsRoot() const
 
 void MainComponent::onDeviceClicked()
 {
-    auto* panel = new juce::AudioDeviceSelectorComponent (engine.getDeviceManager(),
-                                                          0, 64, 0, 64,
-                                                          false, false, true, false);
-    panel->setSize (560, 480);
-
-    juce::DialogWindow::LaunchOptions opts;
-    opts.dialogTitle                  = "Audio Device";
-    opts.content.setOwned (panel);
-    opts.componentToCentreAround      = this;
-    opts.escapeKeyTriggersCloseButton = true;
-    opts.useNativeTitleBar            = true;
-    opts.resizable                    = true;
-    opts.launchAsync();
+    zynforge::AudioDeviceDialog::launch (engine);
 }
 
 juce::File MainComponent::makeNewSessionDir() const
