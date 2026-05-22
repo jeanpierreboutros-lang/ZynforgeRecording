@@ -1454,6 +1454,20 @@ static juce::File findSessionProj (const juce::File& dir)
     return dir.getChildFile (dir.getFileName() + ".zfproj");
 }
 
+static zynforge::SetlistBar::StripSnapshot snapshotStrip (zynforge::TrackState& t)
+{
+    zynforge::SetlistBar::StripSnapshot s;
+    s.gainDb       = t.gainDb       .load (std::memory_order_relaxed);
+    s.pan          = t.pan          .load (std::memory_order_relaxed);
+    s.inputRouting = t.inputRouting .load (std::memory_order_relaxed);
+    s.outputRouting= t.outputRouting.load (std::memory_order_relaxed);
+    s.muted        = t.muted        .load (std::memory_order_relaxed);
+    s.soloed       = t.soloed       .load (std::memory_order_relaxed);
+    s.monitor      = t.monitor      .load (std::memory_order_relaxed);
+    s.armed        = t.armed        .load (std::memory_order_relaxed);
+    return s;
+}
+
 void MainComponent::loadSetlistFromActiveSession()
 {
     cues.clear();
@@ -1475,6 +1489,31 @@ void MainComponent::loadSetlistFromActiveSession()
                         zynforge::SetlistBar::Cue cue;
                         cue.name      = c->getProperty ("name").toString();
                         cue.samplePos = (juce::int64) (double) c->getProperty ("samplePos");
+
+                        // Deserialize per-strip snapshot if present
+                        // (cues saved by older builds without snapshots
+                        // just leave the strips vector empty — recall
+                        // then skips strip restore).
+                        const auto sv = c->getProperty ("strips");
+                        if (auto* sa = sv.getArray())
+                        {
+                            for (const auto& sitem : *sa)
+                            {
+                                if (auto* so = sitem.getDynamicObject())
+                                {
+                                    zynforge::SetlistBar::StripSnapshot s;
+                                    s.gainDb       = (float) (double) so->getProperty ("gainDb");
+                                    s.pan          = (float) (double) so->getProperty ("pan");
+                                    s.inputRouting = (int)            so->getProperty ("in");
+                                    s.outputRouting= (int)            so->getProperty ("out");
+                                    s.muted        = (bool)           so->getProperty ("mute");
+                                    s.soloed       = (bool)           so->getProperty ("solo");
+                                    s.monitor      = (bool)           so->getProperty ("mon");
+                                    s.armed        = (bool)           so->getProperty ("rec");
+                                    cue.strips.push_back (s);
+                                }
+                            }
+                        }
                         cues.push_back (std::move (cue));
                     }
                 }
@@ -1502,6 +1541,22 @@ void MainComponent::saveSetlistToActiveSession() const
         juce::DynamicObject::Ptr entry (new juce::DynamicObject());
         entry->setProperty ("name",      c.name);
         entry->setProperty ("samplePos", (double) c.samplePos);
+
+        juce::Array<juce::var> stripArr;
+        for (const auto& s : c.strips)
+        {
+            juce::DynamicObject::Ptr st (new juce::DynamicObject());
+            st->setProperty ("gainDb", (double) s.gainDb);
+            st->setProperty ("pan",    (double) s.pan);
+            st->setProperty ("in",     s.inputRouting);
+            st->setProperty ("out",    s.outputRouting);
+            st->setProperty ("mute",   s.muted);
+            st->setProperty ("solo",   s.soloed);
+            st->setProperty ("mon",    s.monitor);
+            st->setProperty ("rec",    s.armed);
+            stripArr.add (juce::var (st.get()));
+        }
+        entry->setProperty ("strips", juce::var (stripArr));
         arr.add (juce::var (entry.get()));
     }
     obj->setProperty ("setlist",   juce::var (arr));
@@ -1516,10 +1571,37 @@ void MainComponent::jumpToCue (int index)
     currentCueIndex = index;
     setlistBar.setCues (cues, currentCueIndex);
 
+    const auto& cue = cues[(size_t) index];
+
     auto& player = engine.getPlayer();
-    player.setPositionSamples (cues[(size_t) index].samplePos);
+    player.setPositionSamples (cue.samplePos);
+
+    // Recall the mixer state captured with this cue: gain / pan /
+    // input + output routing / mute / solo / mon / arm — for every
+    // strip the cue knows about. Strips beyond the snapshot length
+    // (added after the cue was saved) are left untouched.
+    auto& rec = engine.getRecorder();
+    const int total = rec.getNumTracks();
+    const int n     = juce::jmin (total, (int) cue.strips.size());
+    for (int i = 0; i < n; ++i)
+    {
+        const auto& s = cue.strips[(size_t) i];
+        engine.setTrackGainDb       (i, s.gainDb);
+        engine.setTrackPan          (i, s.pan);
+        engine.setTrackInputRouting (i, s.inputRouting);
+        engine.setTrackOutputRouting(i, s.outputRouting);
+
+        auto& t = rec.getTrack (i);
+        t.muted  .store (s.muted,   std::memory_order_relaxed);
+        t.soloed .store (s.soloed,  std::memory_order_relaxed);
+        t.monitor.store (s.monitor, std::memory_order_relaxed);
+        t.armed  .store (s.armed,   std::memory_order_relaxed);
+    }
+    lastTrackCount = -1;   // force strip refresh so combos + buttons redraw
+
     updateTransportLabels();
-    showStatus ("Cue " + juce::String (index + 1) + " — " + cues[(size_t) index].name);
+    showStatus ("Cue " + juce::String (index + 1) + " — " + cue.name
+                + (n > 0 ? " (mix recalled)" : ""));
 }
 
 void MainComponent::promptCueName (const juce::String& title,
@@ -1562,12 +1644,23 @@ void MainComponent::addCueAtTransport()
                          ? juce::String ("Song " + juce::String ((int) cues.size() + 1))
                          : name;
         c.samplePos = pos;
+
+        // Snapshot the current mixer state so recalling this cue later
+        // restores fader, pan, mute/solo/mon/arm, and routing for every
+        // strip.
+        auto& rec = engine.getRecorder();
+        const int total = rec.getNumTracks();
+        c.strips.reserve ((size_t) total);
+        for (int i = 0; i < total; ++i)
+            c.strips.push_back (snapshotStrip (rec.getTrack (i)));
+
         cues.push_back (std::move (c));
         currentCueIndex = (int) cues.size() - 1;
         setlistBar.setCues (cues, currentCueIndex);
         saveSetlistToActiveSession();
         showStatus ("Added cue '" + cues.back().name + "' at "
-                    + juce::String ((double) pos / juce::jmax (1.0, player.getSampleRate()), 2) + " s");
+                    + juce::String ((double) pos / juce::jmax (1.0, player.getSampleRate()), 2)
+                    + " s (mix snapshot captured)");
     });
 }
 
@@ -1601,12 +1694,23 @@ void MainComponent::updateCueAtTransport()
     }
     auto& player = engine.getPlayer();
     const auto pos = player.isLoaded() ? player.getPositionSamples() : juce::int64 (0);
-    cues[(size_t) currentCueIndex].samplePos = pos;
+    auto& cue = cues[(size_t) currentCueIndex];
+    cue.samplePos = pos;
+
+    // Re-capture every strip's state. Update means 'whatever the mixer
+    // looks like NOW is what this cue should recall to in the future'.
+    auto& rec = engine.getRecorder();
+    const int total = rec.getNumTracks();
+    cue.strips.clear();
+    cue.strips.reserve ((size_t) total);
+    for (int i = 0; i < total; ++i)
+        cue.strips.push_back (snapshotStrip (rec.getTrack (i)));
+
     setlistBar.setCues (cues, currentCueIndex);
     saveSetlistToActiveSession();
-    showStatus ("Cue '" + cues[(size_t) currentCueIndex].name
-                + "' moved to "
-                + juce::String ((double) pos / juce::jmax (1.0, player.getSampleRate()), 2) + " s");
+    showStatus ("Cue '" + cue.name + "' updated — "
+                + juce::String ((double) pos / juce::jmax (1.0, player.getSampleRate()), 2) + " s, "
+                + juce::String (total) + " strip mix snapshotted");
 }
 
 void MainComponent::showSessionProperties()
@@ -2107,7 +2211,9 @@ void MainComponent::onImportAudioFiles()
         // Per imported file: remember (start_strip_index, was_stereo).
         struct ImportRecord { int trackIndex; bool stereo; juce::String name; };
         std::vector<ImportRecord> records;
-        int nextTrack = 0;
+        // Start *after* the existing strips so multi-file import APPENDS
+        // to the session instead of overwriting Track_01.wav onwards.
+        int nextTrack = engine.getRecorder().getNumTracks();
         int failed    = 0;
 
         auto writeMono = [] (juce::AudioFormatReader& reader, int channelIndex,

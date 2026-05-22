@@ -16,10 +16,25 @@ namespace zynforge
     class SetlistBar final : public juce::Component
     {
     public:
+        // Per-strip snapshot captured at +Cue / Update time. Restored
+        // when the cue is recalled (◂ / ▸ or dropdown pick).
+        struct StripSnapshot
+        {
+            float gainDb       { 0.0f };
+            float pan          { 0.0f };
+            int   inputRouting { -1 };
+            int   outputRouting{ -1 };
+            bool  muted        { false };
+            bool  soloed       { false };
+            bool  monitor      { false };
+            bool  armed        { false };
+        };
+
         struct Cue
         {
             juce::String name;
             juce::int64  samplePos { 0 };
+            std::vector<StripSnapshot> strips;   // length = recorder.getNumTracks() at capture time
         };
 
         SetlistBar();
