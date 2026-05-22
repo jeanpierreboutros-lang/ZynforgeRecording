@@ -13,30 +13,38 @@ namespace zynforge
         {
             juce::MemoryBlock head;
             char buf[1024];
+            // 5 s overall deadline so a half-open client doesn't wedge us.
+            const auto deadline = juce::Time::getMillisecondCounter() + 5000;
             for (;;)
             {
+                if (juce::Time::getMillisecondCounter() >= deadline) return {};
+                const int ready = s.waitUntilReady (true, 200);
+                if (ready < 0) return {};        // socket error / closed
+                if (ready == 0) continue;        // timed out, loop until deadline
+
                 const int got = s.read (buf, sizeof (buf), false);
-                if (got <= 0) break;
+                if (got <= 0) return {};
                 head.append (buf, (std::size_t) got);
-                // Look for end-of-headers
+
                 const auto str = juce::String::fromUTF8 ((const char*) head.getData(),
                                                           (int) head.getSize());
                 const int hdrEnd = str.indexOf ("\r\n\r\n");
                 if (hdrEnd < 0) continue;
 
-                // Headers complete; pull Content-Length to know how much body to read.
                 const auto headers = str.substring (0, hdrEnd);
                 int contentLength = 0;
                 for (auto& line : juce::StringArray::fromLines (headers))
-                {
                     if (line.startsWithIgnoreCase ("Content-Length:"))
                         contentLength = line.fromFirstOccurrenceOf (":", false, false).trim().getIntValue();
-                }
 
                 int bodyHave = (int) head.getSize() - (hdrEnd + 4);
                 bodyOut = str.substring (hdrEnd + 4);
-                while (bodyHave < contentLength)
+                while (bodyHave < contentLength
+                       && juce::Time::getMillisecondCounter() < deadline)
                 {
+                    const int r2 = s.waitUntilReady (true, 200);
+                    if (r2 < 0) break;
+                    if (r2 == 0) continue;
                     const int got2 = s.read (buf, sizeof (buf), false);
                     if (got2 <= 0) break;
                     bodyOut += juce::String::fromUTF8 (buf, got2);
@@ -44,7 +52,6 @@ namespace zynforge
                 }
                 return headers;
             }
-            return {};
         }
 
         const char* kHtmlPage = R"HTML(<!doctype html>
