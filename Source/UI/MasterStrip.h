@@ -32,10 +32,12 @@ namespace zynforge
         juce::Label      gainLabel;
         juce::ComboBox   outLCombo;
         juce::ComboBox   outRCombo;
+        juce::ToggleButton modeButton { "ST" };   // toggles between MONO and STEREO
         juce::ToggleButton muteButton { "MUTE" };
         juce::Slider     fader { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
         LedMeter         meter;
         int lastNumOutputs { -1 };
+        bool             cachedStereo { true };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MasterStrip)
     };

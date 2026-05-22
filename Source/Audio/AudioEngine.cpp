@@ -94,6 +94,15 @@ namespace zynforge
             appProps->saveIfNeeded();
         }
     }
+    void AudioEngine::setMasterStereo (bool s)
+    {
+        masterStereo.store (s, std::memory_order_release);
+        if (appProps != nullptr)
+        {
+            appProps->setValue ("masterStereo", s);
+            appProps->saveIfNeeded();
+        }
+    }
 
     void AudioEngine::setLtcSourceStrip (int oneBasedIndex) noexcept
     {
@@ -291,12 +300,15 @@ namespace zynforge
         ltcSourceStrip.store (appProps->getIntValue ("ltcSourceStrip", 0) - 1,
                               std::memory_order_release);
 
-        // Master bus state — gain + mute + L/R output routing.
-        masterState.name = "MASTER";
+        // Master bus state — gain + mute + L/R output routing + stereo mode.
+        masterState.name  = "MASTER";
+        masterStateR.name = "MASTER R";
         masterState.gainDb.store ((float) appProps->getDoubleValue ("masterGainDb", 0.0));
         masterState.muted .store (appProps->getBoolValue ("masterMuted", false));
-        masterOutL.store (appProps->getIntValue ("masterOutL", 0));
-        masterOutR.store (appProps->getIntValue ("masterOutR", 1));
+        masterOutL  .store (appProps->getIntValue  ("masterOutL", 0));
+        masterOutR  .store (appProps->getIntValue  ("masterOutR", 1));
+        masterStereo.store (appProps->getBoolValue ("masterStereo", true),
+                            std::memory_order_release);
 
         // Open with up to 256 inputs / 64 outputs by default — adjust later from UI.
         auto err = deviceManager.initialise (/*numInputs*/ 256, /*numOutputs*/ 64,
@@ -739,9 +751,19 @@ namespace zynforge
                                          (double) masterState.gainDb.load (std::memory_order_relaxed),
                                          -60.0);
 
-        // Drive the master meter (peak + RMS) from the accumulator BEFORE
-        // mGain so the meter shows what's hitting the bus, then write to
-        // the configured master outputs scaled by mGain.
+        // If mono, collapse L+R into accL (and zero accR) so a single
+        // output gets the sum and the meter reads as one bar.
+        const bool stereo = masterStereo.load (std::memory_order_relaxed);
+        if (! stereo)
+        {
+            for (int i = 0; i < blk; ++i)
+            {
+                accL[i] = (accL[i] + accR[i]) * 0.5;   // average to keep headroom
+                accR[i] = 0.0;
+            }
+        }
+
+        // Drive the L/R master meters from the accumulator BEFORE mGain.
         {
             double mPeakL = 0.0, mPeakR = 0.0;
             double mRmsL  = 0.0, mRmsR  = 0.0;
@@ -755,23 +777,36 @@ namespace zynforge
                 mRmsR += accR[i] * accR[i];
             }
             const double inv = 1.0 / (double) juce::jmax (1, blk);
-            const float pk  = (float) juce::jmax (mPeakL, mPeakR);
-            const float rms = (float) std::sqrt (juce::jmax (mRmsL, mRmsR) * inv);
-            const float prevPk  = masterState.peak.load (std::memory_order_relaxed);
-            const float prevRms = masterState.rms .load (std::memory_order_relaxed);
-            masterState.peak.store (juce::jmax (pk,  prevPk  * 0.92f), std::memory_order_relaxed);
-            masterState.rms .store (juce::jmax (rms, prevRms * 0.85f), std::memory_order_relaxed);
-            if (pk >= 0.999f) masterState.clipped.store (true, std::memory_order_relaxed);
+            const float pkL  = (float) mPeakL;
+            const float pkR  = (float) mPeakR;
+            const float rmsL = (float) std::sqrt (mRmsL * inv);
+            const float rmsR = (float) std::sqrt (mRmsR * inv);
+
+            const float prevPkL  = masterState .peak.load (std::memory_order_relaxed);
+            const float prevPkR  = masterStateR.peak.load (std::memory_order_relaxed);
+            const float prevRmsL = masterState .rms .load (std::memory_order_relaxed);
+            const float prevRmsR = masterStateR.rms .load (std::memory_order_relaxed);
+
+            masterState .peak.store (juce::jmax (pkL,  prevPkL  * 0.92f), std::memory_order_relaxed);
+            masterStateR.peak.store (juce::jmax (pkR,  prevPkR  * 0.92f), std::memory_order_relaxed);
+            masterState .rms .store (juce::jmax (rmsL, prevRmsL * 0.85f), std::memory_order_relaxed);
+            masterStateR.rms .store (juce::jmax (rmsR, prevRmsR * 0.85f), std::memory_order_relaxed);
+            if (pkL >= 0.999f) masterState .clipped.store (true, std::memory_order_relaxed);
+            if (pkR >= 0.999f) masterStateR.clipped.store (true, std::memory_order_relaxed);
         }
 
         const int outL = juce::jlimit (0, numOutputs - 1, masterOutL.load (std::memory_order_relaxed));
-        const int outR = juce::jlimit (0, numOutputs - 1, masterOutR.load (std::memory_order_relaxed));
         if (outL < numOutputs && outputs[outL] != nullptr)
             for (int i = 0; i < blk; ++i)
                 outputs[outL][i] += (float) (accL[i] * mGain);
-        if (outR < numOutputs && outputs[outR] != nullptr && outR != outL)
-            for (int i = 0; i < blk; ++i)
-                outputs[outR][i] += (float) (accR[i] * mGain);
+
+        if (stereo)
+        {
+            const int outR = juce::jlimit (0, numOutputs - 1, masterOutR.load (std::memory_order_relaxed));
+            if (outR < numOutputs && outputs[outR] != nullptr && outR != outL)
+                for (int i = 0; i < blk; ++i)
+                    outputs[outR][i] += (float) (accR[i] * mGain);
+        }
 
         // Companion stream feed — runs at the very end so it captures
         // EVERYTHING the engineer hears at outputs 0+1 (per-channel

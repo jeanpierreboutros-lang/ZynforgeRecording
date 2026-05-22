@@ -43,6 +43,28 @@ namespace zynforge
         addAndMakeVisible (outLCombo);
         addAndMakeVisible (outRCombo);
 
+        // Mono / stereo mode toggle. Reuses the toggle-button pill style;
+        // text flips between 'MONO' and 'ST', tick colour goes brand-orange
+        // when stereo (the default) and teal when mono so the difference
+        // reads at a glance.
+        modeButton.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
+        modeButton.setColour (juce::ToggleButton::tickColourId, brand::brandOrange);
+        modeButton.setClickingTogglesState (true);
+        modeButton.setToggleState (engine.getMasterStereo(), juce::dontSendNotification);
+        modeButton.setButtonText (engine.getMasterStereo() ? "ST" : "MONO");
+        modeButton.setTooltip ("Master output mode — click to toggle between MONO (one output, "
+                               "one meter bar) and STEREO (two outputs, two meter bars).");
+        modeButton.onClick = [this]
+        {
+            const bool stereo = modeButton.getToggleState();
+            engine.setMasterStereo (stereo);
+            modeButton.setButtonText (stereo ? "ST" : "MONO");
+            meter.setStereoPartner (stereo ? &engine.getMasterStateR() : nullptr);
+            outRCombo.setEnabled (stereo);
+            resized();   // hide / show the R output combo
+        };
+        addAndMakeVisible (modeButton);
+
         muteButton.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
         muteButton.setColour (juce::ToggleButton::tickColourId, brand::accentRecord);
         muteButton.setToggleState (engine.getMasterMuted(), juce::dontSendNotification);
@@ -72,7 +94,10 @@ namespace zynforge
         addAndMakeVisible (fader);
 
         meter.setTooltip ("Master bus peak + RMS — click to clear clip.");
+        if (engine.getMasterStereo())
+            meter.setStereoPartner (&engine.getMasterStateR());
         addAndMakeVisible (meter);
+        cachedStereo = engine.getMasterStereo();
 
         refreshOutputs();
         startTimerHz (10);
@@ -108,8 +133,9 @@ namespace zynforge
 
     void MasterStrip::timerCallback()
     {
-        // Sync gain readout + mute / outputs from engine atomics so other
-        // entry points (OSC, persistent restore) keep the UI in lockstep.
+        // Sync gain readout + mute / outputs / stereo mode from engine
+        // atomics so other entry points (restore, future API) keep the
+        // UI in lockstep.
         const float dB = engine.getMasterGainDb();
         if (std::abs ((float) fader.getValue() - dB) > 0.05f)
             fader.setValue (dB, juce::dontSendNotification);
@@ -120,6 +146,17 @@ namespace zynforge
         const int rId = engine.getMasterOutputR() + 1;
         if (outLCombo.getSelectedId() != lId) outLCombo.setSelectedId (lId, juce::dontSendNotification);
         if (outRCombo.getSelectedId() != rId) outRCombo.setSelectedId (rId, juce::dontSendNotification);
+
+        const bool stereo = engine.getMasterStereo();
+        if (stereo != cachedStereo)
+        {
+            cachedStereo = stereo;
+            modeButton.setToggleState (stereo, juce::dontSendNotification);
+            modeButton.setButtonText (stereo ? "ST" : "MONO");
+            meter.setStereoPartner (stereo ? &engine.getMasterStateR() : nullptr);
+            outRCombo.setEnabled (stereo);
+            resized();
+        }
 
         refreshOutputs();
     }
@@ -136,20 +173,41 @@ namespace zynforge
     void MasterStrip::resized()
     {
         auto r = getLocalBounds().reduced (8, 10);
+        const bool stereo = engine.getMasterStereo();
 
         title    .setBounds (r.removeFromTop (20));
         r.removeFromTop (brand::space::sm);
+
+        // Mode pill takes the full strip width so the label (ST / MONO)
+        // is always readable. Sits above the output combos.
+        modeButton.setBounds (r.removeFromTop (22));
+        r.removeFromTop (brand::space::xs);
+
         outLCombo.setBounds (r.removeFromTop (22));
         r.removeFromTop (brand::space::xs);
-        outRCombo.setBounds (r.removeFromTop (22));
-        r.removeFromTop (brand::space::sm);
+
+        // R combo only shown in stereo mode; in mono we collapse the
+        // slot so the rest of the layout moves up.
+        if (stereo)
+        {
+            outRCombo.setVisible (true);
+            outRCombo.setBounds (r.removeFromTop (22));
+            r.removeFromTop (brand::space::sm);
+        }
+        else
+        {
+            outRCombo.setVisible (false);
+            outRCombo.setBounds ({});
+        }
+
         muteButton.setBounds (r.removeFromTop (24));
         r.removeFromTop (brand::space::sm);
         gainLabel.setBounds (r.removeFromTop (16));
         r.removeFromTop (brand::space::xs);
 
-        // Meter on right, fader on left.
-        const int meterW = 36;
+        // Meter on right, fader on left. Meter width shrinks slightly
+        // in mono mode since only one bar is needed.
+        const int meterW = stereo ? 40 : 26;
         auto meterArea = r.removeFromRight (meterW);
         meter.setBounds (meterArea);
         r.removeFromRight (4);

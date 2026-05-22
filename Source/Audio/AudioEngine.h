@@ -47,7 +47,8 @@ namespace zynforge
         // channel whose MON flag is on (live input monitoring). Mute and
         // solo gates apply: any solo engaged → only soloed channels reach
         // the master.
-        TrackState& getMasterState() noexcept { return masterState; }
+        TrackState& getMasterState()  noexcept { return masterState; }
+        TrackState& getMasterStateR() noexcept { return masterStateR; }
         float getMasterGainDb() const noexcept { return masterState.gainDb.load(); }
         bool  getMasterMuted()  const noexcept { return masterState.muted.load(); }
         void  setMasterGainDb (float dB);
@@ -55,6 +56,13 @@ namespace zynforge
         int   getMasterOutputL() const noexcept { return masterOutL.load(); }
         int   getMasterOutputR() const noexcept { return masterOutR.load(); }
         void  setMasterOutputs (int l, int r);
+
+        // Mono / stereo mode. In mono, L+R are summed and sent only to
+        // masterOutL; the meter collapses to a single bar. In stereo, L
+        // goes to masterOutL and R to masterOutR; the meter shows two
+        // bars driven by masterState (L) and masterStateR (R).
+        bool  getMasterStereo() const noexcept { return masterStereo.load(); }
+        void  setMasterStereo (bool stereo);
 
         bool startRecording (const juce::File& sessionDir);
         void stopRecording();
@@ -205,8 +213,10 @@ namespace zynforge
         // gain/pan paths without a parallel implementation. Output
         // routing is engineer-configurable and persists in appProps.
         TrackState        masterState;
-        std::atomic<int>  masterOutL { 0 };
-        std::atomic<int>  masterOutR { 1 };
+        TrackState        masterStateR;
+        std::atomic<int>  masterOutL    { 0 };
+        std::atomic<int>  masterOutR    { 1 };
+        std::atomic<bool> masterStereo  { true };
 
         std::unique_ptr<OscRemote> osc;
         std::unique_ptr<CompanionServer> companion;
