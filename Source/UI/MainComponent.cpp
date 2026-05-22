@@ -69,6 +69,13 @@ MainComponent::MainComponent()
     patchButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus.withAlpha (0.18f));
     patchButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus);
     patchButton.onClick = [this] { zynforge::PatchPage::launch (engine); };
+
+    vscButton.setColour (juce::TextButton::buttonColourId, brand::engagedAmber.withAlpha (0.22f));
+    vscButton.setColour (juce::TextButton::textColourOffId, brand::engagedAmber);
+    vscButton.setTooltip ("Virtual Soundcheck — repatch every strip's OUTPUT to match its INPUT, "
+                          "so playback feeds the desk via the same channels the live mics did.");
+    vscButton.onClick = [this] { onVscClicked(); };
+    addAndMakeVisible (vscButton);
     addAndMakeVisible (patchButton);
 
     auto styleViewBtn = [] (juce::TextButton& b, bool engaged)
@@ -325,6 +332,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
     else if (topLevelIndex == 2)  // Session
     {
         menu.addItem (50, "Patch…");
+        menu.addItem (52, "Virtual Soundcheck — repatch outputs ↔ inputs");
         menu.addItem (51, "Meterbridge…");
 
         // OSC submenu with the five dialects.
@@ -455,6 +463,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id >= 100 && id < 200) onExportIndividualTrack (id - 100);
     else if (id == 50)   zynforge::PatchPage::launch (engine);
     else if (id == 51)   zynforge::Meterbridge::launch (engine);
+    else if (id == 52)   onVscClicked();
     else if (id == 250)
     {
         struct StubContent final : public juce::Component
@@ -1004,6 +1013,30 @@ void MainComponent::applyLockState()
                               : engine.isRecording()  ? "Recording"
                               : engine.isPlaying()    ? "Playing"
                                                       : "Idle");
+}
+
+void MainComponent::onVscClicked()
+{
+    // Virtual Soundcheck: copy each strip's input routing to its output
+    // routing, so playback feeds the same hardware channel the live
+    // input would have used. The desk sees the recorded tracks on the
+    // same snake / network channels it'd see the live mics on.
+    auto& rec = engine.getRecorder();
+    const int n = rec.getNumTracks();
+    int repatched = 0;
+    for (int i = 0; i < n; ++i)
+    {
+        const int inDev = rec.getTrack (i).inputRouting.load (std::memory_order_relaxed);
+        // -2 means 'identity default' — resolve to i so the output ends
+        // up explicitly set to the strip's identity input.
+        const int target = (inDev == -2) ? i : inDev;
+        engine.setTrackOutputRouting (i, target);
+        ++repatched;
+    }
+    showStatus (repatched > 0
+                ? "Virtual Soundcheck — " + juce::String (repatched)
+                  + " strip(s) repatched: outputs now match inputs"
+                : juce::String ("No strips to repatch"));
 }
 
 void MainComponent::onBackupClicked()
@@ -1740,6 +1773,8 @@ void MainComponent::resized()
 
     // PATCH + MIX / EDIT view toggle are the quick-access in-app buttons.
     patchButton    .setBounds (row2.removeFromRight (90).reduced (0, 2));
+    row2.removeFromRight (8);
+    vscButton      .setBounds (row2.removeFromRight (70).reduced (0, 2));
     row2.removeFromRight (8);
     editViewButton .setBounds (row2.removeFromRight (60).reduced (0, 2));
     row2.removeFromRight (4);

@@ -52,6 +52,7 @@ private:
     void onImportAudioFiles();
     void onLockToggled();
     void onBackupClicked();
+    void onVscClicked();
     void applyLockState();
     void offerSessionRecovery();
     bool saveSessionStateTo (const juce::File& dir);
@@ -102,6 +103,7 @@ private:
     juce::TextButton lockButton    { "LOCK" };
     juce::TextButton backupButton  { "BACKUP" };
     juce::TextButton patchButton   { "PATCH" };
+    juce::TextButton vscButton     { "VSC" };
     juce::TextButton metersButton  { "METERS" };
     juce::TextButton oscButton     { "OSC" };
     juce::TextButton addChannelButton { "+ CH" };
