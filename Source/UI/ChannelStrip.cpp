@@ -587,10 +587,11 @@ namespace zynforge
         dbLabel  .setBounds (r.removeFromTop (14));
         clipLabel.setBounds (r.removeFromTop (12));
         r.removeFromTop (2);
-        // Rotary pan: knob area on top + value readout below (centred,
-        // ~42 px tall total so the knob has room to be readable on a
-        // ~150 px wide strip).
-        panSlider.setBounds (r.removeFromTop (44).reduced (8, 0));
+        // Rotary pan — bigger knob so the engineer can read its
+        // position at a glance. 64 px tall total: ~48 px for the knob
+        // and 14 px for the value readout underneath, with only 4 px
+        // of horizontal padding so the dial fills the strip width.
+        panSlider.setBounds (r.removeFromTop (64).reduced (4, 0));
         r.removeFromTop (4);
 
         outLabel.setBounds (r.removeFromTop (14));
