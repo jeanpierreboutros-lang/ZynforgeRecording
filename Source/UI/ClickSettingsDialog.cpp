@@ -10,15 +10,19 @@ namespace zynforge
             "Sine",  "Beep",  "Cowbell",  "Wood Block",  "Classic Click"
         };
 
-        // UTF-8 glyphs for the note-value buttons in the reference.
+        // Plain fraction labels — the Unicode music-symbol glyphs (𝅗𝅥,
+        // 𝅘𝅥, …) only render with a music font (Bravura etc.) that we
+        // don't ship; on the default macOS UI font they fall back to
+        // 'tofu' boxes. Fractions are bundled with every system font
+        // and read unambiguously at small button size.
         static const char* subdivisionGlyphs[] = {
-            "\xf0\x9d\x85\x9d",   // whole note
-            "\xf0\x9d\x85\x9e",   // half
-            "\xf0\x9d\x85\x9f",   // quarter
-            "\xf0\x9d\x85\xa0",   // eighth
-            "\xf0\x9d\x85\xa1",   // sixteenth
-            "3",                  // triplet
-            "\xe2\x80\xa2"        // rest / silent dot
+            "1",         // whole
+            "1/2",       // half
+            "1/4",       // quarter
+            "1/8",       // eighth
+            "1/16",      // sixteenth
+            "3",         // triplet
+            "\xe2\x80\x94"  // em dash = silent
         };
 
         class VoiceRow final : public juce::Component
