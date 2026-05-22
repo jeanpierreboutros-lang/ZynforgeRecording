@@ -117,7 +117,7 @@ namespace zynforge
     void MultitrackRecorder::setTrackCount (int n)
     {
         if (isRecording()) return;
-        n = juce::jmax (1, n);
+        n = juce::jmax (0, n);
         while ((int) tracks.size() > n) removeLastTrack();
         while ((int) tracks.size() < n) addTrack();
     }

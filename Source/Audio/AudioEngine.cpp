@@ -45,13 +45,13 @@ namespace zynforge
 
     int AudioEngine::getStripCount() const
     {
-        return appProps ? juce::jlimit (1, 256, appProps->getIntValue ("stripCount", 1)) : 1;
+        return appProps ? juce::jlimit (0, 256, appProps->getIntValue ("stripCount", 0)) : 0;
     }
 
     void AudioEngine::setStripCount (int n)
     {
         if (recorder.isRecording()) return;
-        n = juce::jlimit (1, 256, n);
+        n = juce::jlimit (0, 256, n);
 
         if (appProps != nullptr)
         {
@@ -75,7 +75,7 @@ namespace zynforge
         if (recorder.isRecording()) return;
         const int n = recorder.getNumTracks();
         if (index < 0 || index >= n)  return;
-        if (n <= 1) return;   // must keep at least one strip
+        if (n < 1) return;
 
         deviceManager.removeAudioCallback (this);
         recorder.removeTrackAt (index);

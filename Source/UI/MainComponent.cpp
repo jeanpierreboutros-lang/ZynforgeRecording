@@ -97,7 +97,7 @@ MainComponent::MainComponent()
 
         auto* aw = new juce::AlertWindow ("Number of channels",
                                           "How many recording channels do you want?\n"
-                                          "(current: " + juce::String (cur) + ", min 1, max 256)\n"
+                                          "(current: " + juce::String (cur) + ", min 0, max 256)\n"
                                           "Stereo creates two linked strips per channel "
                                           "(L + R), so '4 stereo' = 8 strips.",
                                           juce::MessageBoxIconType::QuestionIcon);
@@ -123,7 +123,7 @@ MainComponent::MainComponent()
 
                         // Stereo mode creates two strips per requested channel.
                         const int rawCount = stereo ? requested * 2 : requested;
-                        const int clamped  = juce::jlimit (1, 256, rawCount);
+                        const int clamped  = juce::jlimit (0, 256, rawCount);
                         engine.setStripCount (clamped);
 
                         // Mark each L track in a stereo pair so the UI knows
