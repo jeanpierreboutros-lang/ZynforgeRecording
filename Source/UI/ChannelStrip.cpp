@@ -417,8 +417,8 @@ namespace zynforge
             if (pairState) pairState->muted.store (muteButton.getToggleState(),
                                                    std::memory_order_relaxed);
         };
-        // M (mute) → red gradient when on.
-        muteButton.setColour (juce::ToggleButton::tickColourId, brand::accentRecord);
+        // M (mute) → orange gradient when on.
+        muteButton.setColour (juce::ToggleButton::tickColourId, brand::brandOrange);
         addAndMakeVisible (muteButton);
 
         soloButton.setToggleState (s.soloed.load(), juce::dontSendNotification);
