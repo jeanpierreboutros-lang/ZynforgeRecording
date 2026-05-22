@@ -206,17 +206,16 @@ namespace zynforge
                     const int col = x / L.colW;
                     if (col < 0 || col >= numStrips) return;
                     const auto& ls = logical[(std::size_t) col];
-                    auto& t = engine.getRecorder().getTrack (ls.trackIndex);
                     const int totalTracks = engine.getRecorder().getNumTracks();
                     if (! ls.stereo)
                     {
                         // Going mono → stereo. Need a right partner.
                         if (ls.trackIndex + 1 >= totalTracks) return;
-                        t.isStereo.store (true, std::memory_order_release);
+                        engine.setTrackStereo (ls.trackIndex, true);
                     }
                     else
                     {
-                        t.isStereo.store (false, std::memory_order_release);
+                        engine.setTrackStereo (ls.trackIndex, false);
                     }
                     dragActive = false;
                     repaint();

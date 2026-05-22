@@ -84,6 +84,10 @@ namespace zynforge
         void addOneStrip();
         void removeStripAt (int index);
 
+        // Persisted mono/stereo state for a strip. The L track holds
+        // the flag; R partner is implicit at trackIndex + 1.
+        void setTrackStereo (int channelIndex, bool isStereoPair);
+
         // OSC remote: starts/stops a juce::OSCReceiver bound to UDP port,
         // with a dialect parser for DiGiCo / A&H / SSL / Yamaha consoles
         // plus a generic /zynforge/* schema for tablet apps.

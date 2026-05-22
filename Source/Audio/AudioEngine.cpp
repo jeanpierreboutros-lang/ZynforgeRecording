@@ -144,6 +144,28 @@ namespace zynforge
                                    std::memory_order_relaxed);
             t.outputRouting.store (stripRouting.hasOutput (i) ? stripRouting.getOutput (i) : i,
                                    std::memory_order_relaxed);
+
+            // Restore the mono / stereo flag from appProps. The key is
+            // 'strip_stereo_N' → bool. Defaults to false.
+            if (appProps != nullptr)
+            {
+                const auto key = juce::String ("strip_stereo_") + juce::String (i);
+                t.isStereo.store (appProps->getBoolValue (key, false),
+                                  std::memory_order_relaxed);
+            }
+        }
+    }
+
+    void AudioEngine::setTrackStereo (int channelIndex, bool isStereoPair)
+    {
+        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
+        recorder.getTrack (channelIndex).isStereo.store (isStereoPair,
+                                                          std::memory_order_release);
+        if (appProps != nullptr)
+        {
+            const auto key = juce::String ("strip_stereo_") + juce::String (channelIndex);
+            appProps->setValue (key, isStereoPair);
+            appProps->saveIfNeeded();
         }
     }
 

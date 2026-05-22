@@ -128,12 +128,12 @@ MainComponent::MainComponent()
 
                         // Mark each L track in a stereo pair so the UI knows
                         // to collapse the L+R pair into one stereo strip.
+                        // setTrackStereo also persists the flag to appProps.
                         const int total = engine.getRecorder().getNumTracks();
                         for (int i = 0; i < total; ++i)
                         {
-                            auto& t = engine.getRecorder().getTrack (i);
                             const bool isLeftOfPair = stereo && (i % 2 == 0) && (i + 1 < total);
-                            t.isStereo.store (isLeftOfPair, std::memory_order_release);
+                            engine.setTrackStereo (i, isLeftOfPair);
                         }
 
                         if (stereo)
@@ -629,9 +629,8 @@ void MainComponent::rebuildStrips()
         {
             const int total = engine.getRecorder().getNumTracks();
             if (i + 1 >= total) return;
-            auto& tL = engine.getRecorder().getTrack (i);
-            const bool wasStereo = tL.isStereo.load();
-            tL.isStereo.store (! wasStereo, std::memory_order_release);
+            const bool wasStereo = engine.getRecorder().getTrack (i).isStereo.load();
+            engine.setTrackStereo (i, ! wasStereo);
             // Trigger a full rebuild on the next timer tick.
             lastTrackCount = -1;
         };

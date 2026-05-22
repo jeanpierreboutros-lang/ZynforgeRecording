@@ -179,6 +179,8 @@ namespace zynforge
 
     void ChannelStrip::mouseDown (const juce::MouseEvent& e)
     {
+        // Only react to right-click — left-clicks go straight to whichever
+        // child (button / fader / combo) received them.
         if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
             showContextMenu();
     }
@@ -463,6 +465,11 @@ namespace zynforge
         addAndMakeVisible (*swatch);
 
         stripTimer = std::make_unique<StripTimer> (*this);
+
+        // Bubble every child component's mouseDown up to this strip so a
+        // right-click anywhere on the strip — even on a button or fader —
+        // opens the context menu.
+        addMouseListener (this, true);
     }
 
     void ChannelStrip::paint (juce::Graphics& g)
