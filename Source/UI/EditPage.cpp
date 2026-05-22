@@ -12,6 +12,30 @@ namespace zynforge
     class EditPage::TrackRow final : public juce::Component
     {
     public:
+        // Track-height presets — Pro Tools-style 7-step scale plus a
+        // dynamic "fit to window" computed from the viewport height.
+        enum class Size { Micro, Mini, Small, Medium, Large, Jumbo, Extreme, FitToWindow };
+
+        static int pixelsFor (Size s, int fitFallback = 80)
+        {
+            switch (s)
+            {
+                case Size::Micro:       return 28;
+                case Size::Mini:        return 50;
+                case Size::Small:       return 80;
+                case Size::Medium:      return 110;
+                case Size::Large:       return 160;
+                case Size::Jumbo:       return 220;
+                case Size::Extreme:     return 320;
+                case Size::FitToWindow: return fitFallback;
+            }
+            return 80;
+        }
+
+        // Callback fired by the right-click menu so the owning TrackList
+        // can recompute layout (and resolve "fit to window").
+        std::function<void(TrackRow&, Size)> onSizeChosen;
+
         TrackRow (int trackIdx,
                   bool isStereoPair,
                   AudioEngine& eng,
@@ -316,7 +340,13 @@ namespace zynforge
 
         void mouseDown (const juce::MouseEvent& e) override
         {
-            // Click the coloured swatch column to open the colour picker.
+            // Right-click anywhere on the row → size menu.
+            if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
+            {
+                showSizeMenu();
+                return;
+            }
+            // Left-click on the coloured swatch column → colour picker.
             if (e.x < swatchW)
                 openColourPicker();
         }
@@ -339,6 +369,46 @@ namespace zynforge
         int  getHeaderWidth() const noexcept { return headerW; }
         int  getTrackIndex()  const noexcept { return index; }
         bool isStereoPair()   const noexcept { return stereo; }
+
+        Size getRowSize() const noexcept { return rowSize; }
+        void setRowSize (Size s) noexcept { rowSize = s; }
+        int  getRowPixelHeight (int fitFallback) const noexcept
+        {
+            return pixelsFor (rowSize, fitFallback);
+        }
+
+    private:
+        void showSizeMenu()
+        {
+            juce::PopupMenu menu;
+            auto add = [this, &menu] (int id, const juce::String& name, Size s)
+            {
+                menu.addItem (id, name, true /*enabled*/, s == rowSize);
+            };
+            add (1, "micro",        Size::Micro);
+            add (2, "mini",         Size::Mini);
+            add (3, "small",        Size::Small);
+            add (4, "medium",       Size::Medium);
+            add (5, "large",        Size::Large);
+            add (6, "jumbo",        Size::Jumbo);
+            add (7, "extreme",      Size::Extreme);
+            menu.addSeparator();
+            add (8, "fit to window", Size::FitToWindow);
+
+            menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                                [this] (int chosen)
+            {
+                static const std::array<Size, 8> map { Size::Micro, Size::Mini, Size::Small,
+                                                       Size::Medium, Size::Large, Size::Jumbo,
+                                                       Size::Extreme, Size::FitToWindow };
+                if (chosen < 1 || chosen > 8) return;
+                const auto next = map[(std::size_t) (chosen - 1)];
+                rowSize = next;
+                if (onSizeChosen) onSizeChosen (*this, next);
+            });
+        }
+
+    public:
 
     private:
         juce::Colour getStripColour() const
@@ -371,6 +441,7 @@ namespace zynforge
         int                       lastInputDeviceCount  { -1 };
         int                       lastOutputDeviceCount { -1 };
         unsigned int              lastColourArgb        { 0 };
+        Size                      rowSize               { Size::Small };
     };
 
     // Owner of the TrackRow vertical list. EditPage drops this into the
@@ -382,6 +453,10 @@ namespace zynforge
                    juce::AudioFormatManager& fm,
                    juce::AudioThumbnailCache& cache)
             : engine (eng), formats (fm), thumbCache (cache) {}
+
+        // The viewport's visible height — needed to resolve "fit to window".
+        // EditPage sets this on every resize.
+        void setViewportHeight (int h) { viewportHeight = juce::jmax (60, h); }
 
         void rebuild (int numTracks)
         {
@@ -395,6 +470,7 @@ namespace zynforge
                 auto& tL = engine.getRecorder().getTrack (i);
                 const bool stereo = tL.isStereo.load() && (i + 1 < numTracks);
                 auto r = std::make_unique<TrackRow> (i, stereo, engine, formats, thumbCache);
+                r->onSizeChosen = [this] (TrackRow&, TrackRow::Size) { resized(); };
                 addAndMakeVisible (*r);
                 rows.push_back (std::move (r));
                 i += stereo ? 2 : 1;
@@ -404,12 +480,29 @@ namespace zynforge
 
         void resized() override
         {
-            const int rowH = 110;
-            auto bounds = getLocalBounds();
+            // Fit-to-window fallback distributes the viewport height across
+            // the rows that opted into Size::FitToWindow.
+            int fixedTotal = 0;
+            int fitRows    = 0;
             for (auto& r : rows)
-                r->setBounds (bounds.removeFromTop (rowH));
-            // Resize ourselves so the viewport scrolls.
-            setSize (getWidth(), (int) rows.size() * rowH);
+            {
+                if (r->getRowSize() == TrackRow::Size::FitToWindow) ++fitRows;
+                else fixedTotal += TrackRow::pixelsFor (r->getRowSize());
+            }
+            const int fitFallback = fitRows > 0
+                ? juce::jmax (28, (viewportHeight - fixedTotal) / fitRows)
+                : 80;
+
+            auto bounds = getLocalBounds();
+            int totalH = 0;
+            for (auto& r : rows)
+            {
+                const int h = r->getRowPixelHeight (fitFallback);
+                r->setBounds (bounds.removeFromTop (h));
+                totalH += h;
+            }
+            // Resize ourselves so the viewport scrolls when content > view.
+            setSize (getWidth(), juce::jmax (viewportHeight, totalH));
         }
 
         void setWaveformsFromSession (const juce::File& sessionDir)
@@ -448,6 +541,7 @@ namespace zynforge
         juce::AudioFormatManager&                 formats;
         juce::AudioThumbnailCache&                thumbCache;
         std::vector<std::unique_ptr<TrackRow>>    rows;
+        int                                       viewportHeight { 480 };
     };
 
     EditPage::EditPage (AudioEngine& eng)
@@ -539,8 +633,9 @@ namespace zynforge
     void EditPage::resized()
     {
         viewport.setBounds (getLocalBounds());
-        // Set list width = viewport width minus scrollbar; height is set in
-        // TrackList::resized() based on row count.
+        // Tell the list how tall the visible area is so "fit to window"
+        // sizing can resolve a sensible per-row pixel height.
+        list->setViewportHeight (viewport.getHeight());
         list->setSize (viewport.getWidth(), list->getHeight());
         list->resized();
     }
