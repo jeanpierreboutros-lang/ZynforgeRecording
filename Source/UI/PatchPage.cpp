@@ -27,9 +27,27 @@ namespace zynforge
                 int colW;
             };
 
+            // Returns the list of logical strips — each entry is the L track
+            // index of that strip, and `stereo` is true when the strip
+            // represents a stereo pair (L, L+1).
+            struct LogicalStrip { int trackIndex; bool stereo; };
+            std::vector<LogicalStrip> logicalStrips() const
+            {
+                std::vector<LogicalStrip> out;
+                const int n = engine.getRecorder().getNumTracks();
+                for (int i = 0; i < n; )
+                {
+                    const bool stereo = engine.getRecorder().getTrack (i).isStereo.load()
+                                     && (i + 1 < n);
+                    out.push_back ({ i, stereo });
+                    i += stereo ? 2 : 1;
+                }
+                return out;
+            }
+
             Layout computeLayout() const
             {
-                const int numStrips = engine.getRecorder().getNumTracks();
+                const int numStrips = (int) logicalStrips().size();
                 Layout L;
                 L.rowHeaderW = 90;
                 L.colorBandH = 60;
@@ -45,7 +63,8 @@ namespace zynforge
             {
                 g.fillAll (brand::bgDeep);
 
-                const int numStrips = engine.getRecorder().getNumTracks();
+                const auto logical  = logicalStrips();
+                const int numStrips = (int) logical.size();
                 const int numHw     = isInput ? engine.getCurrentDeviceInputCount()
                                               : engine.getCurrentDeviceOutputCount();
                 const auto L = computeLayout();
@@ -64,10 +83,11 @@ namespace zynforge
                 // ─── Column headers (coloured band + M button band)
                 for (int c = 0; c < numStrips; ++c)
                 {
-                    auto& t = engine.getRecorder().getTrack (c);
+                    auto& t = engine.getRecorder().getTrack (logical[(std::size_t) c].trackIndex);
+                    const bool stereoCol = logical[(std::size_t) c].stereo;
                     const auto stripCol = t.colourARGB.load() != 0
                                           ? juce::Colour ((juce::uint32) t.colourARGB.load())
-                                          : brand::stripColour (c);
+                                          : brand::stripColour (logical[(std::size_t) c].trackIndex);
 
                     // Coloured band
                     juce::Rectangle<int> head (L.rowHeaderW + c * L.colW, 0, L.colW, L.colorBandH);
@@ -79,16 +99,19 @@ namespace zynforge
                     g.setColour (stripCol.brighter (0.30f).withAlpha (0.60f));
                     g.drawRoundedRectangle (inner.toFloat(), 5.0f, 1.0f);
 
-                    // Channel number
+                    // Channel number / pair label
                     g.setColour (juce::Colours::white);
                     g.setFont (juce::Font (juce::FontOptions().withHeight (22.0f).withStyle ("Bold")));
                     g.drawText (juce::String (c + 1),
                                 juce::Rectangle<int> (inner.getX(), inner.getY() + 4, inner.getWidth(), 26),
                                 juce::Justification::centred, false);
 
-                    // INS label
-                    g.setFont (juce::Font (juce::FontOptions().withHeight (12.0f).withStyle ("Bold")));
-                    g.drawText ("INS " + juce::String (c + 1),
+                    // INS label — "INS N" for mono, "INS N L+R" for stereo
+                    g.setFont (juce::Font (juce::FontOptions().withHeight (11.0f).withStyle ("Bold")));
+                    const auto subLabel = stereoCol
+                        ? juce::String ("INS ") + juce::String (c + 1) + " (L+R)"
+                        : juce::String ("INS ") + juce::String (c + 1);
+                    g.drawText (subLabel,
                                 juce::Rectangle<int> (inner.getX(), inner.getY() + 32, inner.getWidth(), 18),
                                 juce::Justification::centred, false);
 
@@ -127,7 +150,7 @@ namespace zynforge
                     }
 
                     // Row label
-                    const bool isActiveRow = isRowRoutedToAnyStrip (row, numStrips);
+                    const bool isActiveRow = isRowRoutedToAnyStrip (row, logical);
                     g.setColour (isActiveRow ? brand::textPrimary : brand::textSecondary);
                     g.setFont (juce::Font (juce::FontOptions().withHeight (14.0f).withStyle ("Bold")));
                     g.drawText ((isInput ? "IN " : "OUT ") + juce::String (row + 1),
@@ -141,19 +164,34 @@ namespace zynforge
                         const auto cell = juce::Rectangle<int> (x, y, L.colW, L.rowH);
                         const auto dot  = cell.withSizeKeepingCentre (22, 22).toFloat();
 
-                        const int rt = currentRouting (c);
-                        const bool active = (rt == row);
+                        const int trackIdx = logical[(std::size_t) c].trackIndex;
+                        const bool stereoCol = logical[(std::size_t) c].stereo;
+                        const int rtL = currentRoutingForTrack (trackIdx);
+                        const int rtR = stereoCol ? currentRoutingForTrack (trackIdx + 1) : -99;
+                        const bool activeL = (rtL == row);
+                        const bool activeR = (rtR == row);
 
-                        if (active)
+                        if (activeL || activeR)
                         {
-                            auto& t = engine.getRecorder().getTrack (c);
+                            auto& t = engine.getRecorder().getTrack (trackIdx);
                             const auto stripCol = t.colourARGB.load() != 0
                                                   ? juce::Colour ((juce::uint32) t.colourARGB.load())
-                                                  : brand::stripColour (c);
+                                                  : brand::stripColour (trackIdx);
                             g.setColour (stripCol);
                             g.fillEllipse (dot);
                             g.setColour (juce::Colours::white);
                             g.drawEllipse (dot, 2.0f);
+
+                            // L / R glyph on stereo dots so users see which
+                            // side of the pair this row feeds.
+                            if (stereoCol)
+                            {
+                                g.setColour (juce::Colours::white);
+                                g.setFont (juce::Font (juce::FontOptions().withHeight (10.0f).withStyle ("Bold")));
+                                g.drawText (activeL ? "L" : "R",
+                                            dot.toNearestInt(),
+                                            juce::Justification::centred, false);
+                            }
                         }
                         else
                         {
@@ -166,7 +204,8 @@ namespace zynforge
 
             void mouseDown (const juce::MouseEvent& e) override
             {
-                const int numStrips = engine.getRecorder().getNumTracks();
+                const auto logical  = logicalStrips();
+                const int numStrips = (int) logical.size();
                 const int numHw     = isInput ? engine.getCurrentDeviceInputCount()
                                               : engine.getCurrentDeviceOutputCount();
                 const auto L = computeLayout();
@@ -178,8 +217,12 @@ namespace zynforge
                     if (x < 0) return;
                     const int col = x / L.colW;
                     if (col < 0 || col >= numStrips) return;
-                    auto& t = engine.getRecorder().getTrack (col);
-                    t.muted.store (! t.muted.load());
+                    const auto& ls = logical[(std::size_t) col];
+                    auto& t = engine.getRecorder().getTrack (ls.trackIndex);
+                    const bool newMute = ! t.muted.load();
+                    t.muted.store (newMute);
+                    if (ls.stereo)
+                        engine.getRecorder().getTrack (ls.trackIndex + 1).muted.store (newMute);
                     dragActive = false;
                     repaint();
                     return;
@@ -194,14 +237,12 @@ namespace zynforge
                 if (col < 0 || col >= numStrips) { dragActive = false; return; }
                 if (row < 0 || row >= numHw)     { dragActive = false; return; }
 
-                // Toggle the clicked cell — same as before.
-                const int current = currentRouting (col);
+                const auto& ls = logical[(std::size_t) col];
+                const int current = currentRoutingForTrack (ls.trackIndex);
                 const int newVal  = (current == row) ? -1 : row;
-                setRouting (col, newVal);
+                setRoutingLogical (ls, newVal);
 
-                // Start a drag-patch from here so that dragging down/up
-                // auto-patches consecutive strips to consecutive inputs.
-                dragActive   = (newVal >= 0);   // only auto-patch when ACTIVATING
+                dragActive   = (newVal >= 0);
                 dragStartCol = col;
                 dragStartRow = row;
                 dragLastDr   = 0;
@@ -213,7 +254,8 @@ namespace zynforge
             {
                 if (! dragActive) return;
 
-                const int numStrips = engine.getRecorder().getNumTracks();
+                const auto logical  = logicalStrips();
+                const int numStrips = (int) logical.size();
                 const int numHw     = isInput ? engine.getCurrentDeviceInputCount()
                                               : engine.getCurrentDeviceOutputCount();
                 const auto L = computeLayout();
@@ -227,8 +269,6 @@ namespace zynforge
                 if (dr == dragLastDr) return;
                 dragLastDr = dr;
 
-                // Walk diagonally from the start cell to the current row,
-                // patching every (col+i, row+i) pair along the way.
                 const int sign = (dr >= 0) ? 1 : -1;
                 for (int i = 0; i <= std::abs (dr); ++i)
                 {
@@ -236,32 +276,39 @@ namespace zynforge
                     const int targetRow = dragStartRow + i * sign;
                     if (targetCol < 0 || targetCol >= numStrips) break;
                     if (targetRow < 0 || targetRow >= numHw)     break;
-                    setRouting (targetCol, targetRow);
+                    setRoutingLogical (logical[(std::size_t) targetCol], targetRow);
                 }
                 repaint();
             }
 
             void mouseUp (const juce::MouseEvent&) override { dragActive = false; }
 
-            bool isRowRoutedToAnyStrip (int row, int numStrips) const
+            bool isRowRoutedToAnyStrip (int row, const std::vector<LogicalStrip>& logical) const
             {
-                for (int c = 0; c < numStrips; ++c)
-                    if (currentRouting (c) == row) return true;
+                for (auto& ls : logical)
+                {
+                    if (currentRoutingForTrack (ls.trackIndex) == row) return true;
+                    if (ls.stereo && currentRoutingForTrack (ls.trackIndex + 1) == row) return true;
+                }
                 return false;
             }
 
         private:
-            int currentRouting (int strip) const
+            int currentRoutingForTrack (int trackIndex) const
             {
-                auto& t = engine.getRecorder().getTrack (strip);
+                auto& t = engine.getRecorder().getTrack (trackIndex);
                 return isInput ? t.inputRouting .load (std::memory_order_relaxed)
                                : t.outputRouting.load (std::memory_order_relaxed);
             }
-            void setRouting (int strip, int hwChannel)
+            void setRoutingLogical (const LogicalStrip& ls, int hwChannel)
             {
                 // Linked: clicking a dot in either matrix patches both
                 // sides of the strip's I/O to the same hardware channel.
-                engine.setTrackLinkedRouting (strip, hwChannel);
+                // For stereo: L → hwChannel, R → hwChannel + 1.
+                engine.setTrackLinkedRouting (ls.trackIndex, hwChannel);
+                if (ls.stereo)
+                    engine.setTrackLinkedRouting (ls.trackIndex + 1,
+                                                  (hwChannel < 0) ? -1 : hwChannel + 1);
             }
 
             AudioEngine& engine;

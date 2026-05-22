@@ -12,13 +12,18 @@ namespace zynforge
     {
     public:
         TrackRow (int trackIdx,
+                  bool isStereoPair,
                   AudioEngine& eng,
                   juce::AudioFormatManager& formats,
                   juce::AudioThumbnailCache& cache)
-            : index (trackIdx), engine (eng),
-              thumbnail (1024, formats, cache),
+            : index (trackIdx), stereo (isStereoPair), engine (eng),
+              thumbnailL (1024, formats, cache),
+              thumbnailR (1024, formats, cache),
               meter (engine.getRecorder().getTrack (index))
         {
+            if (stereo)
+                meter.setStereoPartner (&engine.getRecorder().getTrack (index + 1));
+
             auto& s = engine.getRecorder().getTrack (index);
 
             nameLabel.setText (s.name, juce::dontSendNotification);
@@ -48,9 +53,21 @@ namespace zynforge
             styleBtn (armButton,  brand::accentRecord);
             styleBtn (muteButton, brand::accentRecord);
             styleBtn (soloButton, juce::Colour::fromRGB (0xff, 0xd6, 0x4d));
-            armButton .onClick = [this] { engine.getRecorder().getTrack (index).armed .store (armButton .getToggleState()); };
-            muteButton.onClick = [this] { engine.getRecorder().getTrack (index).muted .store (muteButton.getToggleState()); };
-            soloButton.onClick = [this] { engine.getRecorder().getTrack (index).soloed.store (soloButton.getToggleState()); };
+            armButton .onClick = [this]
+            {
+                engine.getRecorder().getTrack (index).armed.store (armButton.getToggleState());
+                if (stereo) engine.getRecorder().getTrack (index + 1).armed.store (armButton.getToggleState());
+            };
+            muteButton.onClick = [this]
+            {
+                engine.getRecorder().getTrack (index).muted.store (muteButton.getToggleState());
+                if (stereo) engine.getRecorder().getTrack (index + 1).muted.store (muteButton.getToggleState());
+            };
+            soloButton.onClick = [this]
+            {
+                engine.getRecorder().getTrack (index).soloed.store (soloButton.getToggleState());
+                if (stereo) engine.getRecorder().getTrack (index + 1).soloed.store (soloButton.getToggleState());
+            };
             addAndMakeVisible (armButton);
             addAndMakeVisible (muteButton);
             addAndMakeVisible (soloButton);
@@ -71,12 +88,16 @@ namespace zynforge
                 const int id = inputCombo.getSelectedId();
                 const int dev = (id <= 1) ? -1 : id - 2;
                 engine.setTrackLinkedRouting (index, dev);
+                if (stereo)
+                    engine.setTrackLinkedRouting (index + 1, (dev < 0) ? -1 : dev + 1);
             };
             outputCombo.onChange = [this]
             {
                 const int id = outputCombo.getSelectedId();
                 const int dev = (id <= 1) ? -1 : id - 2;
                 engine.setTrackLinkedRouting (index, dev);
+                if (stereo)
+                    engine.setTrackLinkedRouting (index + 1, (dev < 0) ? -1 : dev + 1);
             };
             addAndMakeVisible (inputCombo);
             addAndMakeVisible (outputCombo);
@@ -158,14 +179,18 @@ namespace zynforge
             if (outputCombo.getSelectedId() != wantOut) outputCombo.setSelectedId (wantOut, juce::dontSendNotification);
         }
 
-        void setWaveformFile (const juce::File& f)
+        void setWaveformFiles (const juce::File& fL, const juce::File& fR)
         {
-            if (f == currentFile) return;
-            currentFile = f;
-            if (f.existsAsFile())
-                thumbnail.setSource (new juce::FileInputSource (f));
-            else
-                thumbnail.setSource (nullptr);
+            if (fL != currentFileL)
+            {
+                currentFileL = fL;
+                thumbnailL.setSource (fL.existsAsFile() ? new juce::FileInputSource (fL) : nullptr);
+            }
+            if (fR != currentFileR)
+            {
+                currentFileR = fR;
+                thumbnailR.setSource (fR.existsAsFile() ? new juce::FileInputSource (fR) : nullptr);
+            }
             repaint();
         }
 
@@ -198,14 +223,43 @@ namespace zynforge
             g.setColour (brand::bgPanel);
             g.fillRect (wavePane);
 
-            if (thumbnail.getTotalLength() > 0.0)
+            const auto waveColour = juce::Colour::fromRGB (0x4c, 0x82, 0xc8);
+            const auto inner = wavePane.reduced (4, 6);
+
+            if (stereo)
             {
-                // Pro-Tools-style blue waveform on a slightly darker pane.
-                g.setColour (juce::Colour::fromRGB (0x4c, 0x82, 0xc8));
-                thumbnail.drawChannels (g,
-                                        wavePane.reduced (4, 6),
-                                        0.0, thumbnail.getTotalLength(),
-                                        1.0f);
+                // L on top, R on bottom — Pro-Tools-style stereo lanes.
+                const int laneH = inner.getHeight() / 2;
+                auto laneL = inner.withHeight (laneH);
+                auto laneR = inner.withTrimmedTop (laneH);
+
+                if (thumbnailL.getTotalLength() > 0.0)
+                {
+                    g.setColour (waveColour);
+                    thumbnailL.drawChannels (g, laneL, 0.0, thumbnailL.getTotalLength(), 1.0f);
+                }
+                if (thumbnailR.getTotalLength() > 0.0)
+                {
+                    g.setColour (waveColour);
+                    thumbnailR.drawChannels (g, laneR, 0.0, thumbnailR.getTotalLength(), 1.0f);
+                }
+                // Thin divider between lanes
+                g.setColour (brand::edge);
+                g.drawHorizontalLine (inner.getY() + laneH, (float) inner.getX(),
+                                       (float) inner.getRight());
+
+                if (thumbnailL.getTotalLength() <= 0.0 && thumbnailR.getTotalLength() <= 0.0)
+                {
+                    g.setColour (brand::textTertiary);
+                    g.setFont (juce::Font (juce::FontOptions().withHeight (12.0f)));
+                    g.drawText ("(no recording yet — start a session and record to see waveforms)",
+                                wavePane, juce::Justification::centred, false);
+                }
+            }
+            else if (thumbnailL.getTotalLength() > 0.0)
+            {
+                g.setColour (waveColour);
+                thumbnailL.drawChannels (g, inner, 0.0, thumbnailL.getTotalLength(), 1.0f);
             }
             else
             {
@@ -270,7 +324,9 @@ namespace zynforge
             juce::CallOutBox::launchAsynchronously (std::move (picker), screenArea, nullptr);
         }
 
-        int getHeaderWidth() const noexcept { return headerW; }
+        int  getHeaderWidth() const noexcept { return headerW; }
+        int  getTrackIndex()  const noexcept { return index; }
+        bool isStereoPair()   const noexcept { return stereo; }
 
     private:
         juce::Colour getStripColour() const
@@ -287,8 +343,11 @@ namespace zynforge
 
         int                       index;
         AudioEngine&              engine;
-        juce::AudioThumbnail      thumbnail;
-        juce::File                currentFile;
+        juce::AudioThumbnail      thumbnailL;
+        juce::AudioThumbnail      thumbnailR;
+        juce::File                currentFileL;
+        juce::File                currentFileR;
+        bool                      stereo;
         juce::Label               nameLabel;
         juce::ToggleButton        armButton  { "REC"  };
         juce::ToggleButton        muteButton { "MUTE" };
@@ -316,11 +375,17 @@ namespace zynforge
         {
             rows.clear();
             rows.reserve ((size_t) numTracks);
-            for (int i = 0; i < numTracks; ++i)
+
+            // Logical iteration — stereo L track owns the next R partner.
+            int i = 0;
+            while (i < numTracks)
             {
-                auto r = std::make_unique<TrackRow> (i, engine, formats, thumbCache);
+                auto& tL = engine.getRecorder().getTrack (i);
+                const bool stereo = tL.isStereo.load() && (i + 1 < numTracks);
+                auto r = std::make_unique<TrackRow> (i, stereo, engine, formats, thumbCache);
                 addAndMakeVisible (*r);
                 rows.push_back (std::move (r));
+                i += stereo ? 2 : 1;
             }
             resized();
         }
@@ -339,15 +404,18 @@ namespace zynforge
         {
             if (! sessionDir.isDirectory())
             {
-                for (auto& r : rows) r->setWaveformFile ({});
+                for (auto& r : rows) r->setWaveformFiles ({}, {});
                 return;
             }
-            for (size_t i = 0; i < rows.size(); ++i)
+            for (auto& r : rows)
             {
-                const auto idx = (int) i + 1;
-                const auto file = sessionDir.getChildFile (
-                    "Track_" + juce::String (idx).paddedLeft ('0', 2) + ".wav");
-                rows[i]->setWaveformFile (file);
+                const int trackIdx = r->getTrackIndex();
+                auto pad = [] (int n) { return juce::String (n).paddedLeft ('0', 2); };
+                const auto fL = sessionDir.getChildFile ("Track_" + pad (trackIdx + 1) + ".wav");
+                const auto fR = r->isStereoPair()
+                                ? sessionDir.getChildFile ("Track_" + pad (trackIdx + 2) + ".wav")
+                                : juce::File();
+                r->setWaveformFiles (fL, fR);
             }
         }
 
@@ -395,7 +463,18 @@ namespace zynforge
     void EditPage::refresh()
     {
         const int n = engine.getRecorder().getNumTracks();
-        if (n != lastTrackCount)
+
+        // Compute logical (stereo-aware) row count and rebuild when it
+        // differs — physical track count alone doesn't detect isStereo
+        // toggles, which collapse two rows into one.
+        int logicalRows = 0;
+        for (int i = 0; i < n; )
+        {
+            const bool s = engine.getRecorder().getTrack (i).isStereo.load() && (i + 1 < n);
+            ++logicalRows;
+            i += s ? 2 : 1;
+        }
+        if (n != lastTrackCount || logicalRows != (int) list->rowCount())
         {
             list->rebuild (n);
             lastTrackCount = n;
