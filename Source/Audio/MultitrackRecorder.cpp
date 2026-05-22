@@ -53,20 +53,38 @@ namespace zynforge
         const int fifoSize = juce::nextPowerOfTwo ((int) (sr * kFifoSeconds));
         scratch.assign ((std::size_t) maxBlock, 0.0f);
 
-        tracks.clear();
-        fifos.clear();
-        preRoll.clear();
-        for (int i = 0; i < numInputs; ++i)
+        // Preserve existing TrackState objects when the count hasn't
+        // changed — destroying them here would leave every ChannelStrip
+        // / EditPage row holding a dangling reference (those views grab
+        // a TrackState& at construction). Heap corruption results when
+        // those references are later dereferenced.
+        // Only reshape the storage; resize the FIFO + pre-roll to match
+        // the new sample rate; keep the TrackState atomics intact.
+        if ((int) tracks.size() != numInputs)
         {
-            auto t = std::make_unique<TrackState>();
-            t->name = "In " + juce::String (i + 1);
-            tracks.push_back (std::move (t));
+            tracks.clear();
+            fifos.clear();
+            preRoll.clear();
+            for (int i = 0; i < numInputs; ++i)
+            {
+                auto t = std::make_unique<TrackState>();
+                t->name = "In " + juce::String (i + 1);
+                tracks.push_back (std::move (t));
 
-            auto f = std::make_unique<ChannelFifo>();
-            f->resize (fifoSize);
-            fifos.push_back (std::move (f));
+                auto f = std::make_unique<ChannelFifo>();
+                f->resize (fifoSize);
+                fifos.push_back (std::move (f));
 
-            preRoll.push_back (std::make_unique<PreRollBuffer>());
+                preRoll.push_back (std::make_unique<PreRollBuffer>());
+            }
+        }
+        else
+        {
+            // Same track count — just resize the existing FIFOs to the
+            // new sample rate. TrackState objects are reused so the UI's
+            // references stay valid.
+            for (auto& f : fifos)
+                f->resize (fifoSize);
         }
         allocatePreRollBuffers();
 
