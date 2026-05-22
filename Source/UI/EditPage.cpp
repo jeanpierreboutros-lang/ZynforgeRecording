@@ -232,7 +232,9 @@ namespace zynforge
             g.setColour (brand::bgPanel);
             g.fillRect (wavePane);
 
-            const auto waveColour = juce::Colour::fromRGB (0x4c, 0x82, 0xc8);
+            // Paint the waveform in the strip's own colour so it tracks
+            // any colour changes the user makes in the mixer or EDIT view.
+            const auto waveColour = getStripColour().brighter (0.25f);
             const auto inner = wavePane.reduced (4, 6);
 
             if (stereo)
