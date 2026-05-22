@@ -3,6 +3,7 @@
 #include "AddTracksDialog.h"
 #include "AudioDeviceDialog.h"
 #include "Meterbridge.h"
+#include "NewSessionDialog.h"
 #include "PatchPage.h"
 #include "SessionSettingsDialog.h"
 
@@ -268,6 +269,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
 
     if (topLevelIndex == 0)  // File
     {
+        menu.addItem (5, "New Session…",         ! engine.isRecording());
         menu.addItem (1, "Open Session…");
         menu.addItem (4, "Import Audio Files…",  ! engine.isRecording());
         menu.addSeparator();
@@ -363,6 +365,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 2)    onSaveSessionState();
     else if (id == 3)    onSaveSessionAs();
     else if (id == 4)    onImportAudioFiles();
+    else if (id == 5)    launchNewSessionDialog();
     else if (id == 10)   onExportAllTracks();
     else if (id == 99)   confirmAndQuit();
     // Track-export sub-menu uses ids 100..199. Tightened from the
@@ -1116,17 +1119,59 @@ void MainComponent::showStartupWelcome()
                 return;
             }
 
-            // result == 1 (Create) — start clean. Wipe every per-strip
-            // persisted override so the mixer is reset to defaults: names
-            // are bare numbers, no colour overrides, no leftover I/O
-            // routing, fader at 0 dB, REC off. Strip count drops to 0;
-            // engineer uses +CH to dial in what they actually want.
-            engine.resetAllStripState();
-            engine.setStripCount (0);
-            lastTrackCount = -1;   // force MainComponent to rebuild the strip list
-            showStatus ("New session — add channels with +CH and arm REC to capture");
+            // result == 1 (Create) — open the Pro Tools-style New Session
+            // dialog to pick name, storage location, format, sample rate
+            // and bit depth.
+            launchNewSessionDialog();
         }),
         false);
+}
+
+void MainComponent::launchNewSessionDialog()
+{
+    const auto defaultRoot = getSessionsRoot();
+    const auto curFormat   = engine.getRecorder().getCaptureFormat();
+    const double curSr     = pendingSampleRate;
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    zynforge::NewSessionDialog::launch (defaultRoot, curSr, curFormat,
+        [self] (const zynforge::NewSessionDialog::Result& r)
+    {
+        if (self == nullptr) return;
+
+        // Persist the new sessions root (used by makeNewSessionDir +
+        // every future file dialog) and remember the chosen format
+        // so the dB readout / capture matches.
+        if (auto* props = self->engine.getAppProps())
+        {
+            props->setValue ("sessionsRoot",     r.location.getFullPathName());
+            props->setValue ("sessionName",      r.name);
+            props->setValue ("interleavedFlag",  r.interleaved);
+            props->setValue ("ioPreset",         r.ioSettings);
+            props->saveIfNeeded();
+        }
+
+        self->engine.getRecorder().setCaptureFormat (r.captureFormat);
+        self->pendingSampleRate = r.sampleRate;
+        self->refreshFormatButton();
+
+        // Apply the chosen sample rate to the device immediately.
+        auto setup = self->engine.getDeviceManager().getAudioDeviceSetup();
+        if (! juce::approximatelyEqual (setup.sampleRate, r.sampleRate))
+        {
+            setup.sampleRate = r.sampleRate;
+            self->engine.getDeviceManager().setAudioDeviceSetup (setup, true);
+        }
+
+        // Start clean: clear every per-strip persisted override and
+        // reset the strip count so the engineer dials in their own
+        // channels with +CH.
+        self->engine.resetAllStripState();
+        self->engine.setStripCount (0);
+        self->lastTrackCount = -1;
+
+        self->showStatus ("New session '" + r.name + "' — add channels with +CH and arm REC to capture");
+    });
 }
 
 void MainComponent::offerSessionRecovery()
@@ -1771,6 +1816,19 @@ void MainComponent::onLoadSessionClicked()
 
 juce::File MainComponent::getSessionsRoot() const
 {
+    // Engineer can override via New Session… dialog ("Local Storage:")
+    // — stored in appProps as 'sessionsRoot'. Falls back to the canonical
+    // ~/Music/Zynforge Sessions when unset.
+    if (auto* props = engine.getAppProps())
+    {
+        const auto override_ = props->getValue ("sessionsRoot", {});
+        if (override_.isNotEmpty())
+        {
+            juce::File f (override_);
+            if (f.isDirectory() || f.createDirectory().wasOk())
+                return f;
+        }
+    }
     return juce::File::getSpecialLocation (juce::File::userMusicDirectory)
                 .getChildFile ("Zynforge Sessions");
 }

@@ -28,7 +28,8 @@ namespace zynforge
         juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
         MultitrackRecorder&       getRecorder()      noexcept { return recorder; }
         SessionPlayer&            getPlayer()        noexcept { return player; }
-        juce::PropertiesFile*     getAppProps()      noexcept { return appProps.get(); }
+        juce::PropertiesFile*     getAppProps()      noexcept       { return appProps.get(); }
+        juce::PropertiesFile*     getAppProps() const noexcept       { return appProps.get(); }
         TimecodeChase&            getTimecodeChase() noexcept { return timecodeChase; }
 
         // -1 = no LTC source. Otherwise the strip whose device input

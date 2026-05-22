@@ -57,6 +57,7 @@ private:
     void applyLockState();
     void offerSessionRecovery();
     void showStartupWelcome();
+    void launchNewSessionDialog();
     bool saveSessionStateTo (const juce::File& dir);
     int  exportTracksTo (const juce::File& dir,
                          const std::vector<int>& channelIndices,

@@ -59,6 +59,13 @@ Active development. Software ships **multitrack recording**, **playback**, and *
 - [x] Click a dot to route; click-and-drag diagonally for incremental patching across multiple strips
 - [x] Column header shows the strip's colour + actual track name (mirrors mixer/EDIT)
 
+### New session dialog
+- [x] **File → New Session…** — Pro Tools-style picker (without Templates): name, Local Storage path, File Type (BWF/WAV, AIFF, FLAC), Sample Rate, Bit Depth, I/O preset, Interleaved flag
+- [x] Same dialog opens from the welcome screen's *Create New Session* button
+- [x] Chosen sessions root persists in appProps (`sessionsRoot`) and is used by every subsequent record / save / export path
+- [x] Chosen file type + bit depth feeds straight into `MultitrackRecorder::setCaptureFormat`; sample rate is applied to the audio device immediately
+- [x] Per-strip overrides (names, colours, gains, routing) are wiped so every new session starts from defaults
+
 ### Audio file import
 - [x] **File → Import Audio Files…** — multi-select WAV / AIFF / FLAC / MP3 / OGG / M4A / CAF
 - [x] Auto-detects mono vs stereo per file: mono → single track, stereo → L + R as two mono Track_NN.wav files with `isStereo=true` on the L
