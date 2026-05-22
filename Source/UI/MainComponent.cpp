@@ -143,12 +143,90 @@ MainComponent::MainComponent()
     updateTransportLabels();
 
     juce::Timer::callAfterDelay (250, [this] { offerSessionRecovery(); });
+
+   #if JUCE_MAC
+    juce::MenuBarModel::setMacMainMenu (this);
+   #endif
 }
 
 MainComponent::~MainComponent()
 {
+   #if JUCE_MAC
+    juce::MenuBarModel::setMacMainMenu (nullptr);
+   #endif
     removeKeyListener (this);
     setLookAndFeel (nullptr);
+}
+
+juce::StringArray MainComponent::getMenuBarNames()
+{
+    return { "File", "Session" };
+}
+
+juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::String&)
+{
+    juce::PopupMenu menu;
+
+    if (topLevelIndex == 0)  // File
+    {
+        menu.addItem (1, "Open Session…");
+        menu.addSeparator();
+        menu.addItem (2, "Save Session State",  engine.getActiveSessionDir().isDirectory());
+        menu.addItem (3, "Save Session As…",   engine.getActiveSessionDir().isDirectory());
+        menu.addSeparator();
+
+        juce::PopupMenu exportMenu;
+        const bool hasActive = engine.getActiveSessionDir().isDirectory();
+        exportMenu.addItem (10, "Export All Tracks…", hasActive);
+
+        juce::PopupMenu indiv;
+        const int n = engine.getRecorder().getNumTracks();
+        for (int i = 0; i < n; ++i)
+        {
+            const auto& t  = engine.getRecorder().getTrack (i);
+            const auto nm  = t.name.isNotEmpty() ? t.name
+                                                  : juce::String ("In " + juce::String (i + 1));
+            indiv.addItem (100 + i, nm, hasActive);
+        }
+        exportMenu.addSubMenu ("Export Individual Track", indiv, hasActive && n > 0);
+        menu.addSubMenu ("Export", exportMenu);
+    }
+    else if (topLevelIndex == 1)  // Session
+    {
+        menu.addItem (50, "Open Patch…");
+        menu.addItem (51, "Open Meterbridge…");
+        menu.addSeparator();
+        menu.addItem (52, "Start OSC (Generic)");
+        menu.addItem (53, "Start OSC (DiGiCo)");
+        menu.addItem (54, "Start OSC (Allen & Heath)");
+        menu.addItem (55, "Start OSC (SSL Live)");
+        menu.addItem (56, "Start OSC (Yamaha)");
+        menu.addItem (57, "Stop OSC", engine.isOscListening());
+        menu.addSeparator();
+        menu.addItem (60, "Choose Backup Folder…", ! engine.isRecording());
+    }
+
+    return menu;
+}
+
+void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
+{
+    if (id == 1)         onLoadSessionClicked();
+    else if (id == 2)    onSaveSessionState();
+    else if (id == 3)    onSaveSessionAs();
+    else if (id == 10)   onExportAllTracks();
+    else if (id >= 100)  onExportIndividualTrack (id - 100);
+    else if (id == 50)   zynforge::PatchPage::launch (engine);
+    else if (id == 51)   zynforge::Meterbridge::launch (engine);
+    else if (id >= 52 && id <= 56)
+    {
+        const int dialect = id - 52;
+        if (engine.startOsc (8000, dialect))
+            showStatus ("OSC listening on 8000 (" +
+                        juce::StringArray ({"Generic","DiGiCo","A&H","SSL","Yamaha"})[dialect] + ")");
+    }
+    else if (id == 57)   { engine.stopOsc(); showStatus ("OSC stopped"); }
+    else if (id == 60)   onBackupClicked();
 }
 
 bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)

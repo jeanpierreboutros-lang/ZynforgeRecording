@@ -18,6 +18,7 @@ namespace zynforge { class ChannelStrip; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
+                            public juce::MenuBarModel,
                             private juce::Timer
 {
 public:
@@ -28,6 +29,11 @@ public:
     void resized() override;
 
     bool keyPressed (const juce::KeyPress&, juce::Component*) override;
+
+    // MenuBarModel — populates the macOS system menu bar.
+    juce::StringArray getMenuBarNames() override;
+    juce::PopupMenu   getMenuForIndex (int topLevelMenuIndex, const juce::String& menuName) override;
+    void              menuItemSelected (int menuItemID, int topLevelMenuIndex) override;
 
 private:
     void rebuildStrips();
