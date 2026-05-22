@@ -14,9 +14,11 @@ namespace zynforge
     public:
         // Track-height presets — Pro Tools-style 7-step scale plus a
         // dynamic "fit to window" computed from the viewport height.
-        enum class Size { Micro, Mini, Small, Medium, Large, Jumbo, Extreme, FitToWindow };
+        // Size::Custom is engaged whenever the user drags the row's
+        // bottom edge — the dragged pixel height is stored in customH.
+        enum class Size { Micro, Mini, Small, Medium, Large, Jumbo, Extreme, FitToWindow, Custom };
 
-        static int pixelsFor (Size s, int fitFallback = 80)
+        static int pixelsFor (Size s, int fitFallback = 80, int customPixels = 80)
         {
             switch (s)
             {
@@ -28,9 +30,14 @@ namespace zynforge
                 case Size::Jumbo:       return 220;
                 case Size::Extreme:     return 320;
                 case Size::FitToWindow: return fitFallback;
+                case Size::Custom:      return customPixels;
             }
             return 80;
         }
+
+        static constexpr int kResizeZoneH = 6;   // bottom-edge grab zone
+        static constexpr int kMinRowH     = 20;
+        static constexpr int kMaxRowH     = 800;
 
         // Callback fired by the right-click menu so the owning TrackList
         // can recompute layout (and resolve "fit to window").
@@ -338,6 +345,18 @@ namespace zynforge
             outputCombo.setBounds (content.removeFromTop (18));
         }
 
+        bool isInResizeZone (juce::Point<int> p) const noexcept
+        {
+            return p.y >= getHeight() - kResizeZoneH;
+        }
+
+        void mouseMove (const juce::MouseEvent& e) override
+        {
+            setMouseCursor (isInResizeZone (e.getPosition())
+                            ? juce::MouseCursor::UpDownResizeCursor
+                            : juce::MouseCursor::NormalCursor);
+        }
+
         void mouseDown (const juce::MouseEvent& e) override
         {
             // Right-click anywhere on the row → size menu.
@@ -346,10 +365,29 @@ namespace zynforge
                 showSizeMenu();
                 return;
             }
+            // Left-click in the bottom resize zone → start a drag-resize.
+            if (isInResizeZone (e.getPosition()))
+            {
+                dragStartHeight = getHeight();
+                dragging        = true;
+                return;
+            }
             // Left-click on the coloured swatch column → colour picker.
             if (e.x < swatchW)
                 openColourPicker();
         }
+
+        void mouseDrag (const juce::MouseEvent& e) override
+        {
+            if (! dragging) return;
+            const int target = juce::jlimit (kMinRowH, kMaxRowH,
+                                             dragStartHeight + e.getDistanceFromDragStartY());
+            rowSize = Size::Custom;
+            customH = target;
+            if (onSizeChosen) onSizeChosen (*this, Size::Custom);
+        }
+
+        void mouseUp (const juce::MouseEvent&) override { dragging = false; }
 
         void openColourPicker()
         {
@@ -372,9 +410,10 @@ namespace zynforge
 
         Size getRowSize() const noexcept { return rowSize; }
         void setRowSize (Size s) noexcept { rowSize = s; }
+        int  getCustomHeight() const noexcept { return customH; }
         int  getRowPixelHeight (int fitFallback) const noexcept
         {
-            return pixelsFor (rowSize, fitFallback);
+            return pixelsFor (rowSize, fitFallback, customH);
         }
 
     private:
@@ -442,6 +481,9 @@ namespace zynforge
         int                       lastOutputDeviceCount { -1 };
         unsigned int              lastColourArgb        { 0 };
         Size                      rowSize               { Size::Small };
+        int                       customH               { 80 };
+        int                       dragStartHeight       { 0 };
+        bool                      dragging              { false };
     };
 
     // Owner of the TrackRow vertical list. EditPage drops this into the
