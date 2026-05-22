@@ -13,6 +13,7 @@
 #include "NewSessionDialog.h"
 #include "PerfDashboard.h"
 #include "SetlistBar.h"
+#include "TempoBar.h"
 #include "TimelineStrip.h"
 #include "TransportBar.h"
 
@@ -141,6 +142,7 @@ private:
     zynforge::BigClockPanel bigClock;
     zynforge::PerfDashboard perfDashboard;
     zynforge::SetlistBar    setlistBar;
+    zynforge::TempoBar      tempoBar;
 
     // Per-session cue list — populated from <SessionName>.zfproj on
     // every session swap, persisted on every add / pick / update.
@@ -153,6 +155,12 @@ private:
     void addCueAtTransport();
     void updateCueAtTransport();
     void renameCurrentCue();
+    // Build / refresh the metronome track. Walks the current tempo
+    // (and tempoMap, if any) to lay down a click WAV in the session's
+    // Audio Files/ folder. Tracks the file path so a re-press just
+    // overwrites it in place rather than piling up tracks.
+    void generateOrRefreshClickTrack();
+    int  clickTrackIndex { -1 };   // -1 = not yet created in this session
     void promptCueName (const juce::String& title,
                         const juce::String& initial,
                         std::function<void (const juce::String&)> onAccept);

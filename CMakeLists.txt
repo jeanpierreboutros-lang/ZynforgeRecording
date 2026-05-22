@@ -54,6 +54,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/PerfDashboard.cpp
     Source/UI/SessionPropertiesDialog.cpp
     Source/UI/SetlistBar.cpp
+    Source/UI/TempoBar.cpp
     Source/Network/CompanionServer.cpp
     Source/UI/Meterbridge.cpp
     Source/UI/TransportBar.cpp

@@ -382,6 +382,9 @@ namespace zynforge
         recordStereoMixFlag.store (appProps->getBoolValue ("recordStereoMix", false),
                                    std::memory_order_release);
 
+        currentTempoBpm.store ((float) appProps->getDoubleValue ("sessionTempoBpm", 120.0),
+                               std::memory_order_relaxed);
+
         // Restore the active session folder (set by New Session… / Open
         // Session…) so Save / Save As stay enabled across app restarts.
         {
@@ -480,6 +483,48 @@ namespace zynforge
             appProps->setValue ("activeSessionDir", activeSession.getFullPathName());
             appProps->saveIfNeeded();
         }
+    }
+
+    void AudioEngine::setSessionTempoBpm (float bpm)
+    {
+        bpm = juce::jlimit (20.0f, 999.0f, bpm);
+        currentTempoBpm.store (bpm, std::memory_order_relaxed);
+        if (appProps != nullptr)
+        {
+            appProps->setValue ("sessionTempoBpm", (double) bpm);
+            appProps->saveIfNeeded();
+        }
+    }
+
+    void AudioEngine::setTempoMap (std::vector<TempoChange> newMap)
+    {
+        std::sort (newMap.begin(), newMap.end(),
+                   [] (const auto& a, const auto& b) { return a.samplePos < b.samplePos; });
+        tempoMap = std::move (newMap);
+    }
+
+    void AudioEngine::addTempoChange (juce::int64 samplePos, float bpm)
+    {
+        bpm = juce::jlimit (20.0f, 999.0f, bpm);
+        // Replace if a change already exists within a small tolerance
+        // (one block at 48k = ~10ms) so duplicate drops don't pile up.
+        constexpr juce::int64 kSnap = 256;
+        for (auto& c : tempoMap)
+        {
+            if (std::abs (c.samplePos - samplePos) < kSnap)
+            {
+                c.bpm = bpm;
+                return;
+            }
+        }
+        tempoMap.push_back ({ samplePos, bpm });
+        std::sort (tempoMap.begin(), tempoMap.end(),
+                   [] (const auto& a, const auto& b) { return a.samplePos < b.samplePos; });
+    }
+
+    void AudioEngine::clearTempoMap()
+    {
+        tempoMap.clear();
     }
 
     bool AudioEngine::startOsc (int udpPort, int dialectIndex)

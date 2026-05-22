@@ -271,6 +271,20 @@ MainComponent::MainComponent()
     };
     addAndMakeVisible (setlistBar);
 
+    tempoBar.setBpm (engine.getSessionTempoBpm());
+    tempoBar.onBpmChanged = [this] (float bpm)
+    {
+        engine.setSessionTempoBpm (bpm);
+        tempoBar.setBpm (engine.getSessionTempoBpm());   // clamp echo
+
+        // If a click track has already been created in this session,
+        // regenerate it so the metronome stays locked to the new tempo.
+        if (clickTrackIndex >= 0)
+            generateOrRefreshClickTrack();
+    };
+    tempoBar.onCreateClickTrack = [this] { generateOrRefreshClickTrack(); };
+    addAndMakeVisible (tempoBar);
+
 
     timeline = std::make_unique<zynforge::TimelineStrip> (engine);
     addAndMakeVisible (*timeline);
@@ -1489,6 +1503,7 @@ void MainComponent::loadSetlistFromActiveSession()
                         zynforge::SetlistBar::Cue cue;
                         cue.name      = c->getProperty ("name").toString();
                         cue.samplePos = (juce::int64) (double) c->getProperty ("samplePos");
+                        cue.tempoBpm  = (float) (double) c->getProperty ("tempoBpm");
 
                         // Deserialize per-strip snapshot if present
                         // (cues saved by older builds without snapshots
@@ -1541,6 +1556,7 @@ void MainComponent::saveSetlistToActiveSession() const
         juce::DynamicObject::Ptr entry (new juce::DynamicObject());
         entry->setProperty ("name",      c.name);
         entry->setProperty ("samplePos", (double) c.samplePos);
+        entry->setProperty ("tempoBpm",  (double) c.tempoBpm);
 
         juce::Array<juce::var> stripArr;
         for (const auto& s : c.strips)
@@ -1575,6 +1591,19 @@ void MainComponent::jumpToCue (int index)
 
     auto& player = engine.getPlayer();
     player.setPositionSamples (cue.samplePos);
+
+    // Restore the cue's tempo if it has one (older cues stored 0 →
+    // skip so the engineer doesn't get yanked to 0 BPM).
+    if (cue.tempoBpm > 0.0f)
+    {
+        const float oldBpm = engine.getSessionTempoBpm();
+        engine.setSessionTempoBpm (cue.tempoBpm);
+        tempoBar.setBpm (engine.getSessionTempoBpm());
+        // Click track is tempo-locked — regenerate on tempo change so
+        // the metronome lines up with the recalled cue.
+        if (clickTrackIndex >= 0 && std::abs (oldBpm - cue.tempoBpm) > 0.05f)
+            generateOrRefreshClickTrack();
+    }
 
     // Recall the mixer state captured with this cue: gain / pan /
     // input + output routing / mute / solo / mon / arm — for every
@@ -1644,6 +1673,7 @@ void MainComponent::addCueAtTransport()
                          ? juce::String ("Song " + juce::String ((int) cues.size() + 1))
                          : name;
         c.samplePos = pos;
+        c.tempoBpm  = engine.getSessionTempoBpm();
 
         // Snapshot the current mixer state so recalling this cue later
         // restores fader, pan, mute/solo/mon/arm, and routing for every
@@ -1696,6 +1726,7 @@ void MainComponent::updateCueAtTransport()
     const auto pos = player.isLoaded() ? player.getPositionSamples() : juce::int64 (0);
     auto& cue = cues[(size_t) currentCueIndex];
     cue.samplePos = pos;
+    cue.tempoBpm  = engine.getSessionTempoBpm();
 
     // Re-capture every strip's state. Update means 'whatever the mixer
     // looks like NOW is what this cue should recall to in the future'.
@@ -1711,6 +1742,135 @@ void MainComponent::updateCueAtTransport()
     showStatus ("Cue '" + cue.name + "' updated — "
                 + juce::String ((double) pos / juce::jmax (1.0, player.getSampleRate()), 2) + " s, "
                 + juce::String (total) + " strip mix snapshotted");
+}
+
+void MainComponent::generateOrRefreshClickTrack()
+{
+    const auto sessionDir = engine.getActiveSessionDir();
+    if (! sessionDir.isDirectory())
+    {
+        showStatus ("Open or create a session before generating a click");
+        return;
+    }
+
+    auto audioFiles = sessionDir.getChildFile ("Audio Files");
+    audioFiles.createDirectory();
+
+    auto& recorder = engine.getRecorder();
+    if (clickTrackIndex < 0)
+    {
+        // First press in this session — append a fresh track at the end.
+        clickTrackIndex = recorder.getNumTracks();
+        engine.setStripCount (clickTrackIndex + 1);
+        engine.setTrackName  (clickTrackIndex, "Click");
+    }
+
+    const double sr      = juce::jmax (8000.0, [this]
+    {
+        if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())
+            return d->getCurrentSampleRate();
+        return 48000.0;
+    }());
+    const double totalSeconds = 600.0;   // 10 minutes; plenty for one show
+    const juce::int64 totalSamples = (juce::int64) (sr * totalSeconds);
+
+    // Click voice: short 1 kHz (downbeat 1.5 kHz) sine burst, ~30 ms,
+    // exponential decay so it sits without smearing across beats.
+    const double clickLenSec = 0.030;
+    const int    clickLenSamples = juce::jmax (8, (int) (sr * clickLenSec));
+
+    // Walk the tempo map to lay beats. If empty we just use the current
+    // tempo for the whole 10 minutes.
+    const auto& tempoMap = engine.getTempoMap();
+    auto bpmAtSample = [&] (juce::int64 sample) -> float
+    {
+        float bpm = engine.getSessionTempoBpm();
+        for (const auto& tc : tempoMap)
+        {
+            if (tc.samplePos <= sample) bpm = tc.bpm;
+            else break;
+        }
+        return bpm;
+    };
+
+    const auto trackName = juce::String::formatted ("Track_%02d", clickTrackIndex + 1);
+    auto dest = audioFiles.getChildFile (trackName + ".wav");
+    dest.deleteFile();
+
+    if (auto* out = dest.createOutputStream().release())
+    {
+        juce::WavAudioFormat wav;
+        juce::StringPairArray meta;
+        std::unique_ptr<juce::AudioFormatWriter> writer (
+            wav.createWriterFor (out, sr, 1, 24, meta, 0));
+        if (writer == nullptr) { delete out; showStatus ("Click write failed"); return; }
+
+        constexpr int kChunk = 4096;
+        juce::AudioBuffer<float> buf (1, kChunk);
+
+        juce::int64 written = 0;
+        int     beatIdx     = 0;
+        juce::int64 nextBeatAt = 0;
+
+        while (written < totalSamples)
+        {
+            const int thisChunk = (int) juce::jmin ((juce::int64) kChunk, totalSamples - written);
+            buf.clear();
+            auto* dst = buf.getWritePointer (0);
+
+            for (int i = 0; i < thisChunk; ++i)
+            {
+                const juce::int64 here = written + i;
+
+                // Check if a beat lands inside this sample-block window
+                // for this chunk; spawn click voices for any.
+                if (here == nextBeatAt)
+                {
+                    const float bpm = bpmAtSample (here);
+                    const double secondsPerBeat = 60.0 / juce::jmax (20.0f, bpm);
+                    // Downbeat (beat 1 of 4) is a higher pitch
+                    const bool isDownbeat = (beatIdx % 4) == 0;
+                    const double freq    = isDownbeat ? 1500.0 : 1000.0;
+                    const float  amp     = isDownbeat ? 0.85f  : 0.55f;
+
+                    for (int s = 0; s < clickLenSamples; ++s)
+                    {
+                        const int idx = i + s;
+                        if (idx >= thisChunk) break;     // crosses chunk; fine, next beat will continue if needed
+                        const double t      = s / sr;
+                        const double env    = std::exp (-t * 80.0);
+                        dst[idx] += (float) (std::sin (juce::MathConstants<double>::twoPi * freq * t)
+                                              * env * amp);
+                    }
+
+                    ++beatIdx;
+                    nextBeatAt = here + (juce::int64) (sr * secondsPerBeat);
+                }
+            }
+
+            writer->writeFromFloatArrays (buf.getArrayOfReadPointers(), 1, thisChunk);
+            written += thisChunk;
+        }
+    }
+
+    // Default the click track to hardware output 1 so it's audible
+    // without further routing — the strip's OUT combo still exposes
+    // every available device output so the engineer can re-patch it
+    // to a dedicated cue bus (headphones, drummer's IEM, etc.).
+    if (auto* dev = engine.getDeviceManager().getCurrentAudioDevice())
+    {
+        const int outs = dev->getActiveOutputChannels().countNumberOfSetBits();
+        const int outCh = juce::jlimit (0, juce::jmax (0, outs - 1), 0);
+        engine.setTrackOutputRouting (clickTrackIndex, outCh);
+    }
+    engine.setTrackInputRouting (clickTrackIndex, -1);   // no input — playback only
+
+    engine.loadSession (sessionDir);
+    lastTrackCount = -1;
+
+    showStatus ("Click track generated at "
+                + juce::String (engine.getSessionTempoBpm(), 1) + " BPM "
+                + "(routable to any output via its strip)");
 }
 
 void MainComponent::showSessionProperties()
@@ -2661,8 +2821,11 @@ void MainComponent::resized()
     perfDashboard.setBounds (clockRow.removeFromRight (240).reduced (4, 4));
     bigClock.setBounds (clockRow);
 
-    // Setlist bar — slim row between the BigClock banner and the timeline.
-    setlistBar.setBounds (r.removeFromTop (36).reduced (12, 2));
+    // Setlist + tempo row — slim strip between BigClock and the timeline.
+    auto bar = r.removeFromTop (36).reduced (12, 2);
+    tempoBar  .setBounds (bar.removeFromRight (320));
+    bar.removeFromRight (8);
+    setlistBar.setBounds (bar);
 
     // Timeline strip
     if (timeline != nullptr)

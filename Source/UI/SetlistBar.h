@@ -35,6 +35,7 @@ namespace zynforge
             juce::String name;
             juce::int64  samplePos { 0 };
             std::vector<StripSnapshot> strips;   // length = recorder.getNumTracks() at capture time
+            float        tempoBpm  { 0.0f };     // 0 = 'use session default' (older cues)
         };
 
         SetlistBar();

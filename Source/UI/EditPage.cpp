@@ -114,6 +114,49 @@ namespace zynforge
             addAndMakeVisible (muteButton);
             addAndMakeVisible (soloButton);
 
+            // Per-track 'VIEW' picker — clicking pops the lane-content
+            // menu matching the screenshot (blocks/playlists/analysis/
+            // warp are reserved for future builds and stay disabled).
+            viewButton.setColour (juce::TextButton::buttonColourId,  brand::bgElevated);
+            viewButton.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
+            viewButton.setTooltip ("Pick what this row's lane draws — waveform / volume / pan / …");
+            viewButton.onClick = [this]
+            {
+                juce::PopupMenu m;
+                m.addItem (10, "blocks",      false);   // reserved
+                m.addItem (11, "playlists",   false);   // reserved
+                m.addItem (12, "analysis",    false);   // reserved
+                m.addItem (13, "warp",        false);   // reserved
+                m.addSeparator();
+                m.addItem (20, "markers",     true,  laneMode == LaneMode::Markers);
+                m.addItem (21, "transcript",  false);   // reserved
+                m.addItem (22, "waveform",    true,  laneMode == LaneMode::Waveform);
+                m.addSeparator();
+                m.addItem (30, "volume",      true,  laneMode == LaneMode::Volume);
+                m.addItem (31, "volume trim", true,  laneMode == LaneMode::VolumeTrim);
+                m.addItem (32, "mute",        true,  laneMode == LaneMode::Mute);
+                m.addItem (33, "pan",         true,  laneMode == LaneMode::Pan);
+
+                juce::Component::SafePointer<TrackRow> self (this);
+                m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&viewButton),
+                                 [self] (int chosen)
+                {
+                    if (self == nullptr || chosen == 0) return;
+                    switch (chosen)
+                    {
+                        case 20: self->laneMode = LaneMode::Markers;    break;
+                        case 22: self->laneMode = LaneMode::Waveform;   break;
+                        case 30: self->laneMode = LaneMode::Volume;     break;
+                        case 31: self->laneMode = LaneMode::VolumeTrim; break;
+                        case 32: self->laneMode = LaneMode::Mute;       break;
+                        case 33: self->laneMode = LaneMode::Pan;        break;
+                        default: return;
+                    }
+                    self->repaint();
+                });
+            };
+            addAndMakeVisible (viewButton);
+
             // Input + output routing combos — same wiring as the mixer.
             auto styleCombo = [] (juce::ComboBox& c)
             {
@@ -282,6 +325,113 @@ namespace zynforge
             const auto waveColour = getStripColour().brighter (0.25f);
             const auto inner = wavePane.reduced (4, 6);
 
+            // Automation lane modes — flat horizontal line representing
+            // the current value. (Time-varying automation is reserved
+            // for a later build; this gives the engineer an at-a-glance
+            // read of the current parameter alongside the waveform UI.)
+            if (laneMode != LaneMode::Waveform)
+            {
+                auto& t = engine.getRecorder().getTrack (index);
+                g.setColour (brand::edge);
+                g.drawRect (inner, 1);
+
+                // Centre line for reference (zero / unity).
+                g.setColour (brand::edge.brighter (0.2f).withAlpha (0.6f));
+                g.drawHorizontalLine (inner.getCentreY(),
+                                      (float) inner.getX(), (float) inner.getRight());
+
+                juce::Colour lineCol = waveColour;
+                float yProp = 0.5f;  // 0 = top, 1 = bottom
+                juce::String label;
+
+                switch (laneMode)
+                {
+                    case LaneMode::Volume:
+                    case LaneMode::VolumeTrim:
+                    {
+                        const float dB = t.gainDb.load (std::memory_order_relaxed);
+                        // -60..+12 dB mapped to 1..0 (loud → top)
+                        yProp = 1.0f - juce::jlimit (0.0f, 1.0f,
+                                                     (dB + 60.0f) / 72.0f);
+                        lineCol = brand::accentStatus;
+                        label   = (laneMode == LaneMode::VolumeTrim ? "trim " : "vol ")
+                                + juce::String (dB, 1) + " dB";
+                        break;
+                    }
+                    case LaneMode::Pan:
+                    {
+                        const float pan = t.pan.load (std::memory_order_relaxed);
+                        // -1..+1 mapped to 1..0 (left = top, right = bottom)
+                        yProp = (1.0f - pan) * 0.5f;
+                        lineCol = brand::accentSolo;
+                        const int pct = juce::roundToInt (std::abs (pan) * 100.0f);
+                        label = (pct == 0) ? "pan C"
+                                            : (pan < 0 ? "pan L" + juce::String (pct)
+                                                       : "pan R" + juce::String (pct));
+                        break;
+                    }
+                    case LaneMode::Mute:
+                    {
+                        const bool muted = t.muted.load (std::memory_order_relaxed);
+                        yProp = muted ? 0.05f : 0.95f;
+                        lineCol = muted ? brand::brandOrange : brand::textMuted;
+                        label   = muted ? "MUTED" : "open";
+                        break;
+                    }
+                    case LaneMode::Markers:
+                    {
+                        // Markers are session-wide; draw vertical ticks
+                        // (without per-marker time mapping for now — the
+                        // timeline component is authoritative on positions).
+                        g.setColour (brand::accentStatus);
+                        for (int i = 0; i < 6; ++i)
+                        {
+                            const float x = inner.getX() + (i + 1) * inner.getWidth() * 0.1f;
+                            g.drawVerticalLine ((int) x,
+                                                (float) inner.getY(),
+                                                (float) inner.getBottom());
+                        }
+                        g.setColour (brand::textTertiary);
+                        g.setFont (juce::FontOptions().withHeight (11.0f));
+                        g.drawText ("markers", inner.reduced (4, 2),
+                                    juce::Justification::topLeft, false);
+                        // Playhead overlay still applies below.
+                        if (playheadX >= 0 && playheadX < wavePane.getWidth())
+                        {
+                            g.setColour (brand::accentPlay.withAlpha (0.85f));
+                            g.fillRect (juce::Rectangle<int> (headerW + playheadX,
+                                                              0, 2, getHeight()));
+                        }
+                        return;
+                    }
+                    default: break;
+                }
+
+                // Stepped automation line — flat for the whole row,
+                // then the value label sits on the right.
+                const int y = inner.getY()
+                            + juce::roundToInt (yProp * inner.getHeight());
+                g.setColour (lineCol);
+                g.drawHorizontalLine (y, (float) inner.getX(), (float) inner.getRight());
+                // Anchor dot at start + end.
+                g.fillEllipse ((float) inner.getX() - 3.0f, (float) y - 3.0f, 6.0f, 6.0f);
+                g.fillEllipse ((float) inner.getRight() - 3.0f, (float) y - 3.0f, 6.0f, 6.0f);
+
+                g.setColour (brand::textPrimary);
+                g.setFont (juce::FontOptions().withHeight (11.0f).withStyle ("Bold"));
+                g.drawText (label,
+                            inner.reduced (6, 2),
+                            juce::Justification::topRight, false);
+
+                if (playheadX >= 0 && playheadX < wavePane.getWidth())
+                {
+                    g.setColour (brand::accentPlay.withAlpha (0.85f));
+                    g.fillRect (juce::Rectangle<int> (headerW + playheadX,
+                                                      0, 2, getHeight()));
+                }
+                return;
+            }
+
             if (stereo)
             {
                 // L on top, R on bottom — Pro-Tools-style stereo lanes.
@@ -361,6 +511,8 @@ namespace zynforge
             inputCombo .setBounds (content.removeFromTop (18));
             content.removeFromTop (2);
             outputCombo.setBounds (content.removeFromTop (18));
+            content.removeFromTop (3);
+            viewButton .setBounds (content.removeFromTop (18));
         }
 
         bool isInResizeZone (juce::Point<int> p) const noexcept
@@ -516,7 +668,13 @@ namespace zynforge
         juce::ToggleButton        soloButton { "S" };
         juce::ComboBox            inputCombo;
         juce::ComboBox            outputCombo;
+        juce::TextButton          viewButton { "VIEW" };
         LedMeter                  meter;
+
+        // What this row draws in the lane area to the right of the
+        // header. The engineer flips via the VIEW button.
+        enum class LaneMode { Waveform, Markers, Volume, VolumeTrim, Mute, Pan };
+        LaneMode laneMode { LaneMode::Waveform };
         int                       playheadX             { -1 };
         int                       lastInputDeviceCount  { -1 };
         int                       lastOutputDeviceCount { -1 };

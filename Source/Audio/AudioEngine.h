@@ -155,6 +155,21 @@ namespace zynforge
         // empty session. Cleared by passing an empty / non-directory file.
         void setActiveSessionDir (const juce::File& dir);
 
+        // Session tempo. setSessionTempoBpm() is the canonical setter —
+        // it updates currentTempoBpm + persists to appProps. The tempo
+        // map is a sorted list of (samplePos, bpm) change points; the
+        // engine doesn't consume it on the audio thread yet (no MIDI
+        // click out), but TempoBar / EDIT view / cue snapshot all read
+        // and write it through these getters.
+        struct TempoChange { juce::int64 samplePos; float bpm; };
+        float  getSessionTempoBpm() const noexcept { return currentTempoBpm.load (std::memory_order_relaxed); }
+        void   setSessionTempoBpm (float bpm);
+
+        const std::vector<TempoChange>& getTempoMap() const noexcept { return tempoMap; }
+        void   setTempoMap (std::vector<TempoChange> newMap);
+        void   addTempoChange (juce::int64 samplePos, float bpm);
+        void   clearTempoMap();
+
         // Recent sessions — maintained when loadSession / startRecording
         // succeed. Persisted in appProps as 'recentSession_<i>' (i = 0
         // most recent). Capped at kMaxRecent entries.
@@ -252,6 +267,8 @@ namespace zynforge
         // 0–100 % units.
         std::atomic<double> deviceSampleRate { 0.0 };
         std::atomic<float>  audioLoadPct     { 0.0f };
+        std::atomic<float>  currentTempoBpm  { 120.0f };
+        std::vector<TempoChange> tempoMap;   // sorted by samplePos; UI/message-thread only
         std::atomic<float>  diskMBPerSec     { 0.0f };
         std::atomic<float>  ringFillPct      { 0.0f };
     public:
