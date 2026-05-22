@@ -600,6 +600,28 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
 
 bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
 {
+    // Space: universal play / pause toggle. Always wins so engineers
+    // can hit space from anywhere in the app without thinking.
+    if (key == juce::KeyPress::spaceKey)
+    {
+        auto& player = engine.getPlayer();
+        if (player.isPlaying())
+        {
+            engine.stopPlayback();
+            showStatus ("Stopped");
+        }
+        else if (player.isLoaded())
+        {
+            engine.startPlayback();
+            showStatus ("Playing");
+        }
+        else
+        {
+            showStatus ("Load or record a session first — nothing to play");
+        }
+        return true;
+    }
+
     const auto c = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
 
     if (c == 'm')
