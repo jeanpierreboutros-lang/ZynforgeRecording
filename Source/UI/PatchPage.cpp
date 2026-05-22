@@ -138,8 +138,9 @@ namespace zynforge
             }
             void setRouting (int strip, int hwChannel)
             {
-                if (isInput) engine.setTrackInputRouting  (strip, hwChannel);
-                else         engine.setTrackOutputRouting (strip, hwChannel);
+                // Linked: clicking a dot in either matrix patches both
+                // sides of the strip's I/O to the same hardware channel.
+                engine.setTrackLinkedRouting (strip, hwChannel);
             }
 
             AudioEngine& engine;

@@ -486,8 +486,21 @@ void MainComponent::rebuildStrips()
         auto nameCb   = [this, i] (juce::String chosen) { engine.setTrackName   (i, chosen); };
         auto gainCb   = [this, i] (float dB)            { engine.setTrackGainDb (i, dB); };
         auto panCb    = [this, i] (float pan)           { engine.setTrackPan    (i, pan); };
-        auto inCb     = [this, i] (int dev)             { engine.setTrackInputRouting  (i, dev); };
-        auto outCb    = [this, i] (int dev)             { engine.setTrackOutputRouting (i, dev); };
+        // Input + output are linked: changing either side updates both
+        // engine atomics AND refreshes the sibling combo so the UI stays
+        // in lockstep.
+        auto inCb = [this, i] (int dev)
+        {
+            engine.setTrackLinkedRouting (i, dev);
+            if (i < (int) strips.size() && strips[i] != nullptr)
+                strips[i]->setAvailableOutputs (engine.getCurrentDeviceOutputCount());
+        };
+        auto outCb = [this, i] (int dev)
+        {
+            engine.setTrackLinkedRouting (i, dev);
+            if (i < (int) strips.size() && strips[i] != nullptr)
+                strips[i]->setAvailableInputs (engine.getCurrentDeviceInputCount());
+        };
         auto s = std::make_unique<ChannelStrip> (i, recorder.getTrack (i),
                                                  std::move (colourCb),
                                                  std::move (nameCb),

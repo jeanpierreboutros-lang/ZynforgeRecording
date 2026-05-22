@@ -211,6 +211,14 @@ namespace zynforge
         stripRouting.setOutput (channelIndex, deviceCh);
     }
 
+    void AudioEngine::setTrackLinkedRouting (int channelIndex, int deviceCh)
+    {
+        // Single source of truth — sets BOTH sides of the patch so the
+        // PATCH page + the per-strip dropdowns stay in lockstep.
+        setTrackInputRouting  (channelIndex, deviceCh);
+        setTrackOutputRouting (channelIndex, deviceCh);
+    }
+
     void AudioEngine::setTrackGainDb (int channelIndex, float dB)
     {
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;

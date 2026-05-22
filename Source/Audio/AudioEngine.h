@@ -54,6 +54,13 @@ namespace zynforge
         // Routing. -1 = unrouted; values clamped to current device's range.
         void  setTrackInputRouting  (int channelIndex, int deviceCh);
         void  setTrackOutputRouting (int channelIndex, int deviceCh);
+
+        // Sets both input AND output for the strip to the same hardware
+        // channel index — the standard VSC workflow where strip N is
+        // physical channel N on both sides. PATCH page + per-strip combos
+        // both call this so input and output stay linked.
+        void  setTrackLinkedRouting (int channelIndex, int deviceCh);
+
         int   getCurrentDeviceInputCount()  const;
         int   getCurrentDeviceOutputCount() const;
 
