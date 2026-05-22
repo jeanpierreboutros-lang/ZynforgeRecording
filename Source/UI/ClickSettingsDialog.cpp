@@ -145,26 +145,13 @@ namespace zynforge
                   onSave   (std::move (save)),
                   onGenerate (std::move (gen))
             {
-                beatLabel.setText ("BEAT", juce::dontSendNotification);
-                beatLabel.setFont (juce::FontOptions().withHeight (16.0f).withStyle ("Bold"));
-                beatLabel.setColour (juce::Label::textColourId, brand::accentStatus);
-                addAndMakeVisible (beatLabel);
-
-                followMeter.setButtonText ("FOLLOW METER");
-                followMeter.setEnabled (false);   // reserved
-                followMeter.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
-                followMeter.setColour (juce::TextButton::textColourOffId, brand::textMuted);
-                addAndMakeVisible (followMeter);
-
-                bpmLabel.setText ("BPM", juce::dontSendNotification);
-                bpmLabel.setFont (juce::FontOptions().withHeight (14.0f).withStyle ("Bold"));
-                bpmLabel.setColour (juce::Label::textColourId, brand::textMuted);
-                addAndMakeVisible (bpmLabel);
-
-                bpmValue.setText (juce::String (bpm, 0), juce::dontSendNotification);
+                // Tempo readout in a single label: '120 BPM', large
+                // accent-coloured number with 'BPM' beside it. No
+                // separate BEAT / FOLLOW METER chips.
+                bpmValue.setText (juce::String (bpm, 0) + " BPM", juce::dontSendNotification);
                 bpmValue.setFont (juce::FontOptions().withHeight (44.0f).withStyle ("Bold"));
                 bpmValue.setColour (juce::Label::textColourId, brand::accentStatus);
-                bpmValue.setJustificationType (juce::Justification::centredRight);
+                bpmValue.setJustificationType (juce::Justification::centred);
                 addAndMakeVisible (bpmValue);
 
                 onButton.setButtonText (initial.on ? "ON" : "OFF");
@@ -228,18 +215,11 @@ namespace zynforge
             {
                 auto r = getLocalBounds().reduced (16, 12);
 
-                // Top banner: BEAT + FOLLOW METER | BPM number | ON.
-                auto banner = r.removeFromTop (80);
-                auto left   = banner.removeFromLeft (200);
-                beatLabel  .setBounds (left.removeFromTop (24));
-                left.removeFromTop (4);
-                followMeter.setBounds (left.removeFromTop (28));
-
+                // Top banner: [ '120 BPM' centred ] [ ON pill on the right ].
+                auto banner = r.removeFromTop (72);
                 auto onArea = banner.removeFromRight (90);
-                onButton.setBounds (onArea.reduced (4, 10));
-
-                bpmLabel  .setBounds (banner.removeFromTop (20));
-                bpmValue  .setBounds (banner.reduced (8, 0));
+                onButton.setBounds (onArea.reduced (4, 14));
+                bpmValue.setBounds (banner);
 
                 r.removeFromTop (12);
                 row1->setBounds (r.removeFromTop (80));
@@ -257,8 +237,7 @@ namespace zynforge
             ClickSettingsDialog::SaveCallback     onSave;
             ClickSettingsDialog::GenerateCallback onGenerate;
 
-            juce::Label beatLabel, bpmLabel, bpmValue;
-            juce::TextButton followMeter;
+            juce::Label bpmValue;
             juce::TextButton onButton { "ON" };
             std::unique_ptr<VoiceRow> row1, row2;
             juce::TextButton generateButton, closeButton;
