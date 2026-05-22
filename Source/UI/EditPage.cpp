@@ -132,20 +132,18 @@ namespace zynforge
             viewButton.setTooltip ("Pick what this row's lane draws — waveform / volume / pan / …");
             viewButton.onClick = [this]
             {
+                // Lane-content picker. Reserved Pro Tools-style items
+                // (blocks / playlists / analysis / warp / transcript)
+                // are dropped from the menu — they were never wired and
+                // the greyed entries were just clutter.
                 juce::PopupMenu m;
-                m.addItem (10, "blocks",      false);   // reserved
-                m.addItem (11, "playlists",   false);   // reserved
-                m.addItem (12, "analysis",    false);   // reserved
-                m.addItem (13, "warp",        false);   // reserved
+                m.addItem (22, "waveform",    true, laneMode == LaneMode::Waveform);
+                m.addItem (20, "markers",     true, laneMode == LaneMode::Markers);
                 m.addSeparator();
-                m.addItem (20, "markers",     true,  laneMode == LaneMode::Markers);
-                m.addItem (21, "transcript",  false);   // reserved
-                m.addItem (22, "waveform",    true,  laneMode == LaneMode::Waveform);
-                m.addSeparator();
-                m.addItem (30, "volume",      true,  laneMode == LaneMode::Volume);
-                m.addItem (31, "volume trim", true,  laneMode == LaneMode::VolumeTrim);
-                m.addItem (32, "mute",        true,  laneMode == LaneMode::Mute);
-                m.addItem (33, "pan",         true,  laneMode == LaneMode::Pan);
+                m.addItem (30, "volume",      true, laneMode == LaneMode::Volume);
+                m.addItem (31, "volume trim", true, laneMode == LaneMode::VolumeTrim);
+                m.addItem (32, "mute",        true, laneMode == LaneMode::Mute);
+                m.addItem (33, "pan",         true, laneMode == LaneMode::Pan);
 
                 juce::Component::SafePointer<TrackRow> self (this);
                 m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&viewButton),
