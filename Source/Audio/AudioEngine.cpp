@@ -609,7 +609,11 @@ namespace zynforge
     void AudioEngine::setTrackGainDb (int channelIndex, float dB)
     {
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
-        dB = juce::jlimit (-60.0f, 0.0f, dB);
+        // Fader range is -60..+12 dB — earlier clamp at 0 silently
+        // snapped any positive value back to unity, which looked like
+        // the fader was 'resetting itself' when the engineer pushed
+        // it past the centre point.
+        dB = juce::jlimit (-60.0f, 12.0f, dB);
         recorder.getTrack (channelIndex).gainDb.store (dB, std::memory_order_relaxed);
         stripGains.setGainDb (channelIndex, dB);
     }
