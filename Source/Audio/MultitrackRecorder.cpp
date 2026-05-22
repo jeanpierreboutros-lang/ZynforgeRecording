@@ -175,6 +175,22 @@ namespace zynforge
 
         for (int ch = 0; ch < n; ++ch)
         {
+            auto& t = *tracks[(std::size_t) ch];
+
+            // Arm gate: a strip whose REC button is OFF doesn't let input
+            // enter the software. Meter stays silent (decays cleanly so a
+            // previously-hot meter doesn't latch), FFT FIFO is left alone,
+            // and the FIFO push below is skipped too. Engineer arms a
+            // channel when they actually want to see / record it.
+            if (! t.armed.load (std::memory_order_relaxed))
+            {
+                const float prevPeak = t.peak.load (std::memory_order_relaxed);
+                const float prevRms  = t.rms .load (std::memory_order_relaxed);
+                t.peak.store (prevPeak * 0.92f, std::memory_order_relaxed);
+                t.rms .store (prevRms  * 0.85f, std::memory_order_relaxed);
+                continue;
+            }
+
             const float* src = inputs[ch];
             if (src == nullptr) continue;
 
@@ -188,7 +204,6 @@ namespace zynforge
                 sumSq += s * s;
             }
             const float rms = std::sqrt (sumSq / (float) juce::jmax (1, numSamples));
-            auto& t = *tracks[(std::size_t) ch];
             const float prevPeak = t.peak.load (std::memory_order_relaxed);
             t.peak.store (juce::jmax (peak, prevPeak * 0.92f), std::memory_order_relaxed);
             t.rms .store (rms,  std::memory_order_relaxed);
