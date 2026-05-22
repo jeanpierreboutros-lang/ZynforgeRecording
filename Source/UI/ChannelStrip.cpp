@@ -151,10 +151,14 @@ namespace zynforge
         if (nameLabel.getText() != state.name)
             nameLabel.setText (state.name, juce::dontSendNotification);
 
-        // Colour: re-resolve and push to the swatch + repaint the wash.
+        // Colour: re-resolve and push to the swatch + sliders so the
+        // fader fill / pan thumb track the live channel colour.
         const auto resolved = getResolvedColour();
+        const auto knobCol  = resolved.brighter (0.30f);
         if (swatch != nullptr)
             swatch->setDisplayColour (resolved);
+        gainFader.setColour (juce::Slider::thumbColourId, knobCol);
+        panSlider.setColour (juce::Slider::thumbColourId, knobCol);
         repaint();
     }
 
@@ -420,7 +424,10 @@ namespace zynforge
         panSlider.setDoubleClickReturnValue (true, 0.0);
         panSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
         panSlider.setColour (juce::Slider::trackColourId,    brand::edge);
-        panSlider.setColour (juce::Slider::thumbColourId,    brand::accentStatus);
+        panSlider.setColour (juce::Slider::thumbColourId,    getResolvedColour().brighter (0.30f));
+        // Touch-friendly drag — slightly higher sensitivity so the thumb
+        // tracks finger movement 1:1 instead of accelerating away.
+        panSlider.setMouseDragSensitivity (160);
         panSlider.setValue (s.pan.load(), juce::dontSendNotification);
         panSlider.onValueChange = [this]
         {
@@ -440,7 +447,8 @@ namespace zynforge
         gainFader.setNumDecimalPlacesToDisplay (1);
         gainFader.setColour (juce::Slider::trackColourId,        brand::edge);
         gainFader.setColour (juce::Slider::backgroundColourId,   brand::bgDeep);
-        gainFader.setColour (juce::Slider::thumbColourId,        brand::accentStatus);
+        gainFader.setColour (juce::Slider::thumbColourId,        getResolvedColour().brighter (0.30f));
+        gainFader.setMouseDragSensitivity (250);
         gainFader.setColour (juce::Slider::textBoxTextColourId,  brand::textPrimary);
         gainFader.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
         gainFader.setColour (juce::Slider::textBoxBackgroundColourId,

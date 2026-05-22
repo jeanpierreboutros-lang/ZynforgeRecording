@@ -119,9 +119,14 @@ namespace zynforge
         g.setColour (brand::bgDeep);
         g.fillRoundedRectangle (trackX, trackY, trackW, trackH, 2.0f);
 
-        // Green fill from the thumb down to the bottom.
-        const float thumbY = juce::jlimit (trackY, trackB, sliderPos);
-        g.setColour (brand::accentPlay);
+        // Fill from the thumb down to the bottom — gradient in the
+        // channel's colour (taken from the slider's thumbColourId).
+        const float thumbY  = juce::jlimit (trackY, trackB, sliderPos);
+        const auto  baseCol = s.findColour (juce::Slider::thumbColourId);
+        g.setGradientFill (juce::ColourGradient (
+            baseCol.brighter (0.25f), trackX, thumbY,
+            baseCol.darker  (0.30f), trackX, trackB,
+            false));
         g.fillRoundedRectangle (trackX, thumbY, trackW, trackB - thumbY, 2.0f);
 
         g.setColour (brand::edge);
