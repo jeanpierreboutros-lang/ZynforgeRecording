@@ -5,18 +5,25 @@ namespace zynforge
 {
     ZynForgeLookAndFeel::ZynForgeLookAndFeel()
     {
+        // Per Live's design system: bg-elevated (#303030) is the default
+        // chrome colour for buttons / combos. The Recording app was using
+        // bg-strip for these, which made buttons read as part of the dark
+        // panel instead of standing forward.
         setColour (juce::ResizableWindow::backgroundColourId, brand::bgDeep);
         setColour (juce::DocumentWindow::backgroundColourId,  brand::bgDeep);
         setColour (juce::Label::textColourId,                 brand::textPrimary);
-        setColour (juce::TextButton::buttonColourId,          brand::bgStrip);
+        setColour (juce::TextButton::buttonColourId,          brand::bgElevated);
         setColour (juce::TextButton::textColourOnId,          brand::textPrimary);
         setColour (juce::TextButton::textColourOffId,         brand::textPrimary);
-        setColour (juce::ComboBox::backgroundColourId,        brand::bgStrip);
+        setColour (juce::ComboBox::backgroundColourId,        brand::bgElevated);
         setColour (juce::ComboBox::textColourId,              brand::textPrimary);
         setColour (juce::ComboBox::outlineColourId,           brand::edge);
-        setColour (juce::PopupMenu::backgroundColourId,       brand::bgPanel);
+        setColour (juce::PopupMenu::backgroundColourId,       brand::bgElevated);
         setColour (juce::PopupMenu::textColourId,             brand::textPrimary);
         setColour (juce::PopupMenu::highlightedBackgroundColourId, brand::edge);
+        setColour (juce::AlertWindow::backgroundColourId,     brand::bgPanel);
+        setColour (juce::AlertWindow::textColourId,           brand::textPrimary);
+        setColour (juce::AlertWindow::outlineColourId,        brand::edge);
     }
 
     juce::Font ZynForgeLookAndFeel::getTextButtonFont (juce::TextButton&, int h)
