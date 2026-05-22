@@ -55,6 +55,14 @@ namespace zynforge
 
         void mouseDown (const juce::MouseEvent&) override;
 
+        // Multi-select state. Shift/Cmd-clicking the strip header
+        // toggles selection through onToggleSelection so the host
+        // (MainComponent) can build a set of selected strips for
+        // bulk actions (delete / colour).
+        void setSelected (bool isSelected);
+        bool isSelected() const noexcept { return selected; }
+        std::function<void (bool /*additive*/)> onToggleSelection;
+
         juce::Colour getResolvedColour() const;
 
         void paint (juce::Graphics&) override;
@@ -111,6 +119,8 @@ namespace zynforge
 
         class StripTimer;
         std::unique_ptr<StripTimer> stripTimer;
+
+        bool selected { false };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChannelStrip)
     };

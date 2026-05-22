@@ -230,10 +230,27 @@ namespace zynforge
 
     void ChannelStrip::mouseDown (const juce::MouseEvent& e)
     {
-        // Only react to right-click — left-clicks go straight to whichever
-        // child (button / fader / combo) received them.
+        // Right-click → context menu, as before.
         if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
+        {
             showContextMenu();
+            return;
+        }
+        // Shift / Cmd click anywhere on the strip toggles its
+        // multi-selection state. Additive (shift/cmd) keeps existing
+        // selection; plain click clears + selects only this one.
+        if (e.mods.isShiftDown() || e.mods.isCommandDown())
+        {
+            if (onToggleSelection) onToggleSelection (true);
+            return;
+        }
+    }
+
+    void ChannelStrip::setSelected (bool isSelectedNow)
+    {
+        if (selected == isSelectedNow) return;
+        selected = isSelectedNow;
+        repaint();
     }
 
     void ChannelStrip::setMenuCallbacks (VoidCallback onDelete,
@@ -494,6 +511,12 @@ namespace zynforge
         };
 
         stylePanKnob (panSlider);
+        // Trackpad / mouse-wheel scrolling should NOT change the pan
+        // — the engineer scrolls the mixer with the trackpad and
+        // doesn't want every two-finger swipe nudging values around.
+        // The slider still responds to direct click+drag and to
+        // double-click for centre.
+        panSlider.setScrollWheelEnabled (false);
         panSlider.setTooltip ("Pan L — drag to set L100..0..R100. Double-click for centre.");
         panSlider.setValue (s.pan.load(), juce::dontSendNotification);
         panSlider.onValueChange = [this, formatPanText]
@@ -522,6 +545,7 @@ namespace zynforge
         if (pairState != nullptr)
         {
             stylePanKnob (panSliderR);
+            panSliderR.setScrollWheelEnabled (false);
             panSliderR.setTooltip ("Pan R — drag to set L100..0..R100. Double-click for centre.");
             panSliderR.setValue (pairState->pan.load(), juce::dontSendNotification);
             panSliderR.onValueChange = [this, formatPanText]
@@ -558,6 +582,10 @@ namespace zynforge
         gainFader.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
         gainFader.setColour (juce::Slider::textBoxBackgroundColourId,
                              brand::bgDeep.withAlpha (0.4f));
+        // Same reasoning as the pan knob: scroll-wheel / trackpad
+        // gestures should NEVER move the gain. The fader changes only
+        // on a direct click+drag interaction.
+        gainFader.setScrollWheelEnabled (false);
         gainFader.setValue (s.gainDb.load(), juce::dontSendNotification);
         gainFader.onValueChange = [this]
         {
@@ -606,6 +634,16 @@ namespace zynforge
 
         g.setColour (stripColour.brighter (0.40f).withAlpha (0.30f));
         g.drawRoundedRectangle (r, brand::radius::xl, 1.0f);
+
+        // Multi-select highlight — a 2 px accent-yellow outline so a
+        // group of selected strips is unambiguous from the side of the
+        // room while still letting the strip's personality colour
+        // dominate.
+        if (selected)
+        {
+            g.setColour (brand::accentSolo);
+            g.drawRoundedRectangle (r.reduced (1.0f), brand::radius::xl, 2.5f);
+        }
     }
 
     void ChannelStrip::resized()

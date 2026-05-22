@@ -18,6 +18,7 @@
 #include "TransportBar.h"
 
 #include <memory>
+#include <set>
 #include <vector>
 
 namespace zynforge { class ChannelStrip; }
@@ -80,6 +81,15 @@ private:
     void removeLastCapture();
     void showBatchRenameDialog();
     void showBatchColourDialog();
+    void showSelectionMenu();
+    void deleteSelectedStrips();
+    void colourSelectedStrips();
+    void moveSelectedStrips (int delta);
+    void clearStripSelection();
+
+    // Multi-select: indices are LOGICAL strip indices (stereo pairs
+    // counted as one). Engineer toggles via shift/cmd-click on a strip.
+    std::set<int> selectedLogical;
     void showSessionProperties();
 
     bool snapToMarkers { false };

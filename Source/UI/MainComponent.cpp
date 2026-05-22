@@ -440,6 +440,17 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // dialog instead of renaming/recolouring 24 strips by hand.
         menu.addItem (320, "Batch Rename Channels…",  engine.getRecorder().getNumTracks() > 0);
         menu.addItem (321, "Batch Colour Channels…",  engine.getRecorder().getNumTracks() > 0);
+        menu.addSeparator();
+        const int selCount = (int) selectedLogical.size();
+        juce::PopupMenu sel;
+        sel.addItem (330, "Move selected up",         selCount > 0);
+        sel.addItem (331, "Move selected down",       selCount > 0);
+        sel.addSeparator();
+        sel.addItem (332, "Colour selected…",         selCount > 0);
+        sel.addItem (333, "Delete selected",          selCount > 0);
+        sel.addSeparator();
+        sel.addItem (334, "Clear selection",          selCount > 0);
+        menu.addSubMenu ("Selection (" + juce::String (selCount) + ")", sel, true);
     }
     else if (topLevelIndex == 2)  // Session
     {
@@ -722,6 +733,11 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 313)  removeLastCapture();
     else if (id == 320)  showBatchRenameDialog();
     else if (id == 321)  showBatchColourDialog();
+    else if (id == 330)  moveSelectedStrips (-1);
+    else if (id == 331)  moveSelectedStrips ( 1);
+    else if (id == 332)  colourSelectedStrips();
+    else if (id == 333)  deleteSelectedStrips();
+    else if (id == 334)  clearStripSelection();
 }
 
 bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
@@ -898,6 +914,23 @@ void MainComponent::rebuildStrips()
                              std::move (addCb),
                              std::move (linkStereoCb),
                              std::move (linkOtherCb));
+
+        // Hook shift/cmd-click selection. The toggle handler is keyed
+        // on the LOGICAL strip index (i.e. stereo pairs count as one).
+        const int logicalIdx = (int) strips.size();
+        s->onToggleSelection = [this, logicalIdx] (bool /*additive*/)
+        {
+            if (selectedLogical.count (logicalIdx) > 0)
+                selectedLogical.erase (logicalIdx);
+            else
+                selectedLogical.insert (logicalIdx);
+            // Update visual state on every strip so the highlight is
+            // always in sync with the selection set.
+            for (size_t k = 0; k < strips.size(); ++k)
+                strips[k]->setSelected (selectedLogical.count ((int) k) > 0);
+            showStatus (juce::String ((int) selectedLogical.size()) + " strip(s) selected");
+        };
+        s->setSelected (selectedLogical.count (logicalIdx) > 0);
 
         s->setAvailableInputs  (numIns);
         s->setAvailableOutputs (numOuts);
@@ -2045,6 +2078,119 @@ void MainComponent::showSessionProperties()
             proj.replaceWithText (juce::JSON::toString (juce::var (merged.get())));
             showStatus ("Saved session properties — " + sessionDir.getFileName());
         });
+}
+
+// ─── Multi-selection helpers ──────────────────────────────────────
+//
+// 'selectedLogical' is the set of logical strip indices currently
+// selected via shift/cmd-click. For stereo pairs, both halves move /
+// recolour / delete together because the strip list iterates logical
+// rows, not raw track indices.
+
+void MainComponent::clearStripSelection()
+{
+    if (selectedLogical.empty()) return;
+    selectedLogical.clear();
+    for (auto& s : strips) s->setSelected (false);
+    showStatus ("Selection cleared");
+}
+
+void MainComponent::deleteSelectedStrips()
+{
+    if (selectedLogical.empty() || engine.isRecording()) return;
+
+    // Delete from the highest index down so earlier indices stay valid.
+    std::vector<int> sorted (selectedLogical.begin(), selectedLogical.end());
+    std::sort (sorted.rbegin(), sorted.rend());
+
+    int removed = 0;
+    for (int logical : sorted)
+    {
+        if (logical < 0 || logical >= (int) strips.size()) continue;
+        // The strip's deleteCb already knows how to remove the right
+        // number of underlying tracks (1 for mono, 2 for stereo). We
+        // simulate that by walking through the engine's index map.
+        // Since the strip list rebuilds on the next tick, we just call
+        // engine.removeStripAt for each logical entry — for stereo
+        // pairs we call it twice at the same physical index because
+        // the second physical track shifts down.
+        // To find the physical index of a logical row, sum mono+stereo
+        // strip widths up to that point.
+        int phys = 0;
+        for (int k = 0; k < logical; ++k)
+        {
+            auto& t = engine.getRecorder().getTrack (phys);
+            phys += t.isStereo.load (std::memory_order_relaxed) ? 2 : 1;
+        }
+        if (phys >= engine.getRecorder().getNumTracks()) continue;
+        const bool wasStereo = engine.getRecorder().getTrack (phys)
+                                    .isStereo.load (std::memory_order_relaxed);
+        engine.removeStripAt (phys);
+        if (wasStereo) engine.removeStripAt (phys);
+        ++removed;
+    }
+    selectedLogical.clear();
+    lastTrackCount = -1;
+    showStatus ("Deleted " + juce::String (removed) + " selected strip(s)");
+}
+
+void MainComponent::colourSelectedStrips()
+{
+    if (selectedLogical.empty()) return;
+
+    auto picker = std::make_unique<juce::ColourSelector>(
+        juce::ColourSelector::showColourspace
+        | juce::ColourSelector::showSliders);
+    picker->setSize (300, 280);
+    picker->setCurrentColour (juce::Colours::orange);
+
+    struct Apply : public juce::ChangeListener
+    {
+        MainComponent* owner;
+        void changeListenerCallback (juce::ChangeBroadcaster* src) override
+        {
+            if (auto* cs = dynamic_cast<juce::ColourSelector*> (src))
+            {
+                const auto c = cs->getCurrentColour();
+                for (int logical : owner->selectedLogical)
+                {
+                    if (logical < 0 || logical >= (int) owner->strips.size()) continue;
+                    int phys = 0;
+                    for (int k = 0; k < logical; ++k)
+                    {
+                        auto& t = owner->engine.getRecorder().getTrack (phys);
+                        phys += t.isStereo.load (std::memory_order_relaxed) ? 2 : 1;
+                    }
+                    owner->engine.setTrackColour (phys, c);
+                    auto& t = owner->engine.getRecorder().getTrack (phys);
+                    if (t.isStereo.load (std::memory_order_relaxed))
+                        owner->engine.setTrackColour (phys + 1, c);
+                }
+                owner->lastTrackCount = -1;
+            }
+        }
+    };
+    auto listener = std::make_shared<Apply>();
+    listener->owner = this;
+    picker->addChangeListener (listener.get());
+    batchColourListenerHandle = listener;   // keep alive
+
+    juce::CallOutBox::launchAsynchronously (
+        std::move (picker),
+        juce::Rectangle<int>{ getScreenBounds().getCentreX(),
+                              getScreenBounds().getCentreY(), 1, 1 },
+        nullptr);
+
+    showStatus ("Picking colour for " + juce::String ((int) selectedLogical.size()) + " strip(s)…");
+}
+
+void MainComponent::moveSelectedStrips (int /*delta*/)
+{
+    // True audio-file reorder would shuffle Track_NN.wav files on disk
+    // and renumber persisted overrides — non-trivial and out of scope
+    // for the current pass. For now we flag the request so the engineer
+    // knows it's recognised but deferred.
+    showStatus ("Reorder is in progress — for now, delete + re-import in the desired order");
 }
 
 void MainComponent::showBatchRenameDialog()

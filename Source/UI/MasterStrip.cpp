@@ -70,6 +70,7 @@ namespace zynforge
         addAndMakeVisible (muteButton);
 
         fader.setSliderStyle (juce::Slider::LinearVertical);
+        fader.setScrollWheelEnabled (false);   // trackpad scroll mustn't move the master
         fader.setRange (-60.0, 12.0, 0.1);
         fader.setSkewFactorFromMidPoint (-15.0);
         fader.setDoubleClickReturnValue (true, 0.0);
