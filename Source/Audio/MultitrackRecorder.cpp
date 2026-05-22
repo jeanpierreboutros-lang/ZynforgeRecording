@@ -79,6 +79,40 @@ namespace zynforge
         backupDir = dir;
     }
 
+    void MultitrackRecorder::addTrack()
+    {
+        if (isRecording()) return;
+
+        const int fifoSize = juce::nextPowerOfTwo ((int) (sampleRate * kFifoSeconds));
+
+        auto t = std::make_unique<TrackState>();
+        t->name = "In " + juce::String ((int) tracks.size() + 1);
+        tracks.push_back (std::move (t));
+
+        auto f = std::make_unique<ChannelFifo>();
+        f->resize (fifoSize);
+        fifos.push_back (std::move (f));
+
+        preRoll.push_back (std::make_unique<PreRollBuffer>());
+        allocatePreRollBuffers();
+    }
+
+    void MultitrackRecorder::removeLastTrack()
+    {
+        if (isRecording() || tracks.empty()) return;
+        tracks.pop_back();
+        fifos.pop_back();
+        preRoll.pop_back();
+    }
+
+    void MultitrackRecorder::setTrackCount (int n)
+    {
+        if (isRecording()) return;
+        n = juce::jmax (1, n);
+        while ((int) tracks.size() > n) removeLastTrack();
+        while ((int) tracks.size() < n) addTrack();
+    }
+
     void MultitrackRecorder::setPreRollSeconds (int seconds)
     {
         seconds = juce::jlimit (0, 30, seconds);

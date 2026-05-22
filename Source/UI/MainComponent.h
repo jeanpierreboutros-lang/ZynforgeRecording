@@ -102,6 +102,7 @@ private:
     juce::TextButton patchButton   { "PATCH" };
     juce::TextButton metersButton  { "METERS" };
     juce::TextButton oscButton     { "OSC" };
+    juce::TextButton addChannelButton { "+ CH" };
 
     bool sessionLocked { false };
 

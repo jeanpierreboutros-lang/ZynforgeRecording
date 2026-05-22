@@ -64,6 +64,13 @@ namespace zynforge
         int   getStreamOutputR() const noexcept { return streamOutR.load (std::memory_order_relaxed); }
         void  setTrackStream   (int channelIndex, bool enabled);
 
+        // App-level: persisted user-chosen strip count. Defaults to 1 on
+        // first launch. setStripCount safely detaches the audio callback,
+        // mutates the track vector, reapplies persisted per-strip state,
+        // and re-attaches.
+        int  getStripCount() const;
+        void setStripCount (int n);
+
         // OSC remote: starts/stops a juce::OSCReceiver bound to UDP port,
         // with a dialect parser for DiGiCo / A&H / SSL / Yamaha consoles
         // plus a generic /zynforge/* schema for tablet apps.
@@ -125,6 +132,9 @@ namespace zynforge
         std::atomic<int> streamOutR { -1 };
 
         std::unique_ptr<OscRemote> osc;
+        std::unique_ptr<juce::PropertiesFile> appProps;
+
+        void applyPersistedStripState();
 
         // Audio-thread scratch for routed VSC playback: track i fills
         // channel i, then engine copies into the real device output that

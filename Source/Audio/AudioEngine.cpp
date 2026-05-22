@@ -43,8 +43,60 @@ namespace zynforge
         return markers.getCount();
     }
 
+    int AudioEngine::getStripCount() const
+    {
+        return appProps ? juce::jlimit (1, 128, appProps->getIntValue ("stripCount", 1)) : 1;
+    }
+
+    void AudioEngine::setStripCount (int n)
+    {
+        if (recorder.isRecording()) return;
+        n = juce::jlimit (1, 128, n);
+
+        if (appProps != nullptr)
+        {
+            appProps->setValue ("stripCount", n);
+            appProps->saveIfNeeded();
+        }
+
+        deviceManager.removeAudioCallback (this);
+        recorder.setTrackCount (n);
+        applyPersistedStripState();
+        deviceManager.addAudioCallback (this);
+    }
+
+    void AudioEngine::applyPersistedStripState()
+    {
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+        {
+            auto& t = recorder.getTrack (i);
+            if (stripColours.hasColour (i))
+                t.colourARGB.store (stripColours.getColour (i).getARGB(),
+                                    std::memory_order_relaxed);
+            if (stripNames.hasName (i))
+                t.name = stripNames.getName (i);
+            if (stripGains.hasGain (i))
+                t.gainDb.store (stripGains.getGainDb (i), std::memory_order_relaxed);
+            if (stripGains.hasPan (i))
+                t.pan.store    (stripGains.getPan (i), std::memory_order_relaxed);
+
+            t.inputRouting .store (stripRouting.hasInput  (i) ? stripRouting.getInput  (i) : i,
+                                   std::memory_order_relaxed);
+            t.outputRouting.store (stripRouting.hasOutput (i) ? stripRouting.getOutput (i) : i,
+                                   std::memory_order_relaxed);
+        }
+    }
+
     AudioEngine::AudioEngine()
     {
+        juce::PropertiesFile::Options opts;
+        opts.applicationName     = "Zynforge Recording";
+        opts.filenameSuffix      = ".settings";
+        opts.folderName          = "Zynforge Recording";
+        opts.osxLibrarySubFolder = "Application Support";
+        opts.storageFormat       = juce::PropertiesFile::storeAsXML;
+        appProps = std::make_unique<juce::PropertiesFile> (opts);
+
         // Open with up to 128 inputs / 64 outputs by default — adjust later from UI.
         auto err = deviceManager.initialise (/*numInputs*/ 128, /*numOutputs*/ 64,
                                              /*savedState*/ nullptr,
@@ -64,34 +116,13 @@ namespace zynforge
     {
         const auto sr        = device->getCurrentSampleRate();
         const auto blockSize = device->getCurrentBufferSizeSamples();
-        const auto inputs    = device->getActiveInputChannels().countNumberOfSetBits();
 
-        recorder.prepare (sr, blockSize, juce::jmax (1, inputs));
+        // Strip count is user-controlled (persisted; defaults to 1) —
+        // it's no longer tied to the device's input channel count.
+        recorder.prepare (sr, blockSize, getStripCount());
         player  .prepare (sr, blockSize);
 
-        // Apply persisted per-channel colour + name + gain/pan + routing.
-        for (int i = 0; i < recorder.getNumTracks(); ++i)
-        {
-            auto& t = recorder.getTrack (i);
-
-            if (stripColours.hasColour (i))
-                t.colourARGB.store (stripColours.getColour (i).getARGB(),
-                                    std::memory_order_relaxed);
-
-            if (stripNames.hasName (i))
-                t.name = stripNames.getName (i);
-
-            if (stripGains.hasGain (i))
-                t.gainDb.store (stripGains.getGainDb (i), std::memory_order_relaxed);
-            if (stripGains.hasPan (i))
-                t.pan   .store (stripGains.getPan    (i), std::memory_order_relaxed);
-
-            // Identity routing by default; override if persisted.
-            t.inputRouting .store (stripRouting.hasInput  (i) ? stripRouting.getInput  (i) : i,
-                                   std::memory_order_relaxed);
-            t.outputRouting.store (stripRouting.hasOutput (i) ? stripRouting.getOutput (i) : i,
-                                   std::memory_order_relaxed);
-        }
+        applyPersistedStripState();
     }
 
     juce::Array<juce::File> AudioEngine::findIncompleteSessions (const juce::File& sessionsRoot)

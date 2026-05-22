@@ -56,6 +56,13 @@ namespace zynforge
         void setPreRollSeconds (int seconds);
         int  getPreRollSeconds() const noexcept               { return preRollSeconds; }
 
+        // Decouples strip count from device input count — engineer picks
+        // how many tracks they want, routing chooses which device input
+        // each strip captures. No-op while recording.
+        void addTrack();
+        void removeLastTrack();
+        void setTrackCount (int n);
+
         int          getNumTracks() const noexcept { return (int) tracks.size(); }
         TrackState&  getTrack (int i) noexcept     { return *tracks[(std::size_t) i]; }
 
