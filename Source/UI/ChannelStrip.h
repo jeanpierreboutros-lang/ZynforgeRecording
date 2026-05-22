@@ -30,7 +30,8 @@ namespace zynforge
                       FloatCallback  onGainDb        = {},
                       FloatCallback  onPan           = {},
                       IntCallback    onInputRouted   = {},
-                      IntCallback    onOutputRouted  = {});
+                      IntCallback    onOutputRouted  = {},
+                      TrackState*    stereoPartner   = nullptr);
         ~ChannelStrip() override;
 
         void setMenuCallbacks (VoidCallback onDelete,
@@ -67,6 +68,7 @@ namespace zynforge
 
         int          stripIndex;
         TrackState&  state;
+        TrackState*  pairState { nullptr };   // R partner when this is a stereo strip
         juce::Colour personality;
         ColourCallback colourCb;
         NameCallback   renameCb;

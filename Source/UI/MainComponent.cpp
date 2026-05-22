@@ -567,52 +567,75 @@ void MainComponent::rebuildStrips()
     const int numIns  = engine.getCurrentDeviceInputCount();
     const int numOuts = engine.getCurrentDeviceOutputCount();
 
-    for (int i = 0; i < n; ++i)
+    // Iterate logical strips: a stereo L track owns its R partner and only
+    // creates a single ChannelStrip representing the pair.
+    int i = 0;
+    while (i < n)
     {
-        auto colourCb = [this, i] (juce::Colour chosen) { engine.setTrackColour (i, chosen); };
+        auto& tL = recorder.getTrack (i);
+        const bool stereo = tL.isStereo.load() && (i + 1 < n);
+        TrackState* tR = stereo ? &recorder.getTrack (i + 1) : nullptr;
+        const int  step = stereo ? 2 : 1;
+
+        auto colourCb = [this, i, step] (juce::Colour chosen)
+        {
+            engine.setTrackColour (i, chosen);
+            if (step == 2) engine.setTrackColour (i + 1, chosen);
+        };
         auto nameCb   = [this, i] (juce::String chosen) { engine.setTrackName   (i, chosen); };
-        auto gainCb   = [this, i] (float dB)            { engine.setTrackGainDb (i, dB); };
-        auto panCb    = [this, i] (float pan)           { engine.setTrackPan    (i, pan); };
-        // Input + output are linked: changing either side updates both
-        // engine atomics AND refreshes the sibling combo so the UI stays
-        // in lockstep.
-        auto inCb = [this, i] (int dev)
+        auto gainCb   = [this, i, step] (float dB)
+        {
+            engine.setTrackGainDb (i, dB);
+            if (step == 2) engine.setTrackGainDb (i + 1, dB);
+        };
+        auto panCb    = [this, i, step] (float pan)
+        {
+            engine.setTrackPan (i, pan);
+            if (step == 2) engine.setTrackPan (i + 1, pan);
+        };
+
+        // Stereo routing: L → device[N], R → device[N+1].
+        auto inCb = [this, i, step] (int dev)
         {
             engine.setTrackLinkedRouting (i, dev);
-            if (i < (int) strips.size() && strips[i] != nullptr)
-                strips[i]->setAvailableOutputs (engine.getCurrentDeviceOutputCount());
+            if (step == 2)
+                engine.setTrackLinkedRouting (i + 1, (dev < 0) ? -1 : dev + 1);
         };
-        auto outCb = [this, i] (int dev)
+        auto outCb = [this, i, step] (int dev)
         {
             engine.setTrackLinkedRouting (i, dev);
-            if (i < (int) strips.size() && strips[i] != nullptr)
-                strips[i]->setAvailableInputs (engine.getCurrentDeviceInputCount());
+            if (step == 2)
+                engine.setTrackLinkedRouting (i + 1, (dev < 0) ? -1 : dev + 1);
         };
-        auto s = std::make_unique<ChannelStrip> (i, recorder.getTrack (i),
+
+        auto s = std::make_unique<ChannelStrip> (i, tL,
                                                  std::move (colourCb),
                                                  std::move (nameCb),
                                                  std::move (gainCb),
                                                  std::move (panCb),
                                                  std::move (inCb),
-                                                 std::move (outCb));
+                                                 std::move (outCb),
+                                                 tR);
 
-        // Wire the right-click menu actions to engine-level operations.
-        auto deleteCb     = [this, i] { engine.removeStripAt (i); };
-        auto addCb        = [this]    { engine.addOneStrip(); };
+        // Right-click menu wiring.
+        auto deleteCb     = [this, i, step]
+        {
+            // Stereo strip: delete both halves of the pair.
+            engine.removeStripAt (i);
+            if (step == 2) engine.removeStripAt (i);   // same idx after shift
+        };
+        auto addCb        = [this] { engine.addOneStrip(); };
         auto linkStereoCb = [this, i]
         {
-            const int n = engine.getRecorder().getNumTracks();
-            if (i + 1 >= n) return;   // need a right partner
+            const int total = engine.getRecorder().getNumTracks();
+            if (i + 1 >= total) return;
             auto& tL = engine.getRecorder().getTrack (i);
             const bool wasStereo = tL.isStereo.load();
             tL.isStereo.store (! wasStereo, std::memory_order_release);
+            // Trigger a full rebuild on the next timer tick.
+            lastTrackCount = -1;
         };
-        auto linkOtherCb  = [this, i] (int other)
-        {
-            // Reserved for future "link to channel N" grouping. For now this
-            // forwards stereo linking to the chosen channel pair.
-            juce::ignoreUnused (i, other);
-        };
+        auto linkOtherCb  = [this, i] (int other) { juce::ignoreUnused (i, other); };
         s->setMenuCallbacks (std::move (deleteCb),
                              std::move (addCb),
                              std::move (linkStereoCb),
@@ -622,6 +645,8 @@ void MainComponent::rebuildStrips()
         s->setAvailableOutputs (numOuts);
         stripsContainer.addAndMakeVisible (*s);
         strips.push_back (std::move (s));
+
+        i += step;
     }
     lastTrackCount = n;
     resized();

@@ -273,9 +273,11 @@ namespace zynforge
                                 FloatCallback  gainCallback,
                                 FloatCallback  panCallback,
                                 IntCallback    inputCallback,
-                                IntCallback    outputCallback)
+                                IntCallback    outputCallback,
+                                TrackState*    stereoPartner)
         : stripIndex (index),
           state (s),
+          pairState (stereoPartner),
           personality (brand::stripColour (index)),
           colourCb (std::move (colourCallback)),
           renameCb (std::move (nameCallback)),
@@ -286,6 +288,10 @@ namespace zynforge
           spectrum (s),
           meter (s)
     {
+        // When this strip controls a stereo pair, point the meter at the R
+        // partner so it can draw two bars side-by-side.
+        if (pairState != nullptr)
+            meter.setStereoPartner (pairState);
         nameLabel.setText (s.name, juce::dontSendNotification);
         nameLabel.setJustificationType (juce::Justification::centred);
         nameLabel.setColour (juce::Label::textColourId, brand::textPrimary);
@@ -333,6 +339,8 @@ namespace zynforge
         armButton.onClick = [this]
         {
             state.armed.store (armButton.getToggleState(), std::memory_order_relaxed);
+            if (pairState) pairState->armed.store (armButton.getToggleState(),
+                                                   std::memory_order_relaxed);
         };
         armButton.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
         armButton.setColour (juce::ToggleButton::tickColourId, brand::accentRecord);
@@ -342,6 +350,8 @@ namespace zynforge
         monButton.onClick = [this]
         {
             state.monitor.store (monButton.getToggleState(), std::memory_order_relaxed);
+            if (pairState) pairState->monitor.store (monButton.getToggleState(),
+                                                     std::memory_order_relaxed);
         };
         monButton.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
         monButton.setColour (juce::ToggleButton::tickColourId, brand::accentPlay);
@@ -351,6 +361,8 @@ namespace zynforge
         muteButton.onClick = [this]
         {
             state.muted.store (muteButton.getToggleState(), std::memory_order_relaxed);
+            if (pairState) pairState->muted.store (muteButton.getToggleState(),
+                                                   std::memory_order_relaxed);
         };
         muteButton.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
         muteButton.setColour (juce::ToggleButton::tickColourId, brand::accentRecord);
@@ -360,6 +372,8 @@ namespace zynforge
         soloButton.onClick = [this]
         {
             state.soloed.store (soloButton.getToggleState(), std::memory_order_relaxed);
+            if (pairState) pairState->soloed.store (soloButton.getToggleState(),
+                                                    std::memory_order_relaxed);
         };
         soloButton.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
         soloButton.setColour (juce::ToggleButton::tickColourId,
@@ -402,6 +416,7 @@ namespace zynforge
         {
             const float v = (float) panSlider.getValue();
             state.pan.store (v, std::memory_order_relaxed);
+            if (pairState) pairState->pan.store (v, std::memory_order_relaxed);
             if (panCb) panCb (v);
         };
         addAndMakeVisible (panSlider);
@@ -425,6 +440,7 @@ namespace zynforge
         {
             const float v = (float) gainFader.getValue();
             state.gainDb.store (v, std::memory_order_relaxed);
+            if (pairState) pairState->gainDb.store (v, std::memory_order_relaxed);
             if (gainCb) gainCb (v);
         };
         addAndMakeVisible (gainFader);

@@ -25,6 +25,16 @@ namespace zynforge
         displayPeak = juce::jmax (peak, displayPeak * 0.85f);
         displayRms  = juce::jmax (rms,  displayRms  * 0.7f);
         if (clip) showClip = true;
+
+        if (stereoR != nullptr)
+        {
+            const float pR = stereoR->peak.load (std::memory_order_relaxed);
+            const float rR = stereoR->rms .load (std::memory_order_relaxed);
+            const bool  cR = stereoR->clipped.load (std::memory_order_relaxed);
+            displayPeakR = juce::jmax (pR, displayPeakR * 0.85f);
+            displayRmsR  = juce::jmax (rR, displayRmsR  * 0.7f);
+            if (cR) showClip = true;
+        }
         repaint();
     }
 
@@ -43,15 +53,14 @@ namespace zynforge
         return juce::jlimit (0.0f, 1.0f, (db - kMinDb) / (kMaxDb - kMinDb));
     }
 
-    void LedMeter::paint (juce::Graphics& g)
+    void LedMeter::paintBar (juce::Graphics& g, juce::Rectangle<float> r,
+                             float displayPeakLocal, float displayRmsLocal) const
     {
-        auto r = getLocalBounds().toFloat().reduced (2.0f);
-
         g.setColour (brand::bgDeep);
         g.fillRoundedRectangle (r, 3.0f);
 
-        const float litPeak = linearToNormalisedDb (displayPeak);
-        const float litRms  = linearToNormalisedDb (displayRms);
+        const float litPeak = linearToNormalisedDb (displayPeakLocal);
+        const float litRms  = linearToNormalisedDb (displayRmsLocal);
 
         const float segH = r.getHeight() / (float) kNumSegments;
         const float gap  = juce::jmax (1.0f, segH * 0.15f);
@@ -76,6 +85,25 @@ namespace zynforge
             else if (litByPeak)  g.setColour (base.withAlpha (0.45f));
             else                 g.setColour (brand::meterIdle);
             g.fillRoundedRectangle (seg, 1.5f);
+        }
+    }
+
+    void LedMeter::paint (juce::Graphics& g)
+    {
+        auto r = getLocalBounds().toFloat().reduced (2.0f);
+        const bool stereo = (stereoR != nullptr);
+
+        if (stereo)
+        {
+            const float half = r.getWidth() * 0.5f;
+            auto leftBar  = r.withWidth (half - 1.0f);
+            auto rightBar = r.withTrimmedLeft (half + 1.0f);
+            paintBar (g, leftBar,  displayPeak,  displayRms);
+            paintBar (g, rightBar, displayPeakR, displayRmsR);
+        }
+        else
+        {
+            paintBar (g, r, displayPeak, displayRms);
         }
 
         // Side tick marks at standard dB values, on the right edge.
