@@ -104,7 +104,7 @@ private:
     juce::TextButton metersButton  { "METERS" };
     juce::TextButton oscButton     { "OSC" };
     juce::TextButton addChannelButton { "+ CH" };
-    juce::TextButton mixViewButton    { "MIX" };
+    juce::TextButton mixViewButton    { "MIXER" };
     juce::TextButton editViewButton   { "EDIT" };
 
     enum class View { Mix, Edit };

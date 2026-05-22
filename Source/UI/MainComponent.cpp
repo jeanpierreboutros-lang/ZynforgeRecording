@@ -1406,7 +1406,7 @@ void MainComponent::resized()
     row2.removeFromRight (8);
     editViewButton .setBounds (row2.removeFromRight (60).reduced (0, 2));
     row2.removeFromRight (4);
-    mixViewButton  .setBounds (row2.removeFromRight (60).reduced (0, 2));
+    mixViewButton  .setBounds (row2.removeFromRight (70).reduced (0, 2));
     row2.removeFromRight (10);
     transportLabel.setBounds (row2.removeFromLeft (140));
     sessionLabel  .setBounds (row2);
