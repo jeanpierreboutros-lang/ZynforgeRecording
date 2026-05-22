@@ -543,24 +543,18 @@ namespace zynforge
 
         outLabel.setBounds (r.removeFromTop (14));
 
-        // Fader | dB ruler | LED meter (left → right).
-        const int meterW    = 30;   // wider so the meter's own dB labels fit
-        const int rulerW    = 28;
-        const int headroomH = 32;   // empty space above the fader so the
-                                    // 0 dB mark sits where the thumb rests,
-                                    // not at the absolute top of the strip.
+        // Fader | dB ruler | LED meter (left → right). All three share the
+        // same vertical extent now that the fader has positive headroom
+        // (-60..+12 dB), so the cap at +12 dB lines up with the meter's
+        // 0 dBFS at the top of the strip.
+        const int meterW = 30;   // wide enough for the meter's own dB gutter
+        const int rulerW = 28;   // fader's dB tick column
 
-        // Meter spans the full remaining height — it represents the live
-        // signal level and should always show top peaks.
         meter.setBounds (r.removeFromRight (meterW));
         r.removeFromRight (2);
-
-        // Fader + ruler share a column that starts headroomH below the top.
-        auto faderCol = r;
-        faderCol.removeFromTop (headroomH);
         if (dbRuler != nullptr)
-            dbRuler->setBounds (faderCol.removeFromRight (rulerW));
-        faderCol.removeFromRight (2);
-        gainFader.setBounds (faderCol);
+            dbRuler->setBounds (r.removeFromRight (rulerW));
+        r.removeFromRight (2);
+        gainFader.setBounds (r);
     }
 }
