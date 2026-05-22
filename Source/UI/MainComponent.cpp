@@ -259,7 +259,11 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 3)    onSaveSessionAs();
     else if (id == 10)   onExportAllTracks();
     else if (id == 99)   confirmAndQuit();
-    else if (id >= 100)  onExportIndividualTrack (id - 100);
+    // Track-export sub-menu uses ids 100..199. Tightened from the
+    // previous open-ended `>= 100` which was swallowing 110..115
+    // (OSC dialects), 200..230 (settings menu), and 250 (Session
+    // Settings) — sending all of them to onExportIndividualTrack.
+    else if (id >= 100 && id < 200) onExportIndividualTrack (id - 100);
     else if (id == 50)   zynforge::PatchPage::launch (engine);
     else if (id == 51)   zynforge::Meterbridge::launch (engine);
     // OSC dialect picks under Session ▶ OSC ▶
@@ -271,7 +275,138 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
                         juce::StringArray ({"Generic","DiGiCo","A&H","SSL","Yamaha"})[dialect] + ")");
     }
     else if (id == 115)  { engine.stopOsc(); showStatus ("OSC stopped"); }
-    else if (id == 250)  zynforge::SessionSettingsDialog::launch (engine);
+    else if (id == 250)
+    {
+        struct StubContent final : public juce::Component
+        {
+            explicit StubContent (AudioEngine& e) : eng (e) { rebuild(); setSize (380, 230); }
+
+            void rebuild()
+            {
+                using F = zynforge::CaptureFormat;
+                const auto cur = eng.getRecorder().getCaptureFormat();
+                const double sr = eng.getDeviceManager().getAudioDeviceSetup().sampleRate;
+
+                fmtL.setText ("Audio Format", juce::dontSendNotification);
+                rateL.setText ("Sample Rate", juce::dontSendNotification);
+                bitsL.setText ("Bit Depth", juce::dontSendNotification);
+                for (auto* l : { &fmtL, &rateL, &bitsL })
+                    { l->setColour (juce::Label::textColourId, brand::textPrimary); addAndMakeVisible (*l); }
+
+                fmtBox.addItem ("WAV",  1);
+                fmtBox.addItem ("AIFF", 2);
+                fmtBox.addItem ("FLAC", 3);
+                int container = (cur == F::Wav16 || cur == F::Wav24 || cur == F::Wav32Float) ? 1
+                              : (cur == F::Aiff16 || cur == F::Aiff24 || cur == F::Aiff32Float) ? 2 : 3;
+                fmtBox.setSelectedId (container, juce::dontSendNotification);
+                fmtBox.onChange = [this] { refreshBits(); };
+                addAndMakeVisible (fmtBox);
+
+                rateBox.addItem ("44.1 kHz", 1);
+                rateBox.addItem ("48 kHz",   2);
+                rateBox.addItem ("96 kHz",   3);
+                rateBox.addItem ("192 kHz",  4);
+                rateBox.setSelectedId (juce::approximatelyEqual (sr, 44100.0)  ? 1
+                                     : juce::approximatelyEqual (sr, 96000.0)  ? 3
+                                     : juce::approximatelyEqual (sr, 192000.0) ? 4 : 2,
+                                     juce::dontSendNotification);
+                addAndMakeVisible (rateBox);
+
+                addAndMakeVisible (bitsBox);
+                refreshBits();
+                bitsBox.setSelectedId ((cur == F::Wav16 || cur == F::Aiff16 || cur == F::Flac16) ? 1
+                                     : (cur == F::Wav32Float || cur == F::Aiff32Float) ? 3 : 2,
+                                     juce::dontSendNotification);
+
+                applyB.setButtonText ("Apply");
+                cancelB.setButtonText ("Cancel");
+                applyB.onClick  = [this] { apply(); };
+                cancelB.onClick = [this] { close(); };
+                addAndMakeVisible (applyB);
+                addAndMakeVisible (cancelB);
+            }
+
+            void refreshBits()
+            {
+                const int prev = bitsBox.getSelectedId();
+                bitsBox.clear (juce::dontSendNotification);
+                bitsBox.addItem ("16-bit PCM", 1);
+                bitsBox.addItem ("24-bit PCM", 2);
+                if (fmtBox.getSelectedId() != 3) bitsBox.addItem ("32-bit float", 3);
+                if (prev > 0) bitsBox.setSelectedId (prev, juce::dontSendNotification);
+                if (bitsBox.getSelectedId() == 0)
+                    bitsBox.setSelectedId (2, juce::dontSendNotification);
+            }
+
+            void apply()
+            {
+                if (eng.isRecording()) { close(); return; }
+                using F = zynforge::CaptureFormat;
+                F f = F::Wav24;
+                const int c = fmtBox.getSelectedId(), b = bitsBox.getSelectedId();
+                if      (c == 1) f = b == 1 ? F::Wav16 : b == 2 ? F::Wav24 : F::Wav32Float;
+                else if (c == 2) f = b == 1 ? F::Aiff16 : b == 2 ? F::Aiff24 : F::Aiff32Float;
+                else             f = b == 1 ? F::Flac16 : F::Flac24;
+                eng.getRecorder().setCaptureFormat (f);
+
+                double sr = 48000.0;
+                switch (rateBox.getSelectedId())
+                { case 1: sr = 44100.0; break; case 2: sr = 48000.0; break;
+                  case 3: sr = 96000.0; break; case 4: sr = 192000.0; break; }
+                auto setup = eng.getDeviceManager().getAudioDeviceSetup();
+                setup.sampleRate = sr;
+                eng.getDeviceManager().setAudioDeviceSetup (setup, true);
+                close();
+            }
+
+            void close()
+            {
+                if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
+                    dw->exitModalState (0);
+            }
+
+            void resized() override
+            {
+                auto r = getLocalBounds().reduced (16);
+                const int rowH = 30, labelW = 120;
+                auto row = [&] (juce::Label& l, juce::ComboBox& b)
+                {
+                    auto rr = r.removeFromTop (rowH);
+                    l.setBounds (rr.removeFromLeft (labelW));
+                    b.setBounds (rr);
+                    r.removeFromTop (6);
+                };
+                row (fmtL, fmtBox); row (rateL, rateBox); row (bitsL, bitsBox);
+                r.removeFromTop (10);
+                auto br = r.removeFromBottom (32);
+                applyB .setBounds (br.removeFromRight (110));
+                br.removeFromRight (8);
+                cancelB.setBounds (br.removeFromRight (110));
+            }
+
+            void paint (juce::Graphics& g) override { g.fillAll (brand::bgPanel); }
+
+            AudioEngine& eng;
+            juce::Label fmtL, rateL, bitsL;
+            juce::ComboBox fmtBox, rateBox, bitsBox;
+            juce::TextButton applyB, cancelB;
+        };
+
+        auto* content = new StubContent (engine);
+
+        juce::DialogWindow::LaunchOptions opts;
+        opts.content.setOwned (content);
+        opts.dialogTitle                  = "Session Settings";
+        opts.dialogBackgroundColour       = brand::bgPanel;
+        opts.escapeKeyTriggersCloseButton = true;
+        opts.useNativeTitleBar            = true;
+        opts.resizable                    = false;
+        if (auto* dw = opts.launchAsync())
+        {
+            dw->setAlwaysOnTop (true);
+            dw->toFront (true);
+        }
+    }
     else if (id == 60)   onBackupClicked();
     // Edit menu
     else if (id == 307)  soloSelection();

@@ -183,32 +183,27 @@ namespace zynforge
 
     void SessionSettingsDialog::launch (AudioEngine& engine)
     {
-        juce::Logger::writeToLog ("[ZF] SessionSettingsDialog::launch — entered");
+        // Direct file breadcrumb — bypasses juce::Logger entirely so we
+        // can prove the call site is wired even if writeToLog is muted
+        // in Release builds.
+        juce::File::getSpecialLocation (juce::File::tempDirectory)
+                .getChildFile ("zf-settings-launch.txt")
+                .replaceWithText (juce::Time::getCurrentTime().toISO8601 (true));
 
-        // Defer to the next message-thread tick so the menu has fully
-        // torn down before we open the modal.
-        juce::MessageManager::callAsync ([engineRef = std::ref (engine)]
+        auto content = std::make_unique<SettingsContent> (engine);
+
+        juce::DialogWindow::LaunchOptions opts;
+        opts.content.setOwned (content.release());
+        opts.dialogTitle                  = "Session Settings";
+        opts.dialogBackgroundColour       = brand::bgPanel;
+        opts.escapeKeyTriggersCloseButton = true;
+        opts.useNativeTitleBar            = true;
+        opts.resizable                    = false;
+        auto* dw = opts.launchAsync();
+        if (dw != nullptr)
         {
-            juce::Logger::writeToLog ("[ZF] SessionSettingsDialog::launch — opening window");
-            auto& engine = engineRef.get();
-
-            auto content = std::make_unique<SettingsContent> (engine);
-
-            juce::DialogWindow::LaunchOptions opts;
-            opts.content.setOwned (content.release());
-            opts.dialogTitle                  = "Session Settings";
-            opts.dialogBackgroundColour       = brand::bgPanel;
-            opts.escapeKeyTriggersCloseButton = true;
-            opts.useNativeTitleBar            = true;
-            opts.resizable                    = false;
-            auto* dw = opts.launchAsync();
-            juce::Logger::writeToLog (juce::String ("[ZF] launchAsync returned ")
-                                       + (dw != nullptr ? "valid window" : "nullptr"));
-            if (dw != nullptr)
-            {
-                dw->setAlwaysOnTop (true);
-                dw->toFront (true);
-            }
-        });
+            dw->setAlwaysOnTop (true);
+            dw->toFront (true);
+        }
     }
 }
