@@ -2,6 +2,7 @@
 #include "../Theme/BrandColors.h"
 #include "Meterbridge.h"
 #include "PatchPage.h"
+#include "SessionSettingsDialog.h"
 
 using namespace zynforge;
 
@@ -131,6 +132,9 @@ MainComponent::MainComponent()
     timeline = std::make_unique<zynforge::TimelineStrip> (engine);
     addAndMakeVisible (*timeline);
 
+    transportBar = std::make_unique<zynforge::TransportBar> (engine);
+    addAndMakeVisible (*transportBar);
+
     stripsViewport.setViewedComponent (&stripsContainer, false);
     stripsViewport.setScrollBarsShown (false, true);     // h-scroll only
     addAndMakeVisible (stripsViewport);
@@ -160,7 +164,7 @@ MainComponent::~MainComponent()
 
 juce::StringArray MainComponent::getMenuBarNames()
 {
-    return { "File", "Session" };
+    return { "File", "Edit", "Session" };
 }
 
 juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::String&)
@@ -191,9 +195,39 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         exportMenu.addSubMenu ("Export Individual Track", indiv, hasActive && n > 0);
         menu.addSubMenu ("Export", exportMenu);
         menu.addSeparator();
+        menu.addItem (60, "Choose Backup Folder…", ! engine.isRecording());
+        menu.addSeparator();
         menu.addItem (99, "Quit Zynforge Recording…");
     }
-    else if (topLevelIndex == 1)  // Session
+    else if (topLevelIndex == 1)  // Edit
+    {
+        // Edit menu. Shortcut hints appear after a tab character — macOS
+        // pulls those out and right-aligns them in the native menu.
+        const bool hasContext = engine.getPlayer().isLoaded() || engine.isRecording();
+
+        menu.addItem (300, "Undo\tCmd+Z",       false);
+        menu.addItem (301, "Redo\tCmd+R",       false);
+        menu.addSeparator();
+        menu.addItem (302, "Cut\tCmd+X",        false);
+        menu.addItem (303, "Copy\tCmd+C",       false);
+        menu.addItem (304, "Paste\tCmd+V",      false);
+        menu.addItem (305, "Delete",             false);
+        menu.addItem (306, "Crop\tCtrl+Cmd+C", false);
+        menu.addItem (307, "Solo Selection\tA",   true);
+        menu.addSeparator();
+        menu.addItem (308, "Set Range to Loop Range",
+                      engine.getPlayer().hasLoopRegion());
+        menu.addSeparator();
+        menu.addItem (309, "Toggle Snap\t4", true, snapToMarkers);
+        menu.addSeparator();
+        menu.addItem (310, "Split/Separate\tS", hasContext);
+        menu.addSeparator();
+        menu.addItem (311, "Start Range\t,",  hasContext);
+        menu.addItem (312, "Finish Range\t.", hasContext);
+        menu.addSeparator();
+        menu.addItem (313, "Remove Last Capture", ! engine.isRecording());
+    }
+    else if (topLevelIndex == 2)  // Session
     {
         menu.addItem (50, "Patch…");
         menu.addItem (51, "Meterbridge…");
@@ -209,36 +243,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         oscMenu.addItem (115, "Stop OSC", engine.isOscListening());
         menu.addSubMenu ("OSC", oscMenu);
 
-        // Session Settings: format / sample rate / bit depth + Apply.
-        juce::PopupMenu settingsMenu;
-
-        juce::PopupMenu fmtMenu;
-        fmtMenu.addItem (200, "WAV",  ! engine.isRecording(), pendingContainer == 0);
-        fmtMenu.addItem (201, "AIFF", ! engine.isRecording(), pendingContainer == 1);
-        fmtMenu.addItem (202, "FLAC", ! engine.isRecording(), pendingContainer == 2);
-        settingsMenu.addSubMenu ("Audio Format", fmtMenu);
-
-        juce::PopupMenu srMenu;
-        srMenu.addItem (210, "44.1 kHz", ! engine.isRecording(), pendingSampleRate == 44100.0);
-        srMenu.addItem (211, "48 kHz",   ! engine.isRecording(), pendingSampleRate == 48000.0);
-        srMenu.addItem (212, "96 kHz",   ! engine.isRecording(), pendingSampleRate == 96000.0);
-        srMenu.addItem (213, "192 kHz",  ! engine.isRecording(), pendingSampleRate == 192000.0);
-        settingsMenu.addSubMenu ("Sample Rate", srMenu);
-
-        juce::PopupMenu bdMenu;
-        const bool can32 = pendingContainer != 2;   // FLAC doesn't support 32-bit float
-        bdMenu.addItem (220, "16-bit",       ! engine.isRecording(),           pendingBitDepth == 16);
-        bdMenu.addItem (221, "24-bit",       ! engine.isRecording(),           pendingBitDepth == 24);
-        bdMenu.addItem (222, "32-bit float", ! engine.isRecording() && can32, pendingBitDepth == 32);
-        settingsMenu.addSubMenu ("Bit Depth", bdMenu);
-
-        settingsMenu.addSeparator();
-        settingsMenu.addItem (230, "Apply", ! engine.isRecording());
-
-        menu.addSubMenu ("Session Settings", settingsMenu);
-
         menu.addSeparator();
-        menu.addItem (60, "Choose Backup Folder…", ! engine.isRecording());
+        menu.addItem (250, "Session Settings…", ! engine.isRecording());
     }
 
     return menu;
@@ -263,34 +269,34 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
                         juce::StringArray ({"Generic","DiGiCo","A&H","SSL","Yamaha"})[dialect] + ")");
     }
     else if (id == 115)  { engine.stopOsc(); showStatus ("OSC stopped"); }
-    // Session settings pending state
-    else if (id == 200)  pendingContainer = 0;
-    else if (id == 201)  pendingContainer = 1;
-    else if (id == 202)  { pendingContainer = 2; if (pendingBitDepth == 32) pendingBitDepth = 24; }
-    else if (id == 210)  pendingSampleRate = 44100.0;
-    else if (id == 211)  pendingSampleRate = 48000.0;
-    else if (id == 212)  pendingSampleRate = 96000.0;
-    else if (id == 213)  pendingSampleRate = 192000.0;
-    else if (id == 220)  pendingBitDepth = 16;
-    else if (id == 221)  pendingBitDepth = 24;
-    else if (id == 222)  pendingBitDepth = 32;
-    else if (id == 230)  applySessionSettings();
+    else if (id == 250)  zynforge::SessionSettingsDialog::launch (engine);
     else if (id == 60)   onBackupClicked();
+    // Edit menu
+    else if (id == 307)  soloSelection();
+    else if (id == 308)  setRangeToLoopRange();
+    else if (id == 309)  toggleSnap();
+    else if (id == 310)  splitSeparate();
+    else if (id == 311)  startRange();
+    else if (id == 312)  finishRange();
+    else if (id == 313)  removeLastCapture();
 }
 
 bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
 {
-    if (key.getTextCharacter() == 'm' || key.getTextCharacter() == 'M')
+    const auto c = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
+
+    if (c == 'm')
     {
         const int n = engine.dropMarkerAtCurrentPosition();
-        if (n >= 0)
-            statusLabel.setText ("Marker " + juce::String (n) + " dropped",
-                                 juce::dontSendNotification);
-        else
-            statusLabel.setText ("No active session — can't drop marker",
-                                 juce::dontSendNotification);
+        showStatus (n >= 0 ? "Marker " + juce::String (n) + " dropped"
+                            : "No active session — can't drop marker");
         return true;
     }
+    if (c == 'a') { soloSelection();        return true; }
+    if (c == 's') { splitSeparate();        return true; }
+    if (c == ',') { startRange();           return true; }
+    if (c == '.') { finishRange();          return true; }
+    if (c == '4') { toggleSnap();           return true; }
     return false;
 }
 
@@ -659,6 +665,106 @@ void MainComponent::onFileMenuClicked()
 void MainComponent::showStatus (const juce::String& msg)
 {
     statusLabel.setText (msg, juce::dontSendNotification);
+}
+
+void MainComponent::soloSelection()
+{
+    // Live-recorder interpretation: if any track is soloed, clear all
+    // solos. Otherwise solo every track that's currently armed.
+    auto& rec = engine.getRecorder();
+    bool anySolo = false;
+    for (int i = 0; i < rec.getNumTracks(); ++i)
+        if (rec.getTrack (i).soloed.load (std::memory_order_relaxed))
+            { anySolo = true; break; }
+
+    if (anySolo)
+    {
+        for (int i = 0; i < rec.getNumTracks(); ++i)
+            rec.getTrack (i).soloed.store (false, std::memory_order_relaxed);
+        showStatus ("Cleared all solos");
+    }
+    else
+    {
+        int n = 0;
+        for (int i = 0; i < rec.getNumTracks(); ++i)
+            if (rec.getTrack (i).armed.load (std::memory_order_relaxed))
+            { rec.getTrack (i).soloed.store (true, std::memory_order_relaxed); ++n; }
+        showStatus ("Soloed " + juce::String (n) + " armed track" + (n == 1 ? "" : "s"));
+    }
+}
+
+void MainComponent::setRangeToLoopRange()
+{
+    auto& player = engine.getPlayer();
+    if (! player.hasLoopRegion()) { showStatus ("No loop region set"); return; }
+    auto& m = engine.getMarkers();
+    m.drop (player.getLoopStart(), "Range In");
+    m.drop (player.getLoopEnd(),   "Range Out");
+    showStatus ("Range markers placed at loop boundaries");
+}
+
+void MainComponent::toggleSnap()
+{
+    snapToMarkers = ! snapToMarkers;
+    showStatus (snapToMarkers ? "Snap to markers: ON" : "Snap to markers: OFF");
+}
+
+namespace
+{
+    juce::int64 currentPlayheadSamples (zynforge::AudioEngine& eng)
+    {
+        if (eng.isRecording()) return eng.getRecorder().getSamplesSinceStart();
+        if (eng.getPlayer().isLoaded()) return eng.getPlayer().getPositionSamples();
+        return 0;
+    }
+}
+
+void MainComponent::splitSeparate()
+{
+    const auto pos = currentPlayheadSamples (engine);
+    engine.getMarkers().drop (pos, "Split");
+    showStatus ("Split marker dropped");
+}
+
+void MainComponent::startRange()
+{
+    engine.getMarkers().drop (currentPlayheadSamples (engine), "Range In");
+    showStatus ("Range In marker dropped");
+}
+
+void MainComponent::finishRange()
+{
+    engine.getMarkers().drop (currentPlayheadSamples (engine), "Range Out");
+    showStatus ("Range Out marker dropped");
+}
+
+void MainComponent::removeLastCapture()
+{
+    const auto root = getSessionsRoot();
+    if (! root.isDirectory()) { showStatus ("No sessions to remove"); return; }
+
+    auto dirs = root.findChildFiles (juce::File::findDirectories, false, "Session_*");
+    if (dirs.isEmpty()) { showStatus ("No sessions to remove"); return; }
+
+    // Find the most-recently-modified session folder.
+    dirs.sort();   // alphabetical; our naming is ISO-style so this is chronological
+    const auto target = dirs.getLast();
+
+    juce::AlertWindow::showAsync (
+        juce::MessageBoxOptions()
+            .withIconType (juce::MessageBoxIconType::WarningIcon)
+            .withTitle ("Remove last capture?")
+            .withMessage ("Permanently delete\n\n" + target.getFullPathName() + "\n\nThis cannot be undone.")
+            .withButton ("Delete")
+            .withButton ("Cancel"),
+        [this, target] (int result)
+    {
+        if (result != 0) return;
+        if (target.deleteRecursively())
+            showStatus ("Removed: " + target.getFileName());
+        else
+            showStatus ("Couldn't remove that folder");
+    });
 }
 
 void MainComponent::applySessionSettings()
@@ -1042,14 +1148,15 @@ void MainComponent::resized()
     lockButton   .setBounds (row1.removeFromRight (76).reduced (0, 2));
     statusLabel  .setBounds (row1);
 
-    // Row 2 — FILE / PLAY / STOP / transport / session / BACKUP
+    // Row 2 — FILE / transport bar / session label / BACKUP / PATCH / METERS / OSC
     auto row2 = r.removeFromTop (40).reduced (12, 6);
     loadButton    .setBounds (row2.removeFromLeft (90).reduced (0, 2));
-    row2.removeFromLeft (6);
-    playButton    .setBounds (row2.removeFromLeft (78).reduced (0, 2));
-    row2.removeFromLeft (4);
-    stopButton    .setBounds (row2.removeFromLeft (68).reduced (0, 2));
+    row2.removeFromLeft (8);
+    // Six-button transport bar (gotoStart, gotoEnd, play, stop, record, loop).
+    if (transportBar != nullptr)
+        transportBar->setBounds (row2.removeFromLeft (220).reduced (0, 2));
     row2.removeFromLeft (10);
+
     oscButton     .setBounds (row2.removeFromRight (70).reduced (0, 2));
     row2.removeFromRight (4);
     metersButton  .setBounds (row2.removeFromRight (84).reduced (0, 2));
@@ -1060,6 +1167,11 @@ void MainComponent::resized()
     row2.removeFromRight (8);
     transportLabel.setBounds (row2.removeFromLeft (130));
     sessionLabel  .setBounds (row2);
+
+    // Old PLAY/STOP TextButtons are kept alive for backward-compat in
+    // applyLockState but not laid out — they're invisible now.
+    playButton.setBounds ({});
+    stopButton.setBounds ({});
 
     // Big clock banner with a phase meter docked on its right edge
     auto clockRow = r.removeFromTop (96).reduced (12, 6);

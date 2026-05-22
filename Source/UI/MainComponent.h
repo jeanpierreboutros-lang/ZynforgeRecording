@@ -10,6 +10,7 @@
 #include "ExportDialog.h"
 #include "PhaseMeter.h"
 #include "TimelineStrip.h"
+#include "TransportBar.h"
 
 #include <memory>
 #include <vector>
@@ -59,6 +60,17 @@ private:
     void confirmAndQuit();
     void applySessionSettings();
 
+    // Edit menu actions.
+    void soloSelection();
+    void setRangeToLoopRange();
+    void toggleSnap();
+    void splitSeparate();
+    void startRange();
+    void finishRange();
+    void removeLastCapture();
+
+    bool snapToMarkers { false };
+
     int    pendingContainer  { 0 };       // 0 = WAV, 1 = AIFF, 2 = FLAC
     int    pendingBitDepth   { 24 };      // 16 / 24 / 32 (32 = float)
     double pendingSampleRate { 48000.0 };
@@ -98,6 +110,7 @@ private:
     zynforge::BigClockPanel bigClock;
     std::unique_ptr<zynforge::PhaseMeter>    phaseMeter;
     std::unique_ptr<zynforge::TimelineStrip> timeline;
+    std::unique_ptr<zynforge::TransportBar>  transportBar;
 
     juce::Viewport  stripsViewport;
     juce::Component stripsContainer;
