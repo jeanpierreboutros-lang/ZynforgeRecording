@@ -567,8 +567,8 @@ namespace zynforge
         // same vertical extent now that the fader has positive headroom
         // (-60..+12 dB), so the cap at +12 dB lines up with the meter's
         // 0 dBFS at the top of the strip.
-        const int meterW = 30;   // wide enough for the meter's own dB gutter
-        const int rulerW = 28;   // fader's dB tick column
+        const int meterW = 40;   // 14 px label gutter + 24 px bar (12 + 12 for stereo)
+        const int rulerW = 26;
 
         meter.setBounds (r.removeFromRight (meterW));
         r.removeFromRight (2);

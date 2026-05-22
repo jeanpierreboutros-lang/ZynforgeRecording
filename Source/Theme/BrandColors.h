@@ -44,7 +44,7 @@ namespace zynforge::brand
     inline const auto meterGreen   = juce::Colour::fromRGB (0x3c, 0xb8, 0x78);
     inline const auto meterAmber   = juce::Colour::fromRGB (0xf0, 0xc0, 0x60);
     inline const auto meterRed     = juce::Colour::fromRGB (0xdc, 0x38, 0x38);
-    inline const auto meterIdle    = juce::Colour::fromRGB (0x1c, 0x1f, 0x26);
+    inline const auto meterIdle    = juce::Colour::fromRGB (0x2c, 0x30, 0x3a);   // visible against bgDeep
 
     // ── Transport / control-button chrome (3 hover states) ────────────────
     inline const auto controlBg          = juce::Colour::fromRGB (0x2a, 0x2c, 0x30);
