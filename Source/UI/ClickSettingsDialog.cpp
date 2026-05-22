@@ -188,7 +188,20 @@ namespace zynforge
                 generateButton.setButtonText ("Generate click track");
                 generateButton.setColour (juce::TextButton::buttonColourId,  brand::accentRecord);
                 generateButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
-                generateButton.onClick = [this] { if (onGenerate) onGenerate(); };
+                generateButton.onClick = [this]
+                {
+                    // Generating commits a click WAV to the session.
+                    // The real-time click engine should NOT also be
+                    // running on top — flip it off and reflect that
+                    // back to the settings before the dialog closes.
+                    settings.on = false;
+                    onButton.setToggleState (false, juce::dontSendNotification);
+                    onButton.setButtonText ("OFF");
+                    if (onSave)     onSave (settings);
+                    if (onGenerate) onGenerate();
+                    if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
+                        dw->exitModalState (1);
+                };
                 addAndMakeVisible (generateButton);
 
                 closeButton.setButtonText ("Close");
@@ -253,7 +266,7 @@ namespace zynforge
     {
         auto* content = new Content (initial, bpm, std::move (onSave), std::move (onGenerate));
         juce::DialogWindow::LaunchOptions opts;
-        opts.dialogTitle                  = "CLICK II";
+        opts.dialogTitle                  = "Click";
         opts.content.setOwned (content);
         opts.dialogBackgroundColour       = brand::bgPanel;
         opts.escapeKeyTriggersCloseButton = true;
