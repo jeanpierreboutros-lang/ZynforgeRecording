@@ -67,7 +67,7 @@ namespace zynforge
             {
                 const auto newName = nameLabel.getText().trim();
                 auto& st = engine.getRecorder().getTrack (index);
-                st.name = newName.isEmpty() ? juce::String ("In " + juce::String (index + 1))
+                st.name = newName.isEmpty() ? juce::String (index + 1)
                                             : newName;
                 nameLabel.setText (st.name, juce::dontSendNotification);
                 engine.setTrackName (index, st.name);

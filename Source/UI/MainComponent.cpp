@@ -295,7 +295,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         {
             const auto& t  = engine.getRecorder().getTrack (i);
             const auto nm  = t.name.isNotEmpty() ? t.name
-                                                  : juce::String ("In " + juce::String (i + 1));
+                                                  : juce::String (i + 1);
             indiv.addItem (100 + i, nm, hasActive);
         }
         exportMenu.addSubMenu ("Export Individual Track", indiv, hasActive && n > 0);
@@ -1182,7 +1182,7 @@ void MainComponent::onFileMenuClicked()
     {
         const auto& t   = engine.getRecorder().getTrack (i);
         const auto name = t.name.isNotEmpty() ? t.name
-                                              : juce::String ("In " + juce::String (i + 1));
+                                              : juce::String (i + 1);
         individualMenu.addItem (100 + i, name, hasActive);
     }
     exportMenu.addSubMenu ("Export Individual Track", individualMenu, hasActive && trackCount > 0);

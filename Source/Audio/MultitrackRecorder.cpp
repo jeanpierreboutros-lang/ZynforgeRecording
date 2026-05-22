@@ -68,7 +68,7 @@ namespace zynforge
             for (int i = 0; i < numInputs; ++i)
             {
                 auto t = std::make_unique<TrackState>();
-                t->name = "In " + juce::String (i + 1);
+                t->name = juce::String (i + 1);
                 tracks.push_back (std::move (t));
 
                 auto f = std::make_unique<ChannelFifo>();
@@ -104,7 +104,7 @@ namespace zynforge
         const int fifoSize = juce::nextPowerOfTwo ((int) (sampleRate * kFifoSeconds));
 
         auto t = std::make_unique<TrackState>();
-        t->name = "In " + juce::String ((int) tracks.size() + 1);
+        t->name = juce::String ((int) tracks.size() + 1);
         tracks.push_back (std::move (t));
 
         auto f = std::make_unique<ChannelFifo>();

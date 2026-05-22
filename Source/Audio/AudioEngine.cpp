@@ -511,8 +511,7 @@ namespace zynforge
         if (name.isEmpty())
         {
             stripNames.clearName (channelIndex);
-            recorder.getTrack (channelIndex).name =
-                "In " + juce::String (channelIndex + 1);
+            recorder.getTrack (channelIndex).name = juce::String (channelIndex + 1);
         }
         else
         {

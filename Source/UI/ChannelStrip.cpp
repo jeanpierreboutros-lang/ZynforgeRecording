@@ -268,7 +268,7 @@ namespace zynforge
                 case 4: if (renameCb)
                         {
                             renameCb ({});
-                            state.name = "In " + juce::String (stripIndex + 1);
+                            state.name = juce::String (stripIndex + 1);
                             nameLabel.setText (state.name, juce::dontSendNotification);
                         }
                         break;
@@ -345,7 +345,7 @@ namespace zynforge
         nameLabel.onTextChange = [this]
         {
             const auto newName = nameLabel.getText().trim();
-            state.name = newName.isEmpty() ? juce::String ("In " + juce::String (stripIndex + 1))
+            state.name = newName.isEmpty() ? juce::String (stripIndex + 1)
                                             : newName;
             nameLabel.setText (state.name, juce::dontSendNotification);
             if (renameCb) renameCb (newName);
