@@ -221,11 +221,25 @@ namespace zynforge
         writers.reserve (tracks.size());
 
         juce::WavAudioFormat  wav;
+        juce::AiffAudioFormat aiff;
         juce::FlacAudioFormat flac;
 
-        const bool useFlac = (captureFormat == CaptureFormat::Flac24);
-        const int  bitDepth = (captureFormat == CaptureFormat::Wav32Float) ? 32 : 24;
-        const char* ext     = useFlac ? ".flac" : ".wav";
+        enum class Container { Wav, Aiff, Flac } container;
+        int bitDepth;
+        switch (captureFormat)
+        {
+            case CaptureFormat::Wav16:       container = Container::Wav;  bitDepth = 16; break;
+            case CaptureFormat::Wav24:       container = Container::Wav;  bitDepth = 24; break;
+            case CaptureFormat::Wav32Float:  container = Container::Wav;  bitDepth = 32; break;
+            case CaptureFormat::Aiff16:      container = Container::Aiff; bitDepth = 16; break;
+            case CaptureFormat::Aiff24:      container = Container::Aiff; bitDepth = 24; break;
+            case CaptureFormat::Aiff32Float: container = Container::Aiff; bitDepth = 32; break;
+            case CaptureFormat::Flac16:      container = Container::Flac; bitDepth = 16; break;
+            case CaptureFormat::Flac24:      container = Container::Flac; bitDepth = 24; break;
+        }
+        const bool useFlac = (container == Container::Flac);
+        const bool useAiff = (container == Container::Aiff);
+        const char* ext = useFlac ? ".flac" : (useAiff ? ".aif" : ".wav");
 
         const auto now = juce::Time::getCurrentTime();
 
@@ -233,7 +247,7 @@ namespace zynforge
         {
             // BWF (bext) metadata — only meaningful for WAV.
             juce::StringPairArray meta;
-            if (! useFlac)
+            if (! useFlac && ! useAiff)
             {
                 meta.set (juce::WavAudioFormat::bwavDescription,
                           "Zynforge Recording — " + sessionDir.getFileName()
@@ -252,9 +266,10 @@ namespace zynforge
 
             if (auto* out = file.createOutputStream().release())
             {
-                juce::AudioFormatWriter* awRaw = useFlac
-                    ? flac.createWriterFor (out, sampleRate, 1, bitDepth, meta, 5 /*quality*/)
-                    : wav .createWriterFor (out, sampleRate, 1, bitDepth, meta, 0);
+                juce::AudioFormatWriter* awRaw = nullptr;
+                if      (useFlac) awRaw = flac.createWriterFor (out, sampleRate, 1, bitDepth, meta, 5);
+                else if (useAiff) awRaw = aiff.createWriterFor (out, sampleRate, 1, bitDepth, meta, 0);
+                else              awRaw = wav .createWriterFor (out, sampleRate, 1, bitDepth, meta, 0);
 
                 if (awRaw == nullptr) { delete out; }
                 w.writer.reset (awRaw);
@@ -269,9 +284,10 @@ namespace zynforge
                 backupFile.deleteFile();
                 if (auto* bout = backupFile.createOutputStream().release())
                 {
-                    juce::AudioFormatWriter* bw = useFlac
-                        ? flac.createWriterFor (bout, sampleRate, 1, bitDepth, meta, 5)
-                        : wav .createWriterFor (bout, sampleRate, 1, bitDepth, meta, 0);
+                    juce::AudioFormatWriter* bw = nullptr;
+                    if      (useFlac) bw = flac.createWriterFor (bout, sampleRate, 1, bitDepth, meta, 5);
+                    else if (useAiff) bw = aiff.createWriterFor (bout, sampleRate, 1, bitDepth, meta, 0);
+                    else              bw = wav .createWriterFor (bout, sampleRate, 1, bitDepth, meta, 0);
                     if (bw == nullptr) { delete bout; }
                     w.backupWriter.reset (bw);
                 }

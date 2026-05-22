@@ -14,8 +14,13 @@ namespace zynforge
 {
     enum class CaptureFormat
     {
+        Wav16,        // 16-bit PCM WAV
         Wav24,        // 24-bit PCM WAV (default)
         Wav32Float,   // 32-bit IEEE float WAV — clip-proof at file level
+        Aiff16,       // 16-bit PCM AIFF
+        Aiff24,       // 24-bit PCM AIFF
+        Aiff32Float,  // 32-bit IEEE float AIFF
+        Flac16,       // 16-bit FLAC
         Flac24        // 24-bit FLAC — ~50% disk size vs WAV
     };
 

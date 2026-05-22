@@ -57,6 +57,11 @@ private:
                          const zynforge::ExportOptions&);
     void showStatus (const juce::String& msg);
     void confirmAndQuit();
+    void applySessionSettings();
+
+    int    pendingContainer  { 0 };       // 0 = WAV, 1 = AIFF, 2 = FLAC
+    int    pendingBitDepth   { 24 };      // 16 / 24 / 32 (32 = float)
+    double pendingSampleRate { 48000.0 };
     void onFormatClicked();
     void onPreRollClicked();
     void refreshFormatButton();

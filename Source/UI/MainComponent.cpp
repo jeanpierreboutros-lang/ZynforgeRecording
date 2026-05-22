@@ -195,15 +195,48 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
     }
     else if (topLevelIndex == 1)  // Session
     {
-        menu.addItem (50, "Open Patch…");
-        menu.addItem (51, "Open Meterbridge…");
-        menu.addSeparator();
-        menu.addItem (52, "Start OSC (Generic)");
-        menu.addItem (53, "Start OSC (DiGiCo)");
-        menu.addItem (54, "Start OSC (Allen & Heath)");
-        menu.addItem (55, "Start OSC (SSL Live)");
-        menu.addItem (56, "Start OSC (Yamaha)");
-        menu.addItem (57, "Stop OSC", engine.isOscListening());
+        menu.addItem (50, "Patch…");
+        menu.addItem (51, "Meterbridge…");
+
+        // OSC submenu with the five dialects.
+        juce::PopupMenu oscMenu;
+        oscMenu.addItem (110, "OSC Generic /zynforge");
+        oscMenu.addItem (111, "OSC DiGiCo");
+        oscMenu.addItem (112, "OSC Allen & Heath");
+        oscMenu.addItem (113, "OSC SSL Live");
+        oscMenu.addItem (114, "OSC Yamaha");
+        oscMenu.addSeparator();
+        oscMenu.addItem (115, "Stop OSC", engine.isOscListening());
+        menu.addSubMenu ("OSC", oscMenu);
+
+        // Session Settings: format / sample rate / bit depth + Apply.
+        juce::PopupMenu settingsMenu;
+
+        juce::PopupMenu fmtMenu;
+        fmtMenu.addItem (200, "WAV",  ! engine.isRecording(), pendingContainer == 0);
+        fmtMenu.addItem (201, "AIFF", ! engine.isRecording(), pendingContainer == 1);
+        fmtMenu.addItem (202, "FLAC", ! engine.isRecording(), pendingContainer == 2);
+        settingsMenu.addSubMenu ("Audio Format", fmtMenu);
+
+        juce::PopupMenu srMenu;
+        srMenu.addItem (210, "44.1 kHz", ! engine.isRecording(), pendingSampleRate == 44100.0);
+        srMenu.addItem (211, "48 kHz",   ! engine.isRecording(), pendingSampleRate == 48000.0);
+        srMenu.addItem (212, "96 kHz",   ! engine.isRecording(), pendingSampleRate == 96000.0);
+        srMenu.addItem (213, "192 kHz",  ! engine.isRecording(), pendingSampleRate == 192000.0);
+        settingsMenu.addSubMenu ("Sample Rate", srMenu);
+
+        juce::PopupMenu bdMenu;
+        const bool can32 = pendingContainer != 2;   // FLAC doesn't support 32-bit float
+        bdMenu.addItem (220, "16-bit",       ! engine.isRecording(),           pendingBitDepth == 16);
+        bdMenu.addItem (221, "24-bit",       ! engine.isRecording(),           pendingBitDepth == 24);
+        bdMenu.addItem (222, "32-bit float", ! engine.isRecording() && can32, pendingBitDepth == 32);
+        settingsMenu.addSubMenu ("Bit Depth", bdMenu);
+
+        settingsMenu.addSeparator();
+        settingsMenu.addItem (230, "Apply", ! engine.isRecording());
+
+        menu.addSubMenu ("Session Settings", settingsMenu);
+
         menu.addSeparator();
         menu.addItem (60, "Choose Backup Folder…", ! engine.isRecording());
     }
@@ -221,14 +254,27 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id >= 100)  onExportIndividualTrack (id - 100);
     else if (id == 50)   zynforge::PatchPage::launch (engine);
     else if (id == 51)   zynforge::Meterbridge::launch (engine);
-    else if (id >= 52 && id <= 56)
+    // OSC dialect picks under Session ▶ OSC ▶
+    else if (id >= 110 && id <= 114)
     {
-        const int dialect = id - 52;
+        const int dialect = id - 110;
         if (engine.startOsc (8000, dialect))
             showStatus ("OSC listening on 8000 (" +
                         juce::StringArray ({"Generic","DiGiCo","A&H","SSL","Yamaha"})[dialect] + ")");
     }
-    else if (id == 57)   { engine.stopOsc(); showStatus ("OSC stopped"); }
+    else if (id == 115)  { engine.stopOsc(); showStatus ("OSC stopped"); }
+    // Session settings pending state
+    else if (id == 200)  pendingContainer = 0;
+    else if (id == 201)  pendingContainer = 1;
+    else if (id == 202)  { pendingContainer = 2; if (pendingBitDepth == 32) pendingBitDepth = 24; }
+    else if (id == 210)  pendingSampleRate = 44100.0;
+    else if (id == 211)  pendingSampleRate = 48000.0;
+    else if (id == 212)  pendingSampleRate = 96000.0;
+    else if (id == 213)  pendingSampleRate = 192000.0;
+    else if (id == 220)  pendingBitDepth = 16;
+    else if (id == 221)  pendingBitDepth = 24;
+    else if (id == 222)  pendingBitDepth = 32;
+    else if (id == 230)  applySessionSettings();
     else if (id == 60)   onBackupClicked();
 }
 
@@ -468,9 +514,14 @@ void MainComponent::refreshFormatButton()
     juce::String label;
     switch (engine.getRecorder().getCaptureFormat())
     {
-        case F::Wav24:      label = "WAV 24";   break;
-        case F::Wav32Float: label = "WAV 32F";  break;
-        case F::Flac24:     label = "FLAC 24";  break;
+        case F::Wav16:       label = "WAV 16";   break;
+        case F::Wav24:       label = "WAV 24";   break;
+        case F::Wav32Float:  label = "WAV 32F";  break;
+        case F::Aiff16:      label = "AIFF 16";  break;
+        case F::Aiff24:      label = "AIFF 24";  break;
+        case F::Aiff32Float: label = "AIFF 32F"; break;
+        case F::Flac16:      label = "FLAC 16";  break;
+        case F::Flac24:      label = "FLAC 24";  break;
     }
     formatButton.setButtonText (label);
 }
@@ -608,6 +659,32 @@ void MainComponent::onFileMenuClicked()
 void MainComponent::showStatus (const juce::String& msg)
 {
     statusLabel.setText (msg, juce::dontSendNotification);
+}
+
+void MainComponent::applySessionSettings()
+{
+    if (engine.isRecording()) { showStatus ("Stop recording before applying settings"); return; }
+
+    using F = zynforge::CaptureFormat;
+    F fmt;
+    if (pendingContainer == 0)
+        fmt = pendingBitDepth == 16 ? F::Wav16  : pendingBitDepth == 24 ? F::Wav24  : F::Wav32Float;
+    else if (pendingContainer == 1)
+        fmt = pendingBitDepth == 16 ? F::Aiff16 : pendingBitDepth == 24 ? F::Aiff24 : F::Aiff32Float;
+    else
+        fmt = pendingBitDepth == 16 ? F::Flac16 : F::Flac24;   // FLAC has no 32-float
+
+    engine.getRecorder().setCaptureFormat (fmt);
+    refreshFormatButton();
+
+    auto setup = engine.getDeviceManager().getAudioDeviceSetup();
+    setup.sampleRate = pendingSampleRate;
+    const auto err = engine.getDeviceManager().setAudioDeviceSetup (setup, true);
+    if (err.isEmpty())
+        showStatus ("Session settings applied (" + formatButton.getButtonText()
+                     + " @ " + juce::String (pendingSampleRate / 1000.0, 1) + " kHz)");
+    else
+        showStatus ("Sample rate change failed: " + err);
 }
 
 void MainComponent::confirmAndQuit()
