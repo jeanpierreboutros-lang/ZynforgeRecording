@@ -68,7 +68,7 @@ namespace zynforge
         recorder.prepare (sr, blockSize, juce::jmax (1, inputs));
         player  .prepare (sr, blockSize);
 
-        // Apply persisted per-channel colour + name overrides.
+        // Apply persisted per-channel colour + name + gain/pan overrides.
         for (int i = 0; i < recorder.getNumTracks(); ++i)
         {
             if (stripColours.hasColour (i))
@@ -78,6 +78,13 @@ namespace zynforge
 
             if (stripNames.hasName (i))
                 recorder.getTrack (i).name = stripNames.getName (i);
+
+            if (stripGains.hasGain (i))
+                recorder.getTrack (i).gainDb.store (stripGains.getGainDb (i),
+                                                    std::memory_order_relaxed);
+            if (stripGains.hasPan (i))
+                recorder.getTrack (i).pan.store (stripGains.getPan (i),
+                                                 std::memory_order_relaxed);
         }
     }
 
@@ -88,6 +95,22 @@ namespace zynforge
         if (player.isLoaded())
             return player.getSessionDir();
         return {};
+    }
+
+    void AudioEngine::setTrackGainDb (int channelIndex, float dB)
+    {
+        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
+        dB = juce::jlimit (-60.0f, 12.0f, dB);
+        recorder.getTrack (channelIndex).gainDb.store (dB, std::memory_order_relaxed);
+        stripGains.setGainDb (channelIndex, dB);
+    }
+
+    void AudioEngine::setTrackPan (int channelIndex, float pan)
+    {
+        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
+        pan = juce::jlimit (-1.0f, 1.0f, pan);
+        recorder.getTrack (channelIndex).pan.store (pan, std::memory_order_relaxed);
+        stripGains.setPan (channelIndex, pan);
     }
 
     void AudioEngine::setTrackName (int channelIndex, const juce::String& name)
@@ -162,6 +185,17 @@ namespace zynforge
             if (! channelAudible (i) && outputs[i] != nullptr)
                 juce::FloatVectorOperations::clear (outputs[i], numSamples);
 
+        // Per-channel playback gain on the VSC outputs.
+        for (int i = 0; i < trackCount && i < numOutputs; ++i)
+        {
+            if (! channelAudible (i)) continue;
+            const float dB   = recorder.getTrack (i).gainDb.load (std::memory_order_relaxed);
+            if (juce::approximatelyEqual (dB, 0.0f)) continue;
+            const float gain = juce::Decibels::decibelsToGain (dB, -60.0f);
+            if (outputs[i] != nullptr)
+                juce::FloatVectorOperations::multiply (outputs[i], gain, numSamples);
+        }
+
         // Phase correlation between the selected pair (smoothed).
         {
             const int li = phaseLeft .load (std::memory_order_relaxed);
@@ -186,8 +220,8 @@ namespace zynforge
             }
         }
 
-        // Sum monitored inputs into the stereo monitor bus (outputs 0 + 1).
-        // Mute/solo gate applies to monitoring the same as to playback.
+        // Sum monitored inputs into the stereo monitor bus (outputs 0 + 1)
+        // with constant-power pan and per-channel gain.
         const int monL = 0, monR = 1;
         for (int ch = 0; ch < trackCount && ch < numInputs; ++ch)
         {
@@ -197,10 +231,18 @@ namespace zynforge
 
             const float* src = inputs[ch];
             if (src == nullptr) continue;
-            if (monL < numOutputs && outputs[monL] != nullptr)
-                juce::FloatVectorOperations::add (outputs[monL], src, numSamples);
-            if (monR < numOutputs && outputs[monR] != nullptr)
-                juce::FloatVectorOperations::add (outputs[monR], src, numSamples);
+
+            const float dB   = t.gainDb.load (std::memory_order_relaxed);
+            const float gain = juce::Decibels::decibelsToGain (dB, -60.0f);
+            const float pan  = juce::jlimit (-1.0f, 1.0f, t.pan.load (std::memory_order_relaxed));
+            const float panNorm = (pan + 1.0f) * 0.5f;             // 0..1
+            const float gL = gain * std::cos (panNorm * juce::MathConstants<float>::halfPi);
+            const float gR = gain * std::sin (panNorm * juce::MathConstants<float>::halfPi);
+
+            if (monL < numOutputs && outputs[monL] != nullptr && gL > 0.0001f)
+                juce::FloatVectorOperations::addWithMultiply (outputs[monL], src, gL, numSamples);
+            if (monR < numOutputs && outputs[monR] != nullptr && gR > 0.0001f)
+                juce::FloatVectorOperations::addWithMultiply (outputs[monR], src, gR, numSamples);
         }
     }
 }

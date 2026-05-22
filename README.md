@@ -24,6 +24,7 @@ A focused recording surface for engineers running front-of-house or monitors who
 - [x] Capture format selector — cycle FMT button (WAV 24 / WAV 32-float / FLAC 24)
 - [x] Per-track monitor (MON button on each strip → sum to stereo monitor bus, outputs 0+1)
 - [x] Per-track MUTE and SOLO — applied to both VSC playback outputs and the monitor bus. Any solo engaged → only soloed channels are audible.
+- [x] Per-channel fader (−60 .. +12 dB) and pan (L .. C .. R) — applied to VSC playback and monitor sum (constant-power pan). Recording stays pre-fader. Both persist across launches.
 - [x] Per-strip mini-spectrum (log-frequency FFT, 24 Hz refresh)
 - [x] Phase correlation meter (selectable pair, smoothed)
 - [x] dBFS numeric readout + per-channel clip counter (click meter to clear)
@@ -101,6 +102,20 @@ Format is locked while recording.
 ## Pre-roll
 
 Cycle the **PRE** button: `0 / 5 / 10 / 30 s`. When pre-roll is non-zero, every channel keeps a rolling history of the last N seconds. When you press RECORD, that history is dumped into the file before live capture begins — so the count-in / first hit / squawk before the first chorus is never lost.
+
+## Fader + pan
+
+Every channel has its own playback gain and pan:
+
+- **Fader** — vertical slider next to the LED meter, range −60 to +12 dB, default 0 dB. Double-click to reset to 0 dB.
+- **Pan** — horizontal slider above the fader, −1 (full L) to +1 (full R), constant-power law (centre = −3 dBFS to each bus). Double-click to recentre.
+
+Both apply to:
+
+- **VSC playback** — Track N's playback to output N is multiplied by the fader gain. Pan is **not** applied to VSC playback (the console expects 1-to-1 routing).
+- **Monitor bus** (outputs 0+1) — fader gain × constant-power pan when summing into the stereo monitor.
+
+Recording is always **pre-fader** — armed channels are written to disk at the device's input level regardless of fader / pan settings. Both persist per channel index across launches via `juce::PropertiesFile`.
 
 ## Channel buttons
 

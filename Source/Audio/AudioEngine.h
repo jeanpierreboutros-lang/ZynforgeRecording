@@ -7,6 +7,7 @@
 #include "MultitrackRecorder.h"
 #include "SessionPlayer.h"
 #include "StripColours.h"
+#include "StripGains.h"
 #include "StripNames.h"
 
 namespace zynforge
@@ -41,6 +42,10 @@ namespace zynforge
         // Empty string reverts to the default "In N" label.
         void setTrackName (int channelIndex, const juce::String&);
 
+        // Per-channel playback gain (dB) + pan (-1..+1). Both persist.
+        void  setTrackGainDb (int channelIndex, float dB);
+        void  setTrackPan    (int channelIndex, float pan);
+
         // Returns recording dir if recording, else loaded playback session,
         // else an empty File.
         juce::File getActiveSessionDir() const;
@@ -71,6 +76,7 @@ namespace zynforge
         MarkersManager           markers;
         StripColours             stripColours;
         StripNames               stripNames;
+        StripGains               stripGains;
 
         std::atomic<int>   phaseLeft         { 0 };  // 0-based
         std::atomic<int>   phaseRight        { 1 };

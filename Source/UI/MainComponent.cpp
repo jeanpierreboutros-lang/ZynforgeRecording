@@ -104,17 +104,15 @@ void MainComponent::rebuildStrips()
     strips.reserve ((std::size_t) n);
     for (int i = 0; i < n; ++i)
     {
-        auto colourCb = [this, i] (juce::Colour chosen)
-        {
-            engine.setTrackColour (i, chosen);
-        };
-        auto nameCb = [this, i] (juce::String chosen)
-        {
-            engine.setTrackName (i, chosen);
-        };
+        auto colourCb = [this, i] (juce::Colour chosen) { engine.setTrackColour (i, chosen); };
+        auto nameCb   = [this, i] (juce::String chosen) { engine.setTrackName   (i, chosen); };
+        auto gainCb   = [this, i] (float dB)            { engine.setTrackGainDb (i, dB); };
+        auto panCb    = [this, i] (float pan)           { engine.setTrackPan    (i, pan); };
         auto s = std::make_unique<ChannelStrip> (i, recorder.getTrack (i),
                                                  std::move (colourCb),
-                                                 std::move (nameCb));
+                                                 std::move (nameCb),
+                                                 std::move (gainCb),
+                                                 std::move (panCb));
         addAndMakeVisible (*s);
         strips.push_back (std::move (s));
     }

@@ -127,12 +127,16 @@ namespace zynforge
 
     ChannelStrip::ChannelStrip (int index, TrackState& s,
                                 ColourCallback colourCallback,
-                                NameCallback   nameCallback)
+                                NameCallback   nameCallback,
+                                FloatCallback  gainCallback,
+                                FloatCallback  panCallback)
         : stripIndex (index),
           state (s),
           personality (brand::stripColour (index)),
           colourCb (std::move (colourCallback)),
           renameCb (std::move (nameCallback)),
+          gainCb   (std::move (gainCallback)),
+          panCb    (std::move (panCallback)),
           spectrum (s),
           meter (s)
     {
@@ -200,6 +204,45 @@ namespace zynforge
         addAndMakeVisible (clipLabel);
 
         addAndMakeVisible (spectrum);
+
+        panSlider.setSliderStyle (juce::Slider::LinearHorizontal);
+        panSlider.setRange (-1.0, 1.0, 0.01);
+        panSlider.setDoubleClickReturnValue (true, 0.0);
+        panSlider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+        panSlider.setColour (juce::Slider::trackColourId,    brand::edge);
+        panSlider.setColour (juce::Slider::thumbColourId,    brand::accentStatus);
+        panSlider.setValue (s.pan.load(), juce::dontSendNotification);
+        panSlider.onValueChange = [this]
+        {
+            const float v = (float) panSlider.getValue();
+            state.pan.store (v, std::memory_order_relaxed);
+            if (panCb) panCb (v);
+        };
+        addAndMakeVisible (panSlider);
+
+        gainFader.setSliderStyle (juce::Slider::LinearVertical);
+        gainFader.setRange (-60.0, 12.0, 0.1);
+        gainFader.setSkewFactorFromMidPoint (0.0);
+        gainFader.setDoubleClickReturnValue (true, 0.0);
+        gainFader.setTextValueSuffix (" dB");
+        gainFader.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 56, 14);
+        gainFader.setNumDecimalPlacesToDisplay (1);
+        gainFader.setColour (juce::Slider::trackColourId,        brand::edge);
+        gainFader.setColour (juce::Slider::backgroundColourId,   brand::bgDeep);
+        gainFader.setColour (juce::Slider::thumbColourId,        brand::accentStatus);
+        gainFader.setColour (juce::Slider::textBoxTextColourId,  brand::textPrimary);
+        gainFader.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+        gainFader.setColour (juce::Slider::textBoxBackgroundColourId,
+                             brand::bgDeep.withAlpha (0.4f));
+        gainFader.setValue (s.gainDb.load(), juce::dontSendNotification);
+        gainFader.onValueChange = [this]
+        {
+            const float v = (float) gainFader.getValue();
+            state.gainDb.store (v, std::memory_order_relaxed);
+            if (gainCb) gainCb (v);
+        };
+        addAndMakeVisible (gainFader);
+
         addAndMakeVisible (meter);
 
         swatch = std::make_unique<Swatch>();
@@ -251,6 +294,13 @@ namespace zynforge
         dbLabel  .setBounds (r.removeFromTop (14));
         clipLabel.setBounds (r.removeFromTop (12));
         r.removeFromTop (2);
-        meter.setBounds (r);
+        panSlider.setBounds (r.removeFromTop (16).reduced (4, 0));
+        r.removeFromTop (4);
+
+        // Fader on left, LED meter on right.
+        const int meterW = 18;
+        meter    .setBounds (r.removeFromRight (meterW));
+        r.removeFromRight (2);
+        gainFader.setBounds (r);
     }
 }

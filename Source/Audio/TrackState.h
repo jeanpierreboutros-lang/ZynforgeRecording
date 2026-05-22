@@ -18,6 +18,10 @@ namespace zynforge
         std::atomic<bool>  muted   { false };
         std::atomic<bool>  soloed  { false };
 
+        // Playback / monitor only. Recording is always pre-fader.
+        std::atomic<float> gainDb  { 0.0f };           // -60 .. +12
+        std::atomic<float> pan     { 0.0f };           // -1 = L, 0 = C, +1 = R
+
         std::atomic<int>          clipCount        { 0 };
         std::atomic<juce::int64>  lastClipSample   { -1 };
 

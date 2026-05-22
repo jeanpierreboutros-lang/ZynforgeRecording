@@ -51,6 +51,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Audio/SessionPlayer.cpp
     Source/Audio/Markers.cpp
     Source/Audio/StripColours.cpp
+    Source/Audio/StripGains.cpp
     Source/Audio/StripNames.cpp
     Source/Audio/TrackExporter.cpp
     Source/Theme/ZynForgeLookAndFeel.cpp

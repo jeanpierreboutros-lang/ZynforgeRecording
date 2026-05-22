@@ -16,10 +16,13 @@ namespace zynforge
     public:
         using ColourCallback = std::function<void (juce::Colour)>;
         using NameCallback   = std::function<void (juce::String)>;
+        using FloatCallback  = std::function<void (float)>;
 
         ChannelStrip (int index, TrackState& state,
                       ColourCallback onColourPicked = {},
-                      NameCallback   onRename       = {});
+                      NameCallback   onRename       = {},
+                      FloatCallback  onGainDb       = {},
+                      FloatCallback  onPan          = {});
         ~ChannelStrip() override;
 
         void mouseDown (const juce::MouseEvent&) override;
@@ -41,6 +44,8 @@ namespace zynforge
         juce::Colour personality;
         ColourCallback colourCb;
         NameCallback   renameCb;
+        FloatCallback  gainCb;
+        FloatCallback  panCb;
 
         juce::Label   nameLabel;
         juce::ToggleButton armButton   { "ARM" };
@@ -50,6 +55,8 @@ namespace zynforge
         juce::Label   dbLabel;
         juce::Label   clipLabel;
         MiniSpectrum  spectrum;
+        juce::Slider  panSlider;
+        juce::Slider  gainFader;
         LedMeter      meter;
         std::unique_ptr<Swatch> swatch;
 
