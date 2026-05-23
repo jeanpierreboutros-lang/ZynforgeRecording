@@ -51,6 +51,7 @@ Active development. Software ships **multitrack recording**, **playback**, and *
 - [x] Click the colour swatch to recolour from the row
 - [x] Per-row I/O routing combos, REC/MUTE/SOLO buttons, live signal meter
 - [x] Playhead bar synced to playback position
+- [x] **Pro Tools-style edit tools** — small icon toolbar along the top of the EDIT view: **Smart** (default — top of clip = fade handles, edges = trim, body = move), **Selector** (click parks the playhead, drag seeds a loop region), **Trim** (any body click trims from the nearer edge), **Grabber** (every body click = move), **Fade** (body click opens the fade preset menu), **Scrubber** (click + drag chase the playhead). Active tool paints in the VS amber accent.
 - [x] **Clip toolkit** — right-click any clip for the full editing menu: **Mute / Unmute**, **Lock / Unlock** (locked clips refuse trim/move/fade and paint a corner lock glyph), **Duplicate**, **Delete**, **Clip gain** (−12/−6/−3/0/+3/+6 dB presets + custom value dialog), **Fade in / Fade out** submenus (Off / 10 ms / 50 ms / 200 ms / 500 ms / 1 s), and Clear both fades. Muted clips render silence on the audio thread and paint a soft mute scrim across the lane span. Clip gain is applied per-sample by `SessionPlayer::processBlock` along with the fade envelope.
 
 ### PATCH view

@@ -1,5 +1,6 @@
 #include "EditPage.h"
 #include "AutomationToolbar.h"
+#include "EditToolsBar.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "LedMeter.h"
@@ -46,7 +47,8 @@ namespace zynforge
 
         // Toolbar / click-overlay context — set by the host EditPage
         // after construction so all rows share the same global view.
-        AutomationToolbar* toolbar { nullptr };
+        AutomationToolbar* toolbar  { nullptr };
+        EditToolsBar*      toolsBar { nullptr };
         bool   clickOverlay { false };
         int    clickRowIdx  { -1 };
         // Drag tracking — while > -1, mouseDrag moves the indexed
@@ -1044,6 +1046,72 @@ namespace zynforge
                 return;
             }
 
+            // Pro Tools-style edit tool — Scrubber, Selector, and Fade
+            // intercept the left-click before the normal clip-drag
+            // hit-test. Trim / Grabber bias the clip-body branch below.
+            const auto activeTool = (toolsBar != nullptr)
+                                      ? toolsBar->getTool()
+                                      : EditToolsBar::Tool::Smart;
+
+            if (laneMode == LaneMode::Waveform && e.x >= headerW
+                && (activeTool == EditToolsBar::Tool::Scrubber
+                 || activeTool == EditToolsBar::Tool::Selector
+                 || activeTool == EditToolsBar::Tool::Fade))
+            {
+                auto& player = engine.getPlayer();
+                const juce::int64 totalSamples = player.isLoaded()
+                    ? player.getTotalLengthSamples() : 0;
+                if (totalSamples > 0)
+                {
+                    const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+                    const auto xToSample = [&] (int x) -> juce::int64
+                    {
+                        const double prop = juce::jlimit (0.0, 1.0,
+                            (double) (x - inner.getX()) / (double) juce::jmax (1, inner.getWidth()));
+                        return (juce::int64) (prop * (double) totalSamples);
+                    };
+
+                    if (activeTool == EditToolsBar::Tool::Fade)
+                    {
+                        if (auto* clips = engine.tryClipsFor (index))
+                        {
+                            const auto sx = xToSample (e.x);
+                            for (int i = 0; i < (int) clips->size(); ++i)
+                            {
+                                const auto& c = (*clips)[(size_t) i];
+                                if (sx >= c.timelineStartSamples
+                                    && sx <= c.timelineStartSamples + c.fileLengthSamples)
+                                {
+                                    showFadeMenu (i, e.getScreenPosition());
+                                    return;
+                                }
+                            }
+                        }
+                        return;
+                    }
+
+                    // Scrubber + Selector: park the playhead at the
+                    // click sample. Selector additionally seeds a loop
+                    // region whose end follows mouseDrag.
+                    const auto sx = xToSample (e.x);
+                    player.setPositionSamples (sx);
+                    if (activeTool == EditToolsBar::Tool::Selector)
+                    {
+                        player.clearLoopRegion();
+                        dragStartX          = e.x;
+                        lastDragSamples     = sx;     // store anchor sample
+                        draggingClipIdx     = -1;
+                        draggingClipModeInt = 6;      // 6 = SelectRange
+                    }
+                    else
+                    {
+                        draggingClipModeInt = 5;      // 5 = Scrub
+                    }
+                    repaint();
+                    return;
+                }
+            }
+
             // Clip drag-edit. Only when we're on the waveform lane (so
             // automation lanes still own their own drag semantics) and
             // the track actually has clips to grab.
@@ -1107,6 +1175,42 @@ namespace zynforge
                                 return;
                             }
 
+                            const bool inClipBody = (e.x >= xL && e.x <= xR);
+
+                            // Grabber: every click inside the clip body
+                            // = Move (no edge trim).
+                            if (activeTool == EditToolsBar::Tool::Grabber)
+                            {
+                                if (inClipBody)
+                                {
+                                    draggingClipIdx     = i;
+                                    draggingClipModeInt = 2;  // Move
+                                    dragStartX = e.x;
+                                    lastDragSamples = 0;
+                                    return;
+                                }
+                                continue;
+                            }
+
+                            // Trim: any body click trims from the nearer
+                            // edge (left half → TrimLeft, right half →
+                            // TrimRight).
+                            if (activeTool == EditToolsBar::Tool::Trim)
+                            {
+                                if (inClipBody)
+                                {
+                                    const bool leftHalf = (e.x - xL) < ((xR - xL) / 2);
+                                    draggingClipIdx     = i;
+                                    draggingClipModeInt = leftHalf ? 0 : 1;
+                                    dragStartX = e.x;
+                                    lastDragSamples = 0;
+                                    return;
+                                }
+                                continue;
+                            }
+
+                            // Smart (default) — edge zones trim, body
+                            // moves.
                             if (e.x >= xL - hitZone && e.x <= xL + hitZone)
                             {
                                 draggingClipIdx     = i;
@@ -1230,6 +1334,35 @@ namespace zynforge
                 return;
             }
 
+            // Scrubber / Selector drag — playhead chases the mouse;
+            // Selector additionally seeds a loop region anchored at the
+            // mouseDown position.
+            if (draggingClipModeInt == 5 || draggingClipModeInt == 6)
+            {
+                auto& player = engine.getPlayer();
+                const juce::int64 totalSamples = player.isLoaded()
+                    ? player.getTotalLengthSamples() : 0;
+                if (totalSamples > 0)
+                {
+                    const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+                    const double prop = juce::jlimit (0.0, 1.0,
+                        (double) (e.x - inner.getX()) / (double) juce::jmax (1, inner.getWidth()));
+                    const juce::int64 sx = (juce::int64) (prop * (double) totalSamples);
+                    if (draggingClipModeInt == 5)
+                    {
+                        player.setPositionSamples (sx);
+                    }
+                    else
+                    {
+                        const juce::int64 a = juce::jmin (lastDragSamples, sx);
+                        const juce::int64 b = juce::jmax (lastDragSamples, sx);
+                        if (b > a) player.setLoopRegion (a, b);
+                    }
+                    repaint();
+                }
+                return;
+            }
+
             // Clip edit drag — translate pixel delta back to sample
             // delta and feed it to engine.editClip incrementally. Fade
             // handles use the absolute drag delta from the drag start
@@ -1317,6 +1450,7 @@ namespace zynforge
             dragging         = false;
             draggingPointIdx = -1;
             draggingClipIdx  = -1;
+            draggingClipModeInt = 0;
             lastDragSamples  = 0;
         }
 
@@ -1586,6 +1720,7 @@ namespace zynforge
         // Stored here so newly-created rows pick them up automatically;
         // existing rows are mutated through updateRowContext().
         AutomationToolbar* sharedToolbar       { nullptr };
+        EditToolsBar*      sharedToolsBar      { nullptr };
         bool               sharedClickPresent  { false };
         int                sharedClickRowIdx   { -1 };
 
@@ -1594,6 +1729,7 @@ namespace zynforge
             for (auto& r : rows)
             {
                 r->toolbar      = sharedToolbar;
+                r->toolsBar     = sharedToolsBar;
                 r->clickOverlay = sharedClickPresent;
                 r->clickRowIdx  = sharedClickRowIdx;
                 r->repaint();
@@ -1627,6 +1763,7 @@ namespace zynforge
                 auto r = std::make_unique<TrackRow> (i, stereo, engine, formats, thumbCache);
                 r->onSizeChosen = [this] (TrackRow&, TrackRow::Size) { resized(); };
                 r->toolbar      = sharedToolbar;
+                r->toolsBar     = sharedToolsBar;
                 r->clickOverlay = sharedClickPresent;
                 r->clickRowIdx  = sharedClickRowIdx;
                 addAndMakeVisible (*r);
@@ -1707,7 +1844,11 @@ namespace zynforge
     {
         formatManager.registerBasicFormats();
 
+        toolsBar = std::make_unique<EditToolsBar>();
+        addAndMakeVisible (*toolsBar);
+
         list = std::make_unique<TrackList> (engine, formatManager, thumbnailCache);
+        list->sharedToolsBar = toolsBar.get();
         viewport.setViewedComponent (list.get(), false);
         viewport.setScrollBarsShown (true, false);
         addAndMakeVisible (viewport);
@@ -1831,7 +1972,17 @@ namespace zynforge
 
     void EditPage::resized()
     {
-        viewport.setBounds (getLocalBounds());
+        auto r = getLocalBounds();
+        if (toolsBar != nullptr)
+        {
+            const int barH = 32;
+            auto top = r.removeFromTop (barH).reduced (brand::space::md, 3);
+            // Hold the toolbar to its natural pixel width (6 × 32 + 5 × 4 + side
+            // padding ≈ 220) so it sits left-aligned rather than stretching.
+            toolsBar->setBounds (top.withWidth (juce::jmin (top.getWidth(), 232)));
+            r.removeFromTop (brand::space::xs);
+        }
+        viewport.setBounds (r);
         // Tell the list how tall the visible area is so "fit to window"
         // sizing can resolve a sensible per-row pixel height.
         list->setViewportHeight (viewport.getHeight());

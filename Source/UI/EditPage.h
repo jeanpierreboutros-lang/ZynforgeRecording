@@ -18,6 +18,7 @@ namespace zynforge
     // mixer view (TrackState), so mute / solo / rename changes propagate
     // both ways.
     class AutomationToolbar;
+    class EditToolsBar;
     class EditPage final : public juce::Component, private juce::Timer
     {
     public:
@@ -28,6 +29,12 @@ namespace zynforge
         // which tool (Select / Add / Delete) and which parameter
         // (Volume / Pan / Mute) the engineer has chosen.
         void setAutomationToolbar (AutomationToolbar* t);
+
+        // Pro Tools-style edit-mode toolbar (Smart / Selector / Trim /
+        // Grabber / Fade / Scrubber). EditPage owns it and lays it out
+        // along the top edge; TrackRow consults it on every left-click
+        // to bias the hit-test.
+        EditToolsBar* getEditToolsBar() noexcept { return toolsBar.get(); }
 
         // Force every row's lane content to follow the toolbar's
         // Param choice. Called whenever the toolbar's onParamChanged
@@ -60,7 +67,8 @@ namespace zynforge
 
         int  lastTrackCount  { -1 };
         bool lastLoaded      { false };
-        AutomationToolbar* toolbar { nullptr };
+        AutomationToolbar*             toolbar  { nullptr };
+        std::unique_ptr<EditToolsBar>  toolsBar;
         bool clickPresent { false };
         int  clickTrackIdx { -1 };
 
