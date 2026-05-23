@@ -22,7 +22,7 @@ MainComponent::MainComponent()
 {
     setLookAndFeel (&laf);
 
-    // Title text removed from the header — the macOS window title +
+    // Title text removed from the header -- the macOS window title +
     // app icon already identify the product, no need to repeat it.
     titleLabel.setFont (brand::type::headline());
     titleLabel.setColour (juce::Label::textColourId, brand::textPrimary);
@@ -44,7 +44,7 @@ MainComponent::MainComponent()
     nextCueLabel.setFont (brand::fonts::body());
     addAndMakeVisible (nextCueLabel);
 
-    // DANTE pill — shows when the active audio device is Dante Virtual
+    // DANTE pill -- shows when the active audio device is Dante Virtual
     // Soundcard so the engineer sees at a glance that they're on the
     // Dante network. Updated from the existing timer.
     danteLabel.setColour (juce::Label::textColourId, brand::featureEngaged);
@@ -57,7 +57,7 @@ MainComponent::MainComponent()
     sessionLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (sessionLabel);
 
-    // Transport timecode — mono so HH:MM:SS doesn't dance
+    // Transport timecode -- mono so HH:MM:SS doesn't dance
     transportLabel.setFont (brand::type::mono (13.0f, true));
     transportLabel.setColour (juce::Label::textColourId, brand::textPrimary);
     transportLabel.setJustificationType (juce::Justification::centred);
@@ -123,7 +123,7 @@ MainComponent::MainComponent()
     // sharing engagedAmber, now ties to accentVS).
     vscButton.setColour (juce::TextButton::buttonColourId,  brand::signalVsc().darker (0.55f));
     vscButton.setColour (juce::TextButton::textColourOffId, brand::signalVsc().brighter (0.10f));
-    vscButton.setTooltip ("Virtual Soundcheck — repatch every strip's OUTPUT to match its INPUT, "
+    vscButton.setTooltip ("Virtual Soundcheck -- repatch every strip's OUTPUT to match its INPUT, "
                           "so playback feeds the desk via the same channels the live mics did.");
     vscButton.onClick = [this] { onVscClicked(); };
     addAndMakeVisible (vscButton);
@@ -140,8 +140,8 @@ MainComponent::MainComponent()
     };
     styleViewBtn (mixViewButton,  true);
     styleViewBtn (editViewButton, false);
-    mixViewButton .setTooltip ("Mixer view — channel strips with faders and meters.");
-    editViewButton.setTooltip ("Edit view — waveforms of the loaded/recorded tracks.");
+    mixViewButton .setTooltip ("Mixer view -- channel strips with faders and meters.");
+    editViewButton.setTooltip ("Edit view -- waveforms of the loaded/recorded tracks.");
     mixViewButton .onClick = [this] { switchView (View::Mix);  };
     editViewButton.onClick = [this] { switchView (View::Edit); };
     addAndMakeVisible (mixViewButton);
@@ -158,10 +158,10 @@ MainComponent::MainComponent()
         b.setClickingTogglesState (false);
         b.setTooltip (tt);
     };
-    styleStripBtn (stripXsButton, "XS strip width — 24 strips per page (tightest)");
-    styleStripBtn (stripSButton,  "S  strip width — 16 strips per page");
-    styleStripBtn (stripMButton,  "M  strip width — 12 strips per page (default)");
-    styleStripBtn (stripLButton,  "L  strip width — 8 strips per page (largest)");
+    styleStripBtn (stripXsButton, "XS strip width -- 24 strips per page (tightest)");
+    styleStripBtn (stripSButton,  "S  strip width -- 16 strips per page");
+    styleStripBtn (stripMButton,  "M  strip width -- 12 strips per page (default)");
+    styleStripBtn (stripLButton,  "L  strip width -- 8 strips per page (largest)");
     stripXsButton.onClick = [this] { setStripWidthPreset (StripWidth::XS); };
     stripSButton .onClick = [this] { setStripWidthPreset (StripWidth::S);  };
     stripMButton .onClick = [this] { setStripWidthPreset (StripWidth::M);  };
@@ -183,7 +183,7 @@ MainComponent::MainComponent()
 
     addChannelButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus.darker (0.55f));
     addChannelButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus.brighter (0.10f));
-    addChannelButton.setTooltip ("Set the number of recording channels — opens a prompt where you type the count (1–256).");
+    addChannelButton.setTooltip ("Set the number of recording channels -- opens a prompt where you type the count (1-256).");
     addChannelButton.onClick = [this]
     {
         if (engine.isRecording())
@@ -258,7 +258,7 @@ MainComponent::MainComponent()
         }
         metersDialog = zynforge::Meterbridge::launch (engine);
     };
-    metersButton.setTooltip ("Open the floating meterbridge — drag onto a second display.");
+    metersButton.setTooltip ("Open the floating meterbridge -- drag onto a second display.");
     addAndMakeVisible (metersButton);
 
     oscButton.onClick = [this]
@@ -269,11 +269,11 @@ MainComponent::MainComponent()
                                 ? "OSC listening on port " + juce::String (engine.getOscPort())
                                 : "OSC idle");
         menu.addSeparator();
-        menu.addItem (1, "Listen — Generic /zynforge");
-        menu.addItem (2, "Listen — DiGiCo");
-        menu.addItem (3, "Listen — Allen & Heath (SQ / Avantis)");
-        menu.addItem (4, "Listen — SSL Live");
-        menu.addItem (5, "Listen — Yamaha (DM7 / RIVAGE)");
+        menu.addItem (1, "Listen -- Generic /zynforge");
+        menu.addItem (2, "Listen -- DiGiCo");
+        menu.addItem (3, "Listen -- Allen & Heath (SQ / Avantis)");
+        menu.addItem (4, "Listen -- SSL Live");
+        menu.addItem (5, "Listen -- Yamaha (DM7 / RIVAGE)");
         menu.addSeparator();
         menu.addItem (10, "Stop", engine.isOscListening());
 
@@ -304,9 +304,9 @@ MainComponent::MainComponent()
     loadButton   .setTooltip ("FILE menu: Open / Save / Save As / Export.");
     playButton   .setTooltip ("Play the loaded session through the matching output of each strip (virtual soundcheck).");
     stopButton   .setTooltip ("Stop playback and rewind to the start.");
-    backupButton .setTooltip ("Pick a second drive — every track is mirrored there as you record.");
+    backupButton .setTooltip ("Pick a second drive -- every track is mirrored there as you record.");
     patchButton  .setTooltip ("Open the patch matrix: route hardware inputs / outputs to channel strips.");
-    titleLabel   .setTooltip ("Zynforge Recording — JUCE 8 multitrack recorder + virtual soundcheck.");
+    titleLabel   .setTooltip ("Zynforge Recording -- JUCE 8 multitrack recorder + virtual soundcheck.");
 
     refreshFormatButton();
     refreshPreRollButton();
@@ -350,7 +350,7 @@ MainComponent::MainComponent()
     };
     addAndMakeVisible (setlistBar);
 
-    // Automation toolbar — visible only when the EDIT view is active.
+    // Automation toolbar -- visible only when the EDIT view is active.
     // Tool / parameter changes are exposed to the EDIT rows via the
     // engine + a simple poll (TrackRow::resized + paint pick the
     // current laneMode from the toolbar's param choice).
@@ -361,7 +361,7 @@ MainComponent::MainComponent()
     {
         if (editPage != nullptr)
         {
-            // Toolbar param choice drives every row's lane content —
+            // Toolbar param choice drives every row's lane content --
             // engineer doesn't have to flip the per-row VIEW menu first.
             editPage->applyToolbarParamToAllRows();
             editPage->repaint();
@@ -369,11 +369,11 @@ MainComponent::MainComponent()
     };
     automationToolbar.onClearAll = [this]
     {
-        showStatus ("Automation clear is recognised — point storage lands in the next pass");
+        showStatus ("Automation clear is recognised -- point storage lands in the next pass");
     };
     addAndMakeVisible (automationToolbar);
 
-    // editPage doesn't exist yet here — the real wiring happens below
+    // editPage doesn't exist yet here -- the real wiring happens below
     // after `editPage = std::make_unique<EditPage>(...)`.
 
     // onClearAll wipes the active parameter across every track.
@@ -429,7 +429,7 @@ MainComponent::MainComponent()
             },
             [this]
             {
-                // 'Generate click track' button — render an audio file
+                // 'Generate click track' button -- render an audio file
                 // of the click for offline workflows (mixdown / export).
                 generateOrRefreshClickTrack();
             });
@@ -438,7 +438,7 @@ MainComponent::MainComponent()
 
 
     // TimelineStrip exists for marker bookkeeping but is no longer
-    // painted in either MIX or EDIT — the empty "Load a session…"
+    // painted in either MIX or EDIT -- the empty "Load a session..."
     // band added visual noise without working state. Keep the
     // instance for marker APIs that reference it; just don't show it.
     timeline = std::make_unique<zynforge::TimelineStrip> (engine);
@@ -475,7 +475,7 @@ MainComponent::MainComponent()
                                 brand::featureEngaged.darker (0.55f));
     vcaToggleButton.setColour (juce::TextButton::textColourOffId,
                                 brand::featureEngaged.brighter (0.10f));
-    vcaToggleButton.setTooltip ("Toggle the 8-bus VCA fader panel — group faders for "
+    vcaToggleButton.setTooltip ("Toggle the 8-bus VCA fader panel -- group faders for "
                                  "drums / vocals / etc. Strips opt in via right-click ▸ Assign to VCA.");
     vcaToggleButton.onClick = [this]
     {
@@ -498,7 +498,7 @@ MainComponent::MainComponent()
     loadSetlistFromActiveSession();
     juce::Timer::callAfterDelay (50, [this] { loadUILayoutFromActiveSession(); });
 
-    // First-launch tutorial — gated by appProps so it only fires once.
+    // First-launch tutorial -- gated by appProps so it only fires once.
     // Engineers can replay it from Help ▸ Quick Start.
     const bool firstRun = engine.getAppProps() == nullptr
                         || ! engine.getAppProps()->getBoolValue ("tutorialShown", false);
@@ -544,21 +544,21 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
 
     if (topLevelIndex == 0)  // File
     {
-        menu.addItem (5, "New Session…",         ! engine.isRecording());
-        menu.addItem (1, "Open Session…");
-        menu.addItem (4, "Import Audio Files…",  ! engine.isRecording());
+        menu.addItem (5, "New Session...",         ! engine.isRecording());
+        menu.addItem (1, "Open Session...");
+        menu.addItem (4, "Import Audio Files...",  ! engine.isRecording());
         menu.addSeparator();
         // Save / Save As are always enabled: if there's no active
         // session yet, Save falls through to Save As (picker), and
         // Save As is by definition a picker so it never needs prior
         // state.
         menu.addItem (2, "Save Session State");
-        menu.addItem (3, "Save Session As…");
+        menu.addItem (3, "Save Session As...");
         menu.addSeparator();
 
         juce::PopupMenu exportMenu;
         const bool hasActive = engine.getActiveSessionDir().isDirectory();
-        exportMenu.addItem (10, "Export All Tracks…", hasActive);
+        exportMenu.addItem (10, "Export All Tracks...", hasActive);
 
         juce::PopupMenu indiv;
         const int n = engine.getRecorder().getNumTracks();
@@ -573,12 +573,12 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addSubMenu ("Export", exportMenu);
         menu.addSeparator();
 
-        // Session templates — save the current strip config (count,
+        // Session templates -- save the current strip config (count,
         // names, colours, routings, stereo flags) to a reusable
         // template, or start a new session pre-populated from one.
-        menu.addItem (71, "Print setlist…", ! cues.empty());
+        menu.addItem (71, "Print setlist...", ! cues.empty());
         menu.addSeparator();
-        menu.addItem (70, "Save Current as Template…",
+        menu.addItem (70, "Save Current as Template...",
                       engine.getRecorder().getNumTracks() > 0
                        && ! engine.isRecording());
 
@@ -591,18 +591,18 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         else
         {
             templates.addSeparator();
-            templates.addItem (250, "Delete a template…");
+            templates.addItem (250, "Delete a template...");
         }
         menu.addSubMenu ("New Session from Template", templates, ! engine.isRecording());
 
         menu.addSeparator();
-        menu.addItem (60, "Choose Backup Folder…", ! engine.isRecording());
+        menu.addItem (60, "Choose Backup Folder...", ! engine.isRecording());
         menu.addSeparator();
-        menu.addItem (99, "Quit Zynforge Recording…");
+        menu.addItem (99, "Quit Zynforge Recording...");
     }
     else if (topLevelIndex == 1)  // Edit
     {
-        // Edit menu. Shortcut hints appear after a tab character — macOS
+        // Edit menu. Shortcut hints appear after a tab character -- macOS
         // pulls those out and right-aligns them in the native menu.
         const bool hasContext = engine.getPlayer().isLoaded() || engine.isRecording();
 
@@ -636,10 +636,10 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (314, "Punch In/Out Mode",
                       playerLoaded, engine.isPunchModeOn());
         menu.addSeparator();
-        // Batch ops — let the engineer sweep a range of channels in one
+        // Batch ops -- let the engineer sweep a range of channels in one
         // dialog instead of renaming/recolouring 24 strips by hand.
-        menu.addItem (320, "Batch Rename Channels…",  engine.getRecorder().getNumTracks() > 0);
-        menu.addItem (321, "Batch Colour Channels…",  engine.getRecorder().getNumTracks() > 0);
+        menu.addItem (320, "Batch Rename Channels...",  engine.getRecorder().getNumTracks() > 0);
+        menu.addItem (321, "Batch Colour Channels...",  engine.getRecorder().getNumTracks() > 0);
         menu.addSeparator();
         const int selCount = (int) selectedLogical.size();
         const int stripCount = (int) strips.size();
@@ -650,22 +650,22 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         sel.addItem (330, "Move selected up",         selCount > 0);
         sel.addItem (331, "Move selected down",       selCount > 0);
         sel.addSeparator();
-        sel.addItem (332, "Colour selected…",         selCount > 0);
+        sel.addItem (332, "Colour selected...",         selCount > 0);
         sel.addItem (333, "Delete selected",          selCount > 0);
         menu.addSubMenu ("Selection (" + juce::String (selCount) + ")", sel, true);
     }
     else if (topLevelIndex == 2)  // Session
     {
-        menu.addItem (54, "Show pre-flight checklist…");
+        menu.addItem (54, "Show pre-flight checklist...");
         menu.addSeparator();
-        menu.addItem (50, "Patch…");
-        menu.addItem (52, "Virtual Soundcheck — repatch outputs ↔ inputs");
-        menu.addItem (51, "Meterbridge…");
-        menu.addItem (53, "Markers…");
+        menu.addItem (50, "Patch...");
+        menu.addItem (52, "Virtual Soundcheck -- repatch outputs ↔ inputs");
+        menu.addItem (51, "Meterbridge...");
+        menu.addItem (53, "Markers...");
         menu.addSeparator();
         menu.addItem (55, engine.getNDIBridge().isEnabled()
                               ? juce::String ("Stop NDI broadcast")
-                              : juce::String ("Start NDI broadcast…"));
+                              : juce::String ("Start NDI broadcast..."));
 
         // OSC submenu with the five dialects.
         juce::PopupMenu oscMenu;
@@ -678,7 +678,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         oscMenu.addItem (115, "Stop OSC", engine.isOscListening());
         menu.addSubMenu ("OSC", oscMenu);
 
-        // MIDI clock master — drive outboard synths / drum machines /
+        // MIDI clock master -- drive outboard synths / drum machines /
         // DAW slaves from the session tempo (24 PPQN). Submenu lists
         // every installed MIDI output; pick one to enable, or "Stop"
         // to disable. Currently-active device is checkmarked.
@@ -693,32 +693,32 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addSubMenu ("MIDI clock out", midiMenu);
 
         menu.addSeparator();
-        menu.addItem (260, "Upload session to cloud…", ! engine.isRecording());
-        menu.addItem (261, "Configure cloud upload command…");
+        menu.addItem (260, "Upload session to cloud...", ! engine.isRecording());
+        menu.addItem (261, "Configure cloud upload command...");
         menu.addSeparator();
         const bool compRunning = engine.isCompanionServerRunning();
         menu.addItem (270, compRunning
                             ? juce::String ("Stop companion (port " + juce::String (engine.getCompanionServerPort()) + ")")
-                            : juce::String ("Start companion server on :9000…"));
+                            : juce::String ("Start companion server on :9000..."));
         menu.addSeparator();
-        menu.addItem (250, "Session Settings…", ! engine.isRecording());
-        menu.addItem (251, "Properties…",       engine.getActiveSessionDir().isDirectory());
+        menu.addItem (250, "Session Settings...", ! engine.isRecording());
+        menu.addItem (251, "Properties...",       engine.getActiveSessionDir().isDirectory());
         menu.addSeparator();
         menu.addItem (280, "Spectral auto-name strips",
                       engine.getRecorder().getNumTracks() > 0);
         menu.addItem (281, "Write soundcheck report",
                       engine.getActiveSessionDir().isDirectory());
-        menu.addItem (282, "Analyse for noise / hum / bumps…",
+        menu.addItem (282, "Analyse for noise / hum / bumps...",
                       engine.getActiveSessionDir().isDirectory());
         menu.addSeparator();
         menu.addItem (290, sessionMirror.isMirroring()
                               ? "Stop mirroring " + sessionMirror.getPrimary()
-                              : juce::String ("Mirror primary host…"));
+                              : juce::String ("Mirror primary host..."));
     }
     else if (topLevelIndex == 3)  // Help
     {
-        menu.addItem (900, "Keyboard Shortcuts…");
-        menu.addItem (903, "User Guide (panel tips)…");
+        menu.addItem (900, "Keyboard Shortcuts...");
+        menu.addItem (903, "User Guide (panel tips)...");
         menu.addItem (901, "Quick Start (replay tutorial)");
         menu.addSeparator();
         menu.addItem (902, "About Zynforge Recording");
@@ -754,8 +754,8 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     // Track-export sub-menu uses ids 100..199. Tightened from the
     // previous open-ended `>= 100` which was swallowing 110..115
     // (OSC dialects), 200..230 (settings menu), and 250 (Session
-    // Settings) — sending all of them to onExportIndividualTrack.
-    // OSC dialect picks under Session ▶ OSC ▶ — must be checked BEFORE
+    // Settings) -- sending all of them to onExportIndividualTrack.
+    // OSC dialect picks under Session ▶ OSC ▶ -- must be checked BEFORE
     // the export range below, otherwise IDs 110..115 fall through to
     // onExportIndividualTrack(10..15) and silently no-op.
     else if (id >= 110 && id <= 114)
@@ -765,7 +765,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
             showStatus ("OSC listening on 8000 (" +
                         juce::StringArray ({"Generic","DiGiCo","A&H","SSL","Yamaha"})[dialect] + ")");
         else
-            showStatus ("OSC failed to bind UDP 8000 — port already in use?");
+            showStatus ("OSC failed to bind UDP 8000 -- port already in use?");
     }
     else if (id == 115)  { engine.stopOsc(); showStatus ("OSC stopped"); }
     else if (id == 400)
@@ -789,12 +789,12 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     {
         // Run the configured cloud-upload command with {SESSION} expanded.
         const auto sessionDir = engine.getActiveSessionDir();
-        if (! sessionDir.isDirectory()) { showStatus ("No session active — load or record first"); return; }
+        if (! sessionDir.isDirectory()) { showStatus ("No session active -- load or record first"); return; }
         auto* props = engine.getAppProps();
         const auto tmpl = props != nullptr ? props->getValue ("cloudUploadCommand") : juce::String();
         if (tmpl.isEmpty())
         {
-            showStatus ("No upload command configured — pick \"Configure cloud upload command…\" first");
+            showStatus ("No upload command configured -- pick \"Configure cloud upload command...\" first");
             return;
         }
         const auto cmd = tmpl.replace ("{SESSION}", sessionDir.getFullPathName().quoted(), false);
@@ -805,7 +805,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
         }
         else
         {
-            showStatus ("Cloud upload failed to launch — check the configured command");
+            showStatus ("Cloud upload failed to launch -- check the configured command");
         }
     }
     else if (id == 270)
@@ -817,11 +817,11 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
         }
         else if (engine.startCompanionServer (9000))
         {
-            showStatus ("Companion server on http://localhost:9000 — open it from any browser / iPad");
+            showStatus ("Companion server on http://localhost:9000 -- open it from any browser / iPad");
         }
         else
         {
-            showStatus ("Companion failed to bind port 9000 — try a different port");
+            showStatus ("Companion failed to bind port 9000 -- try a different port");
         }
     }
     else if (id == 261)
@@ -888,10 +888,10 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
                 ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
                 : 48000.0;
             const auto host = juce::SystemStats::getComputerName();
-            if (bridge.start ("Zynforge — " + host, sr))
-                showStatus ("NDI broadcasting as 'Zynforge — " + host + "'");
+            if (bridge.start ("Zynforge -- " + host, sr))
+                showStatus ("NDI broadcasting as 'Zynforge -- " + host + "'");
             else
-                showStatus ("NDI start failed — check ndi.tv runtime install");
+                showStatus ("NDI start failed -- check ndi.tv runtime install");
         }
     }
     else if (id == 251) showSessionProperties();
@@ -1076,7 +1076,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         return true;
     }
 
-    // Cmd+A — select every strip. Skips when the system focus is on a
+    // Cmd+A -- select every strip. Skips when the system focus is on a
     // text editor (so name-rename Cmd+A still selects the text).
     if (key == juce::KeyPress ('a', juce::ModifierKeys::commandModifier, 0)
         && juce::Component::getCurrentlyFocusedComponent() != nullptr
@@ -1112,12 +1112,12 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         }
         else
         {
-            showStatus ("Load or record a session first — nothing to play");
+            showStatus ("Load or record a session first -- nothing to play");
         }
         return true;
     }
 
-    // Number keys 1..9 jump to cue 1..9 if a setlist is loaded — turns
+    // Number keys 1..9 jump to cue 1..9 if a setlist is loaded -- turns
     // the cue list into a real performance tool. Shift+number stores a
     // new cue at the playhead (quick-build setlist).
     {
@@ -1139,7 +1139,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
     {
         const int n = engine.dropMarkerAtCurrentPosition();
         showStatus (n >= 0 ? "Marker " + juce::String (n) + " dropped"
-                            : "No active session — can't drop marker");
+                            : "No active session -- can't drop marker");
         return true;
     }
     if (c == 'a') { editSoloSelection();    return true; }
@@ -1246,7 +1246,7 @@ void MainComponent::rebuildStrips()
             if (step == 2) engine.setTrackGainDb (i + 1, dB);
         };
         // L pan persists to track i. For a stereo strip, the R pan
-        // travels through its own panRCb (below) — the two sides are
+        // travels through its own panRCb (below) -- the two sides are
         // INDEPENDENT, not mirrored, so the engineer can pan the L
         // channel hard-left and R hard-right (or whatever they want).
         auto panCb  = [this, i] (float pan) { engine.setTrackPan (i,     pan); };
@@ -1300,7 +1300,7 @@ void MainComponent::rebuildStrips()
                              std::move (linkStereoCb),
                              std::move (linkOtherCb));
 
-        // VCA assignment from the strip's right-click menu — the
+        // VCA assignment from the strip's right-click menu -- the
         // ChannelStrip sets state.vcaGroup directly for immediate
         // audio-thread effect; this callback persists the choice
         // through appProps so a relaunch restores it.
@@ -1309,7 +1309,7 @@ void MainComponent::rebuildStrips()
             engine.setTrackVcaGroup (i, vcaIdx);
         };
 
-        // Aux send wiring — feed the strip the live bus list so its
+        // Aux send wiring -- feed the strip the live bus list so its
         // 'Send to bus' submenu populates, and persist whatever the
         // engineer picks for send slot 0. Unity post-fader default.
         s->getBusList = [this]() -> std::vector<std::pair<int, juce::String>>
@@ -1363,7 +1363,7 @@ void MainComponent::timerCallback()
     if (n != lastTrackCount)
         rebuildStrips();
 
-    // MIDI clock status pill — visible reassurance that the engineer's
+    // MIDI clock status pill -- visible reassurance that the engineer's
     // outboard sync is alive. Empty string when disabled hides it.
     {
         const auto& clock = engine.getMidiClockOut();
@@ -1374,7 +1374,7 @@ void MainComponent::timerCallback()
             midiStatusLabel.setText (label, juce::dontSendNotification);
     }
 
-    // DANTE detection — flag the active audio device when its name
+    // DANTE detection -- flag the active audio device when its name
     // contains 'Dante' / 'DVS' (Audinate's Dante Virtual Soundcard).
     {
         juce::String txt;
@@ -1388,7 +1388,7 @@ void MainComponent::timerCallback()
             danteLabel.setText (txt, juce::dontSendNotification);
     }
 
-    // LCD countdown to next cue — only when a setlist exists AND the
+    // LCD countdown to next cue -- only when a setlist exists AND the
     // player is rolling. Pre-show or scrub state shows blank so the
     // chip doesn't lie about a still session.
     {
@@ -1415,17 +1415,17 @@ void MainComponent::timerCallback()
             nextCueLabel.setText (txt, juce::dontSendNotification);
     }
 
-    // Tick the cue-fade ramp if one is in flight — interpolates gain
+    // Tick the cue-fade ramp if one is in flight -- interpolates gain
     // and pan from the live mix toward the cue's target snapshot.
     if (cueRamp.active) updateCueRamp();
 
-    // Punch in/out — when the playhead enters the loop region we
+    // Punch in/out -- when the playhead enters the loop region we
     // automatically start recording on every track that has the
     // punch-arm bit set; when it leaves we stop.
     if (engine.isPunchModeOn() && engine.getPlayer().hasLoopRegion())
         servicePunch();
 
-    // Keep each strip's input/output combos in sync with engine state —
+    // Keep each strip's input/output combos in sync with engine state --
     // the PATCH page can mutate routing behind the strip's back. Also
     // refresh name + colour so changes made from the EDIT view show up.
     for (auto& s : strips)
@@ -1474,7 +1474,7 @@ void MainComponent::timerCallback()
     bigClock.setMarkers (markers.getCount());
 
     // Surface the brand-orange armed-ready border when at least one
-    // strip is record-armed AND we're not already rolling — the
+    // strip is record-armed AND we're not already rolling -- the
     // engineer sees, before pressing RECORD, that the next press
     // will print to disk.
     bool anyArmed = false;
@@ -1510,7 +1510,7 @@ void MainComponent::timerCallback()
                           recorder.getMissedSamples(),
                           remainingSec);
 
-    // CPU / disk / buffer dashboard — driven directly from engine atomics
+    // CPU / disk / buffer dashboard -- driven directly from engine atomics
     // so the read is lock-free even at 256 channels under load.
     perfDashboard.setMetrics (engine.getAudioLoadPct(),
                               engine.getDiskMBPerSec(),
@@ -1569,19 +1569,19 @@ void MainComponent::onRecordClicked()
     auto* device = engine.getDeviceManager().getCurrentAudioDevice();
     if (device == nullptr)
     {
-        statusLabel.setText ("No audio device open — pick one with DEVICE.", juce::dontSendNotification);
+        statusLabel.setText ("No audio device open -- pick one with DEVICE.", juce::dontSendNotification);
         return;
     }
     const int numInputs = device->getActiveInputChannels().countNumberOfSetBits();
     if (numInputs == 0)
     {
-        statusLabel.setText ("Device has 0 active inputs — open DEVICE and enable inputs.",
+        statusLabel.setText ("Device has 0 active inputs -- open DEVICE and enable inputs.",
                              juce::dontSendNotification);
         return;
     }
 
     // Count armed tracks AND auto-fix any strip whose inputRouting points
-    // outside the device's actual input count — fall back to a sequential
+    // outside the device's actual input count -- fall back to a sequential
     // wrap so engineer doesn't have to open PATCH to start recording.
     int armed = 0;
     int autoRouted = 0;
@@ -1606,7 +1606,7 @@ void MainComponent::onRecordClicked()
 
     const auto dir = makeNewSessionDir();
 
-    // Disk-space pre-flight — abort if the drive can't hold at least
+    // Disk-space pre-flight -- abort if the drive can't hold at least
     // 30 minutes at current SR × armed-track count × bit depth (assume
     // 24-bit if unknown). Surface the actual free GB so the engineer
     // knows what to clear.
@@ -1621,7 +1621,7 @@ void MainComponent::onRecordClicked()
             const double freeGB = freeBytes / 1.0e9;
             statusLabel.setText ("Drive has only "
                                  + juce::String (freeGB, 1)
-                                 + " GB free — < 30 min headroom. Clear space before recording.",
+                                 + " GB free -- < 30 min headroom. Clear space before recording.",
                                  juce::dontSendNotification);
             return;
         }
@@ -1638,7 +1638,7 @@ void MainComponent::onRecordClicked()
     }
     else
     {
-        statusLabel.setText ("Failed to start recording — could not open writer files.",
+        statusLabel.setText ("Failed to start recording -- could not open writer files.",
                              juce::dontSendNotification);
     }
 }
@@ -1671,7 +1671,7 @@ void MainComponent::onStopClicked()
     // STOP-while-recording is a take-killing action. A fat-fingered
     // keystroke or stray touch must not end a live recording. First
     // tap arms (flash + toast); a second tap within 2 s fires for
-    // real. Any other state — playback, idle — stops immediately
+    // real. Any other state -- playback, idle -- stops immediately
     // because there's nothing irreversible to protect.
     auto& player = engine.getPlayer();
 
@@ -1682,14 +1682,14 @@ void MainComponent::onStopClicked()
 
         if (stopArmedAtMs == 0 || (now - stopArmedAtMs) > kArmWindowMs)
         {
-            // First tap — arm. Don't actually stop yet.
+            // First tap -- arm. Don't actually stop yet.
             stopArmedAtMs = now;
             toast.show ("Tap STOP again to end the recording", Toast::Kind::Warning);
-            statusLabel.setText ("STOP armed — tap again within 2 s to stop recording",
+            statusLabel.setText ("STOP armed -- tap again within 2 s to stop recording",
                                  juce::dontSendNotification);
             return;
         }
-        // Second tap within window — disarm and fall through to stop.
+        // Second tap within window -- disarm and fall through to stop.
         stopArmedAtMs = 0;
     }
     else
@@ -1783,7 +1783,7 @@ void MainComponent::applyLockState()
     for (auto& s : strips) if (s != nullptr) s->setEnabled (e);
 
     lockButton.setButtonText (sessionLocked ? "UNLOCK" : "LOCK");
-    showStatus (sessionLocked ? "LOCKED — click UNLOCK to resume control"
+    showStatus (sessionLocked ? "LOCKED -- click UNLOCK to resume control"
                               : engine.isRecording()  ? "Recording"
                               : engine.isPlaying()    ? "Playing"
                                                       : "Idle");
@@ -1801,14 +1801,14 @@ void MainComponent::onVscClicked()
     for (int i = 0; i < n; ++i)
     {
         const int inDev = rec.getTrack (i).inputRouting.load (std::memory_order_relaxed);
-        // -2 means 'identity default' — resolve to i so the output ends
+        // -2 means 'identity default' -- resolve to i so the output ends
         // up explicitly set to the strip's identity input.
         const int target = (inDev == -2) ? i : inDev;
         engine.setTrackOutputRouting (i, target);
         ++repatched;
     }
     showStatus (repatched > 0
-                ? "Virtual Soundcheck — " + juce::String (repatched)
+                ? "Virtual Soundcheck -- " + juce::String (repatched)
                   + " strip(s) repatched: outputs now match inputs"
                 : juce::String ("No strips to repatch"));
 }
@@ -1842,7 +1842,7 @@ void MainComponent::onBackupClicked()
 
 void MainComponent::showFirstRunTutorial()
 {
-    // Sequential walkthrough — each AlertWindow chains the next via
+    // Sequential walkthrough -- each AlertWindow chains the next via
     // its modal callback. Plain dialogs (not arrow callouts) so the
     // tutorial keeps working even if the layout shifts later.
     struct Step { juce::String title; juce::String body; };
@@ -1851,25 +1851,25 @@ void MainComponent::showFirstRunTutorial()
           "Live multitrack recording + virtual soundcheck.\n\n"
           "This 5-step tour shows you how to capture your first session. "
           "You can replay this any time from Help > Quick Start." },
-        { "Step 1 of 5 — Add channels",
+        { "Step 1 of 5 -- Add channels",
           "Click the green + CH button in the top-right header to add channels. "
           "Pick a count (e.g. 8 for a basic drum kit) and tick Stereo for pairs. "
           "Channels appear in the mixer left-to-right." },
-        { "Step 2 of 5 — Arm tracks",
+        { "Step 2 of 5 -- Arm tracks",
           "On each channel strip, click the red R button to ARM it for recording. "
           "Click the green I button to also monitor (hear) it through your outputs.\n\n"
           "Tip: Shift-click multiple strips to select them, then bulk-arm / delete / "
           "colour them via Edit > Selection. Esc clears the selection." },
-        { "Step 3 of 5 — Record + play back",
+        { "Step 3 of 5 -- Record + play back",
           "Press the red record button in the transport bar (centre-bottom of "
           "the header) to start recording. Press it again to stop.\n\n"
           "When you stop, the session auto-loads for playback. Press play "
           "(green triangle) or just SPACEBAR to hear what you captured." },
-        { "Step 4 of 5 — Cue list for shows",
+        { "Step 4 of 5 -- Cue list for shows",
           "For playback shows, build a setlist with the cue bar at the top. "
-          "Each cue snapshots fader / pan / routing—recall via cue "
+          "Each cue snapshots fader / pan / routing--recall via cue "
           "buttons OR number keys 1-""9. Soft-takeover ramps prevent clicks." },
-        { "Step 5 of 5 — Help is always one menu away",
+        { "Step 5 of 5 -- Help is always one menu away",
           "Help > Keyboard Shortcuts shows every shortcut.\n"
           "Help > Quick Start replays this tour.\n\n"
           "You're ready. Press OK to start your first session." }
@@ -1954,7 +1954,7 @@ void MainComponent::showUserGuide()
         "Right-click a row for size + take swap; right-click a clip for "
         "mute / lock / duplicate / delete / gain / fades.\n\n"
         "PATCH PAGE (Session menu)\n"
-        "  INPUT / OUTPUT tabs — rows are hardware channels, columns are "
+        "  INPUT / OUTPUT tabs -- rows are hardware channels, columns are "
         "your strips. Click a dot to route; drag diagonally for "
         "incremental patching.\n\n"
         "CUE LIST (top bar)\n"
@@ -1983,14 +1983,14 @@ void MainComponent::showUserGuide()
         "  Native Dante requires Audinate's paid SDK + NDA. Practical "
         "path: install Audinate's free Dante Virtual Soundcard (DVS) "
         "from audinate.com. DVS exposes up to 64\xC3\x97""64 Dante channels "
-        "as a Core Audio device—just pick it in DEVICE and route "
+        "as a Core Audio device--just pick it in DEVICE and route "
         "strips to its channels via PATCH. ZynForge auto-detects DVS "
         "and shows a 'DANTE' badge in the status bar.\n\n"
         "NETWORK AUDIO (NDI)\n"
         "  Session > NDI broadcast pushes the master mix onto your "
         "LAN as an NDI Audio source. Any NDI receiver (NDI Tools, OBS, "
         "TouchDesigner) on the same network can monitor your live "
-        "stream. Requires NDI runtime from ndi.tv—free.";
+        "stream. Requires NDI runtime from ndi.tv--free.";
 
     auto* aw = new juce::AlertWindow ("Zynforge user guide", body,
                                       juce::MessageBoxIconType::InfoIcon);
@@ -2067,7 +2067,7 @@ void MainComponent::showStartupWelcome()
                 return;
             }
 
-            // result == 1 (Create) — open the Pro Tools-style New Session
+            // result == 1 (Create) -- open the Pro Tools-style New Session
             // dialog to pick name, storage location, format, sample rate
             // and bit depth.
             launchNewSessionDialog();
@@ -2138,7 +2138,7 @@ void MainComponent::launchNewSessionDialog()
         self->engine.setStripCount (0);
         self->lastTrackCount = -1;
 
-        self->showStatus ("New session '" + r.name + "' — add channels with +CH and arm REC to capture");
+        self->showStatus ("New session '" + r.name + "' -- add channels with +CH and arm REC to capture");
     });
 }
 
@@ -2175,15 +2175,15 @@ void MainComponent::onFileMenuClicked()
     const bool hasActive   = activeDir.isDirectory();
 
     juce::PopupMenu menu;
-    menu.addItem (1, "Open Session…");
-    menu.addItem (4, "Import Audio Files…",   ! engine.isRecording());
+    menu.addItem (1, "Open Session...");
+    menu.addItem (4, "Import Audio Files...",   ! engine.isRecording());
     menu.addSeparator();
     menu.addItem (2, "Save Session State",      hasActive);
-    menu.addItem (3, "Save Session As…",   hasActive);
+    menu.addItem (3, "Save Session As...",   hasActive);
     menu.addSeparator();
 
     juce::PopupMenu exportMenu;
-    exportMenu.addItem (10, "Export All Tracks…", hasActive);
+    exportMenu.addItem (10, "Export All Tracks...", hasActive);
 
     juce::PopupMenu individualMenu;
     const int trackCount = engine.getRecorder().getNumTracks();
@@ -2215,7 +2215,7 @@ void MainComponent::showStatus (const juce::String& msg)
     statusLabel.setText (msg, juce::dontSendNotification);
     // Also surface the message as a non-modal toast so the engineer
     // catches feedback even when their eyes are on the strips, not
-    // the footer. Pick the Kind from the message tone — anything
+    // the footer. Pick the Kind from the message tone -- anything
     // containing "Stop", "can't", "fail" reads as a warning;
     // everything else as info.
     if (msg.isNotEmpty())
@@ -2430,7 +2430,7 @@ void MainComponent::editSoloSelection()
         return;
     }
 
-    // No selection: toggle — if any solo on, clear all; else solo all armed.
+    // No selection: toggle -- if any solo on, clear all; else solo all armed.
     bool anySolo = false;
     for (int i = 0; i < rec.getNumTracks(); ++i)
         if (rec.getTrack (i).soloed.load (std::memory_order_relaxed))
@@ -2464,7 +2464,7 @@ void MainComponent::editCropToLoopRange()
     auto& m = engine.getMarkers();
     m.drop (player.getLoopStart(), "Crop In");
     m.drop (player.getLoopEnd(),   "Crop Out");
-    showStatus ("Crop markers placed — use Save Session As to commit the trim");
+    showStatus ("Crop markers placed -- use Save Session As to commit the trim");
 }
 
 void MainComponent::editSetRangeToLoopRange()
@@ -2472,10 +2472,10 @@ void MainComponent::editSetRangeToLoopRange()
     auto& player = engine.getPlayer();
     if (! player.hasLoopRegion())
     {
-        // Engineer hit it without a loop set — start one at the playhead.
+        // Engineer hit it without a loop set -- start one at the playhead.
         const auto pos = currentPlayheadSamples (engine);
         player.setLoopRegion (pos, pos + (juce::int64) (player.getSampleRate() * 2.0));
-        showStatus ("No loop region set — defaulted to 2 s at the playhead");
+        showStatus ("No loop region set -- defaulted to 2 s at the playhead");
         return;
     }
     auto& m = engine.getMarkers();
@@ -2495,7 +2495,7 @@ void MainComponent::editSplitAtPlayhead()
     const auto pos = currentPlayheadSamples (engine);
     engine.getMarkers().drop (pos, "Split");
 
-    // Real clip-level split — only act on the selected strips. If
+    // Real clip-level split -- only act on the selected strips. If
     // nothing is selected, the action stays as 'just drop a marker' so
     // it's safe to bind to the S hotkey by default.
     int splits = 0;
@@ -2596,7 +2596,7 @@ void MainComponent::loadSetlistFromActiveSession()
 
                         // Deserialize per-strip snapshot if present
                         // (cues saved by older builds without snapshots
-                        // just leave the strips vector empty — recall
+                        // just leave the strips vector empty -- recall
                         // then skips strip restore).
                         const auto sv = c->getProperty ("strips");
                         if (auto* sa = sv.getArray())
@@ -2619,7 +2619,7 @@ void MainComponent::loadSetlistFromActiveSession()
                                 }
                             }
                         }
-                        // Per-cue tempo curve (optional — older cues
+                        // Per-cue tempo curve (optional -- older cues
                         // without one just play at the single tempoBpm).
                         const auto cv = c->getProperty ("tempoCurve");
                         if (auto* ca = cv.getArray())
@@ -2646,7 +2646,7 @@ void MainComponent::loadSetlistFromActiveSession()
     // Restore comp playlists (Takes) from the .zfproj if present.
     // seedDefaultClips ran earlier and populated trackPlaylists with
     // Take 1; loadPlaylistsFromJson now overwrites that with whatever
-    // the engineer had saved. Re-parse the .zfproj here — the earlier
+    // the engineer had saved. Re-parse the .zfproj here -- the earlier
     // 'obj' was scoped to the setlist deserialise block above.
     {
         const auto proj = findSessionProj (engine.getActiveSessionDir());
@@ -2668,7 +2668,7 @@ void MainComponent::saveSetlistToActiveSession() const
     if (proj == juce::File{}) return;
 
     // Preserve the existing .zfproj fields (createdAt, sampleRate, etc.)
-    // when we rewrite — only the 'setlist' key is touched.
+    // when we rewrite -- only the 'setlist' key is touched.
     juce::DynamicObject::Ptr obj;
     const auto parsed = juce::JSON::parse (proj);
     if (parsed.isObject()) obj = parsed.getDynamicObject();
@@ -2701,7 +2701,7 @@ void MainComponent::saveSetlistToActiveSession() const
         }
         entry->setProperty ("strips", juce::var (stripArr));
 
-        // Per-cue tempo curve — offsets + bpm pairs. Empty when the
+        // Per-cue tempo curve -- offsets + bpm pairs. Empty when the
         // cue is a single-BPM cue (older format / no curve set).
         if (! c.tempoCurve.empty())
         {
@@ -2718,7 +2718,7 @@ void MainComponent::saveSetlistToActiveSession() const
         arr.add (juce::var (entry.get()));
     }
     obj->setProperty ("setlist",   juce::var (arr));
-    // Persist comp playlists (Takes) — RAM-only before this fix
+    // Persist comp playlists (Takes) -- RAM-only before this fix
     // meant every alternate take was lost on app quit.
     obj->setProperty ("playlists", engine.playlistsToJson());
     // .zfproj schema version: 2 introduced playlists + (next commit)
@@ -2739,7 +2739,7 @@ void MainComponent::saveSetlistToActiveSession() const
                                                   + "_" + stamp + ".zfproj");
         proj.copyFileTo (bk);
 
-        // Prune — keep only the 10 most recent.
+        // Prune -- keep only the 10 most recent.
         auto snaps = backupsDir.findChildFiles (juce::File::findFiles, false, "*.zfproj");
         if (snaps.size() > 10)
         {
@@ -2768,13 +2768,13 @@ void MainComponent::jumpToCue (int index)
         const float oldBpm = engine.getSessionTempoBpm();
         engine.setSessionTempoBpm (cue.tempoBpm);
         tempoBar.setBpm (engine.getSessionTempoBpm());
-        // Click track is tempo-locked — regenerate on tempo change so
+        // Click track is tempo-locked -- regenerate on tempo change so
         // the metronome lines up with the recalled cue.
         if (clickTrackIndex >= 0 && std::abs (oldBpm - cue.tempoBpm) > 0.05f)
             generateOrRefreshClickTrack();
     }
 
-    // Per-cue tempo curve — install the cue's tempo map (offsets
+    // Per-cue tempo curve -- install the cue's tempo map (offsets
     // translated to absolute sample positions starting at cue.samplePos)
     // into the engine's tempo map. The audio thread already walks the
     // map each block and pushes the resulting BPM to ClickEngine and
@@ -2789,23 +2789,23 @@ void MainComponent::jumpToCue (int index)
         engine.setTempoMap (std::move (map));
     }
 
-    // Fade transition? — start a ramp instead of instant restore.
+    // Fade transition? -- start a ramp instead of instant restore.
     if (cue.transition == zynforge::SetlistBar::Transition::Fade && cue.fadeBeats > 0.0f)
     {
         startCueRampTo (cue);
         updateTransportLabels();
-        showStatus ("Cue " + juce::String (index + 1) + " — fading mix over "
+        showStatus ("Cue " + juce::String (index + 1) + " -- fading mix over "
                     + juce::String (cue.fadeBeats, 1) + " beats");
         return;
     }
 
     // Recall the mixer state captured with this cue: gain / pan /
-    // input + output routing / mute / solo / mon / arm — for every
+    // input + output routing / mute / solo / mon / arm -- for every
     // strip the cue knows about. Strips beyond the snapshot length
     // (added after the cue was saved) are left untouched.
     auto& rec = engine.getRecorder();
     const int total = rec.getNumTracks();
-    // 250 ms soft-takeover — short enough to feel snappy on a cue
+    // 250 ms soft-takeover -- short enough to feel snappy on a cue
     // jump, long enough to avoid an audible zipper / click when
     // gain or pan jumps by 6+ dB.
     constexpr double kCueRecallSeconds = 0.25;
@@ -2847,7 +2847,7 @@ void MainComponent::jumpToCue (int index)
     lastTrackCount = -1;   // force strip refresh so combos + buttons redraw
 
     updateTransportLabels();
-    showStatus ("Cue " + juce::String (index + 1) + " — " + cue.name
+    showStatus ("Cue " + juce::String (index + 1) + " -- " + cue.name
                 + (n > 0 ? " (mix recalled)" : ""));
 }
 
@@ -2957,7 +2957,7 @@ void MainComponent::updateCueAtTransport()
 
     setlistBar.setCues (cues, currentCueIndex);
     saveSetlistToActiveSession();
-    showStatus ("Cue '" + cue.name + "' updated — "
+    showStatus ("Cue '" + cue.name + "' updated -- "
                 + juce::String ((double) pos / juce::jmax (1.0, player.getSampleRate()), 2) + " s, "
                 + juce::String (total) + " strip mix snapshotted");
 }
@@ -2977,7 +2977,7 @@ void MainComponent::generateOrRefreshClickTrack()
     auto& recorder = engine.getRecorder();
     if (clickTrackIndex < 0)
     {
-        // First press in this session — append a fresh track at the end.
+        // First press in this session -- append a fresh track at the end.
         clickTrackIndex = recorder.getNumTracks();
         engine.setStripCount (clickTrackIndex + 1);
         engine.setTrackName  (clickTrackIndex, "Click");
@@ -2995,7 +2995,7 @@ void MainComponent::generateOrRefreshClickTrack()
     auto& player = engine.getPlayer();
     juce::int64 totalSamples = player.isLoaded() ? player.getTotalLengthSamples() : 0;
     if (totalSamples <= 0)
-        // 1-hour fallback when there's nothing loaded yet — plenty for
+        // 1-hour fallback when there's nothing loaded yet -- plenty for
         // any single show, 4× faster to render than the old 4-hour cap.
         totalSamples = (juce::int64) (sr * 60.0 * 60.0);
 
@@ -3137,7 +3137,7 @@ void MainComponent::generateOrRefreshClickTrack()
     }
 
     // Default the click track to hardware output 1 so it's audible
-    // without further routing — the strip's OUT combo still exposes
+    // without further routing -- the strip's OUT combo still exposes
     // every available device output so the engineer can re-patch it
     // to a dedicated cue bus (headphones, drummer's IEM, etc.).
     if (auto* dev = engine.getDeviceManager().getCurrentAudioDevice())
@@ -3146,7 +3146,7 @@ void MainComponent::generateOrRefreshClickTrack()
         const int outCh = juce::jlimit (0, juce::jmax (0, outs - 1), 0);
         engine.setTrackOutputRouting (clickTrackIndex, outCh);
     }
-    engine.setTrackInputRouting (clickTrackIndex, -1);   // no input — playback only
+    engine.setTrackInputRouting (clickTrackIndex, -1);   // no input -- playback only
 
     engine.loadSession (sessionDir);
     lastTrackCount = -1;
@@ -3188,7 +3188,7 @@ void MainComponent::startCueRampTo (const zynforge::SetlistBar::Cue& cue)
     }
 
     // Other state (mute / solo / mon / arm / routing / tempo) snaps
-    // immediately — only continuous parameters interpolate.
+    // immediately -- only continuous parameters interpolate.
     if (cue.tempoBpm > 0.0f) { engine.setSessionTempoBpm (cue.tempoBpm); tempoBar.setBpm (cue.tempoBpm); }
     for (int i = 0; i < (int) cue.strips.size() && i < n; ++i)
     {
@@ -3297,7 +3297,7 @@ void MainComponent::togglePunchMode()
         for (int i = 0; i < rec.getNumTracks(); ++i)
             engine.setTrackPunchArmed (i,
                 rec.getTrack (i).armed.load (std::memory_order_relaxed));
-        showStatus ("Punch mode ON — set the loop region, then press PLAY");
+        showStatus ("Punch mode ON -- set the loop region, then press PLAY");
     }
     else
     {
@@ -3315,7 +3315,7 @@ void MainComponent::servicePunch()
 
     if (inside && ! wasInsidePunch && player.isPlaying())
     {
-        // Crossed into the punch window — drop into record on every
+        // Crossed into the punch window -- drop into record on every
         // punch-armed track, leave the rest playing back as normal.
         if (! engine.isRecording())
         {
@@ -3330,7 +3330,7 @@ void MainComponent::servicePunch()
     }
     else if (! inside && wasInsidePunch && engine.isRecording())
     {
-        // Crossed out — stop recording cleanly.
+        // Crossed out -- stop recording cleanly.
         engine.stopRecording();
     }
     wasInsidePunch = inside;
@@ -3345,7 +3345,7 @@ void MainComponent::runNoiseAnalysis()
         return;
     }
 
-    showStatus ("Analysing tracks for noise / hum / bumps…");
+    showStatus ("Analysing tracks for noise / hum / bumps...");
 
     // Snapshot track names so the worker doesn't touch engine state
     // from the background thread.
@@ -3374,14 +3374,14 @@ void MainComponent::runNoiseAnalysis()
         }
         juce::String summary = juce::String (findings.size()) + " track"
             + (findings.size() == 1 ? juce::String() : juce::String ("s"))
-            + " analysed — " + juce::String (humCount) + " with hum, "
+            + " analysed -- " + juce::String (humCount) + " with hum, "
             + juce::String (bumpCount) + " with mic bumps. Report saved to noise_report.json.";
 
         juce::MessageManager::callAsync ([self, summary, findings]
         {
             if (self == nullptr) return;
             self->showStatus (summary);
-            // Sortable table replaces the text dump — engineer clicks
+            // Sortable table replaces the text dump -- engineer clicks
             // column headers to sort by worst hum / most bumps /
             // highest noise floor.
             zynforge::NoiseReportDialog::launch (findings);
@@ -3488,7 +3488,7 @@ void MainComponent::showSessionProperties()
             case F::Flac16:       return "FLAC 16-bit";
             case F::Flac24:       return "FLAC 24-bit";
         }
-        return "—";
+        return "--";
     };
 
     SessionPropertiesDialog::Fields fields;
@@ -3503,7 +3503,7 @@ void MainComponent::showSessionProperties()
         const auto sr = obj ? (double) obj->getProperty ("sampleRate") : 0.0;
         fields.sampleRate = sr > 0.0
             ? juce::String (sr / 1000.0, 1) + " kHz"
-            : juce::String ("—");
+            : juce::String ("--");
     }
     {
         const int fmt = obj ? (int) obj->getProperty ("captureFormat") : (int) CaptureFormat::Wav24;
@@ -3531,7 +3531,7 @@ void MainComponent::showSessionProperties()
                                  juce::Time::getCurrentTime().toISO8601 (true));
 
             proj.replaceWithText (juce::JSON::toString (juce::var (merged.get())));
-            showStatus ("Saved session properties — " + sessionDir.getFileName());
+            showStatus ("Saved session properties -- " + sessionDir.getFileName());
         });
 }
 
@@ -3578,7 +3578,7 @@ void MainComponent::deleteSelectedStrips()
         // number of underlying tracks (1 for mono, 2 for stereo). We
         // simulate that by walking through the engine's index map.
         // Since the strip list rebuilds on the next tick, we just call
-        // engine.removeStripAt for each logical entry — for stereo
+        // engine.removeStripAt for each logical entry -- for stereo
         // pairs we call it twice at the same physical index because
         // the second physical track shifts down.
         // To find the physical index of a logical row, sum mono+stereo
@@ -3648,7 +3648,7 @@ void MainComponent::colourSelectedStrips()
                               getScreenBounds().getCentreY(), 1, 1 },
         nullptr);
 
-    showStatus ("Picking colour for " + juce::String ((int) selectedLogical.size()) + " strip(s)…");
+    showStatus ("Picking colour for " + juce::String ((int) selectedLogical.size()) + " strip(s)...");
 }
 
 int MainComponent::physicalFromLogicalIdx (int logical)
@@ -3667,7 +3667,7 @@ void MainComponent::moveSelectedStrips (int delta)
     recordUndoSnapshot ("Move selection");
 
     // Order the move: up (delta < 0) sweeps low-to-high; down sweeps
-    // high-to-low — so we never trample a target slot mid-sweep.
+    // high-to-low -- so we never trample a target slot mid-sweep.
     std::vector<int> sorted (selectedLogical.begin(), selectedLogical.end());
     if (delta < 0) std::sort (sorted.begin(),  sorted.end());
     else           std::sort (sorted.rbegin(), sorted.rend());
@@ -3748,8 +3748,8 @@ void MainComponent::showBatchRenameDialog()
                 engine.setTrackName (ch, name);
             }
             showStatus ("Renamed channels " + juce::String (firstCh)
-                        + "–" + juce::String (lastCh)
-                        + " (" + prefix + " " + juce::String (startN) + "…)");
+                        + "-" + juce::String (lastCh)
+                        + " (" + prefix + " " + juce::String (startN) + "...)");
             lastTrackCount = -1;   // force strip rebuild so names show up
         }),
         false);
@@ -3767,7 +3767,7 @@ void MainComponent::showBatchColourDialog()
                                       juce::MessageBoxIconType::QuestionIcon);
     aw->addTextEditor ("first", "1",                  "First channel:");
     aw->addTextEditor ("last",  juce::String (total), "Last channel:");
-    aw->addButton ("Pick colour…", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Pick colour...", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel",       0, juce::KeyPress (juce::KeyPress::escapeKey));
 
     aw->enterModalState (true,
@@ -3819,12 +3819,12 @@ void MainComponent::showBatchColourDialog()
                 nullptr);
 
             // Keep the listener alive until the CallOutBox closes.
-            // Easiest: stash it in a member; for now leak benignly —
+            // Easiest: stash it in a member; for now leak benignly --
             // colour-pickers are infrequent.
             batchColourListenerHandle = listener;
 
             showStatus ("Colouring channels " + juce::String (firstCh)
-                        + "–" + juce::String (lastCh) + "…");
+                        + "-" + juce::String (lastCh) + "...");
         }),
         false);
 }
@@ -3953,7 +3953,7 @@ void MainComponent::confirmAndQuit()
         }
 
         if (auto* app = juce::JUCEApplication::getInstance())
-            app->quit();   // direct quit — confirmAndQuit IS the confirmation
+            app->quit();   // direct quit -- confirmAndQuit IS the confirmation
     });
 }
 
@@ -4079,10 +4079,10 @@ void MainComponent::onSaveSessionState()
             showStatus ("Save failed");
         return;
     }
-    // No active session yet — behave like Save As so the engineer
+    // No active session yet -- behave like Save As so the engineer
     // can still capture the current strip / format / routing config
     // to a brand new folder.
-    showStatus ("No active session — pick a destination…");
+    showStatus ("No active session -- pick a destination...");
     onSaveSessionAs();
 }
 
@@ -4092,7 +4092,7 @@ void MainComponent::onImportAudioFiles()
 
     // Accept anything the JUCE basic format manager + FLAC can read.
     // (WavAudioFormat, AiffAudioFormat, FlacAudioFormat, OggVorbisAudioFormat,
-    //  MP3AudioFormat — read-only — when JUCE_USE_MP3AUDIOFORMAT is on.)
+    //  MP3AudioFormat -- read-only -- when JUCE_USE_MP3AUDIOFORMAT is on.)
     const juce::String filters = "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg;*.m4a;*.caf";
 
     chooser = std::make_unique<juce::FileChooser> (
@@ -4110,7 +4110,7 @@ void MainComponent::onImportAudioFiles()
 
         // Convert each picked file into one or two Track_NN.wav files
         // (mono per track) inside the active session's Audio Files/ dir.
-        // Stereo source files become a stereo PAIR — two consecutive
+        // Stereo source files become a stereo PAIR -- two consecutive
         // mono WAVs whose L track gets isStereo=true so the UI collapses
         // them into one strip. The session is then loaded for VSC playback.
         auto sessionDir = makeNewSessionDir();
@@ -4118,13 +4118,13 @@ void MainComponent::onImportAudioFiles()
 
         // Pro Tools-style: imported audio lives under Audio Files/.
         // makeNewSessionDir() either returns the engineer-named session
-        // (from appProps) or freshly auto-stamps one — either way we
+        // (from appProps) or freshly auto-stamps one -- either way we
         // want Track files inside the subfolder, not loose at the root.
         auto audioFilesDir = sessionDir.getChildFile ("Audio Files");
         audioFilesDir.createDirectory();
         // Also seed the rest of the Pro Tools-style layout so loose
         // imports look like a real session if the engineer hadn't
-        // already created one via File ▸ New Session….
+        // already created one via File ▸ New Session....
         sessionDir.getChildFile ("Bounced Files")       .createDirectory();
         sessionDir.getChildFile ("Clip Groups")         .createDirectory();
         sessionDir.getChildFile ("Session File Backups").createDirectory();
@@ -4202,7 +4202,7 @@ void MainComponent::onImportAudioFiles()
 
         if (records.empty())
         {
-            showStatus ("Import failed — no readable audio files");
+            showStatus ("Import failed -- no readable audio files");
             return;
         }
 
@@ -4234,7 +4234,7 @@ void MainComponent::onImportAudioFiles()
         }
 
         // setTrackStereo doesn't change the track count, so the mixer
-        // wouldn't otherwise rebuild — force the next timer tick to
+        // wouldn't otherwise rebuild -- force the next timer tick to
         // re-iterate logical strips (collapse stereo pairs into one).
         lastTrackCount = -1;
 
@@ -4246,23 +4246,23 @@ void MainComponent::onImportAudioFiles()
                     + juce::String ((int) records.size() - stereoCount) + " mono"
                     + (failed > 0 ? " (skipped " + juce::String (failed) + ")"
                                   : juce::String())
-                    + " — loaded " + juce::String (loaded) + " for playback");
+                    + " -- loaded " + juce::String (loaded) + " for playback");
     });
 }
 
 void MainComponent::onSaveSessionAs()
 {
     // Source may or may not exist yet:
-    //  * If the engineer made a session via File ▸ New Session… or
-    //    loaded one with Open Session…, getActiveSessionDir() points
+    //  * If the engineer made a session via File ▸ New Session... or
+    //    loaded one with Open Session..., getActiveSessionDir() points
     //    at it and Save As clones the whole folder to the new spot.
     //  * If there's no active session, Save As still works as a
-    //    'save current mixer state to a new folder' flow — it just
+    //    'save current mixer state to a new folder' flow -- it just
     //    skips the directory copy.
     const auto source = engine.getActiveSessionDir();
 
     chooser = std::make_unique<juce::FileChooser> (
-        "Save session copy in…",
+        "Save session copy in...",
         getSessionsRoot(),
         "");
 
@@ -4319,7 +4319,7 @@ void MainComponent::onExportAllTracks()
                                        : getSessionsRoot();
         bouncedDir.createDirectory();
         chooser = std::make_unique<juce::FileChooser> (
-            "Export all tracks to…", bouncedDir, "");
+            "Export all tracks to...", bouncedDir, "");
 
         const auto flags = juce::FileBrowserComponent::saveMode
                          | juce::FileBrowserComponent::canSelectDirectories;
@@ -4334,7 +4334,7 @@ void MainComponent::onExportAllTracks()
             std::vector<int> all;
             for (int i = 0; i < engine.getRecorder().getNumTracks(); ++i) all.push_back (i);
 
-            showStatus ("Exporting " + juce::String ((int) all.size()) + " tracks…");
+            showStatus ("Exporting " + juce::String ((int) all.size()) + " tracks...");
             const int n = exportTracksTo (dest, all, chosenOpts);
             showStatus ("Exported " + juce::String (n) + " tracks → " + dest.getFileName());
         });
@@ -4358,7 +4358,7 @@ void MainComponent::onExportIndividualTrack (int channelIndex)
                                        : getSessionsRoot();
         bouncedDir.createDirectory();
         chooser = std::make_unique<juce::FileChooser> (
-            "Export track to…", bouncedDir, "");
+            "Export track to...", bouncedDir, "");
 
         const auto flags = juce::FileBrowserComponent::saveMode
                          | juce::FileBrowserComponent::canSelectDirectories;
@@ -4370,7 +4370,7 @@ void MainComponent::onExportIndividualTrack (int channelIndex)
             if (dest.getFullPathName().isEmpty()) return;
             if (! dest.exists()) dest.createDirectory();
 
-            showStatus ("Exporting track " + juce::String (channelIndex + 1) + "…");
+            showStatus ("Exporting track " + juce::String (channelIndex + 1) + "...");
             const int n = exportTracksTo (dest, { channelIndex }, chosenOpts);
             showStatus (n > 0
                         ? "Exported track " + juce::String (channelIndex + 1)
@@ -4435,8 +4435,8 @@ void MainComponent::onLoadSessionClicked()
 
 juce::File MainComponent::getSessionsRoot() const
 {
-    // Engineer can override via New Session… dialog ("Local Storage:")
-    // — stored in appProps as 'sessionsRoot'. Falls back to the canonical
+    // Engineer can override via New Session... dialog ("Local Storage:")
+    // -- stored in appProps as 'sessionsRoot'. Falls back to the canonical
     // ~/Music/Zynforge Sessions when unset.
     if (auto* props = engine.getAppProps())
     {
@@ -4453,8 +4453,8 @@ juce::File MainComponent::getSessionsRoot() const
 }
 
 // ── Session templates ───────────────────────────────────────────────
-// A template captures the engineer's per-strip layout — count,
-// names, colours, stereo pairs, input + output routings — and
+// A template captures the engineer's per-strip layout -- count,
+// names, colours, stereo pairs, input + output routings -- and
 // nothing else (sample rate / device live on the audio device).
 // Persisted as JSON under
 //   ~/Library/Application Support/Zynforge Recording/Templates/<name>.zftemplate
@@ -4556,7 +4556,7 @@ void MainComponent::applySessionTemplate (const juce::File& templateFile)
 
 void MainComponent::showPreflightChecklist()
 {
-    // Build a one-screen status report — green checks for what's OK,
+    // Build a one-screen status report -- green checks for what's OK,
     // amber warnings for risks, red items for blockers. Engineer
     // reads this before downbeat to verify the rig.
     auto* device = engine.getDeviceManager().getCurrentAudioDevice();
@@ -4663,7 +4663,7 @@ void MainComponent::loadUILayoutFromActiveSession()
     auto* ui = uiVar.getDynamicObject();
     if (ui == nullptr) return;
 
-    // View — must call switchView (not just write currentView) so the
+    // View -- must call switchView (not just write currentView) so the
     // page visibility + automation toolbar flip correctly.
     const auto viewStr = ui->getProperty ("view").toString();
     if (viewStr.isNotEmpty())
@@ -4780,7 +4780,7 @@ void MainComponent::onDeviceClicked()
 
 juce::File MainComponent::makeNewSessionDir() const
 {
-    // If the engineer has created a named session via File ▸ New Session…,
+    // If the engineer has created a named session via File ▸ New Session...,
     // every RECORD lands inside that folder (Audio Files/ subdirectory is
     // handled by MultitrackRecorder::startRecording). Otherwise we fall
     // back to the legacy auto-stamped folder so a bare RECORD click still
@@ -4823,7 +4823,7 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
     sessionFolder.getChildFile ("Session File Backups").createDirectory();
     sessionFolder.getChildFile ("Video Files")         .createDirectory();
 
-    // Session document — a small JSON file that ties the folder together.
+    // Session document -- a small JSON file that ties the folder together.
     // (Equivalent of Pro Tools' .ptx; we use .zfproj for clarity.)
     {
         juce::DynamicObject::Ptr m (new juce::DynamicObject());
@@ -4838,7 +4838,7 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
                      .replaceWithText (juce::JSON::toString (juce::var (m.get())));
     }
 
-    // Waveform cache placeholder — engine will populate it as the engineer
+    // Waveform cache placeholder -- engine will populate it as the engineer
     // records / scrubs.
     sessionFolder.getChildFile ("WaveCache.wfm").create();
 
@@ -4847,7 +4847,7 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
 
 void MainComponent::paint (juce::Graphics& g)
 {
-    // Whole-window vertical gradient — top sits 6% above bgDeep, bottom
+    // Whole-window vertical gradient -- top sits 6% above bgDeep, bottom
     // sits 4% below. Subtle enough that the engineer reads it as 'deep
     // panel' rather than 'banded background', but it stops the canvas
     // feeling like a flat sheet of paint.
@@ -4870,7 +4870,7 @@ void MainComponent::paint (juce::Graphics& g)
     g.drawHorizontalLine ((int) header.getBottom() - 1,
                           header.getX(), header.getRight());
 
-    // Empty-state guidance — when there are no strips and the mixer
+    // Empty-state guidance -- when there are no strips and the mixer
     // is visible, draw a centred hint over the strips area so the
     // engineer knows their first move is "+CH". Drawn in MainComponent
     // (not the strips container) so it doesn't have to subclass.
@@ -4902,7 +4902,7 @@ void MainComponent::resized()
 {
     auto r = getLocalBounds();
 
-    // Toast anchored to bottom-right of the window — independent of
+    // Toast anchored to bottom-right of the window -- independent of
     // the rest of the layout flow because it floats over everything.
     {
         const int tW = 320;
@@ -4913,12 +4913,12 @@ void MainComponent::resized()
                          tW, tH);
     }
 
-    // Row 1 — title + status + LOCK + + CH + DEVICE + RECORD
+    // Row 1 -- title + status + LOCK + + CH + DEVICE + RECORD
     // FMT / PRE moved into Session Settings.
     auto row1 = r.removeFromTop (44).reduced (12, 8);
-    titleLabel   .setBounds ({});   // hidden — keeps left edge clean
+    titleLabel   .setBounds ({});   // hidden -- keeps left edge clean
     row1.removeFromLeft (brand::space::md);
-    // MIDI clock status chip on the left edge of row 1 — visible
+    // MIDI clock status chip on the left edge of row 1 -- visible
     // reassurance for the engineer that the outboard sync is live.
     // Empty text → zero pixels rendered, so this disappears when the
     // clock is off.
@@ -4945,10 +4945,10 @@ void MainComponent::resized()
     formatButton .setBounds ({});
     preRollButton.setBounds ({});
 
-    // Row 2 — Transport bar (taller, wider) | transport label | session label | BACKUP / PATCH / METERS / OSC
+    // Row 2 -- Transport bar (taller, wider) | transport label | session label | BACKUP / PATCH / METERS / OSC
     auto row2 = r.removeFromTop (52).reduced (12, 4);
 
-    // Six-button transport bar — bigger, since the FILE button moved to
+    // Six-button transport bar -- bigger, since the FILE button moved to
     // the macOS menu bar.
     if (transportBar != nullptr)
         transportBar->setBounds (row2.removeFromLeft (340).reduced (0, 2));
@@ -4993,13 +4993,13 @@ void MainComponent::resized()
 
     // Big clock banner + the CPU / disk / buffer dashboard docked on
     // the right so the engineer can see headroom without leaving the
-    // mixer view. (Phase meter removed — not relevant for a pure
+    // mixer view. (Phase meter removed -- not relevant for a pure
     // multitrack recorder + virtual soundcheck workflow.)
     auto clockRow = r.removeFromTop (96).reduced (12, 6);
     perfDashboard.setBounds (clockRow.removeFromRight (240).reduced (4, 4));
     bigClock.setBounds (clockRow);
 
-    // Setlist + tempo row — slim strip between BigClock and the timeline.
+    // Setlist + tempo row -- slim strip between BigClock and the timeline.
     auto bar = r.removeFromTop (36).reduced (12, 2);
     tempoBar  .setBounds (bar.removeFromRight (320));
     bar.removeFromRight (brand::space::md);
@@ -5007,15 +5007,15 @@ void MainComponent::resized()
     bar.removeFromRight (brand::space::sm);
     setlistBar.setBounds (bar);
 
-    // TimelineStrip is intentionally not laid out — see the ctor.
+    // TimelineStrip is intentionally not laid out -- see the ctor.
     if (timeline != nullptr)
         timeline->setBounds ({});
 
-    // Strips area — width adapts so 12 strips always fit on one page,
+    // Strips area -- width adapts so 12 strips always fit on one page,
     // matching the Live app convention. Beyond 12 strips, the viewport
     // scrolls horizontally and the strip width stays at the same 12-fit
     // value so panning reveals additional banks without changing scale.
-    // Strip-width presets — engineer can flip via the XS/S/M/L pill in
+    // Strip-width presets -- engineer can flip via the XS/S/M/L pill in
     // the header. The numbers are the target strips-per-page; the actual
     // strip width is the viewport width divided by that.
     int targetPerPage = 12;
@@ -5082,10 +5082,10 @@ void MainComponent::resized()
     auto* editToolsBar = (editPage != nullptr) ? editPage->getEditToolsBar() : nullptr;
     if (automationToolbar.isVisible())
     {
-        auto topRow = viewportArea.removeFromTop (28).reduced (2, 0);
+        auto topRow = viewportArea.removeFromTop (44).reduced (2, 0);
         if (editToolsBar != nullptr && editToolsBar->isVisible())
         {
-            const int toolsW = 326;   // 6 tool buttons (~220) + zoom controls (~90)
+            const int toolsW = 458;   // 6 tool buttons (~330) + zoom controls (~125)
             editToolsBar->setBounds (topRow.removeFromRight (toolsW));
             topRow.removeFromRight (brand::space::sm);
         }
@@ -5102,7 +5102,7 @@ void MainComponent::resized()
         if (editToolsBar != nullptr) editToolsBar->setBounds ({});
     }
 
-    // PeakTally — a thin red bar perched on top of the strip area.
+    // PeakTally -- a thin red bar perched on top of the strip area.
     // Reserves 4 px above the viewport. Visible from across the room
     // when any strip clips. Click anywhere on the bar to clear.
     {

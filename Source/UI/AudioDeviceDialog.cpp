@@ -21,14 +21,14 @@ namespace zynforge
             {
                 auto r = getLocalBounds().toFloat().reduced (1.0f);
 
-                // Card body — vertical gradient (lighter top → darker bottom).
+                // Card body -- vertical gradient (lighter top → darker bottom).
                 g.setGradientFill (brand::verticalGradient (brand::bgStrip, r, 0.10f, 0.18f));
                 g.fillRoundedRectangle (r, brand::radius::lg);
 
                 g.setColour (brand::borderSubtle);
                 g.drawRoundedRectangle (r, brand::radius::lg, 1.0f);
 
-                // Header strip — 22 px tall with a coloured 3 px accent
+                // Header strip -- 22 px tall with a coloured 3 px accent
                 // bar on the left, then the title text.
                 auto header = r.removeFromTop (24.0f);
                 g.setColour (accent);
@@ -135,8 +135,8 @@ namespace zynforge
 
                 outChanLabel.setText ("Active outputs:", juce::dontSendNotification);
                 inChanLabel .setText ("Active inputs:",  juce::dontSendNotification);
-                outChanValue.setText ("—", juce::dontSendNotification);
-                inChanValue .setText ("—", juce::dontSendNotification);
+                outChanValue.setText ("--", juce::dontSendNotification);
+                inChanValue .setText ("--", juce::dontSendNotification);
                 for (auto* l : { &outChanLabel, &inChanLabel })
                 {
                     l->setFont (brand::type::caption());
@@ -158,7 +158,7 @@ namespace zynforge
                 testButton.onClick = [this] { engine.getDeviceManager().playTestSound(); };
                 addAndMakeVisible (testButton);
 
-                statusLabel.setText ("Pick a device, sample rate and buffer — then Apply.",
+                statusLabel.setText ("Pick a device, sample rate and buffer -- then Apply.",
                                      juce::dontSendNotification);
                 statusLabel.setJustificationType (juce::Justification::centredLeft);
                 statusLabel.setColour (juce::Label::textColourId, brand::textTertiary);
@@ -313,8 +313,8 @@ namespace zynforge
                 }
                 else
                 {
-                    outChanValue.setText ("—", juce::dontSendNotification);
-                    inChanValue .setText ("—", juce::dontSendNotification);
+                    outChanValue.setText ("--", juce::dontSendNotification);
+                    inChanValue .setText ("--", juce::dontSendNotification);
                 }
             }
 
@@ -357,7 +357,7 @@ namespace zynforge
                 }
 
                 const auto err = dm.setAudioDeviceSetup (setup, true);
-                statusLabel.setText (err.isEmpty() ? juce::String ("Device set — Apply to keep it.")
+                statusLabel.setText (err.isEmpty() ? juce::String ("Device set -- Apply to keep it.")
                                                   : err,
                                      juce::dontSendNotification);
             }

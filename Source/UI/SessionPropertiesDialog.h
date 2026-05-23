@@ -5,7 +5,7 @@
 
 namespace zynforge
 {
-    // Session metadata editor — accessed via Session ▸ Properties…
+    // Session metadata editor -- accessed via Session ▸ Properties...
     // Reads from + writes to the <SessionName>.zfproj JSON document
     // sitting at the root of the active session folder. Engineer fills
     // in name / artist / venue / FOH / date / notes; sample rate and

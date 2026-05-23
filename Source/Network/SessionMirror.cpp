@@ -23,7 +23,7 @@ namespace zynforge
 
         const auto url = juce::URL ("http://" + host + ":" + juce::String (port) + "/state.json");
 
-        // Quick non-blocking GET. CompanionServer responds tiny — <2 KB.
+        // Quick non-blocking GET. CompanionServer responds tiny -- <2 KB.
         auto options = juce::URL::InputStreamOptions (juce::URL::ParameterHandling::inAddress)
                           .withConnectionTimeoutMs (300);
         std::unique_ptr<juce::InputStream> stream (url.createInputStream (options));
@@ -46,7 +46,7 @@ namespace zynforge
         auto* obj = v.getDynamicObject();
         if (obj == nullptr) return;
 
-        // Tempo + transport indicators (read-only — the mirror UI shows
+        // Tempo + transport indicators (read-only -- the mirror UI shows
         // what the primary is doing but doesn't drive its own audio).
         if (obj->hasProperty ("bpm"))
             engine.setSessionTempoBpm ((float) (double) obj->getProperty ("bpm"));

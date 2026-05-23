@@ -20,7 +20,7 @@ namespace zynforge
     //   POST /cmd         → action JSON: {action, channel?, value?}
     //   GET  /stream.wav  → infinite stereo 48k 16-bit PCM stream
     //
-    // No WebSocket yet — the companion polls /state.json every 500 ms.
+    // No WebSocket yet -- the companion polls /state.json every 500 ms.
     // Cheap, dead-simple, and works through every browser.
     class CompanionServer
     {

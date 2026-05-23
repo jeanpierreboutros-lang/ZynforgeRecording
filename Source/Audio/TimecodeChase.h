@@ -154,7 +154,7 @@ namespace zynforge
         {
             return crossingsPerS.load (std::memory_order_relaxed);
         }
-        // Detected frame rate (24, 25, 29.97, 30) — 0 until a sync word lands.
+        // Detected frame rate (24, 25, 29.97, 30) -- 0 until a sync word lands.
         float getFps() const noexcept { return ltcFps.load (std::memory_order_relaxed); }
         bool  isDropFrame() const noexcept { return ltcDropFrame.load (std::memory_order_relaxed); }
 
@@ -173,7 +173,7 @@ namespace zynforge
 
             if (! haveHalfBit)
             {
-                // Bootstrap — first 32 intervals seed the estimate; we
+                // Bootstrap -- first 32 intervals seed the estimate; we
                 // take whichever turns out to be the shorter group.
                 if (halfBitMean <= 0.0f) halfBitMean = (float) intervalSamples;
                 else                     halfBitMean = halfBitMean * 0.9f + (float) intervalSamples * 0.1f;
@@ -216,7 +216,7 @@ namespace zynforge
             frameBits[framePos] = (juce::uint8) bit;
             framePos = (framePos + 1) % 80;
 
-            // Sync word — last 16 bits of every LTC frame.
+            // Sync word -- last 16 bits of every LTC frame.
             // 0011111111111101 = 0x3FFD when read in bit order.
             if (bitWindow == 0x3FFD)
                 decodeFrame();

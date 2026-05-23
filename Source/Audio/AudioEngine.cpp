@@ -54,7 +54,7 @@ namespace zynforge
         const int n = recorder.getNumTracks();
         for (int i = 0; i < n; ++i)
         {
-            // Clear persistent overrides — name, colour, gain, pan, routing.
+            // Clear persistent overrides -- name, colour, gain, pan, routing.
             stripNames  .clearName   (i);
             stripColours.clearColour (i);
             // Gains has no clear-by-index helper; just reset to defaults
@@ -94,7 +94,7 @@ namespace zynforge
             if (! mixWriterThread.isThreadRunning())
                 mixWriterThread.startThread();
 
-            // Stereo bus mix lands in Bounced Files/ — that's the
+            // Stereo bus mix lands in Bounced Files/ -- that's the
             // intended Pro Tools-style location for any rendered mix.
             auto bouncedDir = sessionDir.getChildFile ("Bounced Files");
             bouncedDir.createDirectory();
@@ -123,7 +123,7 @@ namespace zynforge
     {
         const auto sessionDir = recorder.getActiveSessionDir();
         recorder.stopRecording();
-        // Drop the threaded writer — its destructor flushes the queue and
+        // Drop the threaded writer -- its destructor flushes the queue and
         // closes the underlying AudioFormatWriter cleanly.
         stereoMixWriter.reset();
 
@@ -333,7 +333,7 @@ namespace zynforge
 
     // Serialise the full per-track playlist (every Take + every Clip
     // inside it) so .zfproj round-trips the engineer's comping work.
-    // Without this Takes are RAM-only and lost on app quit — real
+    // Without this Takes are RAM-only and lost on app quit -- real
     // data-loss bug fixed here.
     juce::var AudioEngine::playlistsToJson() const
     {
@@ -554,7 +554,7 @@ namespace zynforge
             if (stripGains.hasPan (i))
                 t.pan.store    (stripGains.getPan (i), std::memory_order_relaxed);
 
-            // Stable per-strip UUID — generated once on first sight,
+            // Stable per-strip UUID -- generated once on first sight,
             // persisted under strip_uid_<n>. Cue snapshots reference
             // strips by this ID instead of array index, so a reorder
             // doesn't silently break every cue in the show.
@@ -571,7 +571,7 @@ namespace zynforge
                 t.stripId = uid;
             }
 
-            // VCA group — persisted under strip_vca_<n>; -1 = unassigned.
+            // VCA group -- persisted under strip_vca_<n>; -1 = unassigned.
             const int vca = appProps != nullptr
                 ? appProps->getIntValue ("strip_vca_" + juce::String (i), -1)
                 : -1;
@@ -954,8 +954,8 @@ namespace zynforge
         timeSigDenominator.store (appProps->getIntValue ("timeSigDenominator", 4),
                                   std::memory_order_relaxed);
 
-        // Restore the active session folder (set by New Session… / Open
-        // Session…) so Save / Save As stay enabled across app restarts.
+        // Restore the active session folder (set by New Session... / Open
+        // Session...) so Save / Save As stay enabled across app restarts.
         {
             const auto saved = appProps->getValue ("activeSessionDir", {});
             if (saved.isNotEmpty())
@@ -969,7 +969,7 @@ namespace zynforge
         ltcSourceStrip.store (appProps->getIntValue ("ltcSourceStrip", 0) - 1,
                               std::memory_order_release);
 
-        // Master bus state — gain + mute + L/R output routing + stereo mode.
+        // Master bus state -- gain + mute + L/R output routing + stereo mode.
         masterState.name  = "MASTER";
         masterStateR.name = "MASTER R";
         masterState.gainDb.store ((float) appProps->getDoubleValue ("masterGainDb", 0.0));
@@ -979,7 +979,7 @@ namespace zynforge
         masterStereo.store (appProps->getBoolValue ("masterStereo", true),
                             std::memory_order_release);
 
-        // Open with up to 256 inputs / 64 outputs by default — adjust later from UI.
+        // Open with up to 256 inputs / 64 outputs by default -- adjust later from UI.
         auto err = deviceManager.initialise (/*numInputs*/ 256, /*numOutputs*/ 64,
                                              /*savedState*/ nullptr,
                                              /*selectDefault*/ true);
@@ -1017,13 +1017,13 @@ namespace zynforge
         // Hand the device's audio workgroup to the recorder so its
         // writer threads can join it. On Apple Silicon the macOS
         // scheduler then co-schedules the writers with the CoreAudio
-        // IO thread — no priority inversion under load.
+        // IO thread -- no priority inversion under load.
         recorder.setAudioWorkgroup (device->getWorkgroup());
 
         click.prepare (sr);
         click.setTempoBpm (currentTempoBpm.load (std::memory_order_relaxed));
 
-        // Strip count is user-controlled (persisted; defaults to 1) —
+        // Strip count is user-controlled (persisted; defaults to 1) --
         // it's no longer tied to the device's input channel count.
         recorder.prepare (sr, blockSize, getStripCount());
         player  .prepare (sr, blockSize);
@@ -1032,7 +1032,7 @@ namespace zynforge
         // size so the audio thread never allocates when mix capture is on.
         stereoMixScratch.setSize (2, blockSize, false, true, true);
         monitorAccum    .setSize (2, blockSize, false, true, true);
-        // 64-bit output accumulator — sized large enough for typical
+        // 64-bit output accumulator -- sized large enough for typical
         // device output channel counts. Resized lazily inside the
         // callback if a wider device shows up.
         outputAccum     .setSize (64, blockSize, false, true, true);
@@ -1076,7 +1076,7 @@ namespace zynforge
     void AudioEngine::setTimeSignature (int numerator, int denominator)
     {
         numerator   = juce::jlimit (1, 32, numerator);
-        // Powers of two from 1 to 32 — the typical music range.
+        // Powers of two from 1 to 32 -- the typical music range.
         if (denominator < 1) denominator = 4;
         if (denominator > 32) denominator = 32;
         timeSigNumerator  .store (numerator,   std::memory_order_relaxed);
@@ -1093,7 +1093,7 @@ namespace zynforge
     {
         bpm = juce::jlimit (20.0f, 999.0f, bpm);
         currentTempoBpm.store (bpm, std::memory_order_relaxed);
-        // Hand the new tempo to the real-time click immediately — atomic
+        // Hand the new tempo to the real-time click immediately -- atomic
         // store, so the audio thread picks it up at the next block.
         click.setTempoBpm (bpm);
         midiClockOut.setTempoBpm (bpm);
@@ -1191,7 +1191,7 @@ namespace zynforge
         auto* lane = findLane (track, p);
         if (lane == nullptr) return;
 
-        constexpr juce::int64 kSnap = 4096;   // ~85 ms at 48 k — replaces nearby points
+        constexpr juce::int64 kSnap = 4096;   // ~85 ms at 48 k -- replaces nearby points
         for (auto& pt : *lane)
         {
             if (std::abs (pt.samplePos - samplePos) < kSnap)
@@ -1210,7 +1210,7 @@ namespace zynforge
                                           float fallback) const noexcept
     {
         const juce::ScopedTryLock stl (automationLock);
-        if (! stl.isLocked()) return fallback;     // UI mid-edit — use the slider value
+        if (! stl.isLocked()) return fallback;     // UI mid-edit -- use the slider value
         if (track < 0 || track >= (int) automationData.size()) return fallback;
         const auto& a = automationData[(size_t) track];
         const std::vector<AutomationPoint>* lane = nullptr;
@@ -1222,7 +1222,7 @@ namespace zynforge
         }
         if (lane == nullptr || lane->empty()) return fallback;
 
-        // Step automation — value held until the next point. Linear
+        // Step automation -- value held until the next point. Linear
         // interpolation can come later; for now this matches what the
         // EDIT row visually paints.
         float v = (*lane)[0].value;
@@ -1338,7 +1338,7 @@ namespace zynforge
 
     void AudioEngine::setTrackLinkedRouting (int channelIndex, int deviceCh)
     {
-        // Single source of truth — sets BOTH sides of the patch so the
+        // Single source of truth -- sets BOTH sides of the patch so the
         // PATCH page + the per-strip dropdowns stay in lockstep.
         setTrackInputRouting  (channelIndex, deviceCh);
         setTrackOutputRouting (channelIndex, deviceCh);
@@ -1347,7 +1347,7 @@ namespace zynforge
     void AudioEngine::setTrackGainDb (int channelIndex, float dB)
     {
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
-        // Fader range is -60..+12 dB — earlier clamp at 0 silently
+        // Fader range is -60..+12 dB -- earlier clamp at 0 silently
         // snapped any positive value back to unity, which looked like
         // the fader was 'resetting itself' when the engineer pushed
         // it past the centre point.
@@ -1387,7 +1387,7 @@ namespace zynforge
             ? (juce::int64) (sr * juce::jmax (0.0, seconds))
             : 0;
         t.rampTargetPan       .store (pan,     std::memory_order_relaxed);
-        // Reuse rampSamplesRemaining for pan — gain + pan ramp together
+        // Reuse rampSamplesRemaining for pan -- gain + pan ramp together
         // during a cue recall, same duration, so one counter is enough.
         // (Pan ramp uses the same countdown as the gain ramp.)
         t.rampSamplesRemaining.store (samples, std::memory_order_relaxed);
@@ -1458,7 +1458,7 @@ namespace zynforge
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
         auto& t = recorder.getTrack (channelIndex);
         t.isBus.store (isBus, std::memory_order_relaxed);
-        // Bus tracks have no input — clear routing so the audio
+        // Bus tracks have no input -- clear routing so the audio
         // callback's routedInputs[i] resolves to nullptr.
         if (isBus)
         {
@@ -1511,7 +1511,7 @@ namespace zynforge
     {
         if (numSamples <= 0) return;
 
-        // VCA gain ramps — same per-block linear step as the strip ramps.
+        // VCA gain ramps -- same per-block linear step as the strip ramps.
         for (auto& vca : vcas)
         {
             const juce::int64 remaining = vca.rampSamplesRemaining.load (std::memory_order_relaxed);
@@ -1624,10 +1624,10 @@ namespace zynforge
         // dashboard polls audioLoadPct at 4 Hz to drive the LED.
         const auto cbStart = juce::Time::getHighResolutionTicks();
 
-        // 64-bit output accumulator — every per-strip / VCA / stream
+        // 64-bit output accumulator -- every per-strip / VCA / stream
         // sum lands here in double precision; the final cast to the
         // device's float buffers happens at the end of the callback.
-        // Cheap to ensure the size every block — JUCE no-ops when
+        // Cheap to ensure the size every block -- JUCE no-ops when
         // already big enough.
         if (outputAccum.getNumChannels() < numOutputs || outputAccum.getNumSamples() < numSamples)
             outputAccum.setSize (juce::jmax (outputAccum.getNumChannels(), numOutputs),
@@ -1654,7 +1654,7 @@ namespace zynforge
 
         recorder.processBlock (routedInputs, juce::jmin (numTracks, kMaxStrips), numSamples);
 
-        // Soft-takeover ramps (cue recall) — step gain / pan per block
+        // Soft-takeover ramps (cue recall) -- step gain / pan per block
         // toward their target values before they're read downstream by
         // the monitor / per-channel output / stream-bus loops.
         tickRamps (numSamples);
@@ -1674,7 +1674,7 @@ namespace zynforge
         // ? strip_gain : 1)) into that bus's row of playerScratch. The
         // bus track is then summed into the master / per-channel outputs
         // by the standard output loop below, exactly like a normal
-        // strip — its 'audio' is the mix of every send routed at it.
+        // strip -- its 'audio' is the mix of every send routed at it.
         for (int i = 0; i < numTracks; ++i)
         {
             auto& src = recorder.getTrack (i);
@@ -1684,7 +1684,7 @@ namespace zynforge
 
             // Pre-compute strip's effective gain for post-fader sends.
             // (Inlined because the effectiveGainDb lambda lives further
-            // down the callback — out of scope here.)
+            // down the callback -- out of scope here.)
             const float baseDb = src.gainDb.load (std::memory_order_relaxed);
             const int   g      = src.vcaGroup.load (std::memory_order_relaxed);
             const float vcaDb  = (g >= 0 && g < kNumVcas)
@@ -1713,7 +1713,7 @@ namespace zynforge
         // the input-side peak / rms for this block; we max the player
         // contribution on top so a strip with BOTH input AND playback
         // shows whichever is louder. When the player is stopped we
-        // leave the recorder's values alone — otherwise this would
+        // leave the recorder's values alone -- otherwise this would
         // clobber the live input meters with zeros from an idle
         // playerScratch buffer.
         if (player.isPlaying())
@@ -1773,7 +1773,7 @@ namespace zynforge
             }
             else if (anyVcaSolo)
             {
-                // Strip has no VCA — when any VCA is soloed, ungrouped
+                // Strip has no VCA -- when any VCA is soloed, ungrouped
                 // strips drop out (matches console behaviour).
                 return false;
             }
@@ -1800,7 +1800,7 @@ namespace zynforge
 
             auto& t = recorder.getTrack (i);
             // outputMuted gates the physical output independently of the
-            // monitor-side `muted` flag — so an engineer can drop a track
+            // monitor-side `muted` flag -- so an engineer can drop a track
             // from FOH while still hearing it in their cans (or the
             // reverse).
             if (t.outputMuted.load (std::memory_order_relaxed)) continue;
@@ -1813,7 +1813,7 @@ namespace zynforge
             double* dst = outputAccum.getWritePointer (devOut);
 
             // Prefetch the next strip's playerScratch row + its target
-            // output column into L1 — at 256+ tracks this hides the
+            // output column into L1 -- at 256+ tracks this hides the
             // ~10-cycle memory miss on each iteration boundary.
             if (i + 1 < numTracks)
             {
@@ -1824,7 +1824,7 @@ namespace zynforge
                     __builtin_prefetch (outputAccum.getWritePointer (nextOut), 1, 1);
             }
 
-            // NEON-vectorised float-into-double FMA — about 2.5x
+            // NEON-vectorised float-into-double FMA -- about 2.5x
             // faster than the auto-vectorised scalar loop on M1+.
             fastaccum::addFloatScaledIntoDouble (dst, src, gain, numSamples);
         }
@@ -1888,7 +1888,7 @@ namespace zynforge
             stereoMixWriter->write (chans, numSamples);
         }
 
-        // LTC presence detection — analyzes the input of a designated
+        // LTC presence detection -- analyzes the input of a designated
         // strip every block. Engineer routes the desk's timecode line
         // to that strip and toggles 'LTC source' to it from the UI.
         {
@@ -1972,7 +1972,7 @@ namespace zynforge
             const double gL = gain * std::cos (panNorm * juce::MathConstants<double>::halfPi);
             const double gR = gain * std::sin (panNorm * juce::MathConstants<double>::halfPi);
 
-            // (a) VSC playback — always summed to master when audible.
+            // (a) VSC playback -- always summed to master when audible.
             if (ch < playerScratch.getNumChannels())
             {
                 const float* psrc = playerScratch.getReadPointer (ch);
@@ -1985,7 +1985,7 @@ namespace zynforge
                     }
             }
 
-            // (b) Live input — reaches the master when the channel is
+            // (b) Live input -- reaches the master when the channel is
             //     armed (so the engineer hears what's about to hit disk)
             //     OR monitor is on (live audition without recording).
             const bool wantInput = t.armed  .load (std::memory_order_relaxed)
@@ -2087,13 +2087,13 @@ namespace zynforge
                                                numSamples);
         }
 
-        // Companion stream feed — runs at the very end so it captures
+        // Companion stream feed -- runs at the very end so it captures
         // EVERYTHING the engineer hears at outputs 0+1 (per-channel
         // routing + stream-bus + monitor sum, all collapsed into the
         // float output buffers by now).
         // ── Real-time click mix ────────────────────────────────────
         // Click runs on the audio thread so a tempo / voice change
-        // takes effect on the next beat — no file reload, no glitch.
+        // takes effect on the next beat -- no file reload, no glitch.
         // Mixed into outputs 0+1 (the engineer's monitor bus).
         if (click.isEnabled())
         {
@@ -2124,7 +2124,7 @@ namespace zynforge
             companion->feedStreamSamples (L, R, numSamples);
         }
 
-        // NDI Audio transmit — push the master mix onto the LAN as an
+        // NDI Audio transmit -- push the master mix onto the LAN as an
         // NDI source. Cheap: pushStereo is a memcpy + one libndi call;
         // a no-op when the runtime isn't installed.
         if (ndi.isEnabled() && numOutputs >= 2)

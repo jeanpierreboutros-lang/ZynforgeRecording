@@ -7,7 +7,7 @@ namespace zynforge
 {
     namespace
     {
-        // Read one HTTP request from the socket — naive parser, enough
+        // Read one HTTP request from the socket -- naive parser, enough
         // for browser-issued GET/POST. Returns empty string on error.
         juce::String readRequest (juce::StreamingSocket& s, juce::String& bodyOut)
         {
@@ -100,7 +100,7 @@ header .status { color:var(--muted); font-size:13px; }
 </style></head>
 <body>
 <header><span class="brand">ZYNFORGE  RECORDING</span>
-        <span class="status" id="status">connecting…</span></header>
+        <span class="status" id="status">connecting...</span></header>
 <div class="transport">
   <button id="playBtn" class="play">▶ PLAY</button>
   <button id="stopBtn">■ STOP</button>
@@ -226,8 +226,8 @@ setInterval(tick, 500); tick();
         {
             auto client = std::unique_ptr<juce::StreamingSocket> (listener->waitForNextConnection());
             if (client == nullptr) break;
-            // Detach a thread per client. Connections are short — clients
-            // re-poll every 500 ms — except the /stream.wav reader which
+            // Detach a thread per client. Connections are short -- clients
+            // re-poll every 500 ms -- except the /stream.wav reader which
             // holds the socket open for the duration of audition.
             std::thread ([this, c = std::move (client)] () mutable
             {

@@ -40,7 +40,7 @@ namespace zynforge
                                VoidCallback onLinkStereo,
                                IntCallback  onLinkToOther);
 
-        // Populate routing combo boxes — call after device topology changes.
+        // Populate routing combo boxes -- call after device topology changes.
         void setAvailableInputs  (int n);
         void setAvailableOutputs (int n);
 
@@ -68,7 +68,7 @@ namespace zynforge
         // engine.setTrackVcaGroup so the assignment survives relaunch.
         IntCallback onVcaGroupChanged;
 
-        // Aux send wiring — host provides the live bus list
+        // Aux send wiring -- host provides the live bus list
         // (busTrackIndex, displayName) so the right-click menu can
         // populate the 'Send to bus' submenu, and a callback the
         // strip fires when the engineer picks a new target for

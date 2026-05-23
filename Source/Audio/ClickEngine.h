@@ -7,7 +7,7 @@ namespace zynforge
 {
     // Real-time metronome that mixes into the engine's master output.
     // Tempo / voice / subdivision are all atomic so the message thread
-    // can change them on the fly — the audio thread reads them every
+    // can change them on the fly -- the audio thread reads them every
     // block, so a BPM tweak takes effect on the next beat without ever
     // stopping the click.
     //
@@ -25,7 +25,7 @@ namespace zynforge
         void prepare (double sampleRate);
         void processBlock (float* outL, float* outR, int numSamples);
 
-        // Setters — safe from any thread.
+        // Setters -- safe from any thread.
         void setEnabled    (bool en) noexcept       { enabled     .store (en,  std::memory_order_relaxed); }
         void setTempoBpm   (float bpm) noexcept     { tempoBpm    .store (juce::jlimit (20.0f, 999.0f, bpm),
                                                                           std::memory_order_relaxed); }

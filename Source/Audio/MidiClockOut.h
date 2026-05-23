@@ -6,11 +6,11 @@
 
 namespace zynforge
 {
-    // MIDI clock master — emits 0xF8 (clock pulse) at 24 PPQN from the
+    // MIDI clock master -- emits 0xF8 (clock pulse) at 24 PPQN from the
     // session's tempo, plus 0xFA (start) on play / 0xFC (stop) on stop /
     // 0xFB (continue) on resume. A juce::HighResolutionTimer fires on
     // its own thread so the audio thread is never involved. Jitter is
-    // on the order of macOS scheduler granularity (~1-2 ms) — fine for
+    // on the order of macOS scheduler granularity (~1-2 ms) -- fine for
     // sync slaves that smooth incoming clock (most synths, drum machines).
     //
     // The engineer picks a destination MIDI device by name. setEnabled
@@ -55,7 +55,7 @@ namespace zynforge
 
         void setTempoBpm (float bpm) noexcept
         {
-            // 24 PPQN — quarter note = bpm / 60. Each pulse interval =
+            // 24 PPQN -- quarter note = bpm / 60. Each pulse interval =
             // 60_000 / (bpm * 24) milliseconds.
             tempoBpm.store (juce::jmax (20.0f, bpm), std::memory_order_relaxed);
         }
@@ -65,7 +65,7 @@ namespace zynforge
             enabled.store (e, std::memory_order_release);
             if (e)
             {
-                // 1 ms tick — finer than the smallest clock interval
+                // 1 ms tick -- finer than the smallest clock interval
                 // (~2 ms at 999 BPM). The timer self-adjusts: each tick
                 // checks whether enough samples have elapsed since the
                 // last pulse to emit another.

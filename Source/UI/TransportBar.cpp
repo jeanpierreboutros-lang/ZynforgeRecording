@@ -17,7 +17,7 @@ namespace zynforge
 
         void paintButton (juce::Graphics& g, bool over, bool down) override
         {
-            // Square button body — gradient fill, 1px border. Matches the
+            // Square button body -- gradient fill, 1px border. Matches the
             // ZynForge Live transport button finish.
             auto r = getLocalBounds().toFloat().reduced (2.0f);
 
@@ -28,7 +28,7 @@ namespace zynforge
             g.fillRoundedRectangle (r, brand::radius::md);
 
             // Record gets a permanent brand-red 2 px stroke even when
-            // idle — engineer at the console reading at distance and
+            // idle -- engineer at the console reading at distance and
             // under stage glare cannot tell circle / triangle / square
             // apart by colour alone. The persistent stroke makes the
             // call-to-action shape-distinct from PLAY (green) and STOP
@@ -166,8 +166,8 @@ namespace zynforge
             p.setPositionSamples (p.getTotalLengthSamples());
         };
         // Delegate transport actions to the host (MainComponent) when
-        // a hook is wired — that path runs the pre-flight checks
-        // (armed tracks, valid routing, status messages, …). Fall
+        // a hook is wired -- that path runs the pre-flight checks
+        // (armed tracks, valid routing, status messages, ...). Fall
         // back to a direct engine call when no hook is set.
         play     ->onClick = [this]
         {
@@ -223,7 +223,7 @@ namespace zynforge
         const int n = 6;
         const int gap = 4;
 
-        // Square buttons sized to the bar's height — never wider than tall,
+        // Square buttons sized to the bar's height -- never wider than tall,
         // never taller than wide. Matches the reference mock-up's shape.
         const int side = juce::jmin (r.getHeight(),
                                      (r.getWidth() - (n - 1) * gap) / n);

@@ -12,7 +12,7 @@
 
 namespace zynforge
 {
-    // Sortable post-analysis table — replaces the AlertWindow text
+    // Sortable post-analysis table -- replaces the AlertWindow text
     // dump so the engineer can click column headers to sort by
     // worst hum / most bumps / highest noise floor and find the
     // problem tracks at a glance.
@@ -59,7 +59,7 @@ namespace zynforge
             table.setBounds (dialog::bodyBounds (*this).reduced (8));
         }
 
-        // Helper — launch as an async modal dialog.
+        // Helper -- launch as an async modal dialog.
         static void launch (std::vector<NoiseFinding> findings)
         {
             auto* content = new NoiseReportDialog (std::move (findings));
@@ -95,10 +95,10 @@ namespace zynforge
             {
                 case 1: text = f.trackName; break;
                 case 2: text = juce::String (f.humDb, 1); break;
-                case 3: text = f.humFundamentalHz > 0 ? juce::String (f.humFundamentalHz) : "—"; break;
+                case 3: text = f.humFundamentalHz > 0 ? juce::String (f.humFundamentalHz) : "--"; break;
                 case 4: text = f.humDbAboveFloor > 0.0f
                                 ? juce::String (f.humDbAboveFloor, 1)
-                                : "—";
+                                : "--";
                         if (f.humDbAboveFloor > 12.0f) fg = brand::accentRecord;
                         else if (f.humDbAboveFloor > 6.0f) fg = brand::accentSolo;
                         break;

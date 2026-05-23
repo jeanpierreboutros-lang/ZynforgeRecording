@@ -10,7 +10,7 @@ namespace zynforge
     // recorder still writes one big Track_NN.wav today; clips index
     // into that file via [fileStartSamples, fileEndSamples].
     //
-    // Editor UI lands in a follow-up — this header is just the shape.
+    // Editor UI lands in a follow-up -- this header is just the shape.
     struct Clip
     {
         juce::String name;
@@ -20,7 +20,7 @@ namespace zynforge
         // Region of the underlying audio file referenced by this clip.
         juce::int64  fileStartSamples     { 0 };
         juce::int64  fileLengthSamples    { 0 };
-        // Per-clip fades + gain — non-destructive on the audio file.
+        // Per-clip fades + gain -- non-destructive on the audio file.
         juce::int64  fadeInSamples        { 0 };
         juce::int64  fadeOutSamples       { 0 };
         float        gainDb               { 0.0f };

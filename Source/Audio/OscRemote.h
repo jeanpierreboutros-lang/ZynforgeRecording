@@ -8,7 +8,7 @@ namespace zynforge
 
     // OSC receiver wired into AudioEngine. Listens on a configurable UDP
     // port and parses messages from any of the supported console dialects
-    // — DiGiCo (Quantum / SD OSC), Allen & Heath (Avantis / SQ),
+    // -- DiGiCo (Quantum / SD OSC), Allen & Heath (Avantis / SQ),
     // Solid State Logic (SSL Live), Yamaha (DM7, RIVAGE PM), and a
     // generic /zynforge/* path for tablet apps / TouchOSC / homebrew
     // remotes.
@@ -43,7 +43,7 @@ namespace zynforge
     private:
         void oscMessageReceived (const juce::OSCMessage&) override;
 
-        // Dialect dispatchers — return true if the message was handled.
+        // Dialect dispatchers -- return true if the message was handled.
         bool handleGeneric    (const juce::OSCMessage&);
         bool handleDiGiCo     (const juce::OSCMessage&);
         bool handleAllenHeath (const juce::OSCMessage&);
@@ -62,7 +62,7 @@ namespace zynforge
         void setChannelArm    (int oneBasedIndex, bool armed);
         void setChannelColour (int oneBasedIndex, juce::uint32 rgb);
 
-        // Shared channel-op dispatch — returns true if the {ch1, key}
+        // Shared channel-op dispatch -- returns true if the {ch1, key}
         // pair matched a known action (name / mute / arm / colour).
         bool dispatchChannelOp (int oneBasedIndex,
                                 const juce::String& key,

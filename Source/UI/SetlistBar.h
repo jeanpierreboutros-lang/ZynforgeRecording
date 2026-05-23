@@ -11,7 +11,7 @@ namespace zynforge
     // Setlist + cue bar: [SETLIST | ◂ | <dropdown> | ▸ | + Cue | Update].
     //
     // A cue is just a named transport-position bookmark. The engineer
-    // builds an ordered list of cues (one per song, intro, scene…) and
+    // builds an ordered list of cues (one per song, intro, scene...) and
     // then nudges with ◂/▸ during the show to jump between them.
     //
     // The bar is purely UI. Cue storage + transport jumps live in
@@ -23,8 +23,8 @@ namespace zynforge
         // when the cue is recalled (◂ / ▸ or dropdown pick).
         struct StripSnapshot
         {
-            // Stable strip UUID — set on capture, looked up on recall.
-            // Empty string means 'pre-v2 snapshot' — recall falls back
+            // Stable strip UUID -- set on capture, looked up on recall.
+            // Empty string means 'pre-v2 snapshot' -- recall falls back
             // to array index (the position in the cue.strips vector).
             juce::String stripId;
 
@@ -38,13 +38,13 @@ namespace zynforge
             bool  armed        { false };
         };
 
-        // How the cue transitions in — Snap is instant (the prior
+        // How the cue transitions in -- Snap is instant (the prior
         // behaviour); Fade ramps every strip's gain + pan from the
         // current value to the captured value across N beats at the
         // cue's tempo.
         enum class Transition : int { Snap = 0, Fade };
 
-        // Tempo automation point — sample offset relative to the cue's
+        // Tempo automation point -- sample offset relative to the cue's
         // samplePos. Audio thread interpolates linearly between points.
         struct TempoPoint
         {
@@ -74,10 +74,10 @@ namespace zynforge
         void setCues (const std::vector<Cue>& cues, int selectedIndex);
 
         // Triggered by the engineer:
-        //   onPick(int)          — chose a cue from the dropdown
-        //   onPrev() / onNext()  — clicked ◂ or ▸
-        //   onAddCue()           — clicked '+ Cue' (drop at current pos)
-        //   onUpdateCue()        — clicked 'Update' (overwrite current pos)
+        //   onPick(int)          -- chose a cue from the dropdown
+        //   onPrev() / onNext()  -- clicked ◂ or ▸
+        //   onAddCue()           -- clicked '+ Cue' (drop at current pos)
+        //   onUpdateCue()        -- clicked 'Update' (overwrite current pos)
         std::function<void (int)> onPick;
         std::function<void()>     onPrev;
         std::function<void()>     onNext;
@@ -98,7 +98,7 @@ namespace zynforge
         void resized() override;
 
     private:
-        // Path-drawn arrow button — replaces the previous unicode-glyph
+        // Path-drawn arrow button -- replaces the previous unicode-glyph
         // TextButtons so cue navigation matches the TransportBar's
         // vector-icon vocabulary. Forward/backward triangles drawn in
         // a juce::Path; theming follows the standard ZynForge button

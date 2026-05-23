@@ -292,7 +292,7 @@ namespace zynforge
                     if (bitDepthId == 3) return CaptureFormat::Aiff32Float;
                     return CaptureFormat::Aiff24;
                 }
-                if (fileTypeId == 3) // FLAC — no 32-bit float
+                if (fileTypeId == 3) // FLAC -- no 32-bit float
                 {
                     if (bitDepthId == 1) return CaptureFormat::Flac16;
                     return CaptureFormat::Flac24;
@@ -305,7 +305,7 @@ namespace zynforge
 
             void syncBitDepthForFormat()
             {
-                // FLAC doesn't support 32-bit float — silently fall back to 24-bit.
+                // FLAC doesn't support 32-bit float -- silently fall back to 24-bit.
                 if (fileTypeCombo.getSelectedId() == 3 && bitDepthCombo.getSelectedId() == 3)
                     bitDepthCombo.setSelectedId (2, juce::sendNotification);
             }

@@ -14,10 +14,10 @@ namespace zynforge
     class EditPage::TrackRow final : public juce::Component
     {
     public:
-        // Track-height presets — Pro Tools-style 7-step scale plus a
+        // Track-height presets -- Pro Tools-style 7-step scale plus a
         // dynamic "fit to window" computed from the viewport height.
         // Size::Custom is engaged whenever the user drags the row's
-        // bottom edge — the dragged pixel height is stored in customH.
+        // bottom edge -- the dragged pixel height is stored in customH.
         enum class Size { Micro, Mini, Small, Medium, Large, Jumbo, Extreme, FitToWindow, Custom };
 
         static int pixelsFor (Size s, int fitFallback = 80, int customPixels = 80)
@@ -45,13 +45,13 @@ namespace zynforge
         // can recompute layout (and resolve "fit to window").
         std::function<void(TrackRow&, Size)> onSizeChosen;
 
-        // Toolbar / click-overlay context — set by the host EditPage
+        // Toolbar / click-overlay context -- set by the host EditPage
         // after construction so all rows share the same global view.
         AutomationToolbar* toolbar  { nullptr };
         EditToolsBar*      toolsBar { nullptr };
         bool   clickOverlay { false };
         int    clickRowIdx  { -1 };
-        // Drag tracking — while > -1, mouseDrag moves the indexed
+        // Drag tracking -- while > -1, mouseDrag moves the indexed
         // point on the active lane.
         int    draggingPointIdx { -1 };
 
@@ -71,7 +71,7 @@ namespace zynforge
         juce::int64 dragStartFadeIn  { 0 };
         juce::int64 dragStartFadeOut { 0 };
 
-        // Strip reorder drag — armed on swatch-column mouseDown,
+        // Strip reorder drag -- armed on swatch-column mouseDown,
         // activates once vertical movement exceeds 8 px. Each
         // additional row-height of movement swaps with the adjacent
         // strip via engine.swapTracks.
@@ -150,17 +150,17 @@ namespace zynforge
             addAndMakeVisible (muteButton);
             addAndMakeVisible (soloButton);
 
-            // Per-track 'VIEW' picker — clicking pops the lane-content
+            // Per-track 'VIEW' picker -- clicking pops the lane-content
             // menu matching the screenshot (blocks/playlists/analysis/
             // warp are reserved for future builds and stay disabled).
             viewButton.setColour (juce::TextButton::buttonColourId,  brand::bgElevated);
             viewButton.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
-            viewButton.setTooltip ("Pick what this row's lane draws — waveform / volume / pan / …");
+            viewButton.setTooltip ("Pick what this row's lane draws -- waveform / volume / pan / ...");
             viewButton.onClick = [this]
             {
                 // Lane-content picker. Reserved Pro Tools-style items
                 // (blocks / playlists / analysis / warp / transcript)
-                // are dropped from the menu — they were never wired and
+                // are dropped from the menu -- they were never wired and
                 // the greyed entries were just clutter.
                 juce::PopupMenu m;
                 m.addItem (22, "waveform",    true, laneMode == LaneMode::Waveform);
@@ -193,7 +193,7 @@ namespace zynforge
             };
             addAndMakeVisible (viewButton);
 
-            // Input + output routing combos — same wiring as the mixer.
+            // Input + output routing combos -- same wiring as the mixer.
             auto styleCombo = [] (juce::ComboBox& c)
             {
                 c.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep.withAlpha (0.55f));
@@ -228,15 +228,15 @@ namespace zynforge
 
             // Live signal meter on the right edge of the header. The
             // strip header is narrow (16 px reserved), so disable the
-            // dB-label gutter — the bar gets the full widget width.
+            // dB-label gutter -- the bar gets the full widget width.
             meter.setShowDbLabels (false);
             addAndMakeVisible (meter);
-            meter.setTooltip ("Live signal level — click to clear clip.");
+            meter.setTooltip ("Live signal level -- click to clear clip.");
 
             updatePollState();
         }
 
-        // Cheap poll — called by EditPage::timerCallback so mixer-side
+        // Cheap poll -- called by EditPage::timerCallback so mixer-side
         // changes (mute/solo via mixer, rename, etc.) show up here.
         void updatePollState()
         {
@@ -385,7 +385,7 @@ namespace zynforge
             const auto waveColour = getStripColour().brighter (0.25f);
             const auto inner = wavePane.reduced (4, 6);
 
-            // Automation lane modes — flat horizontal line representing
+            // Automation lane modes -- flat horizontal line representing
             // the current value. (Time-varying automation is reserved
             // for a later build; this gives the engineer an at-a-glance
             // read of the current parameter alongside the waveform UI.)
@@ -440,7 +440,7 @@ namespace zynforge
                     }
                     case LaneMode::Click:
                     {
-                        // Beat grid for the whole lane — every quarter
+                        // Beat grid for the whole lane -- every quarter
                         // note at the current session tempo. The lane
                         // adapts its density: if beats would pack closer
                         // than ~6 px we drop to bar markers, then to
@@ -499,7 +499,7 @@ namespace zynforge
                     }
                     case LaneMode::Tempo:
                     {
-                        // Shared tempo curve — one lane for the whole
+                        // Shared tempo curve -- one lane for the whole
                         // session, drawn identically on every row. Each
                         // point in engine.getTempoMap() is rendered as
                         // a handle on a stepped curve (40..240 BPM
@@ -571,7 +571,7 @@ namespace zynforge
                     case LaneMode::Markers:
                     {
                         // Markers are session-wide; draw vertical ticks
-                        // (without per-marker time mapping for now — the
+                        // (without per-marker time mapping for now -- the
                         // timeline component is authoritative on positions).
                         g.setColour (brand::accentStatus);
                         for (int i = 0; i < 6; ++i)
@@ -653,7 +653,7 @@ namespace zynforge
 
                 if (points.empty())
                 {
-                    // No automation yet — fall back to the flat reference
+                    // No automation yet -- fall back to the flat reference
                     // line for the current parameter value, so the lane
                     // still reads at a glance.
                     const int y = inner.getY()
@@ -665,7 +665,7 @@ namespace zynforge
                 {
                     // Render the point sequence as a stepped polyline +
                     // round handles. Step style (no interpolation) for
-                    // now — easier to read for the engineer when there
+                    // now -- easier to read for the engineer when there
                     // are only a handful of points.
                     g.setColour (lineCol);
                     juce::Path path;
@@ -712,7 +712,7 @@ namespace zynforge
 
             if (stereo)
             {
-                // L on top, R on bottom — Pro-Tools-style stereo lanes.
+                // L on top, R on bottom -- Pro-Tools-style stereo lanes.
                 const int laneH = inner.getHeight() / 2;
                 auto laneL = inner.withHeight (laneH);
                 auto laneR = inner.withTrimmedTop (laneH);
@@ -736,7 +736,7 @@ namespace zynforge
                 {
                     g.setColour (brand::textTertiary);
                     g.setFont (brand::type::caption());
-                    g.drawText ("(no recording yet — start a session and record to see waveforms)",
+                    g.drawText ("(no recording yet -- start a session and record to see waveforms)",
                                 wavePane, juce::Justification::centred, false);
                 }
             }
@@ -749,7 +749,7 @@ namespace zynforge
             {
                 g.setColour (brand::textTertiary);
                 g.setFont (brand::type::caption());
-                g.drawText ("(no recording yet — start a session and record to see waveforms)",
+                g.drawText ("(no recording yet -- start a session and record to see waveforms)",
                             wavePane, juce::Justification::centred, false);
             }
 
@@ -849,7 +849,7 @@ namespace zynforge
                             // visible against busy audio.
                             g.fillRect (juce::Rectangle<int> (x, inner2.getY(), 6, 3));
                         }
-                        // Fade-in diagonal — from the bottom-left corner
+                        // Fade-in diagonal -- from the bottom-left corner
                         // of the clip up to the top of (start + fadeIn).
                         {
                             const int xL = sampleToX (c.timelineStartSamples);
@@ -925,7 +925,7 @@ namespace zynforge
                 }
             }
 
-            // ─── Take indicator — small "TAKE N / M" chip in the row
+            // ─── Take indicator -- small "TAKE N / M" chip in the row
             // header so the engineer sees the active comp take without
             // opening the right-click menu.
             {
@@ -1001,7 +1001,7 @@ namespace zynforge
             content.removeFromTop (2);
             outputCombo.setBounds (content.removeFromTop (18));
             content.removeFromTop (3);
-            // Hide the VIEW button on the Click row — its lane is the
+            // Hide the VIEW button on the Click row -- its lane is the
             // metronome waveform, no automation choices apply.
             const bool clickRow =
                 engine.getRecorder().getTrack (index).name == "Click";
@@ -1019,7 +1019,7 @@ namespace zynforge
 
         void mouseMove (const juce::MouseEvent& e) override
         {
-            // Avoid spamming setMouseCursor on every pixel of mouse motion —
+            // Avoid spamming setMouseCursor on every pixel of mouse motion --
             // only flip when the resize-zone hit state changes.
             const bool inZone = isInResizeZone (e.getPosition());
             if (inZone != cursorIsResize)
@@ -1136,7 +1136,7 @@ namespace zynforge
                 return;
             }
 
-            // Pro Tools-style edit tool — Scrubber, Selector, and Fade
+            // Pro Tools-style edit tool -- Scrubber, Selector, and Fade
             // intercept the left-click before the normal clip-drag
             // hit-test. Trim / Grabber bias the clip-body branch below.
             // None (nothing selected) behaves identically to Smart.
@@ -1224,7 +1224,7 @@ namespace zynforge
                         };
                         // 6 px hit zone around each edge for trim;
                         // anything else inside a clip's body = Move.
-                        // Fade handles take priority over both — they
+                        // Fade handles take priority over both -- they
                         // sit in the top-edge stripe and are visually
                         // distinct dots.
                         const int hitZone = 6;
@@ -1240,7 +1240,7 @@ namespace zynforge
                                                             + c.fileLengthSamples
                                                             - c.fadeOutSamples);
 
-                            // Fade-in handle — top-edge band, near
+                            // Fade-in handle -- top-edge band, near
                             // (start + fadeIn).
                             if (e.y - laneTop < fadeHandleZone
                                 && std::abs (e.x - xFadeIn) <= fadeHandleZone)
@@ -1300,7 +1300,7 @@ namespace zynforge
                                 continue;
                             }
 
-                            // Smart (default) — edge zones trim, body
+                            // Smart (default) -- edge zones trim, body
                             // moves.
                             if (e.x >= xL - hitZone && e.x <= xL + hitZone)
                             {
@@ -1331,7 +1331,7 @@ namespace zynforge
                 }
             }
 
-            // Lane-area interaction — only when the toolbar is wired and
+            // Lane-area interaction -- only when the toolbar is wired and
             // this row isn't the Click track itself.
             if (toolbar != nullptr && index != clickRowIdx && e.x >= headerW)
             {
@@ -1364,7 +1364,7 @@ namespace zynforge
                             engine.removeTempoChangeNear (coord.samplePos, tol);
                             break;
                         case AutomationToolbar::Tool::Select:
-                            // Tempo drag isn't wired yet — Select on
+                            // Tempo drag isn't wired yet -- Select on
                             // the Tempo lane just records nothing.
                             break;
                     }
@@ -1390,7 +1390,7 @@ namespace zynforge
                     }
                     case AutomationToolbar::Tool::Select:
                     {
-                        // Try to grab the nearest point — drag will move
+                        // Try to grab the nearest point -- drag will move
                         // it if mouseDrag fires after this.
                         const auto& lane = engine.getAutomation (index, p);
                         const auto& player = engine.getPlayer();
@@ -1414,7 +1414,7 @@ namespace zynforge
 
         void mouseDrag (const juce::MouseEvent& e) override
         {
-            // Strip reorder via swatch drag — once the engineer's
+            // Strip reorder via swatch drag -- once the engineer's
             // vertical movement crosses one row height, swap with the
             // adjacent strip and reset the drag origin so a continuous
             // up-up-up drag walks the strip across the list.
@@ -1428,7 +1428,7 @@ namespace zynforge
                 if (reorderActive && std::abs (delta) > rowH)
                 {
                     // Refuse reorder while playback is actively rolling
-                    // — swapTracks renames Track_NN.wav on disk and the
+                    // -- swapTracks renames Track_NN.wav on disk and the
                     // player's open readers would point at the wrong
                     // data mid-block. Pop a modal warning so the
                     // engineer knows the drag was ignored.
@@ -1438,7 +1438,7 @@ namespace zynforge
                             juce::MessageBoxOptions()
                                 .withIconType (juce::MessageBoxIconType::WarningIcon)
                                 .withTitle ("Strip reorder paused")
-                                .withMessage ("Stop playback before reordering strips — "
+                                .withMessage ("Stop playback before reordering strips -- "
                                               "swapping during playback would corrupt the "
                                               "player's open file readers.")
                                 .withButton ("OK"),
@@ -1486,7 +1486,7 @@ namespace zynforge
                 return;
             }
 
-            // Scrubber / Selector drag — playhead chases the mouse;
+            // Scrubber / Selector drag -- playhead chases the mouse;
             // Selector additionally seeds a loop region anchored at the
             // mouseDown position.
             if (draggingClipModeInt == 5 || draggingClipModeInt == 6)
@@ -1515,7 +1515,7 @@ namespace zynforge
                 return;
             }
 
-            // Clip edit drag — translate pixel delta back to sample
+            // Clip edit drag -- translate pixel delta back to sample
             // delta and feed it to engine.editClip incrementally. Fade
             // handles use the absolute drag delta from the drag start
             // (so the fade tracks the mouse position rather than
@@ -1707,7 +1707,7 @@ namespace zynforge
             gain.addItem (505, "+3 dB",    true, std::abs (gainDb -  3.0f)    < 0.05f);
             gain.addItem (506, "+6 dB",    true, std::abs (gainDb -  6.0f)    < 0.05f);
             gain.addSeparator();
-            gain.addItem (510, "Set value…");
+            gain.addItem (510, "Set value...");
 
             juce::PopupMenu menu;
             menu.addItem (400, muted  ? "Unmute clip" : "Mute clip");
@@ -1809,7 +1809,7 @@ namespace zynforge
             menu.addSeparator();
             add (8, "fit to window", Size::FitToWindow);
 
-            // Takes (comp playlists) — engineer captures the current
+            // Takes (comp playlists) -- engineer captures the current
             // clip list as a named take, switches between takes for
             // comping. IDs 800..830 = pick a take; 850 = new take from
             // current; 851 = rename active take; 852 = delete active.
@@ -1822,7 +1822,7 @@ namespace zynforge
                                    true, i == active);
             takesMenu.addSeparator();
             takesMenu.addItem (850, "New take from current");
-            takesMenu.addItem (851, "Rename active take…", takes > 0);
+            takesMenu.addItem (851, "Rename active take...", takes > 0);
             takesMenu.addItem (852, "Delete active take",  takes > 1);
             menu.addSubMenu ("Take", takesMenu);
 
@@ -1851,7 +1851,7 @@ namespace zynforge
                     return;
                 }
 
-                // Take pick — 800..829.
+                // Take pick -- 800..829.
                 if (chosen >= 800 && chosen < 830)
                 {
                     row->engine.setActiveTake (row->index, chosen - 800);
@@ -1984,7 +1984,7 @@ namespace zynforge
             }
         }
 
-        // The viewport's visible height — needed to resolve "fit to window".
+        // The viewport's visible height -- needed to resolve "fit to window".
         // EditPage sets this on every resize.
         void setViewportHeight (int h) { viewportHeight = juce::jmax (60, h); }
 
@@ -1993,7 +1993,7 @@ namespace zynforge
             rows.clear();
             rows.reserve ((size_t) numTracks);
 
-            // Logical iteration — stereo L track owns the next R partner.
+            // Logical iteration -- stereo L track owns the next R partner.
             int i = 0;
             while (i < numTracks)
             {
@@ -2075,7 +2075,7 @@ namespace zynforge
         }
 
         // While recording, the WAV files grow on disk but the file path
-        // doesn't change — so setWaveformFiles' "if path changed"
+        // doesn't change -- so setWaveformFiles' "if path changed"
         // shortcut skips the refresh. Call this from the EditPage timer
         // to force every row to re-scan its current file each tick.
         void forceRefreshWaveforms()
@@ -2110,7 +2110,7 @@ namespace zynforge
 
         // Owned by EditPage so the lifetime tracks the page, but laid
         // out by MainComponent on the same 28 px row as the automation
-        // toolbar — the host re-parents it via getEditToolsBar() +
+        // toolbar -- the host re-parents it via getEditToolsBar() +
         // addAndMakeVisible().
         toolsBar = std::make_unique<EditToolsBar>();
         toolsBar->onZoomChanged = [this] (float z) { setZoom (z); };
@@ -2118,11 +2118,11 @@ namespace zynforge
         list = std::make_unique<TrackList> (engine, formatManager, thumbnailCache);
         list->sharedToolsBar = toolsBar.get();
         viewport.setViewedComponent (list.get(), false);
-        // Both scrollbars — horizontal lights up as soon as zoom > 1.
+        // Both scrollbars -- horizontal lights up as soon as zoom > 1.
         viewport.setScrollBarsShown (true, true);
         addAndMakeVisible (viewport);
 
-        emptyLabel.setText ("No session loaded — load or record a session to see waveforms here.",
+        emptyLabel.setText ("No session loaded -- load or record a session to see waveforms here.",
                             juce::dontSendNotification);
         emptyLabel.setJustificationType (juce::Justification::centred);
         emptyLabel.setColour (juce::Label::textColourId, brand::textTertiary);
@@ -2180,7 +2180,7 @@ namespace zynforge
         const int n = engine.getRecorder().getNumTracks();
 
         // Compute logical (stereo-aware) row count and rebuild when it
-        // differs — physical track count alone doesn't detect isStereo
+        // differs -- physical track count alone doesn't detect isStereo
         // toggles, which collapse two rows into one.
         int logicalRows = 0;
         for (int i = 0; i < n; )
@@ -2214,7 +2214,7 @@ namespace zynforge
         if (n != lastTrackCount)
             refresh();
 
-        // Pick up session swaps — recording starts, recording stops,
+        // Pick up session swaps -- recording starts, recording stops,
         // session loaded, session changed, ...
         const bool loaded = engine.getPlayer().isLoaded();
         const bool rec    = engine.isRecording();
@@ -2226,7 +2226,7 @@ namespace zynforge
         }
 
         // While recording, the Track_NN files grow on disk but their
-        // path doesn't change — push a fresh InputSource into each row
+        // path doesn't change -- push a fresh InputSource into each row
         // every tick so the AudioThumbnail re-scans the new bytes.
         if (rec && list != nullptr)
             list->forceRefreshWaveforms();
@@ -2258,7 +2258,7 @@ namespace zynforge
         // Tell the list how tall the visible area is so "fit to window"
         // sizing can resolve a sensible per-row pixel height.
         list->setViewportHeight (viewport.getHeight());
-        // Apply the zoom factor — content widens past the viewport when
+        // Apply the zoom factor -- content widens past the viewport when
         // zoom > 1; the horizontal scrollbar lights up to navigate.
         const int contentW = juce::jmax (viewport.getWidth(),
                                          (int) (viewport.getWidth() * zoom));

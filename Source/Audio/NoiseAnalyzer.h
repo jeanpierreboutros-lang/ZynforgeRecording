@@ -23,7 +23,7 @@ namespace zynforge
     //                 a fan / preamp hiss baseline.
     //
     // Implementation: 1-second analysis frames, hop = 0.5s. FFT size
-    // 4096. Doesn't need to be RT-safe — runs on a background thread
+    // 4096. Doesn't need to be RT-safe -- runs on a background thread
     // from the message thread after stopRecording or on demand.
     struct NoiseFinding
     {
@@ -110,7 +110,7 @@ namespace zynforge
 
                 // Spectrum is now magnitudes in fftBuf[0..kFftSize/2].
                 // Compute noise floor as the median of the 100..800 Hz
-                // band — bypasses both the hum harmonics and the HF
+                // band -- bypasses both the hum harmonics and the HF
                 // content from typical music.
                 const int floorLo = binFor (100.0);
                 const int floorHi = binFor (800.0);

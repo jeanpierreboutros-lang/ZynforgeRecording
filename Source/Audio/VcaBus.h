@@ -5,7 +5,7 @@
 
 namespace zynforge
 {
-    // VCA bus — a "ghost fader" the engineer can ride to scale a group
+    // VCA bus -- a "ghost fader" the engineer can ride to scale a group
     // of strips at once. Strips assign themselves to a VCA via
     // TrackState::vcaGroup; the audio thread sums vca[group].gainDb
     // into the per-strip gain at the monitor / output / stream summing

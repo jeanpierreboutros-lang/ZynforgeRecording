@@ -19,7 +19,7 @@ namespace zynforge
     //  - Fade      → body clicks open the fade preset menu
     //  - Scrubber  → drag sets the playhead per-pixel
     //
-    // Header-only on purpose — no extra .cpp in CMakeLists.
+    // Header-only on purpose -- no extra .cpp in CMakeLists.
     class EditToolsBar final : public juce::Component
     {
     public:
@@ -75,12 +75,18 @@ namespace zynforge
             g.setColour (brand::edge);
             g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), 6.0f, 1.0f);
 
-            // Zoom controls: [-]  100%  [+] painted inline. Hit-tested
-            // in mouseDown below. Cheaper than three more Components.
+            // Zoom controls: [-]  100%  [+] painted inline with explicit
+            // gaps so the buttons don't visually touch the readout box.
+            // Hit-tested in mouseDown below using the same geometry.
+            const int btnW = 30;
+            const int textW = 48;
+            const int gap = 6;
             auto z = zoomBounds();
-            const auto rMinus = z.removeFromLeft (22);
-            const auto rText  = z.removeFromLeft (38);
-            const auto rPlus  = z.removeFromLeft (22);
+            const auto rMinus = z.removeFromLeft (btnW);
+            z.removeFromLeft (gap);
+            const auto rText  = z.removeFromLeft (textW);
+            z.removeFromLeft (gap);
+            const auto rPlus  = z.removeFromLeft (btnW);
             const auto draw = [&] (juce::Rectangle<int> r, juce::String t, bool isText)
             {
                 g.setColour (isText ? brand::bgPanel : brand::controlBg);
@@ -100,9 +106,16 @@ namespace zynforge
 
         void mouseDown (const juce::MouseEvent& e) override
         {
-            const auto z = zoomBounds();
-            const auto rMinus = z.withWidth (22);
-            const auto rPlus  = z.withTrimmedLeft (60).withWidth (22);
+            // Mirror the paint geometry: minus button, gap, text, gap, plus.
+            const int btnW = 30;
+            const int textW = 48;
+            const int gap = 6;
+            auto z = zoomBounds();
+            const auto rMinus = z.removeFromLeft (btnW);
+            z.removeFromLeft (gap);
+            z.removeFromLeft (textW);
+            z.removeFromLeft (gap);
+            const auto rPlus  = z.removeFromLeft (btnW);
             if (rMinus.contains (e.getPosition()))
             {
                 if (onZoomChanged) onZoomChanged (juce::jlimit (1.0f, 16.0f, zoomLevel * 0.71f));
@@ -116,8 +129,8 @@ namespace zynforge
         void resized() override
         {
             auto r = getLocalBounds().reduced (brand::space::sm, brand::space::xs);
-            const int btnW = 32;
-            const int gap  = 4;
+            const int btnW = 48;
+            const int gap  = 6;
             for (auto& b : buttons)
             {
                 b->setBounds (r.removeFromLeft (btnW));
@@ -127,9 +140,10 @@ namespace zynforge
 
         juce::Rectangle<int> zoomBounds() const noexcept
         {
-            // ~82 px wide column pinned to the right edge.
-            return getLocalBounds().withTrimmedLeft (getWidth() - 90)
-                                   .withTrimmedRight (4)
+            // ~125 px wide column pinned to the right edge (was 90 --
+            // bumped to match the rest of the larger toolbar).
+            return getLocalBounds().withTrimmedLeft (getWidth() - 125)
+                                   .withTrimmedRight (6)
                                    .reduced (0, brand::space::xs);
         }
 
@@ -156,7 +170,7 @@ namespace zynforge
                 auto rect = getLocalBounds().toFloat().reduced (1.0f);
 
                 // Tool selection uses brand::toolActive() (cool-teal /
-                // featureEngaged) — picked deliberately so it doesn't
+                // featureEngaged) -- picked deliberately so it doesn't
                 // collide with any signalRecord / signalMute / signalSolo
                 // claim. Replaces a previous hardcoded blue literal.
                 const auto accent = brand::toolActive();
@@ -222,7 +236,7 @@ namespace zynforge
                         break;
 
                     case Tool::Grabber:
-                        // Open hand simplified — 4 fingers + palm
+                        // Open hand simplified -- 4 fingers + palm
                         g.fillRect (juce::Rectangle<float> (cx - 5, cy - 2, 10, 6));
                         g.fillRect (juce::Rectangle<float> (cx - 5, cy - 6, 2,  6));
                         g.fillRect (juce::Rectangle<float> (cx - 2, cy - 7, 2,  7));

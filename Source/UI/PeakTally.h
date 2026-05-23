@@ -7,10 +7,10 @@
 
 namespace zynforge
 {
-    // PeakTally — a thin red bar painted across the top of the strip
+    // PeakTally -- a thin red bar painted across the top of the strip
     // area. Lights when ANY strip is clipping; holds for one second
     // after the last clip then fades. Visible from across the room
-    // under stage glare — the engineer doesn't need to scan the
+    // under stage glare -- the engineer doesn't need to scan the
     // meter ladder, they see one global "you have a clip somewhere"
     // signal and look down to find it.
     //
@@ -23,9 +23,13 @@ namespace zynforge
     public:
         explicit PeakTally (AudioEngine& eng) : engine (eng)
         {
-            startTimerHz (30);
+            // Poll at 10 Hz when idle (cheap heartbeat, just checks
+            // every strip's clipped flag). The pulse animation gets
+            // bumped to 30 Hz inside timerCallback only while a clip
+            // is being held. Idle cost stays close to zero.
+            startTimerHz (10);
             setInterceptsMouseClicks (true, false);
-            setTooltip ("Any strip clipped — click to clear all clip latches");
+            setTooltip ("Any strip clipped -- click to clear all clip latches");
         }
 
         void paint (juce::Graphics& g) override
@@ -42,7 +46,7 @@ namespace zynforge
                 auto r = getLocalBounds().toFloat();
                 g.setColour (brand::accentRecord.withAlpha (a));
                 g.fillRect (r);
-                // 1 px crisp top edge — makes the bar feel like a
+                // 1 px crisp top edge -- makes the bar feel like a
                 // surface, not a smear.
                 g.setColour (brand::accentRecord.brighter (0.40f).withAlpha (a));
                 g.drawHorizontalLine ((int) r.getY(), r.getX(), r.getRight());

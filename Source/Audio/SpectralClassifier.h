@@ -9,14 +9,14 @@ namespace zynforge
     // Lightweight on-device channel classifier. Runs an FFT over the
     // most recent TrackState::fftSnapshot (already populated by the
     // audio thread) and buckets the energy into 5 broad bands:
-    //   sub  20–80    Hz   (kick, bass)
-    //   low  80–250   Hz   (snare bottom, low toms)
-    //   mid  250–2k   Hz   (vocal, guitar body, snare top)
-    //   high 2k–6k    Hz   (cymbal pickup, vocal sibilance)
-    //   air  6k–20k   Hz   (hi-hat, cymbal shimmer)
+    //   sub  20-80    Hz   (kick, bass)
+    //   low  80-250   Hz   (snare bottom, low toms)
+    //   mid  250-2k   Hz   (vocal, guitar body, snare top)
+    //   high 2k-6k    Hz   (cymbal pickup, vocal sibilance)
+    //   air  6k-20k   Hz   (hi-hat, cymbal shimmer)
     //
     // Heuristic → guess label (kick / bass / snare / vocal / guitar /
-    // hat / cymbal / keys / other). Not a CoreML model — but good
+    // hat / cymbal / keys / other). Not a CoreML model -- but good
     // enough to seed the engineer's channel names during soundcheck.
     class SpectralClassifier
     {
@@ -58,7 +58,7 @@ namespace zynforge
             b.peak = t.peak.load (std::memory_order_relaxed);
             b.rms  = t.rms .load (std::memory_order_relaxed);
 
-            // Tiny rule engine. Returns 'other' when nothing matches —
+            // Tiny rule engine. Returns 'other' when nothing matches --
             // engineer can confirm / override.
             const float total = b.sub + b.low + b.mid + b.high + b.air + 1e-6f;
             const float subR  = b.sub  / total;

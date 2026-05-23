@@ -22,7 +22,7 @@ namespace zynforge
         std::atomic<float> gainDb  { 0.0f };           // -60 .. +12
         std::atomic<float> pan     { 0.0f };           // -1 = L, 0 = C, +1 = R
 
-        // Soft-takeover targets used during cue recall — the audio thread
+        // Soft-takeover targets used during cue recall -- the audio thread
         // ramps gainDb / pan from their current value to these targets
         // over rampSamplesRemaining samples so a cue change doesn't
         // produce an audible step / click. When the ramp is inactive,
@@ -30,7 +30,7 @@ namespace zynforge
         std::atomic<float>       rampTargetGainDb     { 0.0f };
         std::atomic<float>       rampTargetPan        { 0.0f };
         std::atomic<juce::int64> rampSamplesRemaining { 0 };
-        // Output muting — independent of `muted` (which gates BOTH the
+        // Output muting -- independent of `muted` (which gates BOTH the
         // monitor bus AND the per-channel output). outputMuted gates the
         // physical output only; muted continues to gate the monitor sum.
         std::atomic<bool> outputMuted { false };
@@ -42,14 +42,14 @@ namespace zynforge
         // muted flag also gates the strip's output.
         std::atomic<int> vcaGroup { -1 };
 
-        // Bus track flag — when true this strip is an aux / mix bus.
+        // Bus track flag -- when true this strip is an aux / mix bus.
         // Bus tracks have no input routing, no recording, no R / I
         // buttons. They receive audio from other strips via AuxSends
         // and then sum into the master / per-channel outputs like a
         // normal strip (with their own fader, pan, mute, solo).
         std::atomic<bool> isBus { false };
 
-        // Aux sends — 4 slots per non-bus strip. Each slot has a
+        // Aux sends -- 4 slots per non-bus strip. Each slot has a
         // target bus index (-1 = empty), a level (-60..+12 dB), and
         // a pre/post-fader switch. Audio thread reads these every
         // block and sums (strip_audio × send.gain × (postFader
@@ -84,7 +84,7 @@ namespace zynforge
         // 0 means "use default personality colour for this index".
         std::atomic<juce::uint32> colourARGB       { 0 };
 
-        // FFT FIFO — audio thread fills `fftFifo`, snapshots into
+        // FFT FIFO -- audio thread fills `fftFifo`, snapshots into
         // `fftSnapshot` when full and sets `fftBlockReady`. UI thread
         // reads the snapshot, FFTs it, then clears the flag.
         std::array<float, kFftSize> fftFifo     {};

@@ -48,9 +48,9 @@ namespace zynforge { namespace fastaccum
             dst[s] += (double) src[s] * gain;
     }
 
-    // dst[i] += (double) src[i] * gain — same as above but adds
+    // dst[i] += (double) src[i] * gain -- same as above but adds
     // the FMA into an EXISTING double accumulator. Identical body
-    // — kept as a distinct name for call-site clarity.
+    // -- kept as a distinct name for call-site clarity.
     inline void mulAddFloatToDouble (double* dst,
                                       const float* src,
                                       double gain,
@@ -59,7 +59,7 @@ namespace zynforge { namespace fastaccum
         addFloatScaledIntoDouble (dst, src, gain, numSamples);
     }
 
-    // dst[i] = (float) src[i]  — the final master downcast at the end
+    // dst[i] = (float) src[i]  -- the final master downcast at the end
     // of the audio callback. Handles N samples; pairs of float64x2
     // narrow into one float32x4 via vcvt_high_f32_f64.
     inline void downcastDoubleToFloat (float* dst,

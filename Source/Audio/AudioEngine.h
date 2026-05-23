@@ -99,7 +99,7 @@ namespace zynforge
             midiClockOut.sendStop();
         }
 
-        // MIDI clock master (24 PPQN) — drives outboard synths /
+        // MIDI clock master (24 PPQN) -- drives outboard synths /
         // drum machines / DAW slaves from the session tempo.
         MidiClockOut& getMidiClockOut() noexcept { return midiClockOut; }
         NDIBridge&    getNDIBridge()    noexcept { return ndi; }
@@ -145,13 +145,13 @@ namespace zynforge
         // Per-channel playback gain (dB) + pan (-1..+1). Both persist.
         void  setTrackGainDb (int channelIndex, float dB);
         void  setTrackPan    (int channelIndex, float pan);
-        // Soft-takeover variants — interpolate over the given duration.
+        // Soft-takeover variants -- interpolate over the given duration.
         // Used by cue recall so a setlist jump doesn't audibly click
         // when the cue's stored fader / pan values differ from the
         // engineer's current settings.
         void  setTrackGainDbRamped (int channelIndex, float dB,  double seconds);
         void  setTrackPanRamped    (int channelIndex, float pan, double seconds);
-        // Per-block ramp stepper — called from the audio callback.
+        // Per-block ramp stepper -- called from the audio callback.
         void  tickRamps (int numSamples) noexcept;
 
         // Routing. -1 = unrouted; values clamped to current device's range.
@@ -159,7 +159,7 @@ namespace zynforge
         void  setTrackOutputRouting (int channelIndex, int deviceCh);
 
         // Sets both input AND output for the strip to the same hardware
-        // channel index — the standard VSC workflow where strip N is
+        // channel index -- the standard VSC workflow where strip N is
         // physical channel N on both sides. PATCH page + per-strip combos
         // both call this so input and output stay linked.
         void  setTrackLinkedRouting (int channelIndex, int deviceCh);
@@ -195,11 +195,11 @@ namespace zynforge
         // colour, gain, pan, routing, mute/solo/mon/arm, stereo flag),
         // persisted overrides, and the underlying Track_NN.wav files in
         // the active session's Audio Files/ folder. UI keeps holding the
-        // same TrackState references — only their contents swap — so
+        // same TrackState references -- only their contents swap -- so
         // strips don't dangle. Returns true on success.
         bool swapTracks (int a, int b);
 
-        // Punch in/out — the player auto-arms enabled punch tracks when
+        // Punch in/out -- the player auto-arms enabled punch tracks when
         // the playhead enters the loop region and disarms again when it
         // leaves. The actual record state is driven on the message
         // thread by MainComponent's timer polling getPunch* and
@@ -209,7 +209,7 @@ namespace zynforge
         bool isTrackPunchArmed (int channel) const noexcept;
         void setTrackPunchArmed (int channel, bool armed);
         // The loop region from SessionPlayer doubles as the punch window
-        // — there's only ever one 'do this between A and B' selection.
+        // -- there's only ever one 'do this between A and B' selection.
 
         // OSC remote: starts/stops a juce::OSCReceiver bound to UDP port,
         // with a dialect parser for DiGiCo / A&H / SSL / Yamaha consoles
@@ -224,14 +224,14 @@ namespace zynforge
         // else an empty File.
         juce::File getActiveSessionDir() const;
 
-        // Pin the active session folder explicitly (used by New Session…
-        // and Open Session…). Without this, the engine reports an active
+        // Pin the active session folder explicitly (used by New Session...
+        // and Open Session...). Without this, the engine reports an active
         // session only while recording or while a player has loaded one
-        // — which left Save / Save As greyed out right after creating an
+        // -- which left Save / Save As greyed out right after creating an
         // empty session. Cleared by passing an empty / non-directory file.
         void setActiveSessionDir (const juce::File& dir);
 
-        // Session tempo. setSessionTempoBpm() is the canonical setter —
+        // Session tempo. setSessionTempoBpm() is the canonical setter --
         // it updates currentTempoBpm + persists to appProps. The tempo
         // map is a sorted list of (samplePos, bpm) change points; the
         // engine doesn't consume it on the audio thread yet (no MIDI
@@ -241,7 +241,7 @@ namespace zynforge
         float  getSessionTempoBpm() const noexcept { return currentTempoBpm.load (std::memory_order_relaxed); }
         void   setSessionTempoBpm (float bpm);
 
-        // Time signature — clicks accent beat 1 of each bar; the click
+        // Time signature -- clicks accent beat 1 of each bar; the click
         // engine consumes (numerator, denominator). Persisted to appProps.
         int   getTimeSignatureNumerator()   const noexcept { return timeSigNumerator  .load (std::memory_order_relaxed); }
         int   getTimeSignatureDenominator() const noexcept { return timeSigDenominator.load (std::memory_order_relaxed); }
@@ -311,20 +311,20 @@ namespace zynforge
         // this, Takes are RAM-only and lost on app quit.
         juce::var playlistsToJson() const;
         void      loadPlaylistsFromJson (const juce::var& v);
-        // Split the named track at the current playhead — creates two
+        // Split the named track at the current playhead -- creates two
         // clips that reference the same audio file with adjacent regions.
         bool splitTrackAtPlayhead (int track);
 
         // Mutate one clip's bounds and republish to the player. Three
         // edit modes the EDIT row's drag handles drive:
         //
-        //   TrimLeft   — shrinks/grows the left edge. timelineStart and
+        //   TrimLeft   -- shrinks/grows the left edge. timelineStart and
         //                fileStart move together (slip-trim style); the
         //                clip stays anchored to the same content frame.
-        //   TrimRight  — shrinks/grows the right edge. Only fileLength
+        //   TrimRight  -- shrinks/grows the right edge. Only fileLength
         //                changes; the file content under the clip is
         //                unchanged from the left.
-        //   Move       — slides the whole clip along the timeline without
+        //   Move       -- slides the whole clip along the timeline without
         //                changing what's inside it.
         //
         // deltaSamples is signed: +N to drag right by N samples, -N for
@@ -352,7 +352,7 @@ namespace zynforge
         // of the source so the engineer doesn't have to nudge it.
         bool duplicateClip   (int track, int clipIndex);
 
-        // Recent sessions — maintained when loadSession / startRecording
+        // Recent sessions -- maintained when loadSession / startRecording
         // succeed. Persisted in appProps as 'recentSession_<i>' (i = 0
         // most recent). Capped at kMaxRecent entries.
         static constexpr int kMaxRecent = 10;
@@ -361,7 +361,7 @@ namespace zynforge
         void clearRecentSessions();
 
         // Wipe every per-strip persisted override so all strips read
-        // their defaults (name = '1', '2', '3' …, no colour override,
+        // their defaults (name = '1', '2', '3' ..., no colour override,
         // 0 dB gain, centre pan, master routing). Used by the welcome
         // dialog's 'Create New Session' so the engineer starts with a
         // truly clean board.
@@ -463,10 +463,10 @@ namespace zynforge
         std::unique_ptr<CompanionServer> companion;
         std::unique_ptr<juce::PropertiesFile> appProps;
 
-        // Live performance telemetry — written from the audio thread
+        // Live performance telemetry -- written from the audio thread
         // (audioLoadPct) and the writer threads (diskMBPerSec /
         // ringFillPct), polled from the UI to drive the header dashboard.
-        // 0–100 % units.
+        // 0-100 % units.
         std::atomic<double> deviceSampleRate { 0.0 };
         std::atomic<float>  audioLoadPct     { 0.0f };
         std::atomic<float>  currentTempoBpm     { 120.0f };
@@ -475,7 +475,7 @@ namespace zynforge
         std::vector<TempoChange> tempoMap;   // sorted by samplePos; UI/message-thread only
 
         // Per-track, per-parameter automation. UI-thread only for now
-        // (audio thread doesn't yet consume these — the engineer reads
+        // (audio thread doesn't yet consume these -- the engineer reads
         // them visually and they ride along in cue snapshots).
         struct TrackAutomation
         {

@@ -11,7 +11,7 @@
 
 namespace zynforge
 {
-    // EDIT view — one row per channel with the strip header (colour, name,
+    // EDIT view -- one row per channel with the strip header (colour, name,
     // REC / MUTE / SOLO) on the left and the recorded WAV's waveform drawn
     // on the right via juce::AudioThumbnail. A vertical playhead spans all
     // rows and tracks the SessionPlayer position. State is shared with the
@@ -36,7 +36,7 @@ namespace zynforge
         // to bias the hit-test.
         EditToolsBar* getEditToolsBar() noexcept { return toolsBar.get(); }
 
-        // Horizontal zoom — content widens past the viewport so the
+        // Horizontal zoom -- content widens past the viewport so the
         // engineer can navigate a 90-min show. 1.0 = fit, 16.0 = 16×.
         void  setZoom (float z);
         float getZoom() const noexcept { return zoom; }

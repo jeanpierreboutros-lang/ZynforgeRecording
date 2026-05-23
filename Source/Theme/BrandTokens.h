@@ -34,9 +34,9 @@ namespace zynforge::brand
     // bundled Inter / JetBrains Mono later by changing exactly these
     // two strings.
     //
-    //   uiFamily   — proportional UI text (labels, body, titles, buttons)
-    //   monoFamily — tabular numerals (BigClock, BPM, meter dB readouts,
-    //                CPU%, MB/s — anywhere a value changes and shouldn't
+    //   uiFamily   -- proportional UI text (labels, body, titles, buttons)
+    //   monoFamily -- tabular numerals (BigClock, BPM, meter dB readouts,
+    //                CPU%, MB/s -- anywhere a value changes and shouldn't
     //                cause horizontal layout jitter)
     //
     // These names match the bundled BinaryData faces directly. The
@@ -48,7 +48,7 @@ namespace zynforge::brand
     namespace type
     {
         // Sized scale. Seven discrete heights. Anything outside this
-        // list should be considered a bug — the system should be tight.
+        // list should be considered a bug -- the system should be tight.
         inline constexpr float h_label    = 10.0f;   // tiny captions / dB ruler ticks
         inline constexpr float h_caption  = 11.0f;   // small labels, chips
         inline constexpr float h_body     = 13.0f;   // standard body
@@ -86,14 +86,14 @@ namespace zynforge::brand
         inline juce::Font channelName()  { return ui   (h_body, true);     }
         inline juce::Font sectionTitle() { return ui   (h_title, true);    }
         inline juce::Font headline()     { return ui   (h_headline, true); }
-        // 22 pt UI bold — for cue-countdown / "Next: ..." pills that
+        // 22 pt UI bold -- for cue-countdown / "Next: ..." pills that
         // need to sit between body text and the BigClock numbers.
         inline juce::Font subhead()      { return ui   (h_subhead, true);  }
-        // 28 pt mono bold — for section hero numbers (cue index, etc.).
+        // 28 pt mono bold -- for section hero numbers (cue index, etc.).
         inline juce::Font display()      { return mono (h_display, true);  }
-        // 44 pt mono bold — pinned for the BigClock timer.
+        // 44 pt mono bold -- pinned for the BigClock timer.
         inline juce::Font hero()         { return mono (h_hero, true);     }
-        // Numeric readouts — every value-readout font goes through this.
+        // Numeric readouts -- every value-readout font goes through this.
         inline juce::Font readout (float height) { return mono (height, true); }
     }
 
@@ -108,7 +108,7 @@ namespace zynforge::brand
         inline juce::Font title()       { return type::sectionTitle();   }
         inline juce::Font headline()    { return type::headline();       }
         inline juce::Font hero()        { return type::hero();           }
-        // Tabular numerals — pick the closest size.
+        // Tabular numerals -- pick the closest size.
         inline juce::Font numeral10()   { return type::mono (10.0f, true); }
         inline juce::Font numeral11()   { return type::mono (11.0f, true); }
         inline juce::Font numeral13()   { return type::mono (13.0f, true); }

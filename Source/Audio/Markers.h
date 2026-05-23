@@ -10,7 +10,7 @@ namespace zynforge
     {
         juce::int64  sampleOffset { 0 };
         juce::String name;
-        juce::String type { "user" };   // "user", "scene", "song", …
+        juce::String type { "user" };   // "user", "scene", "song", ...
     };
 
     // Per-session marker list. Persisted as markers.json in the session dir.

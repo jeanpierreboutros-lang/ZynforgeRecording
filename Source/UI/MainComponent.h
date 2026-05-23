@@ -43,7 +43,7 @@ public:
 
     bool keyPressed (const juce::KeyPress&, juce::Component*) override;
 
-    // MenuBarModel — populates the macOS system menu bar.
+    // MenuBarModel -- populates the macOS system menu bar.
     juce::StringArray getMenuBarNames() override;
     juce::PopupMenu   getMenuForIndex (int topLevelMenuIndex, const juce::String& menuName) override;
     void              menuItemSelected (int menuItemID, int topLevelMenuIndex) override;
@@ -147,14 +147,14 @@ private:
     // Open a modal warning if the loaded session's SR doesn't match the device.
     void warnIfSampleRateMismatch();
 
-    // Session templates — engineer's per-strip layout reusable across shows.
+    // Session templates -- engineer's per-strip layout reusable across shows.
     juce::File  templatesDir() const;
     juce::Array<juce::File> listSessionTemplates() const;
     void  promptSaveSessionTemplate();
     void  applySessionTemplate (const juce::File& templateFile);
     void  promptDeleteSessionTemplate();
 
-    // Setlist printing — writes setlist.html into the active session
+    // Setlist printing -- writes setlist.html into the active session
     // dir and opens it in the default browser (engineer prints from
     // there, or saves as PDF via the browser's print dialog).
     void  printSetlist();
@@ -162,7 +162,7 @@ private:
     // from the active session's .zfproj. Called after loadSession so
     // the engineer reopens their show with their layout intact.
     void  loadUILayoutFromActiveSession();
-    // Show pre-flight checklist — one-screen view of every show-critical
+    // Show pre-flight checklist -- one-screen view of every show-critical
     // setting (device, SR, inputs, armed, backup, disk, cues, recording state).
     void  showPreflightChecklist();
 
@@ -183,7 +183,7 @@ private:
     juce::Label  danteLabel        { {}, "" };
     juce::Label  sessionLabel      { {}, "No session loaded" };
     juce::Label  transportLabel    { {}, "00:00 / 00:00" };
-    // Header chrome — IconButton paints a glyph next to each label so
+    // Header chrome -- IconButton paints a glyph next to each label so
     // the chrome reads as icons + words instead of monospace SHOUTING.
     zynforge::IconButton recordButton  { zynforge::icons::Glyph::Record, "RECORD" };
     zynforge::IconButton deviceButton  { zynforge::icons::Glyph::Device, "DEVICE" };
@@ -234,7 +234,7 @@ private:
     juce::uint32 stopArmedAtMs { 0 };
     zynforge::AutomationToolbar automationToolbar;
 
-    // Per-session cue list — populated from <SessionName>.zfproj on
+    // Per-session cue list -- populated from <SessionName>.zfproj on
     // every session swap, persisted on every add / pick / update.
     std::vector<zynforge::SetlistBar::Cue> cues;
     int currentCueIndex { -1 };

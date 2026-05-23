@@ -16,12 +16,12 @@ namespace zynforge
     {
         Wav16,        // 16-bit PCM WAV
         Wav24,        // 24-bit PCM WAV (default)
-        Wav32Float,   // 32-bit IEEE float WAV — clip-proof at file level
+        Wav32Float,   // 32-bit IEEE float WAV -- clip-proof at file level
         Aiff16,       // 16-bit PCM AIFF
         Aiff24,       // 24-bit PCM AIFF
         Aiff32Float,  // 32-bit IEEE float AIFF
         Flac16,       // 16-bit FLAC
-        Flac24        // 24-bit FLAC — ~50% disk size vs WAV
+        Flac24        // 24-bit FLAC -- ~50% disk size vs WAV
     };
 
     // Lock-free per-channel ring buffer + background disk writer.
@@ -49,13 +49,13 @@ namespace zynforge
         void stopRecording();
         bool isRecording() const noexcept { return recording.load (std::memory_order_acquire); }
 
-        // Capture format & pre-roll are settings — only changeable while not recording.
+        // Capture format & pre-roll are settings -- only changeable while not recording.
         void setCaptureFormat (CaptureFormat f) noexcept     { if (! isRecording()) captureFormat = f; }
         CaptureFormat getCaptureFormat() const noexcept       { return captureFormat; }
 
         // Optional second format for the backup writer. When set to a
         // different value than the primary, recording produces TWO files
-        // per channel — e.g., 24-bit WAV to the main drive AND 24-bit
+        // per channel -- e.g., 24-bit WAV to the main drive AND 24-bit
         // FLAC to the backup drive. Default mirrors the primary.
         void setBackupCaptureFormat (CaptureFormat f) noexcept { if (! isRecording()) backupCaptureFormat = f; }
         CaptureFormat getBackupCaptureFormat() const noexcept  { return backupCaptureFormat; }
@@ -63,7 +63,7 @@ namespace zynforge
         void setPreRollSeconds (int seconds);
         int  getPreRollSeconds() const noexcept               { return preRollSeconds; }
 
-        // Decouples strip count from device input count — engineer picks
+        // Decouples strip count from device input count -- engineer picks
         // how many tracks they want, routing chooses which device input
         // each strip captures. No-op while recording.
         void addTrack();
@@ -74,14 +74,14 @@ namespace zynforge
         int          getNumTracks() const noexcept { return (int) tracks.size(); }
         TrackState&  getTrack (int i) noexcept     { return *tracks[(std::size_t) i]; }
 
-        // Health + position counters — all RT-safe to read.
+        // Health + position counters -- all RT-safe to read.
         juce::int64 getSamplesSinceStart() const noexcept { return samplesSinceStart.load(std::memory_order_relaxed); }
         juce::int64 getMissedSamples()     const noexcept { return missedSamples    .load(std::memory_order_relaxed); }
         int         getLastWriteMs()       const noexcept { return lastWriteMs      .load(std::memory_order_relaxed); }
 
         // Apple-Silicon scheduling: when the engine learns about a new
         // audio device, it forwards the device's AudioWorkgroup here so
-        // every writer worker can join it — the macOS scheduler then
+        // every writer worker can join it -- the macOS scheduler then
         // co-schedules them with the CoreAudio IO thread (no priority
         // inversion, no jitter under load). Pass an empty/disengaged
         // workgroup to revert to the default scheduler.
@@ -105,7 +105,7 @@ namespace zynforge
         bool       hasBackupFailed() const noexcept         { return backupFailed.load (std::memory_order_relaxed); }
 
     private:
-        // Inherited but no longer used directly — drain logic moves into
+        // Inherited but no longer used directly -- drain logic moves into
         // per-shard ShardClients (see below). Kept as a stub returning a
         // long delay so the base class doesn't compile-error.
         int useTimeSlice() override;
@@ -191,7 +191,7 @@ namespace zynforge
         juce::AudioFormatManager formatManager;
 
         // Writer-thread pool. We start min(8, max(2, hardware/2)) worker
-        // threads — one TimeSliceThread per shard — and each one drains
+        // threads -- one TimeSliceThread per shard -- and each one drains
         // a contiguous slice of channels. rebuildShards() reshapes the
         // assignment when the track count changes.
         std::vector<std::unique_ptr<juce::TimeSliceThread>> writerThreads;
@@ -213,7 +213,7 @@ namespace zynforge
 
         // (Disk throughput + ring-fill accumulators now live per-shard in
         // ShardClient. The public getters in this class sum / max across
-        // shards each time the UI polls them — see the .cpp.)
+        // shards each time the UI polls them -- see the .cpp.)
 
         CaptureFormat captureFormat        { CaptureFormat::Wav24 };
         CaptureFormat backupCaptureFormat  { CaptureFormat::Wav24 };

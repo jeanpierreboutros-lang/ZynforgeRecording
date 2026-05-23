@@ -10,9 +10,9 @@
 
 namespace zynforge
 {
-    // NDI audio transmitter — broadcasts ZynForge's master mix onto
+    // NDI audio transmitter -- broadcasts ZynForge's master mix onto
     // the LAN as a stereo NDI Audio source. Any NDI receiver (NDI
-    // Tools, OBS Studio, vMix, TouchDesigner …) on the same network
+    // Tools, OBS Studio, vMix, TouchDesigner ...) on the same network
     // can subscribe.
     //
     // NDI SDK is NOT linked at build time. We dlopen libndi at runtime;
@@ -20,7 +20,7 @@ namespace zynforge
     // engineer sees a clear status message. The user must install the
     // free NDI runtime from ndi.tv to actually transmit.
     //
-    // Stereo only for v1 — the master bus is already a stereo sum.
+    // Stereo only for v1 -- the master bus is already a stereo sum.
     // Multi-channel NDI Audio v3 + AES67 support are future work.
     class NDIBridge
     {
@@ -59,7 +59,7 @@ namespace zynforge
             sr = sampleRate;
             if (! loadLibrary()) return false;
 
-            // NDIlib_initialize() — bring the runtime up.
+            // NDIlib_initialize() -- bring the runtime up.
             using InitFn = bool (*)();
             auto initFn = (InitFn) sym ("NDIlib_initialize");
             if (initFn == nullptr || ! initFn()) return false;
@@ -117,7 +117,7 @@ namespace zynforge
             if (! enabled.load (std::memory_order_relaxed) || sender == nullptr
                 || sendAudioFn == nullptr || L == nullptr || R == nullptr) return;
 
-            // NDIlib_audio_frame_v2_t layout — channel-interleaved
+            // NDIlib_audio_frame_v2_t layout -- channel-interleaved
             // float32, channel_stride_in_bytes set to one channel
             // length so the receiver reads planar.
             struct AudioFrame

@@ -21,7 +21,7 @@ namespace zynforge
         outputCombo.setColour (juce::ComboBox::outlineColourId,    brand::edge);
         outputCombo.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
         outputCombo.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
-        outputCombo.setTooltip ("Master output device channel(s) — pair like 'Out 1-2' "
+        outputCombo.setTooltip ("Master output device channel(s) -- pair like 'Out 1-2' "
                                 "in stereo mode, single 'Out N' in mono.");
         outputCombo.onChange = [this]
         {
@@ -44,7 +44,7 @@ namespace zynforge
         modeButton.setClickingTogglesState (true);
         modeButton.setToggleState (engine.getMasterStereo(), juce::dontSendNotification);
         modeButton.setButtonText (engine.getMasterStereo() ? "ST" : "MONO");
-        modeButton.setTooltip ("Master output mode — click to toggle between MONO (one output, "
+        modeButton.setTooltip ("Master output mode -- click to toggle between MONO (one output, "
                                "one meter bar) and STEREO (two outputs, two meter bars).");
         modeButton.onClick = [this]
         {
@@ -89,7 +89,7 @@ namespace zynforge
         };
         addAndMakeVisible (fader);
 
-        meter.setTooltip ("Master bus peak + RMS — click to clear clip.");
+        meter.setTooltip ("Master bus peak + RMS -- click to clear clip.");
         if (engine.getMasterStereo())
             meter.setStereoPartner (&engine.getMasterStateR());
         addAndMakeVisible (meter);
@@ -148,7 +148,7 @@ namespace zynforge
             modeButton.setButtonText (stereo ? "ST" : "MONO");
             meter.setStereoPartner (stereo ? &engine.getMasterStateR() : nullptr);
             // Mode change means the combo's item set (pairs vs singles)
-            // has to be rebuilt — force a full refresh.
+            // has to be rebuilt -- force a full refresh.
             lastNumOutputs = -1;
             resized();
         }

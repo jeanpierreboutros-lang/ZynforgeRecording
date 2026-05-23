@@ -67,7 +67,7 @@ namespace zynforge
     void MultitrackRecorder::prepare (double sr, int maxBlock, int numInputs)
     {
         stopRecording();
-        // Detach existing shards from their threads — they'll be rebuilt.
+        // Detach existing shards from their threads -- they'll be rebuilt.
         for (auto& sh : shards)
             for (auto& th : writerThreads)
                 th->removeTimeSliceClient (sh.get());
@@ -80,7 +80,7 @@ namespace zynforge
         scratch.assign ((std::size_t) maxBlock, 0.0f);
 
         // Preserve existing TrackState objects when the count hasn't
-        // changed — destroying them here would leave every ChannelStrip
+        // changed -- destroying them here would leave every ChannelStrip
         // / EditPage row holding a dangling reference (those views grab
         // a TrackState& at construction). Heap corruption results when
         // those references are later dereferenced.
@@ -106,7 +106,7 @@ namespace zynforge
         }
         else
         {
-            // Same track count — just resize the existing FIFOs to the
+            // Same track count -- just resize the existing FIFOs to the
             // new sample rate. TrackState objects are reused so the UI's
             // references stay valid.
             for (auto& f : fifos)
@@ -119,7 +119,7 @@ namespace zynforge
 
     void MultitrackRecorder::rebuildShards()
     {
-        // Detach + recreate. We never resize the thread pool itself —
+        // Detach + recreate. We never resize the thread pool itself --
         // only the per-shard channel ranges change, so the engineer
         // doesn't pay a thread-creation cost on every track count change.
         for (auto& sh : shards)
@@ -412,8 +412,8 @@ namespace zynforge
             if (c == Container::Wav)
             {
                 meta.set (juce::WavAudioFormat::bwavDescription,
-                          "Zynforge Recording — " + sessionDir.getFileName()
-                            + " — " + target.getFileNameWithoutExtension());
+                          "Zynforge Recording -- " + sessionDir.getFileName()
+                            + " -- " + target.getFileNameWithoutExtension());
                 meta.set (juce::WavAudioFormat::bwavOriginator,      "Zynforge Recording");
                 meta.set (juce::WavAudioFormat::bwavOriginatorRef,   sessionDir.getFileName());
                 meta.set (juce::WavAudioFormat::bwavOriginationDate, now.formatted ("%Y-%m-%d"));
@@ -434,7 +434,7 @@ namespace zynforge
             WriterChannel w;
             const auto trackName = juce::String::formatted ("Track_%02d", (int) i + 1);
 
-            // Bus tracks have no input — no writer. Push an empty
+            // Bus tracks have no input -- no writer. Push an empty
             // WriterChannel so the per-channel index stays aligned with
             // tracks[i]; processBlock's arm-gate already skips bus
             // tracks (they have armed=false).
@@ -445,11 +445,11 @@ namespace zynforge
                 continue;
             }
 
-            // Primary writer — under <session>/Audio Files/Track_NN.<ext>.
+            // Primary writer -- under <session>/Audio Files/Track_NN.<ext>.
             const auto primaryFile = audioFilesDir.getChildFile (trackName + primary.ext);
             w.writer.reset (openWriter (primaryFile, primary.container, primary.bitDepth));
 
-            // Optional second copy — may be in a different format from
+            // Optional second copy -- may be in a different format from
             // the primary, so the engineer can run e.g. WAV/24 to the
             // main drive AND FLAC/24 to the backup drive simultaneously.
             // Backups mirror the same Audio Files/ layout under the chosen
@@ -471,7 +471,7 @@ namespace zynforge
         backupActive.store (backupDir.isDirectory(), std::memory_order_relaxed);
         backupFailed.store (false, std::memory_order_relaxed);
 
-        // Recovery marker — deleted on clean stop.
+        // Recovery marker -- deleted on clean stop.
         {
             juce::DynamicObject::Ptr m (new juce::DynamicObject());
             m->setProperty ("startedAt",  now.toISO8601 (true));
@@ -511,7 +511,7 @@ namespace zynforge
         closeWriters();
         backupActive.store (false, std::memory_order_relaxed);
 
-        // Post-show JSON report — one file per session that captures every
+        // Post-show JSON report -- one file per session that captures every
         // datum a mix engineer / producer needs after the gig: total time,
         // per-track clip count, missed samples, backup status. Drop-in
         // alongside the WAVs in the session directory.
@@ -550,7 +550,7 @@ namespace zynforge
                             .replaceWithText (juce::JSON::toString (juce::var (report.get()), true));
         }
 
-        // Clean stop — remove the recovery marker.
+        // Clean stop -- remove the recovery marker.
         if (activeSessionDir.isDirectory())
             activeSessionDir.getChildFile ("recording.session").deleteFile();
     }
@@ -563,7 +563,7 @@ namespace zynforge
 
     int MultitrackRecorder::useTimeSlice()
     {
-        // Recorder is no longer registered as a client itself — drain
+        // Recorder is no longer registered as a client itself -- drain
         // work runs on ShardClient instances. This is here only because
         // we still inherit from TimeSliceClient (compat shim) and JUCE
         // requires the override to be present.
@@ -626,7 +626,7 @@ namespace zynforge
 
     void MultitrackRecorder::drainOnce()
     {
-        // Legacy entry-point — when called from anywhere other than the
+        // Legacy entry-point -- when called from anywhere other than the
         // shard clients, fan out to every shard so behaviour is identical
         // to the pre-shard implementation (mostly used by stopRecording's
         // final flush).
@@ -653,7 +653,7 @@ namespace zynforge
             if (w.writer == nullptr) continue;
 
             // Track FIFO occupancy so the dashboard can warn the engineer
-            // BEFORE samples are dropped — at 80%+ the disk is falling
+            // BEFORE samples are dropped -- at 80%+ the disk is falling
             // behind the audio thread.
             const int cap = (int) cf.data.size();
             if (cap > 0)

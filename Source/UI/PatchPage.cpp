@@ -6,7 +6,7 @@ namespace zynforge
 {
     namespace
     {
-        // One half of the patch page — either input or output routing.
+        // One half of the patch page -- either input or output routing.
         class PatchMatrix final : public juce::Component, private juce::Timer
         {
         public:
@@ -28,7 +28,7 @@ namespace zynforge
                 int colW;
             };
 
-            // Returns the list of logical strips — each entry is the L track
+            // Returns the list of logical strips -- each entry is the L track
             // index of that strip, and `stereo` is true when the strip
             // represents a stereo pair (L, L+1).
             struct LogicalStrip { int trackIndex; bool stereo; };
@@ -108,7 +108,7 @@ namespace zynforge
                                 juce::Rectangle<int> (inner.getX(), inner.getY() + 4, inner.getWidth(), 26),
                                 juce::Justification::centred, false);
 
-                    // Actual track name — same string as mixer + edit view.
+                    // Actual track name -- same string as mixer + edit view.
                     g.setFont (brand::type::uiLabel());
                     const auto displayName = t.name.isNotEmpty() ? t.name
                                                                   : juce::String ("In ") + juce::String (ls.trackIndex + 1);
@@ -117,7 +117,7 @@ namespace zynforge
                                                       inner.getWidth() - 4, 18),
                                 juce::Justification::centred, false);
 
-                    // Mono / stereo indicator pill — click to toggle.
+                    // Mono / stereo indicator pill -- click to toggle.
                     juce::Rectangle<int> pillCell (L.rowHeaderW + c * L.colW, L.colorBandH, L.colW, L.muteBandH);
                     auto pill = pillCell.reduced (10, 4);
                     if (stereoCol)
@@ -199,7 +199,7 @@ namespace zynforge
                                               : engine.getCurrentDeviceOutputCount();
                 const auto L = computeLayout();
 
-                // Mono / stereo pill click — toggles isStereo on this column.
+                // Mono / stereo pill click -- toggles isStereo on this column.
                 if (e.y >= L.colorBandH && e.y < L.colHeaderH)
                 {
                     const int x = e.x - L.rowHeaderW;
@@ -281,7 +281,7 @@ namespace zynforge
             bool isRowRoutedToAnyStrip (int row, const std::vector<LogicalStrip>& logical) const
             {
                 // Only the L position of a stereo strip activates a row
-                // label — R is implicit, so leaving its row dim keeps the
+                // label -- R is implicit, so leaving its row dim keeps the
                 // visual in sync with the dot-rendering rule.
                 for (auto& ls : logical)
                     if (currentRoutingForTrack (ls.trackIndex) == row) return true;
@@ -309,7 +309,7 @@ namespace zynforge
             AudioEngine& engine;
             bool         isInput;
 
-            // Drag-patch state — set in mouseDown, consumed in mouseDrag.
+            // Drag-patch state -- set in mouseDown, consumed in mouseDrag.
             bool dragActive   = false;
             int  dragStartCol = 0;
             int  dragStartRow = 0;

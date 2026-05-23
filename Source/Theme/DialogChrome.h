@@ -7,7 +7,7 @@
 
 namespace zynforge::dialog
 {
-    // Standard chrome dimensions — all dialogs (and the LookAndFeel
+    // Standard chrome dimensions -- all dialogs (and the LookAndFeel
     // AlertBox override) read from these so a future re-skin only
     // touches this file.
     inline constexpr int titleH     = 44;
@@ -17,7 +17,7 @@ namespace zynforge::dialog
     inline constexpr int btnSecond  = 90;
     inline constexpr int btnH       = 28;
 
-    // Background — vertical gradient on bgPanel, identical to what
+    // Background -- vertical gradient on bgPanel, identical to what
     // AudioDeviceDialog paints. Call this first inside paint().
     inline void paintBackground (juce::Graphics& g, juce::Component& host) noexcept
     {
@@ -26,7 +26,7 @@ namespace zynforge::dialog
         g.fillAll();
     }
 
-    // Title bar — 44 px tall, brand-orange 3 px stripe down the left
+    // Title bar -- 44 px tall, brand-orange 3 px stripe down the left
     // edge, section-title text in textPrimary. Returns the rect the
     // title bar occupied so the caller can measure remaining space.
     inline juce::Rectangle<int> paintTitle (juce::Graphics& g,
@@ -45,7 +45,7 @@ namespace zynforge::dialog
         return host.getLocalBounds().removeFromTop (titleH);
     }
 
-    // Footer divider — horizontal hairline brand::edge just above the
+    // Footer divider -- horizontal hairline brand::edge just above the
     // footer button row. paintTitle + paintFooterDivider together
     // bracket the dialog's working area.
     inline void paintFooterDivider (juce::Graphics& g, juce::Component& host) noexcept
@@ -54,7 +54,7 @@ namespace zynforge::dialog
         g.drawHorizontalLine (host.getHeight() - footerH, 0.0f, (float) host.getWidth());
     }
 
-    // One-call chrome — call this from any dialog's paint(). Equivalent
+    // One-call chrome -- call this from any dialog's paint(). Equivalent
     // to paintBackground + paintTitle + paintFooterDivider.
     inline void paintChrome (juce::Graphics& g,
                              juce::Component& host,
@@ -80,7 +80,7 @@ namespace zynforge::dialog
                    .reduced (brand::space::md);
     }
 
-    // Apply / primary action button — accentStatus background, legible
+    // Apply / primary action button -- accentStatus background, legible
     // foreground via brand::onSignal. Matches AudioDeviceDialog's
     // primary action treatment.
     inline void stylePrimary (juce::TextButton& b) noexcept
@@ -93,7 +93,7 @@ namespace zynforge::dialog
                      brand::onSignal (brand::accentStatus));
     }
 
-    // Cancel / secondary action button — bgElevated background,
+    // Cancel / secondary action button -- bgElevated background,
     // textSecondary foreground. Matches AudioDeviceDialog Cancel.
     inline void styleSecondary (juce::TextButton& b) noexcept
     {
@@ -102,7 +102,7 @@ namespace zynforge::dialog
         b.setColour (juce::TextButton::textColourOnId,  brand::textSecondary);
     }
 
-    // Standard combo / text-editor / numeric-field treatment — same
+    // Standard combo / text-editor / numeric-field treatment -- same
     // dark deep field with edge outline that AudioDeviceDialog uses
     // on every input control.
     inline void styleCombo (juce::ComboBox& c) noexcept

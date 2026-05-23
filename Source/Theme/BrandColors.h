@@ -62,13 +62,13 @@ namespace zynforge::brand
     inline const auto swatchSlate    = juce::Colour::fromRGB (0x40, 0x45, 0x50);
     inline const auto swatchGraphite = juce::Colour::fromRGB (0x55, 0x55, 0x5a);
 
-    // ── Signal semantics — KEEP THESE MAPPINGS STABLE ACROSS THE APP ──
+    // ── Signal semantics -- KEEP THESE MAPPINGS STABLE ACROSS THE APP ──
     //
     //   record arm     → red        (accentRecord)
     //   input monitor  → green      (accentPlay)
     //   mute           → orange     (brandOrange)
     //   solo           → yellow     (accentSolo)
-    //   virtual sndchk → warm-amber (accentVS) — lights the VSC button
+    //   virtual sndchk → warm-amber (accentVS) -- lights the VSC button
     //   stream / send  → cool-teal  (featureEngaged)
     //   record danger  → red glow   (accentRecord)
     //
@@ -82,11 +82,11 @@ namespace zynforge::brand
     inline juce::Colour signalStream()      { return featureEngaged; }
     inline juce::Colour signalPlayhead()    { return accentPlay;   }
     // Armed-but-not-rolling: BigClock border, future "ready" states.
-    // Maps to engagedAmber (the BYPASS / LIVE / LOCK token) — it's
+    // Maps to engagedAmber (the BYPASS / LIVE / LOCK token) -- it's
     // semantically a 'primed but not active' colour. Keeps brandOrange
     // free for its two documented uses (signalMute + brand assertion).
     inline juce::Colour signalArmedReady()  { return engagedAmber; }
-    // EDIT tools active selection — cool-teal so it doesn't collide
+    // EDIT tools active selection -- cool-teal so it doesn't collide
     // with any of the signal colours above.
     inline juce::Colour toolActive()        { return featureEngaged; }
 
@@ -122,21 +122,21 @@ namespace zynforge::brand
                    : textPrimary;
     }
 
-    // ── Personality wash colours — INS 1-8 ────────────────────────────────
+    // ── Personality wash colours -- INS 1-8 ────────────────────────────────
     //
     // Pass 2 (2026-05-23): the moss / olive / violet / teal swatches
     // were still getting absorbed into bgDeep at XS strip widths.
     // Saturation + luminance bumped ~12-15% on each so every personality
     // reads cleanly even in a 256-strip layout. The hue is preserved.
     inline const std::array<juce::Colour, 8> personality {
-        juce::Colour::fromRGB (0x4c, 0x6c, 0x88),  // INS 1 — dusty blue
-        juce::Colour::fromRGB (0x52, 0x8a, 0x6a),  // INS 2 — moss      (bumped)
-        juce::Colour::fromRGB (0x80, 0x76, 0x46),  // INS 3 — olive     (bumped)
-        juce::Colour::fromRGB (0x76, 0x5a, 0x8c),  // INS 4 — violet    (bumped)
-        juce::Colour::fromRGB (0x78, 0x3c, 0x4e),  // INS 5 — wine
-        juce::Colour::fromRGB (0x3c, 0x82, 0x86),  // INS 6 — teal      (bumped)
-        juce::Colour::fromRGB (0x80, 0x5c, 0x32),  // INS 7 — amber
-        juce::Colour::fromRGB (0x7a, 0x6a, 0x38),  // INS 8 — mustard
+        juce::Colour::fromRGB (0x4c, 0x6c, 0x88),  // INS 1 -- dusty blue
+        juce::Colour::fromRGB (0x52, 0x8a, 0x6a),  // INS 2 -- moss      (bumped)
+        juce::Colour::fromRGB (0x80, 0x76, 0x46),  // INS 3 -- olive     (bumped)
+        juce::Colour::fromRGB (0x76, 0x5a, 0x8c),  // INS 4 -- violet    (bumped)
+        juce::Colour::fromRGB (0x78, 0x3c, 0x4e),  // INS 5 -- wine
+        juce::Colour::fromRGB (0x3c, 0x82, 0x86),  // INS 6 -- teal      (bumped)
+        juce::Colour::fromRGB (0x80, 0x5c, 0x32),  // INS 7 -- amber
+        juce::Colour::fromRGB (0x7a, 0x6a, 0x38),  // INS 8 -- mustard
     };
 
     inline juce::Colour stripColour (int index) noexcept
@@ -144,7 +144,7 @@ namespace zynforge::brand
         return personality[(std::size_t) (index % (int) personality.size())];
     }
 
-    // ── Gradient helpers — every painted surface should use these ─────────
+    // ── Gradient helpers -- every painted surface should use these ─────────
     // Top-to-bottom vertical gradient for buttons / pills / strip backs.
     inline juce::ColourGradient verticalGradient (juce::Colour base,
                                                   juce::Rectangle<float> r,

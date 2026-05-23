@@ -21,7 +21,7 @@ namespace zynforge
 
         // Toggle the dB-label gutter on the left edge. The EDIT view rows
         // turn this off because the meter widget is too narrow to fit
-        // labels and a bar — they want a pure-bar meter.
+        // labels and a bar -- they want a pure-bar meter.
         void setShowDbLabels (bool s) noexcept { showLabels = s; repaint(); }
 
         void paint (juce::Graphics&) override;

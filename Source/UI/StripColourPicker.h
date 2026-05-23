@@ -8,7 +8,7 @@
 namespace zynforge
 {
     // Small popup shown via juce::CallOutBox: 10 fixed colour swatches
-    // (2 rows × 5) plus a "Custom…" button that opens a juce::ColourSelector.
+    // (2 rows × 5) plus a "Custom..." button that opens a juce::ColourSelector.
     // Reports the chosen colour through `onColourPicked`. Passing an
     // empty / transparent colour means "revert to default".
     class StripColourPicker final : public juce::Component
@@ -34,7 +34,7 @@ namespace zynforge
         std::array<juce::Colour, kCols * kRows> presets;
         juce::Colour     current;
         Callback         callback;
-        juce::TextButton customButton { "Custom…" };
+        juce::TextButton customButton { "Custom..." };
         juce::TextButton resetButton  { "Default" };
 
         std::unique_ptr<juce::Component> colourSelectorContent;

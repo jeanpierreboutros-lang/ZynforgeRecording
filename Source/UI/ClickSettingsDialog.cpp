@@ -11,8 +11,8 @@ namespace zynforge
             "Sine",  "Beep",  "Cowbell",  "Wood Block",  "Classic Click"
         };
 
-        // Plain fraction labels — the Unicode music-symbol glyphs (𝅗𝅥,
-        // 𝅘𝅥, …) only render with a music font (Bravura etc.) that we
+        // Plain fraction labels -- the Unicode music-symbol glyphs (𝅗𝅥,
+        // 𝅘𝅥, ...) only render with a music font (Bravura etc.) that we
         // don't ship; on the default macOS UI font they fall back to
         // 'tofu' boxes. Fractions are bundled with every system font
         // and read unambiguously at small button size.
@@ -194,7 +194,7 @@ namespace zynforge
                 {
                     // Generating commits a click WAV to the session.
                     // The real-time click engine should NOT also be
-                    // running on top — flip it off and reflect that
+                    // running on top -- flip it off and reflect that
                     // back to the settings before the dialog closes.
                     settings.on = false;
                     onButton.setToggleState (false, juce::dontSendNotification);

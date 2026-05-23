@@ -116,7 +116,7 @@ namespace zynforge
         if (writer == nullptr) { outError = "Cannot create writer"; return false; }
         outStream.release(); // writer owns the stream now
 
-        // Resampling pipeline: keep `reader` alive — pass `deleteWhenRemoved=false`.
+        // Resampling pipeline: keep `reader` alive -- pass `deleteWhenRemoved=false`.
         juce::AudioFormatReaderSource readerSrc (reader.get(), false);
         juce::ResamplingAudioSource    resampler (&readerSrc, false, channels);
         resampler.setResamplingRatio (srcSR / destSR);

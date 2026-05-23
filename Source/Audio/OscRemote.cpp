@@ -5,7 +5,7 @@ namespace zynforge
 {
     OscRemote::OscRemote (AudioEngine& e) : engine (e)
     {
-        // Match anything — we route per-dialect inside oscMessageReceived.
+        // Match anything -- we route per-dialect inside oscMessageReceived.
         addListener (this);
     }
 
@@ -168,7 +168,7 @@ namespace zynforge
         return false;
     }
 
-    // Shared channel-op dispatch — every dialect supports the same
+    // Shared channel-op dispatch -- every dialect supports the same
     // set of per-channel actions, so once the dialect's path prefix
     // has been stripped down to {<channel-number>, <key>}, the actual
     // setter call is identical.
@@ -229,7 +229,7 @@ namespace zynforge
 
         if (path.startsWith ("/sq/ch"))
         {
-            // /sq/chN/key — N is the digit run immediately after "ch".
+            // /sq/chN/key -- N is the digit run immediately after "ch".
             const auto rest = path.substring (6);
             int idx = 0;
             while (idx < rest.length() && juce::CharacterFunctions::isDigit (rest[idx])) ++idx;

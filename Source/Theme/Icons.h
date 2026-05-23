@@ -46,7 +46,7 @@ namespace zynforge::icons
                 p.addCentredArc   (0.50f, 0.36f, 0.16f, 0.16f, 0.0f,
                                    -halfPi, halfPi, false);
                 p.lineTo          (0.66f, 0.48f);
-                // Keyhole — small dot inside the body
+                // Keyhole -- small dot inside the body
                 p.addEllipse (0.46f, 0.64f, 0.08f, 0.08f);
                 break;
             }
@@ -249,8 +249,8 @@ namespace zynforge::icons
                                                         bounds.getHeight())
                               .translated (bounds.getX(), bounds.getY()));
         g.setColour (colour);
-        // 'Filled' shapes — Record, Stop, Play, Plus, Lock body, Trash
-        // body — get filled. Stroked-only outlines for the rest.
+        // 'Filled' shapes -- Record, Stop, Play, Plus, Lock body, Trash
+        // body -- get filled. Stroked-only outlines for the rest.
         const bool filled = glyph == Glyph::Record
                          || glyph == Glyph::Stop
                          || glyph == Glyph::Play

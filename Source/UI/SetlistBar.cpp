@@ -52,7 +52,7 @@ namespace zynforge
         addAndMakeVisible (updateButton);
 
         // Listen for mouse events bubbling up from every child so a
-        // right-click anywhere on the bar — combo, arrow, button —
+        // right-click anywhere on the bar -- combo, arrow, button --
         // opens the same context menu.
         addMouseListener (this, true);
     }
@@ -62,7 +62,7 @@ namespace zynforge
         if (! (e.mods.isPopupMenu() || e.mods.isRightButtonDown()))
             return;
 
-        // Don't fight the combo's own dropdown — it owns the left-click
+        // Don't fight the combo's own dropdown -- it owns the left-click
         // popup. Right-click on it still opens our menu.
         juce::PopupMenu menu;
         menu.addItem (1, "Rename cue...", onRenameCue != nullptr);
@@ -89,7 +89,7 @@ namespace zynforge
         for (size_t i = 0; i < cues.size(); ++i)
         {
             // Numbered prefix so the engineer can read the order even on
-            // a busy show: '01  Intro', '02  Opener', …
+            // a busy show: '01  Intro', '02  Opener', ...
             const auto labelNum = juce::String ((int) i + 1).paddedLeft ('0', 2);
             cueCombo.addItem (labelNum + "  " + cues[i].name, (int) i + 1);
         }
@@ -112,7 +112,7 @@ namespace zynforge
     {
         // Compact, left-anchored layout:
         //   SETLIST | ◂ | combo(260px) | ▸ | + Cue | Update | Rename
-        // The combo is fixed-width — the engineer doesn't want it
+        // The combo is fixed-width -- the engineer doesn't want it
         // swallowing the whole row. Empty space sits to the right.
         auto r = getLocalBounds().reduced (8, 4);
 

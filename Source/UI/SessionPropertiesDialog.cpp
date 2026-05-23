@@ -84,7 +84,7 @@ namespace zynforge
                     styleLabel (cap);
                     addAndMakeVisible (cap);
 
-                    val.setText (valText.isNotEmpty() ? valText : juce::String ("—"),
+                    val.setText (valText.isNotEmpty() ? valText : juce::String ("--"),
                                  juce::dontSendNotification);
                     styleReadOnly (val);
                     addAndMakeVisible (val);

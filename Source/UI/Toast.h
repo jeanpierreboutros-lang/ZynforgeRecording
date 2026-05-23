@@ -8,7 +8,7 @@
 
 namespace zynforge
 {
-    // Toast — non-modal notification pill that slides in from the
+    // Toast -- non-modal notification pill that slides in from the
     // bottom-right of its host, holds for ~3 s, then fades out. Calls
     // are queued, so two toasts fired back-to-back display in order
     // rather than stomping each other.
@@ -43,18 +43,18 @@ namespace zynforge
             auto r = getLocalBounds().toFloat().reduced (4.0f);
             const auto base = colourForKind (current.kind);
 
-            // Drop shadow (elev3 — toasts float above all chrome).
+            // Drop shadow (elev3 -- toasts float above all chrome).
             g.setColour (brand::shadow::elev3());
             g.fillRoundedRectangle (r.translated (0.0f, 2.0f).expanded (1.0f), brand::radius::lg);
 
-            // Body — gradient pill in the kind-tinted colour.
+            // Body -- gradient pill in the kind-tinted colour.
             g.setGradientFill (juce::ColourGradient (
                 base.brighter (0.25f), r.getCentreX(), r.getY(),
                 base.darker   (0.20f), r.getCentreX(), r.getBottom(),
                 false));
             g.fillRoundedRectangle (r, brand::radius::lg);
 
-            // 6 px accent stripe down the left edge — colour-coded by Kind.
+            // 6 px accent stripe down the left edge -- colour-coded by Kind.
             const auto accent = accentForKind (current.kind);
             g.setColour (accent);
             g.fillRoundedRectangle (juce::Rectangle<float> (r.getX(), r.getY(), 4.0f, r.getHeight()),

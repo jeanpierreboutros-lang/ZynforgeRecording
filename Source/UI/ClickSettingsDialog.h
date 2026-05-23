@@ -5,13 +5,13 @@
 
 namespace zynforge
 {
-    // Click-track settings — two voices summed into the metronome track.
+    // Click-track settings -- two voices summed into the metronome track.
     // CLICK 1 is the downbeat (accent), CLICK 2 fires on the remaining
     // beats in the bar. Each voice has its own volume, waveform, and
     // subdivision so the engineer can build patterns like
     //   1 : cowbell, quarter note
     //   2 : woodblock, 8th note triplets
-    // …without leaving the dialog.
+    // ...without leaving the dialog.
     struct ClickSettings
     {
         enum class Voice : int { Sine = 0, Beep, Cowbell, WoodBlock, Click };
@@ -27,7 +27,7 @@ namespace zynforge
         };
 
         bool        on       { true };
-        bool        followMeter { false };  // reserved — for meter changes
+        bool        followMeter { false };  // reserved -- for meter changes
         Voice1Then2 click1;                  // accent / downbeat
         Voice1Then2 click2;                  // remaining beats
     };

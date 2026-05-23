@@ -68,7 +68,7 @@ namespace zynforge
 
     static juce::String formatRemaining (double seconds)
     {
-        if (seconds <= 0 || std::isinf (seconds)) return "—";
+        if (seconds <= 0 || std::isinf (seconds)) return "--";
         const auto h = (int) (seconds / 3600.0);
         const auto m = ((int) (seconds / 60.0)) % 60;
         if (h > 99) return ">99h";
@@ -79,7 +79,7 @@ namespace zynforge
     {
         auto r = getLocalBounds().toFloat();
 
-        // Background — gradient fill in the state-tinted colour so the
+        // Background -- gradient fill in the state-tinted colour so the
         // hero panel reads as a glassy plate rather than a flat block.
         // While recording, the red tint breathes at 1 Hz so the engineer
         // can read 'rolling' from across the room without looking at
@@ -99,7 +99,7 @@ namespace zynforge
             false));
         g.fillRoundedRectangle (bgRect, 6.0f);
 
-        // Soft top highlight — reinforces the glass / depth feel and
+        // Soft top highlight -- reinforces the glass / depth feel and
         // makes the timer read as raised metal under stage lights.
         auto hi = bgRect.withTrimmedBottom (bgRect.getHeight() * 0.60f);
         g.setGradientFill (juce::ColourGradient (
@@ -109,7 +109,7 @@ namespace zynforge
         g.fillRoundedRectangle (hi, 6.0f);
 
         // Armed-but-not-rolling border. Uses signalArmedReady
-        // (engagedAmber — the BYPASS / LIVE / LOCK token) so the
+        // (engagedAmber -- the BYPASS / LIVE / LOCK token) so the
         // 'primed but not active' colour doesn't collide with the
         // mute / brand-assertion claims on brandOrange. Pulses at
         // 1 Hz so the call-to-action draws the eye.
@@ -185,7 +185,7 @@ namespace zynforge
         g.setColour (mode == Mode::Recording ? brand::accentRecord
                    : mode == Mode::Playing   ? brand::accentPlay
                                              : brand::accentStatus);
-        // Tabular numerals — the timer string can't shift width as
+        // Tabular numerals -- the timer string can't shift width as
         // seconds tick. Hero scale (h_hero=44) pinned via brand::type
         // so the timer's visual weight is system-managed, not bespoke.
         g.setFont (brand::type::mono (juce::jmin (inner.getHeight() * 0.95f,

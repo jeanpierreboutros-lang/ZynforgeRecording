@@ -21,9 +21,9 @@ namespace zynforge
     // serves GET /state.json with the full mixer state. The mirror polls
     // it every 500 ms and applies non-destructive deltas (names, colours,
     // BPM, cue list) to its local engine. Audio routing and per-strip
-    // gain are left alone — each machine keeps its own monitor mix.
+    // gain are left alone -- each machine keeps its own monitor mix.
     //
-    // This class is intentionally LIGHTWEIGHT — it does not transfer
+    // This class is intentionally LIGHTWEIGHT -- it does not transfer
     // audio, does not replicate recording state, and does not become a
     // master/replica audio engine. It's a metadata mirror only.
     class SessionMirror : private juce::Timer

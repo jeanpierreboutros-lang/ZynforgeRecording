@@ -37,7 +37,7 @@ namespace zynforge
         b.phase   = 0.0;
         b.active  = true;
         b.gainLin = gainLin;
-        // Per-voice tonal flavour. All damped sines — fast, real-time
+        // Per-voice tonal flavour. All damped sines -- fast, real-time
         // safe, sound distinct enough at metronome volume.
         switch (v)
         {
@@ -94,7 +94,7 @@ namespace zynforge
 
         for (int i = 0; i < numSamples; ++i)
         {
-            // CLICK 1 — accent, only on every 4th beat of the underlying
+            // CLICK 1 -- accent, only on every 4th beat of the underlying
             // quarter-note grid. Silent if Subdivision::Silent.
             if (samplesPerClick1 > 0.0)
             {
@@ -107,7 +107,7 @@ namespace zynforge
                     ++beat1Counter;
                 }
             }
-            // CLICK 2 — on the other beats. We don't want a stack-up
+            // CLICK 2 -- on the other beats. We don't want a stack-up
             // with CLICK 1 on the downbeat, so skip when beat2Counter
             // % 4 == 0 (only when subs are aligned, i.e. quarter-note).
             if (samplesPerClick2 > 0.0)

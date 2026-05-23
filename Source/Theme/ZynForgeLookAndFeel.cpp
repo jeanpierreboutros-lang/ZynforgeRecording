@@ -73,7 +73,7 @@ namespace zynforge
         if (down) base = base.brighter (0.15f);
         else if (over) base = base.brighter (0.07f);
 
-        // Pronounced top-to-bottom gradient — top is noticeably lighter
+        // Pronounced top-to-bottom gradient -- top is noticeably lighter
         // and bottom darker than the base so the button reads as a
         // glossy pill rather than a flat tinted rectangle.
         const auto top = base.brighter (down ? 0.10f : 0.30f);
@@ -84,7 +84,7 @@ namespace zynforge
             false));
         g.fillRoundedRectangle (r, brand::radius::md);
 
-        // Specular highlight on the top half — reinforces the gloss.
+        // Specular highlight on the top half -- reinforces the gloss.
         auto hi = r.withTrimmedBottom (r.getHeight() * 0.55f);
         g.setGradientFill (juce::ColourGradient (
             juce::Colours::white.withAlpha (down ? 0.08f : 0.14f),
@@ -109,7 +109,7 @@ namespace zynforge
         // S → yellow). Off state stays the dark control-bg pill.
         if (on)
         {
-            // ToggleButton has no buttonOnColourId — repurpose
+            // ToggleButton has no buttonOnColourId -- repurpose
             // tickColourId (already set per button: R red, I green,
             // M red, S yellow) as the active fill source.
             const auto base = b.findColour (juce::ToggleButton::tickColourId);
@@ -141,7 +141,7 @@ namespace zynforge
             g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
         }
 
-        // Letter — white-ish when on for max contrast against the
+        // Letter -- white-ish when on for max contrast against the
         // saturated background; muted grey when off.
         const auto txt = on ? juce::Colours::white.withAlpha (0.95f)
                             : brand::textMuted;
@@ -161,7 +161,7 @@ namespace zynforge
         // footer divider above the action buttons.
         dialog::paintBackground (g, alert);
 
-        // Title row — fixed 44 px tall, identical to dialog::paintTitle
+        // Title row -- fixed 44 px tall, identical to dialog::paintTitle
         // but read from the AlertWindow's own message-box title so the
         // engineer doesn't have to plumb it in by hand.
         auto title = alert.getLocalBounds().removeFromTop (dialog::titleH)
@@ -249,7 +249,7 @@ namespace zynforge
         g.setColour (brand::bgDeep);
         g.fillRoundedRectangle (trackX, trackY, trackW, trackH, 2.0f);
 
-        // Fill from the thumb down to the bottom — gradient in the
+        // Fill from the thumb down to the bottom -- gradient in the
         // channel's colour (taken from the slider's thumbColourId).
         const float thumbY  = juce::jlimit (trackY, trackB, sliderPos);
         const auto  baseCol = s.findColour (juce::Slider::thumbColourId);
@@ -262,7 +262,7 @@ namespace zynforge
         g.setColour (brand::edge);
         g.drawRoundedRectangle (trackX, trackY, trackW, trackH, 2.0f, 1.0f);
 
-        // Wide horizontal pill cap — matches the reference screenshot.
+        // Wide horizontal pill cap -- matches the reference screenshot.
         // The cap is wider than tall, with rounded shoulders and a clear
         // centre line so the engineer can read its position at a glance.
         const float thumbW = juce::jmin (34.0f, bounds.getWidth() - 2.0f);
@@ -272,13 +272,13 @@ namespace zynforge
                                 thumbY - thumbH * 0.5f,
                                 thumbW, thumbH);
 
-        // Drop shadow lifts the cap off the track (elev2 — fader caps
+        // Drop shadow lifts the cap off the track (elev2 -- fader caps
         // sit between flat strips and floating dialogs in the system).
         g.setColour (brand::shadow::elev2());
         g.fillRoundedRectangle (thumb.translated (0.0f, 1.5f).expanded (1.0f, 1.0f),
                                 brand::radius::sm);
 
-        // Body — vertical gradient.
+        // Body -- vertical gradient.
         g.setGradientFill (juce::ColourGradient (
             brand::faderThumbHi, thumb.getCentreX(), thumb.getY(),
             brand::faderThumbLo, thumb.getCentreX(), thumb.getBottom(),
@@ -288,7 +288,7 @@ namespace zynforge
         g.setColour (brand::faderThumbEdge);
         g.drawRoundedRectangle (thumb, brand::radius::sm, 1.0f);
 
-        // Two grip lines above the centre stripe, two below — gives the
+        // Two grip lines above the centre stripe, two below -- gives the
         // cap clear top / bottom orientation.
         g.setColour (brand::faderThumbGrip);
         const float gripPad = 5.0f;
@@ -297,7 +297,7 @@ namespace zynforge
                                   thumb.getX() + gripPad,
                                   thumb.getRight() - gripPad);
 
-        // Centre highlight stripe — coloured by the slider's thumb colour
+        // Centre highlight stripe -- coloured by the slider's thumb colour
         // so each channel's cap accent matches its fader fill.
         g.setColour (s.findColour (juce::Slider::thumbColourId).brighter (0.30f));
         const float stripeH = 3.0f;

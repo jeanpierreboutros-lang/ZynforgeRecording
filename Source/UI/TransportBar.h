@@ -6,11 +6,11 @@
 
 namespace zynforge
 {
-    // Horizontal transport strip — six custom-painted icon buttons:
+    // Horizontal transport strip -- six custom-painted icon buttons:
     //   |◀  go to start
     //   ▶|  go to end
     //   ▶   play / pause
-    //   ■   stop (hard — kills both recording and playback)
+    //   ■   stop (hard -- kills both recording and playback)
     //   ●   record toggle
     //   ⟲   loop region toggle
     class TransportBar final : public juce::Component,
@@ -20,7 +20,7 @@ namespace zynforge
         explicit TransportBar (AudioEngine&);
         ~TransportBar() override;
 
-        // Optional hooks — when set, the bar delegates to these instead
+        // Optional hooks -- when set, the bar delegates to these instead
         // of calling the engine directly. MainComponent wires them to
         // its onRecord/onPlay/onStop handlers so the pre-flight checks
         // + status messages also fire from the transport bar buttons.

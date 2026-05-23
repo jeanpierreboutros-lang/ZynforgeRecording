@@ -70,7 +70,7 @@ namespace zynforge
         // Pick a colour for any height-fraction (0..1) along the meter.
         auto colourAt = [] (float frac)
         {
-            // Top 15% red, next 15% amber, rest green — same proportions as
+            // Top 15% red, next 15% amber, rest green -- same proportions as
             // the segmented mode below.
             if (frac > 0.85f) return brand::meterRed;
             if (frac > 0.70f) return brand::meterAmber;
@@ -85,13 +85,13 @@ namespace zynforge
 
         if (h < 60.0f)
         {
-            // Smooth gradient bar — bottom green, top red.
+            // Smooth gradient bar -- bottom green, top red.
             juce::ColourGradient grad (brand::meterGreen, r.getX(), r.getBottom(),
                                        brand::meterRed,   r.getX(), r.getY(), false);
             grad.addColour (0.70, brand::meterAmber);
             grad.addColour (0.85, brand::meterRed);
 
-            // Background — idle bar.
+            // Background -- idle bar.
             g.setColour (brand::meterIdle);
             g.fillRoundedRectangle (r.reduced (1.0f), 2.0f);
 
@@ -158,7 +158,7 @@ namespace zynforge
 
         // Reserve a dedicated left-hand gutter for the dB labels so they
         // never overlap the meter segments. The bar(s) get the right side.
-        // When the host turned labels off (narrow meter — EDIT view),
+        // When the host turned labels off (narrow meter -- EDIT view),
         // the bar gets the full width.
         const float labelW = showLabels ? 14.0f : 0.0f;
         const float gap    = showLabels ? 2.0f  : 0.0f;
@@ -178,7 +178,7 @@ namespace zynforge
             paintBar (g, barArea, displayPeak, displayRms);
         }
 
-        // dB scale — labels live in their own column, ticks bridge the gap.
+        // dB scale -- labels live in their own column, ticks bridge the gap.
         const float dBLabels[] = { 0.0f, -3.0f, -6.0f, -10.0f, -16.0f, -22.0f, -32.0f, -60.0f };
         g.setFont (brand::type::label());
         for (float dB : dBLabels)
@@ -186,11 +186,11 @@ namespace zynforge
             const float frac = (dB - kMinDb) / (kMaxDb - kMinDb);
             const float y    = bounds.getBottom() - bounds.getHeight() * frac;
 
-            // Tick — short line bridging the label column and the bar.
+            // Tick -- short line bridging the label column and the bar.
             g.setColour (brand::textTertiary);
             g.drawHorizontalLine ((int) y, labelCol.getRight() - 2.0f, labelCol.getRight() + 1.0f);
 
-            // Label — right-aligned inside the dedicated label column.
+            // Label -- right-aligned inside the dedicated label column.
             // Clamp the label box to the widget bounds so the extreme labels
             // (0 dB at top, floor at bottom) don't get clipped off-screen.
             const float labelY = juce::jlimit (0.0f,
@@ -202,7 +202,7 @@ namespace zynforge
                         juce::Justification::centredRight, false);
         }
 
-        // Clip pip — only over the bar area, not the label column.
+        // Clip pip -- only over the bar area, not the label column.
         if (showClip)
         {
             g.setColour (brand::meterRed);

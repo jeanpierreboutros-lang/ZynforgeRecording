@@ -10,7 +10,7 @@ namespace zynforge
         ZynForgeLookAndFeel();
 
         // Returns Inter / JetBrains Mono from BinaryData when the
-        // engineer-facing typeface names (SF Pro / SF Mono — see
+        // engineer-facing typeface names (SF Pro / SF Mono -- see
         // BrandTokens.h) are requested. Falls back to the system
         // typeface for anything else.
         juce::Typeface::Ptr getTypefaceForFont (const juce::Font&) override;
@@ -32,9 +32,9 @@ namespace zynforge
         void drawToggleButton (juce::Graphics&, juce::ToggleButton&,
                                bool over, bool down) override;
 
-        // AlertWindow chrome — paints the same orange-stripe title bar,
+        // AlertWindow chrome -- paints the same orange-stripe title bar,
         // gradient bgPanel background, and footer divider that every
-        // first-party dialog (AudioDevice, NewSession, Export, …)
+        // first-party dialog (AudioDevice, NewSession, Export, ...)
         // uses. Any juce::AlertWindow::showAsync (...) now reads as a
         // first-party ZynForge prompt.
         void drawAlertBox (juce::Graphics&, juce::AlertWindow&,

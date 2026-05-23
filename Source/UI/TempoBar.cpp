@@ -29,7 +29,7 @@ namespace zynforge
             // setBpm with the clamped value).
             setBpm (currentBpm);
         };
-        valueLabel.setTooltip ("Session tempo in BPM — double-click to type a value");
+        valueLabel.setTooltip ("Session tempo in BPM -- double-click to type a value");
         addAndMakeVisible (valueLabel);
 
         auto styleNudge = [] (juce::TextButton& b)
@@ -66,7 +66,7 @@ namespace zynforge
         // the same file in place so a tempo change keeps the click in
         // sync without piling up tracks.
         // Click track button uses accentVS (warm VSC amber) instead
-        // of brandOrange — see brandOrange consolidation: the orange
+        // of brandOrange -- see brandOrange consolidation: the orange
         // token is now reserved for signalMute() + brand assertion.
         clickButton.setColour (juce::TextButton::buttonColourId,  brand::accentVS);
         clickButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::accentVS));
@@ -98,7 +98,7 @@ namespace zynforge
     void TempoBar::doTap()
     {
         const auto now = juce::Time::getMillisecondCounterHiRes();
-        // Drop the oldest tap if older than 2 s — engineer is starting
+        // Drop the oldest tap if older than 2 s -- engineer is starting
         // a fresh count rather than tapping continuously.
         if (tapCount > 0 && now - taps[(tapCount - 1) % kMaxTaps] > 2000.0)
             tapCount = 0;
@@ -116,7 +116,7 @@ namespace zynforge
             const int a = (tapCount - sampleCount + i - 1 + kMaxTaps * 2) % kMaxTaps;
             const int b = (tapCount - sampleCount + i     + kMaxTaps * 2) % kMaxTaps;
             const double dt = taps[b] - taps[a];
-            if (dt > 50.0 && dt < 2000.0)   // 30–1200 BPM range
+            if (dt > 50.0 && dt < 2000.0)   // 30-1200 BPM range
             {
                 total += dt;
                 ++intervals;
@@ -137,7 +137,7 @@ namespace zynforge
 
     void TempoBar::timerCallback()
     {
-        // Visual click LED — pulses at the current tempo. Pure cosmetic.
+        // Visual click LED -- pulses at the current tempo. Pure cosmetic.
         const double tickMs = 60000.0 / juce::jmax (20.0f, currentBpm);
         beatPhase += 1000.0 / 30.0;
         if (beatPhase >= tickMs)

@@ -9,7 +9,7 @@
 
 namespace zynforge
 {
-    // Fixed master strip — sits to the right of the channel-strip viewport
+    // Fixed master strip -- sits to the right of the channel-strip viewport
     // and never scrolls. Controls the master gain / mute / output routing
     // and meters the master bus.
     class MasterStrip final : public juce::Component, private juce::Timer

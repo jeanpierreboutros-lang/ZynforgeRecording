@@ -63,7 +63,7 @@ namespace zynforge
         // RT-safe: fills outputs[i] with samples from track i, position advances.
         void processBlock (float* const* outputs, int numOutputs, int numSamples) noexcept;
 
-        // Per-track clip list — when present, processBlock honours it
+        // Per-track clip list -- when present, processBlock honours it
         // (renders only the audio that falls inside a clip; silence
         // elsewhere). Empty / missing → legacy 'play the whole file'.
         // Setter is UI-thread; the audio thread reads under a lock that
@@ -84,7 +84,7 @@ namespace zynforge
         std::vector<Track> tracks;
 
         // Active clip lists, keyed by track index. Audio thread reads
-        // under clipsLock — UI thread holds it just long enough to
+        // under clipsLock -- UI thread holds it just long enough to
         // std::move a new vector in.
         std::vector<std::vector<Clip>> activeClips;
         mutable juce::CriticalSection  clipsLock;

@@ -68,7 +68,7 @@ namespace zynforge
             t.length = raw->lengthInSamples;
 
             auto buf = std::make_unique<juce::BufferingAudioReader> (raw, readerThread, bufferSamples);
-            buf->setReadTimeout (0); // non-blocking — fill silence if not buffered yet
+            buf->setReadTimeout (0); // non-blocking -- fill silence if not buffered yet
             t.reader = std::move (buf);
 
             maxLen = juce::jmax (maxLen, t.length);
@@ -192,7 +192,7 @@ namespace zynforge
         if (scratch.getNumSamples() < playableThisBlock)
             scratch.setSize (1, playableThisBlock, false, false, true);
 
-        // Snapshot the clip lists under the lock — held only long enough
+        // Snapshot the clip lists under the lock -- held only long enough
         // to take a const reference. After release we iterate read-only
         // and the UI may modify the (different) live vector.
         const juce::ScopedTryLock stl (clipsLock);

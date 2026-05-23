@@ -13,7 +13,7 @@ namespace zynforge
     // average(intervals) once at least 2 taps have arrived. Taps older
     // than 2 s are discarded so the engineer can re-start mid-set.
     //
-    // The host (MainComponent) owns the canonical BPM in AudioEngine —
+    // The host (MainComponent) owns the canonical BPM in AudioEngine --
     // this bar fires onBpmChanged() and reads back via setBpm() when
     // the engine answers.
     class TempoBar final : public juce::Component, private juce::Timer
@@ -49,7 +49,7 @@ namespace zynforge
         juce::TextButton tapButton    { "TAP" };
         juce::TextButton clickButton  { "CLICK" };
 
-        // Beat LED phase counter — runs off the timer (no audio sync;
+        // Beat LED phase counter -- runs off the timer (no audio sync;
         // it's a visual confidence cue, not a clock).
         double beatPhase { 0.0 };
         bool   beatOn    { false };

@@ -11,7 +11,7 @@
 
 namespace zynforge
 {
-    // Compact VCA fader panel — 8 mini-strips that each ride one VCA
+    // Compact VCA fader panel -- 8 mini-strips that each ride one VCA
     // bus. Engineers assign channel strips to a VCA via the
     // ChannelStrip right-click menu; this panel is where they actually
     // ride the bus fader during a show.
@@ -190,7 +190,7 @@ namespace zynforge
                     showContextMenu();
                     return;
                 }
-                // Top 6 px swatch band — open the colour picker.
+                // Top 6 px swatch band -- open the colour picker.
                 if (e.y < 8)
                     openColourPicker();
             }

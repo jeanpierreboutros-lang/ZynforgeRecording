@@ -151,7 +151,7 @@ namespace zynforge
     void TimelineStrip::showMarkerMenu (int idx, juce::Point<int>)
     {
         juce::PopupMenu menu;
-        menu.addItem (1, "Rename…");
+        menu.addItem (1, "Rename...");
         menu.addItem (2, "Delete");
         menu.addSeparator();
         menu.addItem (3, "Set as Loop In");

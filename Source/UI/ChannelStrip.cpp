@@ -29,7 +29,7 @@ namespace zynforge
             g.setColour (brand::textMuted);
             g.setFont (brand::type::label());
 
-            // dB tick values (top → bottom) — matches the reference
+            // dB tick values (top → bottom) -- matches the reference
             // screenshot. Positive values keep the '+' sign, negatives
             // drop the minus to keep the column tight.
             const int dBValues[] = { 12, 6, 0, -5, -10, -15, -20, -30, -40, -60 };
@@ -114,7 +114,7 @@ namespace zynforge
 
         // Populate enough items so a strip's identity input always has
         // a visible entry. For stereo strips we list pairs ("In 1-2",
-        // "In 3-4", …); the underlying ID is still the L channel index.
+        // "In 3-4", ...); the underlying ID is still the L channel index.
         const int visible = juce::jmax (n, stripIndex + 1, stereoStrip ? 16 : 8);
         inputCombo.clear (juce::dontSendNotification);
         inputCombo.addItem ("(unrouted)", 1);
@@ -270,13 +270,13 @@ namespace zynforge
         const bool isStereo  = state.isStereo .load (std::memory_order_relaxed);
 
         juce::PopupMenu menu;
-        menu.addItem (1, "Rename…");
+        menu.addItem (1, "Rename...");
         menu.addItem (10, "Add channel");
         menu.addItem (11, "Delete channel");
         menu.addSeparator();
         menu.addItem (12, isStereo ? "Unlink stereo pair" : "Link to next channel (stereo)");
         menu.addSeparator();
-        menu.addItem (2, "Change colour…");
+        menu.addItem (2, "Change colour...");
         menu.addItem (3, "Reset colour");
         menu.addSeparator();
         menu.addItem (4, "Reset name");
@@ -297,7 +297,7 @@ namespace zynforge
                              true, curVca == i);
         menu.addSubMenu ("Assign to VCA", vcaMenu);
 
-        // Aux send to a bus track (slot 0 only in the menu — multi-send
+        // Aux send to a bus track (slot 0 only in the menu -- multi-send
         // gets its own dialog later). Hidden for bus tracks themselves
         // since sending a bus into another bus would feedback loop.
         if (! state.isBus.load (std::memory_order_relaxed))
@@ -377,7 +377,7 @@ namespace zynforge
 
     void ChannelStrip::openRenameDialog()
     {
-        // Trigger the Label's inline editor — same UX as double-click.
+        // Trigger the Label's inline editor -- same UX as double-click.
         nameLabel.showEditor();
     }
 
@@ -517,7 +517,7 @@ namespace zynforge
         soloButton.setColour (juce::ToggleButton::tickColourId, brand::accentSolo);
         addAndMakeVisible (soloButton);
 
-        // Live-value readout — tabular mono so peaks don't visually
+        // Live-value readout -- tabular mono so peaks don't visually
         // wobble while the meter is moving.
         dbLabel.setFont (brand::type::mono (11.0f, true));
         dbLabel.setColour (juce::Label::textColourId, brand::textPrimary);
@@ -529,18 +529,18 @@ namespace zynforge
         clipLabel.setJustificationType (juce::Justification::centred);
         addAndMakeVisible (clipLabel);
 
-        // FFT spectrum removed per user request — keep the component
+        // FFT spectrum removed per user request -- keep the component
         // alive (it feeds off TrackState) but don't show it.
 
-        nameLabel  .setTooltip ("Channel name — double-click to rename, right-click for more.");
+        nameLabel  .setTooltip ("Channel name -- double-click to rename, right-click for more.");
         inputCombo .setTooltip ("Hardware input this strip records from.");
         outputCombo.setTooltip ("Hardware output this strip plays VSC audio to.");
-        armButton  .setTooltip ("ARM — include this channel when RECORD is rolling.");
-        monButton  .setTooltip ("Input monitor — sum this input into the stereo monitor bus (outputs 1 + 2).");
-        muteButton .setTooltip ("Mute — silence this channel in monitor + playback. Recording still hits disk.");
-        soloButton .setTooltip ("Solo — when any track is soloed, only soloed tracks are audible.");
+        armButton  .setTooltip ("ARM -- include this channel when RECORD is rolling.");
+        monButton  .setTooltip ("Input monitor -- sum this input into the stereo monitor bus (outputs 1 + 2).");
+        muteButton .setTooltip ("Mute -- silence this channel in monitor + playback. Recording still hits disk.");
+        soloButton .setTooltip ("Solo -- when any track is soloed, only soloed tracks are audible.");
         spectrum   .setTooltip ("Live FFT spectrum of this channel's input signal.");
-        meter      .setTooltip ("Peak + RMS LED meter — click to clear the clip indicator.");
+        meter      .setTooltip ("Peak + RMS LED meter -- click to clear the clip indicator.");
         if (swatch != nullptr)
             swatch->setTooltip ("Click for a colour palette. Right-click the strip for more options.");
 
@@ -580,12 +580,12 @@ namespace zynforge
 
         stylePanKnob (panSlider);
         // Trackpad / mouse-wheel scrolling should NOT change the pan
-        // — the engineer scrolls the mixer with the trackpad and
+        // -- the engineer scrolls the mixer with the trackpad and
         // doesn't want every two-finger swipe nudging values around.
         // The slider still responds to direct click+drag and to
         // double-click for centre.
         panSlider.setScrollWheelEnabled (false);
-        panSlider.setTooltip ("Pan L — drag to set L100..0..R100. Double-click for centre.");
+        panSlider.setTooltip ("Pan L -- drag to set L100..0..R100. Double-click for centre.");
         panSlider.setValue (s.pan.load(), juce::dontSendNotification);
         panSlider.onValueChange = [this, formatPanText]
         {
@@ -614,7 +614,7 @@ namespace zynforge
         {
             stylePanKnob (panSliderR);
             panSliderR.setScrollWheelEnabled (false);
-            panSliderR.setTooltip ("Pan R — drag to set L100..0..R100. Double-click for centre.");
+            panSliderR.setTooltip ("Pan R -- drag to set L100..0..R100. Double-click for centre.");
             panSliderR.setValue (pairState->pan.load(), juce::dontSendNotification);
             panSliderR.onValueChange = [this, formatPanText]
             {
@@ -684,7 +684,7 @@ namespace zynforge
         stripTimer = std::make_unique<StripTimer> (*this);
 
         // Bubble every child component's mouseDown up to this strip so a
-        // right-click anywhere on the strip — even on a button or fader —
+        // right-click anywhere on the strip -- even on a button or fader --
         // opens the context menu.
         addMouseListener (this, true);
     }
@@ -694,24 +694,24 @@ namespace zynforge
         auto r = getLocalBounds().toFloat().reduced (2.0f);
         auto stripColour = getResolvedColour();
 
-        // Hover lift — mouse over the strip brightens the wash ~6% so
+        // Hover lift -- mouse over the strip brightens the wash ~6% so
         // the engineer reads 'this is the strip my pointer is on'
         // without needing a focus ring or selection state.
         if (hovered) stripColour = stripColour.brighter (0.06f);
 
-        // Vertical gradient wash in the personality colour — matches
+        // Vertical gradient wash in the personality colour -- matches
         // ZynForge Live's strip finish and gives every channel a sense
         // of depth instead of a flat block.
         g.setGradientFill (brand::verticalGradient (stripColour, r, 0.18f, 0.28f));
         g.fillRoundedRectangle (r, brand::radius::xl);
 
-        // Hover border — a touch brighter than the resting edge so the
+        // Hover border -- a touch brighter than the resting edge so the
         // strip lifts subtly off the canvas.
         const float edgeAlpha = hovered ? 0.55f : 0.30f;
         g.setColour (stripColour.brighter (0.40f).withAlpha (edgeAlpha));
         g.drawRoundedRectangle (r, brand::radius::xl, 1.0f);
 
-        // Multi-select highlight — a 2 px accent-yellow outline so a
+        // Multi-select highlight -- a 2 px accent-yellow outline so a
         // group of selected strips is unambiguous from the side of the
         // room while still letting the strip's personality colour
         // dominate.
@@ -721,7 +721,7 @@ namespace zynforge
             g.drawRoundedRectangle (r.reduced (1.0f), brand::radius::xl, 2.5f);
         }
 
-        // VCA badge — small chip in the top-right of the strip so the
+        // VCA badge -- small chip in the top-right of the strip so the
         // engineer can see at a glance which group every strip is on,
         // without right-clicking each one.
         const int vca = state.vcaGroup.load (std::memory_order_relaxed);
@@ -738,7 +738,7 @@ namespace zynforge
             g.drawText (label, badge.toNearestInt(), juce::Justification::centred, false);
         }
 
-        // BUS badge — left side, distinguishes aux/mix bus tracks
+        // BUS badge -- left side, distinguishes aux/mix bus tracks
         // from audio tracks at a glance. Painted in alertAmber so the
         // engineer doesn't confuse it with the VCA chip.
         if (state.isBus.load (std::memory_order_relaxed))
@@ -761,7 +761,7 @@ namespace zynforge
 
     void ChannelStrip::mouseExit (const juce::MouseEvent& e)
     {
-        // mouseListener forwarding means children fire mouseExit too —
+        // mouseListener forwarding means children fire mouseExit too --
         // only clear the hover when the cursor has actually left the
         // strip's local bounds.
         if (! getLocalBounds().contains (e.getEventRelativeTo (this).getPosition()))
@@ -781,7 +781,7 @@ namespace zynforge
         nameLabel.setBounds (nameRow);
         r.removeFromTop (brand::space::xs);
 
-        // Routing combos: keep them in flow but small — they live above
+        // Routing combos: keep them in flow but small -- they live above
         // the pan section in the existing UX (engineer can also use the
         // PATCH page). 18px each.
         inputCombo .setBounds (r.removeFromTop (18).reduced (2, 1));
@@ -789,7 +789,7 @@ namespace zynforge
         r.removeFromTop (brand::space::sm);
 
         // ── 2. Pan section ─────────────────────────────────────────
-        // Bigger knobs — engineers wanted them obvious at a glance.
+        // Bigger knobs -- engineers wanted them obvious at a glance.
         // Mono: one knob (72 px) centred + "pan  ◂ N ▸" readout.
         // Stereo: two knobs (56 px each) side by side + two compact
         // "◂ N ▸" readouts under each.
@@ -816,8 +816,8 @@ namespace zynforge
         r.removeFromTop (brand::space::sm);
 
         // ── 3. Two rows of two buttons each: [ I | R ] / [ S | M ] ──
-        //   …except on the metronome strip ("Click"), which is
-        //   playback-only — record-arm and input-monitor make no sense
+        //   ...except on the metronome strip ("Click"), which is
+        //   playback-only -- record-arm and input-monitor make no sense
         //   so those two pills are hidden, and the SOLO + MUTE row sits
         //   alone with no gap above it.
         const bool isClickStrip = (state.name == "Click");
@@ -826,7 +826,7 @@ namespace zynforge
         const int btnGap = 3;
 
         // Touch-target compliance: at XS strip width (~56-70 px) the
-        // 2×2 button grid gives each button ~26×24 — below Apple HIG's
+        // 2×2 button grid gives each button ~26×24 -- below Apple HIG's
         // 44 pt minimum and below WCAG 2.5.5 (24×24 minimum, 44×44
         // enhanced). Auto-stack vertically when the strip is narrower
         // than 78 px so each toggle gets full width (~70+ px) at the
@@ -837,7 +837,7 @@ namespace zynforge
 
         if (isClickStrip || isBusStrip)
         {
-            // Bus tracks have no input — no R / I buttons.
+            // Bus tracks have no input -- no R / I buttons.
             armButton.setVisible (false); armButton.setBounds ({});
             monButton.setVisible (false); monButton.setBounds ({});
             if (stack)
@@ -904,6 +904,6 @@ namespace zynforge
         r.removeFromRight (2);
         gainFader.setBounds (r);
 
-        outLabel.setBounds ({});  // collapsed — output combo serves the role
+        outLabel.setBounds ({});  // collapsed -- output combo serves the role
     }
 }

@@ -7,7 +7,7 @@ namespace zynforge
     AutomationToolbar::AutomationToolbar()
     {
         title.setText ("AUTOMATION", juce::dontSendNotification);
-        title.setFont (brand::type::uiLabel());
+        title.setFont (brand::type::sectionTitle());
         title.setColour (juce::Label::textColourId, brand::accentStatus);
         addAndMakeVisible (title);
 
@@ -17,17 +17,17 @@ namespace zynforge
         selectButton .onClick = [this] { selectTool (Tool::Select);      };
         addButton    .onClick = [this] { selectTool (Tool::AddPoint);    };
         deleteButton .onClick = [this] { selectTool (Tool::DeletePoint); };
-        selectButton .setTooltip ("Select tool — drag an existing point to move it");
-        addButton    .setTooltip ("Add point — click in a row's automation lane to drop a point");
-        deleteButton .setTooltip ("Delete tool — click a point to remove it");
+        selectButton .setTooltip ("Select tool -- drag an existing point to move it");
+        addButton    .setTooltip ("Add point -- click in a row's automation lane to drop a point");
+        deleteButton .setTooltip ("Delete tool -- click a point to remove it");
         addAndMakeVisible (selectButton);
         addAndMakeVisible (addButton);
         addAndMakeVisible (deleteButton);
         selectButton.setToggleState (true, juce::dontSendNotification);
 
         paramLabel.setText ("Lane:", juce::dontSendNotification);
-        paramLabel.setFont (brand::type::caption());
-        paramLabel.setColour (juce::Label::textColourId, brand::textMuted);
+        paramLabel.setFont (brand::type::captionBold());
+        paramLabel.setColour (juce::Label::textColourId, brand::textSecondary);
         addAndMakeVisible (paramLabel);
 
         paramCombo.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff000000));
@@ -81,22 +81,25 @@ namespace zynforge
 
     void AutomationToolbar::resized()
     {
-        auto r = getLocalBounds().reduced (8, 4);
+        // All widths bumped ~50% for the larger toolbar height -- the
+        // engineer can read the controls from arm's length and hit
+        // the buttons under stage lighting.
+        auto r = getLocalBounds().reduced (10, 6);
 
-        title       .setBounds (r.removeFromLeft (94));
+        title       .setBounds (r.removeFromLeft (130));
+        r.removeFromLeft (brand::space::md);
+        selectButton.setBounds (r.removeFromLeft (88).reduced (0, 3));
+        r.removeFromLeft (4);
+        addButton   .setBounds (r.removeFromLeft (96).reduced (0, 3));
+        r.removeFromLeft (4);
+        deleteButton.setBounds (r.removeFromLeft (88).reduced (0, 3));
+        r.removeFromLeft (16);
+
+        paramLabel  .setBounds (r.removeFromLeft (50));
         r.removeFromLeft (brand::space::sm);
-        selectButton.setBounds (r.removeFromLeft (62).reduced (0, 2));
-        r.removeFromLeft (2);
-        addButton   .setBounds (r.removeFromLeft (68).reduced (0, 2));
-        r.removeFromLeft (2);
-        deleteButton.setBounds (r.removeFromLeft (62).reduced (0, 2));
-        r.removeFromLeft (12);
+        paramCombo  .setBounds (r.removeFromLeft (180).reduced (0, 3));
+        r.removeFromLeft (16);
 
-        paramLabel  .setBounds (r.removeFromLeft (36));
-        r.removeFromLeft (brand::space::xs);
-        paramCombo  .setBounds (r.removeFromLeft (130).reduced (0, 2));
-        r.removeFromLeft (12);
-
-        clearButton .setBounds (r.removeFromLeft (78).reduced (0, 2));
+        clearButton .setBounds (r.removeFromLeft (110).reduced (0, 3));
     }
 }

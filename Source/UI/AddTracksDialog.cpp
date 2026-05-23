@@ -10,7 +10,7 @@ namespace zynforge
     namespace
     {
         // Single row of the dialog: "Create [N] new [Mono ▼] Audio Track   Name: [____] [+]".
-        // Width laid out by the parent — height is fixed.
+        // Width laid out by the parent -- height is fixed.
         class TrackRow final : public juce::Component
         {
         public:
@@ -53,7 +53,7 @@ namespace zynforge
                 styleCombo (modeCombo);
                 addAndMakeVisible (modeCombo);
 
-                // Track type — Audio (records input + plays back) vs
+                // Track type -- Audio (records input + plays back) vs
                 // Bus (no input, sums sends, routes to outputs).
                 typeCombo.addItem ("Audio Track", 1);
                 typeCombo.addItem ("Bus Track",   2);
@@ -158,7 +158,7 @@ namespace zynforge
         public:
             explicit DialogContent (AddTracksDialog::ResultCallback cb) : callback (std::move (cb))
             {
-                // Title is painted by DialogChrome — keep the label
+                // Title is painted by DialogChrome -- keep the label
                 // hidden so we don't double up.
                 title.setVisible (false);
 

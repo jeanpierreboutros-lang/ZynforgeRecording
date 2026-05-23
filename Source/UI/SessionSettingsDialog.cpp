@@ -155,7 +155,7 @@ namespace zynforge
                 setup.sampleRate = sr;
                 const auto err = engine.getDeviceManager().setAudioDeviceSetup (setup, true);
 
-                juce::Logger::writeToLog ("[ZF] Session settings applied — format="
+                juce::Logger::writeToLog ("[ZF] Session settings applied -- format="
                                          + juce::String ((int) fmt)
                                          + " sr=" + juce::String (sr)
                                          + (err.isEmpty() ? juce::String() : juce::String (" err=") + err));
@@ -190,7 +190,7 @@ namespace zynforge
 
     void SessionSettingsDialog::launch (AudioEngine& engine)
     {
-        // Direct file breadcrumb — bypasses juce::Logger entirely so we
+        // Direct file breadcrumb -- bypasses juce::Logger entirely so we
         // can prove the call site is wired even if writeToLog is muted
         // in Release builds.
         juce::File::getSpecialLocation (juce::File::tempDirectory)

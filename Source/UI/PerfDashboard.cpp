@@ -50,13 +50,13 @@ namespace zynforge
                             float pct,
                             const juce::String& valueText)
         {
-            // Label (left) — proportional UI font, muted colour
+            // Label (left) -- proportional UI font, muted colour
             g.setColour (brand::textTertiary);
             g.setFont (brand::type::ledLabel());
             g.drawText (label, row.removeFromLeft (labelW),
                         juce::Justification::centredLeft, false);
 
-            // Value (right) — tabular mono so the % digit doesn't twitch
+            // Value (right) -- tabular mono so the % digit doesn't twitch
             // every frame as CPU load swings.
             const auto col = ledColour (pct);
             g.setColour (col);
@@ -67,7 +67,7 @@ namespace zynforge
             row.removeFromLeft (gap);
             row.removeFromRight (gap);
 
-            // LED bar — segmented (12 segments) so a track-by-track read
+            // LED bar -- segmented (12 segments) so a track-by-track read
             // is obvious even at a glance from across the room.
             const float barH = juce::jmin (8.0f, row.getHeight() - 4.0f);
             auto bar = row.withSizeKeepingCentre (row.getWidth(), barH);
