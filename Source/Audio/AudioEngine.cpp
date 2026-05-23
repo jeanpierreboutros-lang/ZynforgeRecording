@@ -120,10 +120,20 @@ namespace zynforge
 
     void AudioEngine::stopRecording()
     {
+        const auto sessionDir = recorder.getActiveSessionDir();
         recorder.stopRecording();
         // Drop the threaded writer — its destructor flushes the queue and
         // closes the underlying AudioFormatWriter cleanly.
         stereoMixWriter.reset();
+
+        // Auto-load the just-recorded session into the SessionPlayer so
+        // PLAY / spacebar can play back immediately without an explicit
+        // 'open session' step. Skip if the dir somehow vanished.
+        if (sessionDir.isDirectory())
+        {
+            player.loadSession (sessionDir);
+            setActiveSessionDir (sessionDir);
+        }
     }
 
     bool AudioEngine::startCompanionServer (int port)
