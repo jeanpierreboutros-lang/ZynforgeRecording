@@ -2101,8 +2101,19 @@ void MainComponent::showStartupWelcome()
         }
         self->engine.getRecorder().setCaptureFormat (r.captureFormat);
         self->engine.setActiveSessionDir (sessionFolder);
+
+        // New session = clean slate. Wipe any per-strip persistence
+        // from a previous show AND reset the strip count to zero so
+        // the engineer dials in the channels they want via +CH /
+        // clicking the empty EDIT pane. Matches the legacy
+        // launchNewSessionDialog path.
+        self->engine.clearAllStripOverrides();
+        self->engine.setStripCount (0);
+        self->lastTrackCount = -1;
+
         self->refreshFormatButton();
-        self->showStatus ("Session created: " + sessionFolder.getFileName());
+        self->showStatus ("Session created: " + sessionFolder.getFileName()
+                          + " -- add channels with +CH");
     };
 
     auto onOpen = [self] (const juce::File& sessionDir)

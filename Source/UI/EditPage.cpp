@@ -964,18 +964,25 @@ namespace zynforge
             // ─── Edit cursor overlay (Pro Tools-style insertion point)
             // Painted BEHIND the playhead so the engineer can see both
             // at once when the player is paused at a different sample.
+            // Uses the same 5-min notional span as mouseDown when no
+            // audio is loaded, so the cursor stays visible on a fresh
+            // empty session before any recording happens.
             {
                 const auto cursorSample = engine.getEditCursorSample();
-                const auto& player2 = engine.getPlayer();
-                const juce::int64 totalSamples2 = player2.isLoaded()
-                    ? player2.getTotalLengthSamples() : 0;
-                if (cursorSample >= 0 && totalSamples2 > 0)
+                if (cursorSample >= 0)
                 {
+                    const auto& player2 = engine.getPlayer();
+                    const juce::int64 loadedSamples2 = player2.isLoaded()
+                        ? player2.getTotalLengthSamples() : 0;
+                    const double sr2 = player2.getSampleRate() > 0.0
+                                    ? player2.getSampleRate() : 48000.0;
+                    const juce::int64 totalSamples2 = loadedSamples2 > 0
+                        ? loadedSamples2 : (juce::int64) (sr2 * 300.0);
                     const double prop = juce::jlimit (0.0, 1.0,
                         (double) cursorSample / (double) totalSamples2);
                     const int cx = juce::roundToInt (prop * (wavePane.getWidth() - 8)) + 4;
-                    g.setColour (brand::textPrimary.withAlpha (0.85f));
-                    g.fillRect (juce::Rectangle<int> (headerW + cx, 0, 1, getHeight()));
+                    g.setColour (brand::textPrimary.withAlpha (0.95f));
+                    g.fillRect (juce::Rectangle<int> (headerW + cx, 0, 2, getHeight()));
                 }
             }
 
@@ -1134,26 +1141,28 @@ namespace zynforge
         void mouseDown (const juce::MouseEvent& e) override
         {
             // Pro Tools-style edit cursor. Any left-click that lands
-            // in the wave pane sets the edit cursor at the
-            // corresponding sample position, even if the click is
-            // also going to start a clip drag or scrub. The cursor
-            // is what 'Add Marker', 'Split at cursor', etc. read --
-            // a separate insertion point from the playhead.
+            // in the wave pane sets the edit cursor at the corresponding
+            // sample position. Works whether or not audio is loaded:
+            // with no audio we use a notional 5-min span (matching
+            // EditTimeRuler) so a fresh session lets the engineer place
+            // the cursor anywhere and drop markers before recording.
             if (! (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
                 && e.x >= headerW)
             {
                 const auto& player = engine.getPlayer();
-                const juce::int64 totalSamples = player.isLoaded()
+                const juce::int64 loadedSamples = player.isLoaded()
                     ? player.getTotalLengthSamples() : 0;
-                if (totalSamples > 0)
-                {
-                    const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
-                    const double prop = juce::jlimit (0.0, 1.0,
-                        (double) (e.x - inner.getX())
-                            / (double) juce::jmax (1, inner.getWidth()));
-                    const juce::int64 sx = (juce::int64) (prop * (double) totalSamples);
-                    engine.setEditCursorSample (sx);
-                }
+                const double sr = player.getSampleRate() > 0.0
+                                ? player.getSampleRate() : 48000.0;
+                const juce::int64 totalSamples = loadedSamples > 0
+                    ? loadedSamples
+                    : (juce::int64) (sr * 300.0);    // 5-min notional span
+                const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+                const double prop = juce::jlimit (0.0, 1.0,
+                    (double) (e.x - inner.getX())
+                        / (double) juce::jmax (1, inner.getWidth()));
+                const juce::int64 sx = (juce::int64) (prop * (double) totalSamples);
+                engine.setEditCursorSample (sx);
             }
 
             // Right-click on a clip in the waveform lane → fade menu.
