@@ -4,6 +4,7 @@
 
 #include "../Audio/AudioEngine.h"
 #include "../Audio/TrackExporter.h"
+#include "../Network/SessionMirror.h"
 #include "../Theme/ZynForgeLookAndFeel.h"
 #include "AutomationToolbar.h"
 #include "BigClockPanel.h"
@@ -94,6 +95,11 @@ private:
     void showSessionProperties();
     void runSpectralAutoName();
     void writeSoundcheckReport();
+    void promptMirrorHost();
+    zynforge::SessionMirror sessionMirror { engine };
+    void togglePunchMode();
+    void servicePunch();        // called each timerCallback tick
+    bool wasInsidePunch { false };
 
     bool snapToMarkers { false };
 

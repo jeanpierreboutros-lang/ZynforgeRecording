@@ -5,6 +5,7 @@
 
 #include "Markers.h"
 #include "ClickEngine.h"
+#include "ClipModel.h"
 #include "MultitrackRecorder.h"
 #include "SessionPlayer.h"
 #include "StripColours.h"
@@ -144,6 +145,18 @@ namespace zynforge
         // strips don't dangle. Returns true on success.
         bool swapTracks (int a, int b);
 
+        // Punch in/out — the player auto-arms enabled punch tracks when
+        // the playhead enters the loop region and disarms again when it
+        // leaves. The actual record state is driven on the message
+        // thread by MainComponent's timer polling getPunch* and
+        // toggling startRecording / stopRecording / track.armed.
+        bool isPunchModeOn()      const noexcept { return punchEnabled.load (std::memory_order_relaxed); }
+        void setPunchModeOn (bool en) noexcept   { punchEnabled.store (en, std::memory_order_relaxed); }
+        bool isTrackPunchArmed (int channel) const noexcept;
+        void setTrackPunchArmed (int channel, bool armed);
+        // The loop region from SessionPlayer doubles as the punch window
+        // — there's only ever one 'do this between A and B' selection.
+
         // OSC remote: starts/stops a juce::OSCReceiver bound to UDP port,
         // with a dialect parser for DiGiCo / A&H / SSL / Yamaha consoles
         // plus a generic /zynforge/* schema for tablet apps.
@@ -201,6 +214,17 @@ namespace zynforge
 
         void clearAutomation (AutomationParam);
         void clearAutomationForTrack (int track, AutomationParam);
+
+        // Per-track clip list. Lazy: a track stays in 'whole file' mode
+        // (no entry in trackClips, or one full-range entry) until the
+        // engineer splits or trims it. The EDIT view + future playback
+        // path read from here when present; falls back to the underlying
+        // Track_NN.wav otherwise.
+        std::vector<Clip>& clipsFor (int track);
+        const std::vector<Clip>* tryClipsFor (int track) const;
+        // Split the named track at the current playhead — creates two
+        // clips that reference the same audio file with adjacent regions.
+        bool splitTrackAtPlayhead (int track);
 
         // Recent sessions — maintained when loadSession / startRecording
         // succeed. Persisted in appProps as 'recentSession_<i>' (i = 0
@@ -289,6 +313,13 @@ namespace zynforge
         std::atomic<int>  masterOutR    { 1 };
         std::atomic<bool> masterStereo  { true };
 
+        // Punch mode flags. punchEnabled gates the whole feature;
+        // per-track armed bits are kept as a separate vector keyed by
+        // physical track index. UI mutates from the message thread,
+        // MainComponent's timer reads and drives startRecording.
+        std::atomic<bool>           punchEnabled { false };
+        std::vector<std::atomic<bool>> punchArmed;
+
         ClickEngine        click;
     public:
         ClickEngine& getClickEngine() noexcept { return click; }
@@ -314,6 +345,11 @@ namespace zynforge
             std::vector<AutomationPoint> volume, pan, mute;
         };
         std::vector<TrackAutomation> automationData;
+        // Per-track clip lists. Empty/missing entry → 'play the whole
+        // Track_NN.wav' (the current behaviour). Once the engineer
+        // splits or trims, the entry has one or more Clips covering
+        // the audible regions.
+        std::vector<std::vector<Clip>> trackClips;
         std::vector<AutomationPoint> emptyAutomation;   // returned by ref when none
 
         std::vector<AutomationPoint>* findLane (int track, AutomationParam);

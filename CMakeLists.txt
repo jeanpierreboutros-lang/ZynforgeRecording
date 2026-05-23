@@ -36,6 +36,16 @@ juce_add_gui_app(ZynforgeRecording
 
 juce_generate_juce_header(ZynforgeRecording)
 
+# Bundled fonts — Inter for UI text, JetBrains Mono for tabular numerals.
+# Both ship with the binary so the brand identity is locked across macOS
+# versions and per-user font settings. License: SIL Open Font License.
+juce_add_binary_data(ZynforgeFonts SOURCES
+    Source/Theme/Fonts/Inter-Regular.ttf
+    Source/Theme/Fonts/Inter-Bold.ttf
+    Source/Theme/Fonts/JetBrainsMono-Regular.ttf
+    Source/Theme/Fonts/JetBrainsMono-Bold.ttf
+)
+
 target_sources(ZynforgeRecording PRIVATE
     Source/Main.cpp
     Source/UI/MainComponent.cpp
@@ -58,6 +68,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/TempoBar.cpp
     Source/UI/ClickSettingsDialog.cpp
     Source/Network/CompanionServer.cpp
+    Source/Network/SessionMirror.cpp
     Source/UI/Meterbridge.cpp
     Source/UI/TransportBar.cpp
     Source/UI/SessionSettingsDialog.cpp
@@ -88,6 +99,7 @@ target_compile_definitions(ZynforgeRecording PRIVATE
 )
 
 target_link_libraries(ZynforgeRecording PRIVATE
+    ZynforgeFonts
     juce::juce_audio_utils
     juce::juce_audio_devices
     juce::juce_audio_formats

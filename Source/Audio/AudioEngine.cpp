@@ -367,6 +367,80 @@ namespace zynforge
         }
     }
 
+    std::vector<Clip>& AudioEngine::clipsFor (int track)
+    {
+        if (track < 0) track = 0;
+        if (track >= (int) trackClips.size()) trackClips.resize ((size_t) track + 1);
+        return trackClips[(size_t) track];
+    }
+
+    const std::vector<Clip>* AudioEngine::tryClipsFor (int track) const
+    {
+        if (track < 0 || track >= (int) trackClips.size()) return nullptr;
+        const auto& v = trackClips[(size_t) track];
+        return v.empty() ? nullptr : &v;
+    }
+
+    bool AudioEngine::splitTrackAtPlayhead (int track)
+    {
+        if (track < 0 || track >= recorder.getNumTracks()) return false;
+        const auto pos = player.isLoaded() ? player.getPositionSamples() : juce::int64 (0);
+        if (pos <= 0) return false;
+
+        auto sessionDir = getActiveSessionDir();
+        const auto trackFile = sessionDir.isDirectory()
+            ? sessionDir.getChildFile ("Audio Files")
+                       .getChildFile (juce::String::formatted ("Track_%02d.wav", track + 1))
+            : juce::File();
+        if (! trackFile.existsAsFile()) return false;
+
+        // Lazy bootstrap: if the track has no clip list yet, create one
+        // full-range clip spanning the whole file.
+        auto& list = clipsFor (track);
+        if (list.empty())
+        {
+            Clip c;
+            c.name                 = juce::String::formatted ("Track_%02d", track + 1);
+            c.audioFile            = trackFile;
+            c.timelineStartSamples = 0;
+            c.fileStartSamples     = 0;
+            c.fileLengthSamples    = trackFile.getSize() > 0
+                ? (juce::int64) (trackFile.getSize() / 4)  // 24-bit WAV mono ≈ 3 B/sample, rough
+                : player.getTotalLengthSamples();
+            list.push_back (c);
+        }
+
+        // Find the clip whose timeline range contains the playhead.
+        for (int i = 0; i < (int) list.size(); ++i)
+        {
+            const auto& c = list[(size_t) i];
+            const auto tEnd = c.timelineStartSamples + c.fileLengthSamples;
+            if (pos > c.timelineStartSamples && pos < tEnd)
+            {
+                const auto fileOffset = c.fileStartSamples + (pos - c.timelineStartSamples);
+                return splitClipAt (list, i, fileOffset);
+            }
+        }
+        return false;
+    }
+
+    bool AudioEngine::isTrackPunchArmed (int channel) const noexcept
+    {
+        if (channel < 0 || channel >= (int) punchArmed.size()) return false;
+        return punchArmed[(size_t) channel].load (std::memory_order_relaxed);
+    }
+
+    void AudioEngine::setTrackPunchArmed (int channel, bool armed)
+    {
+        if (channel < 0) return;
+        if (channel >= (int) punchArmed.size())
+        {
+            const auto target = (size_t) channel + 1;
+            punchArmed = std::vector<std::atomic<bool>> (target);
+        }
+        punchArmed[(size_t) channel].store (armed, std::memory_order_relaxed);
+    }
+
     bool AudioEngine::swapTracks (int a, int b)
     {
         if (recorder.isRecording()) return false;

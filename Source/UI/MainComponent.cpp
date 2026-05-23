@@ -485,6 +485,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addSeparator();
         menu.addItem (313, "Remove Last Capture", ! engine.isRecording());
         menu.addSeparator();
+        menu.addItem (314, "Punch In/Out Mode",
+                      playerLoaded, engine.isPunchModeOn());
+        menu.addSeparator();
         // Batch ops — let the engineer sweep a range of channels in one
         // dialog instead of renaming/recolouring 24 strips by hand.
         menu.addItem (320, "Batch Rename Channels…",  engine.getRecorder().getNumTracks() > 0);
@@ -534,6 +537,10 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                       engine.getRecorder().getNumTracks() > 0);
         menu.addItem (281, "Write soundcheck report",
                       engine.getActiveSessionDir().isDirectory());
+        menu.addSeparator();
+        menu.addItem (290, sessionMirror.isMirroring()
+                              ? "Stop mirroring " + sessionMirror.getPrimary()
+                              : juce::String ("Mirror primary host…"));
     }
 
     return menu;
@@ -646,6 +653,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 251) showSessionProperties();
     else if (id == 280) runSpectralAutoName();
     else if (id == 281) writeSoundcheckReport();
+    else if (id == 290) promptMirrorHost();
     else if (id == 250)
     {
         struct StubContent final : public juce::Component
@@ -794,6 +802,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 311)  editStartRange();
     else if (id == 312)  editFinishRange();
     else if (id == 313)  removeLastCapture();
+    else if (id == 314)  togglePunchMode();
     else if (id == 320)  showBatchRenameDialog();
     else if (id == 321)  showBatchColourDialog();
     else if (id == 330)  moveSelectedStrips (-1);
@@ -1028,6 +1037,12 @@ void MainComponent::timerCallback()
     // Tick the cue-fade ramp if one is in flight — interpolates gain
     // and pan from the live mix toward the cue's target snapshot.
     if (cueRamp.active) updateCueRamp();
+
+    // Punch in/out — when the playhead enters the loop region we
+    // automatically start recording on every track that has the
+    // punch-arm bit set; when it leaves we stop.
+    if (engine.isPunchModeOn() && engine.getPlayer().hasLoopRegion())
+        servicePunch();
 
     // Keep each strip's input/output combos in sync with engine state —
     // the PATCH page can mutate routing behind the strip's back. Also
@@ -1795,7 +1810,25 @@ void MainComponent::editSplitAtPlayhead()
 {
     const auto pos = currentPlayheadSamples (engine);
     engine.getMarkers().drop (pos, "Split");
-    showStatus ("Split marker dropped at "
+
+    // Real clip-level split — only act on the selected strips. If
+    // nothing is selected, the action stays as 'just drop a marker' so
+    // it's safe to bind to the S hotkey by default.
+    int splits = 0;
+    if (! selectedLogical.empty())
+    {
+        recordUndoSnapshot ("Split clips at playhead");
+        for (int logical : selectedLogical)
+        {
+            const int phys = physicalFromLogicalIdx (logical);
+            if (engine.splitTrackAtPlayhead (phys)) ++splits;
+        }
+    }
+    if (editPage != nullptr) editPage->repaint();
+    showStatus ((splits > 0
+                    ? "Split " + juce::String (splits) + " clip(s) and dropped marker"
+                    : juce::String ("Split marker dropped"))
+                + " at "
                 + juce::String ((double) pos
                                 / juce::jmax (1.0, engine.getPlayer().getSampleRate()), 2) + " s");
 }
@@ -2416,6 +2449,89 @@ void MainComponent::runSpectralAutoName()
     lastTrackCount = -1;
     showStatus ("Spectral auto-name: confident guesses on "
                 + juce::String (hits) + " of " + juce::String (n) + " strip(s)");
+}
+
+void MainComponent::promptMirrorHost()
+{
+    if (sessionMirror.isMirroring())
+    {
+        sessionMirror.stop();
+        showStatus ("Mirror stopped");
+        return;
+    }
+
+    auto* aw = new juce::AlertWindow ("Mirror primary host",
+                                      "Enter the primary Mac's address (host:port). "
+                                      "The primary must have its companion server running.",
+                                      juce::MessageBoxIconType::QuestionIcon);
+    aw->addTextEditor ("addr", "192.168.1.42:9000", "Primary host:");
+    aw->addButton ("Start", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    aw->enterModalState (true,
+        juce::ModalCallbackFunction::create ([this, aw] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            if (result != 1) return;
+            const auto addr = aw->getTextEditorContents ("addr").trim();
+            const auto colon = addr.indexOfChar (':');
+            const auto host = (colon > 0) ? addr.substring (0, colon) : addr;
+            const auto port = (colon > 0) ? addr.substring (colon + 1).getIntValue() : 9000;
+            sessionMirror.start (host, port);
+            showStatus ("Mirroring " + host + ":" + juce::String (port));
+        }), false);
+}
+
+void MainComponent::togglePunchMode()
+{
+    const bool on = ! engine.isPunchModeOn();
+    engine.setPunchModeOn (on);
+    if (on)
+    {
+        // Default: punch-arm every currently-armed track. Engineer can
+        // narrow by un-arming individuals via the track's right-click
+        // menu later.
+        auto& rec = engine.getRecorder();
+        for (int i = 0; i < rec.getNumTracks(); ++i)
+            engine.setTrackPunchArmed (i,
+                rec.getTrack (i).armed.load (std::memory_order_relaxed));
+        showStatus ("Punch mode ON — set the loop region, then press PLAY");
+    }
+    else
+    {
+        if (engine.isRecording()) engine.stopRecording();
+        showStatus ("Punch mode OFF");
+    }
+}
+
+void MainComponent::servicePunch()
+{
+    auto& player = engine.getPlayer();
+    if (! player.isLoaded()) return;
+    const auto pos    = player.getPositionSamples();
+    const auto inside = (pos >= player.getLoopStart() && pos < player.getLoopEnd());
+
+    if (inside && ! wasInsidePunch && player.isPlaying())
+    {
+        // Crossed into the punch window — drop into record on every
+        // punch-armed track, leave the rest playing back as normal.
+        if (! engine.isRecording())
+        {
+            // Save each strip's pre-punch arm state, then force-arm
+            // only the punch-armed ones for the duration of the punch.
+            auto& rec = engine.getRecorder();
+            for (int i = 0; i < rec.getNumTracks(); ++i)
+                rec.getTrack (i).armed.store (engine.isTrackPunchArmed (i),
+                                              std::memory_order_relaxed);
+            engine.startRecording (makeNewSessionDir());
+        }
+    }
+    else if (! inside && wasInsidePunch && engine.isRecording())
+    {
+        // Crossed out — stop recording cleanly.
+        engine.stopRecording();
+    }
+    wasInsidePunch = inside;
 }
 
 void MainComponent::writeSoundcheckReport()

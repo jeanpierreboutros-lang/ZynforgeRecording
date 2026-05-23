@@ -1,6 +1,7 @@
 #include "ZynForgeLookAndFeel.h"
 #include "BrandColors.h"
 #include "BrandTokens.h"
+#include "BinaryData.h"
 
 namespace zynforge
 {
@@ -27,10 +28,38 @@ namespace zynforge
         setColour (juce::AlertWindow::outlineColourId,        brand::edge);
     }
 
+    juce::Typeface::Ptr ZynForgeLookAndFeel::getTypefaceForFont (const juce::Font& f)
+    {
+        // Load Inter / JetBrains Mono from the BinaryData target the
+        // moment any font requests those typeface names. Cached, so
+        // the second call is free.
+        static juce::Typeface::Ptr interReg = juce::Typeface::createSystemTypefaceFor (
+            BinaryData::InterRegular_ttf, BinaryData::InterRegular_ttfSize);
+        static juce::Typeface::Ptr interBold = juce::Typeface::createSystemTypefaceFor (
+            BinaryData::InterBold_ttf,    BinaryData::InterBold_ttfSize);
+        static juce::Typeface::Ptr monoReg  = juce::Typeface::createSystemTypefaceFor (
+            BinaryData::JetBrainsMonoRegular_ttf, BinaryData::JetBrainsMonoRegular_ttfSize);
+        static juce::Typeface::Ptr monoBold = juce::Typeface::createSystemTypefaceFor (
+            BinaryData::JetBrainsMonoBold_ttf,    BinaryData::JetBrainsMonoBold_ttfSize);
+
+        const auto name  = f.getTypefaceName();
+        const bool bold  = f.isBold();
+
+        // brand::uiFamily resolves to 'SF Pro' in BrandTokens.h — match
+        // either that or the JUCE default-font name so any user-of-the-
+        // codebase asking for 'SF Pro' gets Inter delivered.
+        if (name == "SF Pro" || name.containsIgnoreCase ("inter"))
+            return bold ? interBold : interReg;
+        if (name == "SF Mono" || name.containsIgnoreCase ("jetbrains")
+            || name.containsIgnoreCase ("mono"))
+            return bold ? monoBold : monoReg;
+
+        return juce::LookAndFeel_V4::getTypefaceForFont (f);
+    }
+
     juce::Font ZynForgeLookAndFeel::getTextButtonFont (juce::TextButton&, int h)
     {
-        return juce::Font (juce::FontOptions().withHeight ((float) juce::jmin (16, h - 8))
-                                              .withStyle ("Bold"));
+        return brand::type::ui ((float) juce::jmin (16, h - 8), true);
     }
 
     void ZynForgeLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b,

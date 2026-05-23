@@ -747,6 +747,35 @@ namespace zynforge
                 }
             }
 
+            // ─── Clip boundary overlay (waveform mode only) ─────────
+            // After Edit ▸ Split / Separate, the track grows a clip list.
+            // Paint each clip boundary as a 1 px vertical cut + a small
+            // ⌐ marker at the top of the lane so the engineer can see
+            // where the split landed.
+            if (auto* clips = engine.tryClipsFor (index))
+            {
+                const auto& player = engine.getPlayer();
+                const juce::int64 totalSamples = player.isLoaded()
+                    ? player.getTotalLengthSamples() : 0;
+                if (totalSamples > 0)
+                {
+                    const auto inner2 = wavePane.reduced (4, 6);
+                    for (const auto& c : *clips)
+                    {
+                        if (c.timelineStartSamples <= 0) continue;
+                        const double prop = (double) c.timelineStartSamples / (double) totalSamples;
+                        const int x = inner2.getX()
+                                    + (int) (prop * inner2.getWidth());
+                        g.setColour (brand::accentSolo.withAlpha (0.85f));
+                        g.drawVerticalLine (x, (float) inner2.getY(),
+                                            (float) inner2.getBottom());
+                        // Tiny corner flag at the top so the cut is
+                        // visible against busy audio.
+                        g.fillRect (juce::Rectangle<int> (x, inner2.getY(), 6, 3));
+                    }
+                }
+            }
+
             // ─── Playhead overlay
             if (playheadX >= 0 && playheadX < wavePane.getWidth())
             {

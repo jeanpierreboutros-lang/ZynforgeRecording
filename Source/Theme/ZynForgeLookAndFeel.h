@@ -9,6 +9,12 @@ namespace zynforge
     public:
         ZynForgeLookAndFeel();
 
+        // Returns Inter / JetBrains Mono from BinaryData when the
+        // engineer-facing typeface names (SF Pro / SF Mono — see
+        // BrandTokens.h) are requested. Falls back to the system
+        // typeface for anything else.
+        juce::Typeface::Ptr getTypefaceForFont (const juce::Font&) override;
+
         juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
         void drawButtonBackground (juce::Graphics&, juce::Button&,
                                    const juce::Colour& bg,
