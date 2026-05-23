@@ -840,7 +840,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
                                           "  rclone copy {SESSION} myremote:zynforge-sessions/\n"
                                           "  aws s3 sync {SESSION} s3://my-bucket/sessions/\n"
                                           "  rsync -a {SESSION} engineer@studio:/sessions/",
-                                          juce::MessageBoxIconType::QuestionIcon);
+                                          juce::MessageBoxIconType::NoIcon);
         const auto current = engine.getAppProps() != nullptr
                               ? engine.getAppProps()->getValue ("cloudUploadCommand")
                               : juce::String();
@@ -884,7 +884,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
             if (runtime.isEmpty())
             {
                 juce::AlertWindow::showMessageBoxAsync (
-                    juce::MessageBoxIconType::WarningIcon,
+                    juce::MessageBoxIconType::NoIcon,
                     "NDI runtime not found",
                     "Install the free NDI runtime from ndi.tv (the 'NDI Tools' bundle "
                     "ships with libndi.dylib in /usr/local/lib). Re-launch the app "
@@ -1939,7 +1939,7 @@ void MainComponent::showFirstRunTutorial()
     {
         if (self == nullptr || idx >= (int) steps.size()) return;
         const auto& s = steps[(size_t) idx];
-        auto* aw = new juce::AlertWindow (s.title, s.body, juce::MessageBoxIconType::InfoIcon);
+        auto* aw = new juce::AlertWindow (s.title, s.body, juce::MessageBoxIconType::NoIcon);
         const bool last = (idx + 1 >= (int) steps.size());
         aw->addButton (last ? "OK" : "Next", 1, juce::KeyPress (juce::KeyPress::returnKey));
         if (! last) aw->addButton ("Skip tour", 0, juce::KeyPress (juce::KeyPress::escapeKey));
@@ -1993,7 +1993,7 @@ void MainComponent::showKeyboardShortcuts()
 
     auto* aw = new juce::AlertWindow ("Keyboard shortcuts",
                                       body,
-                                      juce::MessageBoxIconType::InfoIcon);
+                                      juce::MessageBoxIconType::NoIcon);
     aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
         [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }));
@@ -2051,7 +2051,7 @@ void MainComponent::showUserGuide()
         "stream. Requires NDI runtime from ndi.tv--free.";
 
     auto* aw = new juce::AlertWindow ("Zynforge user guide", body,
-                                      juce::MessageBoxIconType::InfoIcon);
+                                      juce::MessageBoxIconType::NoIcon);
     aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
         [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }));
@@ -2060,7 +2060,7 @@ void MainComponent::showUserGuide()
 void MainComponent::showAboutDialog()
 {
     juce::AlertWindow::showMessageBoxAsync (
-        juce::MessageBoxIconType::InfoIcon,
+        juce::MessageBoxIconType::NoIcon,
         "Zynforge Recording",
         "Live multitrack recording + virtual soundcheck.\n\n"
         "JUCE 8 * C++20 * macOS Universal\n"
@@ -2561,7 +2561,7 @@ void MainComponent::dropMarkerAndPromptName()
     //    Tools' Memory Locations does exactly this on Enter.
     auto* aw = new juce::AlertWindow ("New marker",
                                       "Name this memory location:",
-                                      juce::MessageBoxIconType::QuestionIcon,
+                                      juce::MessageBoxIconType::NoIcon,
                                       this);
     aw->addTextEditor ("markerName", defaultName, {});
     aw->getTextEditor ("markerName")->selectAll();
@@ -2959,7 +2959,7 @@ void MainComponent::promptCueName (const juce::String& title,
 {
     auto* aw = new juce::AlertWindow (title,
                                       "Cue name:",
-                                      juce::MessageBoxIconType::QuestionIcon);
+                                      juce::MessageBoxIconType::NoIcon);
     aw->addTextEditor ("cueName", initial, juce::String{});
     aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
@@ -3367,7 +3367,7 @@ void MainComponent::promptMirrorHost()
     auto* aw = new juce::AlertWindow ("Mirror primary host",
                                       "Enter the primary Mac's address (host:port). "
                                       "The primary must have its companion server running.",
-                                      juce::MessageBoxIconType::QuestionIcon);
+                                      juce::MessageBoxIconType::NoIcon);
     aw->addTextEditor ("addr", "192.168.1.42:9000", "Primary host:");
     aw->addButton ("Start", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
@@ -3819,7 +3819,7 @@ void MainComponent::showBatchRenameDialog()
                                       "Apply a numbered name to a range of channels.\n"
                                       "Example: prefix 'Drums', first 1, last 8, start 1\n"
                                       "         → 'Drums 1', 'Drums 2', ... 'Drums 8'.",
-                                      juce::MessageBoxIconType::QuestionIcon);
+                                      juce::MessageBoxIconType::NoIcon);
     aw->addTextEditor ("prefix", "Drums",              "Prefix:");
     aw->addTextEditor ("first",  "1",                  "First channel:");
     aw->addTextEditor ("last",   juce::String (total), "Last channel:");
@@ -3866,7 +3866,7 @@ void MainComponent::showBatchColourDialog()
     // simple (numeric inputs only) and reuses StripColourPicker.
     auto* aw = new juce::AlertWindow ("Batch Colour Channels",
                                       "Apply a colour to a contiguous range of channels.",
-                                      juce::MessageBoxIconType::QuestionIcon);
+                                      juce::MessageBoxIconType::NoIcon);
     aw->addTextEditor ("first", "1",                  "First channel:");
     aw->addTextEditor ("last",  juce::String (total), "Last channel:");
     aw->addButton ("Pick colour...", 1, juce::KeyPress (juce::KeyPress::returnKey));
@@ -3945,7 +3945,7 @@ void MainComponent::removeLastCapture()
 
     juce::AlertWindow::showAsync (
         juce::MessageBoxOptions()
-            .withIconType (juce::MessageBoxIconType::WarningIcon)
+            .withIconType (juce::MessageBoxIconType::NoIcon)
             .withTitle ("Remove last capture?")
             .withMessage ("Permanently delete\n\n" + target.getFullPathName() + "\n\nThis cannot be undone.")
             .withButton ("Delete")
@@ -3998,7 +3998,7 @@ void MainComponent::confirmAndQuit()
     if (recording)
     {
         auto options = juce::MessageBoxOptions()
-                         .withIconType (juce::MessageBoxIconType::QuestionIcon)
+                         .withIconType (juce::MessageBoxIconType::NoIcon)
                          .withTitle ("Recording is still rolling")
                          .withMessage ("A recording is in progress.\n"
                                        "Stop the recording cleanly and quit?")
@@ -4020,7 +4020,7 @@ void MainComponent::confirmAndQuit()
     if (! hasActiveSession)
     {
         auto options = juce::MessageBoxOptions()
-                         .withIconType (juce::MessageBoxIconType::QuestionIcon)
+                         .withIconType (juce::MessageBoxIconType::NoIcon)
                          .withTitle ("Quit Zynforge Recording?")
                          .withMessage ("No active session. Any unsaved app state will be lost.")
                          .withButton ("Quit")
@@ -4054,7 +4054,7 @@ void MainComponent::confirmAndQuit()
                                        + "\" before closing?",
                                       "Your session state, take history, cues and "
                                       "markers will be written to the session folder.",
-                                      juce::MessageBoxIconType::QuestionIcon,
+                                      juce::MessageBoxIconType::NoIcon,
                                       this);
     aw->addButton ("Don't Save", kDontSave);
     aw->addButton ("Cancel",     kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
@@ -4506,7 +4506,7 @@ void MainComponent::warnIfSampleRateMismatch()
     if (std::abs (sessSR - devSR) < 0.5) return;
 
     juce::AlertWindow::showMessageBoxAsync (
-        juce::MessageBoxIconType::WarningIcon,
+        juce::MessageBoxIconType::NoIcon,
         "Sample-rate mismatch",
         "This session was recorded at " + juce::String ((int) sessSR)
             + " Hz but your audio device is set to " + juce::String ((int) devSR)
@@ -4595,7 +4595,7 @@ void MainComponent::promptSaveSessionTemplate()
 {
     auto* aw = new juce::AlertWindow ("Save session template",
                                        "Name this template:",
-                                       juce::MessageBoxIconType::QuestionIcon);
+                                       juce::MessageBoxIconType::NoIcon);
     aw->addTextEditor ("name", "", {});
     aw->addButton ("Save",   1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
@@ -4761,7 +4761,7 @@ void MainComponent::showPreflightChecklist()
     }
 
     auto* aw = new juce::AlertWindow ("Pre-flight checklist",
-                                      body, juce::MessageBoxIconType::InfoIcon);
+                                      body, juce::MessageBoxIconType::NoIcon);
     aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
         [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }));

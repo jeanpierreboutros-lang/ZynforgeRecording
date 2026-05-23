@@ -156,31 +156,48 @@ namespace zynforge
                                             const juce::Rectangle<int>& textArea,
                                             juce::TextLayout& textLayout)
     {
-        // Same chrome the first-party dialogs use: gradient bgPanel
-        // background, brand-orange title stripe + section-title text,
-        // footer divider above the action buttons.
-        dialog::paintBackground (g, alert);
+        // macOS-native-style alert chrome. Two-tone body:
+        //  - upper area (message)            : bgPanel (lighter)
+        //  - lower footer area (buttons)     : bgDeep   (darker)
+        // No icon column (engineers don't need a question mark to
+        // tell them this is a dialog -- removing it via NoIcon at
+        // call sites, the textArea now spans the full width).
+        // No brand-orange title stripe -- the message itself is the
+        // header, bold and large; the body text follows underneath.
 
-        // Title row -- fixed 44 px tall, identical to dialog::paintTitle
-        // but read from the AlertWindow's own message-box title so the
-        // engineer doesn't have to plumb it in by hand.
-        auto title = alert.getLocalBounds().removeFromTop (dialog::titleH)
-                                           .reduced (brand::space::md, 0);
-        g.setColour (brand::brandOrange);
-        g.fillRect (title.removeFromLeft (dialog::stripeW));
-        g.setColour (brand::textPrimary);
-        g.setFont (brand::type::sectionTitle());
-        // AlertWindow stores its title in the inherited Component name.
-        g.drawText (alert.getName().toUpperCase(),
-                    title.translated (brand::space::md, 0),
-                    juce::Justification::centredLeft, false);
+        const auto full = alert.getLocalBounds().toFloat();
 
-        // Footer divider (hairline edge line above the action buttons).
-        dialog::paintFooterDivider (g, alert);
+        // Whole panel base
+        g.fillAll (brand::bgPanel);
 
-        // Body text. AlertWindow already lays out the message into
-        // `textLayout`; we just draw it inside the supplied textArea.
-        textLayout.draw (g, textArea.toFloat());
+        // Footer area -- last 64 px shaded darker for visual weight.
+        const float footerH = 64.0f;
+        const auto footerRect = full.withTop (full.getBottom() - footerH);
+        g.setColour (brand::bgDeep);
+        g.fillRect (footerRect);
+
+        // Hairline divider between message body and footer.
+        g.setColour (brand::edge);
+        g.drawHorizontalLine ((int) footerRect.getY(),
+                              full.getX(), full.getRight());
+
+        // Message text. textLayout was prepared by JUCE; draw it where
+        // JUCE expected, but shift it left into the freed icon column
+        // by re-running the layout against a wider rect.
+        const auto bodyRect = juce::Rectangle<int> (
+            (int) full.getX() + 22,
+            (int) full.getY() + 16,
+            (int) full.getWidth() - 44,
+            (int) (full.getHeight() - footerH - 28));
+
+        // Re-layout the attributed string into the wider body rect so
+        // the icon's old space is reclaimed. textLayout's source is
+        // not directly accessible, so the simplest reliable path is
+        // to draw the existing layout shifted to bodyRect's origin.
+        // Anything that doesn't fit gets clipped, but the alert's
+        // own sizing already accounts for the full message.
+        juce::ignoreUnused (textArea);
+        textLayout.draw (g, bodyRect.toFloat());
     }
 
     int ZynForgeLookAndFeel::getAlertBoxWindowFlags()

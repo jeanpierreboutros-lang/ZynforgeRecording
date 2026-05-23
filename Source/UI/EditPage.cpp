@@ -1518,7 +1518,7 @@ namespace zynforge
                     {
                         juce::AlertWindow::showAsync (
                             juce::MessageBoxOptions()
-                                .withIconType (juce::MessageBoxIconType::WarningIcon)
+                                .withIconType (juce::MessageBoxIconType::NoIcon)
                                 .withTitle ("Strip reorder paused")
                                 .withMessage ("Stop playback before reordering strips -- "
                                               "swapping during playback would corrupt the "
@@ -1828,7 +1828,7 @@ namespace zynforge
                     {
                         auto* aw = new juce::AlertWindow ("Clip gain",
                             "Enter clip gain in dB (-60 .. +12).",
-                            juce::MessageBoxIconType::QuestionIcon);
+                            juce::MessageBoxIconType::NoIcon);
                         aw->addTextEditor ("dB", juce::String (gainDb, 2));
                         aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
                         aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
@@ -1951,7 +1951,7 @@ namespace zynforge
                     const int active = row->engine.getActiveTakeIdx (row->index);
                     const auto cur   = row->engine.getTakeName (row->index, active);
                     auto* aw = new juce::AlertWindow ("Rename take",
-                        "Take name:", juce::MessageBoxIconType::QuestionIcon);
+                        "Take name:", juce::MessageBoxIconType::NoIcon);
                     aw->addTextEditor ("n", cur, {});
                     aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
                     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));

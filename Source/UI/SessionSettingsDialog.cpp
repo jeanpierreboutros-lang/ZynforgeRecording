@@ -121,7 +121,7 @@ namespace zynforge
                 {
                     juce::AlertWindow::showAsync (
                         juce::MessageBoxOptions()
-                            .withIconType (juce::MessageBoxIconType::WarningIcon)
+                            .withIconType (juce::MessageBoxIconType::NoIcon)
                             .withTitle ("Recording active")
                             .withMessage ("Stop recording before changing session settings.")
                             .withButton ("OK"),
@@ -164,7 +164,7 @@ namespace zynforge
                 {
                     juce::AlertWindow::showAsync (
                         juce::MessageBoxOptions()
-                            .withIconType (juce::MessageBoxIconType::WarningIcon)
+                            .withIconType (juce::MessageBoxIconType::NoIcon)
                             .withTitle ("Could not apply sample rate")
                             .withMessage ("Audio device error:\n\n" + err
                                 + "\n\nThe capture format has still been changed; the device kept its previous sample rate.")

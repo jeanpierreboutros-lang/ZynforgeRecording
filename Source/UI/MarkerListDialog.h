@@ -115,7 +115,7 @@ namespace zynforge
                     if (chosen == 1)
                     {
                         auto* aw = new juce::AlertWindow ("Rename marker",
-                            "Name:", juce::MessageBoxIconType::QuestionIcon);
+                            "Name:", juce::MessageBoxIconType::NoIcon);
                         aw->addTextEditor ("n", engine.getMarkers().getMarker (row).name, {});
                         aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
                         aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
