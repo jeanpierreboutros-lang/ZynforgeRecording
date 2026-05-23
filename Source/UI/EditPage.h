@@ -36,6 +36,11 @@ namespace zynforge
         // to bias the hit-test.
         EditToolsBar* getEditToolsBar() noexcept { return toolsBar.get(); }
 
+        // Horizontal zoom — content widens past the viewport so the
+        // engineer can navigate a 90-min show. 1.0 = fit, 16.0 = 16×.
+        void  setZoom (float z);
+        float getZoom() const noexcept { return zoom; }
+
         // Force every row's lane content to follow the toolbar's
         // Param choice. Called whenever the toolbar's onParamChanged
         // fires.
@@ -69,6 +74,7 @@ namespace zynforge
         bool       lastLoaded      { false };
         bool       lastRecording   { false };
         juce::File lastSessionDir;
+        float      zoom            { 1.0f };
         AutomationToolbar*             toolbar  { nullptr };
         std::unique_ptr<EditToolsBar>  toolsBar;
         bool clickPresent { false };

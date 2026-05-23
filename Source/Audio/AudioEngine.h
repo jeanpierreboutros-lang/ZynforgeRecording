@@ -5,6 +5,7 @@
 
 #include "Markers.h"
 #include "ClickEngine.h"
+#include "MidiClockOut.h"
 #include "ClipModel.h"
 #include "MultitrackRecorder.h"
 #include "SessionPlayer.h"
@@ -81,8 +82,22 @@ namespace zynforge
         bool getRecordStereoMix() const noexcept           { return recordStereoMixFlag.load(); }
 
         int  loadSession (const juce::File& sessionDir);
-        void startPlayback()                               { player.start(); }
-        void stopPlayback()                                { player.stop(); }
+        void startPlayback()
+        {
+            const bool wasPlaying = player.isPlaying();
+            player.start();
+            if (! wasPlaying) midiClockOut.sendStart();
+            else              midiClockOut.sendContinue();
+        }
+        void stopPlayback()
+        {
+            player.stop();
+            midiClockOut.sendStop();
+        }
+
+        // MIDI clock master (24 PPQN) — drives outboard synths /
+        // drum machines / DAW slaves from the session tempo.
+        MidiClockOut& getMidiClockOut() noexcept { return midiClockOut; }
         bool isPlaying() const noexcept                    { return player.isPlaying(); }
 
         MarkersManager& getMarkers() noexcept              { return markers; }
@@ -377,6 +392,7 @@ namespace zynforge
         std::vector<std::atomic<bool>> punchArmed;
 
         ClickEngine        click;
+        MidiClockOut       midiClockOut;
     public:
         ClickEngine& getClickEngine() noexcept { return click; }
     private:

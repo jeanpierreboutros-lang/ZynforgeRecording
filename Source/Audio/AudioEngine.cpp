@@ -834,6 +834,7 @@ namespace zynforge
         // Hand the new tempo to the real-time click immediately — atomic
         // store, so the audio thread picks it up at the next block.
         click.setTempoBpm (bpm);
+        midiClockOut.setTempoBpm (bpm);
         if (appProps != nullptr)
         {
             appProps->setValue ("sessionTempoBpm", (double) bpm);

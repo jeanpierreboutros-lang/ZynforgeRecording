@@ -52,6 +52,11 @@ namespace zynforge
 
         Tool getTool() const noexcept { return tool; }
 
+        // Set by EditPage to reflect the current zoom level on the
+        // small read-out chip between the +/- buttons.
+        void setZoom (float z) { zoomLevel = z; repaint(); }
+        std::function<void (float)> onZoomChanged;
+
         void setTool (Tool t)
         {
             if (t == tool) return;
@@ -69,6 +74,43 @@ namespace zynforge
             g.fillRoundedRectangle (getLocalBounds().toFloat(), 6.0f);
             g.setColour (brand::edge);
             g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), 6.0f, 1.0f);
+
+            // Zoom controls: [-]  100%  [+] painted inline. Hit-tested
+            // in mouseDown below. Cheaper than three more Components.
+            auto z = zoomBounds();
+            const auto rMinus = z.removeFromLeft (22);
+            const auto rText  = z.removeFromLeft (38);
+            const auto rPlus  = z.removeFromLeft (22);
+            const auto draw = [&] (juce::Rectangle<int> r, juce::String t, bool isText)
+            {
+                g.setColour (isText ? brand::bgPanel : brand::controlBg);
+                g.fillRoundedRectangle (r.toFloat().reduced (1), 4);
+                g.setColour (brand::edge);
+                g.drawRoundedRectangle (r.toFloat().reduced (1).withSizeKeepingCentre
+                                            ((float) r.getWidth() - 2, (float) r.getHeight() - 2),
+                                        4, 1);
+                g.setColour (brand::textPrimary);
+                g.setFont (brand::fonts::body());
+                g.drawText (t, r, juce::Justification::centred, false);
+            };
+            draw (rMinus, "-", false);
+            draw (rText, juce::String ((int) std::round (zoomLevel * 100.0f)) + "%", true);
+            draw (rPlus, "+", false);
+        }
+
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            const auto z = zoomBounds();
+            const auto rMinus = z.withWidth (22);
+            const auto rPlus  = z.withTrimmedLeft (60).withWidth (22);
+            if (rMinus.contains (e.getPosition()))
+            {
+                if (onZoomChanged) onZoomChanged (juce::jlimit (1.0f, 16.0f, zoomLevel * 0.71f));
+            }
+            else if (rPlus.contains (e.getPosition()))
+            {
+                if (onZoomChanged) onZoomChanged (juce::jlimit (1.0f, 16.0f, zoomLevel * 1.41f));
+            }
         }
 
         void resized() override
@@ -81,6 +123,14 @@ namespace zynforge
                 b->setBounds (r.removeFromLeft (btnW));
                 r.removeFromLeft (gap);
             }
+        }
+
+        juce::Rectangle<int> zoomBounds() const noexcept
+        {
+            // ~82 px wide column pinned to the right edge.
+            return getLocalBounds().withTrimmedLeft (getWidth() - 90)
+                                   .withTrimmedRight (4)
+                                   .reduced (0, brand::space::xs);
         }
 
     private:
@@ -221,7 +271,8 @@ namespace zynforge
             }
         }
 
-        Tool tool { Tool::None };
+        Tool  tool        { Tool::None };
+        float zoomLevel   { 1.0f };
         std::vector<std::unique_ptr<ToolButton>> buttons;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EditToolsBar)

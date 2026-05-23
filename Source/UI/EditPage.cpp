@@ -71,6 +71,14 @@ namespace zynforge
         juce::int64 dragStartFadeIn  { 0 };
         juce::int64 dragStartFadeOut { 0 };
 
+        // Strip reorder drag — armed on swatch-column mouseDown,
+        // activates once vertical movement exceeds 8 px. Each
+        // additional row-height of movement swaps with the adjacent
+        // strip via engine.swapTracks.
+        bool reorderArmed  { false };
+        bool reorderActive { false };
+        int  reorderStartY { 0 };
+
         TrackRow (int trackIdx,
                   bool isStereoPair,
                   AudioEngine& eng,
@@ -1083,10 +1091,15 @@ namespace zynforge
                 dragging        = true;
                 return;
             }
-            // Left-click on the coloured swatch column → colour picker.
+            // Left-click on the coloured swatch column → starts a
+            // reorder-drag. If the engineer doesn't move past the
+            // 8 px threshold, mouseUp falls through to the colour
+            // picker (preserves the legacy 'click swatch = colour').
             if (e.x < swatchW)
             {
-                openColourPicker();
+                reorderArmed  = true;
+                reorderActive = false;
+                reorderStartY = e.y;
                 return;
             }
 
@@ -1368,6 +1381,47 @@ namespace zynforge
 
         void mouseDrag (const juce::MouseEvent& e) override
         {
+            // Strip reorder via swatch drag — once the engineer's
+            // vertical movement crosses one row height, swap with the
+            // adjacent strip and reset the drag origin so a continuous
+            // up-up-up drag walks the strip across the list.
+            if (reorderArmed)
+            {
+                const int delta = e.y - reorderStartY;
+                const int rowH  = juce::jmax (1, getHeight());
+                if (! reorderActive && std::abs (delta) > 8)
+                    reorderActive = true;
+
+                if (reorderActive && std::abs (delta) > rowH)
+                {
+                    const int dir = delta > 0 ? +1 : -1;
+                    // engine.swapTracks does an ADJACENT swap. For a
+                    // stereo strip, swap both halves together so the
+                    // logical pair stays linked.
+                    const auto& t = engine.getRecorder().getTrack (index);
+                    const bool s  = t.isStereo.load() && (index + 1 < engine.getRecorder().getNumTracks());
+                    const int step = s ? 2 : 1;
+                    const int other = index + dir * step;
+                    if (other >= 0 && other + (s ? 1 : 0) < engine.getRecorder().getNumTracks())
+                    {
+                        if (dir > 0)
+                        {
+                            engine.swapTracks (index, other);
+                            if (s) engine.swapTracks (index + 1, other + 1);
+                        }
+                        else
+                        {
+                            engine.swapTracks (other, index);
+                            if (s) engine.swapTracks (other + 1, index + 1);
+                        }
+                        // Stay armed; reset origin so the next row
+                        // crossing fires again.
+                        reorderStartY = e.y;
+                    }
+                }
+                return;
+            }
+
             // Resize drag wins if it's already in flight.
             if (dragging)
             {
@@ -1497,6 +1551,14 @@ namespace zynforge
             draggingClipIdx  = -1;
             draggingClipModeInt = 0;
             lastDragSamples  = 0;
+
+            // Reorder finishes here. If the user clicked the swatch
+            // but never crossed the 8 px threshold, fall through to
+            // the colour picker (legacy 'click swatch = colour').
+            if (reorderArmed && ! reorderActive)
+                openColourPicker();
+            reorderArmed  = false;
+            reorderActive = false;
         }
 
         void openColourPicker()
@@ -1919,11 +1981,13 @@ namespace zynforge
         // toolbar — the host re-parents it via getEditToolsBar() +
         // addAndMakeVisible().
         toolsBar = std::make_unique<EditToolsBar>();
+        toolsBar->onZoomChanged = [this] (float z) { setZoom (z); };
 
         list = std::make_unique<TrackList> (engine, formatManager, thumbnailCache);
         list->sharedToolsBar = toolsBar.get();
         viewport.setViewedComponent (list.get(), false);
-        viewport.setScrollBarsShown (true, false);
+        // Both scrollbars — horizontal lights up as soon as zoom > 1.
+        viewport.setScrollBarsShown (true, true);
         addAndMakeVisible (viewport);
 
         emptyLabel.setText ("No session loaded — load or record a session to see waveforms here.",
@@ -2062,7 +2126,20 @@ namespace zynforge
         // Tell the list how tall the visible area is so "fit to window"
         // sizing can resolve a sensible per-row pixel height.
         list->setViewportHeight (viewport.getHeight());
-        list->setSize (viewport.getWidth(), list->getHeight());
+        // Apply the zoom factor — content widens past the viewport when
+        // zoom > 1; the horizontal scrollbar lights up to navigate.
+        const int contentW = juce::jmax (viewport.getWidth(),
+                                         (int) (viewport.getWidth() * zoom));
+        list->setSize (contentW, list->getHeight());
         list->resized();
+    }
+
+    void EditPage::setZoom (float z)
+    {
+        z = juce::jlimit (1.0f, 16.0f, z);
+        if (std::abs (z - zoom) < 0.01f) return;
+        zoom = z;
+        resized();
+        if (toolsBar != nullptr) toolsBar->setZoom (zoom);
     }
 }

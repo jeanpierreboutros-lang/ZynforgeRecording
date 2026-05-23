@@ -4119,7 +4119,7 @@ void MainComponent::resized()
         auto topRow = viewportArea.removeFromTop (28).reduced (2, 0);
         if (editToolsBar != nullptr && editToolsBar->isVisible())
         {
-            const int toolsW = 232;
+            const int toolsW = 326;   // 6 tool buttons (~220) + zoom controls (~90)
             editToolsBar->setBounds (topRow.removeFromRight (toolsW));
             topRow.removeFromRight (brand::space::sm);
         }
