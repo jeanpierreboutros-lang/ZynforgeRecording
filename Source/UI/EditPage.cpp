@@ -1008,6 +1008,24 @@ namespace zynforge
                 }
             }
 
+            // ─── Edit cursor overlay (Pro Tools-style insertion point)
+            // Painted BEHIND the playhead so the engineer can see both
+            // at once when the player is paused at a different sample.
+            {
+                const auto cursorSample = engine.getEditCursorSample();
+                const auto& player2 = engine.getPlayer();
+                const juce::int64 totalSamples2 = player2.isLoaded()
+                    ? player2.getTotalLengthSamples() : 0;
+                if (cursorSample >= 0 && totalSamples2 > 0)
+                {
+                    const double prop = juce::jlimit (0.0, 1.0,
+                        (double) cursorSample / (double) totalSamples2);
+                    const int cx = juce::roundToInt (prop * (wavePane.getWidth() - 8)) + 4;
+                    g.setColour (brand::textPrimary.withAlpha (0.85f));
+                    g.fillRect (juce::Rectangle<int> (headerW + cx, 0, 1, getHeight()));
+                }
+            }
+
             // ─── Playhead overlay
             if (playheadX >= 0 && playheadX < wavePane.getWidth())
             {
@@ -1162,6 +1180,29 @@ namespace zynforge
 
         void mouseDown (const juce::MouseEvent& e) override
         {
+            // Pro Tools-style edit cursor. Any left-click that lands
+            // in the wave pane sets the edit cursor at the
+            // corresponding sample position, even if the click is
+            // also going to start a clip drag or scrub. The cursor
+            // is what 'Add Marker', 'Split at cursor', etc. read --
+            // a separate insertion point from the playhead.
+            if (! (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
+                && e.x >= headerW)
+            {
+                const auto& player = engine.getPlayer();
+                const juce::int64 totalSamples = player.isLoaded()
+                    ? player.getTotalLengthSamples() : 0;
+                if (totalSamples > 0)
+                {
+                    const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+                    const double prop = juce::jlimit (0.0, 1.0,
+                        (double) (e.x - inner.getX())
+                            / (double) juce::jmax (1, inner.getWidth()));
+                    const juce::int64 sx = (juce::int64) (prop * (double) totalSamples);
+                    engine.setEditCursorSample (sx);
+                }
+            }
+
             // Right-click on a clip in the waveform lane → fade menu.
             // Anywhere else on the row → row-size menu.
             if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())

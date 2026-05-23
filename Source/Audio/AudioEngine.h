@@ -237,6 +237,14 @@ namespace zynforge
         // empty session. Cleared by passing an empty / non-directory file.
         void setActiveSessionDir (const juce::File& dir);
 
+        // Edit cursor (Pro Tools-style insertion point). Distinct from
+        // the playhead: a single click in the EDIT wave pane sets it,
+        // a marker drop / split / paste uses it instead of the
+        // transport position. -1 means 'unset; fall back to playhead'.
+        void          setEditCursorSample (juce::int64 sample) noexcept;
+        juce::int64   getEditCursorSample() const noexcept;
+        void          clearEditCursor() noexcept { setEditCursorSample (-1); }
+
         // Session tempo. setSessionTempoBpm() is the canonical setter --
         // it updates currentTempoBpm + persists to appProps. The tempo
         // map is a sorted list of (samplePos, bpm) change points; the
@@ -478,6 +486,9 @@ namespace zynforge
         std::atomic<float>  currentTempoBpm     { 120.0f };
         std::atomic<int>    timeSigNumerator    { 4 };
         std::atomic<int>    timeSigDenominator  { 4 };
+        // Pro Tools-style edit cursor. -1 = unset (drop-marker /
+        // split / paste use the playhead as the fallback).
+        std::atomic<juce::int64> editCursorSample { -1 };
         std::vector<TempoChange> tempoMap;   // sorted by samplePos; UI/message-thread only
 
         // Per-track, per-parameter automation. UI-thread only for now

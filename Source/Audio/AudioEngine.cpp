@@ -441,12 +441,29 @@ namespace zynforge
         phaseRight.store (juce::jmax (0, rightCh1Based - 1), std::memory_order_relaxed);
     }
 
+    void AudioEngine::setEditCursorSample (juce::int64 sample) noexcept
+    {
+        editCursorSample.store (sample, std::memory_order_release);
+    }
+    juce::int64 AudioEngine::getEditCursorSample() const noexcept
+    {
+        return editCursorSample.load (std::memory_order_acquire);
+    }
+
     int AudioEngine::dropMarkerAtCurrentPosition()
     {
         if (! markers.hasContext()) return -1;
 
-        juce::int64 pos = 0;
-        if (recorder.isRecording())
+        // Pro Tools-style: when the engineer has placed the edit
+        // cursor in the EDIT view, the marker lands there. Otherwise
+        // fall back to the live transport position (recorder while
+        // recording, player otherwise) so the M-key shortcut still
+        // works during a take.
+        juce::int64 pos = -1;
+        const auto cursor = editCursorSample.load (std::memory_order_acquire);
+        if (cursor >= 0)
+            pos = cursor;
+        else if (recorder.isRecording())
             pos = recorder.getSamplesSinceStart();
         else if (player.isLoaded())
             pos = player.getPositionSamples();
