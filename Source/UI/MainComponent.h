@@ -18,6 +18,7 @@
 #include "SetlistBar.h"
 #include "TempoBar.h"
 #include "TimelineStrip.h"
+#include "VcaPanel.h"
 #include "TransportBar.h"
 
 #include <memory>
@@ -242,6 +243,9 @@ private:
     juce::Component stripsContainer;
     std::unique_ptr<zynforge::EditPage>     editPage;
     std::unique_ptr<zynforge::MasterStrip>  masterStrip;
+    std::unique_ptr<zynforge::VcaPanel>     vcaPanel;
+    zynforge::IconButton vcaToggleButton  { zynforge::icons::Glyph::Mix, "VCA" };
+    bool                 showVcaPanel { false };
 
     juce::TooltipWindow tooltipWindow { this, 500 };
 

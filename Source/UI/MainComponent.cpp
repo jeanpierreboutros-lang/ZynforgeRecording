@@ -427,6 +427,23 @@ MainComponent::MainComponent()
     masterStrip = std::make_unique<zynforge::MasterStrip> (engine);
     addAndMakeVisible (*masterStrip);
 
+    vcaPanel = std::make_unique<zynforge::VcaPanel> (engine);
+    addChildComponent (*vcaPanel);   // hidden by default; VCA button toggles
+
+    vcaToggleButton.setColour (juce::TextButton::buttonColourId,
+                                brand::featureEngaged.darker (0.55f));
+    vcaToggleButton.setColour (juce::TextButton::textColourOffId,
+                                brand::featureEngaged.brighter (0.10f));
+    vcaToggleButton.setTooltip ("Toggle the 8-bus VCA fader panel — group faders for "
+                                 "drums / vocals / etc. Strips opt in via right-click ▸ Assign to VCA.");
+    vcaToggleButton.onClick = [this]
+    {
+        showVcaPanel = ! showVcaPanel;
+        if (vcaPanel != nullptr) vcaPanel->setVisible (showVcaPanel);
+        resized();
+    };
+    addAndMakeVisible (vcaToggleButton);
+
     setWantsKeyboardFocus (true);
     addKeyListener (this);
 
@@ -4019,6 +4036,8 @@ void MainComponent::resized()
     // PATCH + MIX / EDIT view toggle are the quick-access in-app buttons.
     patchButton    .setBounds (row2.removeFromRight (90).reduced (0, 2));
     row2.removeFromRight (brand::space::md);
+    vcaToggleButton.setBounds (row2.removeFromRight (68).reduced (0, 2));
+    row2.removeFromRight (brand::space::md);
     vscButton      .setBounds (row2.removeFromRight (70).reduced (0, 2));
     row2.removeFromRight (brand::space::md);
     editViewButton .setBounds (row2.removeFromRight (60).reduced (0, 2));
@@ -4092,7 +4111,9 @@ void MainComponent::resized()
 
     // Master strip sits on the right edge of the mix area, fixed, never
     // scrolls with the channel viewport. Hidden in the EDIT view so the
-    // waveforms get the full width.
+    // waveforms get the full width. VCA panel (when toggled on) sits
+    // between the channel viewport and the master, so engineers reach
+    // for VCA → master in a natural left-to-right gesture.
     const int masterW = 140;
     if (masterStrip != nullptr)
     {
@@ -4100,12 +4121,27 @@ void MainComponent::resized()
         if (currentView == View::Mix)
         {
             auto masterArea = viewportArea.removeFromRight (masterW);
-            viewportArea.removeFromRight (brand::space::md);   // gap between strips and master
+            viewportArea.removeFromRight (brand::space::md);
             masterStrip->setBounds (masterArea);
+
+            if (vcaPanel != nullptr && showVcaPanel)
+            {
+                // ~38 px per VCA × 8 = 304 + side padding ≈ 320 px.
+                auto vcaArea = viewportArea.removeFromRight (320);
+                viewportArea.removeFromRight (brand::space::md);
+                vcaPanel->setBounds (vcaArea);
+                vcaPanel->setVisible (true);
+            }
+            else if (vcaPanel != nullptr)
+            {
+                vcaPanel->setBounds ({});
+                vcaPanel->setVisible (false);
+            }
         }
         else
         {
             masterStrip->setBounds ({});
+            if (vcaPanel != nullptr) { vcaPanel->setBounds ({}); vcaPanel->setVisible (false); }
         }
     }
 
