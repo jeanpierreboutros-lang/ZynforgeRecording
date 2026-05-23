@@ -96,6 +96,7 @@ private:
     void showSessionProperties();
     void runSpectralAutoName();
     void writeSoundcheckReport();
+    void runNoiseAnalysis();
     void promptMirrorHost();
     zynforge::SessionMirror sessionMirror { engine };
     void togglePunchMode();

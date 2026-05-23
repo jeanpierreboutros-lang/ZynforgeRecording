@@ -8,6 +8,7 @@
 #include "PatchPage.h"
 #include "EditToolsBar.h"
 #include "../Audio/MidiClockOut.h"
+#include "../Audio/NoiseAnalyzer.h"
 #include "ClickSettingsDialog.h"
 #include "../Audio/SpectralClassifier.h"
 #include "SessionPropertiesDialog.h"
@@ -636,6 +637,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                       engine.getRecorder().getNumTracks() > 0);
         menu.addItem (281, "Write soundcheck report",
                       engine.getActiveSessionDir().isDirectory());
+        menu.addItem (282, "Analyse for noise / hum / bumps…",
+                      engine.getActiveSessionDir().isDirectory());
         menu.addSeparator();
         menu.addItem (290, sessionMirror.isMirroring()
                               ? "Stop mirroring " + sessionMirror.getPrimary()
@@ -777,6 +780,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 251) showSessionProperties();
     else if (id == 280) runSpectralAutoName();
     else if (id == 281) writeSoundcheckReport();
+    else if (id == 282) runNoiseAnalysis();
     else if (id == 290) promptMirrorHost();
     else if (id == 250)
     {
@@ -2786,6 +2790,62 @@ void MainComponent::servicePunch()
         engine.stopRecording();
     }
     wasInsidePunch = inside;
+}
+
+void MainComponent::runNoiseAnalysis()
+{
+    const auto sessionDir = engine.getActiveSessionDir();
+    if (! sessionDir.isDirectory())
+    {
+        showStatus ("Open or record a session before analysing");
+        return;
+    }
+
+    showStatus ("Analysing tracks for noise / hum / bumps…");
+
+    // Snapshot track names so the worker doesn't touch engine state
+    // from the background thread.
+    juce::StringArray names;
+    for (int i = 0; i < engine.getRecorder().getNumTracks(); ++i)
+        names.add (engine.getRecorder().getTrack (i).name);
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    juce::Thread::launch ([self, sessionDir, names]
+    {
+        const auto findings = zynforge::NoiseAnalyzer::analyseSession (
+            sessionDir,
+            [&names] (int idx) -> juce::String
+            {
+                return (idx >= 0 && idx < names.size())
+                    ? names[idx]
+                    : juce::String ("Track ") + juce::String (idx + 1);
+            });
+
+        // Build a one-line summary + a popup with per-track detail.
+        int humCount = 0, bumpCount = 0;
+        for (const auto& f : findings)
+        {
+            if (f.humFundamentalHz > 0) ++humCount;
+            if (f.bumpCount > 0) ++bumpCount;
+        }
+        juce::String summary = juce::String (findings.size()) + " track"
+            + (findings.size() == 1 ? juce::String() : juce::String ("s"))
+            + " analysed — " + juce::String (humCount) + " with hum, "
+            + juce::String (bumpCount) + " with mic bumps. Report saved to noise_report.json.";
+
+        juce::String detail;
+        for (const auto& f : findings)
+            detail << zynforge::NoiseAnalyzer::summaryLine (f) << "\n";
+
+        juce::MessageManager::callAsync ([self, summary, detail]
+        {
+            if (self == nullptr) return;
+            self->showStatus (summary);
+            juce::AlertWindow::showMessageBoxAsync (
+                juce::MessageBoxIconType::InfoIcon,
+                "Noise analysis", detail, "OK");
+        });
+    });
 }
 
 void MainComponent::writeSoundcheckReport()

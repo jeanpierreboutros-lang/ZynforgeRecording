@@ -405,6 +405,12 @@ namespace zynforge
         // stereo master bus.
         juce::AudioBuffer<double>                               monitorAccum;
 
+        // 64-bit-float output accumulator. Per-strip / stream-bus
+        // summing flows here in double precision; only the final
+        // device-output write down-casts to float. Sized to numOutputs
+        // × blockSize in audioDeviceAboutToStart.
+        juce::AudioBuffer<double>                               outputAccum;
+
         // Master bus state. masterState is just a TrackState so the
         // master meter / fader / mute can reuse LedMeter + the strip
         // gain/pan paths without a parallel implementation. Output

@@ -889,6 +889,10 @@ namespace zynforge
         // size so the audio thread never allocates when mix capture is on.
         stereoMixScratch.setSize (2, blockSize, false, true, true);
         monitorAccum    .setSize (2, blockSize, false, true, true);
+        // 64-bit output accumulator — sized large enough for typical
+        // device output channel counts. Resized lazily inside the
+        // callback if a wider device shows up.
+        outputAccum     .setSize (64, blockSize, false, true, true);
 
         applyPersistedStripState();
     }
@@ -1419,6 +1423,18 @@ namespace zynforge
         // dashboard polls audioLoadPct at 4 Hz to drive the LED.
         const auto cbStart = juce::Time::getHighResolutionTicks();
 
+        // 64-bit output accumulator — every per-strip / VCA / stream
+        // sum lands here in double precision; the final cast to the
+        // device's float buffers happens at the end of the callback.
+        // Cheap to ensure the size every block — JUCE no-ops when
+        // already big enough.
+        if (outputAccum.getNumChannels() < numOutputs || outputAccum.getNumSamples() < numSamples)
+            outputAccum.setSize (juce::jmax (outputAccum.getNumChannels(), numOutputs),
+                                 juce::jmax (outputAccum.getNumSamples(), numSamples),
+                                 false, false, true);
+        for (int ch = 0; ch < numOutputs; ++ch)
+            juce::FloatVectorOperations::clear (outputAccum.getWritePointer (ch), numSamples);
+
         // Always clear outputs first; player + monitor sum into them.
         for (int ch = 0; ch < numOutputs; ++ch)
             if (outputs[ch] != nullptr)
@@ -1552,12 +1568,14 @@ namespace zynforge
             if (devOut < 0 || devOut >= numOutputs || outputs[devOut] == nullptr) continue;
 
             const float dB   = effectiveGainDb (i);
-            const float gain = juce::Decibels::decibelsToGain (dB, -60.0f);
+            const double gain = (double) juce::Decibels::decibelsToGain (dB, -60.0f);
             const float* src = playerScratch.getReadPointer (i);
-            if (juce::approximatelyEqual (gain, 1.0f))
-                juce::FloatVectorOperations::add (outputs[devOut], src, numSamples);
-            else
-                juce::FloatVectorOperations::addWithMultiply (outputs[devOut], src, gain, numSamples);
+            // Sum into the 64-bit accumulator — each strip adds at
+            // full double precision; the final downcast at the end of
+            // the callback is the only float-truncation point.
+            double* dst = outputAccum.getWritePointer (devOut);
+            for (int s = 0; s < numSamples; ++s)
+                dst[s] += (double) src[s] * gain;
         }
 
         const int trackCount = numTracks;
@@ -1585,24 +1603,32 @@ namespace zynforge
                 if (! channelAudible (i)) continue;
 
                 const float dB   = effectiveGainDb (i);
-                const float gain = juce::Decibels::decibelsToGain (dB, -60.0f);
+                const double gain = (double) juce::Decibels::decibelsToGain (dB, -60.0f);
                 const float pan  = juce::jlimit (-1.0f, 1.0f, t.pan.load (std::memory_order_relaxed));
-                const float panNorm = (pan + 1.0f) * 0.5f;
-                const float gL = gain * std::cos (panNorm * juce::MathConstants<float>::halfPi);
-                const float gR = gain * std::sin (panNorm * juce::MathConstants<float>::halfPi);
+                const double panNorm = ((double) pan + 1.0) * 0.5;
+                const double gL = gain * std::cos (panNorm * juce::MathConstants<double>::halfPi);
+                const double gR = gain * std::sin (panNorm * juce::MathConstants<double>::halfPi);
 
                 const float* src = playerScratch.getReadPointer (i);
-                if (outputs[sL] != nullptr && gL > 0.0001f)
-                    juce::FloatVectorOperations::addWithMultiply (outputs[sL], src, gL, numSamples);
-                if (outputs[sR] != nullptr && gR > 0.0001f)
-                    juce::FloatVectorOperations::addWithMultiply (outputs[sR], src, gR, numSamples);
+                // Stream bus also goes through the 64-bit accumulator
+                // so the L/R sum stays full precision across N strips.
+                if (sL < numOutputs && gL > 0.00001)
+                {
+                    double* dstL = outputAccum.getWritePointer (sL);
+                    for (int s = 0; s < numSamples; ++s) dstL[s] += (double) src[s] * gL;
+                }
+                if (sR < numOutputs && gR > 0.00001)
+                {
+                    double* dstR = outputAccum.getWritePointer (sR);
+                    for (int s = 0; s < numSamples; ++s) dstR[s] += (double) src[s] * gR;
+                }
 
                 if (wantMixCapture)
                 {
                     juce::FloatVectorOperations::addWithMultiply (stereoMixScratch.getWritePointer (0),
-                                                                  src, gL, numSamples);
+                                                                  src, (float) gL, numSamples);
                     juce::FloatVectorOperations::addWithMultiply (stereoMixScratch.getWritePointer (1),
-                                                                  src, gR, numSamples);
+                                                                  src, (float) gR, numSamples);
                 }
             }
         }
@@ -1781,16 +1807,35 @@ namespace zynforge
         }
 
         const int outL = juce::jlimit (0, numOutputs - 1, masterOutL.load (std::memory_order_relaxed));
-        if (outL < numOutputs && outputs[outL] != nullptr)
+        if (outL < numOutputs)
+        {
+            // Monitor sum lands in the 64-bit accumulator so the master
+            // bus stays double-precision until the final downcast below.
+            double* dstL = outputAccum.getWritePointer (outL);
             for (int i = 0; i < blk; ++i)
-                outputs[outL][i] += (float) (accL[i] * mGain);
+                dstL[i] += accL[i] * mGain;
+        }
 
         if (stereo)
         {
             const int outR = juce::jlimit (0, numOutputs - 1, masterOutR.load (std::memory_order_relaxed));
-            if (outR < numOutputs && outputs[outR] != nullptr && outR != outL)
+            if (outR < numOutputs && outR != outL)
+            {
+                double* dstR = outputAccum.getWritePointer (outR);
                 for (int i = 0; i < blk; ++i)
-                    outputs[outR][i] += (float) (accR[i] * mGain);
+                    dstR[i] += accR[i] * mGain;
+            }
+        }
+
+        // Final downcast: the 64-bit accumulator → device-output float
+        // buffers. Done in one place at the very end so per-strip /
+        // VCA / stream / monitor sums all stayed at double precision.
+        for (int ch = 0; ch < numOutputs; ++ch)
+        {
+            if (outputs[ch] == nullptr) continue;
+            const double* acc = outputAccum.getReadPointer (ch);
+            for (int s = 0; s < numSamples; ++s)
+                outputs[ch][s] = (float) acc[s];
         }
 
         // Companion stream feed — runs at the very end so it captures
