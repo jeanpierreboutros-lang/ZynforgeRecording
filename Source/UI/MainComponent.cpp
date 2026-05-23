@@ -18,10 +18,12 @@ MainComponent::MainComponent()
 {
     setLookAndFeel (&laf);
 
+    // Title text removed from the header — the macOS window title +
+    // app icon already identify the product, no need to repeat it.
     titleLabel.setFont (brand::type::headline());
     titleLabel.setColour (juce::Label::textColourId, brand::textPrimary);
     titleLabel.setJustificationType (juce::Justification::centredLeft);
-    addAndMakeVisible (titleLabel);
+    titleLabel.setVisible (false);
 
     statusLabel.setFont (brand::type::uiBody());
     statusLabel.setColour (juce::Label::textColourId, brand::textMuted);
@@ -39,8 +41,8 @@ MainComponent::MainComponent()
     transportLabel.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (transportLabel);
 
-    recordButton.setColour (juce::TextButton::buttonColourId, brand::accentRecord.withAlpha (brand::alpha::subtle));
-    recordButton.setColour (juce::TextButton::textColourOffId, brand::accentRecord);
+    recordButton.setColour (juce::TextButton::buttonColourId, brand::accentRecord.darker (0.55f));
+    recordButton.setColour (juce::TextButton::textColourOffId, brand::accentRecord.brighter (0.10f));
     recordButton.onClick = [this] { onRecordClicked(); };
     addAndMakeVisible (recordButton);
 
@@ -57,6 +59,8 @@ MainComponent::MainComponent()
     loadButton.onClick = [this] { onFileMenuClicked(); };
     addAndMakeVisible (loadButton);
 
+    deviceButton.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
+    deviceButton.setColour (juce::TextButton::textColourOffId,   brand::textPrimary);
     deviceButton.onClick = [this] { onDeviceClicked(); };
     addAndMakeVisible (deviceButton);
 
@@ -66,23 +70,23 @@ MainComponent::MainComponent()
     preRollButton.onClick = [this] { onPreRollClicked(); };
     addAndMakeVisible (preRollButton);
 
-    lockButton.setColour (juce::TextButton::buttonColourId, brand::accentRecord.withAlpha (brand::alpha::subtle));
-    lockButton.setColour (juce::TextButton::textColourOffId, brand::accentRecord);
+    lockButton.setColour (juce::TextButton::buttonColourId, brand::accentRecord.darker (0.55f));
+    lockButton.setColour (juce::TextButton::textColourOffId, brand::accentRecord.brighter (0.10f));
     lockButton.onClick = [this] { onLockToggled(); };
     addAndMakeVisible (lockButton);
 
     backupButton.onClick = [this] { onBackupClicked(); };
     addAndMakeVisible (backupButton);
 
-    patchButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus.withAlpha (brand::alpha::subtle));
-    patchButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus);
+    patchButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus.darker (0.55f));
+    patchButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus.brighter (0.10f));
     patchButton.onClick = [this] { zynforge::PatchPage::launch (engine); };
 
     // VSC chip uses the dedicated brand::signalVsc() colour so the
     // 'virtual soundcheck' role has a unique visual identity (was
     // sharing engagedAmber, now ties to accentVS).
-    vscButton.setColour (juce::TextButton::buttonColourId,  brand::signalVsc().withAlpha (brand::alpha::subtle));
-    vscButton.setColour (juce::TextButton::textColourOffId, brand::signalVsc());
+    vscButton.setColour (juce::TextButton::buttonColourId,  brand::signalVsc().darker (0.55f));
+    vscButton.setColour (juce::TextButton::textColourOffId, brand::signalVsc().brighter (0.10f));
     vscButton.setTooltip ("Virtual Soundcheck — repatch every strip's OUTPUT to match its INPUT, "
                           "so playback feeds the desk via the same channels the live mics did.");
     vscButton.onClick = [this] { onVscClicked(); };
@@ -92,10 +96,11 @@ MainComponent::MainComponent()
     auto styleViewBtn = [] (juce::TextButton& b, bool engaged)
     {
         b.setColour (juce::TextButton::buttonColourId,
-                     engaged ? brand::accentStatus.withAlpha (0.32f)
+                     engaged ? brand::accentStatus.darker (0.55f)
                              : brand::bgElevated);
         b.setColour (juce::TextButton::textColourOffId,
-                     engaged ? brand::accentStatus : brand::textSecondary);
+                     engaged ? brand::accentStatus.brighter (0.10f)
+                             : brand::textSecondary);
     };
     styleViewBtn (mixViewButton,  true);
     styleViewBtn (editViewButton, false);
@@ -140,8 +145,8 @@ MainComponent::MainComponent()
         else                    stripWidthPreset = StripWidth::M;
     }
 
-    addChannelButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus.withAlpha (brand::alpha::subtle));
-    addChannelButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus);
+    addChannelButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus.darker (0.55f));
+    addChannelButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus.brighter (0.10f));
     addChannelButton.setTooltip ("Set the number of recording channels — opens a prompt where you type the count (1–256).");
     addChannelButton.onClick = [this]
     {
@@ -3625,9 +3630,9 @@ void MainComponent::paint (juce::Graphics& g)
     g.setColour (brand::bgPanel);
     g.fillRect (header);
     g.setColour (brand::edge);
+    // Single divider at the bottom of the header — the inner line at
+    // y=44 was visually overlapping the chrome buttons; removed.
     g.drawHorizontalLine ((int) header.getBottom() - 1,
-                          header.getX(), header.getRight());
-    g.drawHorizontalLine (44,
                           header.getX(), header.getRight());
 }
 
@@ -3638,7 +3643,8 @@ void MainComponent::resized()
     // Row 1 — title + status + LOCK + + CH + DEVICE + RECORD
     // FMT / PRE moved into Session Settings.
     auto row1 = r.removeFromTop (44).reduced (12, 8);
-    titleLabel   .setBounds (row1.removeFromLeft (220));
+    titleLabel   .setBounds ({});   // hidden — keeps left edge clean
+    row1.removeFromLeft (brand::space::md);
     recordButton .setBounds (row1.removeFromRight (104).reduced (0, 2));
     row1.removeFromRight (brand::space::sm);
     deviceButton .setBounds (row1.removeFromRight (118).reduced (0, 2));

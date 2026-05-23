@@ -71,10 +71,26 @@ namespace zynforge
         if (down) base = base.brighter (0.15f);
         else if (over) base = base.brighter (0.07f);
 
-        // Every button surface gets a subtle vertical gradient so the chrome
-        // reads as 3D, matching ZynForge Live's button finish.
-        g.setGradientFill (brand::verticalGradient (base, r));
+        // Pronounced top-to-bottom gradient — top is noticeably lighter
+        // and bottom darker than the base so the button reads as a
+        // glossy pill rather than a flat tinted rectangle.
+        const auto top = base.brighter (down ? 0.10f : 0.30f);
+        const auto bot = base.darker   (down ? 0.05f : 0.28f);
+        g.setGradientFill (juce::ColourGradient (
+            top, r.getCentreX(), r.getY(),
+            bot, r.getCentreX(), r.getBottom(),
+            false));
         g.fillRoundedRectangle (r, brand::radius::md);
+
+        // Specular highlight on the top half — reinforces the gloss.
+        auto hi = r.withTrimmedBottom (r.getHeight() * 0.55f);
+        g.setGradientFill (juce::ColourGradient (
+            juce::Colours::white.withAlpha (down ? 0.08f : 0.14f),
+                hi.getCentreX(), hi.getY(),
+            juce::Colours::white.withAlpha (0.0f),
+                hi.getCentreX(), hi.getBottom(),
+            false));
+        g.fillRoundedRectangle (hi, brand::radius::md);
 
         g.setColour (brand::edge);
         g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
