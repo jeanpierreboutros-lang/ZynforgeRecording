@@ -190,6 +190,24 @@ namespace zynforge
                         case 34: self->laneMode = LaneMode::Click;      break;
                         default: return;
                     }
+                    // Keep the AUTOMATION toolbar's Lane combo in
+                    // lockstep with the per-row VIEW pick, so the
+                    // toolbar param the engineer adds/deletes points
+                    // for matches what they're looking at. Silent
+                    // setter -- doesn't bounce back through
+                    // onParamChanged.
+                    if (self->toolbar != nullptr)
+                    {
+                        using P = AutomationToolbar::Param;
+                        switch (self->laneMode)
+                        {
+                            case LaneMode::Volume: self->toolbar->setParamSilently (P::Volume); break;
+                            case LaneMode::Pan:    self->toolbar->setParamSilently (P::Pan);    break;
+                            case LaneMode::Mute:   self->toolbar->setParamSilently (P::Mute);   break;
+                            case LaneMode::Click:  self->toolbar->setParamSilently (P::Click);  break;
+                            default: break;   // Waveform / Markers don't map to an automation param
+                        }
+                    }
                     self->repaint();
                 });
             };

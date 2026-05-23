@@ -64,6 +64,13 @@ namespace zynforge
         b.setColour (juce::TextButton::textColourOnId,    brand::onSignal (activeColour));
     }
 
+    void AutomationToolbar::setParamSilently (Param p)
+    {
+        if (param == p) return;
+        param = p;
+        paramCombo.setSelectedId ((int) p + 1, juce::dontSendNotification);
+    }
+
     void AutomationToolbar::selectTool (Tool t)
     {
         tool = t;

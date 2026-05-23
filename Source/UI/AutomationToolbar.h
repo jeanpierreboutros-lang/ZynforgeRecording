@@ -19,6 +19,11 @@ namespace zynforge
         Tool  getTool()  const noexcept { return tool;  }
         Param getParam() const noexcept { return param; }
 
+        // Force the toolbar's param combo to the given value without
+        // firing onParamChanged. Used by EditPage to keep the toolbar
+        // in lockstep with the per-row VIEW lane mode picker.
+        void  setParamSilently (Param p);
+
         std::function<void (Tool)>  onToolChanged;
         std::function<void (Param)> onParamChanged;
         std::function<void()>       onClearAll;

@@ -2790,6 +2790,11 @@ void MainComponent::loadSetlistFromActiveSession()
             {
                 const auto pls = root->getProperty ("playlists");
                 if (pls.isArray()) engine.loadPlaylistsFromJson (pls);
+                // Automation lanes (formatVersion >= 3). Older saves
+                // have no automation key, so the if-check is enough
+                // to keep them loadable.
+                const auto autom = root->getProperty ("automation");
+                if (autom.isArray()) engine.loadAutomationFromJson (autom);
             }
         }
     }
@@ -2853,10 +2858,14 @@ void MainComponent::saveSetlistToActiveSession() const
     obj->setProperty ("setlist",   juce::var (arr));
     // Persist comp playlists (Takes) -- RAM-only before this fix
     // meant every alternate take was lost on app quit.
-    obj->setProperty ("playlists", engine.playlistsToJson());
-    // .zfproj schema version: 2 introduced playlists + (next commit)
-    // stable strip IDs. Older saves are read transparently.
-    obj->setProperty ("formatVersion", 2);
+    obj->setProperty ("playlists",  engine.playlistsToJson());
+    // Persist per-track automation lanes (volume/pan/mute points +
+    // curve types). Without this, every point the engineer drew was
+    // lost on app quit. Same data-loss class as the Takes bug fix.
+    obj->setProperty ("automation", engine.automationToJson());
+    // .zfproj schema version: 2 introduced playlists + stable strip
+    // IDs. v3 adds automation lanes. Older saves read transparently.
+    obj->setProperty ("formatVersion", 3);
     obj->setProperty ("updatedAt",     juce::Time::getCurrentTime().toISO8601 (true));
 
     proj.replaceWithText (juce::JSON::toString (juce::var (obj.get())));

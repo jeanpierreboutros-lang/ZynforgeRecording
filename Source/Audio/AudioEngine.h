@@ -273,18 +273,40 @@ namespace zynforge
         //   Mute   (0/1, but stored as float so the lane editor can
         //          fade between values if we ever extend the renderer)
         enum class AutomationParam : int { Volume = 0, Pan = 1, Mute = 2 };
-        struct AutomationPoint { juce::int64 samplePos; float value; };
+        // Curve type controls how the value evolves from this point
+        // to the NEXT point. Hold = step (old behaviour); Linear =
+        // straight ramp; SCurve = smoothstep; ExpUp/ExpDown = power
+        // curves. Mute always ignores the curve and uses Hold so it
+        // never fades to a fractional value.
+        enum class AutomationCurve : int { Hold = 0, Linear = 1, SCurve = 2, ExpUp = 3, ExpDown = 4 };
+        struct AutomationPoint
+        {
+            juce::int64     samplePos { 0 };
+            float           value     { 0.0f };
+            AutomationCurve curve     { AutomationCurve::Linear };
+        };
 
         // Returns the points for (track, parameter). Empty when none.
         const std::vector<AutomationPoint>& getAutomation (int track, AutomationParam) const;
 
         // Drop a new point. Replaces an existing one if it lands within
         // a tolerance window (so dragging never produces fan-out clouds).
+        // For Mute, the value is snapped to 0 or 1 with curve=Hold.
         void addAutomationPoint (int track, AutomationParam, juce::int64 samplePos, float value);
 
         // Remove the nearest point inside the given sample tolerance.
         void removeAutomationPointNear (int track, AutomationParam,
                                         juce::int64 samplePos, juce::int64 tolerance);
+
+        // Per-point curve setter. Affects the segment FROM this point.
+        void setAutomationCurveAt (int track, AutomationParam,
+                                   juce::int64 samplePos, juce::int64 tolerance,
+                                   AutomationCurve);
+
+        // Snapshot every track's automation lanes into a JSON-compatible
+        // var so the engine can round-trip through .zfproj.
+        juce::var      automationToJson() const;
+        void           loadAutomationFromJson (const juce::var&);
 
         void clearAutomation (AutomationParam);
         void clearAutomationForTrack (int track, AutomationParam);
