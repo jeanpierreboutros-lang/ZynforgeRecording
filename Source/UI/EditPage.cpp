@@ -166,9 +166,10 @@ namespace zynforge
                 juce::PopupMenu m;
                 m.addItem (22, "waveform",    true, laneMode == LaneMode::Waveform);
                 m.addItem (20, "markers",     true, laneMode == LaneMode::Markers);
+                // 'volume trim' was a duplicate of 'volume' with a
+                // different label and no backing trim store -- removed.
                 m.addSeparator();
                 m.addItem (30, "volume",      true, laneMode == LaneMode::Volume);
-                m.addItem (31, "volume trim", true, laneMode == LaneMode::VolumeTrim);
                 m.addItem (32, "mute",        true, laneMode == LaneMode::Mute);
                 m.addItem (33, "pan",         true, laneMode == LaneMode::Pan);
                 m.addItem (34, "click",       true, laneMode == LaneMode::Click);
@@ -183,7 +184,6 @@ namespace zynforge
                         case 20: self->laneMode = LaneMode::Markers;    break;
                         case 22: self->laneMode = LaneMode::Waveform;   break;
                         case 30: self->laneMode = LaneMode::Volume;     break;
-                        case 31: self->laneMode = LaneMode::VolumeTrim; break;
                         case 32: self->laneMode = LaneMode::Mute;       break;
                         case 33: self->laneMode = LaneMode::Pan;        break;
                         case 34: self->laneMode = LaneMode::Click;      break;
@@ -358,7 +358,12 @@ namespace zynforge
         void paint (juce::Graphics& g) override
         {
             auto fillColour = getStripColour();
-            const auto headerBg = hovered ? brand::bgPanel.brighter (0.05f) : brand::bgPanel;
+            // Every TrackRow paints itself in bgStrip (a lighter grey
+            // than bgDeep). The EditPage's own background fills the
+            // empty area below the last row in bgDeep, so the engineer
+            // sees a clear 'rows = light, empty area = dark' contrast.
+            const auto headerBg = hovered ? brand::bgStrip.brighter (0.06f)
+                                           : brand::bgStrip;
             if (hovered) fillColour = fillColour.brighter (0.06f);
 
             // ─── Colour swatch column (click to change track colour)
@@ -408,15 +413,13 @@ namespace zynforge
                 switch (laneMode)
                 {
                     case LaneMode::Volume:
-                    case LaneMode::VolumeTrim:
                     {
                         const float dB = t.gainDb.load (std::memory_order_relaxed);
                         // -60..+12 dB mapped to 1..0 (loud → top)
                         yProp = 1.0f - juce::jlimit (0.0f, 1.0f,
                                                      (dB + 60.0f) / 72.0f);
                         lineCol = brand::accentStatus;
-                        label   = (laneMode == LaneMode::VolumeTrim ? "trim " : "vol ")
-                                + juce::String (dB, 1) + " dB";
+                        label   = "vol " + juce::String (dB, 1) + " dB";
                         break;
                     }
                     case LaneMode::Pan:
@@ -1898,7 +1901,7 @@ namespace zynforge
     public:
         // What this row draws in the lane area (matches the toolbar's
         // Param, or the row's own VIEW choice when no toolbar is wired).
-        enum class LaneMode { Waveform, Markers, Volume, VolumeTrim, Mute, Pan, Click, Tempo };
+        enum class LaneMode { Waveform, Markers, Volume, Mute, Pan, Click, Tempo };
         LaneMode laneMode { LaneMode::Waveform };
 
     private:
@@ -2011,6 +2014,18 @@ namespace zynforge
                 i += stereo ? 2 : 1;
             }
             resized();
+        }
+
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            // Click in the empty area below the last row -> create a
+            // new mono audio track. The TrackList itself only sees the
+            // event when no TrackRow consumes it, which means the
+            // engineer hit empty space. Right-click is left alone for
+            // potential future "Add multiple..." menu.
+            if (e.mods.isPopupMenu() || e.mods.isRightButtonDown()) return;
+            if (engine.getRecorder().isRecording()) return;   // safety
+            engine.addOneStrip();
         }
 
         void resized() override
