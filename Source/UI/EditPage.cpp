@@ -2288,6 +2288,14 @@ namespace zynforge
 
     void EditPage::timerCallback()
     {
+        // EDIT view runs at 24 Hz to drive the playhead + waveform
+        // re-scan. When the engineer is in MIX view, EditPage is
+        // hidden and none of that work needs to happen. Bail early.
+        // Exception: a recording in progress -- the playhead doesn't
+        // matter when hidden, but we DO want to keep waveform thumbs
+        // refreshing so flipping back to EDIT shows current peaks.
+        if (! isVisible() && ! engine.isRecording()) return;
+
         const int n = engine.getRecorder().getNumTracks();
         if (n != lastTrackCount)
             refresh();
