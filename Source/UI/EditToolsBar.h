@@ -155,9 +155,11 @@ namespace zynforge
             {
                 auto rect = getLocalBounds().toFloat().reduced (1.0f);
 
-                // Blue accent when this tool is the active one; grey
-                // (panel) when nothing is selected.
-                const auto accent = juce::Colour::fromRGB (0x3a, 0x90, 0xe0);
+                // Tool selection uses brand::toolActive() (cool-teal /
+                // featureEngaged) — picked deliberately so it doesn't
+                // collide with any signalRecord / signalMute / signalSolo
+                // claim. Replaces a previous hardcoded blue literal.
+                const auto accent = brand::toolActive();
                 if (active)
                 {
                     g.setGradientFill (juce::ColourGradient (

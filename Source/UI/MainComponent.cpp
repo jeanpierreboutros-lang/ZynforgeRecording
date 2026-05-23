@@ -315,6 +315,9 @@ MainComponent::MainComponent()
     addAndMakeVisible (perfDashboard);
     addAndMakeVisible (toast);
 
+    peakTally = std::make_unique<zynforge::PeakTally> (engine);
+    addAndMakeVisible (*peakTally);
+
     // Setlist + cue bar. Wires the three engineer actions back into
     // helpers that read/write the session's .zfproj.
     setlistBar.onPick       = [this] (int idx) { jumpToCue (idx); };
@@ -1665,7 +1668,35 @@ void MainComponent::onPlayClicked()
 
 void MainComponent::onStopClicked()
 {
+    // STOP-while-recording is a take-killing action. A fat-fingered
+    // keystroke or stray touch must not end a live recording. First
+    // tap arms (flash + toast); a second tap within 2 s fires for
+    // real. Any other state — playback, idle — stops immediately
+    // because there's nothing irreversible to protect.
     auto& player = engine.getPlayer();
+
+    if (engine.isRecording())
+    {
+        const auto now = juce::Time::getMillisecondCounter();
+        constexpr juce::uint32 kArmWindowMs = 2000;
+
+        if (stopArmedAtMs == 0 || (now - stopArmedAtMs) > kArmWindowMs)
+        {
+            // First tap — arm. Don't actually stop yet.
+            stopArmedAtMs = now;
+            toast.show ("Tap STOP again to end the recording", Toast::Kind::Warning);
+            statusLabel.setText ("STOP armed — tap again within 2 s to stop recording",
+                                 juce::dontSendNotification);
+            return;
+        }
+        // Second tap within window — disarm and fall through to stop.
+        stopArmedAtMs = 0;
+    }
+    else
+    {
+        stopArmedAtMs = 0;
+    }
+
     if (engine.isRecording()) engine.stopRecording();
     engine.stopPlayback();
     player.rewind();
@@ -5069,6 +5100,17 @@ void MainComponent::resized()
     {
         automationToolbar.setBounds ({});
         if (editToolsBar != nullptr) editToolsBar->setBounds ({});
+    }
+
+    // PeakTally — a thin red bar perched on top of the strip area.
+    // Reserves 4 px above the viewport. Visible from across the room
+    // when any strip clips. Click anywhere on the bar to clear.
+    {
+        const int tallyH = 4;
+        const auto tallyBounds = viewportArea.withHeight (tallyH);
+        viewportArea = viewportArea.withTrimmedTop (tallyH);
+        if (peakTally != nullptr)
+            peakTally->setBounds (tallyBounds);
     }
 
     stripsViewport.setBounds (viewportArea);

@@ -65,8 +65,11 @@ namespace zynforge
         // the session's Audio Files/ folder. Following calls re-render
         // the same file in place so a tempo change keeps the click in
         // sync without piling up tracks.
-        clickButton.setColour (juce::TextButton::buttonColourId,  brand::brandOrange);
-        clickButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::brandOrange));
+        // Click track button uses accentVS (warm VSC amber) instead
+        // of brandOrange — see brandOrange consolidation: the orange
+        // token is now reserved for signalMute() + brand assertion.
+        clickButton.setColour (juce::TextButton::buttonColourId,  brand::accentVS);
+        clickButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::accentVS));
         clickButton.setTooltip ("Generate / regenerate a metronome track at the current tempo. "
                                 "Re-pressing after a tempo change updates it in place.");
         clickButton.onClick = [this] { if (onCreateClickTrack) onCreateClickTrack(); };

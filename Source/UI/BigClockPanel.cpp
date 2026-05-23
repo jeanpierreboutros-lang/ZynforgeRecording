@@ -108,13 +108,15 @@ namespace zynforge
             false));
         g.fillRoundedRectangle (hi, 6.0f);
 
-        // Brand-orange armed-but-not-rolling border. Pulses at 1 Hz so
-        // the call-to-action draws the eye — the engineer has armed
-        // strips and the next RECORD press will print to disk.
+        // Armed-but-not-rolling border. Uses signalArmedReady
+        // (engagedAmber — the BYPASS / LIVE / LOCK token) so the
+        // 'primed but not active' colour doesn't collide with the
+        // mute / brand-assertion claims on brandOrange. Pulses at
+        // 1 Hz so the call-to-action draws the eye.
         if (armedReady && mode == Mode::Idle)
         {
             const float pulse = 0.5f + 0.5f * std::sin (pulsePhase);
-            const auto  col   = brand::brandOrange.withMultipliedBrightness (0.85f + 0.25f * pulse);
+            const auto  col   = brand::signalArmedReady().withMultipliedBrightness (0.85f + 0.25f * pulse);
             g.setColour (col);
             g.drawRoundedRectangle (r.reduced (2.0f), 6.0f, 2.0f);
         }

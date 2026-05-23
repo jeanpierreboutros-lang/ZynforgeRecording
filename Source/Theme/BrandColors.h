@@ -81,6 +81,14 @@ namespace zynforge::brand
     inline juce::Colour signalVsc()         { return accentVS;     }
     inline juce::Colour signalStream()      { return featureEngaged; }
     inline juce::Colour signalPlayhead()    { return accentPlay;   }
+    // Armed-but-not-rolling: BigClock border, future "ready" states.
+    // Maps to engagedAmber (the BYPASS / LIVE / LOCK token) — it's
+    // semantically a 'primed but not active' colour. Keeps brandOrange
+    // free for its two documented uses (signalMute + brand assertion).
+    inline juce::Colour signalArmedReady()  { return engagedAmber; }
+    // EDIT tools active selection — cool-teal so it doesn't collide
+    // with any of the signal colours above.
+    inline juce::Colour toolActive()        { return featureEngaged; }
 
     // ── Alpha tokens for layered overlays ────────────────────────────
     // Anything painted on top of the waveform / lane should pick one

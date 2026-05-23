@@ -42,6 +42,9 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Recently Completed
 
+### 2026-05-23 (later in day)
+- [x] **Phase 1 live-show safety pass** (M) — Record button shape distinctness, global PeakTally bar, STOP-while-recording two-tap guard, touch-target stacking at XS, brandOrange consolidation. See `CHANGELOG.md`.
+
 ### 2026-05-23
 - [x] **Unified dialog chrome** (M) — extracted `Source/Theme/DialogChrome.h`; refactored 9 dialogs + `AlertWindow` LookAndFeel override.
 - [x] **Motion + feedback polish** (M) — BigClock pulse, hover lifts on strips, `Toast` component, path-drawn cue arrows.

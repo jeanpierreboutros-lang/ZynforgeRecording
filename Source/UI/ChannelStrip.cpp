@@ -824,29 +824,63 @@ namespace zynforge
         const bool isBusStrip   = state.isBus.load (std::memory_order_relaxed);
         const int btnH = 24;
         const int btnGap = 3;
+
+        // Touch-target compliance: at XS strip width (~56-70 px) the
+        // 2×2 button grid gives each button ~26×24 — below Apple HIG's
+        // 44 pt minimum and below WCAG 2.5.5 (24×24 minimum, 44×44
+        // enhanced). Auto-stack vertically when the strip is narrower
+        // than 78 px so each toggle gets full width (~70+ px) at the
+        // cost of one extra row of height. Engineers running at XS for
+        // density still get a usable hit zone.
+        const bool stack = getWidth() < 78;
+        const int rowsForButtons = stack ? 4 : 2;
+
         if (isClickStrip || isBusStrip)
         {
             // Bus tracks have no input — no R / I buttons.
             armButton.setVisible (false); armButton.setBounds ({});
             monButton.setVisible (false); monButton.setBounds ({});
-            auto row = r.removeFromTop (btnH);
-            const int halfW = row.getWidth() / 2;
-            soloButton.setBounds (row.removeFromLeft (halfW).reduced (2, 0));
-            muteButton.setBounds (row.reduced (2, 0));
+            if (stack)
+            {
+                soloButton.setBounds (r.removeFromTop (btnH).reduced (2, 0));
+                r.removeFromTop (btnGap);
+                muteButton.setBounds (r.removeFromTop (btnH).reduced (2, 0));
+            }
+            else
+            {
+                auto row = r.removeFromTop (btnH);
+                const int halfW = row.getWidth() / 2;
+                soloButton.setBounds (row.removeFromLeft (halfW).reduced (2, 0));
+                muteButton.setBounds (row.reduced (2, 0));
+            }
         }
         else
         {
             armButton.setVisible (true);
             monButton.setVisible (true);
-            auto row1 = r.removeFromTop (btnH);
-            r.removeFromTop (btnGap);
-            auto row2 = r.removeFromTop (btnH);
-            const int halfW = row1.getWidth() / 2;
-            monButton.setBounds (row1.removeFromLeft (halfW).reduced (2, 0));
-            armButton.setBounds (row1.reduced (2, 0));
-            soloButton.setBounds (row2.removeFromLeft (halfW).reduced (2, 0));
-            muteButton.setBounds (row2.reduced (2, 0));
+            if (stack)
+            {
+                monButton .setBounds (r.removeFromTop (btnH).reduced (2, 0));
+                r.removeFromTop (btnGap);
+                armButton .setBounds (r.removeFromTop (btnH).reduced (2, 0));
+                r.removeFromTop (btnGap);
+                soloButton.setBounds (r.removeFromTop (btnH).reduced (2, 0));
+                r.removeFromTop (btnGap);
+                muteButton.setBounds (r.removeFromTop (btnH).reduced (2, 0));
+            }
+            else
+            {
+                auto row1 = r.removeFromTop (btnH);
+                r.removeFromTop (btnGap);
+                auto row2 = r.removeFromTop (btnH);
+                const int halfW = row1.getWidth() / 2;
+                monButton.setBounds (row1.removeFromLeft (halfW).reduced (2, 0));
+                armButton.setBounds (row1.reduced (2, 0));
+                soloButton.setBounds (row2.removeFromLeft (halfW).reduced (2, 0));
+                muteButton.setBounds (row2.reduced (2, 0));
+            }
         }
+        juce::ignoreUnused (rowsForButtons);
         r.removeFromTop (brand::space::sm);
 
         spectrum .setBounds ({});  // hidden

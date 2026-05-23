@@ -18,6 +18,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ## [Unreleased]
 
 ### Added
+- **Phase 1 live-show safety pass** (from the 2026-05-23 UX audit):
+  - **Record button is shape-distinct from Play**: permanent brand-red 2 px border at idle + concentric-ring "target" glyph (outer ring + inner disc) instead of a solid circle. Readable as RECORD vs PLAY by silhouette under stage glare without relying on colour alone.
+  - **Global PEAK tally** (`Source/UI/PeakTally.h`) — a 4 px brand-red bar pinned across the top of the mixer that pulses at 2 Hz whenever any strip clips and holds for ~1 s after the last clip. Click anywhere on the bar to clear every strip's clip latch in one gesture.
+  - **STOP-while-recording two-tap guard** — pressing STOP (or spacebar) while `engine.isRecording()` now arms first and surfaces a `Toast.Kind::Warning` ("Tap STOP again to end the recording"). A second tap within 2 s actually stops; any later tap re-arms. Prevents fat-fingered ends-of-takes.
+  - **Touch-target compliance at XS strip width** — the REC/MON/MUTE/SOLO 2×2 grid auto-stacks vertically to a 1×4 column when strip width is < 78 px so each toggle gets full strip width (~70 px). Restores the 44 pt minimum tap target.
+  - **`brandOrange` consolidation** — orange is now reserved for `signalMute()` + brand assertion only. New `signalArmedReady()` (= `engagedAmber`) for the BigClock armed-but-idle border; new `toolActive()` (= `featureEngaged`) replaces a hardcoded blue literal in `EditToolsBar`; the click-track button moves from `brandOrange` to `accentVS`.
 - Unified dialog chrome via `Source/Theme/DialogChrome.h`. Every modal — first-party `DialogWindow`s *and* `juce::AlertWindow::showAsync(...)` — now wears the AudioDevice dialog's look: orange title stripe, gradient `bgPanel` background, footer divider, `accentStatus` Apply / `bgElevated` Cancel buttons.
 - `Toast` non-modal feedback component (`Source/UI/Toast.h`). Bottom-right pill, fade-in / hold / fade-out, queued. Surfaces every `showStatus(...)` call as a calm non-blocking acknowledgement.
 - Hover affordance on `ChannelStrip`, `EditPage::TrackRow`, and `VcaStripView` — ~6% brightness lift + brighter edge.

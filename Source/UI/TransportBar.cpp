@@ -26,8 +26,23 @@ namespace zynforge
                                            : brand::controlBg);
             g.setGradientFill (brand::verticalGradient (base, r, 0.10f, 0.18f));
             g.fillRoundedRectangle (r, brand::radius::md);
-            g.setColour (brand::controlBorder);
-            g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
+
+            // Record gets a permanent brand-red 2 px stroke even when
+            // idle — engineer at the console reading at distance and
+            // under stage glare cannot tell circle / triangle / square
+            // apart by colour alone. The persistent stroke makes the
+            // call-to-action shape-distinct from PLAY (green) and STOP
+            // (amber) regardless of light conditions.
+            if (icon == Icon::Record)
+            {
+                g.setColour (brand::accentRecord.withAlpha (0.85f));
+                g.drawRoundedRectangle (r.reduced (1.0f), brand::radius::md, 2.0f);
+            }
+            else
+            {
+                g.setColour (brand::controlBorder);
+                g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
+            }
 
             // Icon (centred inside the inner area).
             auto ic = r.reduced (8.0f, 6.0f);
@@ -77,8 +92,17 @@ namespace zynforge
                 }
                 case Icon::Record:
                 {
+                    // Concentric-ring glyph: outer ring + filled inner
+                    // disc. The ring + dot reads as 'target' from
+                    // distance, distinct from PLAY's solid triangle
+                    // and STOP's solid square even when only the
+                    // silhouette is legible.
                     const float radius = juce::jmin (ic.getWidth(), ic.getHeight()) * 0.5f;
-                    g.fillEllipse (cx - radius, cy - radius, radius * 2.0f, radius * 2.0f);
+                    g.drawEllipse (cx - radius, cy - radius,
+                                   radius * 2.0f, radius * 2.0f, 1.6f);
+                    const float innerR = radius * 0.55f;
+                    g.fillEllipse (cx - innerR, cy - innerR,
+                                   innerR * 2.0f, innerR * 2.0f);
                     break;
                 }
                 case Icon::Loop:
