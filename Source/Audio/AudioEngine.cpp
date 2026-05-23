@@ -237,6 +237,8 @@ namespace zynforge
         if (n <= 0) return;
         trackClips.clear();
         trackClips.resize ((size_t) n);
+        trackPlaylists.clear();
+        trackPlaylists.resize ((size_t) n);
         for (int i = 0; i < n; ++i)
         {
             Clip c;
@@ -247,7 +249,85 @@ namespace zynforge
             if (c.fileLengthSamples <= 0) continue;
             trackClips[(size_t) i].push_back (c);
             player.setTrackClips (i, trackClips[(size_t) i]);
+
+            // Seed Take 1 = current single-clip layout so the engineer
+            // can immediately stamp "Take 2 from current" mid-comp.
+            Take t1;
+            t1.name  = "Take 1";
+            t1.clips = trackClips[(size_t) i];
+            trackPlaylists[(size_t) i].takes.push_back (std::move (t1));
+            trackPlaylists[(size_t) i].activeTake = 0;
         }
+    }
+
+    int AudioEngine::getTakeCount (int track) const
+    {
+        if (track < 0 || track >= (int) trackPlaylists.size()) return 0;
+        return (int) trackPlaylists[(size_t) track].takes.size();
+    }
+
+    int AudioEngine::getActiveTakeIdx (int track) const
+    {
+        if (track < 0 || track >= (int) trackPlaylists.size()) return -1;
+        return trackPlaylists[(size_t) track].activeTake;
+    }
+
+    juce::String AudioEngine::getTakeName (int track, int takeIdx) const
+    {
+        if (track < 0 || track >= (int) trackPlaylists.size()) return {};
+        const auto& p = trackPlaylists[(size_t) track];
+        if (takeIdx < 0 || takeIdx >= (int) p.takes.size()) return {};
+        return p.takes[(size_t) takeIdx].name;
+    }
+
+    void AudioEngine::setActiveTake (int track, int takeIdx)
+    {
+        if (track < 0 || track >= (int) trackPlaylists.size()) return;
+        auto& p = trackPlaylists[(size_t) track];
+        if (takeIdx < 0 || takeIdx >= (int) p.takes.size()) return;
+
+        // Save the current trackClips into the OUTGOING take so a
+        // mid-edit switch doesn't lose work, THEN load the incoming
+        // take into trackClips + republish to the player.
+        if (p.activeTake >= 0 && p.activeTake < (int) p.takes.size())
+            p.takes[(size_t) p.activeTake].clips = trackClips[(size_t) track];
+
+        p.activeTake = takeIdx;
+        trackClips[(size_t) track] = p.takes[(size_t) takeIdx].clips;
+        player.setTrackClips (track, trackClips[(size_t) track]);
+    }
+
+    int AudioEngine::newTakeFromCurrent (int track, const juce::String& name)
+    {
+        if (track < 0 || track >= (int) trackPlaylists.size()) return -1;
+        auto& p = trackPlaylists[(size_t) track];
+        Take t;
+        t.name  = name.isNotEmpty() ? name : ("Take " + juce::String ((int) p.takes.size() + 1));
+        t.clips = trackClips[(size_t) track];
+        p.takes.push_back (std::move (t));
+        p.activeTake = (int) p.takes.size() - 1;
+        return p.activeTake;
+    }
+
+    void AudioEngine::deleteTake (int track, int takeIdx)
+    {
+        if (track < 0 || track >= (int) trackPlaylists.size()) return;
+        auto& p = trackPlaylists[(size_t) track];
+        if (takeIdx < 0 || takeIdx >= (int) p.takes.size()) return;
+        if (p.takes.size() <= 1) return;   // never delete the last take
+
+        p.takes.erase (p.takes.begin() + takeIdx);
+        if (p.activeTake >= (int) p.takes.size()) p.activeTake = (int) p.takes.size() - 1;
+        trackClips[(size_t) track] = p.takes[(size_t) p.activeTake].clips;
+        player.setTrackClips (track, trackClips[(size_t) track]);
+    }
+
+    void AudioEngine::renameTake (int track, int takeIdx, const juce::String& name)
+    {
+        if (track < 0 || track >= (int) trackPlaylists.size()) return;
+        auto& p = trackPlaylists[(size_t) track];
+        if (takeIdx < 0 || takeIdx >= (int) p.takes.size()) return;
+        p.takes[(size_t) takeIdx].name = name.isNotEmpty() ? name : ("Take " + juce::String (takeIdx + 1));
     }
 
     void AudioEngine::setPhasePair (int leftCh1Based, int rightCh1Based) noexcept

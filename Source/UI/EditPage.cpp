@@ -1738,6 +1738,23 @@ namespace zynforge
             menu.addSeparator();
             add (8, "fit to window", Size::FitToWindow);
 
+            // Takes (comp playlists) — engineer captures the current
+            // clip list as a named take, switches between takes for
+            // comping. IDs 800..830 = pick a take; 850 = new take from
+            // current; 851 = rename active take; 852 = delete active.
+            menu.addSeparator();
+            const int takes  = engine.getTakeCount (index);
+            const int active = engine.getActiveTakeIdx (index);
+            juce::PopupMenu takesMenu;
+            for (int i = 0; i < takes && i < 30; ++i)
+                takesMenu.addItem (800 + i, engine.getTakeName (index, i),
+                                   true, i == active);
+            takesMenu.addSeparator();
+            takesMenu.addItem (850, "New take from current");
+            takesMenu.addItem (851, "Rename active take…", takes > 0);
+            takesMenu.addItem (852, "Delete active take",  takes > 1);
+            menu.addSubMenu ("Take", takesMenu);
+
             // Use a screen-area target (1x1 at the click point) so the menu's
             // anchor doesn't depend on the row component still being alive
             // when the callback fires. SafePointer wraps the row body so a
@@ -1748,16 +1765,60 @@ namespace zynforge
                                     .withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 }),
                                 [safe] (int chosen)
             {
-                if (auto* row = safe.getComponent())
+                auto* row = safe.getComponent();
+                if (row == nullptr) return;
+                row->menuOpen = false;
+
+                if (chosen >= 1 && chosen <= 8)
                 {
-                    row->menuOpen = false;
                     static const std::array<Size, 8> map { Size::Micro, Size::Mini, Size::Small,
                                                            Size::Medium, Size::Large, Size::Jumbo,
                                                            Size::Extreme, Size::FitToWindow };
-                    if (chosen < 1 || chosen > 8) return;
                     const auto next = map[(std::size_t) (chosen - 1)];
                     row->rowSize = next;
                     if (row->onSizeChosen) row->onSizeChosen (*row, next);
+                    return;
+                }
+
+                // Take pick — 800..829.
+                if (chosen >= 800 && chosen < 830)
+                {
+                    row->engine.setActiveTake (row->index, chosen - 800);
+                    row->repaint();
+                    return;
+                }
+                if (chosen == 850)   // new take from current
+                {
+                    row->engine.newTakeFromCurrent (row->index, {});
+                    row->repaint();
+                    return;
+                }
+                if (chosen == 851)   // rename active take
+                {
+                    const int active = row->engine.getActiveTakeIdx (row->index);
+                    const auto cur   = row->engine.getTakeName (row->index, active);
+                    auto* aw = new juce::AlertWindow ("Rename take",
+                        "Take name:", juce::MessageBoxIconType::QuestionIcon);
+                    aw->addTextEditor ("n", cur, {});
+                    aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
+                    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+                    juce::Component::SafePointer<TrackRow> rs (row);
+                    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+                        [aw, rs, active] (int r)
+                    {
+                        std::unique_ptr<juce::AlertWindow> own (aw);
+                        if (r != 1 || rs == nullptr) return;
+                        rs->engine.renameTake (rs->index, active, own->getTextEditorContents ("n").trim());
+                        rs->repaint();
+                    }));
+                    return;
+                }
+                if (chosen == 852)   // delete active take
+                {
+                    const int active = row->engine.getActiveTakeIdx (row->index);
+                    row->engine.deleteTake (row->index, active);
+                    row->repaint();
+                    return;
                 }
             });
         }

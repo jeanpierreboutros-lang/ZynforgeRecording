@@ -7,6 +7,7 @@
 #include "NewSessionDialog.h"
 #include "PatchPage.h"
 #include "EditToolsBar.h"
+#include "../Audio/MidiClockOut.h"
 #include "ClickSettingsDialog.h"
 #include "../Audio/SpectralClassifier.h"
 #include "SessionPropertiesDialog.h"
@@ -605,6 +606,20 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         oscMenu.addItem (115, "Stop OSC", engine.isOscListening());
         menu.addSubMenu ("OSC", oscMenu);
 
+        // MIDI clock master — drive outboard synths / drum machines /
+        // DAW slaves from the session tempo (24 PPQN). Submenu lists
+        // every installed MIDI output; pick one to enable, or "Stop"
+        // to disable. Currently-active device is checkmarked.
+        juce::PopupMenu midiMenu;
+        const auto outs = zynforge::MidiClockOut::listOutputs();
+        const auto active = engine.getMidiClockOut().getOutputDeviceName();
+        const bool clockOn = engine.getMidiClockOut().isEnabled();
+        midiMenu.addItem (400, "Stop MIDI clock", clockOn, ! clockOn);
+        midiMenu.addSeparator();
+        for (int i = 0; i < outs.size() && i < 30; ++i)
+            midiMenu.addItem (401 + i, outs[i], true, clockOn && outs[i] == active);
+        menu.addSubMenu ("MIDI clock out", midiMenu);
+
         menu.addSeparator();
         menu.addItem (260, "Upload session to cloud…", ! engine.isRecording());
         menu.addItem (261, "Configure cloud upload command…");
@@ -666,6 +681,23 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
             showStatus ("OSC failed to bind UDP 8000 — port already in use?");
     }
     else if (id == 115)  { engine.stopOsc(); showStatus ("OSC stopped"); }
+    else if (id == 400)
+    {
+        engine.getMidiClockOut().setEnabled (false);
+        showStatus ("MIDI clock stopped");
+    }
+    else if (id >= 401 && id < 431)
+    {
+        const auto outs = zynforge::MidiClockOut::listOutputs();
+        const int idx = id - 401;
+        if (idx >= 0 && idx < outs.size())
+        {
+            engine.getMidiClockOut().setOutputDevice (outs[idx]);
+            engine.getMidiClockOut().setTempoBpm (engine.getSessionTempoBpm());
+            engine.getMidiClockOut().setEnabled (true);
+            showStatus ("MIDI clock → " + outs[idx]);
+        }
+    }
     else if (id == 260)
     {
         // Run the configured cloud-upload command with {SESSION} expanded.

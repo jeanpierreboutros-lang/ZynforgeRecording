@@ -274,6 +274,19 @@ namespace zynforge
         // tools have something to grab. Called after loadSession() or
         // when stopRecording() auto-loads the just-captured files.
         void seedDefaultClips();
+
+        // ── Comp playlists (Take swap) ─────────────────────────────
+        // Each track gets a Playlist (vector<Take>). The active Take's
+        // clips are what the player renders. Engineer captures the
+        // current clip list as a named take, switches between takes for
+        // comping, deletes takes they don't want.
+        int   getTakeCount     (int track) const;
+        int   getActiveTakeIdx (int track) const;
+        juce::String getTakeName (int track, int takeIdx) const;
+        void  setActiveTake   (int track, int takeIdx);
+        int   newTakeFromCurrent (int track, const juce::String& name);
+        void  deleteTake      (int track, int takeIdx);
+        void  renameTake      (int track, int takeIdx, const juce::String& name);
         // Split the named track at the current playhead — creates two
         // clips that reference the same audio file with adjacent regions.
         bool splitTrackAtPlayhead (int track);
@@ -442,6 +455,12 @@ namespace zynforge
         // splits or trims, the entry has one or more Clips covering
         // the audible regions.
         std::vector<std::vector<Clip>> trackClips;
+        // Per-track Playlist storing every Take (named clip list). The
+        // active take's clips mirror trackClips above so the player
+        // path doesn't need to know about takes. setActiveTake swaps
+        // the active take's contents into trackClips + republishes
+        // to the player.
+        std::vector<Playlist> trackPlaylists;
         std::vector<AutomationPoint> emptyAutomation;   // returned by ref when none
 
         std::vector<AutomationPoint>* findLane (int track, AutomationParam);
