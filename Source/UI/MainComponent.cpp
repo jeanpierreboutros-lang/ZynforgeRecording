@@ -44,7 +44,10 @@ MainComponent::MainComponent()
     recordButton.setColour (juce::TextButton::buttonColourId, brand::accentRecord.darker (0.55f));
     recordButton.setColour (juce::TextButton::textColourOffId, brand::accentRecord.brighter (0.10f));
     recordButton.onClick = [this] { onRecordClicked(); };
-    addAndMakeVisible (recordButton);
+    // The transport-bar red-circle button now owns the RECORD action;
+    // keep this button alive (status text updates still reference it)
+    // but don't paint it in the header.
+    recordButton.setVisible (false);
 
     playButton.setColour (juce::TextButton::buttonColourId, brand::accentPlay.withAlpha (brand::alpha::subtle));
     playButton.setColour (juce::TextButton::textColourOffId, brand::accentPlay);
@@ -3740,8 +3743,10 @@ void MainComponent::resized()
     auto row1 = r.removeFromTop (44).reduced (12, 8);
     titleLabel   .setBounds ({});   // hidden — keeps left edge clean
     row1.removeFromLeft (brand::space::md);
-    recordButton .setBounds (row1.removeFromRight (104).reduced (0, 2));
-    row1.removeFromRight (brand::space::sm);
+    // Record action is owned by the transport-bar red-circle button.
+    // Keep the pill alive so callers that still poll it don't crash,
+    // but exclude it from the layout.
+    recordButton .setBounds ({});
     deviceButton .setBounds (row1.removeFromRight (110).reduced (0, 2));
     row1.removeFromRight (brand::space::sm);
     addChannelButton.setBounds (row1.removeFromRight (70).reduced (0, 2));
