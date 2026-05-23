@@ -1004,7 +1004,12 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
                 cancelB.setBounds (br.removeFromRight (110));
             }
 
-            void paint (juce::Graphics& g) override { g.fillAll (brand::bgPanel); }
+            void paint (juce::Graphics& g) override
+            {
+                auto r = getLocalBounds().toFloat();
+                g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.08f, 0.14f));
+                g.fillRect (r);
+            }
 
             AudioEngine& eng;
             juce::Label fmtL, rateL, bitsL;
@@ -4796,13 +4801,24 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
 
 void MainComponent::paint (juce::Graphics& g)
 {
-    g.fillAll (brand::bgDeep);
+    // Whole-window vertical gradient — top sits 6% above bgDeep, bottom
+    // sits 4% below. Subtle enough that the engineer reads it as 'deep
+    // panel' rather than 'banded background', but it stops the canvas
+    // feeling like a flat sheet of paint.
+    {
+        auto fullBounds = getLocalBounds().toFloat();
+        g.setGradientFill (juce::ColourGradient (
+            brand::bgDeep.brighter (0.06f), fullBounds.getCentreX(), fullBounds.getY(),
+            brand::bgDeep.darker   (0.04f), fullBounds.getCentreX(), fullBounds.getBottom(),
+            false));
+        g.fillRect (fullBounds);
+    }
 
     // Header = row 1 (44 px) + row 2 transport (52 px) = 96 px total.
     // The previous value (44+40 = 84) put the bottom divider INSIDE the
     // transport row and visually clipped the buttons.
     auto header = getLocalBounds().removeFromTop (44 + 52).toFloat();
-    g.setColour (brand::bgPanel);
+    g.setGradientFill (brand::verticalGradient (brand::bgPanel, header, 0.08f, 0.18f));
     g.fillRect (header);
     g.setColour (brand::edge);
     g.drawHorizontalLine ((int) header.getBottom() - 1,

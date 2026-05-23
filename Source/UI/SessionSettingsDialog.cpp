@@ -92,7 +92,12 @@ namespace zynforge
                 cancelButton.setBounds (btnRow.removeFromRight (110));
             }
 
-            void paint (juce::Graphics& g) override { g.fillAll (brand::bgPanel); }
+            void paint (juce::Graphics& g) override
+            {
+                auto r = getLocalBounds().toFloat();
+                g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.08f, 0.14f));
+                g.fillRect (r);
+            }
 
         private:
             void refreshBitDepths()

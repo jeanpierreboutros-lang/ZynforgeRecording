@@ -48,7 +48,7 @@ namespace zynforge
     void MiniSpectrum::paint (juce::Graphics& g)
     {
         auto r = getLocalBounds().toFloat().reduced (2.0f);
-        g.setColour (brand::bgDeep);
+        g.setGradientFill (brand::verticalGradient (brand::bgDeep, r, 0.10f, 0.16f));
         g.fillRoundedRectangle (r, 2.0f);
 
         if (r.getWidth() < 2.0f || r.getHeight() < 4.0f) return;

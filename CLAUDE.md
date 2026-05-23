@@ -115,6 +115,10 @@ Toggling stereo (via right-click menu, PATCH M/ST pill, or +CH dialog) calls `se
 
 `Session → Configure cloud upload command…` — store a template like `rclone copy {SESSION} myremote:bucket/` (or `aws s3 sync`, `rsync`, …). `Session → Upload session to cloud…` expands `{SESSION}` to the active session dir and `juce::ChildProcess`-launches the command.
 
+## Gradient sweep (2026-05-23 pass 2)
+
+Every previously-flat painted surface in the app now uses `brand::verticalGradient()` (or a bespoke `juce::ColourGradient` for state-tinted hero panels). Flat `g.fillAll (...)` is gone from every component that owns visible chrome. Touched: `MainComponent` (root canvas + header), `BigClockPanel` (state-tinted background + soft top highlight for raised-metal feel), `VcaPanel`, `TimelineStrip`, `MiniSpectrum`, `StripColourPicker`, `Meterbridge`, `MarkerListDialog`, `NoiseReportDialog`, `ExportDialog`, `SessionSettingsDialog`, the AudioDeviceDialog inner panel. Strips, faders, toggles, and TextButtons were already gradient via `ZynForgeLookAndFeel`, so the whole window now reads as a single glassy plane rather than a banded paste-up.
+
 ## Design system (2026-05-23 audit pass)
 
 - **`brand::shadow::elev1/elev2/elev3`** replace the hand-rolled `Colours::black.withAlpha (0.xxf)` shadow values. Strip / chip ≈ elev1, fader caps + dialogs ≈ elev2, modals + accents ≈ elev3.

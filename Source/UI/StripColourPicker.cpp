@@ -45,7 +45,9 @@ namespace zynforge
 
     void StripColourPicker::paint (juce::Graphics& g)
     {
-        g.fillAll (brand::bgPanel);
+        auto fr = getLocalBounds().toFloat();
+        g.setGradientFill (brand::verticalGradient (brand::bgPanel, fr, 0.10f, 0.16f));
+        g.fillRect (fr);
         g.setColour (brand::edge);
         g.drawRect (getLocalBounds(), 1);
 

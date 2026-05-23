@@ -54,12 +54,26 @@ namespace zynforge
     {
         auto r = getLocalBounds().toFloat();
 
-        // Background
+        // Background — gradient fill in the state-tinted colour so the
+        // hero panel reads as a glassy plate rather than a flat block.
         juce::Colour bg = brand::bgPanel;
         if (mode == Mode::Recording) bg = brand::accentRecord.withAlpha (0.16f);
         else if (mode == Mode::Playing) bg = brand::accentPlay.withAlpha (0.14f);
-        g.setColour (bg);
-        g.fillRoundedRectangle (r.reduced (2.0f), 6.0f);
+        auto bgRect = r.reduced (2.0f);
+        g.setGradientFill (juce::ColourGradient (
+            bg.brighter (0.12f), bgRect.getCentreX(), bgRect.getY(),
+            bg.darker   (0.18f), bgRect.getCentreX(), bgRect.getBottom(),
+            false));
+        g.fillRoundedRectangle (bgRect, 6.0f);
+
+        // Soft top highlight — reinforces the glass / depth feel and
+        // makes the timer read as raised metal under stage lights.
+        auto hi = bgRect.withTrimmedBottom (bgRect.getHeight() * 0.60f);
+        g.setGradientFill (juce::ColourGradient (
+            juce::Colours::white.withAlpha (0.06f), hi.getCentreX(), hi.getY(),
+            juce::Colours::white.withAlpha (0.0f),  hi.getCentreX(), hi.getBottom(),
+            false));
+        g.fillRoundedRectangle (hi, 6.0f);
 
         // Brand-orange armed-but-not-rolling border. Only shows when
         // at least one strip is record-armed AND transport is idle —

@@ -52,7 +52,12 @@ namespace zynforge
                 }
             }
 
-            void paint (juce::Graphics& g) override { g.fillAll (brand::bgDeep); }
+            void paint (juce::Graphics& g) override
+            {
+                auto r = getLocalBounds().toFloat();
+                g.setGradientFill (brand::verticalGradient (brand::bgDeep, r, 0.08f, 0.12f));
+                g.fillRect (r);
+            }
 
         private:
             AudioEngine& engine;

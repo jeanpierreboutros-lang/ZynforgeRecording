@@ -39,7 +39,9 @@ namespace zynforge
 
         void paint (juce::Graphics& g) override
         {
-            g.fillAll (brand::bgDeep);
+            auto r = getLocalBounds().toFloat();
+            g.setGradientFill (brand::verticalGradient (brand::bgDeep, r, 0.08f, 0.14f));
+            g.fillRect (r);
             g.setColour (brand::edge);
             g.drawRect (getLocalBounds(), 1);
             g.setColour (brand::textSecondary);

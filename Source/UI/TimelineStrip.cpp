@@ -57,7 +57,7 @@ namespace zynforge
     void TimelineStrip::paint (juce::Graphics& g)
     {
         auto r = getLocalBounds().toFloat().reduced (2.0f);
-        g.setColour (brand::bgPanel);
+        g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.10f, 0.14f));
         g.fillRoundedRectangle (r, 4.0f);
         g.setColour (brand::edge);
         g.drawRoundedRectangle (r, 4.0f, 1.0f);
