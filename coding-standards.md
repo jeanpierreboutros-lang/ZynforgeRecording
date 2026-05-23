@@ -1,0 +1,108 @@
+# Coding Standards — ZynForge Recording
+
+The goal of this document is to keep the codebase consistent enough that any contributor (human or Claude) can read and edit it without first reverse-engineering the previous author's conventions. Where a convention is project-specific — and not just generic C++ / JUCE style — it is called out explicitly.
+
+## General Principles
+
+- **Clarity over cleverness.** Code is read many more times than it is written. Prefer the obvious form.
+- **Real-time discipline is mechanical, not best-effort.** See `decisions.md`. The audio callback obeys hard rules; the rest of the codebase obeys taste.
+- **Persistence is part of the feature.** A user-editable field that does not round-trip to disk is incomplete, not a follow-up.
+- **The design system is the truth.** Colours, fonts, spacing, shadows come from `Source/Theme/`. Inline literals are a smell.
+
+## Naming Conventions
+
+- **Files:** `PascalCase.{h,cpp}` matching the primary class. `AudioEngine.h` declares class `AudioEngine`. Header-only utilities are fine for small helpers.
+- **Namespaces:** `zynforge::` for project code; nested `zynforge::brand` for design tokens; `zynforge::dialog` for dialog helpers. Do not put project code at global scope.
+- **Classes / structs:** `PascalCase`. Mark `final` if not meant to be inherited.
+- **Free functions / methods:** `camelCase`.
+- **Member variables:** `camelCase`. No Hungarian. No `m_` prefix.
+- **Constants:** `kCamelCase` (Google style) — `kNumSends`, `kFftSize`, `kTickMs`.
+- **Atomics:** name reads naturally — `armed`, `peak`, `recording` — not `armedAtomic`.
+- **Enums:** `enum class Name : int { ... }`. Scoped, explicit underlying type.
+
+## Code Formatting and Style
+
+- **C++20.** Use `std::optional`, `std::span`, `concept`, structured bindings, designated initialisers, `if constexpr` freely.
+- **Indentation:** 4 spaces. No tabs.
+- **Braces:** Allman (open brace on its own line) for functions and types; K&R inline for short control flow when the body is one short statement.
+- **Line length:** Aim for ~100 chars; hard wrap at 120.
+- **Includes:** Project headers in `""`, system / JUCE headers in `<>`. Group order: same-file pair → other project → JUCE → std. One blank line between groups.
+- **`auto`:** Use when the type is obvious from the right-hand side (iterators, `make_unique`, JUCE factory returns). Spell out the type when it informs the reader.
+- **No `using namespace`** at file scope. Inside a function is acceptable for `std::chrono_literals`.
+
+## Preferred Patterns and Anti-Patterns
+
+### Always
+
+- Use `brand::*` tokens for every colour, font, spacing, radius, shadow.
+- Use `dialog::paintChrome(...)` for modal `paint()`. Never hand-roll a dialog background.
+- Make `juce::Component`s `final` unless inheritance is intended.
+- Use `juce::Component::SafePointer` when a lambda captured by an async callback (timer, modal, message) refers back to a parent that might outlive it.
+- Use `std::atomic` for any value crossed between the audio thread and any other thread.
+- Pass `juce::String` by const reference. Pass small POD by value.
+- Wrap external commands (`lame`, `rclone`) in `juce::ChildProcess` and check the exit code.
+
+### Never
+
+- Allocate, lock, log, or call `Component::repaint` from the audio callback.
+- Construct a raw `juce::Font` outside `Source/Theme/`. Use `brand::type::*` or `brand::fonts::*`.
+- Use `juce::Colour::fromRGB(...)` or `juce::Colours::black/white` outside `Source/Theme/`. Use `brand::*` tokens or `brand::onSignal(bg)`.
+- Reference a strip by its array index in any persisted form. Use `TrackState::stripId`.
+- Add a plugin hosting hook. See `decisions.md` *No plugin hosting*.
+- Credit Harrison LiveTrax / Waves Tracks Live anywhere.
+- `--force` push or amend a pushed commit.
+
+### Brand-token examples
+
+```cpp
+// ✗  bgPanel hard-coded, font constructed inline, hex shadow.
+g.setColour (juce::Colour (0xff121316));
+g.fillRect (r);
+g.setFont (juce::Font (juce::FontOptions().withHeight (13.5f).withStyle ("Bold")));
+g.setColour (juce::Colours::black.withAlpha (0.35f));
+
+// ✓  same surface via the design system.
+g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.05f, 0.15f));
+g.fillRect (r);
+g.setFont (brand::type::ui (13.5f, true));
+g.setColour (brand::shadow::elev2());
+```
+
+## Error Handling and Logging
+
+- **User-facing errors** become a `Toast` (`Source/UI/Toast.h`) or an `AlertWindow` for blocking conditions. Never silently fail. Silent refusal at the engine boundary (e.g. reorder during playback) is a bug.
+- **Internal invariants** — `jassert` for "this should never happen" in debug. Don't `assert` in release-critical RT code.
+- **Logging** — `juce::Logger::writeToLog` from the message thread only. The audio callback never logs.
+- **File I/O errors** — check `juce::Result` / `bool` returns from JUCE writers. On failure, surface to the engineer and continue (a single failed FLAC encode shouldn't kill the recording session).
+- **External-process errors** — `juce::ChildProcess::getExitCode()` must be checked. Non-zero exit → toast a warning with the command's stderr tail.
+
+## Testing Expectations
+
+See `testing.md` for the full strategy. High level:
+
+- Every change is **build-tested** (`cmake --build build --config Release`).
+- Every change is **smoke-tested** (launch, confirm no new crash report, RSS / CPU healthy).
+- Changes touching `Source/Audio/` are **field-tested** before being declared done.
+- Formal unit tests are not yet in place; a harness for `Source/Audio/` is on the roadmap (see `tasks.md`).
+
+## Documentation and Comments
+
+- **Comment the *why*, never the *what*.** Well-named functions document themselves. Comments document a hidden constraint, a surprising decision, a workaround for a JUCE bug, a non-obvious invariant.
+- **No multi-paragraph docstrings.** A short paragraph at the top of a non-trivial class is fine.
+- **No "added for issue #123" / "used by X" comments.** Those rot. Belong in the commit message or PR description.
+- **No emoji in code, comments, or docs** unless the user explicitly asks for it.
+- **Update `CLAUDE.md` + `README.md`** after every change that alters how the app works or how a contributor would build / run it.
+
+## Git / Commit Guidelines
+
+- **Subject line** in the imperative ("Add VCA stereo shortcut", not "Added" or "Adds").
+- **Body** explains the *why* and any context future-you needs. The diff already shows the *what*.
+- **Co-author trailer** — `Co-Authored-By: Claude Opus <noreply@anthropic.com>` when Claude wrote code in the commit.
+- **Push** to `origin/main` after every change (workflow rule 4). No PR review process today.
+- **Never** `--force` push to `main`. Never amend a pushed commit.
+- **Never** `--no-verify` or skip hooks unless the user explicitly asks.
+
+## Project-specific TODOs
+
+- [TODO] Confirm whether `std::format` is the target for new string formatting, or whether `juce::String::formatted` remains the convention.
+- [TODO] Document `final` policy for header-only components inside `Source/UI/*.h`.
