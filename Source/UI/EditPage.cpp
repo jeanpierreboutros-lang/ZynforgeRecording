@@ -1394,6 +1394,18 @@ namespace zynforge
 
                 if (reorderActive && std::abs (delta) > rowH)
                 {
+                    // Refuse reorder while playback is actively rolling
+                    // — swapTracks renames Track_NN.wav on disk and the
+                    // player's open readers would point at the wrong
+                    // data mid-block. Loaded-but-paused is OK: we
+                    // reload the session after the swap to pick up the
+                    // new file → track mapping.
+                    if (engine.getPlayer().isPlaying())
+                    {
+                        reorderActive = false;
+                        reorderArmed  = false;
+                        return;
+                    }
                     const int dir = delta > 0 ? +1 : -1;
                     // engine.swapTracks does an ADJACENT swap. For a
                     // stereo strip, swap both halves together so the
@@ -1556,7 +1568,23 @@ namespace zynforge
             // but never crossed the 8 px threshold, fall through to
             // the colour picker (legacy 'click swatch = colour').
             if (reorderArmed && ! reorderActive)
+            {
                 openColourPicker();
+            }
+            else if (reorderActive)
+            {
+                // Swap renamed the on-disk Track_NN.wav files; reload
+                // the session so the SessionPlayer's open readers map
+                // to the new file order. Refusal-during-playback is
+                // checked above, so this is always safe to call here.
+                const auto dir = engine.getActiveSessionDir();
+                if (dir.isDirectory())
+                {
+                    const auto pos = engine.getPlayer().getPositionSamples();
+                    engine.loadSession (dir);
+                    engine.getPlayer().setPositionSamples (pos);
+                }
+            }
             reorderArmed  = false;
             reorderActive = false;
         }
