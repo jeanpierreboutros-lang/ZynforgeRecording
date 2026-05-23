@@ -53,6 +53,15 @@ namespace zynforge
         // point on the active lane.
         int    draggingPointIdx { -1 };
 
+        // Clip-edit drag tracking. When the engineer grabs a clip's
+        // left edge, right edge, or body, draggingClipIdx pins which
+        // clip is moving and draggingClipModeInt picks the engine
+        // edit mode (0=TrimLeft, 1=TrimRight, 2=Move).
+        int draggingClipIdx     { -1 };
+        int draggingClipModeInt {  0 };
+        int dragStartX          {  0 };
+        juce::int64 lastDragSamples { 0 };
+
         TrackRow (int trackIdx,
                   bool isStereoPair,
                   AudioEngine& eng,
@@ -930,6 +939,62 @@ namespace zynforge
                 return;
             }
 
+            // Clip drag-edit. Only when we're on the waveform lane (so
+            // automation lanes still own their own drag semantics) and
+            // the track actually has clips to grab.
+            if (laneMode == LaneMode::Waveform && e.x >= headerW)
+            {
+                if (auto* clips = engine.tryClipsFor (index))
+                {
+                    const auto& player = engine.getPlayer();
+                    const juce::int64 totalSamples = player.isLoaded()
+                        ? player.getTotalLengthSamples() : 0;
+                    if (totalSamples > 0)
+                    {
+                        const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+                        const auto sampleToX = [&] (juce::int64 sp) -> int
+                        {
+                            const double prop = juce::jlimit (0.0, 1.0,
+                                                              (double) sp / (double) totalSamples);
+                            return inner.getX() + juce::roundToInt (prop * inner.getWidth());
+                        };
+                        // 6 px hit zone around each edge for trim;
+                        // anything else inside a clip's body = Move.
+                        const int hitZone = 6;
+                        for (int i = 0; i < (int) clips->size(); ++i)
+                        {
+                            const auto& c = (*clips)[(size_t) i];
+                            const int xL = sampleToX (c.timelineStartSamples);
+                            const int xR = sampleToX (c.timelineStartSamples + c.fileLengthSamples);
+                            if (e.x >= xL - hitZone && e.x <= xL + hitZone)
+                            {
+                                draggingClipIdx     = i;
+                                draggingClipModeInt = 0;  // TrimLeft
+                                dragStartX = e.x;
+                                lastDragSamples = 0;
+                                return;
+                            }
+                            if (e.x >= xR - hitZone && e.x <= xR + hitZone)
+                            {
+                                draggingClipIdx     = i;
+                                draggingClipModeInt = 1;  // TrimRight
+                                dragStartX = e.x;
+                                lastDragSamples = 0;
+                                return;
+                            }
+                            if (e.x > xL + hitZone && e.x < xR - hitZone)
+                            {
+                                draggingClipIdx     = i;
+                                draggingClipModeInt = 2;  // Move
+                                dragStartX = e.x;
+                                lastDragSamples = 0;
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+
             // Lane-area interaction — only when the toolbar is wired and
             // this row isn't the Click track itself.
             if (toolbar != nullptr && index != clickRowIdx && e.x >= headerW)
@@ -1024,6 +1089,34 @@ namespace zynforge
                 return;
             }
 
+            // Clip edit drag — translate pixel delta back to sample
+            // delta and feed it to engine.editClip incrementally. We
+            // track lastDragSamples so each motion only applies the
+            // *delta* from the last frame (not a cumulative sum).
+            if (draggingClipIdx >= 0)
+            {
+                const auto& player = engine.getPlayer();
+                const juce::int64 totalSamples = player.isLoaded()
+                    ? player.getTotalLengthSamples() : 0;
+                const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+                if (totalSamples > 0 && inner.getWidth() > 0)
+                {
+                    const double samplesPerPx = (double) totalSamples / (double) inner.getWidth();
+                    const juce::int64 wantSamples = (juce::int64) ((e.x - dragStartX) * samplesPerPx);
+                    const juce::int64 stepSamples = wantSamples - lastDragSamples;
+                    lastDragSamples = wantSamples;
+                    if (std::abs (stepSamples) >= 1)
+                    {
+                        const auto mode = draggingClipModeInt == 0 ? AudioEngine::ClipEdit::TrimLeft
+                                       : draggingClipModeInt == 1 ? AudioEngine::ClipEdit::TrimRight
+                                                                  : AudioEngine::ClipEdit::Move;
+                        engine.editClip (index, draggingClipIdx, mode, stepSamples);
+                        repaint();
+                    }
+                }
+                return;
+            }
+
             // Otherwise: drag a held automation point with the Select tool.
             if (toolbar != nullptr
                 && toolbar->getTool() == AutomationToolbar::Tool::Select
@@ -1050,6 +1143,8 @@ namespace zynforge
         {
             dragging         = false;
             draggingPointIdx = -1;
+            draggingClipIdx  = -1;
+            lastDragSamples  = 0;
         }
 
         void openColourPicker()

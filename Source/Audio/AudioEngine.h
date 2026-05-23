@@ -233,6 +233,24 @@ namespace zynforge
         // clips that reference the same audio file with adjacent regions.
         bool splitTrackAtPlayhead (int track);
 
+        // Mutate one clip's bounds and republish to the player. Three
+        // edit modes the EDIT row's drag handles drive:
+        //
+        //   TrimLeft   — shrinks/grows the left edge. timelineStart and
+        //                fileStart move together (slip-trim style); the
+        //                clip stays anchored to the same content frame.
+        //   TrimRight  — shrinks/grows the right edge. Only fileLength
+        //                changes; the file content under the clip is
+        //                unchanged from the left.
+        //   Move       — slides the whole clip along the timeline without
+        //                changing what's inside it.
+        //
+        // deltaSamples is signed: +N to drag right by N samples, -N for
+        // left. The engine clamps to [0, fileSize] and prevents a clip
+        // from inverting (length never < 1 sample).
+        enum class ClipEdit { TrimLeft, TrimRight, Move };
+        bool editClip (int track, int clipIndex, ClipEdit, juce::int64 deltaSamples);
+
         // Recent sessions — maintained when loadSession / startRecording
         // succeed. Persisted in appProps as 'recentSession_<i>' (i = 0
         // most recent). Capped at kMaxRecent entries.

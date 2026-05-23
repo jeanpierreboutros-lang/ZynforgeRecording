@@ -429,6 +429,53 @@ namespace zynforge
         return did;
     }
 
+    bool AudioEngine::editClip (int track, int clipIndex, ClipEdit mode, juce::int64 deltaSamples)
+    {
+        if (track < 0 || track >= (int) trackClips.size()) return false;
+        auto& list = trackClips[(size_t) track];
+        if (clipIndex < 0 || clipIndex >= (int) list.size()) return false;
+        auto& c = list[(size_t) clipIndex];
+
+        // Min length: 1024 samples (~20 ms at 48 k) so a clip never
+        // collapses to invisibility on a fast drag.
+        constexpr juce::int64 kMinLen = 1024;
+
+        switch (mode)
+        {
+            case ClipEdit::TrimLeft:
+            {
+                // Slip-trim: timelineStart + fileStart move together,
+                // fileLength contracts/expands by the inverse.
+                const juce::int64 newFileStart = juce::jmax<juce::int64> (0,
+                                                                          c.fileStartSamples + deltaSamples);
+                const juce::int64 realDelta = newFileStart - c.fileStartSamples;
+                if (c.fileLengthSamples - realDelta < kMinLen) return false;
+                c.fileStartSamples     = newFileStart;
+                c.timelineStartSamples = juce::jmax<juce::int64> (0,
+                                                                   c.timelineStartSamples + realDelta);
+                c.fileLengthSamples   -= realDelta;
+                break;
+            }
+            case ClipEdit::TrimRight:
+            {
+                const juce::int64 newLen = c.fileLengthSamples + deltaSamples;
+                if (newLen < kMinLen) return false;
+                c.fileLengthSamples = newLen;
+                break;
+            }
+            case ClipEdit::Move:
+            {
+                c.timelineStartSamples = juce::jmax<juce::int64> (0,
+                                                                   c.timelineStartSamples + deltaSamples);
+                break;
+            }
+        }
+        // Publish the updated list to the player so playback honours
+        // the edit on the next audio block.
+        player.setTrackClips (track, list);
+        return true;
+    }
+
     bool AudioEngine::isTrackPunchArmed (int channel) const noexcept
     {
         if (channel < 0 || channel >= (int) punchArmed.size()) return false;
