@@ -205,21 +205,26 @@ namespace zynforge
             styleCombo (inputCombo);
             styleCombo (outputCombo);
 
+            // Input + output route independently -- the previous build
+            // sent both combos through setTrackLinkedRouting which set
+            // both sides to the same device channel, so changing the
+            // output combo silently overwrote the input routing and
+            // vice versa. Each combo now writes only its own side.
             inputCombo.onChange = [this]
             {
                 const int id = inputCombo.getSelectedId();
                 const int dev = (id <= 1) ? -1 : id - 2;
-                engine.setTrackLinkedRouting (index, dev);
+                engine.setTrackInputRouting (index, dev);
                 if (stereo)
-                    engine.setTrackLinkedRouting (index + 1, (dev < 0) ? -1 : dev + 1);
+                    engine.setTrackInputRouting (index + 1, (dev < 0) ? -1 : dev + 1);
             };
             outputCombo.onChange = [this]
             {
                 const int id = outputCombo.getSelectedId();
                 const int dev = (id <= 1) ? -1 : id - 2;
-                engine.setTrackLinkedRouting (index, dev);
+                engine.setTrackOutputRouting (index, dev);
                 if (stereo)
-                    engine.setTrackLinkedRouting (index + 1, (dev < 0) ? -1 : dev + 1);
+                    engine.setTrackOutputRouting (index + 1, (dev < 0) ? -1 : dev + 1);
             };
             addAndMakeVisible (inputCombo);
             addAndMakeVisible (outputCombo);
@@ -227,10 +232,11 @@ namespace zynforge
             rebuildRoutingCombos();
             refreshRoutingSelection();
 
-            // Live signal meter on the right edge of the header. The
-            // strip header is narrow (16 px reserved), so disable the
-            // dB-label gutter -- the bar gets the full widget width.
-            meter.setShowDbLabels (false);
+            // Live signal meter in the middle column of the header.
+            // 80 px wide now, so the dB-label gutter has room to draw
+            // every tick -- the engineer can read absolute levels from
+            // arm's length without flipping back to MIX view.
+            meter.setShowDbLabels (true);
             addAndMakeVisible (meter);
             meter.setTooltip ("Live signal level -- click to clear clip.");
 
@@ -381,46 +387,15 @@ namespace zynforge
             g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
             g.drawVerticalLine (headerW - 1, 0.0f, (float) getHeight());
 
-            // -------- Pro Tools-style sends column + readout --------
-            //
-            // Geometry mirrors resized(): swatch + meter + 140 px left
-            // block, then the middle 'sends' block of 78 px, then the
-            // right block which contains the input/output combos.
-            // We paint the middle column (a/b/c/d send dots + labels)
-            // and the bottom of the right block (vol/pan readout)
-            // directly here so we don't need extra child components.
-            const int sendsX  = swatchW + meterW + 4 + 140;
-            const int sendsW  = 78;
-            const int rightX  = sendsX + sendsW;
+            // Geometry mirrors resized(): swatch + 140 px left block,
+            // then the WIDE meter block (~80 px) takes the middle, then
+            // the right block holds the input/output combos + readout.
+            // The previous a/b/c/d send-dots column was removed -- a
+            // big meter is more useful at a glance than four placeholder
+            // routing dots, and the aux-send routing already lives in
+            // the right-click context menu.
+            const int rightX  = swatchW + 4 + 140 + 80 + 4;
             const int rightW  = headerW - rightX - 8;
-            juce::ignoreUnused (rightW);
-
-            // Sends column: 4 rows of [dot][letter] labels stacked
-            // vertically against the row height. The dot lights up
-            // when the corresponding aux send has a target bus.
-            {
-                const int rows = 4;
-                const int top  = 6;
-                const int bot  = getHeight() - 6;
-                const int rowH = juce::jmax (10, (bot - top) / rows);
-                auto& t = engine.getRecorder().getTrack (index);
-                g.setFont (brand::type::ui (10.5f, true));
-                static const char* letters[] = { "a", "b", "c", "d" };
-                for (int i = 0; i < rows; ++i)
-                {
-                    const int y = top + i * rowH;
-                    const int cx = sendsX + 12;
-                    const int cy = y + rowH / 2;
-                    const int target = t.sends[(size_t) i].targetBus.load (std::memory_order_relaxed);
-                    const bool lit = target >= 0;
-                    g.setColour (lit ? brand::accentStatus : brand::textMuted);
-                    g.fillEllipse ((float) cx - 3.0f, (float) cy - 3.0f, 6.0f, 6.0f);
-                    g.setColour (lit ? brand::textPrimary : brand::textTertiary);
-                    g.drawText (letters[i],
-                                juce::Rectangle<int> (sendsX + 24, y, 16, rowH),
-                                juce::Justification::centredLeft, false);
-                }
-            }
 
             // Bottom-right readout: vol X.X dB on top, pan L100 0 R100
             // below. Reads the live atomics so the engineer can see
@@ -1044,12 +1019,17 @@ namespace zynforge
         void resized() override
         {
             // Pro Tools-style three-column header.
-            //   [swatch | meter | LEFT block | MIDDLE block | RIGHT block]
-            //                     name+R/I/S/M    a/b/c/d     input/output
-            //                                    send dots    + vol/pan
+            //   [swatch | LEFT block | METER block | RIGHT block]
+            //              name+         wide       input/output
+            //              R/I/S/M       LedMeter   + vol/pan
+            //              + view btn    with dB    readout
+            //                            labels
+            //
+            // The a/b/c/d send-dot column was dropped; the meter now
+            // takes its place at a width that's actually readable
+            // from arm's length under stage lighting.
             auto header = getLocalBounds().withWidth (headerW);
             header.removeFromLeft (swatchW);
-            meter.setBounds (header.removeFromLeft (meterW).reduced (1, 4));
             header.removeFromLeft (4);
 
             const bool isClickRow =
@@ -1095,12 +1075,13 @@ namespace zynforge
             else
                 viewButton.setBounds ({});
 
-            // -------------- MIDDLE (sends column) --------------
-            // a/b/c/d send slot indicators -- painted directly in paint(),
-            // no child components needed. Reserve the space here so the
-            // RIGHT block lines up.
-            constexpr int middleBlockW = 78;
-            header.removeFromLeft (middleBlockW);
+            // -------------- MIDDLE (meter) --------------
+            // Wide LedMeter -- 80 px column with full dB labels so the
+            // engineer can read levels at a glance from the EDIT view
+            // without flipping to MIX.
+            constexpr int meterBlockW = 80;
+            meter.setBounds (header.removeFromLeft (meterBlockW).reduced (3, 4));
+            header.removeFromLeft (4);
 
             // -------------- RIGHT (routing + vol/pan readout) --------------
             auto rightBlock = header.removeFromLeft (header.getWidth() - 8).reduced (2, 4);
