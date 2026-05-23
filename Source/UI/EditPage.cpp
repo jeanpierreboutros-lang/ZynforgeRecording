@@ -387,57 +387,10 @@ namespace zynforge
             g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
             g.drawVerticalLine (headerW - 1, 0.0f, (float) getHeight());
 
-            // Geometry mirrors resized(): swatch + 140 px left block,
-            // then the WIDE meter block (~80 px) takes the middle, then
-            // the right block holds the input/output combos + readout.
-            // The previous a/b/c/d send-dots column was removed -- a
-            // big meter is more useful at a glance than four placeholder
-            // routing dots, and the aux-send routing already lives in
-            // the right-click context menu.
-            const int rightX  = swatchW + 4 + 140 + 80 + 4;
-            const int rightW  = headerW - rightX - 8;
-
-            // Bottom-right readout: vol X.X dB on top, pan L100 0 R100
-            // below. Reads the live atomics so the engineer can see
-            // the current strip state without flipping back to MIX.
-            {
-                const int readoutH = 30;
-                const auto readoutRect = juce::Rectangle<int> (rightX,
-                                                                getHeight() - readoutH - 4,
-                                                                rightW,
-                                                                readoutH);
-                g.setColour (brand::bgDeep.brighter (0.05f));
-                g.fillRoundedRectangle (readoutRect.toFloat(), 3.0f);
-                g.setColour (brand::edge);
-                g.drawRoundedRectangle (readoutRect.toFloat(), 3.0f, 1.0f);
-
-                auto& t = engine.getRecorder().getTrack (index);
-                const float dB  = t.gainDb.load (std::memory_order_relaxed);
-                const float pan = t.pan   .load (std::memory_order_relaxed);
-
-                g.setColour (brand::accentStatus);
-                g.setFont (brand::type::mono (10.0f, true));
-                g.drawText ("vol",
-                            readoutRect.withTrimmedTop (1).withHeight (14)
-                                       .withTrimmedLeft (6),
-                            juce::Justification::centredLeft, false);
-                g.setColour (brand::textPrimary);
-                g.drawText (juce::String (dB, 1),
-                            readoutRect.withTrimmedTop (1).withHeight (14)
-                                       .withTrimmedRight (6),
-                            juce::Justification::centredRight, false);
-
-                const int pct = juce::roundToInt (std::abs (pan) * 100.0f);
-                const juce::String panText = (pct == 0)
-                    ? juce::String ("C")
-                    : (pan < 0 ? "L" + juce::String (pct)
-                                : "R" + juce::String (pct));
-                g.setColour (brand::accentStatus);
-                g.drawText (panText,
-                            readoutRect.withTrimmedTop (14).withHeight (14)
-                                       .withTrimmedLeft (6),
-                            juce::Justification::centredLeft, false);
-            }
+            // The bottom-right 'vol X.X / pan C' readout pill was
+            // removed per user request -- the fader + pan values are
+            // already visible on the MIXER strip and the EDIT view's
+            // role is editing, not metering numbers.
 
             // ─── Waveform pane
             auto wavePane = getLocalBounds().withTrimmedLeft (headerW);
