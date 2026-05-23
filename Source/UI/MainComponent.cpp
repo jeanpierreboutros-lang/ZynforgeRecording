@@ -1158,6 +1158,15 @@ void MainComponent::rebuildStrips()
                              std::move (linkStereoCb),
                              std::move (linkOtherCb));
 
+        // VCA assignment from the strip's right-click menu — the
+        // ChannelStrip sets state.vcaGroup directly for immediate
+        // audio-thread effect; this callback persists the choice
+        // through appProps so a relaunch restores it.
+        s->onVcaGroupChanged = [this, i] (int vcaIdx)
+        {
+            engine.setTrackVcaGroup (i, vcaIdx);
+        };
+
         // Hook shift/cmd-click selection. The toggle handler is keyed
         // on the LOGICAL strip index (i.e. stereo pairs count as one).
         const int logicalIdx = (int) strips.size();

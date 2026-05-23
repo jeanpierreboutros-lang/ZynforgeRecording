@@ -63,6 +63,11 @@ namespace zynforge
         bool isSelected() const noexcept { return selected; }
         std::function<void (bool /*additive*/)> onToggleSelection;
 
+        // Fired when the engineer assigns this strip to a VCA bus via
+        // the right-click menu. The host should persist by calling
+        // engine.setTrackVcaGroup so the assignment survives relaunch.
+        IntCallback onVcaGroupChanged;
+
         juce::Colour getResolvedColour() const;
 
         void paint (juce::Graphics&) override;
@@ -90,7 +95,6 @@ namespace zynforge
         VoidCallback   addCb;
         VoidCallback   linkStereoCb;
         IntCallback    linkOtherCb;
-        IntCallback    onVcaGroupChanged;   // -1 = unassigned
 
         class DbRuler;
         std::unique_ptr<DbRuler> dbRuler;
