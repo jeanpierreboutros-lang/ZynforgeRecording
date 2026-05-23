@@ -1181,19 +1181,71 @@ void MainComponent::onRecordClicked()
         engine.stopRecording();
         statusLabel.setText ("Idle", juce::dontSendNotification);
         recordButton.setButtonText ("RECORD");
+        return;
+    }
+
+    // Pre-flight: surface why recording wouldn't capture anything BEFORE
+    // we open writers + flip the engine into recording state.
+    auto& recorder = engine.getRecorder();
+    const int numTracks = recorder.getNumTracks();
+    if (numTracks == 0)
+    {
+        statusLabel.setText ("Add a channel with +CH before recording.", juce::dontSendNotification);
+        return;
+    }
+
+    auto* device = engine.getDeviceManager().getCurrentAudioDevice();
+    if (device == nullptr)
+    {
+        statusLabel.setText ("No audio device open — pick one with DEVICE.", juce::dontSendNotification);
+        return;
+    }
+    const int numInputs = device->getActiveInputChannels().countNumberOfSetBits();
+    if (numInputs == 0)
+    {
+        statusLabel.setText ("Device has 0 active inputs — open DEVICE and enable inputs.",
+                             juce::dontSendNotification);
+        return;
+    }
+
+    // Count armed tracks AND auto-fix any strip whose inputRouting points
+    // outside the device's actual input count — fall back to a sequential
+    // wrap so engineer doesn't have to open PATCH to start recording.
+    int armed = 0;
+    int autoRouted = 0;
+    for (int i = 0; i < numTracks; ++i)
+    {
+        auto& t = recorder.getTrack (i);
+        if (t.armed.load (std::memory_order_relaxed)) ++armed;
+        const int dev = t.inputRouting.load (std::memory_order_relaxed);
+        if (dev < 0 || dev >= numInputs)
+        {
+            const int target = numInputs > 0 ? (i % numInputs) : 0;
+            engine.setTrackInputRouting (i, target);
+            ++autoRouted;
+        }
+    }
+    if (armed == 0)
+    {
+        statusLabel.setText ("Arm at least one track (R button) before recording.",
+                             juce::dontSendNotification);
+        return;
+    }
+
+    const auto dir = makeNewSessionDir();
+    if (engine.startRecording (dir))
+    {
+        auto msg = juce::String ("Recording ") + juce::String (armed) + "/"
+                 + juce::String (numTracks) + " tracks → " + dir.getFileName();
+        if (autoRouted > 0)
+            msg << " (auto-routed " << autoRouted << ")";
+        statusLabel.setText (msg, juce::dontSendNotification);
+        recordButton.setButtonText ("STOP");
     }
     else
     {
-        const auto dir = makeNewSessionDir();
-        if (engine.startRecording (dir))
-        {
-            statusLabel.setText ("Recording → " + dir.getFileName(), juce::dontSendNotification);
-            recordButton.setButtonText ("STOP");
-        }
-        else
-        {
-            statusLabel.setText ("Failed to start recording", juce::dontSendNotification);
-        }
+        statusLabel.setText ("Failed to start recording — could not open writer files.",
+                             juce::dontSendNotification);
     }
 }
 
