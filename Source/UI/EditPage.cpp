@@ -769,18 +769,46 @@ namespace zynforge
                 if (totalSamples > 0)
                 {
                     const auto inner2 = wavePane.reduced (4, 6);
+                    auto sampleToX = [&] (juce::int64 sp) -> int
+                    {
+                        const double prop = juce::jlimit (0.0, 1.0,
+                            (double) sp / (double) totalSamples);
+                        return inner2.getX() + (int) (prop * inner2.getWidth());
+                    };
                     for (const auto& c : *clips)
                     {
-                        if (c.timelineStartSamples <= 0) continue;
-                        const double prop = (double) c.timelineStartSamples / (double) totalSamples;
-                        const int x = inner2.getX()
-                                    + (int) (prop * inner2.getWidth());
-                        g.setColour (brand::accentSolo.withAlpha (brand::alpha::prominent));
-                        g.drawVerticalLine (x, (float) inner2.getY(),
-                                            (float) inner2.getBottom());
-                        // Tiny corner flag at the top so the cut is
-                        // visible against busy audio.
-                        g.fillRect (juce::Rectangle<int> (x, inner2.getY(), 6, 3));
+                        if (c.timelineStartSamples > 0)
+                        {
+                            const int x = sampleToX (c.timelineStartSamples);
+                            g.setColour (brand::accentSolo.withAlpha (brand::alpha::prominent));
+                            g.drawVerticalLine (x, (float) inner2.getY(),
+                                                (float) inner2.getBottom());
+                            // Tiny corner flag at the top so the cut is
+                            // visible against busy audio.
+                            g.fillRect (juce::Rectangle<int> (x, inner2.getY(), 6, 3));
+                        }
+                        // Fade-in diagonal — from the bottom-left corner
+                        // of the clip up to the top of (start + fadeIn).
+                        if (c.fadeInSamples > 0)
+                        {
+                            const int xL = sampleToX (c.timelineStartSamples);
+                            const int xF = sampleToX (c.timelineStartSamples + c.fadeInSamples);
+                            g.setColour (brand::accentStatus.withAlpha (brand::alpha::ghost));
+                            juce::Path p;
+                            p.startNewSubPath ((float) xL, (float) inner2.getBottom());
+                            p.lineTo ((float) xF, (float) inner2.getY());
+                            g.strokePath (p, juce::PathStrokeType (1.4f));
+                        }
+                        if (c.fadeOutSamples > 0)
+                        {
+                            const int xR = sampleToX (c.timelineStartSamples + c.fileLengthSamples);
+                            const int xF = sampleToX (c.timelineStartSamples + c.fileLengthSamples - c.fadeOutSamples);
+                            g.setColour (brand::accentStatus.withAlpha (brand::alpha::ghost));
+                            juce::Path p;
+                            p.startNewSubPath ((float) xF, (float) inner2.getY());
+                            p.lineTo ((float) xR, (float) inner2.getBottom());
+                            g.strokePath (p, juce::PathStrokeType (1.4f));
+                        }
                     }
                 }
             }
@@ -919,9 +947,40 @@ namespace zynforge
 
         void mouseDown (const juce::MouseEvent& e) override
         {
-            // Right-click anywhere on the row → size menu.
+            // Right-click on a clip in the waveform lane → fade menu.
+            // Anywhere else on the row → row-size menu.
             if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
             {
+                if (laneMode == LaneMode::Waveform && e.x >= headerW)
+                {
+                    if (auto* clips = engine.tryClipsFor (index))
+                    {
+                        const auto& player = engine.getPlayer();
+                        const juce::int64 totalSamples = player.isLoaded()
+                            ? player.getTotalLengthSamples() : 0;
+                        if (totalSamples > 0)
+                        {
+                            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+                            const auto sampleToX = [&] (juce::int64 sp) -> int
+                            {
+                                const double prop = juce::jlimit (0.0, 1.0,
+                                                                  (double) sp / (double) totalSamples);
+                                return inner.getX() + juce::roundToInt (prop * inner.getWidth());
+                            };
+                            for (int i = 0; i < (int) clips->size(); ++i)
+                            {
+                                const auto& c = (*clips)[(size_t) i];
+                                const int xL = sampleToX (c.timelineStartSamples);
+                                const int xR = sampleToX (c.timelineStartSamples + c.fileLengthSamples);
+                                if (e.x >= xL && e.x <= xR)
+                                {
+                                    showFadeMenu (i, e.getScreenPosition());
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
                 showSizeMenu (e.getScreenPosition());
                 return;
             }
@@ -1175,6 +1234,76 @@ namespace zynforge
         }
 
     private:
+        void showFadeMenu (int clipIdx, juce::Point<int> screenPos)
+        {
+            if (menuOpen) return;
+            menuOpen = true;
+
+            const auto* clips = engine.tryClipsFor (index);
+            if (clips == nullptr || clipIdx < 0 || clipIdx >= (int) clips->size())
+                { menuOpen = false; return; }
+            const auto fIn  = (*clips)[(size_t) clipIdx].fadeInSamples;
+            const auto fOut = (*clips)[(size_t) clipIdx].fadeOutSamples;
+
+            const double sr = engine.getPlayer().getSampleRate() > 0.0
+                                 ? engine.getPlayer().getSampleRate()
+                                 : 48000.0;
+            auto msToSamples = [sr] (int ms) -> juce::int64
+            {
+                return (juce::int64) ((double) ms * sr / 1000.0);
+            };
+
+            juce::PopupMenu menu;
+            menu.addSectionHeader ("Fade In");
+            menu.addItem (101, "Off",     true, fIn == 0);
+            menu.addItem (102, "10 ms",   true, fIn == msToSamples (10));
+            menu.addItem (103, "50 ms",   true, fIn == msToSamples (50));
+            menu.addItem (104, "200 ms",  true, fIn == msToSamples (200));
+            menu.addItem (105, "500 ms",  true, fIn == msToSamples (500));
+            menu.addItem (106, "1 s",     true, fIn == msToSamples (1000));
+            menu.addSeparator();
+            menu.addSectionHeader ("Fade Out");
+            menu.addItem (201, "Off",     true, fOut == 0);
+            menu.addItem (202, "10 ms",   true, fOut == msToSamples (10));
+            menu.addItem (203, "50 ms",   true, fOut == msToSamples (50));
+            menu.addItem (204, "200 ms",  true, fOut == msToSamples (200));
+            menu.addItem (205, "500 ms",  true, fOut == msToSamples (500));
+            menu.addItem (206, "1 s",     true, fOut == msToSamples (1000));
+            menu.addSeparator();
+            menu.addItem (300, "Clear both fades");
+
+            juce::Component::SafePointer<TrackRow> self (this);
+            menu.showMenuAsync (juce::PopupMenu::Options()
+                                  .withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 }),
+                [self, clipIdx, fIn, fOut, msToSamples] (int chosen)
+            {
+                if (self == nullptr) return;
+                self->menuOpen = false;
+                if (chosen == 0) return;
+                juce::int64 newIn  = fIn;
+                juce::int64 newOut = fOut;
+                switch (chosen)
+                {
+                    case 101: newIn  = 0;                   break;
+                    case 102: newIn  = msToSamples (10);    break;
+                    case 103: newIn  = msToSamples (50);    break;
+                    case 104: newIn  = msToSamples (200);   break;
+                    case 105: newIn  = msToSamples (500);   break;
+                    case 106: newIn  = msToSamples (1000);  break;
+                    case 201: newOut = 0;                   break;
+                    case 202: newOut = msToSamples (10);    break;
+                    case 203: newOut = msToSamples (50);    break;
+                    case 204: newOut = msToSamples (200);   break;
+                    case 205: newOut = msToSamples (500);   break;
+                    case 206: newOut = msToSamples (1000);  break;
+                    case 300: newIn = 0; newOut = 0;        break;
+                    default: return;
+                }
+                self->engine.setClipFades (self->index, clipIdx, newIn, newOut);
+                self->repaint();
+            });
+        }
+
         void showSizeMenu (juce::Point<int> screenPos)
         {
             if (menuOpen) return;   // re-entrancy guard

@@ -240,9 +240,33 @@ namespace zynforge
                         scratch.setSize (1, spanLen, false, false, true);
                     scratch.clear (0, 0, spanLen);
                     t.reader->read (&scratch, 0, spanLen, fileReadStart, true, true);
-                    juce::FloatVectorOperations::copy (out + outOffset,
-                                                       scratch.getReadPointer (0),
-                                                       spanLen);
+
+                    // Apply linear fade envelopes (if any). The clip-relative
+                    // offset of this span's first sample is (ovStartTL -
+                    // c.timelineStartSamples); we walk from there.
+                    auto* src = scratch.getReadPointer (0);
+                    auto* dst = out + outOffset;
+                    const juce::int64 spanOffsetInClip = ovStartTL - c.timelineStartSamples;
+                    const juce::int64 fIn  = c.fadeInSamples;
+                    const juce::int64 fOut = c.fadeOutSamples;
+                    const juce::int64 fOutStart = c.fileLengthSamples - fOut;
+                    if (fIn == 0 && fOut == 0)
+                    {
+                        juce::FloatVectorOperations::copy (dst, src, spanLen);
+                    }
+                    else
+                    {
+                        for (int i = 0; i < spanLen; ++i)
+                        {
+                            const juce::int64 clipPos = spanOffsetInClip + i;
+                            float gain = 1.0f;
+                            if (fIn > 0 && clipPos < fIn)
+                                gain = (float) clipPos / (float) fIn;
+                            else if (fOut > 0 && clipPos >= fOutStart)
+                                gain = (float) (c.fileLengthSamples - clipPos) / (float) fOut;
+                            dst[i] = src[i] * gain;
+                        }
+                    }
                 }
                 if (playableThisBlock < numSamples)
                     juce::FloatVectorOperations::clear (out + playableThisBlock,

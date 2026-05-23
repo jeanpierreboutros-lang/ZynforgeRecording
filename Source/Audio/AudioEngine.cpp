@@ -476,6 +476,24 @@ namespace zynforge
         return true;
     }
 
+    bool AudioEngine::setClipFades (int track, int clipIndex,
+                                    juce::int64 fadeInSamples, juce::int64 fadeOutSamples)
+    {
+        if (track < 0 || track >= (int) trackClips.size()) return false;
+        auto& list = trackClips[(size_t) track];
+        if (clipIndex < 0 || clipIndex >= (int) list.size()) return false;
+        auto& c = list[(size_t) clipIndex];
+
+        fadeInSamples  = juce::jmax<juce::int64> (0, fadeInSamples);
+        fadeOutSamples = juce::jmax<juce::int64> (0, fadeOutSamples);
+        if (fadeInSamples + fadeOutSamples > c.fileLengthSamples) return false;
+
+        c.fadeInSamples  = fadeInSamples;
+        c.fadeOutSamples = fadeOutSamples;
+        player.setTrackClips (track, list);
+        return true;
+    }
+
     bool AudioEngine::isTrackPunchArmed (int channel) const noexcept
     {
         if (channel < 0 || channel >= (int) punchArmed.size()) return false;

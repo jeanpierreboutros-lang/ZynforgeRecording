@@ -251,6 +251,14 @@ namespace zynforge
         enum class ClipEdit { TrimLeft, TrimRight, Move };
         bool editClip (int track, int clipIndex, ClipEdit, juce::int64 deltaSamples);
 
+        // Set linear fade-in / fade-out lengths on a clip. Either side
+        // can be 0 to disable that fade. SessionPlayer applies the
+        // envelope sample-by-sample during the clip-aware render path.
+        // Returns false when the fades overlap (in+out > length) or
+        // the clip index is bad.
+        bool setClipFades (int track, int clipIndex,
+                           juce::int64 fadeInSamples, juce::int64 fadeOutSamples);
+
         // Recent sessions — maintained when loadSession / startRecording
         // succeed. Persisted in appProps as 'recentSession_<i>' (i = 0
         // most recent). Capped at kMaxRecent entries.
