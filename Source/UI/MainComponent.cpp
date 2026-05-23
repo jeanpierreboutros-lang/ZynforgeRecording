@@ -75,6 +75,8 @@ MainComponent::MainComponent()
     lockButton.onClick = [this] { onLockToggled(); };
     addAndMakeVisible (lockButton);
 
+    backupButton.setColour (juce::TextButton::buttonColourId,    brand::accentVS.darker (0.55f));
+    backupButton.setColour (juce::TextButton::textColourOffId,   brand::accentVS.brighter (0.10f));
     backupButton.onClick = [this] { onBackupClicked(); };
     addAndMakeVisible (backupButton);
 
@@ -206,6 +208,8 @@ MainComponent::MainComponent()
     };
     addAndMakeVisible (addChannelButton);
 
+    metersButton.setColour (juce::TextButton::buttonColourId,    brand::featureEngaged.darker (0.55f));
+    metersButton.setColour (juce::TextButton::textColourOffId,   brand::featureEngaged.brighter (0.10f));
     metersButton.onClick = [this] { zynforge::Meterbridge::launch (engine); };
     metersButton.setTooltip ("Open the floating meterbridge — drag onto a second display.");
     addAndMakeVisible (metersButton);
@@ -3648,11 +3652,15 @@ void MainComponent::resized()
     row1.removeFromLeft (brand::space::md);
     recordButton .setBounds (row1.removeFromRight (104).reduced (0, 2));
     row1.removeFromRight (brand::space::sm);
-    deviceButton .setBounds (row1.removeFromRight (118).reduced (0, 2));
+    deviceButton .setBounds (row1.removeFromRight (110).reduced (0, 2));
     row1.removeFromRight (brand::space::sm);
     addChannelButton.setBounds (row1.removeFromRight (70).reduced (0, 2));
     row1.removeFromRight (brand::space::sm);
     lockButton   .setBounds (row1.removeFromRight (76).reduced (0, 2));
+    row1.removeFromRight (brand::space::sm);
+    backupButton .setBounds (row1.removeFromRight (96).reduced (0, 2));
+    row1.removeFromRight (brand::space::sm);
+    metersButton .setBounds (row1.removeFromRight (92).reduced (0, 2));
     statusLabel  .setBounds (row1);
 
     // FMT and PRE buttons are kept alive (still wired) but not laid out.
@@ -3697,9 +3705,8 @@ void MainComponent::resized()
     transportLabel.setBounds (row2.removeFromLeft (140));
     sessionLabel  .setBounds (row2);
 
-    // Hidden duplicates of menu-bar items.
-    backupButton .setBounds ({});
-    metersButton .setBounds ({});
+    // Hidden duplicates of menu-bar items. BACKUP + METERS are now
+    // shown in row 1 alongside the chrome buttons.
     oscButton    .setBounds ({});
     playButton   .setBounds ({});
     stopButton   .setBounds ({});

@@ -37,24 +37,31 @@ namespace zynforge::icons
                 break;
 
             case Glyph::Lock:
-                p.addRoundedRectangle (0.22f, 0.42f, 0.56f, 0.42f, 0.06f);
-                p.startNewSubPath (0.32f, 0.42f);
-                p.lineTo          (0.32f, 0.28f);
-                p.addCentredArc   (0.50f, 0.28f, 0.18f, 0.18f, 0.0f,
-                                   juce::MathConstants<float>::pi,
-                                   juce::MathConstants<float>::twoPi);
-                p.startNewSubPath (0.68f, 0.28f);
-                p.lineTo          (0.68f, 0.42f);
+            {
+                // Clean padlock: rounded body + U-shackle on top.
+                p.addRoundedRectangle (0.26f, 0.48f, 0.48f, 0.40f, 0.07f);
+                const float halfPi = juce::MathConstants<float>::halfPi;
+                p.startNewSubPath (0.34f, 0.48f);
+                p.lineTo          (0.34f, 0.36f);
+                p.addCentredArc   (0.50f, 0.36f, 0.16f, 0.16f, 0.0f,
+                                   -halfPi, halfPi, false);
+                p.lineTo          (0.66f, 0.48f);
+                // Keyhole — small dot inside the body
+                p.addEllipse (0.46f, 0.64f, 0.08f, 0.08f);
                 break;
+            }
 
             case Glyph::Unlock:
-                p.addRoundedRectangle (0.22f, 0.42f, 0.56f, 0.42f, 0.06f);
-                p.startNewSubPath (0.32f, 0.42f);
-                p.lineTo          (0.32f, 0.24f);
-                p.addCentredArc   (0.55f, 0.24f, 0.22f, 0.22f, 0.0f,
-                                   juce::MathConstants<float>::pi,
-                                   juce::MathConstants<float>::twoPi * 0.85f);
+            {
+                // Same body as Lock, but shackle is rotated open on the right.
+                p.addRoundedRectangle (0.26f, 0.48f, 0.48f, 0.40f, 0.07f);
+                const float halfPi = juce::MathConstants<float>::halfPi;
+                p.startNewSubPath (0.34f, 0.48f);
+                p.lineTo          (0.34f, 0.30f);
+                p.addCentredArc   (0.50f, 0.30f, 0.16f, 0.16f, 0.0f,
+                                   -halfPi, halfPi * 0.6f, false);
                 break;
+            }
 
             case Glyph::Plus:
                 p.addRectangle (0.45f, 0.18f, 0.10f, 0.64f);
@@ -62,9 +69,13 @@ namespace zynforge::icons
                 break;
 
             case Glyph::Device:
-                p.addRoundedRectangle (0.12f, 0.30f, 0.76f, 0.40f, 0.06f);
-                for (int i = 0; i < 4; ++i)
-                    p.addEllipse (0.22f + i * 0.15f, 0.45f, 0.08f, 0.10f);
+                // Audio interface front panel: rounded body, two large
+                // knobs on the left, two TRS jacks on the right.
+                p.addRoundedRectangle (0.10f, 0.32f, 0.80f, 0.36f, 0.06f);
+                p.addEllipse (0.18f, 0.40f, 0.16f, 0.20f);   // knob 1
+                p.addEllipse (0.38f, 0.40f, 0.16f, 0.20f);   // knob 2
+                p.addEllipse (0.60f, 0.42f, 0.10f, 0.16f);   // jack 1
+                p.addEllipse (0.74f, 0.42f, 0.10f, 0.16f);   // jack 2
                 break;
 
             case Glyph::Patch:
@@ -245,7 +256,12 @@ namespace zynforge::icons
                          || glyph == Glyph::Play
                          || glyph == Glyph::Plus
                          || glyph == Glyph::Selection;
+        // Lock / Device read clearer at small sizes when the stroke is
+        // a touch heavier than the default 1.2.
+        const float thick = (glyph == Glyph::Lock
+                          || glyph == Glyph::Unlock
+                          || glyph == Glyph::Device) ? 1.6f : strokeThickness;
         if (filled) g.fillPath (p);
-        else        g.strokePath (p, juce::PathStrokeType (strokeThickness));
+        else        g.strokePath (p, juce::PathStrokeType (thick));
     }
 }
