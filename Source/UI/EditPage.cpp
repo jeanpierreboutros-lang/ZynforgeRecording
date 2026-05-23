@@ -51,6 +51,8 @@ namespace zynforge
         // after construction so all rows share the same global view.
         AutomationToolbar* toolbar  { nullptr };
         EditToolsBar*      toolsBar { nullptr };
+        std::function<void (const juce::String& label,
+                            std::function<void()> mutate)> automationEditWrapper;
         bool   clickOverlay { false };
         int    clickRowIdx  { -1 };
         // Drag tracking -- while > -1, mouseDrag moves the indexed
@@ -1268,6 +1270,16 @@ namespace zynforge
                         }
                     }
                 }
+                // Automation lane right-click: when an automation
+                // param is being viewed AND there's a loop region
+                // (which the Selector tool sets), offer Copy / Paste
+                // / Clear for that range on the active param.
+                if (laneMode != LaneMode::Waveform && laneMode != LaneMode::Markers
+                    && engine.getPlayer().hasLoopRegion())
+                {
+                    showAutomationRangeMenu (e.getScreenPosition());
+                    return;
+                }
                 showSizeMenu (e.getScreenPosition());
                 return;
             }
@@ -1526,10 +1538,22 @@ namespace zynforge
                     return;
                 }
 
+                // Helper: route the engine call through the optional
+                // undo wrapper. Plain direct call when no wrapper is
+                // wired (degraded mode -- still functional, just no
+                // Cmd+Z for this edit).
+                auto editWrapped = [this] (const char* label, std::function<void()> fn)
+                {
+                    if (automationEditWrapper) automationEditWrapper (label, std::move (fn));
+                    else                       fn();
+                };
+
                 switch (toolbar->getTool())
                 {
                     case AutomationToolbar::Tool::AddPoint:
-                        engine.addAutomationPoint (index, p, coord.samplePos, coord.value);
+                        editWrapped ("Add automation point",
+                                     [this, p, coord]
+                                     { engine.addAutomationPoint (index, p, coord.samplePos, coord.value); });
                         repaint();
                         return;
                     case AutomationToolbar::Tool::DeletePoint:
@@ -1538,7 +1562,9 @@ namespace zynforge
                         const juce::int64 totalSamples = player.isLoaded() ? player.getTotalLengthSamples()
                                                                            : (juce::int64) (48000.0 * 60.0);
                         const juce::int64 tol = juce::jmax<juce::int64> (1, totalSamples / juce::jmax (1, getWidth() - headerW) * 8);
-                        engine.removeAutomationPointNear (index, p, coord.samplePos, tol);
+                        editWrapped ("Delete automation point",
+                                     [this, p, coord, tol]
+                                     { engine.removeAutomationPointNear (index, p, coord.samplePos, tol); });
                         repaint();
                         return;
                     }
@@ -1945,6 +1971,81 @@ namespace zynforge
             });
         }
 
+        // Per-row clipboard for the automation range copy. Static so
+        // it survives across rows -- Copy on row N then Paste on row M
+        // moves the points between strips, Pro Tools-style.
+        static std::vector<AudioEngine::AutomationPoint>& sharedClipboard()
+        {
+            static std::vector<AudioEngine::AutomationPoint> clip;
+            return clip;
+        }
+
+        void showAutomationRangeMenu (juce::Point<int> screenPos)
+        {
+            const auto& player = engine.getPlayer();
+            if (! player.hasLoopRegion()) return;
+            const auto inSample  = player.getLoopStart();
+            const auto outSample = player.getLoopEnd();
+
+            const auto engineParam =
+                laneMode == LaneMode::Pan  ? AudioEngine::AutomationParam::Pan
+              : laneMode == LaneMode::Mute ? AudioEngine::AutomationParam::Mute
+                                            : AudioEngine::AutomationParam::Volume;
+
+            juce::PopupMenu m;
+            const auto rangePoints = engine.copyAutomationRange (index, engineParam,
+                                                                  inSample, outSample);
+            m.addItem (601, "Copy automation in range ("
+                            + juce::String ((int) rangePoints.size()) + " points)",
+                       ! rangePoints.empty());
+            m.addItem (602, "Paste automation at cursor",
+                       ! sharedClipboard().empty());
+            m.addSeparator();
+            m.addItem (603, "Clear automation in range",
+                       ! rangePoints.empty());
+
+            juce::Component::SafePointer<TrackRow> safe (this);
+            m.showMenuAsync (juce::PopupMenu::Options()
+                                 .withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 }),
+                [safe, engineParam, inSample, outSample] (int chosen)
+                {
+                    if (safe == nullptr || chosen == 0) return;
+                    auto& eng = safe->engine;
+                    if (chosen == 601)
+                    {
+                        sharedClipboard() = eng.copyAutomationRange (safe->index,
+                                                                      engineParam,
+                                                                      inSample, outSample);
+                    }
+                    else if (chosen == 602)
+                    {
+                        const auto anchor = eng.getEditCursorSample();
+                        if (anchor < 0) return;
+                        auto editFn = [&eng, idx = safe->index, engineParam, anchor]
+                                      { eng.pasteAutomationRange (idx, engineParam, anchor,
+                                                                  sharedClipboard()); };
+                        if (safe->automationEditWrapper)
+                            safe->automationEditWrapper ("Paste automation",
+                                                          std::move (editFn));
+                        else
+                            editFn();
+                        safe->repaint();
+                    }
+                    else if (chosen == 603)
+                    {
+                        auto editFn = [&eng, idx = safe->index, engineParam, inSample, outSample]
+                                      { eng.clearAutomationRange (idx, engineParam,
+                                                                  inSample, outSample); };
+                        if (safe->automationEditWrapper)
+                            safe->automationEditWrapper ("Clear automation range",
+                                                          std::move (editFn));
+                        else
+                            editFn();
+                        safe->repaint();
+                    }
+                });
+        }
+
         void showSizeMenu (juce::Point<int> screenPos)
         {
             if (menuOpen) return;   // re-entrancy guard
@@ -2124,15 +2225,21 @@ namespace zynforge
         EditToolsBar*      sharedToolsBar      { nullptr };
         bool               sharedClickPresent  { false };
         int                sharedClickRowIdx   { -1 };
+        // Forwarded from EditPage -> MainComponent. When set, every
+        // per-point automation edit a TrackRow performs goes through
+        // this wrapper so Cmd+Z reverts it.
+        std::function<void (const juce::String& label,
+                            std::function<void()> mutate)> sharedAutomationEditWrapper;
 
         void updateRowContext()
         {
             for (auto& r : rows)
             {
-                r->toolbar      = sharedToolbar;
-                r->toolsBar     = sharedToolsBar;
-                r->clickOverlay = sharedClickPresent;
-                r->clickRowIdx  = sharedClickRowIdx;
+                r->toolbar                = sharedToolbar;
+                r->toolsBar               = sharedToolsBar;
+                r->clickOverlay           = sharedClickPresent;
+                r->clickRowIdx            = sharedClickRowIdx;
+                r->automationEditWrapper  = sharedAutomationEditWrapper;
                 r->repaint();
             }
         }
@@ -2163,10 +2270,11 @@ namespace zynforge
                 const bool stereo = tL.isStereo.load() && (i + 1 < numTracks);
                 auto r = std::make_unique<TrackRow> (i, stereo, engine, formats, thumbCache);
                 r->onSizeChosen = [this] (TrackRow&, TrackRow::Size) { resized(); };
-                r->toolbar      = sharedToolbar;
-                r->toolsBar     = sharedToolsBar;
-                r->clickOverlay = sharedClickPresent;
-                r->clickRowIdx  = sharedClickRowIdx;
+                r->toolbar                = sharedToolbar;
+                r->toolsBar               = sharedToolsBar;
+                r->clickOverlay           = sharedClickPresent;
+                r->clickRowIdx            = sharedClickRowIdx;
+                r->automationEditWrapper  = sharedAutomationEditWrapper;
                 addAndMakeVisible (*r);
                 rows.push_back (std::move (r));
                 i += stereo ? 2 : 1;
@@ -2362,12 +2470,23 @@ namespace zynforge
         }
     }
 
+    void EditPage::setAutomationEditWrapper (AutoEditWrapper fn)
+    {
+        automationEditWrapper = std::move (fn);
+        if (list != nullptr)
+        {
+            list->sharedAutomationEditWrapper = automationEditWrapper;
+            list->updateRowContext();
+        }
+    }
+
     void EditPage::setAutomationToolbar (AutomationToolbar* t)
     {
         toolbar = t;
         if (list != nullptr)
         {
             list->sharedToolbar = t;
+            list->sharedAutomationEditWrapper = automationEditWrapper;
             list->updateRowContext();
         }
         applyToolbarParamToAllRows();

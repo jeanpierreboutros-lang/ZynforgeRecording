@@ -474,6 +474,15 @@ MainComponent::MainComponent()
     // Wire the toolbar AFTER the page exists. The handlers above
     // captured 'this' so they will still see editPage when they fire.
     editPage->setAutomationToolbar (&automationToolbar);
+    // Forward the undo wrapper so EditPage TrackRows can push
+    // per-point Add / Delete edits through the same undo stack the
+    // Clear All button uses. Goes through setAutomationEditWrapper
+    // so it propagates into TrackList + every TrackRow.
+    editPage->setAutomationEditWrapper (
+        [this] (const juce::String& label, std::function<void()> fn)
+        {
+            runAutomationEdit (label, std::move (fn));
+        });
     // Re-parent the EDIT-tools palette onto MainComponent so it can
     // share the same 28 px row as the automation toolbar. (The earlier
     // if-block tried this too but ran before editPage existed.)

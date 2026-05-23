@@ -7,6 +7,7 @@
 #include "../Audio/AudioEngine.h"
 
 #include <memory>
+#include <functional>
 #include <vector>
 
 namespace zynforge
@@ -41,6 +42,18 @@ namespace zynforge
         // engineer can navigate a 90-min show. 1.0 = fit, 16.0 = 16×.
         void  setZoom (float z);
         float getZoom() const noexcept { return zoom; }
+
+        // Optional hook into MainComponent's UndoManager. When set,
+        // every automation-point add / remove / drag goes through
+        // this wrapper so Cmd+Z reverts the lane to its prior state.
+        // When unset, edits go direct -- still functional, just no
+        // undo. setAutomationEditWrapper also propagates the function
+        // down into the TrackList -> TrackRow chain so newly-created
+        // rows see it on next rebuild.
+        using AutoEditWrapper = std::function<void (const juce::String&,
+                                                    std::function<void()>)>;
+        void setAutomationEditWrapper (AutoEditWrapper fn);
+        AutoEditWrapper automationEditWrapper;
 
         // Force every row's lane content to follow the toolbar's
         // Param choice. Called whenever the toolbar's onParamChanged

@@ -329,6 +329,34 @@ namespace zynforge
         juce::var      automationToJson() const;
         void           loadAutomationFromJson (const juce::var&);
 
+        // ── Range operations on one lane ────────────────────────
+        // copyAutomationRange returns every point whose samplePos
+        // lies inside [startSample, endSample]. Points are returned
+        // with samplePos rebased to (samplePos - startSample) so the
+        // caller / paste path can position them at an arbitrary
+        // anchor without preserving session-absolute times.
+        std::vector<AutomationPoint> copyAutomationRange (int track, AutomationParam,
+                                                          juce::int64 startSample,
+                                                          juce::int64 endSample) const;
+        // Wipe every point in [startSample, endSample] for (track, p).
+        void clearAutomationRange (int track, AutomationParam,
+                                   juce::int64 startSample, juce::int64 endSample);
+        // Drop every point in `points` at anchor + point.samplePos.
+        // Points should be in 'relative' form (samplePos = offset
+        // from the original copy range start) -- the format returned
+        // by copyAutomationRange.
+        void pasteAutomationRange (int track, AutomationParam,
+                                   juce::int64 anchorSample,
+                                   const std::vector<AutomationPoint>& points);
+
+        // ── Trim mode -- per (track, param) offset added to the
+        // automation value at playback. Defaults to 0 (no trim).
+        // Volume trim is in dB. Pan trim is added then clamped to
+        // [-1, +1]. Mute trim is ignored.
+        void  setAutomationTrim (int track, AutomationParam, float trim);
+        float getAutomationTrim (int track, AutomationParam) const;
+        void  clearAllAutomationTrims();
+
         void clearAutomation (AutomationParam);
         void clearAutomationForTrack (int track, AutomationParam);
 
@@ -540,6 +568,31 @@ namespace zynforge
         struct TrackAutomation
         {
             std::vector<AutomationPoint> volume, pan, mute;
+            // Trim offsets (Pro Tools-style). Added on top of the
+            // automation value at read time. Volume in dB, pan in
+            // linear -1..+1, mute ignored. Atomics so the audio
+            // thread can read without locking.
+            std::atomic<float> volumeTrim { 0.0f };
+            std::atomic<float> panTrim    { 0.0f };
+
+            TrackAutomation() = default;
+            TrackAutomation (TrackAutomation&& o) noexcept
+                : volume (std::move (o.volume)),
+                  pan    (std::move (o.pan)),
+                  mute   (std::move (o.mute)),
+                  volumeTrim (o.volumeTrim.load()),
+                  panTrim    (o.panTrim.load()) {}
+            TrackAutomation& operator= (TrackAutomation&& o) noexcept
+            {
+                volume = std::move (o.volume);
+                pan    = std::move (o.pan);
+                mute   = std::move (o.mute);
+                volumeTrim.store (o.volumeTrim.load());
+                panTrim   .store (o.panTrim   .load());
+                return *this;
+            }
+            TrackAutomation (const TrackAutomation&) = delete;
+            TrackAutomation& operator= (const TrackAutomation&) = delete;
         };
         std::vector<TrackAutomation> automationData;
         mutable juce::CriticalSection automationLock;

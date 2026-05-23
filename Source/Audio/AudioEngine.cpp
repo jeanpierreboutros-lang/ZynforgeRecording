@@ -435,6 +435,103 @@ namespace zynforge
         }
     }
 
+    std::vector<AudioEngine::AutomationPoint>
+    AudioEngine::copyAutomationRange (int track, AutomationParam p,
+                                      juce::int64 startSample, juce::int64 endSample) const
+    {
+        if (startSample > endSample) std::swap (startSample, endSample);
+        std::vector<AutomationPoint> out;
+        const juce::ScopedLock sl (automationLock);
+        const auto* lane = findLane (track, p);
+        if (lane == nullptr) return out;
+        for (const auto& pt : *lane)
+        {
+            if (pt.samplePos < startSample) continue;
+            if (pt.samplePos > endSample)   break;
+            out.push_back ({ pt.samplePos - startSample, pt.value, pt.curve });
+        }
+        return out;
+    }
+
+    void AudioEngine::clearAutomationRange (int track, AutomationParam p,
+                                            juce::int64 startSample, juce::int64 endSample)
+    {
+        if (startSample > endSample) std::swap (startSample, endSample);
+        const juce::ScopedLock sl (automationLock);
+        auto* lane = findLane (track, p);
+        if (lane == nullptr || lane->empty()) return;
+        auto pred = [startSample, endSample] (const AutomationPoint& pt)
+        {
+            return pt.samplePos >= startSample && pt.samplePos <= endSample;
+        };
+        lane->erase (std::remove_if (lane->begin(), lane->end(), pred), lane->end());
+    }
+
+    void AudioEngine::pasteAutomationRange (int track, AutomationParam p,
+                                            juce::int64 anchorSample,
+                                            const std::vector<AutomationPoint>& points)
+    {
+        if (points.empty()) return;
+        const juce::ScopedLock sl (automationLock);
+        auto* lane = findLane (track, p);
+        if (lane == nullptr) return;
+        // Pre-clear the paste span so the new points don't visually
+        // overlap held-over old points; the engineer asked for a
+        // paste, not a merge.
+        const juce::int64 spanStart = anchorSample;
+        const juce::int64 spanEnd   = anchorSample + points.back().samplePos;
+        for (auto it = lane->begin(); it != lane->end();)
+        {
+            if (it->samplePos >= spanStart && it->samplePos <= spanEnd)
+                it = lane->erase (it);
+            else
+                ++it;
+        }
+        // Drop the new ones at anchor + offset.
+        for (const auto& src : points)
+        {
+            AutomationPoint pt = src;
+            pt.samplePos = anchorSample + src.samplePos;
+            // Mute paste forces Hold curves (matches addAutomationPoint).
+            if (p == AutomationParam::Mute) pt.curve = AutomationCurve::Hold;
+            lane->push_back (pt);
+        }
+        std::sort (lane->begin(), lane->end(),
+                   [] (const auto& a, const auto& b) { return a.samplePos < b.samplePos; });
+    }
+
+    void AudioEngine::setAutomationTrim (int track, AutomationParam p, float trim)
+    {
+        if (p == AutomationParam::Mute) return;
+        const juce::ScopedLock sl (automationLock);
+        if (track < 0) return;
+        if (track >= (int) automationData.size())
+            automationData.resize ((size_t) track + 1);
+        auto& a = automationData[(size_t) track];
+        if (p == AutomationParam::Volume) a.volumeTrim.store (trim, std::memory_order_release);
+        else                              a.panTrim   .store (trim, std::memory_order_release);
+    }
+
+    float AudioEngine::getAutomationTrim (int track, AutomationParam p) const
+    {
+        if (p == AutomationParam::Mute) return 0.0f;
+        const juce::ScopedLock sl (automationLock);
+        if (track < 0 || track >= (int) automationData.size()) return 0.0f;
+        const auto& a = automationData[(size_t) track];
+        return (p == AutomationParam::Volume ? a.volumeTrim.load (std::memory_order_acquire)
+                                              : a.panTrim   .load (std::memory_order_acquire));
+    }
+
+    void AudioEngine::clearAllAutomationTrims()
+    {
+        const juce::ScopedLock sl (automationLock);
+        for (auto& a : automationData)
+        {
+            a.volumeTrim.store (0.0f, std::memory_order_release);
+            a.panTrim   .store (0.0f, std::memory_order_release);
+        }
+    }
+
     juce::var AudioEngine::automationToJson() const
     {
         // Snapshot every track's three lanes (volume / pan / mute)
@@ -1389,15 +1486,34 @@ namespace zynforge
             case AutomationParam::Pan:    lane = &a.pan;    break;
             case AutomationParam::Mute:   lane = &a.mute;   break;
         }
-        if (lane == nullptr || lane->empty()) return fallback;
+        // Trim offset applies to volume + pan regardless of whether
+        // any automation points exist. Read it before the early-out
+        // so a 'no points + non-zero trim' still nudges the value.
+        float trim = 0.0f;
+        if (p == AutomationParam::Volume) trim = a.volumeTrim.load (std::memory_order_acquire);
+        if (p == AutomationParam::Pan)    trim = a.panTrim   .load (std::memory_order_acquire);
+
+        if (lane == nullptr || lane->empty())
+            return p == AutomationParam::Pan
+                       ? juce::jlimit (-1.0f, 1.0f, fallback + trim)
+                       : fallback + trim;
 
         // Find the two surrounding points (prev, next). If samplePos
         // is before the first point or after the last point, hold
         // the boundary value (no extrapolation).
+        // Helper that applies trim + (for pan) clamps. Used at every
+        // return site below so trim layers atop whatever value the
+        // curve produces.
+        auto withTrim = [p, trim] (float baseValue) -> float
+        {
+            const float v = baseValue + trim;
+            return (p == AutomationParam::Pan) ? juce::jlimit (-1.0f, 1.0f, v) : v;
+        };
+
         const auto& v0 = (*lane)[0];
-        if (samplePos <= v0.samplePos) return v0.value;
+        if (samplePos <= v0.samplePos) return withTrim (v0.value);
         const auto& vN = lane->back();
-        if (samplePos >= vN.samplePos) return vN.value;
+        if (samplePos >= vN.samplePos) return withTrim (vN.value);
 
         // Walk to the segment that contains samplePos. The points
         // are kept sorted by samplePos in addAutomationPoint, so a
@@ -1414,11 +1530,11 @@ namespace zynforge
                 break;
             }
         }
-        if (next == nullptr) return vN.value;
+        if (next == nullptr) return withTrim (vN.value);
 
         // Normalised time within this segment.
         const double span = (double) (next->samplePos - prev->samplePos);
-        if (span <= 0.0) return prev->value;
+        if (span <= 0.0) return withTrim (prev->value);
         const double t = (double) (samplePos - prev->samplePos) / span;
 
         // Apply the curve type pinned on the PREV point. That field
@@ -1427,7 +1543,7 @@ namespace zynforge
         switch (prev->curve)
         {
             case AutomationCurve::Hold:
-                return prev->value;                     // step
+                return withTrim (prev->value);          // step
             case AutomationCurve::Linear:
                 shaped = t;
                 break;
@@ -1441,7 +1557,7 @@ namespace zynforge
                 shaped = 1.0 - (1.0 - t) * (1.0 - t);    // ease-out
                 break;
         }
-        return (float) (prev->value + shaped * (next->value - prev->value));
+        return withTrim ((float) (prev->value + shaped * (next->value - prev->value)));
     }
 
     void AudioEngine::removeAutomationPointNear (int track, AutomationParam p,
