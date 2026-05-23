@@ -367,7 +367,7 @@ namespace zynforge
         nameLabel.setText (s.name, juce::dontSendNotification);
         nameLabel.setJustificationType (juce::Justification::centred);
         nameLabel.setColour (juce::Label::textColourId, brand::textPrimary);
-        nameLabel.setFont (juce::Font (juce::FontOptions().withHeight (13.0f).withStyle ("Bold")));
+        nameLabel.setFont (brand::type::channelName());
         // Double-click to rename inline; single-click does nothing.
         nameLabel.setEditable (false, true, false);
         nameLabel.onTextChange = [this]
@@ -451,12 +451,14 @@ namespace zynforge
         soloButton.setColour (juce::ToggleButton::tickColourId, brand::accentSolo);
         addAndMakeVisible (soloButton);
 
-        dbLabel.setFont (juce::Font (juce::FontOptions().withHeight (11.0f).withStyle ("Bold")));
+        // Live-value readout — tabular mono so peaks don't visually
+        // wobble while the meter is moving.
+        dbLabel.setFont (brand::type::mono (11.0f, true));
         dbLabel.setColour (juce::Label::textColourId, brand::textPrimary);
         dbLabel.setJustificationType (juce::Justification::centred);
         addAndMakeVisible (dbLabel);
 
-        clipLabel.setFont (juce::Font (juce::FontOptions().withHeight (10.0f).withStyle ("Bold")));
+        clipLabel.setFont (brand::type::mono (10.0f, true));
         clipLabel.setColour (juce::Label::textColourId, brand::accentRecord);
         clipLabel.setJustificationType (juce::Justification::centred);
         addAndMakeVisible (clipLabel);
@@ -535,7 +537,7 @@ namespace zynforge
         addAndMakeVisible (panSlider);
 
         // Pan label below the knob(s).
-        panLabel.setFont (juce::Font (juce::FontOptions().withHeight (11.0f).withStyle ("Bold")));
+        panLabel.setFont (brand::type::mono (11.0f, true));
         panLabel.setColour (juce::Label::textColourId, brand::accentStatus);
         panLabel.setJustificationType (juce::Justification::centred);
         panLabel.setText (formatPanText (s.pan.load(), pairState != nullptr), juce::dontSendNotification);
@@ -560,7 +562,7 @@ namespace zynforge
             };
             addAndMakeVisible (panSliderR);
 
-            panLabelR.setFont (juce::Font (juce::FontOptions().withHeight (11.0f).withStyle ("Bold")));
+            panLabelR.setFont (brand::type::mono (11.0f, true));
             panLabelR.setColour (juce::Label::textColourId, brand::accentStatus);
             panLabelR.setJustificationType (juce::Justification::centred);
             panLabelR.setText (formatPanText (pairState->pan.load(), true), juce::dontSendNotification);
@@ -601,7 +603,7 @@ namespace zynforge
         addAndMakeVisible (*dbRuler);
 
         outLabel.setText ("OUT", juce::dontSendNotification);
-        outLabel.setFont (juce::Font (juce::FontOptions().withHeight (10.0f).withStyle ("Bold")));
+        outLabel.setFont (brand::type::ledLabel());
         outLabel.setColour (juce::Label::textColourId, brand::textMuted);
         outLabel.setJustificationType (juce::Justification::centred);
         addAndMakeVisible (outLabel);

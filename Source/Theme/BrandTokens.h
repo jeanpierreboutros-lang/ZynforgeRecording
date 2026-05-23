@@ -28,56 +28,61 @@ namespace zynforge::brand
         inline constexpr int btnH  = 24;   // action button height
     }
 
-    // ── Typography scale (matches ZynForge Live's typography.*) ─────────────
+    // ── Typography scale ──────────────────────────────────────────────────
+    //
+    // Two pinned typeface families. Picked by name so we can swap to
+    // bundled Inter / JetBrains Mono later by changing exactly these
+    // two strings.
+    //
+    //   uiFamily   — proportional UI text (labels, body, titles, buttons)
+    //   monoFamily — tabular numerals (BigClock, BPM, meter dB readouts,
+    //                CPU%, MB/s — anywhere a value changes and shouldn't
+    //                cause horizontal layout jitter)
+    inline constexpr const char* uiFamily   = "SF Pro";
+    inline constexpr const char* monoFamily = "SF Mono";
+
     namespace type
     {
-        inline juce::Font label()
+        // Sized scale. Six discrete heights. Anything outside this list
+        // should be considered a bug — the system should be tight.
+        inline constexpr float h_label    = 10.0f;   // tiny captions / dB ruler ticks
+        inline constexpr float h_caption  = 11.0f;   // small labels, chips
+        inline constexpr float h_body     = 13.0f;   // standard body
+        inline constexpr float h_title    = 14.0f;   // dialog + section titles
+        inline constexpr float h_headline = 18.0f;   // big-ish accents
+        inline constexpr float h_display  = 28.0f;   // BigClock / hero numbers
+
+        inline juce::Font ui (float height, bool bold = false)
         {
-            return juce::Font (juce::FontOptions().withHeight (9.0f));
+            auto opts = juce::FontOptions().withName (uiFamily).withHeight (height);
+            if (bold) opts = opts.withStyle ("Bold");
+            return juce::Font (opts);
         }
-        inline juce::Font ledLabel()
+
+        // Tabular / monospace digits. Anywhere a number is going to
+        // change while the user is looking at it.
+        inline juce::Font mono (float height, bool bold = false)
         {
-            return juce::Font (juce::FontOptions().withHeight (9.0f).withStyle ("Bold"));
+            auto opts = juce::FontOptions().withName (monoFamily).withHeight (height);
+            if (bold) opts = opts.withStyle ("Bold");
+            return juce::Font (opts);
         }
-        inline juce::Font hint()
-        {
-            return juce::Font (juce::FontOptions().withHeight (10.0f));
-        }
-        inline juce::Font statusBar()
-        {
-            return juce::Font (juce::FontOptions().withHeight (10.5f));
-        }
-        inline juce::Font uiLabel()
-        {
-            return juce::Font (juce::FontOptions().withHeight (11.0f).withStyle ("Bold"));
-        }
-        inline juce::Font caption()
-        {
-            return juce::Font (juce::FontOptions().withHeight (12.0f));
-        }
-        inline juce::Font captionBold()
-        {
-            return juce::Font (juce::FontOptions().withHeight (12.0f).withStyle ("Bold"));
-        }
-        inline juce::Font uiBody()
-        {
-            return juce::Font (juce::FontOptions().withHeight (13.0f));
-        }
-        inline juce::Font channelName()
-        {
-            return juce::Font (juce::FontOptions().withHeight (13.0f).withStyle ("Bold"));
-        }
-        inline juce::Font sectionTitle()
-        {
-            return juce::Font (juce::FontOptions().withHeight (14.0f).withStyle ("Bold"));
-        }
-        inline juce::Font display()
-        {
-            return juce::Font (juce::FontOptions().withHeight (22.0f).withStyle ("Bold"));
-        }
-        inline juce::Font hero()
-        {
-            return juce::Font (juce::FontOptions().withHeight (28.0f).withStyle ("Bold"));
-        }
+
+        // ── Named roles ───────────────────────────────────────────
+        inline juce::Font label()        { return ui   (h_label);          }
+        inline juce::Font ledLabel()     { return mono (9.0f, true);       }
+        inline juce::Font hint()         { return ui   (h_label);          }
+        inline juce::Font statusBar()    { return ui   (h_caption);        }
+        inline juce::Font uiLabel()      { return ui   (h_caption, true);  }
+        inline juce::Font caption()      { return ui   (h_caption);        }
+        inline juce::Font captionBold()  { return ui   (h_caption, true);  }
+        inline juce::Font uiBody()       { return ui   (h_body);           }
+        inline juce::Font channelName()  { return ui   (h_body, true);     }
+        inline juce::Font sectionTitle() { return ui   (h_title, true);    }
+        inline juce::Font headline()     { return ui   (h_headline, true); }
+        inline juce::Font display()      { return mono (h_display, true);  }
+        inline juce::Font hero()         { return mono (h_display, true);  }
+        // Numeric readouts — every value-readout font goes through this.
+        inline juce::Font readout (float height) { return mono (height, true); }
     }
 }

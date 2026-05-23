@@ -1,5 +1,6 @@
 #include "MainComponent.h"
 #include "../Theme/BrandColors.h"
+#include "../Theme/BrandTokens.h"
 #include "AddTracksDialog.h"
 #include "AudioDeviceDialog.h"
 #include "Meterbridge.h"
@@ -16,22 +17,23 @@ MainComponent::MainComponent()
 {
     setLookAndFeel (&laf);
 
-    titleLabel.setFont (juce::Font (juce::FontOptions().withHeight (16.0f).withStyle ("Bold")));
+    titleLabel.setFont (brand::type::headline());
     titleLabel.setColour (juce::Label::textColourId, brand::textPrimary);
     titleLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (titleLabel);
 
-    statusLabel.setFont (juce::Font (juce::FontOptions().withHeight (13.0f)));
+    statusLabel.setFont (brand::type::uiBody());
     statusLabel.setColour (juce::Label::textColourId, brand::textMuted);
     statusLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (statusLabel);
 
-    sessionLabel.setFont (juce::Font (juce::FontOptions().withHeight (12.0f)));
+    sessionLabel.setFont (brand::type::caption());
     sessionLabel.setColour (juce::Label::textColourId, brand::textMuted);
     sessionLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (sessionLabel);
 
-    transportLabel.setFont (juce::Font (juce::FontOptions().withHeight (13.0f).withStyle ("Bold")));
+    // Transport timecode — mono so HH:MM:SS doesn't dance
+    transportLabel.setFont (brand::type::mono (13.0f, true));
     transportLabel.setColour (juce::Label::textColourId, brand::textPrimary);
     transportLabel.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (transportLabel);

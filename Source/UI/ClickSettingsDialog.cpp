@@ -149,7 +149,8 @@ namespace zynforge
                 // accent-coloured number with 'BPM' beside it. No
                 // separate BEAT / FOLLOW METER chips.
                 bpmValue.setText (juce::String (bpm, 0) + " BPM", juce::dontSendNotification);
-                bpmValue.setFont (juce::FontOptions().withHeight (44.0f).withStyle ("Bold"));
+                // Big tabular numeral so the BPM digit doesn't dance.
+                bpmValue.setFont (brand::type::mono (44.0f, true));
                 bpmValue.setColour (juce::Label::textColourId, brand::accentStatus);
                 bpmValue.setJustificationType (juce::Justification::centred);
                 addAndMakeVisible (bpmValue);

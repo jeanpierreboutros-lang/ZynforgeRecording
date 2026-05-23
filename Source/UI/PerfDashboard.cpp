@@ -50,16 +50,17 @@ namespace zynforge
                             float pct,
                             const juce::String& valueText)
         {
-            // Label (left)
-            g.setColour (brand::textMuted);
-            g.setFont (juce::FontOptions().withHeight (10.0f).withStyle ("Bold"));
+            // Label (left) — proportional UI font, muted colour
+            g.setColour (brand::textTertiary);
+            g.setFont (brand::type::ledLabel());
             g.drawText (label, row.removeFromLeft (labelW),
                         juce::Justification::centredLeft, false);
 
-            // Value (right)
+            // Value (right) — tabular mono so the % digit doesn't twitch
+            // every frame as CPU load swings.
             const auto col = ledColour (pct);
             g.setColour (col);
-            g.setFont (juce::FontOptions().withHeight (11.0f).withStyle ("Bold"));
+            g.setFont (brand::type::mono (11.0f, true));
             g.drawText (valueText, row.removeFromRight (valueW),
                         juce::Justification::centredRight, false);
 
@@ -106,7 +107,7 @@ namespace zynforge
         if (missed > 0)
         {
             g.setColour (brand::accentRecord);
-            g.setFont (juce::FontOptions().withHeight (10.0f).withStyle ("Bold"));
+            g.setFont (brand::type::mono (10.0f, true));
             const auto warn = "DROP " + juce::String (missed);
             g.drawText (warn, r.reduced (8.0f, 4.0f),
                         juce::Justification::bottomRight, false);

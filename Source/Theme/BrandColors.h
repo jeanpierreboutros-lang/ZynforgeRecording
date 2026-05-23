@@ -28,7 +28,7 @@ namespace zynforge::brand
     inline const auto textPrimary   = juce::Colour::fromRGB (0xff, 0xff, 0xff);
     inline const auto textSecondary = juce::Colour::fromRGB (0xb8, 0xc2, 0xcc);
     inline const auto textTertiary  = juce::Colour::fromRGB (0x7a, 0x8a, 0x9a);
-    inline const auto textMuted     = juce::Colour::fromRGB (0x7a, 0x8a, 0x9a);  // alias of textTertiary
+    inline const auto textMuted     = juce::Colour::fromRGB (0x55, 0x60, 0x6c);  // genuine disabled state
 
     // ── Semantic signal accents ───────────────────────────────────────────
     inline const auto accentRecord    = juce::Colour::fromRGB (0xff, 0x3b, 0x3b);  // record / danger
@@ -63,15 +63,20 @@ namespace zynforge::brand
     inline const auto swatchGraphite = juce::Colour::fromRGB (0x55, 0x55, 0x5a);
 
     // ── Personality wash colours — INS 1-8 ────────────────────────────────
+    //
+    // Brightened ~25-30% from the original palette so the strip
+    // identity colour still reads at XS strip width (56 px) against
+    // bgDeep. The original values were getting absorbed into the
+    // background in tight-density mixes.
     inline const std::array<juce::Colour, 8> personality {
-        juce::Colour::fromRGB (0x3a, 0x50, 0x63),  // INS 1 — dusty blue
-        juce::Colour::fromRGB (0x39, 0x56, 0x46),  // INS 2 — moss
-        juce::Colour::fromRGB (0x51, 0x4a, 0x35),  // INS 3 — olive
-        juce::Colour::fromRGB (0x4a, 0x3d, 0x57),  // INS 4 — violet
-        juce::Colour::fromRGB (0x58, 0x2e, 0x3a),  // INS 5 — wine
-        juce::Colour::fromRGB (0x2d, 0x50, 0x51),  // INS 6 — teal
-        juce::Colour::fromRGB (0x5b, 0x45, 0x28),  // INS 7 — amber
-        juce::Colour::fromRGB (0x5a, 0x4d, 0x2c),  // INS 8 — mustard
+        juce::Colour::fromRGB (0x4c, 0x6c, 0x88),  // INS 1 — dusty blue
+        juce::Colour::fromRGB (0x4e, 0x76, 0x5e),  // INS 2 — moss
+        juce::Colour::fromRGB (0x6e, 0x66, 0x44),  // INS 3 — olive
+        juce::Colour::fromRGB (0x66, 0x52, 0x76),  // INS 4 — violet
+        juce::Colour::fromRGB (0x78, 0x3c, 0x4e),  // INS 5 — wine
+        juce::Colour::fromRGB (0x3c, 0x6e, 0x70),  // INS 6 — teal
+        juce::Colour::fromRGB (0x80, 0x5c, 0x32),  // INS 7 — amber
+        juce::Colour::fromRGB (0x7a, 0x6a, 0x38),  // INS 8 — mustard
     };
 
     inline juce::Colour stripColour (int index) noexcept

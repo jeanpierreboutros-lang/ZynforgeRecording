@@ -13,7 +13,9 @@ namespace zynforge
         addAndMakeVisible (titleLabel);
 
         valueLabel.setText ("120.0 BPM", juce::dontSendNotification);
-        valueLabel.setFont (juce::FontOptions().withHeight (16.0f).withStyle ("Bold"));
+        // Tabular mono so BPM doesn't shift width when the engineer
+        // taps a new tempo.
+        valueLabel.setFont (brand::type::mono (16.0f, true));
         valueLabel.setColour (juce::Label::textColourId, brand::accentStatus);
         valueLabel.setJustificationType (juce::Justification::centred);
         valueLabel.setEditable (false, true, false);     // double-click to edit

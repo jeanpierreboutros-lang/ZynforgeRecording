@@ -1,5 +1,6 @@
 #include "BigClockPanel.h"
 #include "../Theme/BrandColors.h"
+#include "../Theme/BrandTokens.h"
 
 namespace zynforge
 {
@@ -73,7 +74,7 @@ namespace zynforge
             g.fillEllipse (left.getX(), left.getY() + 14.0f, lampRadius * 2.0f, lampRadius * 2.0f);
 
             g.setColour (brand::textPrimary);
-            g.setFont (juce::FontOptions().withHeight (28.0f).withStyle ("Bold"));
+            g.setFont (brand::type::headline());
             g.drawText (label,
                         left.withTrimmedLeft (lampRadius * 2.0f + 12.0f),
                         juce::Justification::centredLeft, false);
@@ -82,43 +83,44 @@ namespace zynforge
         // Right: disk/health column
         auto right = inner.removeFromRight (juce::jmin (260.0f, inner.getWidth() * 0.40f));
         {
-            g.setColour (brand::textMuted);
-            g.setFont (juce::FontOptions().withHeight (11.0f));
+            // Each row is [label left, value right]. Label uses the UI
+            // font; value uses tabular mono so the digits don't dance
+            // while the engineer's eye is on the timer.
+            auto drawRow = [&] (juce::Rectangle<float> line,
+                                const char* label, const juce::String& value,
+                                juce::Colour labelCol = brand::textTertiary,
+                                juce::Colour valueCol = brand::textSecondary)
+            {
+                g.setColour (labelCol);
+                g.setFont (brand::type::caption());
+                g.drawText (label, line, juce::Justification::topLeft, false);
+                g.setColour (valueCol);
+                g.setFont (brand::type::mono (11.0f, true));
+                g.drawText (value, line, juce::Justification::topRight, false);
+            };
 
-            auto line = right.removeFromTop (14.0f);
-            g.drawText ("FREE", line, juce::Justification::topLeft, false);
-            g.drawText (juce::String::formatted ("%.1f GB", freeGB),
-                        line, juce::Justification::topRight, false);
-
-            line = right.removeFromTop (14.0f);
-            g.drawText ("RECORD TIME LEFT", line, juce::Justification::topLeft, false);
-            g.drawText (formatRemaining (remainingSeconds),
-                        line, juce::Justification::topRight, false);
-
-            line = right.removeFromTop (14.0f);
-            g.drawText ("LAST WRITE", line, juce::Justification::topLeft, false);
-            g.drawText (juce::String (lastWriteMs) + " ms",
-                        line, juce::Justification::topRight, false);
-
-            line = right.removeFromTop (14.0f);
-            const auto missLabel = missed > 0 ? "MISSED SAMPLES" : "NO MISSED WRITES";
-            g.setColour (missed > 0 ? brand::accentRecord : brand::textMuted);
-            g.drawText (missLabel, line, juce::Justification::topLeft, false);
-            if (missed > 0)
-                g.drawText (juce::String (missed), line, juce::Justification::topRight, false);
-
-            g.setColour (brand::textMuted);
-            line = right.removeFromTop (14.0f);
-            g.drawText ("MARKERS", line, juce::Justification::topLeft, false);
-            g.drawText (juce::String (markerCount), line, juce::Justification::topRight, false);
+            drawRow (right.removeFromTop (14.0f), "FREE",
+                     juce::String::formatted ("%.1f GB", freeGB));
+            drawRow (right.removeFromTop (14.0f), "RECORD TIME LEFT",
+                     formatRemaining (remainingSeconds));
+            drawRow (right.removeFromTop (14.0f), "LAST WRITE",
+                     juce::String (lastWriteMs) + " ms");
+            drawRow (right.removeFromTop (14.0f),
+                     missed > 0 ? "MISSED SAMPLES" : "NO MISSED WRITES",
+                     missed > 0 ? juce::String (missed) : juce::String(),
+                     missed > 0 ? brand::accentRecord : brand::textTertiary,
+                     missed > 0 ? brand::accentRecord : brand::textSecondary);
+            drawRow (right.removeFromTop (14.0f), "MARKERS",
+                     juce::String (markerCount));
         }
 
         // Centre: huge timer
         g.setColour (mode == Mode::Recording ? brand::accentRecord
                    : mode == Mode::Playing   ? brand::accentPlay
                                              : brand::accentStatus);
-        g.setFont (juce::FontOptions().withHeight (juce::jmin (inner.getHeight() * 0.95f, 56.0f))
-                                       .withStyle ("Bold"));
+        // Tabular numerals — the timer string can't shift width as
+        // seconds tick. SF Mono pinned via brand::type::mono.
+        g.setFont (brand::type::mono (juce::jmin (inner.getHeight() * 0.95f, 56.0f), true));
         g.drawText (elapsedText, inner, juce::Justification::centred, false);
     }
 }
