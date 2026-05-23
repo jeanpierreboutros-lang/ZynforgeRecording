@@ -21,7 +21,7 @@ JUCE 8 / C++20 / CMake, macOS-first (Universal) multitrack recording + playback 
 Read the relevant file(s) before starting implementation work when the topic matches:
 
 - **`architecture.md`** — Technical architecture, component map, real-time threading model, data flow, build / boot sequence.
-- **`DESIGN.md`** — Product requirements, user experience, brand identity, visual design system rationale.
+- **`design.md`** — Product requirements, user experience, brand identity, visual design system rationale.
 - **`tasks.md`** — Current priorities and active work. **Check first** for context on ongoing initiatives before starting anything substantial.
 - **`decisions.md`** — Architecture Decision Records. Read before making structural or product-positioning choices.
 - **`coding-standards.md`** — Naming, formatting, real-time safety patterns, JUCE conventions, brand-token rules.
@@ -80,7 +80,7 @@ ZynForge Live (plugin-insert host) lives elsewhere. They share the visual identi
 When implementation surfaces information that should outlive this conversation, update the right doc and include the update in the same commit as the code change:
 
 - **Architecture changes** (new component, threading model shift, removed module) → `architecture.md`.
-- **Product / UX direction changes** → `DESIGN.md`.
+- **Product / UX direction changes** → `design.md`.
 - **Sprint priorities, completed work, new TODOs** → `tasks.md` at the end of every productive session.
 - **Decisions whose *why* future-you will want** → add an ADR to `decisions.md`.
 - **Conventions adopted that aren't yet documented** → `coding-standards.md`.

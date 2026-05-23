@@ -64,7 +64,7 @@ The hub is `AudioEngine`. It owns `juce::AudioDeviceManager`, registers as the `
 ```
 ZynforgeRecording/
 ├── CMakeLists.txt
-├── CLAUDE.md / README.md / architecture.md / DESIGN.md
+├── CLAUDE.md / README.md / architecture.md / design.md
 │   tasks.md / decisions.md / coding-standards.md / testing.md / CHANGELOG.md
 ├── Source/
 │   ├── Main.cpp                       — JUCE app entry + window
