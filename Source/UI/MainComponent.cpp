@@ -1718,6 +1718,14 @@ void MainComponent::onPlayClicked()
     }
     else
     {
+        // Pro Tools-style: if the engineer has placed the edit cursor,
+        // playback starts there instead of from wherever the player
+        // happened to be paused. Without a cursor (-1) the player
+        // resumes from its current position as before.
+        const auto cursor = engine.getEditCursorSample();
+        if (cursor >= 0)
+            player.setPositionSamples (cursor);
+
         engine.startPlayback();
         playButton.setButtonText ("PAUSE");
         statusLabel.setText ("Playing → " + player.getSessionName(), juce::dontSendNotification);

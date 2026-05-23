@@ -31,7 +31,69 @@ namespace zynforge
         // the full session length.
         void setContentWidth (int w) { contentW = juce::jmax (1, w); repaint(); }
 
+        // Double-click a marker flag (or its name label) -> rename
+        // dialog. The hit-test mirrors the paint layout: the flag is
+        // an 8 px-wide triangle at the marker's x; the name extends
+        // 120 px to the right of the flag tip.
+        void mouseDoubleClick (const juce::MouseEvent& e) override
+        {
+            if (e.y >= kMarkerStripH) return;   // double-clicks on the time scale ignored
+
+            const auto& player = engine.getPlayer();
+            const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
+            const auto totalLoaded = player.getTotalLengthSamples();
+            const double totalSec = totalLoaded > 0 ? (double) totalLoaded / sr : 300.0;
+            const int waveW = juce::jmax (1, contentW - headerW);
+            const double pxPerSec = (double) waveW / juce::jmax (0.001, totalSec);
+
+            auto& markers = engine.getMarkers();
+            const auto& list = markers.getAll();
+            for (int i = 0; i < (int) list.size(); ++i)
+            {
+                const double tSec = (double) list[(size_t) i].sampleOffset / sr;
+                if (tSec < 0.0 || tSec > totalSec) continue;
+                const int markerX = headerW + (int) (tSec * pxPerSec);
+
+                // Flag is 8 px wide centered on markerX. Name label
+                // extends ~120 px to the right. Use that whole span as
+                // the hit zone so the engineer can grab anywhere they
+                // can see for that marker.
+                if (e.x < markerX - 6) continue;
+                if (e.x > markerX + 6 + 120) continue;
+
+                openRenameDialog (i);
+                return;
+            }
+        }
+
     private:
+        void openRenameDialog (int markerIndex)
+        {
+            auto& markers = engine.getMarkers();
+            const auto current = markers.getMarker (markerIndex).name;
+            auto* aw = new juce::AlertWindow ("Rename marker",
+                                              "Name:",
+                                              juce::MessageBoxIconType::NoIcon);
+            aw->addTextEditor ("n", current, {});
+            if (auto* ed = aw->getTextEditor ("n")) ed->selectAll();
+            aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
+            aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+            juce::Component::SafePointer<EditTimeRuler> self (this);
+            aw->enterModalState (true,
+                juce::ModalCallbackFunction::create ([aw, self, markerIndex] (int r)
+                {
+                    std::unique_ptr<juce::AlertWindow> dispose (aw);
+                    if (r != 1 || self == nullptr) return;
+                    const auto typed = dispose->getTextEditorContents ("n").trim();
+                    if (typed.isEmpty()) return;
+                    self->engine.getMarkers().renameMarker (markerIndex, typed);
+                    self->engine.getMarkers().save();
+                    self->repaint();
+                }),
+                false);
+        }
+
         void timerCallback() override { repaint(); }
 
         // Paint splits vertically into two strips:
