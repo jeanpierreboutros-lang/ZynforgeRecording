@@ -344,9 +344,21 @@ namespace zynforge
         // session loaded.
         void setPlayheadX (int px) { playheadX = px; repaint(); }
 
+        void mouseEnter (const juce::MouseEvent&) override
+        {
+            if (! hovered) { hovered = true; repaint(); }
+        }
+        void mouseExit (const juce::MouseEvent& e) override
+        {
+            if (! getLocalBounds().contains (e.getEventRelativeTo (this).getPosition()))
+                if (hovered) { hovered = false; repaint(); }
+        }
+
         void paint (juce::Graphics& g) override
         {
-            const auto fillColour = getStripColour();
+            auto fillColour = getStripColour();
+            const auto headerBg = hovered ? brand::bgPanel.brighter (0.05f) : brand::bgPanel;
+            if (hovered) fillColour = fillColour.brighter (0.06f);
 
             // ─── Colour swatch column (click to change track colour)
             auto header = getLocalBounds().withWidth (headerW);
@@ -357,7 +369,7 @@ namespace zynforge
             g.drawVerticalLine (swatchArea.getRight() - 1, 0.0f, (float) getHeight());
 
             // ─── Header background (panel)
-            g.setColour (brand::bgPanel);
+            g.setColour (headerBg);
             g.fillRect (header);
             g.setColour (brand::edge);
             g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
@@ -365,7 +377,7 @@ namespace zynforge
 
             // ─── Waveform pane
             auto wavePane = getLocalBounds().withTrimmedLeft (headerW);
-            g.setColour (brand::bgPanel);
+            g.setColour (headerBg);
             g.fillRect (wavePane);
 
             // Paint the waveform in the strip's own colour so it tracks
@@ -1646,6 +1658,8 @@ namespace zynforge
         }
 
     private:
+        bool hovered { false };
+
         void showFadeMenu (int clipIdx, juce::Point<int> screenPos)
         {
             if (menuOpen) return;

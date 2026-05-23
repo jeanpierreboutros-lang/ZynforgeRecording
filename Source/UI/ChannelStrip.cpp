@@ -692,7 +692,12 @@ namespace zynforge
     void ChannelStrip::paint (juce::Graphics& g)
     {
         auto r = getLocalBounds().toFloat().reduced (2.0f);
-        const auto stripColour = getResolvedColour();
+        auto stripColour = getResolvedColour();
+
+        // Hover lift — mouse over the strip brightens the wash ~6% so
+        // the engineer reads 'this is the strip my pointer is on'
+        // without needing a focus ring or selection state.
+        if (hovered) stripColour = stripColour.brighter (0.06f);
 
         // Vertical gradient wash in the personality colour — matches
         // ZynForge Live's strip finish and gives every channel a sense
@@ -700,7 +705,10 @@ namespace zynforge
         g.setGradientFill (brand::verticalGradient (stripColour, r, 0.18f, 0.28f));
         g.fillRoundedRectangle (r, brand::radius::xl);
 
-        g.setColour (stripColour.brighter (0.40f).withAlpha (0.30f));
+        // Hover border — a touch brighter than the resting edge so the
+        // strip lifts subtly off the canvas.
+        const float edgeAlpha = hovered ? 0.55f : 0.30f;
+        g.setColour (stripColour.brighter (0.40f).withAlpha (edgeAlpha));
         g.drawRoundedRectangle (r, brand::radius::xl, 1.0f);
 
         // Multi-select highlight — a 2 px accent-yellow outline so a
@@ -743,6 +751,22 @@ namespace zynforge
             g.setColour (juce::Colours::white);
             g.setFont (brand::fonts::small());
             g.drawText ("BUS", badge.toNearestInt(), juce::Justification::centred, false);
+        }
+    }
+
+    void ChannelStrip::mouseEnter (const juce::MouseEvent&)
+    {
+        if (! hovered) { hovered = true; repaint(); }
+    }
+
+    void ChannelStrip::mouseExit (const juce::MouseEvent& e)
+    {
+        // mouseListener forwarding means children fire mouseExit too —
+        // only clear the hover when the cursor has actually left the
+        // strip's local bounds.
+        if (! getLocalBounds().contains (e.getEventRelativeTo (this).getPosition()))
+        {
+            if (hovered) { hovered = false; repaint(); }
         }
     }
 

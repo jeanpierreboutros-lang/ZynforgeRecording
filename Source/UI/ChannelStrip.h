@@ -80,8 +80,12 @@ namespace zynforge
 
         void paint (juce::Graphics&) override;
         void resized() override;
+        void mouseEnter (const juce::MouseEvent&) override;
+        void mouseExit  (const juce::MouseEvent&) override;
 
     private:
+        bool hovered { false };
+
         class Swatch;
 
         void openColourPicker();

@@ -115,6 +115,13 @@ Toggling stereo (via right-click menu, PATCH M/ST pill, or +CH dialog) calls `se
 
 `Session → Configure cloud upload command…` — store a template like `rclone copy {SESSION} myremote:bucket/` (or `aws s3 sync`, `rsync`, …). `Session → Upload session to cloud…` expands `{SESSION}` to the active session dir and `juce::ChildProcess`-launches the command.
 
+## Motion + feedback polish (2026-05-23 pass 3)
+
+- **BigClock pulse animation.** A 30 Hz private Timer in `BigClockPanel` runs only when `mode == Recording` OR `armedReady` — modulates background alpha at 1 Hz while recording and pulses the brand-orange armed border so the call-to-action draws the engineer's eye. Timer self-suspends when neither state is active, so idle windows don't burn CPU.
+- **Hover affordance** on `ChannelStrip`, `EditPage::TrackRow`, and `VcaStripView`. Each tracks a private `hovered` bool driven from `mouseEnter` / `mouseExit`; paint lifts the wash by ~5-6% and brightens the edge so the surface reads as reactive.
+- **`Toast` notification component** (`Source/UI/Toast.h`). Bottom-right floating pill, fade-in (200 ms) / hold (2.8 s) / fade-out (320 ms), queued so back-to-back calls don't stomp. Three Kinds (Info / Success / Warning) — left-edge stripe colour-codes the kind, body is a gradient pill with a drop shadow at elev3. `MainComponent::showStatus` now also fires `toast.show()` so existing status messages get the calmer non-modal acknowledgement instead of just sitting in the footer label.
+- **Vector cue-navigation arrows.** `SetlistBar`'s prev/next buttons were `TextButton`s rendering the unicode glyphs `◂` / `▸`. They're now path-drawn `ArrowButton` triangles with the same gradient + border treatment as the `TransportBar`. Vocabulary across the app is now: every transport-shaped button is a `juce::Path`, never a font glyph.
+
 ## Gradient sweep (2026-05-23 pass 2)
 
 Every previously-flat painted surface in the app now uses `brand::verticalGradient()` (or a bespoke `juce::ColourGradient` for state-tinted hero panels). Flat `g.fillAll (...)` is gone from every component that owns visible chrome. Touched: `MainComponent` (root canvas + header), `BigClockPanel` (state-tinted background + soft top highlight for raised-metal feel), `VcaPanel`, `TimelineStrip`, `MiniSpectrum`, `StripColourPicker`, `Meterbridge`, `MarkerListDialog`, `NoiseReportDialog`, `ExportDialog`, `SessionSettingsDialog`, the AudioDeviceDialog inner panel. Strips, faders, toggles, and TextButtons were already gradient via `ZynForgeLookAndFeel`, so the whole window now reads as a single glassy plane rather than a banded paste-up.

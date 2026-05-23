@@ -115,12 +115,23 @@ namespace zynforge
                 addAndMakeVisible (nameLabel);
             }
 
+            void mouseEnter (const juce::MouseEvent&) override
+            {
+                if (! hovered) { hovered = true; repaint(); }
+            }
+            void mouseExit (const juce::MouseEvent& e) override
+            {
+                if (! getLocalBounds().contains (e.getEventRelativeTo (this).getPosition()))
+                    if (hovered) { hovered = false; repaint(); }
+            }
+
             void paint (juce::Graphics& g) override
             {
                 // Background + colour swatch strip. The swatch is a
                 // thicker (6 px) bar so it's an obvious click target
                 // for the colour picker.
-                g.setColour (brand::bgPanel);
+                auto bg = hovered ? brand::bgPanel.brighter (0.06f) : brand::bgPanel;
+                g.setColour (bg);
                 g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (1), 4);
                 const juce::uint32 c = engine.getVca (index).colourARGB.load (std::memory_order_relaxed);
                 const auto swatch = c != 0 ? juce::Colour (c) : brand::stripColour (index);
@@ -253,6 +264,7 @@ namespace zynforge
             juce::ToggleButton mute;
             juce::ToggleButton solo;
             juce::Label        nameLabel;
+            bool               hovered { false };
         };
 
         AudioEngine& engine;

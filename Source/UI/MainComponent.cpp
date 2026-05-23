@@ -313,6 +313,7 @@ MainComponent::MainComponent()
 
     addAndMakeVisible (bigClock);
     addAndMakeVisible (perfDashboard);
+    addAndMakeVisible (toast);
 
     // Setlist + cue bar. Wires the three engineer actions back into
     // helpers that read/write the session's .zfproj.
@@ -2181,6 +2182,20 @@ void MainComponent::onFileMenuClicked()
 void MainComponent::showStatus (const juce::String& msg)
 {
     statusLabel.setText (msg, juce::dontSendNotification);
+    // Also surface the message as a non-modal toast so the engineer
+    // catches feedback even when their eyes are on the strips, not
+    // the footer. Pick the Kind from the message tone — anything
+    // containing "Stop", "can't", "fail" reads as a warning;
+    // everything else as info.
+    if (msg.isNotEmpty())
+    {
+        const auto kind = (msg.containsIgnoreCase ("can't")
+                           || msg.containsIgnoreCase ("fail")
+                           || msg.containsIgnoreCase ("stop record"))
+                              ? Toast::Kind::Warning
+                              : Toast::Kind::Info;
+        toast.show (msg, kind);
+    }
 }
 
 namespace
@@ -4855,6 +4870,17 @@ void MainComponent::paint (juce::Graphics& g)
 void MainComponent::resized()
 {
     auto r = getLocalBounds();
+
+    // Toast anchored to bottom-right of the window — independent of
+    // the rest of the layout flow because it floats over everything.
+    {
+        const int tW = 320;
+        const int tH = 56;
+        const int margin = 18;
+        toast.setBounds (getWidth() - tW - margin,
+                         getHeight() - tH - margin,
+                         tW, tH);
+    }
 
     // Row 1 — title + status + LOCK + + CH + DEVICE + RECORD
     // FMT / PRE moved into Session Settings.

@@ -3,6 +3,9 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <functional>
 
+#include "../Theme/BrandColors.h"
+#include "../Theme/BrandTokens.h"
+
 namespace zynforge
 {
     // Setlist + cue bar: [SETLIST | ◂ | <dropdown> | ▸ | + Cue | Update].
@@ -95,10 +98,51 @@ namespace zynforge
         void resized() override;
 
     private:
+        // Path-drawn arrow button — replaces the previous unicode-glyph
+        // TextButtons so cue navigation matches the TransportBar's
+        // vector-icon vocabulary. Forward/backward triangles drawn in
+        // a juce::Path; theming follows the standard ZynForge button
+        // chrome via the host LookAndFeel.
+        class ArrowButton final : public juce::Button
+        {
+        public:
+            ArrowButton (const juce::String& n, bool forward)
+                : juce::Button (n), pointsRight (forward) {}
+
+            void paintButton (juce::Graphics& g, bool over, bool down) override
+            {
+                auto r = getLocalBounds().toFloat().reduced (2.0f);
+                const auto base = down ? brand::controlBgDown
+                                       : over ? brand::controlBgHover
+                                              : brand::bgElevated;
+                g.setGradientFill (juce::ColourGradient (
+                    base.brighter (down ? 0.10f : 0.30f), r.getCentreX(), r.getY(),
+                    base.darker   (down ? 0.05f : 0.28f), r.getCentreX(), r.getBottom(),
+                    false));
+                g.fillRoundedRectangle (r, brand::radius::md);
+                g.setColour (brand::edge);
+                g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
+
+                const float cx = r.getCentreX();
+                const float cy = r.getCentreY();
+                const float w  = juce::jmin (r.getWidth(), r.getHeight()) * 0.40f;
+                juce::Path p;
+                if (pointsRight)
+                    p.addTriangle (cx - w * 0.5f, cy - w, cx - w * 0.5f, cy + w, cx + w * 0.7f, cy);
+                else
+                    p.addTriangle (cx + w * 0.5f, cy - w, cx + w * 0.5f, cy + w, cx - w * 0.7f, cy);
+                g.setColour (brand::textPrimary);
+                g.fillPath (p);
+            }
+
+        private:
+            bool pointsRight;
+        };
+
         juce::Label        titleLabel;
-        juce::TextButton   prevButton;
+        ArrowButton        prevButton  { "Previous cue", false };
         juce::ComboBox     cueCombo;
-        juce::TextButton   nextButton;
+        ArrowButton        nextButton  { "Next cue",     true };
         juce::TextButton   addCueButton;
         juce::TextButton   updateButton;
 

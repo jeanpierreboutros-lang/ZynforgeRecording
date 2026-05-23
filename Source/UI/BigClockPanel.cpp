@@ -8,7 +8,7 @@ namespace zynforge
 
     void BigClockPanel::setMode (Mode m)
     {
-        if (mode != m) { mode = m; repaint(); }
+        if (mode != m) { mode = m; syncPulseTimer(); repaint(); }
     }
 
     void BigClockPanel::setElapsed (juce::int64 samples, double sr)
@@ -38,7 +38,32 @@ namespace zynforge
 
     void BigClockPanel::setArmedReady (bool ready)
     {
-        if (armedReady != ready) { armedReady = ready; repaint(); }
+        if (armedReady != ready) { armedReady = ready; syncPulseTimer(); repaint(); }
+    }
+
+    void BigClockPanel::syncPulseTimer()
+    {
+        const bool wantPulse = (mode == Mode::Recording) || armedReady;
+        if (wantPulse)
+        {
+            if (! isTimerRunning())
+                startTimerHz (30);
+        }
+        else
+        {
+            stopTimer();
+            pulsePhase = 0.0f;
+        }
+    }
+
+    void BigClockPanel::timerCallback()
+    {
+        // 1 Hz breathe: a full sine cycle every second. Phase wraps at
+        // 2π so the float stays bounded over a long recording session.
+        constexpr float twoPi = juce::MathConstants<float>::twoPi;
+        pulsePhase += twoPi / 30.0f;
+        if (pulsePhase > twoPi) pulsePhase -= twoPi;
+        repaint();
     }
 
     static juce::String formatRemaining (double seconds)
@@ -56,8 +81,16 @@ namespace zynforge
 
         // Background — gradient fill in the state-tinted colour so the
         // hero panel reads as a glassy plate rather than a flat block.
+        // While recording, the red tint breathes at 1 Hz so the engineer
+        // can read 'rolling' from across the room without looking at
+        // the timer value.
         juce::Colour bg = brand::bgPanel;
-        if (mode == Mode::Recording) bg = brand::accentRecord.withAlpha (0.16f);
+        if (mode == Mode::Recording)
+        {
+            const float pulse = 0.5f + 0.5f * std::sin (pulsePhase);  // 0..1
+            const float a = 0.12f + 0.08f * pulse;                    // 0.12..0.20
+            bg = brand::accentRecord.withAlpha (a);
+        }
         else if (mode == Mode::Playing) bg = brand::accentPlay.withAlpha (0.14f);
         auto bgRect = r.reduced (2.0f);
         g.setGradientFill (juce::ColourGradient (
@@ -75,13 +108,14 @@ namespace zynforge
             false));
         g.fillRoundedRectangle (hi, 6.0f);
 
-        // Brand-orange armed-but-not-rolling border. Only shows when
-        // at least one strip is record-armed AND transport is idle —
-        // engineer sees, before hitting RECORD, that the next press
-        // will actually print to disk.
+        // Brand-orange armed-but-not-rolling border. Pulses at 1 Hz so
+        // the call-to-action draws the eye — the engineer has armed
+        // strips and the next RECORD press will print to disk.
         if (armedReady && mode == Mode::Idle)
         {
-            g.setColour (brand::brandOrange);
+            const float pulse = 0.5f + 0.5f * std::sin (pulsePhase);
+            const auto  col   = brand::brandOrange.withMultipliedBrightness (0.85f + 0.25f * pulse);
+            g.setColour (col);
             g.drawRoundedRectangle (r.reduced (2.0f), 6.0f, 2.0f);
         }
         else

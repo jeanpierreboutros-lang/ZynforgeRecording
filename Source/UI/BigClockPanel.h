@@ -9,7 +9,7 @@ namespace zynforge
     // a disk-health strip (free GB / last write ms / missed samples).
     //
     // All values are pushed in by MainComponent from its timer.
-    class BigClockPanel final : public juce::Component
+    class BigClockPanel final : public juce::Component, private juce::Timer
     {
     public:
         enum class Mode { Idle, Recording, Playing };
@@ -38,6 +38,15 @@ namespace zynforge
         juce::int64 missed      { 0 };
         double remainingSeconds { 0.0 };
         bool   armedReady       { false };
+
+        // Pulse animation. timerCallback (30 Hz) advances pulsePhase
+        // when either Recording is active OR armedReady is on; paint
+        // reads pulsePhase to modulate background alpha + border
+        // brightness. When neither state is active the timer stops and
+        // the value is reset, so an idle window doesn't burn CPU.
+        float pulsePhase { 0.0f };
+        void  timerCallback() override;
+        void  syncPulseTimer();
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BigClockPanel)
     };

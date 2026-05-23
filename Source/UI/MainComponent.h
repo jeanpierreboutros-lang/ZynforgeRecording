@@ -18,6 +18,7 @@
 #include "SetlistBar.h"
 #include "TempoBar.h"
 #include "TimelineStrip.h"
+#include "Toast.h"
 #include "VcaPanel.h"
 #include "TransportBar.h"
 
@@ -223,6 +224,7 @@ private:
     zynforge::PerfDashboard perfDashboard;
     zynforge::SetlistBar    setlistBar;
     zynforge::TempoBar      tempoBar;
+    zynforge::Toast         toast;
     zynforge::AutomationToolbar automationToolbar;
 
     // Per-session cue list — populated from <SessionName>.zfproj on

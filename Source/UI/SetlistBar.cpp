@@ -12,15 +12,9 @@ namespace zynforge
         titleLabel.setJustificationType (juce::Justification::centredLeft);
         addAndMakeVisible (titleLabel);
 
-        auto styleArrow = [] (juce::TextButton& b)
-        {
-            b.setColour (juce::TextButton::buttonColourId,  brand::bgElevated);
-            b.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
-        };
-        prevButton.setButtonText (juce::String::fromUTF8 ("\xe2\x97\x82"));   // ◂
-        nextButton.setButtonText (juce::String::fromUTF8 ("\xe2\x96\xb8"));   // ▸
-        styleArrow (prevButton);
-        styleArrow (nextButton);
+        // Arrows are path-drawn ArrowButtons (defined in SetlistBar.h)
+        // so they match the TransportBar's vector-icon vocabulary
+        // instead of depending on the font's bullet glyphs.
         prevButton.setTooltip ("Jump to previous cue");
         nextButton.setTooltip ("Jump to next cue");
         prevButton.onClick = [this] { if (onPrev) onPrev(); };
