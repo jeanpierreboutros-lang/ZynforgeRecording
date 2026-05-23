@@ -756,13 +756,13 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
                     auto rr = r.removeFromTop (rowH);
                     l.setBounds (rr.removeFromLeft (labelW));
                     b.setBounds (rr);
-                    r.removeFromTop (6);
+                    r.removeFromTop (brand::space::sm);
                 };
                 row (fmtL, fmtBox); row (rateL, rateBox); row (bitsL, bitsBox);
-                r.removeFromTop (10);
+                r.removeFromTop (brand::space::lg);
                 auto br = r.removeFromBottom (32);
                 applyB .setBounds (br.removeFromRight (110));
-                br.removeFromRight (8);
+                br.removeFromRight (brand::space::md);
                 cancelB.setBounds (br.removeFromRight (110));
             }
 
@@ -3628,11 +3628,11 @@ void MainComponent::resized()
     auto row1 = r.removeFromTop (44).reduced (12, 8);
     titleLabel   .setBounds (row1.removeFromLeft (220));
     recordButton .setBounds (row1.removeFromRight (104).reduced (0, 2));
-    row1.removeFromRight (6);
+    row1.removeFromRight (brand::space::sm);
     deviceButton .setBounds (row1.removeFromRight (118).reduced (0, 2));
-    row1.removeFromRight (6);
+    row1.removeFromRight (brand::space::sm);
     addChannelButton.setBounds (row1.removeFromRight (70).reduced (0, 2));
-    row1.removeFromRight (6);
+    row1.removeFromRight (brand::space::sm);
     lockButton   .setBounds (row1.removeFromRight (76).reduced (0, 2));
     statusLabel  .setBounds (row1);
 
@@ -3647,7 +3647,7 @@ void MainComponent::resized()
     // the macOS menu bar.
     if (transportBar != nullptr)
         transportBar->setBounds (row2.removeFromLeft (340).reduced (0, 2));
-    row2.removeFromLeft (16);
+    row2.removeFromLeft (brand::space::xl);
 
     // The old FILE TextButton is no longer shown; the File menu lives in
     // the macOS system menu bar. Keep loadButton out of the layout.
@@ -3655,13 +3655,13 @@ void MainComponent::resized()
 
     // PATCH + MIX / EDIT view toggle are the quick-access in-app buttons.
     patchButton    .setBounds (row2.removeFromRight (90).reduced (0, 2));
-    row2.removeFromRight (8);
+    row2.removeFromRight (brand::space::md);
     vscButton      .setBounds (row2.removeFromRight (70).reduced (0, 2));
-    row2.removeFromRight (8);
+    row2.removeFromRight (brand::space::md);
     editViewButton .setBounds (row2.removeFromRight (60).reduced (0, 2));
-    row2.removeFromRight (4);
+    row2.removeFromRight (brand::space::xs);
     mixViewButton  .setBounds (row2.removeFromRight (70).reduced (0, 2));
-    row2.removeFromRight (16);
+    row2.removeFromRight (brand::space::xl);
 
     // Strip-width preset pill, right next to MIX/EDIT.
     stripLButton .setBounds (row2.removeFromRight (30).reduced (0, 2));
@@ -3674,7 +3674,7 @@ void MainComponent::resized()
     stripSButton .setToggleState (stripWidthPreset == StripWidth::S,  juce::dontSendNotification);
     stripMButton .setToggleState (stripWidthPreset == StripWidth::M,  juce::dontSendNotification);
     stripLButton .setToggleState (stripWidthPreset == StripWidth::L,  juce::dontSendNotification);
-    row2.removeFromRight (10);
+    row2.removeFromRight (brand::space::lg);
     transportLabel.setBounds (row2.removeFromLeft (140));
     sessionLabel  .setBounds (row2);
 
@@ -3696,7 +3696,7 @@ void MainComponent::resized()
     // Setlist + tempo row — slim strip between BigClock and the timeline.
     auto bar = r.removeFromTop (36).reduced (12, 2);
     tempoBar  .setBounds (bar.removeFromRight (320));
-    bar.removeFromRight (8);
+    bar.removeFromRight (brand::space::md);
     setlistBar.setBounds (bar);
 
     // Timeline strip
@@ -3738,7 +3738,7 @@ void MainComponent::resized()
         if (currentView == View::Mix)
         {
             auto masterArea = viewportArea.removeFromRight (masterW);
-            viewportArea.removeFromRight (8);   // gap between strips and master
+            viewportArea.removeFromRight (brand::space::md);   // gap between strips and master
             masterStrip->setBounds (masterArea);
         }
         else
@@ -3753,7 +3753,7 @@ void MainComponent::resized()
     if (automationToolbar.isVisible())
     {
         automationToolbar.setBounds (viewportArea.removeFromTop (28).reduced (2, 0));
-        viewportArea.removeFromTop (4);
+        viewportArea.removeFromTop (brand::space::xs);
     }
     else
     {

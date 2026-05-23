@@ -126,9 +126,9 @@ namespace zynforge
                 auto row = [&] (juce::Label& lbl, juce::Component& ed, int h = 30)
                 {
                     auto line = b.removeFromTop (h + 18);
-                    lbl.setBounds (line.removeFromTop (16));
+                    lbl.setBounds (line.removeFromTop (brand::space::xl));
                     ed .setBounds (line.removeFromTop (h));
-                    b.removeFromTop (6);
+                    b.removeFromTop (brand::space::sm);
                 };
 
                 row (nameLabel,   nameEditor);
@@ -138,30 +138,30 @@ namespace zynforge
                 row (dateLabel,   dateEditor);
                 row (notesLabel,  notesEditor, 76);
 
-                b.removeFromTop (8);
+                b.removeFromTop (brand::space::md);
                 configHeader.setBounds (b.removeFromTop (18));
-                b.removeFromTop (4);
+                b.removeFromTop (brand::space::xs);
 
                 auto cfg = b.removeFromTop (44);
                 const int colW = cfg.getWidth() / 3;
                 {
                     auto col = cfg.removeFromLeft (colW);
-                    sampleRateCap.setBounds (col.removeFromTop (16));
+                    sampleRateCap.setBounds (col.removeFromTop (brand::space::xl));
                     sampleRateVal.setBounds (col.removeFromTop (24));
                 }
                 {
                     auto col = cfg.removeFromLeft (colW);
-                    bitDepthCap.setBounds (col.removeFromTop (16));
+                    bitDepthCap.setBounds (col.removeFromTop (brand::space::xl));
                     bitDepthVal.setBounds (col.removeFromTop (24));
                 }
                 {
-                    formatCap.setBounds (cfg.removeFromTop (16));
+                    formatCap.setBounds (cfg.removeFromTop (brand::space::xl));
                     formatVal.setBounds (cfg.removeFromTop (24));
                 }
 
                 auto footer = getLocalBounds().removeFromBottom (56).reduced (24, 12);
                 saveButton  .setBounds (footer.removeFromRight (100));
-                footer.removeFromRight (10);
+                footer.removeFromRight (brand::space::lg);
                 cancelButton.setBounds (footer.removeFromRight (100));
             }
 

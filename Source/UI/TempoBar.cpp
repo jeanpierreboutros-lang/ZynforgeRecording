@@ -176,15 +176,15 @@ namespace zynforge
         auto r = getLocalBounds().reduced (8, 4);
 
         titleLabel  .setBounds (r.removeFromLeft (52));
-        r.removeFromLeft (4);
+        r.removeFromLeft (brand::space::xs);
         valueLabel  .setBounds (r.removeFromLeft (104).reduced (0, 2));
-        r.removeFromLeft (4);
+        r.removeFromLeft (brand::space::xs);
         minusButton .setBounds (r.removeFromLeft (24).reduced (0, 2));
         r.removeFromLeft (2);
         plusButton  .setBounds (r.removeFromLeft (24).reduced (0, 2));
-        r.removeFromLeft (6);
+        r.removeFromLeft (brand::space::sm);
         tapButton   .setBounds (r.removeFromLeft (52).reduced (0, 2));
-        r.removeFromLeft (4);
+        r.removeFromLeft (brand::space::xs);
         clickButton .setBounds (r.removeFromLeft (56).reduced (0, 2));
         // The right-edge LED is painted in paint(); leave breathing room.
     }

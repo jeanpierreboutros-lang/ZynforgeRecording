@@ -1,5 +1,6 @@
 #include "SessionSettingsDialog.h"
 #include "../Theme/BrandColors.h"
+#include "../Theme/BrandTokens.h"
 
 namespace zynforge
 {
@@ -78,16 +79,16 @@ namespace zynforge
                     auto rr = r.removeFromTop (rowH);
                     l.setBounds (rr.removeFromLeft (labelW));
                     b.setBounds (rr);
-                    r.removeFromTop (6);
+                    r.removeFromTop (brand::space::sm);
                 };
                 row (formatLabel, formatBox);
                 row (rateLabel,   rateBox);
                 row (bitsLabel,   bitsBox);
 
-                r.removeFromTop (10);
+                r.removeFromTop (brand::space::lg);
                 auto btnRow = r.removeFromBottom (32);
                 applyButton .setBounds (btnRow.removeFromRight (110));
-                btnRow.removeFromRight (8);
+                btnRow.removeFromRight (brand::space::md);
                 cancelButton.setBounds (btnRow.removeFromRight (110));
             }
 

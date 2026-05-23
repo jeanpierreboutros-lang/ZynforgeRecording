@@ -178,14 +178,14 @@ namespace zynforge
         r.removeFromTop (brand::space::sm);
         muteButton.setBounds (r.removeFromTop (24));
         r.removeFromTop (brand::space::sm);
-        gainLabel.setBounds (r.removeFromTop (16));
+        gainLabel.setBounds (r.removeFromTop (brand::space::xl));
         r.removeFromTop (brand::space::xs);
 
         // Meter shrinks in mono since only one bar is needed.
         const int meterW = stereo ? 40 : 26;
         auto meterArea = r.removeFromRight (meterW);
         meter.setBounds (meterArea);
-        r.removeFromRight (4);
+        r.removeFromRight (brand::space::xs);
         fader.setBounds (r);
     }
 }

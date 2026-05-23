@@ -655,16 +655,16 @@ namespace zynforge
         // ── 1. Name + colour swatch (top of strip) ─────────────────
         auto nameRow = r.removeFromTop (18);
         if (swatch != nullptr)
-            swatch->setBounds (nameRow.removeFromLeft (16).reduced (1, 2));
+            swatch->setBounds (nameRow.removeFromLeft (brand::space::xl).reduced (1, 2));
         nameLabel.setBounds (nameRow);
-        r.removeFromTop (4);
+        r.removeFromTop (brand::space::xs);
 
         // Routing combos: keep them in flow but small — they live above
         // the pan section in the existing UX (engineer can also use the
         // PATCH page). 18px each.
         inputCombo .setBounds (r.removeFromTop (18).reduced (2, 1));
         outputCombo.setBounds (r.removeFromTop (18).reduced (2, 1));
-        r.removeFromTop (6);
+        r.removeFromTop (brand::space::sm);
 
         // ── 2. Pan section ─────────────────────────────────────────
         // Bigger knobs — engineers wanted them obvious at a glance.
@@ -691,7 +691,7 @@ namespace zynforge
             panSlider.setBounds (panKnobs.withSizeKeepingCentre (knobSize, knobSize));
             panLabel .setBounds (panText);
         }
-        r.removeFromTop (6);
+        r.removeFromTop (brand::space::sm);
 
         // ── 3. Two rows of two buttons each: [ I | R ] / [ S | M ] ──
         //   …except on the metronome strip ("Click"), which is
@@ -723,7 +723,7 @@ namespace zynforge
             soloButton.setBounds (row2.removeFromLeft (halfW).reduced (2, 0));
             muteButton.setBounds (row2.reduced (2, 0));
         }
-        r.removeFromTop (6);
+        r.removeFromTop (brand::space::sm);
 
         spectrum .setBounds ({});  // hidden
         clipLabel.setBounds (r.removeFromTop (12));
@@ -731,7 +731,7 @@ namespace zynforge
         // ── 4. Fader area: [ ruler | fader | meter ] ───────────────
         // dB readout sits at the bottom; reserve 16 px before laying
         // out the column.
-        auto bottom = r.removeFromBottom (16);
+        auto bottom = r.removeFromBottom (brand::space::xl);
         dbLabel.setBounds (bottom);
 
         // Ruler is now on the LEFT (matches the reference: numbers

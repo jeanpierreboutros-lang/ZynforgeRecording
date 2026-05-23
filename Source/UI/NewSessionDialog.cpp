@@ -180,16 +180,16 @@ namespace zynforge
 
                 // Name
                 nameLabel.setBounds (b.removeFromTop (18));
-                b.removeFromTop (4);
+                b.removeFromTop (brand::space::xs);
                 nameEditor.setBounds (b.removeFromTop (32));
-                b.removeFromTop (16);
+                b.removeFromTop (brand::space::xl);
 
                 // Local Storage row: [○] Local Storage:  [path]
                 auto local = b.removeFromTop (24);
                 localRadio.setBounds (local.removeFromLeft (130));
-                local.removeFromLeft (4);
+                local.removeFromLeft (brand::space::xs);
                 pathButton.setBounds (local.removeFromLeft (juce::jmin (local.getWidth(), 280)));
-                b.removeFromTop (6);
+                b.removeFromTop (brand::space::sm);
 
                 // Cloud row
                 auto cloud = b.removeFromTop (24);
@@ -199,7 +199,7 @@ namespace zynforge
 
                 // Section header
                 sectionHeader.setBounds (b.removeFromTop (22));
-                b.removeFromTop (8);
+                b.removeFromTop (brand::space::md);
 
                 // Row: File Type / Sample Rate
                 auto row1 = b.removeFromTop (54);
@@ -207,31 +207,31 @@ namespace zynforge
                 {
                     auto left  = row1.removeFromLeft (colW);
                     fileTypeLabel.setBounds (left.removeFromTop (18));
-                    left.removeFromTop (4);
+                    left.removeFromTop (brand::space::xs);
                     fileTypeCombo.setBounds (left.removeFromTop (28));
                 }
-                row1.removeFromLeft (16);
+                row1.removeFromLeft (brand::space::xl);
                 {
                     auto right = row1;
                     sampleRateLabel.setBounds (right.removeFromTop (18));
-                    right.removeFromTop (4);
+                    right.removeFromTop (brand::space::xs);
                     sampleRateCombo.setBounds (right.removeFromTop (28));
                 }
-                b.removeFromTop (16);
+                b.removeFromTop (brand::space::xl);
 
                 // Row: Bit Depth / I/O Settings
                 auto row2 = b.removeFromTop (54);
                 {
                     auto left  = row2.removeFromLeft (colW);
                     bitDepthLabel.setBounds (left.removeFromTop (18));
-                    left.removeFromTop (4);
+                    left.removeFromTop (brand::space::xs);
                     bitDepthCombo.setBounds (left.removeFromTop (28));
                 }
-                row2.removeFromLeft (16);
+                row2.removeFromLeft (brand::space::xl);
                 {
                     auto right = row2;
                     ioLabel.setBounds (right.removeFromTop (18));
-                    right.removeFromTop (4);
+                    right.removeFromTop (brand::space::xs);
                     ioCombo.setBounds (right.removeFromTop (28));
                 }
                 b.removeFromTop (14);
@@ -241,7 +241,7 @@ namespace zynforge
                 // Footer
                 auto footer = getLocalBounds().removeFromBottom (52).reduced (20, 10);
                 createButton.setBounds (footer.removeFromRight (96));
-                footer.removeFromRight (10);
+                footer.removeFromRight (brand::space::lg);
                 cancelButton.setBounds (footer.removeFromRight (96));
             }
 

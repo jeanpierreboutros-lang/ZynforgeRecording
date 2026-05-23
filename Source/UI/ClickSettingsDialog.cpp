@@ -99,12 +99,12 @@ namespace zynforge
 
                 auto topRow = r.removeFromTop (24);
                 title  .setBounds (topRow.removeFromLeft (60));
-                topRow.removeFromLeft (10);
+                topRow.removeFromLeft (brand::space::lg);
                 voice  .setBounds (topRow.removeFromRight (160));
-                topRow.removeFromRight (10);
+                topRow.removeFromRight (brand::space::lg);
                 volume .setBounds (topRow);
 
-                r.removeFromTop (4);
+                r.removeFromTop (brand::space::xs);
                 auto btnRow = r;
                 const int n  = subButtons.size();
                 const int bw = btnRow.getWidth() / juce::jmax (1, n);
@@ -237,12 +237,12 @@ namespace zynforge
 
                 r.removeFromTop (12);
                 row1->setBounds (r.removeFromTop (80));
-                r.removeFromTop (8);
+                r.removeFromTop (brand::space::md);
                 row2->setBounds (r.removeFromTop (80));
 
                 auto footer = r.removeFromBottom (40);
                 closeButton   .setBounds (footer.removeFromLeft (90));
-                footer.removeFromLeft (8);
+                footer.removeFromLeft (brand::space::md);
                 generateButton.setBounds (footer.removeFromRight (180));
             }
 

@@ -1,5 +1,6 @@
 #include "ExportDialog.h"
 #include "../Theme/BrandColors.h"
+#include "../Theme/BrandTokens.h"
 
 namespace zynforge
 {
@@ -82,7 +83,7 @@ namespace zynforge
                     auto rr = r.removeFromTop (rowH);
                     label.setBounds (rr.removeFromLeft (labelW));
                     box  .setBounds (rr);
-                    r.removeFromTop (8);
+                    r.removeFromTop (brand::space::md);
                 };
 
                 row (formatLabel,  formatBox);
@@ -90,10 +91,10 @@ namespace zynforge
                 row (bitsLabel,    bitsBox);
                 row (bitrateLabel, bitrateBox);
 
-                r.removeFromTop (10);
+                r.removeFromTop (brand::space::lg);
                 auto btnRow = r.removeFromBottom (32);
                 okButton    .setBounds (btnRow.removeFromRight (110));
-                btnRow.removeFromRight (8);
+                btnRow.removeFromRight (brand::space::md);
                 cancelButton.setBounds (btnRow.removeFromRight (110));
             }
 

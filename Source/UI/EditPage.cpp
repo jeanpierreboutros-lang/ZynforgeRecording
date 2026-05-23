@@ -792,7 +792,7 @@ namespace zynforge
 
             // Right edge = small live signal meter
             meter.setBounds (content.removeFromRight (meterW));
-            content.removeFromRight (4);
+            content.removeFromRight (brand::space::xs);
 
             nameLabel.setBounds (content.removeFromTop (18));
             content.removeFromTop (2);
@@ -825,7 +825,7 @@ namespace zynforge
                 soloButton.setBounds (row2.removeFromLeft (halfW).reduced (1));
                 muteButton.setBounds (row2.reduced (1));
             }
-            content.removeFromTop (4);
+            content.removeFromTop (brand::space::xs);
 
             inputCombo .setBounds (content.removeFromTop (18));
             content.removeFromTop (2);

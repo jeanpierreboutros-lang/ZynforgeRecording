@@ -84,7 +84,7 @@ namespace zynforge
         auto r = getLocalBounds().reduced (8, 4);
 
         title       .setBounds (r.removeFromLeft (94));
-        r.removeFromLeft (6);
+        r.removeFromLeft (brand::space::sm);
         selectButton.setBounds (r.removeFromLeft (62).reduced (0, 2));
         r.removeFromLeft (2);
         addButton   .setBounds (r.removeFromLeft (68).reduced (0, 2));
@@ -93,7 +93,7 @@ namespace zynforge
         r.removeFromLeft (12);
 
         paramLabel  .setBounds (r.removeFromLeft (36));
-        r.removeFromLeft (4);
+        r.removeFromLeft (brand::space::xs);
         paramCombo  .setBounds (r.removeFromLeft (130).reduced (0, 2));
         r.removeFromLeft (12);
 

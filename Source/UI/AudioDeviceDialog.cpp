@@ -234,7 +234,7 @@ namespace zynforge
                 auto outBody = outputCard.bodyArea().translated (outputCard.getX(), outputCard.getY());
                 outputBox   .setBounds (outBody.removeFromTop (brand::space::ctrlH));
                 outBody.removeFromTop (brand::space::sm);
-                outChanLabel.setBounds (outBody.removeFromTop (16).withWidth (110));
+                outChanLabel.setBounds (outBody.removeFromTop (brand::space::xl).withWidth (110));
                 outChanValue.setBounds (outBody.removeFromTop (18));
                 outBody.removeFromTop (brand::space::xs);
                 testButton  .setBounds (outBody.removeFromTop (24).reduced (0, 0));
@@ -242,7 +242,7 @@ namespace zynforge
                 auto inBody = inputCard.bodyArea().translated (inputCard.getX(), inputCard.getY());
                 inputBox   .setBounds (inBody.removeFromTop (brand::space::ctrlH));
                 inBody.removeFromTop (brand::space::sm);
-                inChanLabel.setBounds (inBody.removeFromTop (16).withWidth (110));
+                inChanLabel.setBounds (inBody.removeFromTop (brand::space::xl).withWidth (110));
                 inChanValue.setBounds (inBody.removeFromTop (18));
                 inBody.removeFromTop (brand::space::xs);
                 inputMeter .setBounds (inBody.removeFromTop (14));

@@ -118,15 +118,15 @@ namespace zynforge
         auto r = getLocalBounds().reduced (8, 4);
 
         titleLabel  .setBounds (r.removeFromLeft (64));
-        r.removeFromLeft (4);
+        r.removeFromLeft (brand::space::xs);
         prevButton  .setBounds (r.removeFromLeft (28).reduced (0, 2));
-        r.removeFromLeft (4);
+        r.removeFromLeft (brand::space::xs);
         cueCombo    .setBounds (r.removeFromLeft (260).reduced (0, 2));
-        r.removeFromLeft (4);
+        r.removeFromLeft (brand::space::xs);
         nextButton  .setBounds (r.removeFromLeft (28).reduced (0, 2));
-        r.removeFromLeft (10);
+        r.removeFromLeft (brand::space::lg);
         addCueButton.setBounds (r.removeFromLeft (64).reduced (0, 2));
-        r.removeFromLeft (4);
+        r.removeFromLeft (brand::space::xs);
         updateButton.setBounds (r.removeFromLeft (74).reduced (0, 2));
     }
 }
