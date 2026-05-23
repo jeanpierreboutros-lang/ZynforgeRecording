@@ -7,7 +7,7 @@ namespace zynforge
     AutomationToolbar::AutomationToolbar()
     {
         title.setText ("AUTOMATION", juce::dontSendNotification);
-        title.setFont (juce::FontOptions().withHeight (11.0f).withStyle ("Bold"));
+        title.setFont (brand::type::uiLabel());
         title.setColour (juce::Label::textColourId, brand::accentStatus);
         addAndMakeVisible (title);
 
@@ -26,7 +26,7 @@ namespace zynforge
         selectButton.setToggleState (true, juce::dontSendNotification);
 
         paramLabel.setText ("Lane:", juce::dontSendNotification);
-        paramLabel.setFont (juce::FontOptions().withHeight (12.0f));
+        paramLabel.setFont (brand::type::caption());
         paramLabel.setColour (juce::Label::textColourId, brand::textMuted);
         addAndMakeVisible (paramLabel);
 

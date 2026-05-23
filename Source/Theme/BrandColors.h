@@ -62,6 +62,36 @@ namespace zynforge::brand
     inline const auto swatchSlate    = juce::Colour::fromRGB (0x40, 0x45, 0x50);
     inline const auto swatchGraphite = juce::Colour::fromRGB (0x55, 0x55, 0x5a);
 
+    // ── Signal semantics — KEEP THESE MAPPINGS STABLE ACROSS THE APP ──
+    //
+    //   record arm     → red        (accentRecord)
+    //   input monitor  → green      (accentPlay)
+    //   mute           → orange     (brandOrange)
+    //   solo           → yellow     (accentSolo)
+    //   virtual sndchk → warm-amber (accentVS) — lights the VSC button
+    //   stream / send  → cool-teal  (featureEngaged)
+    //   record danger  → red glow   (accentRecord)
+    //
+    // Use the named accessors below, not the raw colour tokens, so a
+    // future re-skin only touches this header.
+    inline juce::Colour signalRecord()      { return accentRecord; }
+    inline juce::Colour signalMonitor()     { return accentPlay;   }
+    inline juce::Colour signalMute()        { return brandOrange;  }
+    inline juce::Colour signalSolo()        { return accentSolo;   }
+    inline juce::Colour signalVsc()         { return accentVS;     }
+    inline juce::Colour signalStream()      { return featureEngaged; }
+    inline juce::Colour signalPlayhead()    { return accentPlay;   }
+
+    // ── Alpha tokens for layered overlays ────────────────────────────
+    // Anything painted on top of the waveform / lane should pick one
+    // of these. No more inline magic 0.18 / 0.40 / 0.85 numbers.
+    namespace alpha
+    {
+        inline constexpr float subtle    = 0.18f;  // grid lines, off-beat ticks
+        inline constexpr float ghost     = 0.40f;  // downbeats, secondary cues
+        inline constexpr float prominent = 0.85f;  // playhead, focus highlight
+    }
+
     // ── Personality wash colours — INS 1-8 ────────────────────────────────
     //
     // Brightened ~25-30% from the original palette so the strip

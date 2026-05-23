@@ -8,13 +8,13 @@ namespace zynforge
     {
         static void styleLabel (juce::Label& l)
         {
-            l.setFont (juce::FontOptions().withHeight (12.0f));
+            l.setFont (brand::type::caption());
             l.setColour (juce::Label::textColourId, brand::textSecondary);
         }
 
         static void styleEditor (juce::TextEditor& t)
         {
-            t.setFont (juce::FontOptions().withHeight (14.0f));
+            t.setFont (brand::type::ui (14.0f));
             t.setColour (juce::TextEditor::backgroundColourId,        juce::Colour (0xff000000));
             t.setColour (juce::TextEditor::textColourId,              brand::textPrimary);
             t.setColour (juce::TextEditor::outlineColourId,           brand::edge);
@@ -24,7 +24,7 @@ namespace zynforge
 
         static void styleReadOnly (juce::Label& l)
         {
-            l.setFont (juce::FontOptions().withHeight (13.0f).withStyle ("Bold"));
+            l.setFont (brand::fonts::bold());
             l.setColour (juce::Label::textColourId, brand::accentStatus);
         }
 
@@ -36,7 +36,7 @@ namespace zynforge
                 : initialFields (std::move (initial)), callback (std::move (cb))
             {
                 title.setText ("Session Properties", juce::dontSendNotification);
-                title.setFont (juce::FontOptions().withHeight (18.0f).withStyle ("Bold"));
+                title.setFont (brand::type::headline());
                 title.setColour (juce::Label::textColourId, brand::textPrimary);
                 title.setJustificationType (juce::Justification::centred);
                 addAndMakeVisible (title);
@@ -72,7 +72,7 @@ namespace zynforge
 
                 // Read-only audio config block.
                 configHeader.setText ("Audio configuration", juce::dontSendNotification);
-                configHeader.setFont (juce::FontOptions().withHeight (12.0f).withStyle ("Bold"));
+                configHeader.setFont (brand::type::captionBold());
                 configHeader.setColour (juce::Label::textColourId, brand::textMuted);
                 addAndMakeVisible (configHeader);
 

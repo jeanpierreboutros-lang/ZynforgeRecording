@@ -38,12 +38,12 @@ MainComponent::MainComponent()
     transportLabel.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (transportLabel);
 
-    recordButton.setColour (juce::TextButton::buttonColourId, brand::accentRecord.withAlpha (0.18f));
+    recordButton.setColour (juce::TextButton::buttonColourId, brand::accentRecord.withAlpha (brand::alpha::subtle));
     recordButton.setColour (juce::TextButton::textColourOffId, brand::accentRecord);
     recordButton.onClick = [this] { onRecordClicked(); };
     addAndMakeVisible (recordButton);
 
-    playButton.setColour (juce::TextButton::buttonColourId, brand::accentPlay.withAlpha (0.18f));
+    playButton.setColour (juce::TextButton::buttonColourId, brand::accentPlay.withAlpha (brand::alpha::subtle));
     playButton.setColour (juce::TextButton::textColourOffId, brand::accentPlay);
     playButton.onClick = [this] { onPlayClicked(); };
     addAndMakeVisible (playButton);
@@ -51,7 +51,7 @@ MainComponent::MainComponent()
     stopButton.onClick = [this] { onStopClicked(); };
     addAndMakeVisible (stopButton);
 
-    loadButton.setColour (juce::TextButton::buttonColourId, brand::accentVS.withAlpha (0.18f));
+    loadButton.setColour (juce::TextButton::buttonColourId, brand::accentVS.withAlpha (brand::alpha::subtle));
     loadButton.setColour (juce::TextButton::textColourOffId, brand::accentVS);
     loadButton.onClick = [this] { onFileMenuClicked(); };
     addAndMakeVisible (loadButton);
@@ -65,7 +65,7 @@ MainComponent::MainComponent()
     preRollButton.onClick = [this] { onPreRollClicked(); };
     addAndMakeVisible (preRollButton);
 
-    lockButton.setColour (juce::TextButton::buttonColourId, brand::accentRecord.withAlpha (0.18f));
+    lockButton.setColour (juce::TextButton::buttonColourId, brand::accentRecord.withAlpha (brand::alpha::subtle));
     lockButton.setColour (juce::TextButton::textColourOffId, brand::accentRecord);
     lockButton.onClick = [this] { onLockToggled(); };
     addAndMakeVisible (lockButton);
@@ -73,12 +73,15 @@ MainComponent::MainComponent()
     backupButton.onClick = [this] { onBackupClicked(); };
     addAndMakeVisible (backupButton);
 
-    patchButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus.withAlpha (0.18f));
+    patchButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus.withAlpha (brand::alpha::subtle));
     patchButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus);
     patchButton.onClick = [this] { zynforge::PatchPage::launch (engine); };
 
-    vscButton.setColour (juce::TextButton::buttonColourId, brand::engagedAmber.withAlpha (0.22f));
-    vscButton.setColour (juce::TextButton::textColourOffId, brand::engagedAmber);
+    // VSC chip uses the dedicated brand::signalVsc() colour so the
+    // 'virtual soundcheck' role has a unique visual identity (was
+    // sharing engagedAmber, now ties to accentVS).
+    vscButton.setColour (juce::TextButton::buttonColourId,  brand::signalVsc().withAlpha (brand::alpha::subtle));
+    vscButton.setColour (juce::TextButton::textColourOffId, brand::signalVsc());
     vscButton.setTooltip ("Virtual Soundcheck — repatch every strip's OUTPUT to match its INPUT, "
                           "so playback feeds the desk via the same channels the live mics did.");
     vscButton.onClick = [this] { onVscClicked(); };
@@ -136,7 +139,7 @@ MainComponent::MainComponent()
         else                    stripWidthPreset = StripWidth::M;
     }
 
-    addChannelButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus.withAlpha (0.18f));
+    addChannelButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus.withAlpha (brand::alpha::subtle));
     addChannelButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus);
     addChannelButton.setTooltip ("Set the number of recording channels — opens a prompt where you type the count (1–256).");
     addChannelButton.onClick = [this]
@@ -2742,7 +2745,7 @@ void MainComponent::colourSelectedStrips()
         juce::ColourSelector::showColourspace
         | juce::ColourSelector::showSliders);
     picker->setSize (300, 280);
-    picker->setCurrentColour (juce::Colours::orange);
+    picker->setCurrentColour (brand::brandOrange);
 
     struct Apply : public juce::ChangeListener
     {
@@ -2918,7 +2921,7 @@ void MainComponent::showBatchColourDialog()
                 juce::ColourSelector::showColourspace
                 | juce::ColourSelector::showSliders);
             picker->setSize (300, 280);
-            picker->setCurrentColour (juce::Colours::orange);
+            picker->setCurrentColour (brand::brandOrange);
 
             // ColourSelector is a Component; juce::CallOutBox wraps it
             // and fires onColourChanged via a Listener. Quickest path:

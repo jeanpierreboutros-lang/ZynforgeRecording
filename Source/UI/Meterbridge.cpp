@@ -1,5 +1,6 @@
 #include "Meterbridge.h"
 #include "../Theme/BrandColors.h"
+#include "../Theme/BrandTokens.h"
 #include "LedMeter.h"
 
 namespace zynforge
@@ -30,7 +31,7 @@ namespace zynforge
                     auto label = std::make_unique<juce::Label> (juce::String(), t.name);
                     label->setColour (juce::Label::textColourId, brand::textPrimary);
                     label->setJustificationType (juce::Justification::centred);
-                    label->setFont (juce::Font (juce::FontOptions().withHeight (11.0f).withStyle ("Bold")));
+                    label->setFont (brand::type::uiLabel());
                     addAndMakeVisible (*label);
                     names.push_back (std::move (label));
                 }

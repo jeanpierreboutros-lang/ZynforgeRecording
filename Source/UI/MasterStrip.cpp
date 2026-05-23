@@ -161,7 +161,7 @@ namespace zynforge
         auto r = getLocalBounds().toFloat().reduced (2.0f);
         g.setGradientFill (brand::verticalGradient (brand::bgElevated, r, 0.05f, 0.30f));
         g.fillRoundedRectangle (r, brand::radius::xl);
-        g.setColour (brand::brandOrange.withAlpha (0.40f));
+        g.setColour (brand::brandOrange.withAlpha (brand::alpha::ghost));
         g.drawRoundedRectangle (r, brand::radius::xl, 1.5f);
     }
 

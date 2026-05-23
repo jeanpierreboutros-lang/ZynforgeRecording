@@ -71,7 +71,7 @@ namespace zynforge
             nameLabel.setText (s.name, juce::dontSendNotification);
             nameLabel.setJustificationType (juce::Justification::centredLeft);
             nameLabel.setColour (juce::Label::textColourId, brand::textPrimary);
-            nameLabel.setFont (juce::Font (juce::FontOptions().withHeight (13.0f).withStyle ("Bold")));
+            nameLabel.setFont (brand::fonts::bold());
             nameLabel.setEditable (false, true, false);
             nameLabel.onTextChange = [this]
             {
@@ -435,13 +435,13 @@ namespace zynforge
                             }
                         }
                         g.setColour (brand::textTertiary);
-                        g.setFont (juce::FontOptions().withHeight (11.0f));
+                        g.setFont (brand::type::caption());
                         g.drawText ("click " + juce::String (bpm, 1) + " BPM",
                                     inner.reduced (4, 2),
                                     juce::Justification::topLeft, false);
                         if (playheadX >= 0 && playheadX < wavePane.getWidth())
                         {
-                            g.setColour (brand::accentPlay.withAlpha (0.85f));
+                            g.setColour (brand::accentPlay.withAlpha (brand::alpha::prominent));
                             g.fillRect (juce::Rectangle<int> (headerW + playheadX,
                                                               0, 2, getHeight()));
                         }
@@ -506,13 +506,13 @@ namespace zynforge
                         }
 
                         g.setColour (brand::textTertiary);
-                        g.setFont (juce::FontOptions().withHeight (11.0f));
+                        g.setFont (brand::type::caption());
                         g.drawText ("tempo " + juce::String (sessionBpm, 1) + " BPM",
                                     inner.reduced (6, 2),
                                     juce::Justification::topLeft, false);
                         if (playheadX >= 0 && playheadX < wavePane.getWidth())
                         {
-                            g.setColour (brand::accentPlay.withAlpha (0.85f));
+                            g.setColour (brand::accentPlay.withAlpha (brand::alpha::prominent));
                             g.fillRect (juce::Rectangle<int> (headerW + playheadX,
                                                               0, 2, getHeight()));
                         }
@@ -532,13 +532,13 @@ namespace zynforge
                                                 (float) inner.getBottom());
                         }
                         g.setColour (brand::textTertiary);
-                        g.setFont (juce::FontOptions().withHeight (11.0f));
+                        g.setFont (brand::type::caption());
                         g.drawText ("markers", inner.reduced (4, 2),
                                     juce::Justification::topLeft, false);
                         // Playhead overlay still applies below.
                         if (playheadX >= 0 && playheadX < wavePane.getWidth())
                         {
-                            g.setColour (brand::accentPlay.withAlpha (0.85f));
+                            g.setColour (brand::accentPlay.withAlpha (brand::alpha::prominent));
                             g.fillRect (juce::Rectangle<int> (headerW + playheadX,
                                                               0, 2, getHeight()));
                         }
@@ -646,14 +646,14 @@ namespace zynforge
                 }
 
                 g.setColour (brand::textPrimary);
-                g.setFont (juce::FontOptions().withHeight (11.0f).withStyle ("Bold"));
+                g.setFont (brand::type::uiLabel());
                 g.drawText (label,
                             inner.reduced (6, 2),
                             juce::Justification::topRight, false);
 
                 if (playheadX >= 0 && playheadX < wavePane.getWidth())
                 {
-                    g.setColour (brand::accentPlay.withAlpha (0.85f));
+                    g.setColour (brand::accentPlay.withAlpha (brand::alpha::prominent));
                     g.fillRect (juce::Rectangle<int> (headerW + playheadX,
                                                       0, 2, getHeight()));
                 }
@@ -685,7 +685,7 @@ namespace zynforge
                 if (thumbnailL.getTotalLength() <= 0.0 && thumbnailR.getTotalLength() <= 0.0)
                 {
                     g.setColour (brand::textTertiary);
-                    g.setFont (juce::Font (juce::FontOptions().withHeight (12.0f)));
+                    g.setFont (brand::type::caption());
                     g.drawText ("(no recording yet — start a session and record to see waveforms)",
                                 wavePane, juce::Justification::centred, false);
                 }
@@ -698,7 +698,7 @@ namespace zynforge
             else
             {
                 g.setColour (brand::textTertiary);
-                g.setFont (juce::Font (juce::FontOptions().withHeight (12.0f)));
+                g.setFont (brand::type::caption());
                 g.drawText ("(no recording yet — start a session and record to see waveforms)",
                             wavePane, juce::Justification::centred, false);
             }
@@ -738,8 +738,8 @@ namespace zynforge
                         const int x = paneL + (int) (prop * paneW);
                         const bool downbeat = (beat % 4) == 0;
                         g.setColour (downbeat
-                            ? brand::brandOrange.withAlpha (0.40f)
-                            : brand::accentStatus.withAlpha (0.18f));
+                            ? brand::brandOrange.withAlpha (brand::alpha::ghost)
+                            : brand::accentStatus.withAlpha (brand::alpha::subtle));
                         g.drawVerticalLine (x,
                                             (float) inner2.getY(),
                                             (float) inner2.getBottom());
@@ -766,7 +766,7 @@ namespace zynforge
                         const double prop = (double) c.timelineStartSamples / (double) totalSamples;
                         const int x = inner2.getX()
                                     + (int) (prop * inner2.getWidth());
-                        g.setColour (brand::accentSolo.withAlpha (0.85f));
+                        g.setColour (brand::accentSolo.withAlpha (brand::alpha::prominent));
                         g.drawVerticalLine (x, (float) inner2.getY(),
                                             (float) inner2.getBottom());
                         // Tiny corner flag at the top so the cut is
@@ -779,7 +779,7 @@ namespace zynforge
             // ─── Playhead overlay
             if (playheadX >= 0 && playheadX < wavePane.getWidth())
             {
-                g.setColour (brand::accentPlay.withAlpha (0.85f));
+                g.setColour (brand::accentPlay.withAlpha (brand::alpha::prominent));
                 g.fillRect (juce::Rectangle<int> (headerW + playheadX, 0, 2, getHeight()));
             }
         }

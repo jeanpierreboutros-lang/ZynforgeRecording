@@ -85,4 +85,24 @@ namespace zynforge::brand
         // Numeric readouts — every value-readout font goes through this.
         inline juce::Font readout (float height) { return mono (height, true); }
     }
+
+    // ── Font shorthand (re-exports type:: in shorter form) ────────────
+    // Site-code reads cleaner: brand::fonts::numeral16() vs
+    // brand::type::mono (16.0f, true). Cuts verbosity ~40 %.
+    namespace fonts
+    {
+        inline juce::Font small()       { return type::caption();        }
+        inline juce::Font body()        { return type::uiBody();         }
+        inline juce::Font bold()        { return type::channelName();    }
+        inline juce::Font title()       { return type::sectionTitle();   }
+        inline juce::Font headline()    { return type::headline();       }
+        inline juce::Font hero()        { return type::hero();           }
+        // Tabular numerals — pick the closest size.
+        inline juce::Font numeral10()   { return type::mono (10.0f, true); }
+        inline juce::Font numeral11()   { return type::mono (11.0f, true); }
+        inline juce::Font numeral13()   { return type::mono (13.0f, true); }
+        inline juce::Font numeral16()   { return type::mono (16.0f, true); }
+        inline juce::Font numeral28()   { return type::mono (28.0f, true); }
+        inline juce::Font numeral44()   { return type::mono (44.0f, true); }
+    }
 }

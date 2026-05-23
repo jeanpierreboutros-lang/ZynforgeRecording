@@ -1,5 +1,6 @@
 #include "TimelineStrip.h"
 #include "../Theme/BrandColors.h"
+#include "../Theme/BrandTokens.h"
 
 namespace zynforge
 {
@@ -70,7 +71,7 @@ namespace zynforge
         if (cachedTotal <= 0)
         {
             g.setColour (brand::textMuted);
-            g.setFont (juce::FontOptions().withHeight (11.0f));
+            g.setFont (brand::type::caption());
             g.drawText ("Load a session to see the timeline.",
                         r, juce::Justification::centred, false);
             return;
@@ -115,7 +116,7 @@ namespace zynforge
             g.fillPath (tri);
 
             g.setColour (brand::textPrimary);
-            g.setFont (juce::FontOptions().withHeight (10.0f));
+            g.setFont (brand::type::hint());
             g.drawText (m.name,
                         mx - 30, (int) (r.getBottom() - 14.0f), 60, 12,
                         juce::Justification::centred, false);

@@ -1,5 +1,6 @@
 #include "PatchPage.h"
 #include "../Theme/BrandColors.h"
+#include "../Theme/BrandTokens.h"
 
 namespace zynforge
 {
@@ -71,11 +72,11 @@ namespace zynforge
 
                 // ─── Top-left label (HW IN / CH ->)
                 g.setColour (brand::textSecondary);
-                g.setFont (juce::Font (juce::FontOptions().withHeight (13.0f).withStyle ("Bold")));
+                g.setFont (brand::fonts::bold());
                 g.drawText (isInput ? "HW IN" : "HW OUT",
                             juce::Rectangle<int> (0, 14, L.rowHeaderW, 18),
                             juce::Justification::centred, false);
-                g.setFont (juce::Font (juce::FontOptions().withHeight (12.0f)));
+                g.setFont (brand::type::caption());
                 g.drawText ("CH ->",
                             juce::Rectangle<int> (0, 34, L.rowHeaderW, 18),
                             juce::Justification::centred, false);
@@ -102,13 +103,13 @@ namespace zynforge
 
                     // Big number (logical position)
                     g.setColour (juce::Colours::white);
-                    g.setFont (juce::Font (juce::FontOptions().withHeight (22.0f).withStyle ("Bold")));
+                    g.setFont (brand::type::ui (22.0f, true));
                     g.drawText (juce::String (c + 1),
                                 juce::Rectangle<int> (inner.getX(), inner.getY() + 4, inner.getWidth(), 26),
                                 juce::Justification::centred, false);
 
                     // Actual track name — same string as mixer + edit view.
-                    g.setFont (juce::Font (juce::FontOptions().withHeight (11.0f).withStyle ("Bold")));
+                    g.setFont (brand::type::uiLabel());
                     const auto displayName = t.name.isNotEmpty() ? t.name
                                                                   : juce::String ("In ") + juce::String (ls.trackIndex + 1);
                     g.drawText (displayName,
@@ -133,7 +134,7 @@ namespace zynforge
                         g.drawRoundedRectangle (pill.toFloat(), pill.getHeight() * 0.5f, 1.0f);
                         g.setColour (brand::textSecondary);
                     }
-                    g.setFont (juce::Font (juce::FontOptions().withHeight (11.0f).withStyle ("Bold")));
+                    g.setFont (brand::type::uiLabel());
                     g.drawText (stereoCol ? "ST" : "M", pill, juce::Justification::centred, false);
                 }
 
@@ -152,7 +153,7 @@ namespace zynforge
                     // Row label
                     const bool isActiveRow = isRowRoutedToAnyStrip (row, logical);
                     g.setColour (isActiveRow ? brand::textPrimary : brand::textSecondary);
-                    g.setFont (juce::Font (juce::FontOptions().withHeight (14.0f).withStyle ("Bold")));
+                    g.setFont (juce::Font (brand::type::sectionTitle()));
                     g.drawText ((isInput ? "IN " : "OUT ") + juce::String (row + 1),
                                 juce::Rectangle<int> (14, y, L.rowHeaderW - 18, L.rowH),
                                 juce::Justification::centredLeft, false);

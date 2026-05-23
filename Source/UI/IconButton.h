@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../Theme/Icons.h"
 #include "../Theme/BrandColors.h"
+#include "../Theme/BrandTokens.h"
 
 namespace zynforge
 {
@@ -47,7 +48,7 @@ namespace zynforge
             // they don't overlap.
             auto textArea = bounds.withTrimmedLeft (iconSize + 10.0f).reduced (2.0f, 0.0f);
             g.setColour (colour);
-            g.setFont (juce::Font (juce::FontOptions().withHeight (11.5f).withStyle ("Bold")));
+            g.setFont (brand::type::uiLabel());
             g.drawText (getButtonText(), textArea,
                         juce::Justification::centredLeft, false);
         }

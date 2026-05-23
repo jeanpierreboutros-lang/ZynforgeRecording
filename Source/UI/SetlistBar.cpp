@@ -7,7 +7,7 @@ namespace zynforge
     SetlistBar::SetlistBar()
     {
         titleLabel.setText ("SETLIST", juce::dontSendNotification);
-        titleLabel.setFont (juce::FontOptions().withHeight (11.0f).withStyle ("Bold"));
+        titleLabel.setFont (brand::type::uiLabel());
         titleLabel.setColour (juce::Label::textColourId, brand::textMuted);
         titleLabel.setJustificationType (juce::Justification::centredLeft);
         addAndMakeVisible (titleLabel);

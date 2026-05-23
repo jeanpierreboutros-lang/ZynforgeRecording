@@ -165,7 +165,7 @@ namespace zynforge
                 addAndMakeVisible (statusLabel);
 
                 applyButton.setColour (juce::TextButton::buttonColourId,
-                                       brand::accentStatus.withAlpha (0.85f));
+                                       brand::accentStatus.withAlpha (brand::alpha::prominent));
                 applyButton.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
                 applyButton.onClick = [this] { applyAndClose(); };
                 addAndMakeVisible (applyButton);

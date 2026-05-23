@@ -34,7 +34,7 @@ namespace zynforge
                 : changed (std::move (onChange))
             {
                 title.setText (heading, juce::dontSendNotification);
-                title.setFont (juce::FontOptions().withHeight (12.0f).withStyle ("Bold"));
+                title.setFont (brand::type::captionBold());
                 title.setColour (juce::Label::textColourId, brand::textPrimary);
                 addAndMakeVisible (title);
 
