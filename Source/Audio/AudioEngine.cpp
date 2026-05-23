@@ -810,6 +810,10 @@ namespace zynforge
 
         currentTempoBpm.store ((float) appProps->getDoubleValue ("sessionTempoBpm", 120.0),
                                std::memory_order_relaxed);
+        timeSigNumerator  .store (appProps->getIntValue ("timeSigNumerator",   4),
+                                  std::memory_order_relaxed);
+        timeSigDenominator.store (appProps->getIntValue ("timeSigDenominator", 4),
+                                  std::memory_order_relaxed);
 
         // Restore the active session folder (set by New Session… / Open
         // Session…) so Save / Save As stay enabled across app restarts.
@@ -926,6 +930,22 @@ namespace zynforge
         if (appProps != nullptr)
         {
             appProps->setValue ("activeSessionDir", activeSession.getFullPathName());
+            appProps->saveIfNeeded();
+        }
+    }
+
+    void AudioEngine::setTimeSignature (int numerator, int denominator)
+    {
+        numerator   = juce::jlimit (1, 32, numerator);
+        // Powers of two from 1 to 32 — the typical music range.
+        if (denominator < 1) denominator = 4;
+        if (denominator > 32) denominator = 32;
+        timeSigNumerator  .store (numerator,   std::memory_order_relaxed);
+        timeSigDenominator.store (denominator, std::memory_order_relaxed);
+        if (appProps != nullptr)
+        {
+            appProps->setValue ("timeSigNumerator",   numerator);
+            appProps->setValue ("timeSigDenominator", denominator);
             appProps->saveIfNeeded();
         }
     }

@@ -73,6 +73,9 @@ namespace zynforge
         juce::PopupMenu menu;
         menu.addItem (1, "Rename cue\xe2\x80\xa6", onRenameCue != nullptr);
         menu.addItem (2, "Delete cue",            onDeleteCue != nullptr);
+        menu.addSeparator();
+        menu.addItem (3, "Move cue up",            onMoveCue != nullptr);
+        menu.addItem (4, "Move cue down",          onMoveCue != nullptr);
 
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (
                                 juce::Rectangle<int> (e.getScreenPosition(), e.getScreenPosition())),
@@ -80,6 +83,8 @@ namespace zynforge
         {
             if      (chosen == 1 && onRenameCue) onRenameCue();
             else if (chosen == 2 && onDeleteCue) onDeleteCue();
+            else if (chosen == 3 && onMoveCue)   onMoveCue (-1);
+            else if (chosen == 4 && onMoveCue)   onMoveCue (+1);
         });
     }
 

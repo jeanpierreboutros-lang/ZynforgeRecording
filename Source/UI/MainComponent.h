@@ -68,6 +68,7 @@ private:
     void showKeyboardShortcuts();
     void showAboutDialog();
     void showFirstRunTutorial();
+    void showUserGuide();
     void launchNewSessionDialog();
     juce::File createSessionFolderStructure (const zynforge::NewSessionDialog::Result&);
     bool saveSessionStateTo (const juce::File& dir);
@@ -151,6 +152,11 @@ private:
     void  applySessionTemplate (const juce::File& templateFile);
     void  promptDeleteSessionTemplate();
 
+    // Setlist printing — writes setlist.html into the active session
+    // dir and opens it in the default browser (engineer prints from
+    // there, or saves as PDF via the browser's print dialog).
+    void  printSetlist();
+
     zynforge::ZynForgeLookAndFeel laf;
     zynforge::AudioEngine         engine;
 
@@ -164,6 +170,7 @@ private:
     juce::Label  titleLabel        { {}, "ZYNFORGE  RECORDING" };
     juce::Label  statusLabel       { {}, "Idle" };
     juce::Label  midiStatusLabel   { {}, "" };
+    juce::Label  nextCueLabel      { {}, "" };
     juce::Label  sessionLabel      { {}, "No session loaded" };
     juce::Label  transportLabel    { {}, "00:00 / 00:00" };
     // Header chrome — IconButton paints a glyph next to each label so

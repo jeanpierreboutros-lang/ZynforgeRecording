@@ -10,6 +10,7 @@
 #include "../Audio/MidiClockOut.h"
 #include "../Audio/NoiseAnalyzer.h"
 #include "NoiseReportDialog.h"
+#include "MarkerListDialog.h"
 #include "ClickSettingsDialog.h"
 #include "../Audio/SpectralClassifier.h"
 #include "SessionPropertiesDialog.h"
@@ -37,6 +38,11 @@ MainComponent::MainComponent()
     midiStatusLabel.setJustificationType (juce::Justification::centredLeft);
     midiStatusLabel.setFont (brand::fonts::small());
     addAndMakeVisible (midiStatusLabel);
+
+    nextCueLabel.setColour (juce::Label::textColourId, brand::accentVS);
+    nextCueLabel.setJustificationType (juce::Justification::centredRight);
+    nextCueLabel.setFont (brand::fonts::body());
+    addAndMakeVisible (nextCueLabel);
 
     sessionLabel.setFont (brand::type::caption());
     sessionLabel.setColour (juce::Label::textColourId, brand::textMuted);
@@ -305,6 +311,17 @@ MainComponent::MainComponent()
     setlistBar.onAddCue     = [this] { addCueAtTransport(); };
     setlistBar.onUpdateCue  = [this] { updateCueAtTransport(); };
     setlistBar.onRenameCue  = [this] { renameCurrentCue(); };
+    setlistBar.onMoveCue    = [this] (int dir)
+    {
+        if (currentCueIndex < 0 || currentCueIndex >= (int) cues.size()) return;
+        const int target = currentCueIndex + dir;
+        if (target < 0 || target >= (int) cues.size()) return;
+        std::swap (cues[(size_t) currentCueIndex], cues[(size_t) target]);
+        currentCueIndex = target;
+        setlistBar.setCues (cues, currentCueIndex);
+        saveSetlistToActiveSession();
+        showStatus ("Cue moved");
+    };
     setlistBar.onDeleteCue  = [this]
     {
         if (currentCueIndex < 0 || currentCueIndex >= (int) cues.size()) return;
@@ -541,6 +558,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // Session templates — save the current strip config (count,
         // names, colours, routings, stereo flags) to a reusable
         // template, or start a new session pre-populated from one.
+        menu.addItem (71, "Print setlist…", ! cues.empty());
+        menu.addSeparator();
         menu.addItem (70, "Save Current as Template…",
                       engine.getRecorder().getNumTracks() > 0
                        && ! engine.isRecording());
@@ -622,6 +641,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (50, "Patch…");
         menu.addItem (52, "Virtual Soundcheck — repatch outputs ↔ inputs");
         menu.addItem (51, "Meterbridge…");
+        menu.addItem (53, "Markers…");
 
         // OSC submenu with the five dialects.
         juce::PopupMenu oscMenu;
@@ -674,6 +694,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
     else if (topLevelIndex == 3)  // Help
     {
         menu.addItem (900, "Keyboard Shortcuts…");
+        menu.addItem (903, "User Guide (panel tips)…");
         menu.addItem (901, "Quick Start (replay tutorial)");
         menu.addSeparator();
         menu.addItem (902, "About Zynforge Recording");
@@ -693,6 +714,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 5)    launchNewSessionDialog();
     else if (id == 10)   onExportAllTracks();
     else if (id == 70)   promptSaveSessionTemplate();
+    else if (id == 71)   printSetlist();
     else if (id >= 200 && id < 250)
     {
         const auto list = listSessionTemplates();
@@ -703,6 +725,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 900)  showKeyboardShortcuts();
     else if (id == 901)  showStartupWelcome();
     else if (id == 902)  showAboutDialog();
+    else if (id == 903)  showUserGuide();
     else if (id == 99)   confirmAndQuit();
     // Track-export sub-menu uses ids 100..199. Tightened from the
     // previous open-ended `>= 100` which was swallowing 110..115
@@ -814,6 +837,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 50)   zynforge::PatchPage::launch (engine);
     else if (id == 51)   zynforge::Meterbridge::launch (engine);
     else if (id == 52)   onVscClicked();
+    else if (id == 53)   zynforge::MarkerListDialog::launch (engine);
     else if (id == 251) showSessionProperties();
     else if (id == 280) runSpectralAutoName();
     else if (id == 281) writeSoundcheckReport();
@@ -1267,6 +1291,33 @@ void MainComponent::timerCallback()
             : juce::String();
         if (midiStatusLabel.getText() != label)
             midiStatusLabel.setText (label, juce::dontSendNotification);
+    }
+
+    // LCD countdown to next cue — only when a setlist exists AND the
+    // player is rolling. Pre-show or scrub state shows blank so the
+    // chip doesn't lie about a still session.
+    {
+        juce::String txt;
+        if (engine.getPlayer().isPlaying() && ! cues.empty())
+        {
+            const auto pos = engine.getPlayer().getPositionSamples();
+            const auto sr  = engine.getPlayer().getSampleRate();
+            // Find the next cue with samplePos > pos.
+            const zynforge::SetlistBar::Cue* next = nullptr;
+            for (const auto& c : cues)
+                if (c.samplePos > pos) { next = &c; break; }
+            if (next != nullptr && sr > 0.0)
+            {
+                const double secs = (double) (next->samplePos - pos) / sr;
+                const int totalSec = juce::jmax (0, (int) secs);
+                const int mins  = totalSec / 60;
+                const int secsR = totalSec % 60;
+                txt = juce::String::formatted ("Next: %s in %d:%02d",
+                                                next->name.toRawUTF8(), mins, secsR);
+            }
+        }
+        if (nextCueLabel.getText() != txt)
+            nextCueLabel.setText (txt, juce::dontSendNotification);
     }
 
     // Tick the cue-fade ramp if one is in flight — interpolates gain
@@ -1746,6 +1797,52 @@ void MainComponent::showKeyboardShortcuts()
 
     auto* aw = new juce::AlertWindow ("Keyboard shortcuts",
                                       body,
+                                      juce::MessageBoxIconType::InfoIcon);
+    aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+        [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }));
+}
+
+void MainComponent::showUserGuide()
+{
+    const juce::String body =
+        "MIXER VIEW\n"
+        "  Channel strips run left-to-right; each has R / I / M / S "
+        "buttons, a pan knob, and a fader. Right-click for rename, "
+        "colour, stereo link, stream send, VCA assign, output mute.\n\n"
+        "EDIT VIEW\n"
+        "  Waveform of each Track_NN.wav. Edit tools palette top-right: "
+        "Smart / Selector / Trim / Grabber / Fade / Scrubber. "
+        "Right-click a row for size + take swap; right-click a clip for "
+        "mute / lock / duplicate / delete / gain / fades.\n\n"
+        "PATCH PAGE (Session menu)\n"
+        "  INPUT / OUTPUT tabs — rows are hardware channels, columns are "
+        "your strips. Click a dot to route; drag diagonally for "
+        "incremental patching.\n\n"
+        "CUE LIST (top bar)\n"
+        "  + Cue captures current fader / pan / routing / mute / arm + "
+        "playback position + tempo. Recall via cue buttons OR number "
+        "keys 1\xE2\x80\x93""9. 250 ms soft-takeover prevents clicks.\n\n"
+        "VCA PANEL (toggle with the VCA button)\n"
+        "  8 group faders. Assign strips via right-click \xE2\x96\xB8 Assign to VCA. "
+        "VCA fader sums into each assigned strip's gain. VCA mute / solo "
+        "follows console (solo-in-place) convention.\n\n"
+        "TAKE SWAP (EDIT row right-click)\n"
+        "  Each track holds N named takes (clip lists). Capture the "
+        "current state as a new take mid-comp; switch between takes "
+        "without losing edits.\n\n"
+        "DEVICE / FORMAT / BACKUP\n"
+        "  DEVICE opens the audio interface picker. FILE \xE2\x96\xB8 New Session "
+        "configures format + sample rate. BACKUP picks a second drive "
+        "where every track mirrors as you record.\n\n"
+        "MIDI CLOCK\n"
+        "  Session \xE2\x96\xB8 MIDI clock out picks an output. Tempo drives "
+        "24 PPQN; play / pause / stop send midi-start / continue / stop.\n\n"
+        "NOISE ANALYSIS\n"
+        "  Session \xE2\x96\xB8 Analyse for noise scans every WAV for "
+        "50 / 60 Hz hum, mic bumps, and high noise floor.";
+
+    auto* aw = new juce::AlertWindow ("Zynforge user guide", body,
                                       juce::MessageBoxIconType::InfoIcon);
     aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
@@ -2355,6 +2452,22 @@ void MainComponent::loadSetlistFromActiveSession()
                                 }
                             }
                         }
+                        // Per-cue tempo curve (optional — older cues
+                        // without one just play at the single tempoBpm).
+                        const auto cv = c->getProperty ("tempoCurve");
+                        if (auto* ca = cv.getArray())
+                        {
+                            for (const auto& citem : *ca)
+                            {
+                                if (auto* co = citem.getDynamicObject())
+                                {
+                                    zynforge::SetlistBar::TempoPoint p;
+                                    p.offsetSamples = (juce::int64) (double) co->getProperty ("off");
+                                    p.bpm           = (float)        (double) co->getProperty ("bpm");
+                                    cue.tempoCurve.push_back (p);
+                                }
+                            }
+                        }
                         cues.push_back (std::move (cue));
                     }
                 }
@@ -2401,6 +2514,21 @@ void MainComponent::saveSetlistToActiveSession() const
             stripArr.add (juce::var (st.get()));
         }
         entry->setProperty ("strips", juce::var (stripArr));
+
+        // Per-cue tempo curve — offsets + bpm pairs. Empty when the
+        // cue is a single-BPM cue (older format / no curve set).
+        if (! c.tempoCurve.empty())
+        {
+            juce::Array<juce::var> curveArr;
+            for (const auto& p : c.tempoCurve)
+            {
+                juce::DynamicObject::Ptr cp (new juce::DynamicObject());
+                cp->setProperty ("off", (double) p.offsetSamples);
+                cp->setProperty ("bpm", (double) p.bpm);
+                curveArr.add (juce::var (cp.get()));
+            }
+            entry->setProperty ("tempoCurve", juce::var (curveArr));
+        }
         arr.add (juce::var (entry.get()));
     }
     obj->setProperty ("setlist",   juce::var (arr));
@@ -2452,6 +2580,21 @@ void MainComponent::jumpToCue (int index)
         // the metronome lines up with the recalled cue.
         if (clickTrackIndex >= 0 && std::abs (oldBpm - cue.tempoBpm) > 0.05f)
             generateOrRefreshClickTrack();
+    }
+
+    // Per-cue tempo curve — install the cue's tempo map (offsets
+    // translated to absolute sample positions starting at cue.samplePos)
+    // into the engine's tempo map. The audio thread already walks the
+    // map each block and pushes the resulting BPM to ClickEngine and
+    // MidiClockOut, so accelerandos / ritardandos within the song are
+    // honoured automatically.
+    if (! cue.tempoCurve.empty())
+    {
+        std::vector<zynforge::AudioEngine::TempoChange> map;
+        map.reserve (cue.tempoCurve.size());
+        for (const auto& p : cue.tempoCurve)
+            map.push_back ({ cue.samplePos + p.offsetSamples, p.bpm });
+        engine.setTempoMap (std::move (map));
     }
 
     // Fade transition? — start a ramp instead of instant restore.
@@ -4169,6 +4312,65 @@ void MainComponent::applySessionTemplate (const juce::File& templateFile)
     showStatus ("Applied template: " + templateFile.getFileNameWithoutExtension());
 }
 
+void MainComponent::printSetlist()
+{
+    if (cues.empty()) { showStatus ("No cues to print"); return; }
+
+    const auto dir = engine.getActiveSessionDir();
+    const auto target = dir.isDirectory()
+        ? dir.getChildFile ("setlist.html")
+        : juce::File::getSpecialLocation (juce::File::userDesktopDirectory)
+              .getChildFile ("zynforge_setlist.html");
+
+    const auto sr = engine.getPlayer().getSampleRate();
+    const auto sessName = dir.isDirectory() ? dir.getFileName() : juce::String ("Session");
+
+    juce::String html;
+    html << "<!doctype html><html><head><meta charset=\"utf-8\"><title>"
+         << sessName << " setlist</title>"
+         << "<style>"
+         << "body{font:14pt -apple-system,Helvetica;background:#fff;color:#000;margin:24pt}"
+         << "h1{font-size:22pt;margin:0 0 4pt 0}"
+         << "h2{font-size:11pt;color:#888;font-weight:normal;margin:0 0 18pt 0}"
+         << "table{border-collapse:collapse;width:100%}"
+         << "th{text-align:left;padding:6pt 8pt;background:#eee;border-bottom:1pt solid #888;font-size:10pt}"
+         << "td{padding:6pt 8pt;border-bottom:1pt solid #ccc}"
+         << ".n{text-align:right;color:#555;font-variant-numeric:tabular-nums}"
+         << ".cue{font-weight:600}"
+         << ".bpm{color:#555}"
+         << "@media print{body{margin:12pt}}"
+         << "</style></head><body>"
+         << "<h1>" << sessName << "</h1>"
+         << "<h2>Setlist \xe2\x80\x94 " << juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H:%M")
+         << " \xe2\x80\xa2 " << (int) cues.size() << " cue" << (cues.size() == 1 ? "" : "s")
+         << "</h2>"
+         << "<table><thead><tr><th class=\"n\">#</th><th>Cue</th><th>Time</th><th class=\"n\">BPM</th><th class=\"n\">Strips</th></tr></thead><tbody>";
+
+    for (size_t i = 0; i < cues.size(); ++i)
+    {
+        const auto& c = cues[i];
+        juce::String timeStr;
+        if (sr > 0.0)
+        {
+            const double secs = (double) c.samplePos / sr;
+            const int mins = (int) secs / 60;
+            const double sec = secs - mins * 60;
+            timeStr = juce::String::formatted ("%02d:%06.3f", mins, sec);
+        }
+        html << "<tr><td class=\"n\">" << (int) (i + 1) << "</td>"
+             << "<td class=\"cue\">" << c.name.replace ("&", "&amp;").replace ("<", "&lt;") << "</td>"
+             << "<td>" << timeStr << "</td>"
+             << "<td class=\"n bpm\">" << (c.tempoBpm > 0.0f ? juce::String (c.tempoBpm, 1) : juce::String ("\xe2\x80\x94"))
+             << "</td>"
+             << "<td class=\"n\">" << (int) c.strips.size() << "</td></tr>";
+    }
+    html << "</tbody></table></body></html>";
+
+    target.replaceWithText (html);
+    target.startAsProcess();    // open in default browser
+    showStatus ("Setlist \xe2\x86\x92 " + target.getFileName() + " (printable)");
+}
+
 void MainComponent::promptDeleteSessionTemplate()
 {
     const auto list = listSessionTemplates();
@@ -4281,6 +4483,33 @@ void MainComponent::paint (juce::Graphics& g)
     g.setColour (brand::edge);
     g.drawHorizontalLine ((int) header.getBottom() - 1,
                           header.getX(), header.getRight());
+
+    // Empty-state guidance — when there are no strips and the mixer
+    // is visible, draw a centred hint over the strips area so the
+    // engineer knows their first move is "+CH". Drawn in MainComponent
+    // (not the strips container) so it doesn't have to subclass.
+    if (currentView == View::Mix && strips.empty())
+    {
+        const auto area = stripsViewport.getBounds().toFloat();
+        if (area.getHeight() > 80.0f)
+        {
+            g.setColour (brand::textTertiary);
+            g.setFont (brand::type::headline());
+            g.drawText ("No channels yet",
+                        area.withTrimmedBottom (area.getHeight() * 0.55f).toNearestInt(),
+                        juce::Justification::centredBottom, false);
+            g.setColour (brand::textSecondary);
+            g.setFont (brand::fonts::body());
+            g.drawText ("Click +CH (top-right) to add your first channel.",
+                        area.withSizeKeepingCentre (area.getWidth(), 24.0f).toNearestInt(),
+                        juce::Justification::centred, false);
+            g.setColour (brand::textTertiary);
+            g.setFont (brand::fonts::small());
+            g.drawText ("Then arm R, press the red record button, and play back with the green triangle.",
+                        area.withTrimmedTop (area.getHeight() * 0.55f).toNearestInt(),
+                        juce::Justification::centredTop, false);
+        }
+    }
 }
 
 void MainComponent::resized()
@@ -4375,6 +4604,8 @@ void MainComponent::resized()
     auto bar = r.removeFromTop (36).reduced (12, 2);
     tempoBar  .setBounds (bar.removeFromRight (320));
     bar.removeFromRight (brand::space::md);
+    nextCueLabel.setBounds (bar.removeFromRight (200).reduced (4, 4));
+    bar.removeFromRight (brand::space::sm);
     setlistBar.setBounds (bar);
 
     // TimelineStrip is intentionally not laid out — see the ctor.

@@ -36,6 +36,14 @@ namespace zynforge
         // cue's tempo.
         enum class Transition : int { Snap = 0, Fade };
 
+        // Tempo automation point — sample offset relative to the cue's
+        // samplePos. Audio thread interpolates linearly between points.
+        struct TempoPoint
+        {
+            juce::int64 offsetSamples { 0 };
+            float       bpm           { 120.0f };
+        };
+
         struct Cue
         {
             juce::String name;
@@ -44,6 +52,11 @@ namespace zynforge
             float        tempoBpm  { 0.0f };     // 0 = 'use session default' (older cues)
             Transition   transition { Transition::Snap };
             float        fadeBeats { 0.0f };     // > 0 only meaningful for Fade
+            // Multi-point tempo curve for accel / rit within the song.
+            // Empty → constant tempoBpm. When non-empty, the engine
+            // interpolates between points; the first point's bpm
+            // overrides tempoBpm.
+            std::vector<TempoPoint> tempoCurve;
         };
 
         SetlistBar();
@@ -67,6 +80,9 @@ namespace zynforge
         // right-clicks for Rename / Delete.
         std::function<void()>     onRenameCue;
         std::function<void()>     onDeleteCue;
+        // Reorder the active cue: -1 = move up (earlier in list),
+        // +1 = move down (later). Host applies the swap + persists.
+        std::function<void (int /*direction*/)> onMoveCue;
 
         void mouseDown (const juce::MouseEvent&) override;
 

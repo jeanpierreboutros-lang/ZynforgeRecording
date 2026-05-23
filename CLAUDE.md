@@ -115,15 +115,34 @@ Toggling stereo (via right-click menu, PATCH M/ST pill, or +CH dialog) calls `se
 
 `Session → Configure cloud upload command…` — store a template like `rclone copy {SESSION} myremote:bucket/` (or `aws s3 sync`, `rsync`, …). `Session → Upload session to cloud…` expands `{SESSION}` to the active session dir and `juce::ChildProcess`-launches the command.
 
+## Recently shipped (this session)
+
+- **LTC Phase 2 — bit-perfect biphase-mark decoder** with sync-word lookup, BCD parsing, fps inference, drop-frame flag.
+- **MTC quarter-frame accumulator** — 8-nibble assembly to hr/mn/sc/fr.
+- **VCA / group buses** — 8 buses with gainDb/muted/soloed/colour; per-strip vcaGroup atomic; audio thread sums vca.gainDb into effective per-strip gain; channelAudible honours VCA mute + solo-in-place; persistent assignments + names + colours; **`VcaPanel`** holds 8 compact `VcaStripView` mini-strips (fader / M / S / name / colour swatch / live dB readout) toggled via the new VCA header button. Right-click any strip → **Assign to VCA**.
+- **Comp playlists (Take swap)** — `Playlist`/`Take` model per track; right-click EDIT row → **Take ▸** to swap, create-from-current, rename, delete. **TAKE n/m** chip painted on rows with >1 take.
+- **Soft-takeover ramps** — per-strip + per-VCA gain/pan ramp targets; `tickRamps(numSamples)` steps per block from the audio callback so cue recalls don't click.
+- **64-bit audio path** — `outputAccum` (juce::AudioBuffer<double>) for all per-strip / stream / monitor sums; single float downcast at the end of `audioDeviceIOCallbackWithContext`. Click + companion stream feed run AFTER the downcast (additive).
+- **NoiseAnalyzer** — post-record FFT (4096-point) heuristic for 50/60 Hz hum, sub-80 Hz mic bumps, noise floor + crest factor. Writes `noise_report.json`. **`NoiseReportDialog`** sortable TableListBox replaces the AlertWindow text dump.
+- **EDIT view zoom + horizontal scroll** — `[−]` `[%]` `[+]` in the tools bar; content widens past the viewport via list->setSize(contentW). Both scrollbars enabled.
+- **Strip drag-reorder in EDIT** — mouse-down on the colour swatch arms a reorder; >8 px movement activates; each row-height delta calls `engine.swapTracks`. Refused during playback; force-reloads the session in mouseUp so SessionPlayer readers map to the renamed files.
+- **MIDI clock master** — `MidiClockOut` HighResolutionTimer at 24 PPQN; `setSessionTempoBpm` drives clock tempo; start/stopPlayback fire midi-start/continue/stop. Session menu picker.
+- **Session templates** — JSON layout per `.zftemplate` under `~/Library/Application Support/Zynforge Recording/Templates/`.
+- **Session backup snapshots** — every cue add/update/delete writes a timestamped `.zfproj` copy to `Session File Backups/` (rolling 10).
+- **Disk-space pre-flight** + **sample-rate mismatch warning** + **cue jump 1–9** + **output muting (separate from monitor)** + **lock-against-overwrite**.
+- **UX polish** — first-run tutorial, Help menu (Keyboard Shortcuts / User Guide / Quick Start / About), VCA badge per strip, MIDI status pill, sortable noise table, empty-state mixer hint, Cmd+A select all strips, Esc clear selection, Cmd+Q routes to confirmAndQuit.
+- **Per-cue tempo curves** — `Cue::tempoCurve` (vector of offset+bpm points). On recall, installed into the engine's tempo map; audio thread already pushes BPM to ClickEngine + MidiClockOut each block, so accels / rits within a song play back automatically.
+- **Marker list dialog** — `MarkerListDialog` sortable table with rename / delete; double-click to jump.
+- **Time signature** — numerator + denominator stored on engine, persisted in appProps.
+- **Drag-reorder cues** — Move cue up / Move cue down in the SetlistBar right-click menu.
+- **LCD countdown to next cue** — "Next: Song Name in 0:32" pill above the timeline.
+- **Print setlist** — File ▸ Print setlist writes `setlist.html` into the session dir and opens it in the default browser (engineer prints / saves-as-PDF from there).
+
 ## Roadmap
 
-- LTC Phase 2 — bit-perfect SMPTE recovery (currently presence detection only)
-- MTC quarter-frame nibble accumulator → hr/mn/sc/fr decode
-- Per-snapshot per-channel auto-naming template (driven by OSC scene recall)
-- AI-assisted noise / hum / mic-bump detection post-record
 - WebRTC remote audition (currently HTTP-streamed WAV)
-- 64-bit float on the full audio path (currently only the monitor accumulator)
 - Audio-stream encryption for the companion server
+- iOS / iPad native companion (currently web)
 - Configurable monitor bus outputs (currently outs 0+1)
 
 ## Sibling project

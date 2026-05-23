@@ -228,6 +228,12 @@ namespace zynforge
         float  getSessionTempoBpm() const noexcept { return currentTempoBpm.load (std::memory_order_relaxed); }
         void   setSessionTempoBpm (float bpm);
 
+        // Time signature — clicks accent beat 1 of each bar; the click
+        // engine consumes (numerator, denominator). Persisted to appProps.
+        int   getTimeSignatureNumerator()   const noexcept { return timeSigNumerator  .load (std::memory_order_relaxed); }
+        int   getTimeSignatureDenominator() const noexcept { return timeSigDenominator.load (std::memory_order_relaxed); }
+        void  setTimeSignature (int numerator, int denominator);
+
         const std::vector<TempoChange>& getTempoMap() const noexcept { return tempoMap; }
         void   setTempoMap (std::vector<TempoChange> newMap);
         void   addTempoChange (juce::int64 samplePos, float bpm);
@@ -444,7 +450,9 @@ namespace zynforge
         // 0–100 % units.
         std::atomic<double> deviceSampleRate { 0.0 };
         std::atomic<float>  audioLoadPct     { 0.0f };
-        std::atomic<float>  currentTempoBpm  { 120.0f };
+        std::atomic<float>  currentTempoBpm     { 120.0f };
+        std::atomic<int>    timeSigNumerator    { 4 };
+        std::atomic<int>    timeSigDenominator  { 4 };
         std::vector<TempoChange> tempoMap;   // sorted by samplePos; UI/message-thread only
 
         // Per-track, per-parameter automation. UI-thread only for now
