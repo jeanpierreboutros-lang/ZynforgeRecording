@@ -1,4 +1,5 @@
 #include "AddTracksDialog.h"
+#include "../Theme/DialogChrome.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
@@ -157,20 +158,16 @@ namespace zynforge
         public:
             explicit DialogContent (AddTracksDialog::ResultCallback cb) : callback (std::move (cb))
             {
-                title.setText ("New Tracks", juce::dontSendNotification);
-                title.setFont (brand::type::sectionTitle());
-                title.setColour (juce::Label::textColourId, brand::textPrimary);
-                title.setJustificationType (juce::Justification::centred);
-                addAndMakeVisible (title);
+                // Title is painted by DialogChrome — keep the label
+                // hidden so we don't double up.
+                title.setVisible (false);
 
-                createButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus);
-                createButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::accentStatus));
+                dialog::stylePrimary (createButton);
                 createButton.setButtonText ("Create");
                 createButton.onClick = [this] { commit(); };
                 addAndMakeVisible (createButton);
 
-                cancelButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
-                cancelButton.setColour (juce::TextButton::textColourOffId, brand::textSecondary);
+                dialog::styleSecondary (cancelButton);
                 cancelButton.setButtonText ("Cancel");
                 cancelButton.onClick = [this] { dismiss ({}); };
                 addAndMakeVisible (cancelButton);
@@ -181,12 +178,7 @@ namespace zynforge
 
             void paint (juce::Graphics& g) override
             {
-                auto r = getLocalBounds().toFloat();
-                g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.04f, 0.16f));
-                g.fillAll();
-                g.setColour (brand::edge);
-                g.drawHorizontalLine (44, 0.0f, (float) getWidth());
-                g.drawHorizontalLine (getHeight() - 56, 0.0f, (float) getWidth());
+                dialog::paintChrome (g, *this, "NEW TRACKS");
             }
 
             void resized() override

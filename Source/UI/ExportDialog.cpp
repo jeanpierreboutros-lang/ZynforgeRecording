@@ -1,4 +1,5 @@
 #include "ExportDialog.h"
+#include "../Theme/DialogChrome.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
@@ -60,10 +61,12 @@ namespace zynforge
                 addAndMakeVisible (bitrateBox);
 
                 // Buttons
+                dialog::stylePrimary (okButton);
                 okButton.setButtonText ("Export");
                 okButton.onClick = [this] { onAccept(); };
                 addAndMakeVisible (okButton);
 
+                dialog::styleSecondary (cancelButton);
                 cancelButton.setButtonText ("Cancel");
                 cancelButton.onClick = [this] { onCancel(); };
                 addAndMakeVisible (cancelButton);
@@ -100,9 +103,7 @@ namespace zynforge
 
             void paint (juce::Graphics& g) override
             {
-                auto r = getLocalBounds().toFloat();
-                g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.08f, 0.14f));
-                g.fillRect (r);
+                dialog::paintChrome (g, *this, "EXPORT");
             }
 
         private:

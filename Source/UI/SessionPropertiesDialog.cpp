@@ -1,4 +1,5 @@
 #include "SessionPropertiesDialog.h"
+#include "../Theme/DialogChrome.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
@@ -93,14 +94,12 @@ namespace zynforge
                 setupRO (formatCap,     formatVal,     "File type",     initialFields.captureFormat);
 
                 saveButton.setButtonText ("Save");
-                saveButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus);
-                saveButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::accentStatus));
+                dialog::stylePrimary (saveButton);
                 saveButton.onClick = [this] { commit(); };
                 addAndMakeVisible (saveButton);
 
                 cancelButton.setButtonText ("Cancel");
-                cancelButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
-                cancelButton.setColour (juce::TextButton::textColourOffId, brand::textSecondary);
+                dialog::styleSecondary (cancelButton);
                 cancelButton.onClick = [this] { dismiss (false); };
                 addAndMakeVisible (cancelButton);
 
@@ -109,12 +108,7 @@ namespace zynforge
 
             void paint (juce::Graphics& g) override
             {
-                auto r = getLocalBounds().toFloat();
-                g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.04f, 0.12f));
-                g.fillAll();
-                g.setColour (brand::edge);
-                g.drawHorizontalLine (40, 0.0f, (float) getWidth());
-                g.drawHorizontalLine (getHeight() - 56, 0.0f, (float) getWidth());
+                dialog::paintChrome (g, *this, "SESSION PROPERTIES");
             }
 
             void resized() override

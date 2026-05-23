@@ -1,6 +1,7 @@
 #include "AudioDeviceDialog.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
+#include "../Theme/DialogChrome.h"
 
 namespace zynforge
 {
@@ -189,23 +190,7 @@ namespace zynforge
 
             void paint (juce::Graphics& g) override
             {
-                auto r = getLocalBounds().toFloat();
-                g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.05f, 0.15f));
-                g.fillAll();
-
-                // Title block
-                auto title = getLocalBounds().removeFromTop (44).reduced (brand::space::md, 0);
-                g.setColour (brand::brandOrange);
-                g.fillRect (title.removeFromLeft (3));
-                g.setColour (brand::textPrimary);
-                g.setFont (brand::type::sectionTitle());
-                g.drawText ("AUDIO DEVICE",
-                            title.translated (brand::space::md, 0),
-                            juce::Justification::centredLeft, false);
-
-                // Divider above footer
-                g.setColour (brand::edge);
-                g.drawHorizontalLine (getHeight() - 60, 0.0f, (float) getWidth());
+                dialog::paintChrome (g, *this, "AUDIO DEVICE");
             }
 
             void resized() override

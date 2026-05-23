@@ -1,4 +1,5 @@
 #include "SessionSettingsDialog.h"
+#include "../Theme/DialogChrome.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
@@ -58,10 +59,12 @@ namespace zynforge
                     bitsBox.setSelectedId (bitId, juce::dontSendNotification);
 
                 // Buttons
+                dialog::stylePrimary (applyButton);
                 applyButton .setButtonText ("Apply");
                 applyButton .onClick = [this] { onApply(); };
                 addAndMakeVisible (applyButton);
 
+                dialog::styleSecondary (cancelButton);
                 cancelButton.setButtonText ("Cancel");
                 cancelButton.onClick = [this] { closeDialog (false); };
                 addAndMakeVisible (cancelButton);
@@ -94,9 +97,7 @@ namespace zynforge
 
             void paint (juce::Graphics& g) override
             {
-                auto r = getLocalBounds().toFloat();
-                g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.08f, 0.14f));
-                g.fillRect (r);
+                dialog::paintChrome (g, *this, "SESSION SETTINGS");
             }
 
         private:

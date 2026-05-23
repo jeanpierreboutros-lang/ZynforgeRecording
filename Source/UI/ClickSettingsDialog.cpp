@@ -1,4 +1,5 @@
 #include "ClickSettingsDialog.h"
+#include "../Theme/DialogChrome.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
@@ -220,9 +221,7 @@ namespace zynforge
 
             void paint (juce::Graphics& g) override
             {
-                auto r = getLocalBounds().toFloat();
-                g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.04f, 0.14f));
-                g.fillAll();
+                dialog::paintChrome (g, *this, "CLICK SETTINGS");
             }
 
             void resized() override

@@ -2,6 +2,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "../Theme/DialogChrome.h"
+
 #include "../Audio/AudioEngine.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
@@ -37,11 +39,14 @@ namespace zynforge
 
         void paint (juce::Graphics& g) override
         {
-            auto r = getLocalBounds().toFloat();
-            g.setGradientFill (brand::verticalGradient (brand::bgDeep, r, 0.08f, 0.12f));
-            g.fillRect (r);
+            dialog::paintChrome (g, *this, "MARKERS");
         }
-        void resized() override { table.setBounds (getLocalBounds().reduced (8)); }
+        void resized() override
+        {
+            // Body sits between the chrome title (44 px) and the
+            // footer divider (60 px). Reduce 8 px for breathing room.
+            table.setBounds (dialog::bodyBounds (*this).reduced (8));
+        }
 
         static void launch (AudioEngine& engine)
         {

@@ -1,4 +1,5 @@
 #include "NewSessionDialog.h"
+#include "../Theme/DialogChrome.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
@@ -166,12 +167,7 @@ namespace zynforge
 
             void paint (juce::Graphics& g) override
             {
-                auto r = getLocalBounds().toFloat();
-                g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.04f, 0.12f));
-                g.fillAll();
-
-                g.setColour (brand::edge);
-                g.drawHorizontalLine (getHeight() - 60, 0.0f, (float) getWidth());
+                dialog::paintChrome (g, *this, "NEW SESSION");
             }
 
             void resized() override

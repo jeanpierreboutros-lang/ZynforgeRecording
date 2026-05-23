@@ -115,6 +115,19 @@ Toggling stereo (via right-click menu, PATCH M/ST pill, or +CH dialog) calls `se
 
 `Session → Configure cloud upload command…` — store a template like `rclone copy {SESSION} myremote:bucket/` (or `aws s3 sync`, `rsync`, …). `Session → Upload session to cloud…` expands `{SESSION}` to the active session dir and `juce::ChildProcess`-launches the command.
 
+## Unified dialog chrome (2026-05-23 pass 4)
+
+Every modal in the app — first-party `DialogWindow`s and JUCE's built-in `AlertWindow` — now wears the same chrome as the AudioDevice dialog. Shared helper at `Source/Theme/DialogChrome.h`:
+
+- `dialog::paintChrome (g, host, "TITLE")` — call once from any dialog's `paint()`. Lays down the gradient `bgPanel` background, paints the brand-orange 3 px title stripe + uppercase section title, and draws the hairline edge divider above the footer.
+- `dialog::bodyBounds (host)` / `dialog::footerBounds (host)` — use these in `resized()` instead of computing offsets by hand.
+- `dialog::stylePrimary (button)` / `dialog::styleSecondary (button)` — Apply/Cancel button colour pairs. Primary uses `accentStatus + onSignal()` for legible foreground; secondary uses `bgElevated + textSecondary`.
+- `dialog::styleCombo (combo)` / `dialog::styleTextEditor (editor)` — the `bgDeep + edge` field treatment AudioDevice uses on every input control.
+
+Refactored to use the helper: `AudioDeviceDialog`, `NewSessionDialog`, `AddTracksDialog`, `ExportDialog`, `SessionSettingsDialog`, `SessionPropertiesDialog`, `ClickSettingsDialog`, `MarkerListDialog`, `NoiseReportDialog`.
+
+`ZynForgeLookAndFeel::drawAlertBox` overridden so `juce::AlertWindow::showAsync(...)` calls (reorder-during-playback warning, sample-rate mismatch, format-change-while-recording refusal, …) also paint the orange-stripe chrome. `getWidthsForTextButtons` styles the alert's action buttons via `dialog::stylePrimary` / `styleSecondary`.
+
 ## Motion + feedback polish (2026-05-23 pass 3)
 
 - **BigClock pulse animation.** A 30 Hz private Timer in `BigClockPanel` runs only when `mode == Recording` OR `armedReady` — modulates background alpha at 1 Hz while recording and pulses the brand-orange armed border so the call-to-action draws the engineer's eye. Timer self-suspends when neither state is active, so idle windows don't burn CPU.

@@ -1,6 +1,7 @@
 #include "ZynForgeLookAndFeel.h"
 #include "BrandColors.h"
 #include "BrandTokens.h"
+#include "DialogChrome.h"
 #include "BinaryData.h"
 
 namespace zynforge
@@ -149,6 +150,63 @@ namespace zynforge
         // the single-letter chips read at a glance.
         g.setFont (brand::type::ui (13.5f, true));
         g.drawText (b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, false);
+    }
+
+    void ZynForgeLookAndFeel::drawAlertBox (juce::Graphics& g, juce::AlertWindow& alert,
+                                            const juce::Rectangle<int>& textArea,
+                                            juce::TextLayout& textLayout)
+    {
+        // Same chrome the first-party dialogs use: gradient bgPanel
+        // background, brand-orange title stripe + section-title text,
+        // footer divider above the action buttons.
+        dialog::paintBackground (g, alert);
+
+        // Title row — fixed 44 px tall, identical to dialog::paintTitle
+        // but read from the AlertWindow's own message-box title so the
+        // engineer doesn't have to plumb it in by hand.
+        auto title = alert.getLocalBounds().removeFromTop (dialog::titleH)
+                                           .reduced (brand::space::md, 0);
+        g.setColour (brand::brandOrange);
+        g.fillRect (title.removeFromLeft (dialog::stripeW));
+        g.setColour (brand::textPrimary);
+        g.setFont (brand::type::sectionTitle());
+        // AlertWindow stores its title in the inherited Component name.
+        g.drawText (alert.getName().toUpperCase(),
+                    title.translated (brand::space::md, 0),
+                    juce::Justification::centredLeft, false);
+
+        // Footer divider (hairline edge line above the action buttons).
+        dialog::paintFooterDivider (g, alert);
+
+        // Body text. AlertWindow already lays out the message into
+        // `textLayout`; we just draw it inside the supplied textArea.
+        textLayout.draw (g, textArea.toFloat());
+    }
+
+    int ZynForgeLookAndFeel::getAlertBoxWindowFlags()
+    {
+        return juce::ComponentPeer::windowAppearsOnTaskbar
+             | juce::ComponentPeer::windowHasDropShadow;
+    }
+
+    juce::Array<int> ZynForgeLookAndFeel::getWidthsForTextButtons (
+        juce::AlertWindow&, const juce::Array<juce::TextButton*>& btns)
+    {
+        // Force every alert-box button to the dialog::stylePrimary /
+        // styleSecondary treatment. First button is the affirmative
+        // action (matches JUCE's MessageBoxOptions::withButton order).
+        for (int i = 0; i < btns.size(); ++i)
+        {
+            if (auto* b = btns[i])
+            {
+                if (i == 0) dialog::stylePrimary   (*b);
+                else        dialog::styleSecondary (*b);
+            }
+        }
+        juce::Array<int> widths;
+        for (int i = 0; i < btns.size(); ++i)
+            widths.add (i == 0 ? dialog::btnPrimary : dialog::btnSecond);
+        return widths;
     }
 
     void ZynForgeLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int w, int h,

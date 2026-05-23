@@ -31,5 +31,17 @@ namespace zynforge
         // bold text whose colour reflects the toggle state.
         void drawToggleButton (juce::Graphics&, juce::ToggleButton&,
                                bool over, bool down) override;
+
+        // AlertWindow chrome — paints the same orange-stripe title bar,
+        // gradient bgPanel background, and footer divider that every
+        // first-party dialog (AudioDevice, NewSession, Export, …)
+        // uses. Any juce::AlertWindow::showAsync (...) now reads as a
+        // first-party ZynForge prompt.
+        void drawAlertBox (juce::Graphics&, juce::AlertWindow&,
+                           const juce::Rectangle<int>& textArea,
+                           juce::TextLayout&) override;
+        int  getAlertBoxWindowFlags() override;
+        juce::Array<int> getWidthsForTextButtons (juce::AlertWindow&,
+                                                  const juce::Array<juce::TextButton*>&) override;
     };
 }

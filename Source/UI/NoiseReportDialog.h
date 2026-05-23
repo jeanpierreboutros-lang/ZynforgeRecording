@@ -2,6 +2,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "../Theme/DialogChrome.h"
+
 #include "../Audio/NoiseAnalyzer.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
@@ -49,14 +51,12 @@ namespace zynforge
 
         void paint (juce::Graphics& g) override
         {
-            auto r = getLocalBounds().toFloat();
-            g.setGradientFill (brand::verticalGradient (brand::bgDeep, r, 0.08f, 0.12f));
-            g.fillRect (r);
+            dialog::paintChrome (g, *this, "NOISE REPORT");
         }
 
         void resized() override
         {
-            table.setBounds (getLocalBounds().reduced (8));
+            table.setBounds (dialog::bodyBounds (*this).reduced (8));
         }
 
         // Helper — launch as an async modal dialog.
