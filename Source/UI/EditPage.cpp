@@ -861,6 +861,38 @@ namespace zynforge
                 }
             }
 
+            // ─── Loop-region overlay (set by the Selector tool)
+            {
+                const auto& player = engine.getPlayer();
+                if (player.hasLoopRegion() && player.isLoaded())
+                {
+                    const auto total = player.getTotalLengthSamples();
+                    if (total > 0)
+                    {
+                        const auto sampleToWavX = [&] (juce::int64 sp) -> int
+                        {
+                            const double prop = juce::jlimit (0.0, 1.0,
+                                                              (double) sp / (double) total);
+                            return juce::roundToInt (prop * wavePane.getWidth());
+                        };
+                        const int xA = sampleToWavX (player.getLoopStart());
+                        const int xB = sampleToWavX (player.getLoopEnd());
+                        if (xB > xA)
+                        {
+                            const juce::Rectangle<int> band (
+                                headerW + xA, 0, xB - xA, getHeight());
+                            g.setColour (juce::Colour::fromRGB (0x3a, 0x90, 0xe0)
+                                            .withAlpha (0.18f));
+                            g.fillRect (band);
+                            g.setColour (juce::Colour::fromRGB (0x3a, 0x90, 0xe0)
+                                            .withAlpha (0.75f));
+                            g.drawVerticalLine (band.getX(),     0.0f, (float) getHeight());
+                            g.drawVerticalLine (band.getRight(), 0.0f, (float) getHeight());
+                        }
+                    }
+                }
+            }
+
             // ─── Playhead overlay
             if (playheadX >= 0 && playheadX < wavePane.getWidth())
             {
