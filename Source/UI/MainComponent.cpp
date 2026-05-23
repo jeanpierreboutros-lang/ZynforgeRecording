@@ -493,6 +493,28 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         exportMenu.addSubMenu ("Export Individual Track", indiv, hasActive && n > 0);
         menu.addSubMenu ("Export", exportMenu);
         menu.addSeparator();
+
+        // Session templates — save the current strip config (count,
+        // names, colours, routings, stereo flags) to a reusable
+        // template, or start a new session pre-populated from one.
+        menu.addItem (70, "Save Current as Template…",
+                      engine.getRecorder().getNumTracks() > 0
+                       && ! engine.isRecording());
+
+        juce::PopupMenu templates;
+        const auto tList = listSessionTemplates();
+        for (int i = 0; i < tList.size(); ++i)
+            templates.addItem (200 + i, tList[i].getFileNameWithoutExtension());
+        if (tList.isEmpty())
+            templates.addItem (-1, "(no templates yet)", false);
+        else
+        {
+            templates.addSeparator();
+            templates.addItem (250, "Delete a template…");
+        }
+        menu.addSubMenu ("New Session from Template", templates, ! engine.isRecording());
+
+        menu.addSeparator();
         menu.addItem (60, "Choose Backup Folder…", ! engine.isRecording());
         menu.addSeparator();
         menu.addItem (99, "Quit Zynforge Recording…");
@@ -601,6 +623,14 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 4)    onImportAudioFiles();
     else if (id == 5)    launchNewSessionDialog();
     else if (id == 10)   onExportAllTracks();
+    else if (id == 70)   promptSaveSessionTemplate();
+    else if (id >= 200 && id < 250)
+    {
+        const auto list = listSessionTemplates();
+        const int idx = id - 200;
+        if (idx >= 0 && idx < list.size()) applySessionTemplate (list[idx]);
+    }
+    else if (id == 250)  promptDeleteSessionTemplate();
     else if (id == 99)   confirmAndQuit();
     // Track-export sub-menu uses ids 100..199. Tightened from the
     // previous open-ended `>= 100` which was swallowing 110..115
@@ -3727,6 +3757,129 @@ juce::File MainComponent::getSessionsRoot() const
     }
     return juce::File::getSpecialLocation (juce::File::userMusicDirectory)
                 .getChildFile ("Zynforge Sessions");
+}
+
+// ── Session templates ───────────────────────────────────────────────
+// A template captures the engineer's per-strip layout — count,
+// names, colours, stereo pairs, input + output routings — and
+// nothing else (sample rate / device live on the audio device).
+// Persisted as JSON under
+//   ~/Library/Application Support/Zynforge Recording/Templates/<name>.zftemplate
+// Picking "New Session from Template" applies the template to a
+// fresh session.
+juce::File MainComponent::templatesDir() const
+{
+    auto base = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                    .getChildFile ("Zynforge Recording")
+                    .getChildFile ("Templates");
+    base.createDirectory();
+    return base;
+}
+
+juce::Array<juce::File> MainComponent::listSessionTemplates() const
+{
+    return templatesDir().findChildFiles (juce::File::findFiles, false, "*.zftemplate");
+}
+
+void MainComponent::promptSaveSessionTemplate()
+{
+    auto* aw = new juce::AlertWindow ("Save session template",
+                                       "Name this template:",
+                                       juce::MessageBoxIconType::QuestionIcon);
+    aw->addTextEditor ("name", "", {});
+    aw->addButton ("Save",   1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<MainComponent> self (this);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+        [aw, self] (int r)
+    {
+        std::unique_ptr<juce::AlertWindow> dispose (aw);
+        if (r != 1 || self == nullptr) return;
+        const auto name = aw->getTextEditorContents ("name").trim();
+        if (name.isEmpty()) return;
+
+        juce::DynamicObject::Ptr obj (new juce::DynamicObject());
+        obj->setProperty ("name",       name);
+        obj->setProperty ("createdAt",  juce::Time::getCurrentTime().toISO8601 (true));
+        obj->setProperty ("trackCount", self->engine.getRecorder().getNumTracks());
+
+        juce::Array<juce::var> strips;
+        for (int i = 0; i < self->engine.getRecorder().getNumTracks(); ++i)
+        {
+            auto& t = self->engine.getRecorder().getTrack (i);
+            juce::DynamicObject::Ptr s (new juce::DynamicObject());
+            s->setProperty ("name",    t.name);
+            s->setProperty ("colour",  (juce::int64) t.colourARGB.load (std::memory_order_relaxed));
+            s->setProperty ("inRoute", t.inputRouting .load (std::memory_order_relaxed));
+            s->setProperty ("outRoute",t.outputRouting.load (std::memory_order_relaxed));
+            s->setProperty ("stereo",  t.isStereo.load (std::memory_order_relaxed));
+            s->setProperty ("gainDb",  (double) t.gainDb.load (std::memory_order_relaxed));
+            s->setProperty ("pan",     (double) t.pan   .load (std::memory_order_relaxed));
+            strips.add (juce::var (s.get()));
+        }
+        obj->setProperty ("strips", juce::var (strips));
+
+        const auto safeName = name.replaceCharacters ("/:\\?*<>|\"", "         ").trim();
+        const auto out = self->templatesDir().getChildFile (safeName + ".zftemplate");
+        out.replaceWithText (juce::JSON::toString (juce::var (obj.get())));
+        self->showStatus ("Template saved → " + out.getFileName());
+    }));
+}
+
+void MainComponent::applySessionTemplate (const juce::File& templateFile)
+{
+    if (engine.isRecording()) { showStatus ("Stop recording first"); return; }
+
+    const auto parsed = juce::JSON::parse (templateFile);
+    auto* obj = parsed.getDynamicObject();
+    if (obj == nullptr) { showStatus ("Failed to read template"); return; }
+
+    const int n = (int) obj->getProperty ("trackCount");
+    if (n <= 0) { showStatus ("Template has no strips"); return; }
+
+    engine.resetAllStripState();
+    engine.setStripCount (n);
+
+    if (auto* arr = obj->getProperty ("strips").getArray())
+    {
+        for (int i = 0; i < arr->size() && i < n; ++i)
+        {
+            auto* s = (*arr)[i].getDynamicObject();
+            if (s == nullptr) continue;
+            const auto nm = s->getProperty ("name").toString();
+            if (nm.isNotEmpty()) engine.setTrackName (i, nm);
+            const auto col = (juce::uint32) (juce::int64) s->getProperty ("colour");
+            if (col != 0) engine.setTrackColour (i, juce::Colour (col));
+            engine.setTrackInputRouting  (i, (int) s->getProperty ("inRoute"));
+            engine.setTrackOutputRouting (i, (int) s->getProperty ("outRoute"));
+            engine.setTrackStereo (i, (bool) s->getProperty ("stereo"));
+            engine.setTrackGainDb (i, (float) (double) s->getProperty ("gainDb"));
+            engine.setTrackPan    (i, (float) (double) s->getProperty ("pan"));
+        }
+    }
+    lastTrackCount = -1;
+    showStatus ("Applied template: " + templateFile.getFileNameWithoutExtension());
+}
+
+void MainComponent::promptDeleteSessionTemplate()
+{
+    const auto list = listSessionTemplates();
+    if (list.isEmpty()) return;
+
+    juce::PopupMenu m;
+    for (int i = 0; i < list.size(); ++i)
+        m.addItem (i + 1, "Delete: " + list[i].getFileNameWithoutExtension());
+    juce::Component::SafePointer<MainComponent> self (this);
+    m.showMenuAsync (juce::PopupMenu::Options(), [self, list] (int chosen)
+    {
+        if (chosen <= 0 || self == nullptr) return;
+        const int idx = chosen - 1;
+        if (idx < list.size())
+        {
+            list[idx].deleteFile();
+            self->showStatus ("Template deleted: " + list[idx].getFileNameWithoutExtension());
+        }
+    });
 }
 
 void MainComponent::onDeviceClicked()

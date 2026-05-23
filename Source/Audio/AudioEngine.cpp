@@ -1134,11 +1134,12 @@ namespace zynforge
 
     void AudioEngine::tickRamps (int numSamples) noexcept
     {
+        if (numSamples <= 0) return;
         const int n = recorder.getNumTracks();
         for (int i = 0; i < n; ++i)
         {
             auto& t = recorder.getTrack (i);
-            const auto remaining = t.rampSamplesRemaining.load (std::memory_order_relaxed);
+            const juce::int64 remaining = t.rampSamplesRemaining.load (std::memory_order_relaxed);
             if (remaining <= 0) continue;
 
             const float curG = t.gainDb.load (std::memory_order_relaxed);
@@ -1146,11 +1147,14 @@ namespace zynforge
             const float curP = t.pan   .load (std::memory_order_relaxed);
             const float tgtP = t.rampTargetPan   .load (std::memory_order_relaxed);
 
-            const float frac = (float) numSamples / (float) juce::jmax<juce::int64> (numSamples, remaining);
+            // Defensive: clamp denominator so a stale remaining can't
+            // produce NaN/inf gain values.
+            const juce::int64 denom = juce::jmax ((juce::int64) numSamples, remaining);
+            const float frac = (float) numSamples / (float) denom;
             const float newG = curG + (tgtG - curG) * frac;
             const float newP = curP + (tgtP - curP) * frac;
 
-            const auto next = remaining - numSamples;
+            const juce::int64 next = remaining - (juce::int64) numSamples;
             if (next <= 0)
             {
                 t.gainDb.store (tgtG, std::memory_order_relaxed);

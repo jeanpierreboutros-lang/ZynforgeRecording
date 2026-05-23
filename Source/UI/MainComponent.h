@@ -134,6 +134,13 @@ private:
     // Open a modal warning if the loaded session's SR doesn't match the device.
     void warnIfSampleRateMismatch();
 
+    // Session templates — engineer's per-strip layout reusable across shows.
+    juce::File  templatesDir() const;
+    juce::Array<juce::File> listSessionTemplates() const;
+    void  promptSaveSessionTemplate();
+    void  applySessionTemplate (const juce::File& templateFile);
+    void  promptDeleteSessionTemplate();
+
     zynforge::ZynForgeLookAndFeel laf;
     zynforge::AudioEngine         engine;
 
