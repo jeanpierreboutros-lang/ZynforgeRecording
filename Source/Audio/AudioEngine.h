@@ -229,6 +229,10 @@ namespace zynforge
         // Track_NN.wav otherwise.
         std::vector<Clip>& clipsFor (int track);
         const std::vector<Clip>* tryClipsFor (int track) const;
+        // Populate every track with a single full-range clip so the EDIT
+        // tools have something to grab. Called after loadSession() or
+        // when stopRecording() auto-loads the just-captured files.
+        void seedDefaultClips();
         // Split the named track at the current playhead — creates two
         // clips that reference the same audio file with adjacent regions.
         bool splitTrackAtPlayhead (int track);

@@ -133,6 +133,7 @@ namespace zynforge
         {
             player.loadSession (sessionDir);
             setActiveSessionDir (sessionDir);
+            seedDefaultClips();
         }
     }
 
@@ -221,8 +222,32 @@ namespace zynforge
         {
             markers.setContext (sessionDir, player.getSampleRate());
             rememberRecentSession (sessionDir);
+            seedDefaultClips();
         }
         return n;
+    }
+
+    void AudioEngine::seedDefaultClips()
+    {
+        // Give every track a single full-range clip so the EDIT tools
+        // (Trim / Grabber / Fade / Selector / Scrubber) have something
+        // to grab. Without an active clip list, TrackRow's clip-edit
+        // hit-test short-circuits and the tools feel dead.
+        const int n = player.getNumTracks();
+        if (n <= 0) return;
+        trackClips.clear();
+        trackClips.resize ((size_t) n);
+        for (int i = 0; i < n; ++i)
+        {
+            Clip c;
+            c.name                 = juce::String::formatted ("Track_%02d", i + 1);
+            c.timelineStartSamples = 0;
+            c.fileStartSamples     = 0;
+            c.fileLengthSamples    = player.getTrackLengthSamples (i);
+            if (c.fileLengthSamples <= 0) continue;
+            trackClips[(size_t) i].push_back (c);
+            player.setTrackClips (i, trackClips[(size_t) i]);
+        }
     }
 
     void AudioEngine::setPhasePair (int leftCh1Based, int rightCh1Based) noexcept

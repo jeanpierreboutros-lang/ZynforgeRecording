@@ -37,6 +37,11 @@ namespace zynforge
         bool isPlaying()      const noexcept { return playing.load (std::memory_order_acquire); }
         int  getNumTracks()   const noexcept { return (int) readerCount.load(); }
         juce::int64 getTotalLengthSamples() const noexcept { return totalLength.load(); }
+        juce::int64 getTrackLengthSamples (int trackIdx) const noexcept
+        {
+            if (trackIdx < 0 || trackIdx >= (int) tracks.size()) return 0;
+            return tracks[(size_t) trackIdx].length;
+        }
         juce::int64 getPositionSamples()    const noexcept { return position   .load(); }
         double      getSampleRate()         const noexcept { return fileSampleRate; }
         juce::String getSessionName()       const          { return sessionName; }
