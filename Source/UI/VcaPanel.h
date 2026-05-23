@@ -42,16 +42,16 @@ namespace zynforge
             g.fillAll (brand::bgDeep);
             g.setColour (brand::edge);
             g.drawRect (getLocalBounds(), 1);
-            g.setColour (brand::textTertiary);
-            g.setFont (brand::type::label());
-            g.drawText ("VCA", getLocalBounds().removeFromTop (16),
+            g.setColour (brand::textSecondary);
+            g.setFont (brand::fonts::bold());
+            g.drawText ("VCA GROUPS", getLocalBounds().removeFromTop (22),
                         juce::Justification::centred, false);
         }
 
         void resized() override
         {
-            auto r = getLocalBounds().withTrimmedTop (18).reduced (4, 4);
-            const int gap = 2;
+            auto r = getLocalBounds().withTrimmedTop (24).reduced (6, 6);
+            const int gap = 4;
             const int n = (int) strips.size();
             const int stripW = (r.getWidth() - (n - 1) * gap) / juce::jmax (1, n);
             for (auto& s : strips)
@@ -103,7 +103,7 @@ namespace zynforge
 
                 nameLabel.setEditable (false, true, false);
                 nameLabel.setJustificationType (juce::Justification::centred);
-                nameLabel.setFont (brand::fonts::small());
+                nameLabel.setFont (brand::fonts::bold());
                 nameLabel.setColour (juce::Label::textColourId, brand::textPrimary);
                 nameLabel.setText (engine.getVca (index).name, juce::dontSendNotification);
                 nameLabel.onTextChange = [this]
@@ -130,9 +130,9 @@ namespace zynforge
                 // Live dB readout.
                 const float dB = engine.getVca (index).gainDb.load (std::memory_order_relaxed);
                 g.setColour (brand::textSecondary);
-                g.setFont (brand::fonts::small());
+                g.setFont (brand::fonts::body());
                 g.drawText (juce::String (dB, 1) + " dB",
-                            getLocalBounds().withTop (getHeight() - 14).withHeight (12),
+                            getLocalBounds().withTop (getHeight() - 18).withHeight (16),
                             juce::Justification::centred, false);
 
                 // Sync button visuals with the bus state (cue recall /
@@ -155,14 +155,15 @@ namespace zynforge
 
             void resized() override
             {
-                auto r = getLocalBounds().reduced (3, 4);
+                auto r = getLocalBounds().reduced (4, 6);
                 r.removeFromTop (6);   // colour swatch (matches paint)
-                nameLabel.setBounds (r.removeFromTop (14));
-                auto buttonRow = r.removeFromTop (16);
+                nameLabel.setBounds (r.removeFromTop (20));
+                auto buttonRow = r.removeFromTop (24);
                 const int half = buttonRow.getWidth() / 2;
-                mute.setBounds (buttonRow.removeFromLeft (half).reduced (1));
-                solo.setBounds (buttonRow.reduced (1));
-                r.removeFromBottom (14);   // dB readout space
+                mute.setBounds (buttonRow.removeFromLeft (half).reduced (2));
+                solo.setBounds (buttonRow.reduced (2));
+                r.removeFromTop (4);
+                r.removeFromBottom (18);   // dB readout space
                 fader.setBounds (r);
             }
 

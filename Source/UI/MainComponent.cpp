@@ -4655,7 +4655,10 @@ void MainComponent::resized()
             if (vcaPanel != nullptr && showVcaPanel)
             {
                 // ~38 px per VCA × 8 = 304 + side padding ≈ 320 px.
-                auto vcaArea = viewportArea.removeFromRight (320);
+                // 8 VCA strips × ~64 px each + side padding ≈ 540 px.
+                // Bumped from 320 so the engineer has full-size faders
+                // and a roomy click target on each bus.
+                auto vcaArea = viewportArea.removeFromRight (540);
                 viewportArea.removeFromRight (brand::space::md);
                 vcaPanel->setBounds (vcaArea);
                 vcaPanel->setVisible (true);
