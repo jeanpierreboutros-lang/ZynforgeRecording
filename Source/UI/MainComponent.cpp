@@ -2116,9 +2116,7 @@ void MainComponent::launchNewSessionDialog()
         //       <Name>.zfproj
         //       Audio Files/
         //       Bounced Files/
-        //       Clip Groups/
         //       Session File Backups/
-        //       Video Files/
         //       WaveCache.wfm
         // Subsequent record / save / export operations all live inside
         // this folder.
@@ -4169,9 +4167,7 @@ void MainComponent::onImportAudioFiles()
         // imports look like a real session if the engineer hadn't
         // already created one via File ▸ New Session....
         sessionDir.getChildFile ("Bounced Files")       .createDirectory();
-        sessionDir.getChildFile ("Clip Groups")         .createDirectory();
         sessionDir.getChildFile ("Session File Backups").createDirectory();
-        sessionDir.getChildFile ("Video Files")         .createDirectory();
         engine.setActiveSessionDir (sessionDir);
 
         juce::AudioFormatManager fm;
@@ -4323,9 +4319,7 @@ void MainComponent::onSaveSessionAs()
         // Seed the Pro Tools-style subfolder layout in the new spot.
         dest.getChildFile ("Audio Files")         .createDirectory();
         dest.getChildFile ("Bounced Files")       .createDirectory();
-        dest.getChildFile ("Clip Groups")         .createDirectory();
         dest.getChildFile ("Session File Backups").createDirectory();
-        dest.getChildFile ("Video Files")         .createDirectory();
 
         if (source.isDirectory() && source != dest)
         {
@@ -4865,12 +4859,13 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
         sessionFolder = r.location.getChildFile (safeName + "-" + juce::String (i));
     sessionFolder.createDirectory();
 
-    // Subfolders mirror Pro Tools' session layout.
+    // Subfolders -- only the ones actually wired today. Clip Groups
+    // and Video Files were Pro Tools-style placeholders that nothing
+    // read or wrote, so they're dropped to avoid confusing the
+    // engineer with empty folders.
     sessionFolder.getChildFile ("Audio Files")         .createDirectory();
     sessionFolder.getChildFile ("Bounced Files")       .createDirectory();
-    sessionFolder.getChildFile ("Clip Groups")         .createDirectory();
     sessionFolder.getChildFile ("Session File Backups").createDirectory();
-    sessionFolder.getChildFile ("Video Files")         .createDirectory();
 
     // Session document -- a small JSON file that ties the folder together.
     // (Equivalent of Pro Tools' .ptx; we use .zfproj for clarity.)
@@ -4887,9 +4882,8 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
                      .replaceWithText (juce::JSON::toString (juce::var (m.get())));
     }
 
-    // Waveform cache placeholder -- engine will populate it as the engineer
-    // records / scrubs.
-    sessionFolder.getChildFile ("WaveCache.wfm").create();
+    // WaveCache.wfm is written on demand by EditPage::saveCacheToSession
+    // (on close) and read back on session open. No placeholder needed.
 
     return sessionFolder;
 }

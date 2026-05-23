@@ -19,6 +19,7 @@ namespace zynforge
     // both ways.
     class AutomationToolbar;
     class EditToolsBar;
+    class EditTimeRuler;
     class EditPage final : public juce::Component, private juce::Timer
     {
     public:
@@ -77,8 +78,17 @@ namespace zynforge
         float      zoom            { 1.0f };
         AutomationToolbar*             toolbar  { nullptr };
         std::unique_ptr<EditToolsBar>  toolsBar;
+        std::unique_ptr<EditTimeRuler> ruler;
         bool clickPresent { false };
         int  clickTrackIdx { -1 };
+
+        // WaveCache.wfm persistence: writes the AudioThumbnailCache
+        // contents to disk so the EDIT view re-renders waveforms
+        // instantly on session reopen instead of re-scanning every
+        // Track_NN.wav. Pro Tools-style.
+        void loadCacheFromSession (const juce::File& sessionDir);
+        void saveCacheToSession   (const juce::File& sessionDir);
+        juce::Time lastCacheSaveTime;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EditPage)
     };

@@ -1,6 +1,7 @@
 #include "EditPage.h"
 #include "AutomationToolbar.h"
 #include "EditToolsBar.h"
+#include "EditTimeRuler.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "LedMeter.h"
@@ -2122,6 +2123,12 @@ namespace zynforge
         viewport.setScrollBarsShown (true, true);
         addAndMakeVisible (viewport);
 
+        // Pro Tools-style Min:Secs time ruler perched above the track
+        // list. Reads session length + sample rate from the engine via
+        // its own 4 Hz timer.
+        ruler = std::make_unique<EditTimeRuler> (engine);
+        addAndMakeVisible (*ruler);
+
         emptyLabel.setText ("No session loaded -- load or record a session to see waveforms here.",
                             juce::dontSendNotification);
         emptyLabel.setJustificationType (juce::Justification::centred);
@@ -2132,7 +2139,55 @@ namespace zynforge
         startTimerHz (24);
     }
 
-    EditPage::~EditPage() { stopTimer(); }
+    EditPage::~EditPage()
+    {
+        stopTimer();
+        // Flush the waveform cache to WaveCache.wfm in whichever
+        // session is active. Best-effort: failure here only means the
+        // next launch re-scans waveforms, no data loss.
+        const auto sessionDir = engine.getActiveSessionDir();
+        if (sessionDir.isDirectory())
+            saveCacheToSession (sessionDir);
+    }
+
+    void EditPage::loadCacheFromSession (const juce::File& sessionDir)
+    {
+        const auto cacheFile = sessionDir.getChildFile ("WaveCache.wfm");
+        if (! cacheFile.existsAsFile() || cacheFile.getSize() < 16) return;
+
+        juce::FileInputStream in (cacheFile);
+        if (! in.openedOk()) return;
+        // Best-effort: the cache reader returns true on success, false
+        // if the file is empty / corrupt / from a different JUCE
+        // version. In all failure modes the thumbnails fall back to
+        // re-scanning the Track_NN.wav files, so the worst case is
+        // 'slow first paint', never wrong audio.
+        thumbnailCache.readFromStream (in);
+    }
+
+    void EditPage::saveCacheToSession (const juce::File& sessionDir)
+    {
+        const auto cacheFile = sessionDir.getChildFile ("WaveCache.wfm");
+        // Overwrite atomically -- write to a temp file then rename so
+        // a crash mid-write leaves the previous cache intact.
+        const auto tmpFile = sessionDir.getChildFile ("WaveCache.wfm.tmp");
+        tmpFile.deleteFile();
+        {
+            juce::FileOutputStream out (tmpFile);
+            if (! out.openedOk()) return;
+            thumbnailCache.writeToStream (out);
+            out.flush();
+        }
+        if (tmpFile.getSize() > 0)
+        {
+            cacheFile.deleteFile();
+            tmpFile.moveFileTo (cacheFile);
+        }
+        else
+        {
+            tmpFile.deleteFile();
+        }
+    }
 
     void EditPage::setAutomationToolbar (AutomationToolbar* t)
     {
@@ -2200,6 +2255,14 @@ namespace zynforge
         // over player) so waveforms render the file being WRITTEN, not
         // just the file being read back.
         const auto sessionDir = engine.getActiveSessionDir();
+
+        // When the session changes, pull the on-disk WaveCache.wfm
+        // into the thumbnail cache BEFORE the new TrackRows ask
+        // their thumbnails for sources -- otherwise the thumbnails
+        // re-scan the WAV files even though cached peaks exist.
+        if (sessionDir != lastSessionDir && sessionDir.isDirectory())
+            loadCacheFromSession (sessionDir);
+
         list->setWaveformsFromSession (sessionDir);
 
         const bool loaded = engine.getPlayer().isLoaded();
@@ -2254,9 +2317,16 @@ namespace zynforge
 
     void EditPage::resized()
     {
-        viewport.setBounds (getLocalBounds());
-        // Tell the list how tall the visible area is so "fit to window"
-        // sizing can resolve a sensible per-row pixel height.
+        auto bounds = getLocalBounds();
+
+        // Time ruler perches across the top, 24 px tall. Spans the
+        // full width so the Min:Secs label column aligns with each
+        // TrackRow's header column.
+        const int rulerH = 24;
+        if (ruler != nullptr)
+            ruler->setBounds (bounds.removeFromTop (rulerH));
+
+        viewport.setBounds (bounds);
         list->setViewportHeight (viewport.getHeight());
         // Apply the zoom factor -- content widens past the viewport when
         // zoom > 1; the horizontal scrollbar lights up to navigate.
@@ -2264,6 +2334,11 @@ namespace zynforge
                                          (int) (viewport.getWidth() * zoom));
         list->setSize (contentW, list->getHeight());
         list->resized();
+
+        // Push the same content width into the ruler so its
+        // pixels-per-second matches the wave pane below it.
+        if (ruler != nullptr)
+            ruler->setContentWidth (contentW);
     }
 
     void EditPage::setZoom (float z)
