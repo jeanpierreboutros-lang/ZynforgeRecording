@@ -411,6 +411,7 @@ namespace zynforge
         }
 
         // Find the clip whose timeline range contains the playhead.
+        bool did = false;
         for (int i = 0; i < (int) list.size(); ++i)
         {
             const auto& c = list[(size_t) i];
@@ -418,10 +419,14 @@ namespace zynforge
             if (pos > c.timelineStartSamples && pos < tEnd)
             {
                 const auto fileOffset = c.fileStartSamples + (pos - c.timelineStartSamples);
-                return splitClipAt (list, i, fileOffset);
+                did = splitClipAt (list, i, fileOffset);
+                break;
             }
         }
-        return false;
+        // Publish the updated list to the player so playback honours
+        // the cut on the next block.
+        if (did) player.setTrackClips (track, list);
+        return did;
     }
 
     bool AudioEngine::isTrackPunchArmed (int channel) const noexcept
@@ -747,6 +752,7 @@ namespace zynforge
     void AudioEngine::addAutomationPoint (int track, AutomationParam p,
                                           juce::int64 samplePos, float value)
     {
+        const juce::ScopedLock sl (automationLock);
         auto* lane = findLane (track, p);
         if (lane == nullptr) return;
 
@@ -764,9 +770,39 @@ namespace zynforge
                    [] (const auto& a, const auto& b) { return a.samplePos < b.samplePos; });
     }
 
+    float AudioEngine::automationValueAt (int track, AutomationParam p,
+                                          juce::int64 samplePos,
+                                          float fallback) const noexcept
+    {
+        const juce::ScopedTryLock stl (automationLock);
+        if (! stl.isLocked()) return fallback;     // UI mid-edit — use the slider value
+        if (track < 0 || track >= (int) automationData.size()) return fallback;
+        const auto& a = automationData[(size_t) track];
+        const std::vector<AutomationPoint>* lane = nullptr;
+        switch (p)
+        {
+            case AutomationParam::Volume: lane = &a.volume; break;
+            case AutomationParam::Pan:    lane = &a.pan;    break;
+            case AutomationParam::Mute:   lane = &a.mute;   break;
+        }
+        if (lane == nullptr || lane->empty()) return fallback;
+
+        // Step automation — value held until the next point. Linear
+        // interpolation can come later; for now this matches what the
+        // EDIT row visually paints.
+        float v = (*lane)[0].value;
+        for (const auto& pt : *lane)
+        {
+            if (pt.samplePos <= samplePos) v = pt.value;
+            else break;
+        }
+        return v;
+    }
+
     void AudioEngine::removeAutomationPointNear (int track, AutomationParam p,
                                                  juce::int64 samplePos, juce::int64 tolerance)
     {
+        const juce::ScopedLock sl (automationLock);
         auto* lane = findLane (track, p);
         if (lane == nullptr || lane->empty()) return;
 
@@ -783,6 +819,7 @@ namespace zynforge
 
     void AudioEngine::clearAutomation (AutomationParam p)
     {
+        const juce::ScopedLock sl (automationLock);
         for (auto& a : automationData)
         {
             switch (p)
@@ -1147,15 +1184,33 @@ namespace zynforge
         auto* accL = monitorAccum.getWritePointer (0);
         auto* accR = monitorAccum.getWritePointer (1);
 
+        // Playback position drives automation lookup: when the player
+        // is rolling, gain / pan curves take precedence over the live
+        // slider value; while stopped, the slider value is used.
+        const juce::int64 playPos = player.isPlaying() ? player.getPositionSamples()
+                                                       : juce::int64 (-1);
+
         for (int ch = 0; ch < trackCount; ++ch)
         {
             auto& t = recorder.getTrack (ch);
             if (! channelAudible (ch)) continue;
 
-            const double dB   = t.gainDb.load (std::memory_order_relaxed);
+            float dBVal  = t.gainDb.load (std::memory_order_relaxed);
+            float panVal = t.pan   .load (std::memory_order_relaxed);
+            bool  muteAuto = false;
+            if (playPos >= 0)
+            {
+                dBVal    = automationValueAt (ch, AutomationParam::Volume, playPos, dBVal);
+                panVal   = automationValueAt (ch, AutomationParam::Pan,    playPos, panVal);
+                const float muteV = automationValueAt (ch, AutomationParam::Mute,
+                                                       playPos, t.muted.load() ? 1.0f : 0.0f);
+                muteAuto = muteV > 0.5f;
+            }
+            if (muteAuto) continue;
+
+            const double dB   = (double) dBVal;
             const double gain = juce::Decibels::decibelsToGain (dB, -60.0);
-            const double pan  = juce::jlimit (-1.0, 1.0,
-                                              (double) t.pan.load (std::memory_order_relaxed));
+            const double pan  = juce::jlimit (-1.0, 1.0, (double) panVal);
             const double panNorm = (pan + 1.0) * 0.5;
             const double gL = gain * std::cos (panNorm * juce::MathConstants<double>::halfPi);
             const double gR = gain * std::sin (panNorm * juce::MathConstants<double>::halfPi);
@@ -1262,11 +1317,24 @@ namespace zynforge
         // ── Real-time click mix ────────────────────────────────────
         // Click runs on the audio thread so a tempo / voice change
         // takes effect on the next beat — no file reload, no glitch.
-        // Mixed into outputs 0+1 (the engineer's monitor bus). The
-        // strip's OUT combo doesn't apply to this real-time path —
-        // route via Master output channel selection.
+        // Mixed into outputs 0+1 (the engineer's monitor bus).
         if (click.isEnabled())
         {
+            // If a tempo map exists and the player is rolling, look
+            // up the BPM at the current playhead and feed it to the
+            // click engine for THIS block. Tempo changes ride along
+            // with the audio without any file regenerate.
+            if (! tempoMap.empty() && player.isPlaying())
+            {
+                const auto playPosNow = player.getPositionSamples();
+                float bpm = currentTempoBpm.load (std::memory_order_relaxed);
+                for (const auto& tc : tempoMap)
+                {
+                    if (tc.samplePos <= playPosNow) bpm = tc.bpm;
+                    else break;
+                }
+                click.setTempoBpm (bpm);
+            }
             float* L = (numOutputs > 0) ? outputs[0] : nullptr;
             float* R = (numOutputs > 1) ? outputs[1] : nullptr;
             click.processBlock (L, R, numSamples);

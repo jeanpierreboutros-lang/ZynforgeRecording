@@ -144,6 +144,20 @@ namespace zynforge
         return s >= 0 && e > s;
     }
 
+    void SessionPlayer::setTrackClips (int trackIdx, std::vector<Clip> clips)
+    {
+        if (trackIdx < 0) return;
+        const juce::ScopedLock sl (clipsLock);
+        if (trackIdx >= (int) activeClips.size()) activeClips.resize ((size_t) trackIdx + 1);
+        activeClips[(size_t) trackIdx] = std::move (clips);
+    }
+
+    void SessionPlayer::clearAllClips()
+    {
+        const juce::ScopedLock sl (clipsLock);
+        activeClips.clear();
+    }
+
     void SessionPlayer::processBlock (float* const* outputs, int numOutputs, int numSamples) noexcept
     {
         if (! playing.load (std::memory_order_acquire)) return;
@@ -178,6 +192,11 @@ namespace zynforge
         if (scratch.getNumSamples() < playableThisBlock)
             scratch.setSize (1, playableThisBlock, false, false, true);
 
+        // Snapshot the clip lists under the lock — held only long enough
+        // to take a const reference. After release we iterate read-only
+        // and the UI may modify the (different) live vector.
+        const juce::ScopedTryLock stl (clipsLock);
+
         for (int i = 0; i < n; ++i)
         {
             float* out = outputs[i];
@@ -190,11 +209,52 @@ namespace zynforge
                 continue;
             }
 
+            // Clip-aware path: if this track has an active clip list,
+            // render only the time spans inside clips; silence elsewhere.
+            // Otherwise fall through to the legacy 'whole file' read.
+            const std::vector<Clip>* clips = nullptr;
+            if (stl.isLocked()
+                && i < (int) activeClips.size()
+                && ! activeClips[(size_t) i].empty())
+            {
+                clips = &activeClips[(size_t) i];
+            }
+
+            if (clips != nullptr)
+            {
+                juce::FloatVectorOperations::clear (out, numSamples);
+                for (const auto& c : *clips)
+                {
+                    const auto clipEndTL = c.timelineStartSamples + c.fileLengthSamples;
+                    // Overlap of [startPos, startPos+playableThisBlock)
+                    // with [c.timelineStartSamples, clipEndTL).
+                    const juce::int64 ovStartTL = juce::jmax (startPos, c.timelineStartSamples);
+                    const juce::int64 ovEndTL   = juce::jmin (startPos + playableThisBlock, clipEndTL);
+                    if (ovEndTL <= ovStartTL) continue;
+                    const int outOffset  = (int) (ovStartTL - startPos);
+                    const int spanLen    = (int) (ovEndTL  - ovStartTL);
+                    const juce::int64 fileReadStart =
+                        c.fileStartSamples + (ovStartTL - c.timelineStartSamples);
+
+                    if (scratch.getNumSamples() < spanLen)
+                        scratch.setSize (1, spanLen, false, false, true);
+                    scratch.clear (0, 0, spanLen);
+                    t.reader->read (&scratch, 0, spanLen, fileReadStart, true, true);
+                    juce::FloatVectorOperations::copy (out + outOffset,
+                                                       scratch.getReadPointer (0),
+                                                       spanLen);
+                }
+                if (playableThisBlock < numSamples)
+                    juce::FloatVectorOperations::clear (out + playableThisBlock,
+                                                        numSamples - playableThisBlock);
+                continue;
+            }
+
+            // Legacy whole-file path.
             const int avail = (int) juce::jmin ((juce::int64) playableThisBlock, t.length - startPos);
 
             scratch.clear (0, 0, avail);
-            t.reader->read (&scratch, /*destStart*/ 0, avail, /*readerStart*/ startPos,
-                            /*useLeft*/ true, /*useRight*/ true);
+            t.reader->read (&scratch, 0, avail, startPos, true, true);
 
             juce::FloatVectorOperations::copy (out, scratch.getReadPointer (0), avail);
             if (avail < numSamples)

@@ -215,6 +215,13 @@ namespace zynforge
         void clearAutomation (AutomationParam);
         void clearAutomationForTrack (int track, AutomationParam);
 
+        // RT-safe lookup of the automated parameter value at the given
+        // sample position. Holds automationLock with tryEnter on the
+        // audio thread; if contended (UI thread mid-edit), returns the
+        // static fallback so the mix doesn't glitch.
+        float automationValueAt (int track, AutomationParam, juce::int64 samplePos,
+                                 float fallback) const noexcept;
+
         // Per-track clip list. Lazy: a track stays in 'whole file' mode
         // (no entry in trackClips, or one full-range entry) until the
         // engineer splits or trims it. The EDIT view + future playback
@@ -345,6 +352,7 @@ namespace zynforge
             std::vector<AutomationPoint> volume, pan, mute;
         };
         std::vector<TrackAutomation> automationData;
+        mutable juce::CriticalSection automationLock;
         // Per-track clip lists. Empty/missing entry → 'play the whole
         // Track_NN.wav' (the current behaviour). Once the engineer
         // splits or trims, the entry has one or more Clips covering
