@@ -75,7 +75,14 @@ namespace zynforge
                                               "Name:",
                                               juce::MessageBoxIconType::NoIcon);
             aw->addTextEditor ("n", current, {});
-            if (auto* ed = aw->getTextEditor ("n")) ed->selectAll();
+            if (auto* ed = aw->getTextEditor ("n"))
+            {
+                ed->setSelectAllWhenFocused (true);
+                juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<juce::TextEditor> (ed)]
+                {
+                    if (safe != nullptr) safe->grabKeyboardFocus();
+                });
+            }
             aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
             aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 

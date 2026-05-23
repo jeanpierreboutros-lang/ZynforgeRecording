@@ -1,6 +1,7 @@
 #include "TimelineStrip.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
+#include "../Theme/DialogChrome.h"
 
 namespace zynforge
 {
@@ -190,6 +191,7 @@ namespace zynforge
                                           "Enter a new name:",
                                           juce::MessageBoxIconType::NoIcon);
         aw->addTextEditor ("name", current, {});
+        dialog::primeNameEditor (*aw, "name");
         aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
         aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 

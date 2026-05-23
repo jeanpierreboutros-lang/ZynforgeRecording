@@ -4,6 +4,7 @@
 #include "EditTimeRuler.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
+#include "../Theme/DialogChrome.h"
 #include "LedMeter.h"
 #include "StripColourPicker.h"
 
@@ -411,10 +412,44 @@ namespace zynforge
             const auto waveColour = getStripColour().brighter (0.25f);
             const auto inner = wavePane.reduced (4, 6);
 
+            // Pro Tools-style: the waveform is ALWAYS the base layer,
+            // even when a different lane mode (Volume / Pan / Mute /
+            // Click / Tempo / Markers) is selected. The lane data is
+            // drawn on top with a semi-transparent backdrop. Paint
+            // the waveform here as the substrate; the lane branch
+            // below then overlays its content.
+            if (laneMode != LaneMode::Waveform)
+            {
+                if (stereo)
+                {
+                    const int laneH = inner.getHeight() / 2;
+                    auto laneL = inner.withHeight (laneH);
+                    auto laneR = inner.withTrimmedTop (laneH);
+                    if (thumbnailL.getTotalLength() > 0.0)
+                    {
+                        g.setColour (waveColour.withAlpha (0.55f));
+                        thumbnailL.drawChannels (g, laneL, 0.0,
+                                                 thumbnailL.getTotalLength(), 1.0f);
+                    }
+                    if (thumbnailR.getTotalLength() > 0.0)
+                    {
+                        g.setColour (waveColour.withAlpha (0.55f));
+                        thumbnailR.drawChannels (g, laneR, 0.0,
+                                                 thumbnailR.getTotalLength(), 1.0f);
+                    }
+                }
+                else if (thumbnailL.getTotalLength() > 0.0)
+                {
+                    g.setColour (waveColour.withAlpha (0.55f));
+                    thumbnailL.drawChannels (g, inner, 0.0,
+                                             thumbnailL.getTotalLength(), 1.0f);
+                }
+            }
+
             // Automation lane modes -- flat horizontal line representing
-            // the current value. (Time-varying automation is reserved
-            // for a later build; this gives the engineer an at-a-glance
-            // read of the current parameter alongside the waveform UI.)
+            // the current value (overlaid on top of the dimmed waveform
+            // base above). Time-varying automation is reserved for a
+            // later build.
             if (laneMode != LaneMode::Waveform)
             {
                 auto& t = engine.getRecorder().getTrack (index);
@@ -1849,6 +1884,7 @@ namespace zynforge
                             "Enter clip gain in dB (-60 .. +12).",
                             juce::MessageBoxIconType::NoIcon);
                         aw->addTextEditor ("dB", juce::String (gainDb, 2));
+                        dialog::primeNameEditor (*aw, "dB");
                         aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
                         aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
                         juce::Component::SafePointer<TrackRow> rowSafe (self);
@@ -1972,6 +2008,7 @@ namespace zynforge
                     auto* aw = new juce::AlertWindow ("Rename take",
                         "Take name:", juce::MessageBoxIconType::NoIcon);
                     aw->addTextEditor ("n", cur, {});
+                    dialog::primeNameEditor (*aw, "n");
                     aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
                     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
                     juce::Component::SafePointer<TrackRow> rs (row);

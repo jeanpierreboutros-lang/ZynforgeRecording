@@ -112,6 +112,26 @@ namespace zynforge::dialog
         c.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
         c.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
     }
+    // Prime an AlertWindow's text editor so the engineer can start
+    // typing immediately when the dialog opens: all text selected,
+    // keyboard focus on the field. Without the deferred callAsync
+    // the focus grab happens before AlertWindow finishes its own
+    // layout, gets swallowed, and the engineer still has to click.
+    // Pass the AlertWindow and the editor's id (as passed to
+    // addTextEditor). No-op if the editor isn't found.
+    inline void primeNameEditor (juce::AlertWindow& aw, const juce::String& id) noexcept
+    {
+        if (auto* ed = aw.getTextEditor (id))
+        {
+            ed->setSelectAllWhenFocused (true);
+            juce::MessageManager::callAsync (
+                [safe = juce::Component::SafePointer<juce::TextEditor> (ed)]
+                {
+                    if (safe != nullptr) safe->grabKeyboardFocus();
+                });
+        }
+    }
+
     inline void styleTextEditor (juce::TextEditor& t) noexcept
     {
         t.setColour (juce::TextEditor::backgroundColourId,     brand::bgDeep);

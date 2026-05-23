@@ -1,6 +1,7 @@
 #include "MainComponent.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
+#include "../Theme/DialogChrome.h"
 #include "AddTracksDialog.h"
 #include "AudioDeviceDialog.h"
 #include "Meterbridge.h"
@@ -845,6 +846,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
                               ? engine.getAppProps()->getValue ("cloudUploadCommand")
                               : juce::String();
         aw->addTextEditor ("cmd", current, {});
+        dialog::primeNameEditor (*aw, "cmd");
         aw->addButton ("Save",   1, juce::KeyPress (juce::KeyPress::returnKey));
         aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
         aw->enterModalState (true,
@@ -2583,7 +2585,17 @@ void MainComponent::dropMarkerAndPromptName()
                                       juce::MessageBoxIconType::NoIcon,
                                       this);
     aw->addTextEditor ("markerName", defaultName, {});
-    aw->getTextEditor ("markerName")->selectAll();
+    if (auto* ed = aw->getTextEditor ("markerName"))
+    {
+        ed->setSelectAllWhenFocused (true);
+        // Defer focus grab until after AlertWindow finishes its own
+        // layout pass -- otherwise the focus call is swallowed and
+        // the engineer still has to click the field before typing.
+        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<juce::TextEditor> (ed)]
+        {
+            if (safe != nullptr) safe->grabKeyboardFocus();
+        });
+    }
     aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
@@ -2980,6 +2992,7 @@ void MainComponent::promptCueName (const juce::String& title,
                                       "Cue name:",
                                       juce::MessageBoxIconType::NoIcon);
     aw->addTextEditor ("cueName", initial, juce::String{});
+    dialog::primeNameEditor (*aw, "cueName");
     aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
@@ -3388,6 +3401,7 @@ void MainComponent::promptMirrorHost()
                                       "The primary must have its companion server running.",
                                       juce::MessageBoxIconType::NoIcon);
     aw->addTextEditor ("addr", "192.168.1.42:9000", "Primary host:");
+    dialog::primeNameEditor (*aw, "addr");
     aw->addButton ("Start", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
@@ -3840,7 +3854,9 @@ void MainComponent::showBatchRenameDialog()
                                       "         → 'Drums 1', 'Drums 2', ... 'Drums 8'.",
                                       juce::MessageBoxIconType::NoIcon);
     aw->addTextEditor ("prefix", "Drums",              "Prefix:");
+    dialog::primeNameEditor (*aw, "prefix");
     aw->addTextEditor ("first",  "1",                  "First channel:");
+    dialog::primeNameEditor (*aw, "first");
     aw->addTextEditor ("last",   juce::String (total), "Last channel:");
     aw->addTextEditor ("start",  "1",                  "Start number:");
     aw->addButton ("Apply",  1, juce::KeyPress (juce::KeyPress::returnKey));
