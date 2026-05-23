@@ -95,6 +95,7 @@ private:
     void colourSelectedStrips();
     void moveSelectedStrips (int delta);
     void clearStripSelection();
+    void selectAllStrips();
     int  physicalFromLogicalIdx (int logical);
 
     // Multi-select: indices are LOGICAL strip indices (stereo pairs

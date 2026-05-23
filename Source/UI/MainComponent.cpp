@@ -605,14 +605,16 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (321, "Batch Colour Channels…",  engine.getRecorder().getNumTracks() > 0);
         menu.addSeparator();
         const int selCount = (int) selectedLogical.size();
+        const int stripCount = (int) strips.size();
         juce::PopupMenu sel;
+        sel.addItem (335, "Select all strips\tCmd+A",  stripCount > 0);
+        sel.addItem (334, "Clear selection\tEsc",      selCount > 0);
+        sel.addSeparator();
         sel.addItem (330, "Move selected up",         selCount > 0);
         sel.addItem (331, "Move selected down",       selCount > 0);
         sel.addSeparator();
         sel.addItem (332, "Colour selected…",         selCount > 0);
         sel.addItem (333, "Delete selected",          selCount > 0);
-        sel.addSeparator();
-        sel.addItem (334, "Clear selection",          selCount > 0);
         menu.addSubMenu ("Selection (" + juce::String (selCount) + ")", sel, true);
     }
     else if (topLevelIndex == 2)  // Session
@@ -973,12 +975,32 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 332)  colourSelectedStrips();
     else if (id == 333)  deleteSelectedStrips();
     else if (id == 334)  clearStripSelection();
+    else if (id == 335)  selectAllStrips();
 }
 
 bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
 {
     // Space: universal play / pause toggle. Always wins so engineers
     // can hit space from anywhere in the app without thinking.
+    // Escape clears the multi-strip selection so the engineer can
+    // bail out of a half-built bulk action without clicking each
+    // selected strip again.
+    if (key == juce::KeyPress::escapeKey && ! selectedLogical.empty())
+    {
+        clearStripSelection();
+        return true;
+    }
+
+    // Cmd+A — select every strip. Skips when the system focus is on a
+    // text editor (so name-rename Cmd+A still selects the text).
+    if (key == juce::KeyPress ('a', juce::ModifierKeys::commandModifier, 0)
+        && juce::Component::getCurrentlyFocusedComponent() != nullptr
+        && dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) == nullptr)
+    {
+        selectAllStrips();
+        return true;
+    }
+
     if (key == juce::KeyPress::spaceKey)
     {
         // Universal play / stop / pause toggle. Priority:
@@ -1646,7 +1668,9 @@ void MainComponent::showFirstRunTutorial()
           "Channels appear in the mixer left-to-right." },
         { "Step 2 of 5 \xE2\x80\x94 Arm tracks",
           "On each channel strip, click the red R button to ARM it for recording. "
-          "Click the green I button to also monitor (hear) it through your outputs." },
+          "Click the green I button to also monitor (hear) it through your outputs.\n\n"
+          "Tip: Shift-click multiple strips to select them, then bulk-arm / delete / "
+          "colour them via Edit \xE2\x96\xB8 Selection. Esc clears the selection." },
         { "Step 3 of 5 \xE2\x80\x94 Record + play back",
           "Press the red record button in the transport bar (centre-bottom of "
           "the header) to start recording. Press it again to stop.\n\n"
@@ -1706,7 +1730,9 @@ void MainComponent::showKeyboardShortcuts()
         "\n"
         "MIXER\n"
         "    Shift + click strip\n"
-        "                    Multi-select for bulk delete / colour\n"
+        "                    Toggle multi-selection (additive)\n"
+        "    \xE2\x8C\x98 + A         Select every strip\n"
+        "    Esc           Clear strip selection\n"
         "    Right-click strip\n"
         "                    Rename / Colour / Stereo / Stream send / VCA assign / Output-mute\n"
         "\n"
@@ -3167,6 +3193,18 @@ void MainComponent::clearStripSelection()
     selectedLogical.clear();
     for (auto& s : strips) s->setSelected (false);
     showStatus ("Selection cleared");
+}
+
+void MainComponent::selectAllStrips()
+{
+    if (strips.empty()) return;
+    selectedLogical.clear();
+    for (int i = 0; i < (int) strips.size(); ++i)
+    {
+        selectedLogical.insert (i);
+        if (strips[(size_t) i] != nullptr) strips[(size_t) i]->setSelected (true);
+    }
+    showStatus (juce::String ((int) strips.size()) + " strip(s) selected");
 }
 
 void MainComponent::deleteSelectedStrips()
