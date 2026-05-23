@@ -665,7 +665,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (50, "Patch...");
         menu.addItem (52, "Virtual Soundcheck -- repatch outputs ↔ inputs");
         menu.addItem (51, "Meterbridge...");
-        menu.addItem (53, "Markers...");
+        menu.addItem (56, "Add Marker...\tM",
+                      engine.getActiveSessionDir().isDirectory());
+        menu.addItem (53, "Memory Locations...");
         menu.addSeparator();
         menu.addItem (55, engine.getNDIBridge().isEnabled()
                               ? juce::String ("Stop NDI broadcast")
@@ -867,6 +869,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 52)   onVscClicked();
     else if (id == 53)   zynforge::MarkerListDialog::launch (engine);
     else if (id == 54)   showPreflightChecklist();
+    else if (id == 56)   dropMarkerAndPromptName();
     else if (id == 55)
     {
         auto& bridge = engine.getNDIBridge();
@@ -1141,10 +1144,28 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
 
     if (c == 'm')
     {
-        const int n = engine.dropMarkerAtCurrentPosition();
-        showStatus (n >= 0 ? "Marker " + juce::String (n) + " dropped"
-                            : "No active session -- can't drop marker");
+        // Pro Tools-style marker drop: place the marker immediately at
+        // the current position, then pop a naming dialog. If the
+        // engineer Cancels, the marker keeps its auto-name 'Marker N'
+        // (matches Pro Tools Memory Locations).
+        dropMarkerAndPromptName();
         return true;
+    }
+
+    // Pro Tools-style numeric jump: pressing 1..9 jumps to memory
+    // location 1..9 by sample position. Skips when a text editor
+    // has focus (engineer is typing) -- JUCE handles that elsewhere.
+    if (c >= '1' && c <= '9' && ! key.getModifiers().isCommandDown())
+    {
+        const int targetIdx = (c - '1');
+        const auto& list = engine.getMarkers().getAll();
+        if (targetIdx < (int) list.size())
+        {
+            engine.getPlayer().setPositionSamples (list[(size_t) targetIdx].sampleOffset);
+            showStatus ("Jumped to marker " + juce::String (targetIdx + 1)
+                        + ": " + list[(size_t) targetIdx].name);
+            return true;
+        }
     }
     if (c == 'a') { editSoloSelection();    return true; }
     if (c == 's') { editSplitAtPlayhead();  return true; }
@@ -2510,6 +2531,65 @@ void MainComponent::editToggleSnap()
 {
     snapToMarkers = ! snapToMarkers;
     showStatus (snapToMarkers ? "Snap to markers: ON" : "Snap to markers: OFF");
+}
+
+void MainComponent::dropMarkerAndPromptName()
+{
+    // 1. Drop the marker at the current transport position. Auto-names
+    //    it 'Marker N' where N is the new total count. Returns -1 if
+    //    no session is active.
+    const int newCount = engine.dropMarkerAtCurrentPosition();
+    if (newCount < 0)
+    {
+        showStatus ("No active session -- create or open one before dropping markers");
+        return;
+    }
+
+    const int rowIndex = newCount - 1;
+    const auto defaultName = "Marker " + juce::String (newCount);
+
+    // 2. Apply the default name straight away so the marker is
+    //    immediately visible in the timeline + Memory Locations list
+    //    with a sensible label, even if the engineer cancels the
+    //    rename dialog.
+    engine.getMarkers().renameMarker (rowIndex, defaultName);
+    engine.getMarkers().save();
+    showStatus ("Marker " + juce::String (newCount) + " dropped");
+
+    // 3. Open the rename dialog with the default name selected, so
+    //    the engineer can immediately type a meaningful name. Pro
+    //    Tools' Memory Locations does exactly this on Enter.
+    auto* aw = new juce::AlertWindow ("New marker",
+                                      "Name this memory location:",
+                                      juce::MessageBoxIconType::QuestionIcon,
+                                      this);
+    aw->addTextEditor ("markerName", defaultName, {});
+    aw->getTextEditor ("markerName")->selectAll();
+    aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    aw->enterModalState (true,
+        juce::ModalCallbackFunction::create ([self, aw, rowIndex, defaultName] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            if (self == nullptr) return;
+            if (result != 1) return;            // Cancel keeps the auto-name
+
+            const auto typed = dispose->getTextEditorContents ("markerName").trim();
+            if (typed.isEmpty() || typed == defaultName) return;
+
+            self->engine.getMarkers().renameMarker (rowIndex, typed);
+            self->engine.getMarkers().save();
+            self->showStatus ("Marker " + juce::String (rowIndex + 1)
+                              + " renamed to: " + typed);
+        }),
+        false);
+}
+
+void MainComponent::showMarkersDialog()
+{
+    zynforge::MarkerListDialog::launch (engine);
 }
 
 void MainComponent::editSplitAtPlayhead()

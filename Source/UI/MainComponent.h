@@ -134,6 +134,13 @@ private:
     void editStartRange();
     void editFinishRange();
 
+    // Pro Tools-style marker drop + naming. dropMarkerAndPromptName
+    // places the marker, picks the next default name ("Marker N+1"),
+    // then opens the rename dialog. Cancel keeps the default name.
+    // showMarkersDialog opens the standalone Memory Locations table.
+    void dropMarkerAndPromptName();
+    void showMarkersDialog();
+
     int    pendingContainer  { 0 };       // 0 = WAV, 1 = AIFF, 2 = FLAC
     int    pendingBitDepth   { 24 };      // 16 / 24 / 32 (32 = float)
     double pendingSampleRate { 48000.0 };

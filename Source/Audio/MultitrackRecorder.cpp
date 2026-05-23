@@ -261,12 +261,16 @@ namespace zynforge
         {
             auto& t = *tracks[(std::size_t) ch];
 
-            // Arm gate: a strip whose REC button is OFF doesn't let input
-            // enter the software. Meter stays silent (decays cleanly so a
-            // previously-hot meter doesn't latch), FFT FIFO is left alone,
-            // and the FIFO push below is skipped too. Engineer arms a
-            // channel when they actually want to see / record it.
-            if (! t.armed.load (std::memory_order_relaxed))
+            // Arm-or-monitor gate. Pro Tools convention:
+            //   ARM     = will record when you hit RECORD
+            //   MONITOR = listen to the input through the monitor bus
+            // Either of those modes should drive the strip's meter so
+            // the engineer can gain-stage WITHOUT having to arm the
+            // strip first. Pre-roll history + ring buffer push are
+            // still arm-gated below.
+            const bool armed   = t.armed  .load (std::memory_order_relaxed);
+            const bool monitor = t.monitor.load (std::memory_order_relaxed);
+            if (! armed && ! monitor)
             {
                 const float prevPeak = t.peak.load (std::memory_order_relaxed);
                 const float prevRms  = t.rms .load (std::memory_order_relaxed);
