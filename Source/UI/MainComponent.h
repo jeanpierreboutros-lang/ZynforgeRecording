@@ -14,6 +14,7 @@
 #include "ExportDialog.h"
 #include "MasterStrip.h"
 #include "NewSessionDialog.h"
+#include "WelcomeDialog.h"
 #include "PerfDashboard.h"
 #include "SetlistBar.h"
 #include "PeakTally.h"

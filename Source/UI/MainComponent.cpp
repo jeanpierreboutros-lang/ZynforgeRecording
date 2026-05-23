@@ -512,6 +512,10 @@ MainComponent::MainComponent()
                 p->setValue ("tutorialShown", true);
                 p->saveIfNeeded();
             }
+            // After the tutorial, also surface the Welcome dialog so
+            // first-launch users immediately see the New / Open flow
+            // rather than landing on an empty mixer.
+            juce::Timer::callAfterDelay (350, [this] { showStartupWelcome(); });
         });
     }
     else
@@ -2012,67 +2016,54 @@ void MainComponent::showAboutDialog()
 
 void MainComponent::showStartupWelcome()
 {
-    // Three-button startup dialog: Create / Open Recent / Quit.
-    // 'Create' just dismisses (the engineer is already looking at an
-    // empty mixer ready to be configured). 'Open Recent' opens a
-    // submenu listing the last N session paths from appProps. 'Quit'
-    // gracefully terminates the app.
-    const auto recents = engine.getRecentSessions();
-    const bool hasRecent = ! recents.isEmpty();
+    // Pro Tools-style two-pane welcome: side rail with New / Open,
+    // right pane with the matching form. ZynForge palette throughout
+    // -- no native OS chrome inside the dialog body.
+    const auto defaultRoot = getSessionsRoot();
+    const auto curFormat   = engine.getRecorder().getCaptureFormat();
+    const double curSr     = pendingSampleRate;
 
-    auto* aw = new juce::AlertWindow ("Welcome to Zynforge Recording",
-                                      "Multitrack recording + playback with virtual soundcheck.\n\n"
-                                      "What would you like to do?",
-                                      juce::MessageBoxIconType::QuestionIcon);
-    aw->addButton ("Create New Session", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    if (hasRecent)
-        aw->addButton ("Open Recent",     2);
-    aw->addButton ("Quit",                3, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<MainComponent> self (this);
 
-    aw->enterModalState (true,
-        juce::ModalCallbackFunction::create ([this, aw, recents] (int result)
+    auto onCreate = [self] (const zynforge::WelcomeDialog::NewResult& r)
+    {
+        if (self == nullptr) return;
+        // The WelcomeDialog::NewResult mirrors NewSessionDialog::Result
+        // 1:1 in field types, so reuse the same builder by hand-rolling
+        // a NewSessionDialog::Result and forwarding.
+        zynforge::NewSessionDialog::Result n;
+        n.name          = r.name;
+        n.location      = r.location;
+        n.captureFormat = r.captureFormat;
+        n.sampleRate    = r.sampleRate;
+        n.interleaved   = r.interleaved;
+        n.ioSettings    = r.ioSettings;
+        const auto sessionFolder = self->createSessionFolderStructure (n);
+
+        if (auto* p = self->engine.getAppProps())
         {
-            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            p->setValue ("sessionsRoot", r.location.getFullPathName());
+            p->saveIfNeeded();
+        }
+        self->engine.getRecorder().setCaptureFormat (r.captureFormat);
+        self->engine.setActiveSessionDir (sessionFolder);
+        self->refreshFormatButton();
+        self->showStatus ("Session created: " + sessionFolder.getFileName());
+    };
 
-            if (result == 3)
-            {
-                if (auto* app = juce::JUCEApplication::getInstance())
-                    app->systemRequestedQuit();
-                return;
-            }
+    auto onOpen = [self] (const juce::File& sessionDir)
+    {
+        if (self == nullptr) return;
+        const int n = self->engine.loadSession (sessionDir);
+        self->showStatus (n > 0
+                          ? "Loaded: " + sessionDir.getFileName()
+                          : "Failed to load " + sessionDir.getFileName());
+        if (n > 0) self->warnIfSampleRateMismatch();
+    };
 
-            if (result == 2 && ! recents.isEmpty())
-            {
-                // Build a popup menu with each recent session.
-                juce::PopupMenu menu;
-                for (int i = 0; i < recents.size(); ++i)
-                    menu.addItem (10 + i, recents[i].getFileName());
-                menu.addSeparator();
-                menu.addItem (999, "Clear recent sessions");
-                menu.showMenuAsync (juce::PopupMenu::Options(),
-                                    [this, recents] (int chosen)
-                {
-                    if (chosen == 0) return;
-                    if (chosen == 999) { engine.clearRecentSessions(); return; }
-                    const int idx = chosen - 10;
-                    if (idx >= 0 && idx < recents.size())
-                    {
-                        const int n = engine.loadSession (recents[idx]);
-                        showStatus (n > 0
-                                    ? "Loaded: " + recents[idx].getFileName()
-                                    : "Failed to load " + recents[idx].getFileName());
-                        if (n > 0) warnIfSampleRateMismatch();
-                    }
-                });
-                return;
-            }
-
-            // result == 1 (Create) -- open the Pro Tools-style New Session
-            // dialog to pick name, storage location, format, sample rate
-            // and bit depth.
-            launchNewSessionDialog();
-        }),
-        false);
+    zynforge::WelcomeDialog::launch (defaultRoot, curSr, curFormat,
+                                     std::move (onCreate),
+                                     std::move (onOpen));
 }
 
 void MainComponent::launchNewSessionDialog()
