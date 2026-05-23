@@ -96,12 +96,17 @@ namespace zynforge
         };
 
         // ── Adaptive rendering ──────────────────────────────────────────
-        // At small heights, 20 LED segments smear into a solid block.
-        // Below ~60 px paint a smooth gradient bar; above ~80 px use the
-        // full 20-segment LED look; in between, scale the segment count.
+        // The segmented LED ladder is the brand look -- match it
+        // everywhere (mixer + EDIT rows). Only the very-tiny case
+        // (under ~24 px tall, e.g. micro-row meters in EDIT) falls back
+        // to the smooth gradient, because 8 LED segments inside 24 px
+        // become indistinct stripes. The segmented path itself adapts
+        // its segment count from 8 (at 32 px) up to the full 20 (at
+        // 80+ px), so EDIT rows at 'small' / 'medium' size now show
+        // the same LED ladder as the mixer strip meter.
         const float h = r.getHeight();
 
-        if (h < 60.0f)
+        if (h < 24.0f)
         {
             // Smooth gradient bar -- bottom green, top red.
             juce::ColourGradient grad (brand::meterGreen, r.getX(), r.getBottom(),
