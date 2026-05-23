@@ -477,8 +477,10 @@ MainComponent::MainComponent()
     updateTransportLabels();
 
     juce::Timer::callAfterDelay (250, [this] { offerSessionRecovery(); });
-    // If the previous run had a session pinned, rehydrate its setlist.
+    // If the previous run had a session pinned, rehydrate its setlist
+    // AND its UI layout (view, strip width, VCA panel, EDIT zoom).
     loadSetlistFromActiveSession();
+    juce::Timer::callAfterDelay (50, [this] { loadUILayoutFromActiveSession(); });
 
     // First-launch tutorial — gated by appProps so it only fires once.
     // Engineers can replay it from Help ▸ Quick Start.
@@ -638,6 +640,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
     }
     else if (topLevelIndex == 2)  // Session
     {
+        menu.addItem (54, "Show pre-flight checklist…");
+        menu.addSeparator();
         menu.addItem (50, "Patch…");
         menu.addItem (52, "Virtual Soundcheck — repatch outputs ↔ inputs");
         menu.addItem (51, "Meterbridge…");
@@ -838,6 +842,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 51)   zynforge::Meterbridge::launch (engine);
     else if (id == 52)   onVscClicked();
     else if (id == 53)   zynforge::MarkerListDialog::launch (engine);
+    else if (id == 54)   showPreflightChecklist();
     else if (id == 251) showSessionProperties();
     else if (id == 280) runSpectralAutoName();
     else if (id == 281) writeSoundcheckReport();
@@ -1967,6 +1972,7 @@ void MainComponent::launchNewSessionDialog()
         // even before any recording or playback has started).
         self->engine.setActiveSessionDir (sessionFolder);
         self->loadSetlistFromActiveSession();
+        self->loadUILayoutFromActiveSession();
 
         self->engine.getRecorder().setCaptureFormat (r.captureFormat);
         self->pendingSampleRate = r.sampleRate;
@@ -3775,7 +3781,36 @@ bool MainComponent::saveSessionStateTo (const juce::File& dir)
     root->setProperty ("tracks", trackArr);
 
     const auto json = juce::JSON::toString (juce::var (root.get()), true);
-    return dir.getChildFile ("session_settings.json").replaceWithText (json);
+    const bool wroteSettings = dir.getChildFile ("session_settings.json").replaceWithText (json);
+
+    // Also persist the UI layout into the session's .zfproj so reopening
+    // the show brings back the engineer's view choice, strip width,
+    // VCA-panel visibility, and EDIT zoom. Reads in
+    // loadUILayoutFromActiveSession().
+    {
+        const auto proj = findSessionProj (dir);
+        if (proj != juce::File{})
+        {
+            juce::DynamicObject::Ptr obj;
+            const auto parsed = juce::JSON::parse (proj);
+            if (parsed.isObject()) obj = parsed.getDynamicObject();
+            if (obj == nullptr)    obj = new juce::DynamicObject();
+
+            juce::DynamicObject::Ptr ui (new juce::DynamicObject());
+            ui->setProperty ("view",         currentView == View::Mix ? "Mix" : "Edit");
+            ui->setProperty ("stripWidth",
+                              stripWidthPreset == StripWidth::XS ? "XS"
+                            : stripWidthPreset == StripWidth::S  ? "S"
+                            : stripWidthPreset == StripWidth::L  ? "L"
+                                                                 : "M");
+            ui->setProperty ("vcaPanel",     showVcaPanel);
+            ui->setProperty ("editZoom",     editPage != nullptr ? (double) editPage->getZoom() : 1.0);
+            obj->setProperty ("ui", juce::var (ui.get()));
+            obj->setProperty ("updatedAt", juce::Time::getCurrentTime().toISO8601 (true));
+            proj.replaceWithText (juce::JSON::toString (juce::var (obj.get())));
+        }
+    }
+    return wroteSettings;
 }
 
 int MainComponent::exportTracksTo (const juce::File& destDir,
@@ -4176,6 +4211,7 @@ void MainComponent::onLoadSessionClicked()
         engine.stopPlayback();
         engine.setActiveSessionDir (dir);   // pin so Save / Save As stay lit
         loadSetlistFromActiveSession();
+        loadUILayoutFromActiveSession();
         const int n = engine.loadSession (dir);
         if (n > 0)
         {
@@ -4310,6 +4346,132 @@ void MainComponent::applySessionTemplate (const juce::File& templateFile)
     }
     lastTrackCount = -1;
     showStatus ("Applied template: " + templateFile.getFileNameWithoutExtension());
+}
+
+void MainComponent::showPreflightChecklist()
+{
+    // Build a one-screen status report — green checks for what's OK,
+    // amber warnings for risks, red items for blockers. Engineer
+    // reads this before downbeat to verify the rig.
+    auto* device = engine.getDeviceManager().getCurrentAudioDevice();
+    const int numInputs  = device != nullptr
+        ? device->getActiveInputChannels().countNumberOfSetBits()  : 0;
+    const int numOutputs = device != nullptr
+        ? device->getActiveOutputChannels().countNumberOfSetBits() : 0;
+    const double sr      = device != nullptr ? device->getCurrentSampleRate()      : 0.0;
+    const int blockSize  = device != nullptr ? device->getCurrentBufferSizeSamples() : 0;
+
+    const int total = engine.getRecorder().getNumTracks();
+    int armed = 0;
+    for (int i = 0; i < total; ++i)
+        if (engine.getRecorder().getTrack (i).armed.load (std::memory_order_relaxed)) ++armed;
+
+    const auto sess   = engine.getActiveSessionDir();
+    const bool hasSes = sess.isDirectory();
+    const auto root   = sess.getParentDirectory();
+    const double freeGB = (root.exists() ? root.getBytesFreeOnVolume() : 0) / 1.0e9;
+    const auto fmt    = engine.getRecorder().getCaptureFormat();
+    const juce::String fmtStr =
+          fmt == zynforge::CaptureFormat::Wav24      ? "WAV/24"
+        : fmt == zynforge::CaptureFormat::Wav16      ? "WAV/16"
+        : fmt == zynforge::CaptureFormat::Wav32Float ? "WAV/32f"
+        : fmt == zynforge::CaptureFormat::Aiff24     ? "AIFF/24"
+        : fmt == zynforge::CaptureFormat::Aiff16     ? "AIFF/16"
+        : fmt == zynforge::CaptureFormat::Aiff32Float? "AIFF/32f"
+        : fmt == zynforge::CaptureFormat::Flac24     ? "FLAC/24"
+        : fmt == zynforge::CaptureFormat::Flac16     ? "FLAC/16"
+                                                      : "?";
+
+    // 30-minute headroom estimate at the active configuration.
+    const juce::int64 bytesPerSec = (juce::int64) (sr * juce::jmax (1, armed) * 3);
+    const double minHeadroom = bytesPerSec > 0 ? (freeGB * 1.0e9 / (double) bytesPerSec) / 60.0
+                                                : 0.0;
+
+    auto chk = [] (bool ok, bool warn = false) -> juce::String
+    {
+        return ok ? juce::String ("\xe2\x9c\x93  ")    // ✓
+              : warn ? juce::String ("\xe2\x9a\xa0  ") // ⚠
+                      : juce::String ("\xe2\x9c\x97  ");// ✗
+    };
+
+    juce::String body;
+    body << chk (device != nullptr)
+         << "Audio device: " << (device != nullptr ? device->getName() : juce::String ("(none)"))
+         << "\n"
+         << chk (sr > 0.0)
+         << "Sample rate:  " << juce::String ((int) sr) << " Hz, buffer " << blockSize << " samples\n"
+         << chk (numInputs > 0)
+         << "Inputs:       " << numInputs << " active\n"
+         << chk (numOutputs > 0)
+         << "Outputs:      " << numOutputs << " active\n"
+         << "\n"
+         << chk (total > 0) << "Channel strips: " << total << "\n"
+         << chk (armed > 0) << "Armed for record: " << armed << " / " << total << "\n"
+         << chk (hasSes) << "Active session: "
+                          << (hasSes ? sess.getFileName() : juce::String ("(none)")) << "\n"
+         << chk (! cues.empty(), cues.empty())
+                          << "Setlist cues: " << (int) cues.size() << "\n"
+         << chk (engine.getRecorder().isBackupActive())
+                          << "Backup writer: "
+                          << (engine.getRecorder().isBackupActive() ? juce::String ("active")
+                                                                     : juce::String ("not configured"))
+                          << "\n"
+         << "\n"
+         << chk (freeGB > 5.0, freeGB > 1.0)
+         << "Disk free:    " << juce::String (freeGB, 1) << " GB ("
+         << juce::String (minHeadroom, 0) << " min headroom at " << fmtStr << ")\n"
+         << chk (! engine.isRecording())
+         << "Status:       " << (engine.isRecording() ? juce::String ("RECORDING ROLLING")
+                                                       : engine.getPlayer().isPlaying()
+                                                           ? juce::String ("Playing back")
+                                                           : juce::String ("Idle"))
+         << "\n";
+
+    if (engine.getMidiClockOut().isEnabled())
+        body << "\xe2\x9c\x93  MIDI clock master: " << engine.getMidiClockOut().getOutputDeviceName() << "\n";
+
+    auto* aw = new juce::AlertWindow ("Pre-flight checklist",
+                                      body, juce::MessageBoxIconType::InfoIcon);
+    aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+        [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }));
+}
+
+void MainComponent::loadUILayoutFromActiveSession()
+{
+    const auto proj = findSessionProj (engine.getActiveSessionDir());
+    if (proj == juce::File{}) return;
+
+    const auto parsed = juce::JSON::parse (proj);
+    auto* obj = parsed.getDynamicObject();
+    if (obj == nullptr) return;
+
+    const auto uiVar = obj->getProperty ("ui");
+    auto* ui = uiVar.getDynamicObject();
+    if (ui == nullptr) return;
+
+    // View — must call switchView (not just write currentView) so the
+    // page visibility + automation toolbar flip correctly.
+    const auto viewStr = ui->getProperty ("view").toString();
+    if (viewStr.isNotEmpty())
+        switchView (viewStr == "Edit" ? View::Edit : View::Mix);
+
+    // Strip width preset.
+    const auto sw = ui->getProperty ("stripWidth").toString();
+    if      (sw == "XS") setStripWidthPreset (StripWidth::XS);
+    else if (sw == "S")  setStripWidthPreset (StripWidth::S);
+    else if (sw == "L")  setStripWidthPreset (StripWidth::L);
+    else if (sw == "M")  setStripWidthPreset (StripWidth::M);
+
+    // VCA panel visibility.
+    showVcaPanel = (bool) ui->getProperty ("vcaPanel");
+    if (vcaPanel != nullptr) vcaPanel->setVisible (showVcaPanel);
+
+    // EDIT zoom level.
+    if (editPage != nullptr)
+        editPage->setZoom ((float) (double) ui->getProperty ("editZoom"));
+
+    resized();
 }
 
 void MainComponent::printSetlist()

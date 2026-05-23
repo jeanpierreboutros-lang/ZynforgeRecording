@@ -156,6 +156,13 @@ private:
     // dir and opens it in the default browser (engineer prints from
     // there, or saves as PDF via the browser's print dialog).
     void  printSetlist();
+    // Restore UI layout (view / strip width / VCA panel / EDIT zoom)
+    // from the active session's .zfproj. Called after loadSession so
+    // the engineer reopens their show with their layout intact.
+    void  loadUILayoutFromActiveSession();
+    // Show pre-flight checklist — one-screen view of every show-critical
+    // setting (device, SR, inputs, armed, backup, disk, cues, recording state).
+    void  showPreflightChecklist();
 
     zynforge::ZynForgeLookAndFeel laf;
     zynforge::AudioEngine         engine;
