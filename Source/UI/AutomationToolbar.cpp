@@ -52,6 +52,22 @@ namespace zynforge
         clearButton.setTooltip ("Clear every automation point on every row for the current parameter");
         clearButton.onClick = [this] { if (onClearAll) onClearAll(); };
         addAndMakeVisible (clearButton);
+
+        // WRITE toggle. When on + playback rolling, every fader / pan
+        // move writes a point at the current playhead. Off = lanes
+        // are read-only during playback.
+        writeButton.setClickingTogglesState (true);
+        writeButton.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
+        writeButton.setColour (juce::TextButton::buttonOnColourId,  brand::accentRecord);
+        writeButton.setColour (juce::TextButton::textColourOffId,   brand::textPrimary);
+        writeButton.setColour (juce::TextButton::textColourOnId,    brand::onSignal (brand::accentRecord));
+        writeButton.setTooltip ("WRITE mode: fader and pan moves during playback record automation points. "
+                                "Toggle off to play back without overwriting existing points.");
+        writeButton.onClick = [this]
+        {
+            if (onWriteModeChanged) onWriteModeChanged (writeButton.getToggleState());
+        };
+        addAndMakeVisible (writeButton);
     }
 
     void AutomationToolbar::styleToolButton (juce::TextButton& b, juce::Colour activeColour)
@@ -108,5 +124,7 @@ namespace zynforge
         r.removeFromLeft (16);
 
         clearButton .setBounds (r.removeFromLeft (110).reduced (0, 3));
+        r.removeFromLeft (8);
+        writeButton .setBounds (r.removeFromLeft (80).reduced (0, 3));
     }
 }

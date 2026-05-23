@@ -273,6 +273,27 @@ namespace zynforge
         //   Mute   (0/1, but stored as float so the lane editor can
         //          fade between values if we ever extend the renderer)
         enum class AutomationParam : int { Volume = 0, Pan = 1, Mute = 2 };
+
+        // Pro Tools-style automation write mode. Off = playback only
+        // reads existing points; Touch / Latch / Write progressively
+        // expose more aggressive write behaviour. Today the engine
+        // honours Off vs anything-else (writes a point whenever the
+        // engineer moves the fader during playback); future commits
+        // distinguish the three write flavours.
+        enum class AutomationWriteMode : int { Off = 0, Touch = 1, Latch = 2, Write = 3 };
+        void setAutomationWriteMode (AutomationWriteMode m) noexcept
+        {
+            automationWriteMode.store ((int) m, std::memory_order_release);
+        }
+        AutomationWriteMode getAutomationWriteMode() const noexcept
+        {
+            return (AutomationWriteMode) automationWriteMode.load (std::memory_order_acquire);
+        }
+        bool isAutomationWriting() const noexcept
+        {
+            return getAutomationWriteMode() != AutomationWriteMode::Off
+                && player.isPlaying();
+        }
         // Curve type controls how the value evolves from this point
         // to the NEXT point. Hold = step (old behaviour); Linear =
         // straight ramp; SCurve = smoothstep; ExpUp/ExpDown = power
@@ -522,6 +543,7 @@ namespace zynforge
         };
         std::vector<TrackAutomation> automationData;
         mutable juce::CriticalSection automationLock;
+        std::atomic<int>              automationWriteMode { 0 };   // AutomationWriteMode::Off
         // Per-track clip lists. Empty/missing entry → 'play the whole
         // Track_NN.wav' (the current behaviour). Once the engineer
         // splits or trims, the entry has one or more Clips covering

@@ -381,12 +381,27 @@ MainComponent::MainComponent()
     automationToolbar.onClearAll = [this]
     {
         const auto p = automationToolbar.getParam();
-        engine.clearAutomation (
+        const auto engineParam =
             p == zynforge::AutomationToolbar::Param::Volume ? zynforge::AudioEngine::AutomationParam::Volume
           : p == zynforge::AutomationToolbar::Param::Pan    ? zynforge::AudioEngine::AutomationParam::Pan
-                                                            : zynforge::AudioEngine::AutomationParam::Mute);
-        if (editPage != nullptr) editPage->repaint();
-        showStatus ("Cleared automation points for the active parameter");
+                                                            : zynforge::AudioEngine::AutomationParam::Mute;
+        // Wrap in an undoable transaction so a stray click can be
+        // recovered with Cmd+Z. AutomationSnapshotAction captures
+        // before/after, undo restores the full automation table.
+        runAutomationEdit ("Clear automation lane",
+                           [this, engineParam] { engine.clearAutomation (engineParam); });
+        showStatus ("Cleared automation points for the active parameter (Cmd+Z to undo)");
+    };
+
+    // WRITE toggle -- forward to engine's write-mode state. While
+    // on AND playback is rolling, every fader/pan move drops a new
+    // automation point at the current playhead.
+    automationToolbar.onWriteModeChanged = [this] (bool writeOn)
+    {
+        using M = zynforge::AudioEngine::AutomationWriteMode;
+        engine.setAutomationWriteMode (writeOn ? M::Write : M::Off);
+        showStatus (writeOn ? "Automation WRITE armed (rolling playback will record fader / pan moves)"
+                            : "Automation WRITE off");
     };
 
     tempoBar.setBpm (engine.getSessionTempoBpm());
@@ -1287,17 +1302,42 @@ void MainComponent::rebuildStrips()
             }
         };
         auto nameCb   = [this, i] (juce::String chosen) { engine.setTrackName   (i, chosen); };
-        auto gainCb   = [this, i, step] (float dB)
+        // Helper: if automation write mode is on AND we're playing,
+        // drop a point at the current playhead too. The engineer's
+        // fader / pan moves become recorded automation in real time.
+        auto writeAutoIfPlaying = [this] (int trackIdx,
+                                          zynforge::AudioEngine::AutomationParam p,
+                                          float value)
+        {
+            if (! engine.isAutomationWriting()) return;
+            const auto pos = engine.getPlayer().getPositionSamples();
+            engine.addAutomationPoint (trackIdx, p, pos, value);
+        };
+
+        auto gainCb   = [this, i, step, writeAutoIfPlaying] (float dB)
         {
             engine.setTrackGainDb (i, dB);
-            if (step == 2) engine.setTrackGainDb (i + 1, dB);
+            writeAutoIfPlaying (i, zynforge::AudioEngine::AutomationParam::Volume, dB);
+            if (step == 2)
+            {
+                engine.setTrackGainDb (i + 1, dB);
+                writeAutoIfPlaying (i + 1, zynforge::AudioEngine::AutomationParam::Volume, dB);
+            }
         };
         // L pan persists to track i. For a stereo strip, the R pan
         // travels through its own panRCb (below) -- the two sides are
         // INDEPENDENT, not mirrored, so the engineer can pan the L
         // channel hard-left and R hard-right (or whatever they want).
-        auto panCb  = [this, i] (float pan) { engine.setTrackPan (i,     pan); };
-        auto panRCb = [this, i] (float pan) { engine.setTrackPan (i + 1, pan); };
+        auto panCb  = [this, i, writeAutoIfPlaying] (float pan)
+        {
+            engine.setTrackPan (i, pan);
+            writeAutoIfPlaying (i, zynforge::AudioEngine::AutomationParam::Pan, pan);
+        };
+        auto panRCb = [this, i, writeAutoIfPlaying] (float pan)
+        {
+            engine.setTrackPan (i + 1, pan);
+            writeAutoIfPlaying (i + 1, zynforge::AudioEngine::AutomationParam::Pan, pan);
+        };
 
         // Stereo routing: L → device[N], R → device[N+1].
         auto inCb = [this, i, step] (int dev)
@@ -2356,6 +2396,23 @@ namespace
 // snapshot. This is coarse but always-correct for any strip-level edit.
 namespace
 {
+    // Snapshot the engine's automation lanes before / after a user
+    // edit. On undo() the engine is reverted to the 'before' var;
+    // on redo() it's pushed forward to the 'after' var. Wraps every
+    // EditPage automation mouseDown / drag / context-menu mutation.
+    struct AutomationSnapshotAction final : public juce::UndoableAction
+    {
+        AutomationSnapshotAction (zynforge::AudioEngine& e,
+                                  juce::var beforeIn, juce::var afterIn)
+            : engine (e), before (std::move (beforeIn)), after (std::move (afterIn)) {}
+
+        bool perform() override { engine.loadAutomationFromJson (after);  return true; }
+        bool undo()    override { engine.loadAutomationFromJson (before); return true; }
+
+        zynforge::AudioEngine& engine;
+        juce::var before, after;
+    };
+
     struct MixerSnapshotAction final : public juce::UndoableAction
     {
         MixerSnapshotAction (zynforge::AudioEngine& e, juce::var before)
@@ -2621,6 +2678,19 @@ void MainComponent::dropMarkerAndPromptName()
 void MainComponent::showMarkersDialog()
 {
     zynforge::MarkerListDialog::launch (engine);
+}
+
+void MainComponent::runAutomationEdit (const juce::String& label,
+                                       std::function<void()> mutate)
+{
+    if (! mutate) return;
+    const auto before = engine.automationToJson();
+    mutate();
+    const auto after  = engine.automationToJson();
+
+    undoManager.beginNewTransaction (label);
+    undoManager.perform (new AutomationSnapshotAction (engine, before, after));
+    if (editPage != nullptr) editPage->repaint();
 }
 
 void MainComponent::editSplitAtPlayhead()

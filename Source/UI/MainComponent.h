@@ -141,6 +141,13 @@ private:
     void dropMarkerAndPromptName();
     void showMarkersDialog();
 
+    // EditPage calls this to bracket an automation edit. The lambda
+    // performs the mutation; the helper snapshots automationData
+    // before and after, pushes a single AutomationSnapshotAction so
+    // Cmd+Z reverts cleanly.
+    void runAutomationEdit (const juce::String& label,
+                            std::function<void()> mutate);
+
     int    pendingContainer  { 0 };       // 0 = WAV, 1 = AIFF, 2 = FLAC
     int    pendingBitDepth   { 24 };      // 16 / 24 / 32 (32 = float)
     double pendingSampleRate { 48000.0 };
