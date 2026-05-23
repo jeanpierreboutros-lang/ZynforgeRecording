@@ -381,6 +381,89 @@ namespace zynforge
             g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
             g.drawVerticalLine (headerW - 1, 0.0f, (float) getHeight());
 
+            // -------- Pro Tools-style sends column + readout --------
+            //
+            // Geometry mirrors resized(): swatch + meter + 140 px left
+            // block, then the middle 'sends' block of 78 px, then the
+            // right block which contains the input/output combos.
+            // We paint the middle column (a/b/c/d send dots + labels)
+            // and the bottom of the right block (vol/pan readout)
+            // directly here so we don't need extra child components.
+            const int sendsX  = swatchW + meterW + 4 + 140;
+            const int sendsW  = 78;
+            const int rightX  = sendsX + sendsW;
+            const int rightW  = headerW - rightX - 8;
+            juce::ignoreUnused (rightW);
+
+            // Sends column: 4 rows of [dot][letter] labels stacked
+            // vertically against the row height. The dot lights up
+            // when the corresponding aux send has a target bus.
+            {
+                const int rows = 4;
+                const int top  = 6;
+                const int bot  = getHeight() - 6;
+                const int rowH = juce::jmax (10, (bot - top) / rows);
+                auto& t = engine.getRecorder().getTrack (index);
+                g.setFont (brand::type::ui (10.5f, true));
+                static const char* letters[] = { "a", "b", "c", "d" };
+                for (int i = 0; i < rows; ++i)
+                {
+                    const int y = top + i * rowH;
+                    const int cx = sendsX + 12;
+                    const int cy = y + rowH / 2;
+                    const int target = t.sends[(size_t) i].targetBus.load (std::memory_order_relaxed);
+                    const bool lit = target >= 0;
+                    g.setColour (lit ? brand::accentStatus : brand::textMuted);
+                    g.fillEllipse ((float) cx - 3.0f, (float) cy - 3.0f, 6.0f, 6.0f);
+                    g.setColour (lit ? brand::textPrimary : brand::textTertiary);
+                    g.drawText (letters[i],
+                                juce::Rectangle<int> (sendsX + 24, y, 16, rowH),
+                                juce::Justification::centredLeft, false);
+                }
+            }
+
+            // Bottom-right readout: vol X.X dB on top, pan L100 0 R100
+            // below. Reads the live atomics so the engineer can see
+            // the current strip state without flipping back to MIX.
+            {
+                const int readoutH = 30;
+                const auto readoutRect = juce::Rectangle<int> (rightX,
+                                                                getHeight() - readoutH - 4,
+                                                                rightW,
+                                                                readoutH);
+                g.setColour (brand::bgDeep.brighter (0.05f));
+                g.fillRoundedRectangle (readoutRect.toFloat(), 3.0f);
+                g.setColour (brand::edge);
+                g.drawRoundedRectangle (readoutRect.toFloat(), 3.0f, 1.0f);
+
+                auto& t = engine.getRecorder().getTrack (index);
+                const float dB  = t.gainDb.load (std::memory_order_relaxed);
+                const float pan = t.pan   .load (std::memory_order_relaxed);
+
+                g.setColour (brand::accentStatus);
+                g.setFont (brand::type::mono (10.0f, true));
+                g.drawText ("vol",
+                            readoutRect.withTrimmedTop (1).withHeight (14)
+                                       .withTrimmedLeft (6),
+                            juce::Justification::centredLeft, false);
+                g.setColour (brand::textPrimary);
+                g.drawText (juce::String (dB, 1),
+                            readoutRect.withTrimmedTop (1).withHeight (14)
+                                       .withTrimmedRight (6),
+                            juce::Justification::centredRight, false);
+
+                const int pct = juce::roundToInt (std::abs (pan) * 100.0f);
+                const juce::String panText = (pct == 0)
+                    ? juce::String ("C")
+                    : (pan < 0 ? "L" + juce::String (pct)
+                                : "R" + juce::String (pct));
+                g.setColour (brand::accentStatus);
+                g.drawText (panText,
+                            readoutRect.withTrimmedTop (14).withHeight (14)
+                                       .withTrimmedLeft (6),
+                            juce::Justification::centredLeft, false);
+            }
+
             // ─── Waveform pane
             auto wavePane = getLocalBounds().withTrimmedLeft (headerW);
             g.setColour (headerBg);
@@ -960,60 +1043,74 @@ namespace zynforge
 
         void resized() override
         {
+            // Pro Tools-style three-column header.
+            //   [swatch | meter | LEFT block | MIDDLE block | RIGHT block]
+            //                     name+R/I/S/M    a/b/c/d     input/output
+            //                                    send dots    + vol/pan
             auto header = getLocalBounds().withWidth (headerW);
-            header.removeFromLeft (swatchW);              // colour swatch column
-            auto content = header.reduced (6, 6);
+            header.removeFromLeft (swatchW);
+            meter.setBounds (header.removeFromLeft (meterW).reduced (1, 4));
+            header.removeFromLeft (4);
 
-            // Right edge = small live signal meter
-            meter.setBounds (content.removeFromRight (meterW));
-            content.removeFromRight (brand::space::xs);
-
-            nameLabel.setBounds (content.removeFromTop (18));
-            content.removeFromTop (2);
-
-            // 2×2 grid matching the mixer: [ I | R ] / [ S | M ].
-            // The Click row hides R and I (playback-only track) and shows
-            // a single [ S | M ] row instead.
             const bool isClickRow =
                 engine.getRecorder().getTrack (index).name == "Click";
+
+            // -------------- LEFT (name + buttons) --------------
+            constexpr int leftBlockW = 140;
+            auto leftBlock = header.removeFromLeft (leftBlockW).reduced (4, 4);
+
+            nameLabel.setBounds (leftBlock.removeFromTop (18));
+            leftBlock.removeFromTop (3);
+
             const int btnH = 22;
             if (isClickRow)
             {
                 armButton .setVisible (false); armButton .setBounds ({});
                 monButton .setVisible (false); monButton .setBounds ({});
-                auto row = content.removeFromTop (btnH);
-                const int halfW = row.getWidth() / 2;
-                soloButton.setBounds (row.removeFromLeft (halfW).reduced (1));
+                auto row = leftBlock.removeFromTop (btnH);
+                const int half = row.getWidth() / 2;
+                soloButton.setBounds (row.removeFromLeft (half).reduced (1));
                 muteButton.setBounds (row.reduced (1));
             }
             else
             {
                 armButton.setVisible (true);
                 monButton.setVisible (true);
-                auto row1 = content.removeFromTop (btnH);
-                content.removeFromTop (3);
-                auto row2 = content.removeFromTop (btnH);
-                const int halfW = row1.getWidth() / 2;
-                monButton .setBounds (row1.removeFromLeft (halfW).reduced (1));
-                armButton .setBounds (row1.reduced (1));
-                soloButton.setBounds (row2.removeFromLeft (halfW).reduced (1));
-                muteButton.setBounds (row2.reduced (1));
+                // Four buttons across one row, Pro Tools-style:
+                //   [ REC ][  I  ][  S  ][  M  ]
+                auto row = leftBlock.removeFromTop (btnH);
+                const int quarter = row.getWidth() / 4;
+                armButton .setBounds (row.removeFromLeft (quarter).reduced (1));
+                monButton .setBounds (row.removeFromLeft (quarter).reduced (1));
+                soloButton.setBounds (row.removeFromLeft (quarter).reduced (1));
+                muteButton.setBounds (row.reduced (1));
             }
-            content.removeFromTop (brand::space::xs);
+            leftBlock.removeFromTop (4);
 
-            inputCombo .setBounds (content.removeFromTop (18));
-            content.removeFromTop (2);
-            outputCombo.setBounds (content.removeFromTop (18));
-            content.removeFromTop (3);
-            // Hide the VIEW button on the Click row -- its lane is the
-            // metronome waveform, no automation choices apply.
-            const bool clickRow =
-                engine.getRecorder().getTrack (index).name == "Click";
-            viewButton.setVisible (! clickRow);
-            if (! clickRow)
-                viewButton.setBounds (content.removeFromTop (18));
+            // The VIEW button (lane-mode picker) takes the bottom-left.
+            // On Click rows it's hidden -- metronome lane has no choice.
+            viewButton.setVisible (! isClickRow);
+            if (! isClickRow)
+                viewButton.setBounds (leftBlock.removeFromTop (18));
             else
                 viewButton.setBounds ({});
+
+            // -------------- MIDDLE (sends column) --------------
+            // a/b/c/d send slot indicators -- painted directly in paint(),
+            // no child components needed. Reserve the space here so the
+            // RIGHT block lines up.
+            constexpr int middleBlockW = 78;
+            header.removeFromLeft (middleBlockW);
+
+            // -------------- RIGHT (routing + vol/pan readout) --------------
+            auto rightBlock = header.removeFromLeft (header.getWidth() - 8).reduced (2, 4);
+
+            inputCombo .setBounds (rightBlock.removeFromTop (20));
+            rightBlock.removeFromTop (3);
+            outputCombo.setBounds (rightBlock.removeFromTop (20));
+            // Vol / pan readout area is painted directly (no child
+            // component) so the rest of the right block is left for
+            // paint() to label.
         }
 
         bool isInResizeZone (juce::Point<int> p) const noexcept
@@ -1913,9 +2010,15 @@ namespace zynforge
             return brand::stripColour (index);
         }
 
-        static constexpr int headerW = 240;
+        // Pro Tools-style three-column header layout:
+        //  - swatch (14 px)
+        //  - meter pinned to its right (12 px)
+        //  - left content block: name + 4-button row + chip row (~140 px)
+        //  - middle column: a/b/c/d send dots (~80 px)
+        //  - right column: input/output pills + vol/pan readout + plus (~140 px)
+        static constexpr int headerW = 380;
         static constexpr int swatchW = 14;
-        static constexpr int meterW  = 16;
+        static constexpr int meterW  = 12;
 
         int                       index;
         AudioEngine&              engine;
@@ -2324,7 +2427,10 @@ namespace zynforge
         int playheadX = -1;
         if (total > 0 && list->rowCount() > 0)
         {
-            const auto wavePaneWidth = juce::jmax (1, getWidth() - 240);
+            // Mirror TrackRow::headerW (private, but the value is
+            // pinned in the design system). Keep these in sync.
+            constexpr int kHeaderW = 380;
+            const auto wavePaneWidth = juce::jmax (1, getWidth() - kHeaderW);
             // -8 px to account for waveform reduction in paint.
             const double frac = (double) pos / (double) total;
             playheadX = (int) (frac * (wavePaneWidth - 8)) + 4;

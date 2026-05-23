@@ -108,7 +108,7 @@ namespace zynforge
         }
 
         AudioEngine& engine;
-        int headerW   { 240 };
+        int headerW   { 380 };   // matches TrackRow::headerW
         int contentW  { 1024 };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EditTimeRuler)
