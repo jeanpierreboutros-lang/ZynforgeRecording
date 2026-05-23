@@ -372,8 +372,11 @@ MainComponent::MainComponent()
     addAndMakeVisible (tempoBar);
 
 
+    // TimelineStrip exists for marker bookkeeping but is no longer
+    // painted in either MIX or EDIT — the empty "Load a session…"
+    // band added visual noise without working state. Keep the
+    // instance for marker APIs that reference it; just don't show it.
     timeline = std::make_unique<zynforge::TimelineStrip> (engine);
-    addAndMakeVisible (*timeline);
 
     transportBar = std::make_unique<zynforge::TransportBar> (engine);
     addAndMakeVisible (*transportBar);
@@ -3709,9 +3712,9 @@ void MainComponent::resized()
     bar.removeFromRight (brand::space::md);
     setlistBar.setBounds (bar);
 
-    // Timeline strip
+    // TimelineStrip is intentionally not laid out — see the ctor.
     if (timeline != nullptr)
-        timeline->setBounds (r.removeFromTop (52).reduced (12, 4));
+        timeline->setBounds ({});
 
     // Strips area — width adapts so 12 strips always fit on one page,
     // matching the Live app convention. Beyond 12 strips, the viewport
