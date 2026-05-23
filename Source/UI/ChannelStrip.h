@@ -90,6 +90,7 @@ namespace zynforge
         VoidCallback   addCb;
         VoidCallback   linkStereoCb;
         IntCallback    linkOtherCb;
+        IntCallback    onVcaGroupChanged;   // -1 = unassigned
 
         class DbRuler;
         std::unique_ptr<DbRuler> dbRuler;

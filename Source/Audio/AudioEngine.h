@@ -6,6 +6,9 @@
 #include "Markers.h"
 #include "ClickEngine.h"
 #include "MidiClockOut.h"
+#include "VcaBus.h"
+
+#include <array>
 #include "ClipModel.h"
 #include "MultitrackRecorder.h"
 #include "SessionPlayer.h"
@@ -98,6 +101,21 @@ namespace zynforge
         // MIDI clock master (24 PPQN) — drives outboard synths /
         // drum machines / DAW slaves from the session tempo.
         MidiClockOut& getMidiClockOut() noexcept { return midiClockOut; }
+
+        // ── VCA buses ─────────────────────────────────────────────
+        // 8 group "ghost faders". Strips opt-in via setTrackVcaGroup
+        // and inherit the bus's gainDb / muted. Set with ramping to
+        // avoid clicks when a cue snapshot recalls a different value.
+        static constexpr int kNumVcas = 8;
+        VcaBus&  getVca (int idx) noexcept { return vcas[(size_t) juce::jlimit (0, kNumVcas - 1, idx)]; }
+        const VcaBus&  getVca (int idx) const noexcept { return vcas[(size_t) juce::jlimit (0, kNumVcas - 1, idx)]; }
+        void  setVcaGainDb  (int idx, float dB);
+        void  setVcaGainDbRamped (int idx, float dB, double seconds);
+        void  setVcaMuted   (int idx, bool muted);
+        void  setVcaSoloed  (int idx, bool soloed);
+        void  setVcaName    (int idx, const juce::String& name);
+        void  setVcaColour  (int idx, juce::Colour c);
+        void  setTrackVcaGroup (int channelIndex, int vcaIdx);  // -1 = unassigned
         bool isPlaying() const noexcept                    { return player.isPlaying(); }
 
         MarkersManager& getMarkers() noexcept              { return markers; }
@@ -393,6 +411,7 @@ namespace zynforge
 
         ClickEngine        click;
         MidiClockOut       midiClockOut;
+        std::array<VcaBus, kNumVcas> vcas;
     public:
         ClickEngine& getClickEngine() noexcept { return click; }
     private:

@@ -35,6 +35,13 @@ namespace zynforge
         // physical output only; muted continues to gate the monitor sum.
         std::atomic<bool> outputMuted { false };
 
+        // VCA group assignment. -1 = unassigned; 0..7 = VCA bus index.
+        // The audio thread sums the VCA bus's gain (post-fader) onto
+        // this strip's gain when it routes the player output, so a
+        // single VCA fader can ride a group of strips. The VCA's
+        // muted flag also gates the strip's output.
+        std::atomic<int> vcaGroup { -1 };
+
         // Routing. -1 = unrouted (no input captured / no output played).
         // Default of -2 means "use identity routing" (resolved at init).
         std::atomic<int> inputRouting  { -2 };

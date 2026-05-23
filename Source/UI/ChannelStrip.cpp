@@ -286,6 +286,17 @@ namespace zynforge
         menu.addItem (6, outMuted ? "Unmute physical output" : "Mute physical output (FOH only)",
                       true, outMuted);
 
+        // VCA assignment submenu. Engineer picks a bus index 1..8 or
+        // "None" to detach. Persisted on engine; mute / gain inherited
+        // from the bus.
+        juce::PopupMenu vcaMenu;
+        const int curVca = state.vcaGroup.load (std::memory_order_relaxed);
+        vcaMenu.addItem (700, "None", true, curVca < 0);
+        for (int i = 0; i < 8; ++i)
+            vcaMenu.addItem (701 + i, "VCA " + juce::String (i + 1),
+                             true, curVca == i);
+        menu.addSubMenu ("Assign to VCA", vcaMenu);
+
         menu.showMenuAsync (juce::PopupMenu::Options(),
                             [this] (int chosen)
         {
@@ -313,7 +324,17 @@ namespace zynforge
                 case 10: if (addCb)        addCb();        break;
                 case 11: if (deleteCb)     deleteCb();     break;
                 case 12: if (linkStereoCb) linkStereoCb(); break;
-                default: break;
+                default:
+                    // VCA assignment: 700 = None, 701..708 = VCA 1..8.
+                    if (chosen == 700 || (chosen >= 701 && chosen <= 708))
+                    {
+                        const int v = (chosen == 700) ? -1 : (chosen - 701);
+                        state.vcaGroup.store (v, std::memory_order_relaxed);
+                        if (pairState)
+                            pairState->vcaGroup.store (v, std::memory_order_relaxed);
+                        if (onVcaGroupChanged) onVcaGroupChanged (v);
+                    }
+                    break;
             }
         });
     }

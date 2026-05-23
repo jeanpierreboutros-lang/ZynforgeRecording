@@ -369,6 +369,13 @@ namespace zynforge
             if (stripGains.hasPan (i))
                 t.pan.store    (stripGains.getPan (i), std::memory_order_relaxed);
 
+            // VCA group — persisted under strip_vca_<n>; -1 = unassigned.
+            const int vca = appProps != nullptr
+                ? appProps->getIntValue ("strip_vca_" + juce::String (i), -1)
+                : -1;
+            t.vcaGroup.store ((vca >= 0 && vca < kNumVcas) ? vca : -1,
+                              std::memory_order_relaxed);
+
             // Default to channel i, but clamp to the device's active
             // input count so a 4-strip session on a 1-input device still
             // captures sound (strip i wraps to i % numInputs).
@@ -756,6 +763,18 @@ namespace zynforge
         if (err.isNotEmpty())
             DBG ("AudioDeviceManager init: " << err);
 
+        // Restore persisted VCA names + colours so a relaunch shows the
+        // engineer's "DRUMS" / "VOX" labels instead of "VCA 1..8".
+        for (int i = 0; i < kNumVcas; ++i)
+        {
+            const auto nameKey = "vca_" + juce::String (i) + "_name";
+            const auto colKey  = "vca_" + juce::String (i) + "_colour";
+            const auto n  = appProps->getValue (nameKey, "VCA " + juce::String (i + 1));
+            const auto cc = (juce::uint32) appProps->getDoubleValue (colKey, 0.0);
+            vcas[(size_t) i].name = n;
+            vcas[(size_t) i].colourARGB.store (cc, std::memory_order_relaxed);
+        }
+
         deviceManager.addAudioCallback (this);
     }
 
@@ -1133,9 +1152,103 @@ namespace zynforge
             t.pan.store (pan, std::memory_order_relaxed);
     }
 
+    void AudioEngine::setVcaGainDb (int idx, float dB)
+    {
+        if (idx < 0 || idx >= kNumVcas) return;
+        dB = juce::jlimit (-60.0f, 12.0f, dB);
+        vcas[(size_t) idx].gainDb.store (dB, std::memory_order_relaxed);
+        vcas[(size_t) idx].rampTargetGainDb.store (dB, std::memory_order_relaxed);
+        vcas[(size_t) idx].rampSamplesRemaining.store (0, std::memory_order_relaxed);
+    }
+
+    void AudioEngine::setVcaGainDbRamped (int idx, float dB, double seconds)
+    {
+        if (idx < 0 || idx >= kNumVcas) return;
+        dB = juce::jlimit (-60.0f, 12.0f, dB);
+        const auto sr = deviceSampleRate.load (std::memory_order_relaxed);
+        const juce::int64 samples = sr > 0.0
+            ? (juce::int64) (sr * juce::jmax (0.0, seconds))
+            : 0;
+        vcas[(size_t) idx].rampTargetGainDb.store (dB, std::memory_order_relaxed);
+        vcas[(size_t) idx].rampSamplesRemaining.store (samples, std::memory_order_relaxed);
+        if (samples == 0)
+            vcas[(size_t) idx].gainDb.store (dB, std::memory_order_relaxed);
+    }
+
+    void AudioEngine::setVcaMuted (int idx, bool muted)
+    {
+        if (idx < 0 || idx >= kNumVcas) return;
+        vcas[(size_t) idx].muted.store (muted, std::memory_order_relaxed);
+    }
+
+    void AudioEngine::setVcaSoloed (int idx, bool soloed)
+    {
+        if (idx < 0 || idx >= kNumVcas) return;
+        vcas[(size_t) idx].soloed.store (soloed, std::memory_order_relaxed);
+    }
+
+    void AudioEngine::setVcaName (int idx, const juce::String& name)
+    {
+        if (idx < 0 || idx >= kNumVcas) return;
+        vcas[(size_t) idx].name = name;
+        if (appProps != nullptr)
+        {
+            appProps->setValue ("vca_" + juce::String (idx) + "_name", name);
+            appProps->saveIfNeeded();
+        }
+    }
+
+    void AudioEngine::setVcaColour (int idx, juce::Colour c)
+    {
+        if (idx < 0 || idx >= kNumVcas) return;
+        vcas[(size_t) idx].colourARGB.store (c.getARGB(), std::memory_order_relaxed);
+        if (appProps != nullptr)
+        {
+            appProps->setValue ("vca_" + juce::String (idx) + "_colour",
+                                (juce::int64) c.getARGB());
+            appProps->saveIfNeeded();
+        }
+    }
+
+    void AudioEngine::setTrackVcaGroup (int channelIndex, int vcaIdx)
+    {
+        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
+        const int clamped = (vcaIdx < 0 || vcaIdx >= kNumVcas) ? -1 : vcaIdx;
+        recorder.getTrack (channelIndex).vcaGroup.store (clamped, std::memory_order_relaxed);
+        if (appProps != nullptr)
+        {
+            appProps->setValue ("strip_vca_" + juce::String (channelIndex), clamped);
+            appProps->saveIfNeeded();
+        }
+    }
+
     void AudioEngine::tickRamps (int numSamples) noexcept
     {
         if (numSamples <= 0) return;
+
+        // VCA gain ramps — same per-block linear step as the strip ramps.
+        for (auto& vca : vcas)
+        {
+            const juce::int64 remaining = vca.rampSamplesRemaining.load (std::memory_order_relaxed);
+            if (remaining <= 0) continue;
+            const float curG = vca.gainDb.load (std::memory_order_relaxed);
+            const float tgtG = vca.rampTargetGainDb.load (std::memory_order_relaxed);
+            const juce::int64 denom = juce::jmax ((juce::int64) numSamples, remaining);
+            const float frac = (float) numSamples / (float) denom;
+            const float newG = curG + (tgtG - curG) * frac;
+            const juce::int64 next = remaining - (juce::int64) numSamples;
+            if (next <= 0)
+            {
+                vca.gainDb.store (tgtG, std::memory_order_relaxed);
+                vca.rampSamplesRemaining.store (0, std::memory_order_relaxed);
+            }
+            else
+            {
+                vca.gainDb.store (newG, std::memory_order_relaxed);
+                vca.rampSamplesRemaining.store (next, std::memory_order_relaxed);
+            }
+        }
+
         const int n = recorder.getNumTracks();
         for (int i = 0; i < n; ++i)
         {
@@ -1306,11 +1419,41 @@ namespace zynforge
             if (recorder.getTrack (i).soloed.load (std::memory_order_relaxed))
             { anySolo = true; break; }
 
+        // Any VCA bus soloed? Solo'd VCAs follow the same "only soloed
+        // passes" rule, applied across all strips assigned to that bus.
+        bool anyVcaSolo = false;
+        for (const auto& v : vcas)
+            if (v.soloed.load (std::memory_order_relaxed)) { anyVcaSolo = true; break; }
+
         auto channelAudible = [&] (int i) -> bool
         {
             auto& t = recorder.getTrack (i);
+            const int g = t.vcaGroup.load (std::memory_order_relaxed);
+            if (g >= 0 && g < kNumVcas)
+            {
+                // VCA mute gates the strip.
+                if (vcas[(size_t) g].muted.load (std::memory_order_relaxed)) return false;
+                if (anyVcaSolo && ! vcas[(size_t) g].soloed.load (std::memory_order_relaxed)) return false;
+            }
+            else if (anyVcaSolo)
+            {
+                // Strip has no VCA — when any VCA is soloed, ungrouped
+                // strips drop out (matches console behaviour).
+                return false;
+            }
             if (anySolo) return t.soloed.load (std::memory_order_relaxed);
             return ! t.muted.load (std::memory_order_relaxed);
+        };
+
+        // Returns the strip's effective dB = strip + VCA bus gain.
+        auto effectiveGainDb = [&] (int i) -> float
+        {
+            auto& t = recorder.getTrack (i);
+            const float dB = t.gainDb.load (std::memory_order_relaxed);
+            const int g = t.vcaGroup.load (std::memory_order_relaxed);
+            if (g >= 0 && g < kNumVcas)
+                return dB + vcas[(size_t) g].gainDb.load (std::memory_order_relaxed);
+            return dB;
         };
 
         // Mix the routed track scratch onto the device outputs honoring
@@ -1328,7 +1471,7 @@ namespace zynforge
             const int devOut = t.outputRouting.load (std::memory_order_relaxed);
             if (devOut < 0 || devOut >= numOutputs || outputs[devOut] == nullptr) continue;
 
-            const float dB   = t.gainDb.load (std::memory_order_relaxed);
+            const float dB   = effectiveGainDb (i);
             const float gain = juce::Decibels::decibelsToGain (dB, -60.0f);
             const float* src = playerScratch.getReadPointer (i);
             if (juce::approximatelyEqual (gain, 1.0f))
@@ -1361,7 +1504,7 @@ namespace zynforge
                 if (! t.streamSend.load (std::memory_order_relaxed)) continue;
                 if (! channelAudible (i)) continue;
 
-                const float dB   = t.gainDb.load (std::memory_order_relaxed);
+                const float dB   = effectiveGainDb (i);
                 const float gain = juce::Decibels::decibelsToGain (dB, -60.0f);
                 const float pan  = juce::jlimit (-1.0f, 1.0f, t.pan.load (std::memory_order_relaxed));
                 const float panNorm = (pan + 1.0f) * 0.5f;
