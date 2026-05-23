@@ -187,6 +187,12 @@ namespace zynforge
         void addOneStrip();
         void removeStripAt (int index);
 
+        // Wipe every strip-level override stored in appProps (names,
+        // colours, gains, pans, routing, stereo flags, UUIDs). Called
+        // when the engineer starts a fresh session so a stale pan
+        // value from a previous show doesn't carry over to a new band.
+        void clearAllStripOverrides();
+
         // Persisted mono/stereo state for a strip. The L track holds
         // the flag; R partner is implicit at trackIndex + 1.
         void setTrackStereo (int channelIndex, bool isStereoPair);

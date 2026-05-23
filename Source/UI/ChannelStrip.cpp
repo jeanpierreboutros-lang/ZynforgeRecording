@@ -738,12 +738,15 @@ namespace zynforge
             g.drawText (label, badge.toNearestInt(), juce::Justification::centred, false);
         }
 
-        // BUS badge -- left side, distinguishes aux/mix bus tracks
-        // from audio tracks at a glance. Painted in alertAmber so the
-        // engineer doesn't confuse it with the VCA chip.
+        // BUS badge -- top-right, mirroring the VCA chip position.
+        // Bus strips and VCA-grouped strips are mutually exclusive
+        // (a bus is itself a group target, never a member of one),
+        // so the two chips can share the same coordinates without
+        // colliding. The previous top-left position overlapped the
+        // strip's colour swatch.
         if (state.isBus.load (std::memory_order_relaxed))
         {
-            auto badge = juce::Rectangle<float> (r.getX() + 4.0f, r.getY() + 4.0f, 30.0f, 12.0f);
+            auto badge = juce::Rectangle<float> (r.getRight() - 30.0f, r.getY() + 4.0f, 26.0f, 12.0f);
             g.setColour (brand::alertAmber.darker (0.30f));
             g.fillRoundedRectangle (badge, 2.5f);
             g.setColour (brand::alertAmber.brighter (0.20f));
@@ -837,17 +840,27 @@ namespace zynforge
 
         if (isClickStrip || isBusStrip)
         {
-            // Bus tracks have no input -- no R / I buttons.
+            // Bus / click tracks have no input -- no R / I buttons.
+            // Reserve the missing row(s) as empty space above the
+            // remaining S / M row so the fader + meter below start at
+            // the same Y as a full audio strip's. Without this, the
+            // fader on a bus strip sits ~27 px higher than its
+            // neighbours and meters across the mixer don't line up.
             armButton.setVisible (false); armButton.setBounds ({});
             monButton.setVisible (false); monButton.setBounds ({});
             if (stack)
             {
+                // Two missing rows (mon + arm).
+                r.removeFromTop (btnH);  r.removeFromTop (btnGap);
+                r.removeFromTop (btnH);  r.removeFromTop (btnGap);
                 soloButton.setBounds (r.removeFromTop (btnH).reduced (2, 0));
                 r.removeFromTop (btnGap);
                 muteButton.setBounds (r.removeFromTop (btnH).reduced (2, 0));
             }
             else
             {
+                // One missing row above (the mon / arm row).
+                r.removeFromTop (btnH);  r.removeFromTop (btnGap);
                 auto row = r.removeFromTop (btnH);
                 const int halfW = row.getWidth() / 2;
                 soloButton.setBounds (row.removeFromLeft (halfW).reduced (2, 0));

@@ -462,6 +462,53 @@ namespace zynforge
         return appProps ? juce::jlimit (0, 256, appProps->getIntValue ("stripCount", 0)) : 0;
     }
 
+    void AudioEngine::clearAllStripOverrides()
+    {
+        // Wipe every per-strip key in appProps that survives across
+        // runs -- gains, pans, colours, names, routing, stereo flags,
+        // strip UUIDs. Called on new-session creation so the engineer
+        // starts from a clean slate rather than inheriting (e.g.) a
+        // hard-pan they set up for last weekend's gig.
+        for (int i = 0; i < 256; ++i)
+        {
+            stripGains  .clearGain (i);
+            stripGains  .clearPan  (i);
+            stripColours.clearColour (i);
+            stripNames  .clearName (i);
+            stripRouting.clearInput  (i);
+            stripRouting.clearOutput (i);
+        }
+        if (appProps != nullptr)
+        {
+            for (int i = 0; i < 256; ++i)
+            {
+                appProps->removeValue ("strip_stereo_" + juce::String (i));
+                appProps->removeValue ("strip_uid_"    + juce::String (i));
+                appProps->removeValue ("strip_vca_"    + juce::String (i));
+                appProps->removeValue ("strip_outmute_" + juce::String (i));
+            }
+            appProps->saveIfNeeded();
+        }
+
+        // Reset live state on whatever strips currently exist so the
+        // change is visible immediately, not only after the recorder
+        // grows.
+        for (int i = 0, n = recorder.getNumTracks(); i < n; ++i)
+        {
+            auto& t = recorder.getTrack (i);
+            t.gainDb  .store (0.0f,  std::memory_order_relaxed);
+            t.pan     .store (0.0f,  std::memory_order_relaxed);
+            t.muted   .store (false, std::memory_order_relaxed);
+            t.soloed  .store (false, std::memory_order_relaxed);
+            t.armed   .store (false, std::memory_order_relaxed);
+            t.monitor .store (false, std::memory_order_relaxed);
+            t.isStereo.store (false, std::memory_order_relaxed);
+            t.vcaGroup.store (-1,    std::memory_order_relaxed);
+            t.colourARGB.store (0,   std::memory_order_relaxed);
+            t.stripId.clear();
+        }
+    }
+
     void AudioEngine::setStripCount (int n)
     {
         if (recorder.isRecording()) return;

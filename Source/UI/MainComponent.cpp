@@ -3928,39 +3928,43 @@ void MainComponent::confirmAndQuit()
     // Pro Tools-style three-button save-on-quit dialog. Button order
     // matches the Pro Tools convention the engineer expects:
     //   [Don't Save]  [Cancel]  [Save]
-    // Save is the primary (Return key) action because that's what a
-    // tired engineer will hit by reflex. Cancel sits in the middle so
-    // it's never adjacent to either destructive action.
-    auto options = juce::MessageBoxOptions()
-                     .withIconType (juce::MessageBoxIconType::QuestionIcon)
-                     .withTitle ("Save changes to \"" + activeDir.getFileName()
-                                 + "\" before closing?")
-                     .withMessage ("Your session state, take history, cues and "
-                                   "markers will be written to the session folder.")
-                     .withButton ("Don't Save")
-                     .withButton ("Cancel")
-                     .withButton ("Save")
-                     .withAssociatedComponent (this);
+    //
+    // Using AlertWindow::addButton with explicit return values is
+    // critical here. MessageBoxOptions' index-based return mapping
+    // proved unreliable -- in earlier builds Cancel was triggering
+    // 'Don't Save' behaviour and vice versa because juce::AlertWindow
+    // doesn't number index-added buttons the way the docs suggest on
+    // every platform. Explicit IDs leave no room for confusion.
+    constexpr int kDontSave = 1;
+    constexpr int kCancel   = 2;
+    constexpr int kSave     = 3;
 
-    juce::AlertWindow::showAsync (options,
-        [this, activeDir] (int result)
-    {
-        // Button index 0 = Don't Save, 1 = Cancel, 2 = Save.
-        if (result == 1) return;            // Cancel -- abort the quit
+    auto* aw = new juce::AlertWindow ("Save changes to \"" + activeDir.getFileName()
+                                       + "\" before closing?",
+                                      "Your session state, take history, cues and "
+                                      "markers will be written to the session folder.",
+                                      juce::MessageBoxIconType::QuestionIcon,
+                                      this);
+    aw->addButton ("Don't Save", kDontSave);
+    aw->addButton ("Cancel",     kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
+    aw->addButton ("Save",       kSave,   juce::KeyPress (juce::KeyPress::returnKey));
 
-        if (result == 2)                    // Save -- write to existing session
+    aw->enterModalState (true,
+        juce::ModalCallbackFunction::create ([this, aw, activeDir] (int result)
         {
-            // Silent save: writes session_settings.json + the cue /
-            // marker / playlist blob into the active session folder.
-            // No file picker -- the engineer already chose the folder
-            // when they created the session.
-            saveSessionStateTo (activeDir);
-        }
-        // result == 0 -- Don't Save -- fall through to quit.
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
 
-        if (auto* app = juce::JUCEApplication::getInstance())
-            app->quit();
-    });
+            if (result == kCancel)
+                return;                              // abort the quit, stay in app
+
+            if (result == kSave)
+                saveSessionStateTo (activeDir);      // silent write; no picker
+
+            // kDontSave (or any unexpected value) -- fall through to quit.
+            if (auto* app = juce::JUCEApplication::getInstance())
+                app->quit();
+        }),
+        false);
 }
 
 bool MainComponent::saveSessionStateTo (const juce::File& dir)
@@ -4807,6 +4811,12 @@ juce::File MainComponent::makeNewSessionDir() const
 
 juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessionDialog::Result& r)
 {
+    // Fresh session => wipe any per-strip persistence left behind by
+    // the previous run (gains, pans, colours, names, routing, stereo
+    // flags, VCA assignments). Without this, a hard-pan from last
+    // weekend's show silently ports over to a new band.
+    engine.clearAllStripOverrides();
+
     // Resolve a safe folder name even if the engineer typed something
     // with slashes / colons in the picker.
     auto safeName = juce::File::createLegalFileName (r.name);
