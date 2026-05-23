@@ -297,6 +297,29 @@ namespace zynforge
                              true, curVca == i);
         menu.addSubMenu ("Assign to VCA", vcaMenu);
 
+        // Aux send to a bus track (slot 0 only in the menu — multi-send
+        // gets its own dialog later). Hidden for bus tracks themselves
+        // since sending a bus into another bus would feedback loop.
+        if (! state.isBus.load (std::memory_order_relaxed))
+        {
+            juce::PopupMenu sendMenu;
+            const int currentTarget = state.sends[0].targetBus.load (std::memory_order_relaxed);
+            sendMenu.addItem (800, "None", true, currentTarget < 0);
+            if (getBusList)
+            {
+                int id = 801;
+                for (const auto& b : getBusList())
+                {
+                    sendMenu.addItem (id++, b.second, true, b.first == currentTarget);
+                }
+            }
+            else
+            {
+                sendMenu.addItem (-1, "(no bus tracks — create one via +CH \xe2\x96\xb8 Bus)", false);
+            }
+            menu.addSubMenu ("Send to bus", sendMenu);
+        }
+
         menu.showMenuAsync (juce::PopupMenu::Options(),
                             [this] (int chosen)
         {
@@ -333,6 +356,19 @@ namespace zynforge
                         if (pairState)
                             pairState->vcaGroup.store (v, std::memory_order_relaxed);
                         if (onVcaGroupChanged) onVcaGroupChanged (v);
+                    }
+                    // Aux send target: 800 = None, 801..899 = bus index 0..N-1.
+                    else if (chosen == 800 || (chosen >= 801 && chosen < 900))
+                    {
+                        int target = -1;
+                        if (chosen >= 801 && getBusList)
+                        {
+                            const auto list = getBusList();
+                            const int idx = chosen - 801;
+                            if (idx < (int) list.size()) target = list[(size_t) idx].first;
+                        }
+                        state.sends[0].targetBus.store (target, std::memory_order_relaxed);
+                        if (onSendTargetChanged) onSendTargetChanged (target);
                     }
                     break;
             }
@@ -693,6 +729,21 @@ namespace zynforge
             g.setFont (brand::fonts::small());
             g.drawText (label, badge.toNearestInt(), juce::Justification::centred, false);
         }
+
+        // BUS badge — left side, distinguishes aux/mix bus tracks
+        // from audio tracks at a glance. Painted in alertAmber so the
+        // engineer doesn't confuse it with the VCA chip.
+        if (state.isBus.load (std::memory_order_relaxed))
+        {
+            auto badge = juce::Rectangle<float> (r.getX() + 4.0f, r.getY() + 4.0f, 30.0f, 12.0f);
+            g.setColour (brand::alertAmber.darker (0.30f));
+            g.fillRoundedRectangle (badge, 2.5f);
+            g.setColour (brand::alertAmber.brighter (0.20f));
+            g.drawRoundedRectangle (badge, 2.5f, 0.75f);
+            g.setColour (juce::Colours::white);
+            g.setFont (brand::fonts::small());
+            g.drawText ("BUS", badge.toNearestInt(), juce::Justification::centred, false);
+        }
     }
 
     void ChannelStrip::resized()
@@ -746,10 +797,12 @@ namespace zynforge
         //   so those two pills are hidden, and the SOLO + MUTE row sits
         //   alone with no gap above it.
         const bool isClickStrip = (state.name == "Click");
+        const bool isBusStrip   = state.isBus.load (std::memory_order_relaxed);
         const int btnH = 24;
         const int btnGap = 3;
-        if (isClickStrip)
+        if (isClickStrip || isBusStrip)
         {
+            // Bus tracks have no input — no R / I buttons.
             armButton.setVisible (false); armButton.setBounds ({});
             monButton.setVisible (false); monButton.setBounds ({});
             auto row = r.removeFromTop (btnH);

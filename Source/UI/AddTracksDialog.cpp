@@ -52,6 +52,14 @@ namespace zynforge
                 styleCombo (modeCombo);
                 addAndMakeVisible (modeCombo);
 
+                // Track type — Audio (records input + plays back) vs
+                // Bus (no input, sums sends, routes to outputs).
+                typeCombo.addItem ("Audio Track", 1);
+                typeCombo.addItem ("Bus Track",   2);
+                typeCombo.setSelectedItemIndex (0, juce::dontSendNotification);
+                styleCombo (typeCombo);
+                addAndMakeVisible (typeCombo);
+
                 nameLabel.setText ("Name:", juce::dontSendNotification);
                 nameLabel.setColour (juce::Label::textColourId, brand::textPrimary);
                 nameLabel.setFont (brand::type::uiBody());
@@ -100,6 +108,8 @@ namespace zynforge
                 newLabel   .setBounds (r.removeFromLeft (28));
                 r.removeFromLeft (brand::space::sm);
                 modeCombo  .setBounds (r.removeFromLeft (110).reduced (0, 2));
+                r.removeFromLeft (brand::space::sm);
+                typeCombo  .setBounds (r.removeFromLeft (130).reduced (0, 2));
 
                 // ── Right block (+/-) ────────────────────────────────────
                 plusButton .setBounds (r.removeFromRight (28).reduced (0, 2));
@@ -127,6 +137,7 @@ namespace zynforge
 
             int  count()  const { return juce::jlimit (1, 256, countEditor.getText().getIntValue()); }
             bool stereo() const { return modeCombo.getSelectedItemIndex() == 1; }
+            bool isBus()  const { return typeCombo.getSelectedItemIndex() == 1; }
             juce::String baseName() const { return nameEditor.getText().trim(); }
 
         private:
@@ -134,6 +145,7 @@ namespace zynforge
             juce::TextEditor countEditor;
             juce::Label      newLabel;
             juce::ComboBox   modeCombo;
+            juce::ComboBox   typeCombo;
             juce::Label      nameLabel;
             juce::TextEditor nameEditor;
             juce::TextButton plusButton;
@@ -243,6 +255,7 @@ namespace zynforge
                     AddTracksDialog::Entry e;
                     e.count    = r->count();
                     e.stereo   = r->stereo();
+                    e.isBus    = r->isBus();
                     e.baseName = r->baseName();
                     entries.push_back (std::move (e));
                 }

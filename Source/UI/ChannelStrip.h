@@ -68,6 +68,14 @@ namespace zynforge
         // engine.setTrackVcaGroup so the assignment survives relaunch.
         IntCallback onVcaGroupChanged;
 
+        // Aux send wiring — host provides the live bus list
+        // (busTrackIndex, displayName) so the right-click menu can
+        // populate the 'Send to bus' submenu, and a callback the
+        // strip fires when the engineer picks a new target for
+        // send slot 0.
+        std::function<std::vector<std::pair<int, juce::String>>()> getBusList;
+        std::function<void (int /*targetBus*/)> onSendTargetChanged;
+
         juce::Colour getResolvedColour() const;
 
         void paint (juce::Graphics&) override;

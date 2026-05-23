@@ -118,6 +118,17 @@ namespace zynforge
         void  setVcaName    (int idx, const juce::String& name);
         void  setVcaColour  (int idx, juce::Colour c);
         void  setTrackVcaGroup (int channelIndex, int vcaIdx);  // -1 = unassigned
+
+        // Aux sends + bus tracks ─────────────────────────────────────
+        // setTrackIsBus marks a track as a bus destination (no input,
+        // no record, sums sends + routes to outputs like a regular
+        // strip).
+        void  setTrackIsBus (int channelIndex, bool isBus);
+        // setTrackSend configures one of 4 send slots on a non-bus
+        // strip. targetBus < 0 disables the send. Persisted to appProps
+        // so sends survive a relaunch.
+        void  setTrackSend (int channelIndex, int sendSlot,
+                            int targetBus, float levelDb, bool postFader);
         bool isPlaying() const noexcept                    { return player.isPlaying(); }
 
         MarkersManager& getMarkers() noexcept              { return markers; }

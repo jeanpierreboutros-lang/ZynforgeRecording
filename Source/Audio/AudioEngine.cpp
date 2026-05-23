@@ -456,6 +456,23 @@ namespace zynforge
             t.vcaGroup.store ((vca >= 0 && vca < kNumVcas) ? vca : -1,
                               std::memory_order_relaxed);
 
+            // Bus flag + 4 aux sends.
+            if (appProps != nullptr)
+            {
+                t.isBus.store (appProps->getBoolValue ("strip_isbus_" + juce::String (i), false),
+                                std::memory_order_relaxed);
+                for (int s = 0; s < TrackState::kNumSends; ++s)
+                {
+                    const auto key = "strip_send_" + juce::String (i) + "_" + juce::String (s);
+                    t.sends[(size_t) s].targetBus.store (
+                        appProps->getIntValue (key + "_bus", -1), std::memory_order_relaxed);
+                    t.sends[(size_t) s].levelDb.store (
+                        (float) appProps->getDoubleValue (key + "_dB", 0.0), std::memory_order_relaxed);
+                    t.sends[(size_t) s].postFader.store (
+                        appProps->getBoolValue (key + "_post", true), std::memory_order_relaxed);
+                }
+            }
+
             // Default to channel i, but clamp to the device's active
             // input count so a 4-strip session on a 1-input device still
             // captures sound (strip i wraps to i % numInputs).
@@ -1314,6 +1331,48 @@ namespace zynforge
         }
     }
 
+    void AudioEngine::setTrackIsBus (int channelIndex, bool isBus)
+    {
+        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
+        auto& t = recorder.getTrack (channelIndex);
+        t.isBus.store (isBus, std::memory_order_relaxed);
+        // Bus tracks have no input — clear routing so the audio
+        // callback's routedInputs[i] resolves to nullptr.
+        if (isBus)
+        {
+            t.inputRouting.store (-1, std::memory_order_relaxed);
+            t.armed.store (false, std::memory_order_relaxed);
+            t.monitor.store (false, std::memory_order_relaxed);
+        }
+        if (appProps != nullptr)
+        {
+            appProps->setValue ("strip_isbus_" + juce::String (channelIndex), isBus);
+            appProps->saveIfNeeded();
+        }
+    }
+
+    void AudioEngine::setTrackSend (int channelIndex, int slot,
+                                     int targetBus, float levelDb, bool postFader)
+    {
+        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
+        if (slot < 0 || slot >= TrackState::kNumSends) return;
+        levelDb = juce::jlimit (-60.0f, 12.0f, levelDb);
+
+        auto& s = recorder.getTrack (channelIndex).sends[(size_t) slot];
+        s.targetBus.store (targetBus,  std::memory_order_relaxed);
+        s.levelDb  .store (levelDb,    std::memory_order_relaxed);
+        s.postFader.store (postFader,  std::memory_order_relaxed);
+
+        if (appProps != nullptr)
+        {
+            const auto key = "strip_send_" + juce::String (channelIndex) + "_" + juce::String (slot);
+            appProps->setValue (key + "_bus",   targetBus);
+            appProps->setValue (key + "_dB",    (double) levelDb);
+            appProps->setValue (key + "_post",  postFader);
+            appProps->saveIfNeeded();
+        }
+    }
+
     void AudioEngine::setTrackVcaGroup (int channelIndex, int vcaIdx)
     {
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
@@ -1487,6 +1546,45 @@ namespace zynforge
         player.processBlock (playerScratch.getArrayOfWritePointers(),
                              juce::jmin (playerScratch.getNumChannels(), numTracks),
                              numSamples);
+
+        // Aux sends → bus tracks. For every non-bus strip with a send
+        // pointing at a bus track, sum (strip_audio × send_gain × (post
+        // ? strip_gain : 1)) into that bus's row of playerScratch. The
+        // bus track is then summed into the master / per-channel outputs
+        // by the standard output loop below, exactly like a normal
+        // strip — its 'audio' is the mix of every send routed at it.
+        for (int i = 0; i < numTracks; ++i)
+        {
+            auto& src = recorder.getTrack (i);
+            if (src.isBus.load (std::memory_order_relaxed)) continue;
+            const float* srcAudio = playerScratch.getReadPointer (i);
+            if (srcAudio == nullptr) continue;
+
+            // Pre-compute strip's effective gain for post-fader sends.
+            // (Inlined because the effectiveGainDb lambda lives further
+            // down the callback — out of scope here.)
+            const float baseDb = src.gainDb.load (std::memory_order_relaxed);
+            const int   g      = src.vcaGroup.load (std::memory_order_relaxed);
+            const float vcaDb  = (g >= 0 && g < kNumVcas)
+                ? vcas[(size_t) g].gainDb.load (std::memory_order_relaxed) : 0.0f;
+            const float stripGain = juce::Decibels::decibelsToGain (baseDb + vcaDb, -60.0f);
+
+            for (int s = 0; s < TrackState::kNumSends; ++s)
+            {
+                const auto& snd = src.sends[(size_t) s];
+                const int bus = snd.targetBus.load (std::memory_order_relaxed);
+                if (bus < 0 || bus >= numTracks) continue;
+                if (! recorder.getTrack (bus).isBus.load (std::memory_order_relaxed)) continue;
+
+                const float sendDb = snd.levelDb.load (std::memory_order_relaxed);
+                const float post   = snd.postFader.load (std::memory_order_relaxed) ? stripGain : 1.0f;
+                const float gain = juce::Decibels::decibelsToGain (sendDb, -60.0f) * post;
+                if (gain < 0.00001f) continue;
+
+                float* dst = playerScratch.getWritePointer (bus);
+                juce::FloatVectorOperations::addWithMultiply (dst, srcAudio, gain, numSamples);
+            }
+        }
 
         // Drive per-strip meters from the player's output ONLY when the
         // player is actually rolling. The recorder has already written

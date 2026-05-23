@@ -42,6 +42,28 @@ namespace zynforge
         // muted flag also gates the strip's output.
         std::atomic<int> vcaGroup { -1 };
 
+        // Bus track flag — when true this strip is an aux / mix bus.
+        // Bus tracks have no input routing, no recording, no R / I
+        // buttons. They receive audio from other strips via AuxSends
+        // and then sum into the master / per-channel outputs like a
+        // normal strip (with their own fader, pan, mute, solo).
+        std::atomic<bool> isBus { false };
+
+        // Aux sends — 4 slots per non-bus strip. Each slot has a
+        // target bus index (-1 = empty), a level (-60..+12 dB), and
+        // a pre/post-fader switch. Audio thread reads these every
+        // block and sums (strip_audio × send.gain × (postFader
+        // ? strip.effectiveGain : 1)) into the target bus's scratch
+        // buffer.
+        static constexpr int kNumSends = 4;
+        struct AuxSend
+        {
+            std::atomic<int>   targetBus { -1 };   // -1 = empty, 0..N-1 = bus track index
+            std::atomic<float> levelDb   { 0.0f }; // -60..+12
+            std::atomic<bool>  postFader { true };
+        };
+        std::array<AuxSend, kNumSends> sends;
+
         // Routing. -1 = unrouted (no input captured / no output played).
         // Default of -2 means "use identity routing" (resolved at init).
         std::atomic<int> inputRouting  { -2 };

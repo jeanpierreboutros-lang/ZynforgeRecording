@@ -17,6 +17,9 @@ namespace zynforge
         {
             int  count    { 1 };
             bool stereo   { false };
+            // Pro Tools-style: tracks can be audio (input/output)
+            // or bus (no input; sums sends + routes to outputs).
+            bool isBus    { false };
             juce::String baseName;
         };
 

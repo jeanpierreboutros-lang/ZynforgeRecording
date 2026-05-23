@@ -434,6 +434,17 @@ namespace zynforge
             WriterChannel w;
             const auto trackName = juce::String::formatted ("Track_%02d", (int) i + 1);
 
+            // Bus tracks have no input — no writer. Push an empty
+            // WriterChannel so the per-channel index stays aligned with
+            // tracks[i]; processBlock's arm-gate already skips bus
+            // tracks (they have armed=false).
+            if (tracks[i]->isBus.load (std::memory_order_relaxed))
+            {
+                writers.push_back (std::move (w));
+                fifos[i]->fifo.reset();
+                continue;
+            }
+
             // Primary writer — under <session>/Audio Files/Track_NN.<ext>.
             const auto primaryFile = audioFilesDir.getChildFile (trackName + primary.ext);
             w.writer.reset (openWriter (primaryFile, primary.container, primary.bitDepth));
