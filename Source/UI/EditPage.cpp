@@ -913,6 +913,27 @@ namespace zynforge
                 }
             }
 
+            // ─── Take indicator — small "TAKE N / M" chip in the row
+            // header so the engineer sees the active comp take without
+            // opening the right-click menu.
+            {
+                const int takeCount  = engine.getTakeCount (index);
+                const int activeTake = engine.getActiveTakeIdx (index);
+                if (takeCount > 1)
+                {
+                    const auto label = "TAKE " + juce::String (activeTake + 1)
+                                     + " / " + juce::String (takeCount);
+                    auto chip = juce::Rectangle<int> (headerW - 78, 4, 70, 13);
+                    g.setColour (brand::featureEngaged.darker (0.30f));
+                    g.fillRoundedRectangle (chip.toFloat(), 2.5f);
+                    g.setColour (brand::featureEngaged.brighter (0.40f));
+                    g.drawRoundedRectangle (chip.toFloat(), 2.5f, 0.75f);
+                    g.setColour (juce::Colours::white);
+                    g.setFont (brand::fonts::small());
+                    g.drawText (label, chip, juce::Justification::centred, false);
+                }
+            }
+
             // ─── Playhead overlay
             if (playheadX >= 0 && playheadX < wavePane.getWidth())
             {

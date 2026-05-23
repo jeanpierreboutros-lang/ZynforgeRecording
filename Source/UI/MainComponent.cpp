@@ -32,6 +32,11 @@ MainComponent::MainComponent()
     statusLabel.setJustificationType (juce::Justification::centredRight);
     addAndMakeVisible (statusLabel);
 
+    midiStatusLabel.setColour (juce::Label::textColourId, brand::featureEngaged);
+    midiStatusLabel.setJustificationType (juce::Justification::centredLeft);
+    midiStatusLabel.setFont (brand::fonts::small());
+    addAndMakeVisible (midiStatusLabel);
+
     sessionLabel.setFont (brand::type::caption());
     sessionLabel.setColour (juce::Label::textColourId, brand::textMuted);
     sessionLabel.setJustificationType (juce::Justification::centredLeft);
@@ -475,7 +480,7 @@ MainComponent::~MainComponent()
 
 juce::StringArray MainComponent::getMenuBarNames()
 {
-    return { "File", "Edit", "Session" };
+    return { "File", "Edit", "Session", "Help" };
 }
 
 juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::String&)
@@ -644,6 +649,13 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                               ? "Stop mirroring " + sessionMirror.getPrimary()
                               : juce::String ("Mirror primary host…"));
     }
+    else if (topLevelIndex == 3)  // Help
+    {
+        menu.addItem (900, "Keyboard Shortcuts…");
+        menu.addItem (901, "Quick Start (replay tutorial)");
+        menu.addSeparator();
+        menu.addItem (902, "About Zynforge Recording");
+    }
 
     return menu;
 }
@@ -666,6 +678,9 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
         if (idx >= 0 && idx < list.size()) applySessionTemplate (list[idx]);
     }
     else if (id == 250)  promptDeleteSessionTemplate();
+    else if (id == 900)  showKeyboardShortcuts();
+    else if (id == 901)  showStartupWelcome();
+    else if (id == 902)  showAboutDialog();
     else if (id == 99)   confirmAndQuit();
     // Track-export sub-menu uses ids 100..199. Tightened from the
     // previous open-ended `>= 100` which was swallowing 110..115
@@ -1201,6 +1216,17 @@ void MainComponent::timerCallback()
     if (n != lastTrackCount)
         rebuildStrips();
 
+    // MIDI clock status pill — visible reassurance that the engineer's
+    // outboard sync is alive. Empty string when disabled hides it.
+    {
+        const auto& clock = engine.getMidiClockOut();
+        const auto label = clock.isEnabled()
+            ? juce::String ("MIDI \xe2\x97\x8f ") + clock.getOutputDeviceName()
+            : juce::String();
+        if (midiStatusLabel.getText() != label)
+            midiStatusLabel.setText (label, juce::dontSendNotification);
+    }
+
     // Tick the cue-fade ramp if one is in flight — interpolates gain
     // and pan from the live mix toward the cue's target snapshot.
     if (cueRamp.active) updateCueRamp();
@@ -1581,6 +1607,61 @@ void MainComponent::onBackupClicked()
         backupButton.setButtonText ("BACKUP ✓");
         showStatus ("Backup folder → " + dir.getFileName());
     });
+}
+
+void MainComponent::showKeyboardShortcuts()
+{
+    const juce::String body =
+        "TRANSPORT\n"
+        "    Space        Play / pause (stops recording if armed)\n"
+        "    M             Drop marker at playhead\n"
+        "\n"
+        "CUES\n"
+        "    1 \xE2\x80\x93 9         Jump to cue 1 \xE2\x80\x93 9\n"
+        "\n"
+        "EDIT\n"
+        "    A             Solo selected strips\n"
+        "    S             Split clip at playhead\n"
+        "    ,              Set range start at playhead\n"
+        "    .              Set range end at playhead\n"
+        "    4             Toggle snap mode\n"
+        "    \xE2\x8C\x98 + Z         Undo last clip edit\n"
+        "    \xE2\x8C\x98 + R         Redo\n"
+        "    \xE2\x8C\x98 + X         Cut selected strips\n"
+        "    \xE2\x8C\x98 + C         Copy selected strips\n"
+        "    \xE2\x8C\x98 + V         Paste strips\n"
+        "\n"
+        "MIXER\n"
+        "    Shift + click strip\n"
+        "                    Multi-select for bulk delete / colour\n"
+        "    Right-click strip\n"
+        "                    Rename / Colour / Stereo / Stream send / VCA assign / Output-mute\n"
+        "\n"
+        "EDIT VIEW\n"
+        "    Right-click row\n"
+        "                    Row size + Take swap (comp playlists)\n"
+        "    Right-click clip\n"
+        "                    Mute / Lock / Duplicate / Delete / Gain / Fade in & out\n"
+        "    Drag swatch (left edge)\n"
+        "                    Reorder strip (paused only)";
+
+    auto* aw = new juce::AlertWindow ("Keyboard shortcuts",
+                                      body,
+                                      juce::MessageBoxIconType::InfoIcon);
+    aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+        [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }));
+}
+
+void MainComponent::showAboutDialog()
+{
+    juce::AlertWindow::showMessageBoxAsync (
+        juce::MessageBoxIconType::InfoIcon,
+        "Zynforge Recording",
+        "Live multitrack recording + virtual soundcheck.\n\n"
+        "JUCE 8 \xE2\x80\xA2 C++20 \xE2\x80\xA2 macOS Universal\n"
+        "\xC2\xA9 Zynforge",
+        "OK");
 }
 
 void MainComponent::showStartupWelcome()
@@ -3408,7 +3489,8 @@ void MainComponent::confirmAndQuit()
             // result == 1 → Don't Save → fall through
         }
 
-        juce::JUCEApplication::getInstance()->systemRequestedQuit();
+        if (auto* app = juce::JUCEApplication::getInstance())
+            app->quit();   // direct quit — confirmAndQuit IS the confirmation
     });
 }
 
@@ -4102,6 +4184,12 @@ void MainComponent::resized()
     auto row1 = r.removeFromTop (44).reduced (12, 8);
     titleLabel   .setBounds ({});   // hidden — keeps left edge clean
     row1.removeFromLeft (brand::space::md);
+    // MIDI clock status chip on the left edge of row 1 — visible
+    // reassurance for the engineer that the outboard sync is live.
+    // Empty text → zero pixels rendered, so this disappears when the
+    // clock is off.
+    midiStatusLabel.setBounds (row1.removeFromLeft (220).reduced (0, 4));
+    row1.removeFromLeft (brand::space::sm);
     // Record action is owned by the transport-bar red-circle button.
     // Keep the pill alive so callers that still poll it don't crash,
     // but exclude it from the layout.

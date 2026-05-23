@@ -676,6 +676,23 @@ namespace zynforge
             g.setColour (brand::accentSolo);
             g.drawRoundedRectangle (r.reduced (1.0f), brand::radius::xl, 2.5f);
         }
+
+        // VCA badge — small chip in the top-right of the strip so the
+        // engineer can see at a glance which group every strip is on,
+        // without right-clicking each one.
+        const int vca = state.vcaGroup.load (std::memory_order_relaxed);
+        if (vca >= 0 && vca < 8)
+        {
+            const juce::String label = "V" + juce::String (vca + 1);
+            auto badge = juce::Rectangle<float> (r.getRight() - 26.0f, r.getY() + 4.0f, 22.0f, 12.0f);
+            g.setColour (brand::featureEngaged.darker (0.30f));
+            g.fillRoundedRectangle (badge, 2.5f);
+            g.setColour (brand::featureEngaged.brighter (0.40f));
+            g.drawRoundedRectangle (badge, 2.5f, 0.75f);
+            g.setColour (juce::Colours::white);
+            g.setFont (brand::fonts::small());
+            g.drawText (label, badge.toNearestInt(), juce::Justification::centred, false);
+        }
     }
 
     void ChannelStrip::resized()

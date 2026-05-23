@@ -18,7 +18,19 @@ public:
 
     void shutdown() override { mainWindow.reset(); }
 
-    void systemRequestedQuit() override { quit(); }
+    void systemRequestedQuit() override
+    {
+        // Route through MainComponent::confirmAndQuit so an unsaved
+        // session / running recording surfaces the appropriate prompt
+        // before we shut down. confirmAndQuit calls quit() on user OK.
+        if (mainWindow != nullptr)
+            if (auto* mc = dynamic_cast<MainComponent*> (mainWindow->getContentComponent()))
+            {
+                mc->confirmAndQuit();
+                return;
+            }
+        quit();
+    }
 
 private:
     class MainWindow final : public juce::DocumentWindow

@@ -65,6 +65,8 @@ private:
     void applyLockState();
     void offerSessionRecovery();
     void showStartupWelcome();
+    void showKeyboardShortcuts();
+    void showAboutDialog();
     void launchNewSessionDialog();
     juce::File createSessionFolderStructure (const zynforge::NewSessionDialog::Result&);
     bool saveSessionStateTo (const juce::File& dir);
@@ -72,7 +74,11 @@ private:
                          const std::vector<int>& channelIndices,
                          const zynforge::ExportOptions&);
     void showStatus (const juce::String& msg);
+public:
+    // Called from Main.cpp's systemRequestedQuit so an unsaved
+    // session / running recording prompts BEFORE the app shuts down.
     void confirmAndQuit();
+private:
     void applySessionSettings();
 
     // Edit menu actions.
@@ -155,6 +161,7 @@ private:
 
     juce::Label  titleLabel        { {}, "ZYNFORGE  RECORDING" };
     juce::Label  statusLabel       { {}, "Idle" };
+    juce::Label  midiStatusLabel   { {}, "" };
     juce::Label  sessionLabel      { {}, "No session loaded" };
     juce::Label  transportLabel    { {}, "00:00 / 00:00" };
     // Header chrome — IconButton paints a glyph next to each label so
