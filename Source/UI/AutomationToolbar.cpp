@@ -61,7 +61,7 @@ namespace zynforge
         b.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
         b.setColour (juce::TextButton::buttonOnColourId,  activeColour);
         b.setColour (juce::TextButton::textColourOffId,   brand::textPrimary);
-        b.setColour (juce::TextButton::textColourOnId,    juce::Colours::black);
+        b.setColour (juce::TextButton::textColourOnId,    brand::onSignal (activeColour));
     }
 
     void AutomationToolbar::selectTool (Tool t)

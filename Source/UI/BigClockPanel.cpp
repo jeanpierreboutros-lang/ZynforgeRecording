@@ -36,6 +36,11 @@ namespace zynforge
         repaint();
     }
 
+    void BigClockPanel::setArmedReady (bool ready)
+    {
+        if (armedReady != ready) { armedReady = ready; repaint(); }
+    }
+
     static juce::String formatRemaining (double seconds)
     {
         if (seconds <= 0 || std::isinf (seconds)) return "—";
@@ -56,8 +61,20 @@ namespace zynforge
         g.setColour (bg);
         g.fillRoundedRectangle (r.reduced (2.0f), 6.0f);
 
-        g.setColour (brand::edge);
-        g.drawRoundedRectangle (r.reduced (2.0f), 6.0f, 1.0f);
+        // Brand-orange armed-but-not-rolling border. Only shows when
+        // at least one strip is record-armed AND transport is idle —
+        // engineer sees, before hitting RECORD, that the next press
+        // will actually print to disk.
+        if (armedReady && mode == Mode::Idle)
+        {
+            g.setColour (brand::brandOrange);
+            g.drawRoundedRectangle (r.reduced (2.0f), 6.0f, 2.0f);
+        }
+        else
+        {
+            g.setColour (brand::edge);
+            g.drawRoundedRectangle (r.reduced (2.0f), 6.0f, 1.0f);
+        }
 
         auto inner = r.reduced (16.0f, 10.0f);
 
@@ -119,8 +136,11 @@ namespace zynforge
                    : mode == Mode::Playing   ? brand::accentPlay
                                              : brand::accentStatus);
         // Tabular numerals — the timer string can't shift width as
-        // seconds tick. SF Mono pinned via brand::type::mono.
-        g.setFont (brand::type::mono (juce::jmin (inner.getHeight() * 0.95f, 56.0f), true));
+        // seconds tick. Hero scale (h_hero=44) pinned via brand::type
+        // so the timer's visual weight is system-managed, not bespoke.
+        g.setFont (brand::type::mono (juce::jmin (inner.getHeight() * 0.95f,
+                                                  brand::type::h_hero + 12.0f),
+                                      true));
         g.drawText (elapsedText, inner, juce::Justification::centred, false);
     }
 }

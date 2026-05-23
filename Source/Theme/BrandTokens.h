@@ -38,19 +38,25 @@ namespace zynforge::brand
     //   monoFamily — tabular numerals (BigClock, BPM, meter dB readouts,
     //                CPU%, MB/s — anywhere a value changes and shouldn't
     //                cause horizontal layout jitter)
-    inline constexpr const char* uiFamily   = "SF Pro";
-    inline constexpr const char* monoFamily = "SF Mono";
+    //
+    // These names match the bundled BinaryData faces directly. The
+    // LookAndFeel still accepts "SF Pro" / "SF Mono" for any legacy
+    // call, but new code should ask by the canonical name.
+    inline constexpr const char* uiFamily   = "Inter";
+    inline constexpr const char* monoFamily = "JetBrains Mono";
 
     namespace type
     {
-        // Sized scale. Six discrete heights. Anything outside this list
-        // should be considered a bug — the system should be tight.
+        // Sized scale. Seven discrete heights. Anything outside this
+        // list should be considered a bug — the system should be tight.
         inline constexpr float h_label    = 10.0f;   // tiny captions / dB ruler ticks
         inline constexpr float h_caption  = 11.0f;   // small labels, chips
         inline constexpr float h_body     = 13.0f;   // standard body
         inline constexpr float h_title    = 14.0f;   // dialog + section titles
         inline constexpr float h_headline = 18.0f;   // big-ish accents
-        inline constexpr float h_display  = 28.0f;   // BigClock / hero numbers
+        inline constexpr float h_subhead  = 22.0f;   // cue countdown, next-up labels
+        inline constexpr float h_display  = 28.0f;   // section hero numbers
+        inline constexpr float h_hero     = 44.0f;   // BigClock timer
 
         inline juce::Font ui (float height, bool bold = false)
         {
@@ -80,8 +86,13 @@ namespace zynforge::brand
         inline juce::Font channelName()  { return ui   (h_body, true);     }
         inline juce::Font sectionTitle() { return ui   (h_title, true);    }
         inline juce::Font headline()     { return ui   (h_headline, true); }
+        // 22 pt UI bold — for cue-countdown / "Next: ..." pills that
+        // need to sit between body text and the BigClock numbers.
+        inline juce::Font subhead()      { return ui   (h_subhead, true);  }
+        // 28 pt mono bold — for section hero numbers (cue index, etc.).
         inline juce::Font display()      { return mono (h_display, true);  }
-        inline juce::Font hero()         { return mono (h_display, true);  }
+        // 44 pt mono bold — pinned for the BigClock timer.
+        inline juce::Font hero()         { return mono (h_hero, true);     }
         // Numeric readouts — every value-readout font goes through this.
         inline juce::Font readout (float height) { return mono (height, true); }
     }
@@ -102,6 +113,7 @@ namespace zynforge::brand
         inline juce::Font numeral11()   { return type::mono (11.0f, true); }
         inline juce::Font numeral13()   { return type::mono (13.0f, true); }
         inline juce::Font numeral16()   { return type::mono (16.0f, true); }
+        inline juce::Font numeral22()   { return type::mono (22.0f, true); }
         inline juce::Font numeral28()   { return type::mono (28.0f, true); }
         inline juce::Font numeral44()   { return type::mono (44.0f, true); }
     }

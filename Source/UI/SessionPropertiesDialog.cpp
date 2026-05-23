@@ -94,7 +94,7 @@ namespace zynforge
 
                 saveButton.setButtonText ("Save");
                 saveButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus);
-                saveButton.setColour (juce::TextButton::textColourOffId, juce::Colours::black);
+                saveButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::accentStatus));
                 saveButton.onClick = [this] { commit(); };
                 addAndMakeVisible (saveButton);
 

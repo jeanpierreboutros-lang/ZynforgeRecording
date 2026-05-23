@@ -44,7 +44,7 @@ namespace zynforge
 
         addCueButton.setButtonText ("+ Cue");
         addCueButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus);
-        addCueButton.setColour (juce::TextButton::textColourOffId, juce::Colours::black);
+        addCueButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::accentStatus));
         addCueButton.setTooltip ("Drop a new cue at the current transport position");
         addCueButton.onClick = [this] { if (onAddCue) onAddCue(); };
         addAndMakeVisible (addCueButton);

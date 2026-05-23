@@ -17,7 +17,7 @@ namespace zynforge
         static void styleTextField (juce::TextEditor& t)
         {
             t.setFont (brand::type::uiBody().withHeight (15.0f));
-            t.setColour (juce::TextEditor::backgroundColourId,   juce::Colour (0xff000000));
+            t.setColour (juce::TextEditor::backgroundColourId,   brand::bgDeep);
             t.setColour (juce::TextEditor::textColourId,         brand::textPrimary);
             t.setColour (juce::TextEditor::outlineColourId,      brand::edge);
             t.setColour (juce::TextEditor::focusedOutlineColourId, brand::accentStatus);
@@ -26,7 +26,7 @@ namespace zynforge
 
         static void styleCombo (juce::ComboBox& c)
         {
-            c.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff000000));
+            c.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep);
             c.setColour (juce::ComboBox::outlineColourId,    brand::edge);
             c.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
             c.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
@@ -158,7 +158,7 @@ namespace zynforge
                 addAndMakeVisible (createButton);
                 createButton.setButtonText ("Create");
                 createButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus);
-                createButton.setColour (juce::TextButton::textColourOffId, juce::Colours::black);
+                createButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::accentStatus));
                 createButton.onClick = [this] { dismiss (true); };
 
                 setSize (520, 460);

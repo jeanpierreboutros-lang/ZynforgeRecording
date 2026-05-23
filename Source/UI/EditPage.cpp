@@ -678,7 +678,7 @@ namespace zynforge
                         const int y = valueToY  (pt.value);
                         g.setColour (lineCol);
                         g.fillEllipse ((float) x - 3.5f, (float) y - 3.5f, 7.0f, 7.0f);
-                        g.setColour (juce::Colours::black.withAlpha (0.6f));
+                        g.setColour (brand::shadow::elev3());
                         g.drawEllipse ((float) x - 3.5f, (float) y - 3.5f, 7.0f, 7.0f, 1.0f);
                     }
                 }

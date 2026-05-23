@@ -22,6 +22,11 @@ namespace zynforge
         void setDiskInfo  (double freeGB, int lastWriteMs, juce::int64 missedSamples,
                            double remainingSeconds);
 
+        // True when any strip is record-armed but the transport is
+        // still idle. Paints a brand-orange ready border so the
+        // engineer sees, at a glance, that hitting RECORD will roll.
+        void setArmedReady (bool ready);
+
         void paint (juce::Graphics&) override;
 
     private:
@@ -32,6 +37,7 @@ namespace zynforge
         int    lastWriteMs      { 0 };
         juce::int64 missed      { 0 };
         double remainingSeconds { 0.0 };
+        bool   armedReady       { false };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (BigClockPanel)
     };

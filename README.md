@@ -134,11 +134,13 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. Set `CMAKE_OSX_DEPLOYMENT
 
 Part of the ZynForge family — palette directly matches ZynForge Live:
 
-- Near-black canvas (`#0a0a0c` / `#12131 6`)
-- Every channel strip is washed end-to-end with a muted personality colour (dusty blue, moss, olive, violet, wine, teal, amber, mustard — rotates by strip index, mirrors Live's INS 1–8)
-- LED-segment meters (20 segments, green/amber/red, exponential decay, click to clear clip)
+- Near-black canvas (`#0d0d12` / `#121316`)
+- Every channel strip is washed end-to-end with a personality colour (dusty blue, moss, olive, violet, wine, teal, amber, mustard — rotates by strip index, mirrors Live's INS 1–8). The four mid-luminance hues were saturation-lifted on the 2026-05-23 design pass so they hold up at XS strip width (56 px) against the deep background.
+- LED-segment meters (20 segments, green / amber / red, exponential decay, click to clear clip)
 - Bright signal-green session clock (`#5dd87a`) reused from Live
-- Status accents reserved for state, not decoration: red = record, green = play, amber = virtual soundcheck
+- Status accents reserved for state, not decoration: red = record, green = play, amber = virtual soundcheck, brand-orange = armed-but-not-rolling (BigClock border)
+- `Inter` (proportional) + `JetBrains Mono` (tabular numerals) are bundled as BinaryData and resolved through `ZynForgeLookAndFeel::getTypefaceForFont`. Seven-step type scale (`label/caption/body/title/headline/subhead/display/hero`) is the only set of font heights used anywhere in the app.
+- Three-step elevation tokens (`brand::shadow::elev1/elev2/elev3`) replace ad-hoc black-with-alpha drop shadows; one helper (`brand::onSignal`) picks the legible foreground for any saturated accent background.
 
 ## Layout
 

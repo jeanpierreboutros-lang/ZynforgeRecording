@@ -45,13 +45,14 @@ namespace zynforge
         const auto name  = f.getTypefaceName();
         const bool bold  = f.isBold();
 
-        // brand::uiFamily resolves to 'SF Pro' in BrandTokens.h — match
-        // either that or the JUCE default-font name so any user-of-the-
-        // codebase asking for 'SF Pro' gets Inter delivered.
-        if (name == "SF Pro" || name.containsIgnoreCase ("inter"))
+        // brand::uiFamily resolves to 'Inter' in BrandTokens.h. The
+        // 'SF Pro' / 'SF Mono' fallbacks keep any legacy call sites
+        // (pre-2026-05-23 rename) wiring through to the bundled face.
+        if (name.containsIgnoreCase ("inter") || name == "SF Pro")
             return bold ? interBold : interReg;
-        if (name == "SF Mono" || name.containsIgnoreCase ("jetbrains")
-            || name.containsIgnoreCase ("mono"))
+        if (name.containsIgnoreCase ("jetbrains")
+            || name.containsIgnoreCase ("mono")
+            || name == "SF Mono")
             return bold ? monoBold : monoReg;
 
         return juce::LookAndFeel_V4::getTypefaceForFont (f);
@@ -146,7 +147,7 @@ namespace zynforge
         g.setColour (txt);
         // Heavier, slightly larger glyph than the default uiLabel so
         // the single-letter chips read at a glance.
-        g.setFont (juce::Font (juce::FontOptions().withHeight (13.5f).withStyle ("Bold")));
+        g.setFont (brand::type::ui (13.5f, true));
         g.drawText (b.getButtonText(), b.getLocalBounds(), juce::Justification::centred, false);
     }
 
@@ -213,8 +214,9 @@ namespace zynforge
                                 thumbY - thumbH * 0.5f,
                                 thumbW, thumbH);
 
-        // Drop shadow lifts the cap off the track.
-        g.setColour (juce::Colours::black.withAlpha (0.35f));
+        // Drop shadow lifts the cap off the track (elev2 — fader caps
+        // sit between flat strips and floating dialogs in the system).
+        g.setColour (brand::shadow::elev2());
         g.fillRoundedRectangle (thumb.translated (0.0f, 1.5f).expanded (1.0f, 1.0f),
                                 brand::radius::sm);
 

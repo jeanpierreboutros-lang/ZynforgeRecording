@@ -115,6 +115,16 @@ Toggling stereo (via right-click menu, PATCH M/ST pill, or +CH dialog) calls `se
 
 `Session → Configure cloud upload command…` — store a template like `rclone copy {SESSION} myremote:bucket/` (or `aws s3 sync`, `rsync`, …). `Session → Upload session to cloud…` expands `{SESSION}` to the active session dir and `juce::ChildProcess`-launches the command.
 
+## Design system (2026-05-23 audit pass)
+
+- **`brand::shadow::elev1/elev2/elev3`** replace the hand-rolled `Colours::black.withAlpha (0.xxf)` shadow values. Strip / chip ≈ elev1, fader caps + dialogs ≈ elev2, modals + accents ≈ elev3.
+- **`brand::onSignal (bg)`** picks legible text on saturated accent backgrounds — yellow Solo + green Status + orange both want black, deep Red Record + teal Stream want white. All button `textColourOnId` / `textColourOffId` on accent fills now route through this helper, not raw `Colours::black/white`.
+- **Typography scale extended**: `h_subhead = 22 pt` slots between `h_headline (18)` and `h_display (28)`; `h_hero = 44 pt` is the pinned BigClock timer face. `brand::type::subhead()` + `brand::fonts::numeral22()` expose the new sizes.
+- **Font family canonicalisation**: `brand::uiFamily` and `brand::monoFamily` are now `"Inter"` / `"JetBrains Mono"` (matching the bundled BinaryData faces). `ZynForgeLookAndFeel::getTypefaceForFont` still resolves the legacy `"SF Pro"` / `"SF Mono"` names for any caller that hasn't been migrated.
+- **Personality palette pass 2**: moss / olive / violet / teal swatches bumped ~12-15% on saturation + luminance — readable at XS strip width (56 px) against `bgDeep` without the absorption that was happening in tight 256-strip layouts.
+- **`brandOrange` now surfaces visibly**: the BigClock paints a 2 px brand-orange border when any strip is record-armed but transport is idle. The engineer sees, before pressing RECORD, that the next press will print to disk.
+- **LookAndFeel internal cleanup**: the toggle-button glyph no longer constructs a raw `juce::Font`; it goes through `brand::type::ui (13.5f, true)` so the font swap to Inter Bold is automatic.
+
 ## Recently shipped (this session)
 
 - **LTC Phase 2 — bit-perfect biphase-mark decoder** with sync-word lookup, BCD parsing, fps inference, drop-frame flag.

@@ -154,7 +154,7 @@ MainComponent::MainComponent()
         b.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
         b.setColour (juce::TextButton::buttonOnColourId,  brand::accentStatus);
         b.setColour (juce::TextButton::textColourOffId,   brand::textSecondary);
-        b.setColour (juce::TextButton::textColourOnId,    juce::Colours::black);
+        b.setColour (juce::TextButton::textColourOnId,    brand::onSignal (brand::accentStatus));
         b.setClickingTogglesState (false);
         b.setTooltip (tt);
     };
@@ -1463,6 +1463,21 @@ void MainComponent::timerCallback()
     bigClock.setMode (m);
     bigClock.setElapsed (elapsed, timerSR);
     bigClock.setMarkers (markers.getCount());
+
+    // Surface the brand-orange armed-ready border when at least one
+    // strip is record-armed AND we're not already rolling — the
+    // engineer sees, before pressing RECORD, that the next press
+    // will print to disk.
+    bool anyArmed = false;
+    for (int i = 0, n = recorder.getNumTracks(); i < n; ++i)
+    {
+        if (recorder.getTrack (i).armed.load (std::memory_order_relaxed))
+        {
+            anyArmed = true;
+            break;
+        }
+    }
+    bigClock.setArmedReady (anyArmed && ! engine.isRecording() && ! engine.isPlaying());
 
     const bool rec = engine.isRecording();
     formatButton .setEnabled (! rec);

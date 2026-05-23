@@ -49,7 +49,7 @@ namespace zynforge
                 volume.onValueChange = [this] { broadcast(); };
                 addAndMakeVisible (volume);
 
-                voice.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff000000));
+                voice.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep);
                 voice.setColour (juce::ComboBox::outlineColourId,    brand::edge);
                 voice.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
                 voice.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
@@ -67,7 +67,7 @@ namespace zynforge
                     b->setColour (juce::TextButton::buttonColourId,   brand::bgElevated);
                     b->setColour (juce::TextButton::buttonOnColourId, brand::accentSolo);
                     b->setColour (juce::TextButton::textColourOffId,  brand::textPrimary);
-                    b->setColour (juce::TextButton::textColourOnId,   juce::Colours::black);
+                    b->setColour (juce::TextButton::textColourOnId,   brand::onSignal (brand::accentSolo));
                     if (i == (int) init.sub)
                         b->setToggleState (true, juce::dontSendNotification);
                     b->onClick = [this, i]
@@ -160,7 +160,7 @@ namespace zynforge
                 onButton.setToggleState (initial.on, juce::dontSendNotification);
                 onButton.setColour (juce::TextButton::buttonOnColourId, brand::accentStatus);
                 onButton.setColour (juce::TextButton::buttonColourId,   brand::bgElevated);
-                onButton.setColour (juce::TextButton::textColourOnId,   juce::Colours::black);
+                onButton.setColour (juce::TextButton::textColourOnId,   brand::onSignal (brand::accentStatus));
                 onButton.setColour (juce::TextButton::textColourOffId,  brand::textPrimary);
                 onButton.onClick = [this]
                 {
@@ -188,7 +188,7 @@ namespace zynforge
 
                 generateButton.setButtonText ("Generate click track");
                 generateButton.setColour (juce::TextButton::buttonColourId,  brand::accentRecord);
-                generateButton.setColour (juce::TextButton::textColourOffId, juce::Colours::white);
+                generateButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::accentRecord));
                 generateButton.onClick = [this]
                 {
                     // Generating commits a click WAV to the session.

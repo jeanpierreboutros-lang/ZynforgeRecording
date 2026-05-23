@@ -104,7 +104,7 @@ namespace zynforge
                     r.getX(), r.getBottom() - peakH, r.getWidth(), peakH - rmsH);
                 g.setGradientFill (grad);
                 g.fillRect (peakRect.reduced (1.0f, 0.0f));
-                g.setColour (juce::Colours::black.withAlpha (0.55f));
+                g.setColour (brand::shadow::elev3());
                 g.fillRect (peakRect.reduced (1.0f, 0.0f));
             }
             if (rmsH > 0.0f)

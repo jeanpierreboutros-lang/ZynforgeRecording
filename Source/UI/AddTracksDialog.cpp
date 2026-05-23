@@ -164,7 +164,7 @@ namespace zynforge
                 addAndMakeVisible (title);
 
                 createButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus);
-                createButton.setColour (juce::TextButton::textColourOffId, juce::Colours::black);
+                createButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::accentStatus));
                 createButton.setButtonText ("Create");
                 createButton.onClick = [this] { commit(); };
                 addAndMakeVisible (createButton);

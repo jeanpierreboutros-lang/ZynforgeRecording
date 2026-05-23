@@ -56,7 +56,7 @@ namespace zynforge
 
         tapButton.setButtonText ("TAP");
         tapButton.setColour (juce::TextButton::buttonColourId,  brand::accentStatus);
-        tapButton.setColour (juce::TextButton::textColourOffId, juce::Colours::black);
+        tapButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::accentStatus));
         tapButton.setTooltip ("Tap repeatedly to set tempo (≥ 2 taps, < 2 s apart)");
         tapButton.onClick = [this] { doTap(); };
         addAndMakeVisible (tapButton);
@@ -66,7 +66,7 @@ namespace zynforge
         // the same file in place so a tempo change keeps the click in
         // sync without piling up tracks.
         clickButton.setColour (juce::TextButton::buttonColourId,  brand::brandOrange);
-        clickButton.setColour (juce::TextButton::textColourOffId, juce::Colours::black);
+        clickButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::brandOrange));
         clickButton.setTooltip ("Generate / regenerate a metronome track at the current tempo. "
                                 "Re-pressing after a tempo change updates it in place.");
         clickButton.onClick = [this] { if (onCreateClickTrack) onCreateClickTrack(); };

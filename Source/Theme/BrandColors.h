@@ -92,19 +92,41 @@ namespace zynforge::brand
         inline constexpr float prominent = 0.85f;  // playhead, focus highlight
     }
 
+    // ── Elevation / shadow scale ──────────────────────────────────────
+    // Replaces hand-rolled juce::Colours::black.withAlpha (0.xxf) calls.
+    // Three levels, picked by perceived lift: strips/chips < fader caps
+    // /dialogs < modal popovers.
+    namespace shadow
+    {
+        inline juce::Colour elev1() { return juce::Colours::black.withAlpha (0.25f); }
+        inline juce::Colour elev2() { return juce::Colours::black.withAlpha (0.40f); }
+        inline juce::Colour elev3() { return juce::Colours::black.withAlpha (0.55f); }
+    }
+
+    // ── Text-on-accent helper ─────────────────────────────────────────
+    // Picks a legible foreground for a saturated button / chip background.
+    // Bright accents (yellow Solo, green Play, orange) want black; deep
+    // accents (red Record, teal Stream) want white. One call, one rule.
+    inline juce::Colour onSignal (juce::Colour bg) noexcept
+    {
+        return bg.getPerceivedBrightness() > 0.55f
+                   ? juce::Colours::black
+                   : textPrimary;
+    }
+
     // ── Personality wash colours — INS 1-8 ────────────────────────────────
     //
-    // Brightened ~25-30% from the original palette so the strip
-    // identity colour still reads at XS strip width (56 px) against
-    // bgDeep. The original values were getting absorbed into the
-    // background in tight-density mixes.
+    // Pass 2 (2026-05-23): the moss / olive / violet / teal swatches
+    // were still getting absorbed into bgDeep at XS strip widths.
+    // Saturation + luminance bumped ~12-15% on each so every personality
+    // reads cleanly even in a 256-strip layout. The hue is preserved.
     inline const std::array<juce::Colour, 8> personality {
         juce::Colour::fromRGB (0x4c, 0x6c, 0x88),  // INS 1 — dusty blue
-        juce::Colour::fromRGB (0x4e, 0x76, 0x5e),  // INS 2 — moss
-        juce::Colour::fromRGB (0x6e, 0x66, 0x44),  // INS 3 — olive
-        juce::Colour::fromRGB (0x66, 0x52, 0x76),  // INS 4 — violet
+        juce::Colour::fromRGB (0x52, 0x8a, 0x6a),  // INS 2 — moss      (bumped)
+        juce::Colour::fromRGB (0x80, 0x76, 0x46),  // INS 3 — olive     (bumped)
+        juce::Colour::fromRGB (0x76, 0x5a, 0x8c),  // INS 4 — violet    (bumped)
         juce::Colour::fromRGB (0x78, 0x3c, 0x4e),  // INS 5 — wine
-        juce::Colour::fromRGB (0x3c, 0x6e, 0x70),  // INS 6 — teal
+        juce::Colour::fromRGB (0x3c, 0x82, 0x86),  // INS 6 — teal      (bumped)
         juce::Colour::fromRGB (0x80, 0x5c, 0x32),  // INS 7 — amber
         juce::Colour::fromRGB (0x7a, 0x6a, 0x38),  // INS 8 — mustard
     };
