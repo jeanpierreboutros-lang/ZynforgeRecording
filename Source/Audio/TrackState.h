@@ -93,6 +93,13 @@ namespace zynforge
         std::atomic<bool>           fftBlockReady { false };
 
         juce::String       name;
+        // Stable identity that survives a strip reorder. Generated
+        // once on strip creation, persisted in appProps under
+        // strip_uid_<n>, and referenced by cue snapshots so a cue
+        // recalls the engineer's intent even after they shuffle the
+        // mixer layout. Empty string means 'no ID yet' (legacy strip);
+        // the engine generates one lazily and writes it back.
+        juce::String       stripId;
 
         void reset() noexcept
         {

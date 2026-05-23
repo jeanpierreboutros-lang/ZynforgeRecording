@@ -2490,6 +2490,7 @@ static juce::File findSessionProj (const juce::File& dir)
 static zynforge::SetlistBar::StripSnapshot snapshotStrip (zynforge::TrackState& t)
 {
     zynforge::SetlistBar::StripSnapshot s;
+    s.stripId      = t.stripId;
     s.gainDb       = t.gainDb       .load (std::memory_order_relaxed);
     s.pan          = t.pan          .load (std::memory_order_relaxed);
     s.inputRouting = t.inputRouting .load (std::memory_order_relaxed);
@@ -2539,6 +2540,7 @@ void MainComponent::loadSetlistFromActiveSession()
                                 if (auto* so = sitem.getDynamicObject())
                                 {
                                     zynforge::SetlistBar::StripSnapshot s;
+                                    s.stripId      = so->getProperty ("uid").toString();
                                     s.gainDb       = (float) (double) so->getProperty ("gainDb");
                                     s.pan          = (float) (double) so->getProperty ("pan");
                                     s.inputRouting = (int)            so->getProperty ("in");
@@ -2574,6 +2576,24 @@ void MainComponent::loadSetlistFromActiveSession()
         }
     }
     setlistBar.setCues (cues, currentCueIndex);
+
+    // Restore comp playlists (Takes) from the .zfproj if present.
+    // seedDefaultClips ran earlier and populated trackPlaylists with
+    // Take 1; loadPlaylistsFromJson now overwrites that with whatever
+    // the engineer had saved. Re-parse the .zfproj here — the earlier
+    // 'obj' was scoped to the setlist deserialise block above.
+    {
+        const auto proj = findSessionProj (engine.getActiveSessionDir());
+        if (proj != juce::File{})
+        {
+            const auto parsed = juce::JSON::parse (proj);
+            if (auto* root = parsed.getDynamicObject())
+            {
+                const auto pls = root->getProperty ("playlists");
+                if (pls.isArray()) engine.loadPlaylistsFromJson (pls);
+            }
+        }
+    }
 }
 
 void MainComponent::saveSetlistToActiveSession() const
@@ -2602,6 +2622,7 @@ void MainComponent::saveSetlistToActiveSession() const
         for (const auto& s : c.strips)
         {
             juce::DynamicObject::Ptr st (new juce::DynamicObject());
+            st->setProperty ("uid",    s.stripId);
             st->setProperty ("gainDb", (double) s.gainDb);
             st->setProperty ("pan",    (double) s.pan);
             st->setProperty ("in",     s.inputRouting);
@@ -2631,7 +2652,13 @@ void MainComponent::saveSetlistToActiveSession() const
         arr.add (juce::var (entry.get()));
     }
     obj->setProperty ("setlist",   juce::var (arr));
-    obj->setProperty ("updatedAt", juce::Time::getCurrentTime().toISO8601 (true));
+    // Persist comp playlists (Takes) — RAM-only before this fix
+    // meant every alternate take was lost on app quit.
+    obj->setProperty ("playlists", engine.playlistsToJson());
+    // .zfproj schema version: 2 introduced playlists + (next commit)
+    // stable strip IDs. Older saves are read transparently.
+    obj->setProperty ("formatVersion", 2);
+    obj->setProperty ("updatedAt",     juce::Time::getCurrentTime().toISO8601 (true));
 
     proj.replaceWithText (juce::JSON::toString (juce::var (obj.get())));
 
@@ -2712,20 +2739,40 @@ void MainComponent::jumpToCue (int index)
     // (added after the cue was saved) are left untouched.
     auto& rec = engine.getRecorder();
     const int total = rec.getNumTracks();
-    const int n     = juce::jmin (total, (int) cue.strips.size());
     // 250 ms soft-takeover — short enough to feel snappy on a cue
     // jump, long enough to avoid an audible zipper / click when
     // gain or pan jumps by 6+ dB.
     constexpr double kCueRecallSeconds = 0.25;
+
+    // Stable-ID lookup: pre-v2 cues (no stripId) fall back to array
+    // index. v2+ cues match by UUID so reordering strips no longer
+    // silently scrambles the cue.
+    auto resolveTarget = [&] (const zynforge::SetlistBar::StripSnapshot& s,
+                               int fallbackIdx) -> int
+    {
+        if (s.stripId.isNotEmpty())
+        {
+            for (int j = 0; j < total; ++j)
+                if (rec.getTrack (j).stripId == s.stripId)
+                    return j;
+            return -1;   // strip was deleted since the cue was saved
+        }
+        return fallbackIdx < total ? fallbackIdx : -1;
+    };
+
+    const int n = (int) cue.strips.size();
     for (int i = 0; i < n; ++i)
     {
         const auto& s = cue.strips[(size_t) i];
-        engine.setTrackGainDbRamped (i, s.gainDb, kCueRecallSeconds);
-        engine.setTrackPanRamped    (i, s.pan,    kCueRecallSeconds);
-        engine.setTrackInputRouting (i, s.inputRouting);
-        engine.setTrackOutputRouting(i, s.outputRouting);
+        const int target = resolveTarget (s, i);
+        if (target < 0) continue;
 
-        auto& t = rec.getTrack (i);
+        engine.setTrackGainDbRamped (target, s.gainDb, kCueRecallSeconds);
+        engine.setTrackPanRamped    (target, s.pan,    kCueRecallSeconds);
+        engine.setTrackInputRouting (target, s.inputRouting);
+        engine.setTrackOutputRouting(target, s.outputRouting);
+
+        auto& t = rec.getTrack (target);
         t.muted  .store (s.muted,   std::memory_order_relaxed);
         t.soloed .store (s.soloed,  std::memory_order_relaxed);
         t.monitor.store (s.monitor, std::memory_order_relaxed);

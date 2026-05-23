@@ -20,6 +20,11 @@ namespace zynforge
         // when the cue is recalled (◂ / ▸ or dropdown pick).
         struct StripSnapshot
         {
+            // Stable strip UUID — set on capture, looked up on recall.
+            // Empty string means 'pre-v2 snapshot' — recall falls back
+            // to array index (the position in the cue.strips vector).
+            juce::String stripId;
+
             float gainDb       { 0.0f };
             float pan          { 0.0f };
             int   inputRouting { -1 };

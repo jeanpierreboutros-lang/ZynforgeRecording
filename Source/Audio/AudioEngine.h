@@ -306,6 +306,11 @@ namespace zynforge
         int   newTakeFromCurrent (int track, const juce::String& name);
         void  deleteTake      (int track, int takeIdx);
         void  renameTake      (int track, int takeIdx, const juce::String& name);
+        // Serialise / deserialise the full playlist (every track's
+        // takes + their clip lists) for .zfproj persistence. Without
+        // this, Takes are RAM-only and lost on app quit.
+        juce::var playlistsToJson() const;
+        void      loadPlaylistsFromJson (const juce::var& v);
         // Split the named track at the current playhead — creates two
         // clips that reference the same audio file with adjacent regions.
         bool splitTrackAtPlayhead (int track);

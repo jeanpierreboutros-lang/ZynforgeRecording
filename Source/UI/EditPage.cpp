@@ -1418,11 +1418,19 @@ namespace zynforge
                     // Refuse reorder while playback is actively rolling
                     // — swapTracks renames Track_NN.wav on disk and the
                     // player's open readers would point at the wrong
-                    // data mid-block. Loaded-but-paused is OK: we
-                    // reload the session after the swap to pick up the
-                    // new file → track mapping.
+                    // data mid-block. Pop a modal warning so the
+                    // engineer knows the drag was ignored.
                     if (engine.getPlayer().isPlaying())
                     {
+                        juce::AlertWindow::showAsync (
+                            juce::MessageBoxOptions()
+                                .withIconType (juce::MessageBoxIconType::WarningIcon)
+                                .withTitle ("Strip reorder paused")
+                                .withMessage ("Stop playback before reordering strips — "
+                                              "swapping during playback would corrupt the "
+                                              "player's open file readers.")
+                                .withButton ("OK"),
+                            nullptr);
                         reorderActive = false;
                         reorderArmed  = false;
                         return;

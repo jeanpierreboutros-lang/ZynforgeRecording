@@ -331,6 +331,110 @@ namespace zynforge
         p.takes[(size_t) takeIdx].name = name.isNotEmpty() ? name : ("Take " + juce::String (takeIdx + 1));
     }
 
+    // Serialise the full per-track playlist (every Take + every Clip
+    // inside it) so .zfproj round-trips the engineer's comping work.
+    // Without this Takes are RAM-only and lost on app quit — real
+    // data-loss bug fixed here.
+    juce::var AudioEngine::playlistsToJson() const
+    {
+        juce::Array<juce::var> tracks;
+        for (size_t t = 0; t < trackPlaylists.size(); ++t)
+        {
+            const auto& pl = trackPlaylists[t];
+            juce::DynamicObject::Ptr pObj (new juce::DynamicObject());
+            pObj->setProperty ("track",      (int) t);
+            pObj->setProperty ("activeTake", pl.activeTake);
+
+            juce::Array<juce::var> takes;
+            for (const auto& tk : pl.takes)
+            {
+                juce::DynamicObject::Ptr tObj (new juce::DynamicObject());
+                tObj->setProperty ("name", tk.name);
+                juce::Array<juce::var> clips;
+                for (const auto& c : tk.clips)
+                {
+                    juce::DynamicObject::Ptr cObj (new juce::DynamicObject());
+                    cObj->setProperty ("name",        c.name);
+                    cObj->setProperty ("file",        c.audioFile.getFullPathName());
+                    cObj->setProperty ("tlStart",     (juce::int64) c.timelineStartSamples);
+                    cObj->setProperty ("fileStart",   (juce::int64) c.fileStartSamples);
+                    cObj->setProperty ("fileLen",     (juce::int64) c.fileLengthSamples);
+                    cObj->setProperty ("fadeIn",      (juce::int64) c.fadeInSamples);
+                    cObj->setProperty ("fadeOut",     (juce::int64) c.fadeOutSamples);
+                    cObj->setProperty ("gainDb",      (double) c.gainDb);
+                    cObj->setProperty ("muted",       c.muted);
+                    cObj->setProperty ("locked",      c.locked);
+                    clips.add (juce::var (cObj.get()));
+                }
+                tObj->setProperty ("clips", juce::var (clips));
+                takes.add (juce::var (tObj.get()));
+            }
+            pObj->setProperty ("takes", juce::var (takes));
+            tracks.add (juce::var (pObj.get()));
+        }
+        return juce::var (tracks);
+    }
+
+    void AudioEngine::loadPlaylistsFromJson (const juce::var& v)
+    {
+        auto* arr = v.getArray();
+        if (arr == nullptr) return;
+
+        // Resize storage to match (seedDefaultClips has already
+        // populated this on session load; we overwrite per-track here).
+        for (const auto& item : *arr)
+        {
+            auto* pObj = item.getDynamicObject();
+            if (pObj == nullptr) continue;
+            const int t = (int) pObj->getProperty ("track");
+            if (t < 0 || t >= (int) trackPlaylists.size()) continue;
+            auto& pl = trackPlaylists[(size_t) t];
+
+            pl.takes.clear();
+            pl.activeTake = (int) pObj->getProperty ("activeTake");
+
+            auto* takesArr = pObj->getProperty ("takes").getArray();
+            if (takesArr == nullptr) continue;
+            for (const auto& takeVar : *takesArr)
+            {
+                auto* tObj = takeVar.getDynamicObject();
+                if (tObj == nullptr) continue;
+                Take tk;
+                tk.name = tObj->getProperty ("name").toString();
+                auto* clipsArr = tObj->getProperty ("clips").getArray();
+                if (clipsArr != nullptr)
+                {
+                    for (const auto& clipVar : *clipsArr)
+                    {
+                        auto* cObj = clipVar.getDynamicObject();
+                        if (cObj == nullptr) continue;
+                        Clip c;
+                        c.name                 = cObj->getProperty ("name").toString();
+                        c.audioFile            = juce::File (cObj->getProperty ("file").toString());
+                        c.timelineStartSamples = (juce::int64) (double) cObj->getProperty ("tlStart");
+                        c.fileStartSamples     = (juce::int64) (double) cObj->getProperty ("fileStart");
+                        c.fileLengthSamples    = (juce::int64) (double) cObj->getProperty ("fileLen");
+                        c.fadeInSamples        = (juce::int64) (double) cObj->getProperty ("fadeIn");
+                        c.fadeOutSamples       = (juce::int64) (double) cObj->getProperty ("fadeOut");
+                        c.gainDb               = (float)        (double) cObj->getProperty ("gainDb");
+                        c.muted                = (bool)         cObj->getProperty ("muted");
+                        c.locked               = (bool)         cObj->getProperty ("locked");
+                        tk.clips.push_back (std::move (c));
+                    }
+                }
+                pl.takes.push_back (std::move (tk));
+            }
+
+            // Reapply the active take to the live trackClips +
+            // SessionPlayer so playback matches the persisted state.
+            if (pl.activeTake >= 0 && pl.activeTake < (int) pl.takes.size())
+            {
+                trackClips[(size_t) t] = pl.takes[(size_t) pl.activeTake].clips;
+                player.setTrackClips (t, trackClips[(size_t) t]);
+            }
+        }
+    }
+
     void AudioEngine::setPhasePair (int leftCh1Based, int rightCh1Based) noexcept
     {
         phaseLeft .store (juce::jmax (0, leftCh1Based  - 1), std::memory_order_relaxed);
@@ -449,6 +553,23 @@ namespace zynforge
                 t.gainDb.store (stripGains.getGainDb (i), std::memory_order_relaxed);
             if (stripGains.hasPan (i))
                 t.pan.store    (stripGains.getPan (i), std::memory_order_relaxed);
+
+            // Stable per-strip UUID — generated once on first sight,
+            // persisted under strip_uid_<n>. Cue snapshots reference
+            // strips by this ID instead of array index, so a reorder
+            // doesn't silently break every cue in the show.
+            if (appProps != nullptr)
+            {
+                const auto key = "strip_uid_" + juce::String (i);
+                auto uid = appProps->getValue (key, juce::String());
+                if (uid.isEmpty())
+                {
+                    uid = juce::Uuid().toString();
+                    appProps->setValue (key, uid);
+                    appProps->saveIfNeeded();
+                }
+                t.stripId = uid;
+            }
 
             // VCA group — persisted under strip_vca_<n>; -1 = unassigned.
             const int vca = appProps != nullptr
