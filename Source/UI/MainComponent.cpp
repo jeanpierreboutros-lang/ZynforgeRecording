@@ -1240,8 +1240,28 @@ void MainComponent::rebuildStrips()
 
         auto colourCb = [this, i, step] (juce::Colour chosen)
         {
-            engine.setTrackColour (i, chosen);
-            if (step == 2) engine.setTrackColour (i + 1, chosen);
+            // If the engineer has multiple strips selected (Shift /
+            // Cmd-click), apply the colour to every one of them so
+            // 'select 8 strips, set colour' works as expected. The
+            // single-strip path still works because mouseDown selects
+            // this strip first; selectedLogical will contain at least
+            // this one when the colour picker opens via right-click.
+            if (selectedLogical.size() > 1)
+            {
+                for (int logical : selectedLogical)
+                {
+                    if (logical < 0 || logical >= (int) strips.size()) continue;
+                    const auto& s = strips[(size_t) logical];
+                    const int phys = s->getStripIndex();
+                    engine.setTrackColour (phys, chosen);
+                    if (s->isStereo()) engine.setTrackColour (phys + 1, chosen);
+                }
+            }
+            else
+            {
+                engine.setTrackColour (i, chosen);
+                if (step == 2) engine.setTrackColour (i + 1, chosen);
+            }
         };
         auto nameCb   = [this, i] (juce::String chosen) { engine.setTrackName   (i, chosen); };
         auto gainCb   = [this, i, step] (float dB)
@@ -1336,14 +1356,27 @@ void MainComponent::rebuildStrips()
         // Hook shift/cmd-click selection. The toggle handler is keyed
         // on the LOGICAL strip index (i.e. stereo pairs count as one).
         const int logicalIdx = (int) strips.size();
-        s->onToggleSelection = [this, logicalIdx] (bool /*additive*/)
+        s->onToggleSelection = [this, logicalIdx] (bool additive)
         {
-            if (selectedLogical.count (logicalIdx) > 0)
-                selectedLogical.erase (logicalIdx);
+            if (additive)
+            {
+                // Shift / Cmd-click: toggle this strip in/out, keep
+                // existing selection.
+                if (selectedLogical.count (logicalIdx) > 0)
+                    selectedLogical.erase (logicalIdx);
+                else
+                    selectedLogical.insert (logicalIdx);
+            }
             else
-                selectedLogical.insert (logicalIdx);
-            // Update visual state on every strip so the highlight is
-            // always in sync with the selection set.
+            {
+                // Plain click: make this strip the sole selection.
+                // Clicking the only-selected strip a second time
+                // clears the selection entirely (toggle-off).
+                const bool wasOnlySelected = selectedLogical.size() == 1
+                                          && selectedLogical.count (logicalIdx) > 0;
+                selectedLogical.clear();
+                if (! wasOnlySelected) selectedLogical.insert (logicalIdx);
+            }
             for (size_t k = 0; k < strips.size(); ++k)
                 strips[k]->setSelected (selectedLogical.count ((int) k) > 0);
             showStatus (juce::String ((int) selectedLogical.size()) + " strip(s) selected");

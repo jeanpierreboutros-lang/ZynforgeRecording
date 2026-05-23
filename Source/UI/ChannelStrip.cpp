@@ -230,12 +230,23 @@ namespace zynforge
 
     void ChannelStrip::mouseDown (const juce::MouseEvent& e)
     {
-        // Right-click → context menu, as before.
+        // Ignore clicks that originated on an actual interactive
+        // child (the fader cap, a button, a combo). The bubble-up
+        // through addMouseListener(this, true) means we see those
+        // events on the strip too; without this guard, dragging a
+        // button or fader would also select the strip. originalComponent
+        // is the leaf that received the click; if it isn't 'this',
+        // the leaf is handling it.
+        if (e.eventComponent != this && e.originalComponent != this)
+            return;
+
+        // Right-click → context menu.
         if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
         {
             showContextMenu();
             return;
         }
+
         // Shift / Cmd click anywhere on the strip toggles its
         // multi-selection state. Additive (shift/cmd) keeps existing
         // selection; plain click clears + selects only this one.
@@ -244,6 +255,12 @@ namespace zynforge
             if (onToggleSelection) onToggleSelection (true);
             return;
         }
+
+        // Plain left-click: make this strip the sole selection.
+        // onToggleSelection(false) means 'clear the rest, then
+        // select me'. Allows simple click-to-select without
+        // remembering modifiers.
+        if (onToggleSelection) onToggleSelection (false);
     }
 
     void ChannelStrip::setSelected (bool isSelectedNow)
@@ -646,6 +663,13 @@ namespace zynforge
         gainFader.setColour (juce::Slider::backgroundColourId,   brand::bgDeep);
         gainFader.setColour (juce::Slider::thumbColourId,        getResolvedColour().brighter (0.30f));
         gainFader.setMouseDragSensitivity (250);
+        // The fader value must NEVER jump when the engineer clicks
+        // somewhere on the strip body to select / right-click. Only a
+        // direct drag of the thumb cap should move it. Disabling
+        // "snap to mouse position" prevents click-on-track-to-jump.
+        // Combined with the fader's narrow visual track, the engineer
+        // has to actually grab the cap to change gain.
+        gainFader.setSliderSnapsToMousePosition (false);
         gainFader.setColour (juce::Slider::textBoxTextColourId,  brand::textPrimary);
         gainFader.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
         gainFader.setColour (juce::Slider::textBoxBackgroundColourId,

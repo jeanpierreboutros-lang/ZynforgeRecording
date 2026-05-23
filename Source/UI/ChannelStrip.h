@@ -61,6 +61,8 @@ namespace zynforge
         // bulk actions (delete / colour).
         void setSelected (bool isSelected);
         bool isSelected() const noexcept { return selected; }
+        int  getStripIndex() const noexcept { return stripIndex; }
+        bool isStereo()     const noexcept { return pairState != nullptr; }
         std::function<void (bool /*additive*/)> onToggleSelection;
 
         // Fired when the engineer assigns this strip to a VCA bus via
