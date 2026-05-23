@@ -6,6 +6,7 @@
 #include "Meterbridge.h"
 #include "NewSessionDialog.h"
 #include "PatchPage.h"
+#include "EditToolsBar.h"
 #include "ClickSettingsDialog.h"
 #include "../Audio/SpectralClassifier.h"
 #include "SessionPropertiesDialog.h"
@@ -302,7 +303,13 @@ MainComponent::MainComponent()
     addAndMakeVisible (automationToolbar);
 
     if (editPage != nullptr)
+    {
         editPage->setAutomationToolbar (&automationToolbar);
+        // Re-parent the EDIT tools bar from EditPage to MainComponent
+        // so it can share the same 28 px strip as the automation bar.
+        if (auto* tb = editPage->getEditToolsBar())
+            addAndMakeVisible (*tb);
+    }
 
     // onClearAll wipes the active parameter across every track.
     automationToolbar.onClearAll = [this]
@@ -900,6 +907,9 @@ void MainComponent::switchView (View v)
 
     // Automation toolbar is part of the EDIT-view chrome.
     automationToolbar.setVisible (! mix);
+    if (editPage != nullptr)
+        if (auto* tb = editPage->getEditToolsBar())
+            tb->setVisible (! mix);
     resized();   // re-flow the layout for the new state
 
     // Reflect active state in the button tinting.
@@ -3748,16 +3758,30 @@ void MainComponent::resized()
     }
 
     // In EDIT view the automation toolbar takes the top 28 px of the
-    // viewport area. In MIX view it's hidden so the strips get the
-    // full height.
+    // viewport area, sharing that row with the Pro Tools-style tools
+    // palette pinned to the right. In MIX view both are hidden so the
+    // strips get the full height.
+    auto* editToolsBar = (editPage != nullptr) ? editPage->getEditToolsBar() : nullptr;
     if (automationToolbar.isVisible())
     {
-        automationToolbar.setBounds (viewportArea.removeFromTop (28).reduced (2, 0));
+        auto topRow = viewportArea.removeFromTop (28).reduced (2, 0);
+        if (editToolsBar != nullptr && editToolsBar->isVisible())
+        {
+            const int toolsW = 232;
+            editToolsBar->setBounds (topRow.removeFromRight (toolsW));
+            topRow.removeFromRight (brand::space::sm);
+        }
+        else if (editToolsBar != nullptr)
+        {
+            editToolsBar->setBounds ({});
+        }
+        automationToolbar.setBounds (topRow);
         viewportArea.removeFromTop (brand::space::xs);
     }
     else
     {
         automationToolbar.setBounds ({});
+        if (editToolsBar != nullptr) editToolsBar->setBounds ({});
     }
 
     stripsViewport.setBounds (viewportArea);

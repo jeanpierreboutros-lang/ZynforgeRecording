@@ -23,7 +23,7 @@ namespace zynforge
     class EditToolsBar final : public juce::Component
     {
     public:
-        enum class Tool : int { Smart = 0, Selector, Trim, Grabber, Fade, Scrubber };
+        enum class Tool : int { None = -1, Smart = 0, Selector, Trim, Grabber, Fade, Scrubber };
 
         EditToolsBar()
         {
@@ -39,7 +39,11 @@ namespace zynforge
             for (auto& [t, name] : items)
             {
                 auto b = std::make_unique<ToolButton> (t, name);
-                b->onClick = [this, tool = t]() { selectTool (tool); };
+                b->onClick = [this, tool = t]()
+                {
+                    // Toggle: click the active tool again to deselect.
+                    setTool (this->tool == tool ? Tool::None : tool);
+                };
                 addAndMakeVisible (*b);
                 buttons.push_back (std::move (b));
             }
@@ -101,7 +105,9 @@ namespace zynforge
             {
                 auto rect = getLocalBounds().toFloat().reduced (1.0f);
 
-                const auto accent = brand::accentVS;
+                // Blue accent when this tool is the active one; grey
+                // (panel) when nothing is selected.
+                const auto accent = juce::Colour::fromRGB (0x3a, 0x90, 0xe0);
                 if (active)
                 {
                     g.setGradientFill (juce::ColourGradient (
@@ -215,7 +221,7 @@ namespace zynforge
             }
         }
 
-        Tool tool { Tool::Smart };
+        Tool tool { Tool::None };
         std::vector<std::unique_ptr<ToolButton>> buttons;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EditToolsBar)

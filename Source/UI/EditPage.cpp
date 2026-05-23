@@ -1049,9 +1049,10 @@ namespace zynforge
             // Pro Tools-style edit tool — Scrubber, Selector, and Fade
             // intercept the left-click before the normal clip-drag
             // hit-test. Trim / Grabber bias the clip-body branch below.
+            // None (nothing selected) behaves identically to Smart.
             const auto activeTool = (toolsBar != nullptr)
                                       ? toolsBar->getTool()
-                                      : EditToolsBar::Tool::Smart;
+                                      : EditToolsBar::Tool::None;
 
             if (laneMode == LaneMode::Waveform && e.x >= headerW
                 && (activeTool == EditToolsBar::Tool::Scrubber
@@ -1844,8 +1845,11 @@ namespace zynforge
     {
         formatManager.registerBasicFormats();
 
+        // Owned by EditPage so the lifetime tracks the page, but laid
+        // out by MainComponent on the same 28 px row as the automation
+        // toolbar — the host re-parents it via getEditToolsBar() +
+        // addAndMakeVisible().
         toolsBar = std::make_unique<EditToolsBar>();
-        addAndMakeVisible (*toolsBar);
 
         list = std::make_unique<TrackList> (engine, formatManager, thumbnailCache);
         list->sharedToolsBar = toolsBar.get();
@@ -1972,17 +1976,7 @@ namespace zynforge
 
     void EditPage::resized()
     {
-        auto r = getLocalBounds();
-        if (toolsBar != nullptr)
-        {
-            const int barH = 32;
-            auto top = r.removeFromTop (barH).reduced (brand::space::md, 3);
-            // Hold the toolbar to its natural pixel width (6 × 32 + 5 × 4 + side
-            // padding ≈ 220) so it sits left-aligned rather than stretching.
-            toolsBar->setBounds (top.withWidth (juce::jmin (top.getWidth(), 232)));
-            r.removeFromTop (brand::space::xs);
-        }
-        viewport.setBounds (r);
+        viewport.setBounds (getLocalBounds());
         // Tell the list how tall the visible area is so "fit to window"
         // sizing can resolve a sensible per-row pixel height.
         list->setViewportHeight (viewport.getHeight());
