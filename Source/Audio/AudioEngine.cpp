@@ -1315,6 +1315,11 @@ namespace zynforge
             if (! channelAudible (i)) continue;
 
             auto& t = recorder.getTrack (i);
+            // outputMuted gates the physical output independently of the
+            // monitor-side `muted` flag — so an engineer can drop a track
+            // from FOH while still hearing it in their cans (or the
+            // reverse).
+            if (t.outputMuted.load (std::memory_order_relaxed)) continue;
             const int devOut = t.outputRouting.load (std::memory_order_relaxed);
             if (devOut < 0 || devOut >= numOutputs || outputs[devOut] == nullptr) continue;
 

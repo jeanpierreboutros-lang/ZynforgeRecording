@@ -282,6 +282,9 @@ namespace zynforge
         menu.addItem (4, "Reset name");
         menu.addSeparator();
         menu.addItem (5, "Send to STREAM bus", true, streaming);
+        const bool outMuted = state.outputMuted.load (std::memory_order_relaxed);
+        menu.addItem (6, outMuted ? "Unmute physical output" : "Mute physical output (FOH only)",
+                      true, outMuted);
 
         menu.showMenuAsync (juce::PopupMenu::Options(),
                             [this] (int chosen)
@@ -300,6 +303,12 @@ namespace zynforge
                         break;
                 case 5: state.streamSend.store (! state.streamSend.load (std::memory_order_relaxed),
                                                 std::memory_order_relaxed);
+                        break;
+                case 6: state.outputMuted.store (! state.outputMuted.load (std::memory_order_relaxed),
+                                                 std::memory_order_relaxed);
+                        if (pairState)
+                            pairState->outputMuted.store (state.outputMuted.load (std::memory_order_relaxed),
+                                                           std::memory_order_relaxed);
                         break;
                 case 10: if (addCb)        addCb();        break;
                 case 11: if (deleteCb)     deleteCb();     break;
