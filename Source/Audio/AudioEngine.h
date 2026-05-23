@@ -7,6 +7,7 @@
 #include "ClickEngine.h"
 #include "MidiClockOut.h"
 #include "VcaBus.h"
+#include "../Network/NDIBridge.h"
 
 #include <array>
 #include "ClipModel.h"
@@ -101,6 +102,7 @@ namespace zynforge
         // MIDI clock master (24 PPQN) — drives outboard synths /
         // drum machines / DAW slaves from the session tempo.
         MidiClockOut& getMidiClockOut() noexcept { return midiClockOut; }
+        NDIBridge&    getNDIBridge()    noexcept { return ndi; }
 
         // ── VCA buses ─────────────────────────────────────────────
         // 8 group "ghost faders". Strips opt-in via setTrackVcaGroup
@@ -436,6 +438,7 @@ namespace zynforge
 
         ClickEngine        click;
         MidiClockOut       midiClockOut;
+        NDIBridge          ndi;
         std::array<VcaBus, kNumVcas> vcas;
     public:
         ClickEngine& getClickEngine() noexcept { return click; }

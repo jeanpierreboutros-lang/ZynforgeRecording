@@ -178,6 +178,7 @@ private:
     juce::Label  statusLabel       { {}, "Idle" };
     juce::Label  midiStatusLabel   { {}, "" };
     juce::Label  nextCueLabel      { {}, "" };
+    juce::Label  danteLabel        { {}, "" };
     juce::Label  sessionLabel      { {}, "No session loaded" };
     juce::Label  transportLabel    { {}, "00:00 / 00:00" };
     // Header chrome — IconButton paints a glyph next to each label so

@@ -44,6 +44,14 @@ MainComponent::MainComponent()
     nextCueLabel.setFont (brand::fonts::body());
     addAndMakeVisible (nextCueLabel);
 
+    // DANTE pill — shows when the active audio device is Dante Virtual
+    // Soundcard so the engineer sees at a glance that they're on the
+    // Dante network. Updated from the existing timer.
+    danteLabel.setColour (juce::Label::textColourId, brand::featureEngaged);
+    danteLabel.setJustificationType (juce::Justification::centredLeft);
+    danteLabel.setFont (brand::fonts::small());
+    addAndMakeVisible (danteLabel);
+
     sessionLabel.setFont (brand::type::caption());
     sessionLabel.setColour (juce::Label::textColourId, brand::textMuted);
     sessionLabel.setJustificationType (juce::Justification::centredLeft);
@@ -646,6 +654,10 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (52, "Virtual Soundcheck — repatch outputs ↔ inputs");
         menu.addItem (51, "Meterbridge…");
         menu.addItem (53, "Markers…");
+        menu.addSeparator();
+        menu.addItem (55, engine.getNDIBridge().isEnabled()
+                              ? juce::String ("Stop NDI broadcast")
+                              : juce::String ("Start NDI broadcast…"));
 
         // OSC submenu with the five dialects.
         juce::PopupMenu oscMenu;
@@ -843,6 +855,37 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 52)   onVscClicked();
     else if (id == 53)   zynforge::MarkerListDialog::launch (engine);
     else if (id == 54)   showPreflightChecklist();
+    else if (id == 55)
+    {
+        auto& bridge = engine.getNDIBridge();
+        if (bridge.isEnabled())
+        {
+            bridge.stop();
+            showStatus ("NDI broadcast stopped");
+        }
+        else
+        {
+            const auto runtime = zynforge::NDIBridge::findRuntimePath();
+            if (runtime.isEmpty())
+            {
+                juce::AlertWindow::showMessageBoxAsync (
+                    juce::MessageBoxIconType::WarningIcon,
+                    "NDI runtime not found",
+                    "Install the free NDI runtime from ndi.tv (the 'NDI Tools' bundle "
+                    "ships with libndi.dylib in /usr/local/lib). Re-launch the app "
+                    "after installing to broadcast over NDI.", "OK");
+                return;
+            }
+            auto sr = engine.getDeviceManager().getCurrentAudioDevice() != nullptr
+                ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
+                : 48000.0;
+            const auto host = juce::SystemStats::getComputerName();
+            if (bridge.start ("Zynforge — " + host, sr))
+                showStatus ("NDI broadcasting as 'Zynforge — " + host + "'");
+            else
+                showStatus ("NDI start failed — check ndi.tv runtime install");
+        }
+    }
     else if (id == 251) showSessionProperties();
     else if (id == 280) runSpectralAutoName();
     else if (id == 281) writeSoundcheckReport();
@@ -1296,6 +1339,20 @@ void MainComponent::timerCallback()
             : juce::String();
         if (midiStatusLabel.getText() != label)
             midiStatusLabel.setText (label, juce::dontSendNotification);
+    }
+
+    // DANTE detection — flag the active audio device when its name
+    // contains 'Dante' / 'DVS' (Audinate's Dante Virtual Soundcard).
+    {
+        juce::String txt;
+        if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())
+        {
+            const auto n = d->getName();
+            if (n.containsIgnoreCase ("Dante") || n.containsIgnoreCase ("DVS"))
+                txt = "DANTE \xE2\x97\x8F " + n;
+        }
+        if (danteLabel.getText() != txt)
+            danteLabel.setText (txt, juce::dontSendNotification);
     }
 
     // LCD countdown to next cue — only when a setlist exists AND the
@@ -1845,7 +1902,19 @@ void MainComponent::showUserGuide()
         "24 PPQN; play / pause / stop send midi-start / continue / stop.\n\n"
         "NOISE ANALYSIS\n"
         "  Session \xE2\x96\xB8 Analyse for noise scans every WAV for "
-        "50 / 60 Hz hum, mic bumps, and high noise floor.";
+        "50 / 60 Hz hum, mic bumps, and high noise floor.\n\n"
+        "DANTE\n"
+        "  Native Dante requires Audinate's paid SDK + NDA. Practical "
+        "path: install Audinate's free Dante Virtual Soundcard (DVS) "
+        "from audinate.com. DVS exposes up to 64\xC3\x97""64 Dante channels "
+        "as a Core Audio device \xE2\x80\x94 just pick it in DEVICE and route "
+        "strips to its channels via PATCH. ZynForge auto-detects DVS "
+        "and shows a 'DANTE' badge in the status bar.\n\n"
+        "NETWORK AUDIO (NDI)\n"
+        "  Session \xE2\x96\xB8 NDI broadcast pushes the master mix onto your "
+        "LAN as an NDI Audio source. Any NDI receiver (NDI Tools, OBS, "
+        "TouchDesigner) on the same network can monitor your live "
+        "stream. Requires NDI runtime from ndi.tv \xE2\x80\x94 free.";
 
     auto* aw = new juce::AlertWindow ("Zynforge user guide", body,
                                       juce::MessageBoxIconType::InfoIcon);
@@ -4430,6 +4499,13 @@ void MainComponent::showPreflightChecklist()
     if (engine.getMidiClockOut().isEnabled())
         body << "\xe2\x9c\x93  MIDI clock master: " << engine.getMidiClockOut().getOutputDeviceName() << "\n";
 
+    if (device != nullptr)
+    {
+        const auto dn = device->getName();
+        if (dn.containsIgnoreCase ("Dante") || dn.containsIgnoreCase ("DVS"))
+            body << "\xe2\x9c\x93  Dante network active (" << dn << ")\n";
+    }
+
     auto* aw = new juce::AlertWindow ("Pre-flight checklist",
                                       body, juce::MessageBoxIconType::InfoIcon);
     aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
@@ -4688,6 +4764,8 @@ void MainComponent::resized()
     // Empty text → zero pixels rendered, so this disappears when the
     // clock is off.
     midiStatusLabel.setBounds (row1.removeFromLeft (220).reduced (0, 4));
+    row1.removeFromLeft (brand::space::sm);
+    danteLabel.setBounds (row1.removeFromLeft (180).reduced (0, 4));
     row1.removeFromLeft (brand::space::sm);
     // Record action is owned by the transport-bar red-circle button.
     // Keep the pill alive so callers that still poll it don't crash,

@@ -1895,6 +1895,12 @@ namespace zynforge
             companion->feedStreamSamples (L, R, numSamples);
         }
 
+        // NDI Audio transmit — push the master mix onto the LAN as an
+        // NDI source. Cheap: pushStereo is a memcpy + one libndi call;
+        // a no-op when the runtime isn't installed.
+        if (ndi.isEnabled() && numOutputs >= 2)
+            ndi.pushStereo (outputs[0], outputs[1], numSamples);
+
         // CPU-load: (callback wall time) / (block period). EMA-smoothed
         // with a fast attack and slower release so the engineer sees
         // spikes immediately but the meter doesn't twitch on each block.
