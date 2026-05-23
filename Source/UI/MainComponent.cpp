@@ -3626,12 +3626,13 @@ void MainComponent::paint (juce::Graphics& g)
 {
     g.fillAll (brand::bgDeep);
 
-    auto header = getLocalBounds().removeFromTop (44 + 40).toFloat();
+    // Header = row 1 (44 px) + row 2 transport (52 px) = 96 px total.
+    // The previous value (44+40 = 84) put the bottom divider INSIDE the
+    // transport row and visually clipped the buttons.
+    auto header = getLocalBounds().removeFromTop (44 + 52).toFloat();
     g.setColour (brand::bgPanel);
     g.fillRect (header);
     g.setColour (brand::edge);
-    // Single divider at the bottom of the header — the inner line at
-    // y=44 was visually overlapping the chrome buttons; removed.
     g.drawHorizontalLine ((int) header.getBottom() - 1,
                           header.getX(), header.getRight());
 }
