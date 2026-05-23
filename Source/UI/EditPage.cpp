@@ -2448,10 +2448,11 @@ namespace zynforge
     {
         auto bounds = getLocalBounds();
 
-        // Time ruler perches across the top, 24 px tall. Spans the
-        // full width so the Min:Secs label column aligns with each
-        // TrackRow's header column.
-        const int rulerH = 24;
+        // Time ruler perches across the top, 44 px tall:
+        //   20 px marker strip + 24 px time scale = 44 total.
+        // Spans the full width so the header label column aligns with
+        // each TrackRow's header column.
+        const int rulerH = 44;
         if (ruler != nullptr)
             ruler->setBounds (bounds.removeFromTop (rulerH));
 

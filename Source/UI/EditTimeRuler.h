@@ -34,52 +34,66 @@ namespace zynforge
     private:
         void timerCallback() override { repaint(); }
 
+        // Paint splits vertically into two strips:
+        //   top  : marker strip      (kMarkerStripH px tall)
+        //   bottom: time scale ticks (remaining height)
+        // EditPage now sizes the ruler to 44 px so the marker strip
+        // has room for a name + flag.
+        static constexpr int kMarkerStripH = 20;
+
         void paint (juce::Graphics& g) override
         {
+            const int totalH        = getHeight();
+            const int markerStripH  = juce::jmin (kMarkerStripH, totalH / 2);
+            const int rulerH        = totalH - markerStripH;
+            const int rulerTop      = markerStripH;
+
             auto r = getLocalBounds().toFloat();
             g.setGradientFill (brand::verticalGradient (brand::bgDeep, r, 0.06f, 0.12f));
             g.fillRect (r);
             g.setColour (brand::edge);
-            g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
+            g.drawHorizontalLine (totalH - 1, 0.0f, (float) getWidth());
+            // Separator between marker strip and time scale.
+            g.setColour (brand::edge.withAlpha (0.6f));
+            g.drawHorizontalLine (markerStripH, 0.0f, (float) getWidth());
 
-            // Left "Min:Secs" label column.
-            auto label = getLocalBounds().withWidth (headerW).reduced (8, 0);
+            // Left header column -- two stacked labels matching the
+            // two-row layout: 'Markers' on top, 'Min:Secs' below.
+            const int headerInsetX = 8;
+            g.setColour (brand::textMuted);
+            g.setFont (brand::type::caption());
+            g.drawText ("Markers",
+                        juce::Rectangle<int> (headerInsetX, 0,
+                                              headerW - headerInsetX, markerStripH),
+                        juce::Justification::centredLeft, false);
             g.setColour (brand::accentStatus);
             g.setFont (brand::type::captionBold());
-            g.drawText ("Min:Secs", label, juce::Justification::centredLeft, false);
+            g.drawText ("Min:Secs",
+                        juce::Rectangle<int> (headerInsetX, rulerTop,
+                                              headerW - headerInsetX, rulerH),
+                        juce::Justification::centredLeft, false);
             g.setColour (brand::edge);
-            g.drawVerticalLine (headerW - 1, 0.0f, (float) getHeight());
+            g.drawVerticalLine (headerW - 1, 0.0f, (float) totalH);
 
             // Decide tick spacing in seconds based on pixels-per-second.
-            // total samples / sample rate = total seconds across contentW.
             const auto& player = engine.getPlayer();
             const auto total = player.getTotalLengthSamples();
             const double sr  = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
-            // If the session has no length yet (no audio loaded), fall
-            // back to a notional 5-minute span so the ruler still
-            // shows meaningful gradations.
             const double totalSec = total > 0 ? (double) total / sr : 300.0;
             const int waveW = juce::jmax (1, contentW - headerW);
-            const double secPerPx = totalSec / (double) waveW;
             const double pxPerSec = (double) waveW / juce::jmax (0.001, totalSec);
 
-            // Pick a tick interval whose label spacing >= 70 px.
             const double minPxBetweenLabels = 70.0;
             const int candidates[] = { 1, 2, 5, 10, 30, 60, 120, 300, 600, 1800 };
             int tickSec = 60;
             for (int c : candidates)
                 if ((double) c * pxPerSec >= minPxBetweenLabels) { tickSec = c; break; }
-
-            // Sub-tick is 1/5 of major tick, but only painted if it's
-            // wide enough to be visually distinct.
             const int subSec = juce::jmax (1, tickSec / 5);
-            const double subPx = (double) subSec * pxPerSec;
 
-            const int rulerTop = 0;
-            const int rulerH   = getHeight();
-            const int majorTickH = juce::jmax (8,  (int) (rulerH * 0.55f));
-            const int minorTickH = juce::jmax (4,  (int) (rulerH * 0.30f));
+            const int majorTickH = juce::jmax (8, (int) (rulerH * 0.55f));
+            const int minorTickH = juce::jmax (4, (int) (rulerH * 0.30f));
 
+            // -------- Time scale (bottom strip) --------
             g.setFont (brand::type::mono (10.5f, true));
             for (double tSec = 0.0; tSec <= totalSec + 0.5; tSec += subSec)
             {
@@ -88,23 +102,59 @@ namespace zynforge
                 const bool major = std::fmod (tSec + 0.0001, (double) tickSec) < 0.001;
                 const int hPx = major ? majorTickH : minorTickH;
                 g.setColour (major ? brand::textSecondary : brand::textMuted);
-                g.drawVerticalLine (x, (float) (rulerTop + rulerH - hPx), (float) (rulerTop + rulerH));
+                g.drawVerticalLine (x, (float) (rulerTop + rulerH - hPx),
+                                    (float) (rulerTop + rulerH));
 
                 if (major)
                 {
-                    // Format as M:SS so 0..59s reads "0:00".."0:59",
-                    // then "1:00", "1:10", etc.
                     const int m = (int) (tSec / 60.0);
                     const int s = (int) (std::fmod (tSec, 60.0) + 0.0001);
                     juce::String text = juce::String (m) + ":"
                                       + (s < 10 ? "0" : "") + juce::String (s);
                     g.setColour (brand::textSecondary);
                     g.drawText (text,
-                                juce::Rectangle<int> (x + 3, rulerTop, 60, rulerH - majorTickH - 2),
+                                juce::Rectangle<int> (x + 3, rulerTop, 60,
+                                                      rulerH - majorTickH - 2),
                                 juce::Justification::topLeft, false);
                 }
             }
-            juce::ignoreUnused (secPerPx);
+
+            // -------- Marker strip (top strip) --------
+            // Each marker gets a small downward-pointing flag at its
+            // sample position plus its name to the right. Pro Tools-
+            // style: name leans right, flag tip aligned to the exact
+            // marker x so it lines up with the time scale tick.
+            const auto& list = engine.getMarkers().getAll();
+            g.setFont (brand::type::mono (10.5f, true));
+            for (const auto& m : list)
+            {
+                const double tSec = (double) m.sampleOffset / sr;
+                if (tSec < 0.0 || tSec > totalSec) continue;
+                const int x = headerW + (int) (tSec * pxPerSec);
+                if (x < headerW || x >= getWidth()) continue;
+
+                // Flag: 8x8 px brand-orange downward triangle anchored
+                // to the bottom of the marker strip.
+                juce::Path flag;
+                const float fy = (float) markerStripH;
+                flag.addTriangle ((float) x - 4.0f, fy - 10.0f,
+                                  (float) x + 4.0f, fy - 10.0f,
+                                  (float) x,        fy);
+                g.setColour (brand::brandOrange);
+                g.fillPath (flag);
+                g.setColour (brand::brandOrange.darker (0.40f));
+                g.strokePath (flag, juce::PathStrokeType (0.75f));
+
+                // Name to the right of the flag. Clip to ~120 px so a
+                // long name doesn't bleed across the next marker.
+                if (m.name.isNotEmpty())
+                {
+                    g.setColour (brand::textPrimary);
+                    g.drawText (m.name,
+                                juce::Rectangle<int> (x + 6, 1, 120, markerStripH - 2),
+                                juce::Justification::centredLeft, false);
+                }
+            }
         }
 
         AudioEngine& engine;
