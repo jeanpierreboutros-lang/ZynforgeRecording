@@ -54,13 +54,20 @@ namespace zynforge
         int    draggingPointIdx { -1 };
 
         // Clip-edit drag tracking. When the engineer grabs a clip's
-        // left edge, right edge, or body, draggingClipIdx pins which
-        // clip is moving and draggingClipModeInt picks the engine
-        // edit mode (0=TrimLeft, 1=TrimRight, 2=Move).
+        // left edge, right edge, body, or a fade handle, draggingClipIdx
+        // pins which clip is moving and draggingClipModeInt picks the
+        // edit mode:
+        //   0 = TrimLeft   (slip-trim left edge)
+        //   1 = TrimRight  (extend / shrink right edge)
+        //   2 = Move       (slide on the timeline)
+        //   3 = FadeIn     (drag the fade-in apex)
+        //   4 = FadeOut    (drag the fade-out apex)
         int draggingClipIdx     { -1 };
         int draggingClipModeInt {  0 };
         int dragStartX          {  0 };
         juce::int64 lastDragSamples { 0 };
+        juce::int64 dragStartFadeIn  { 0 };
+        juce::int64 dragStartFadeOut { 0 };
 
         TrackRow (int trackIdx,
                   bool isStereoPair,
@@ -789,25 +796,43 @@ namespace zynforge
                         }
                         // Fade-in diagonal — from the bottom-left corner
                         // of the clip up to the top of (start + fadeIn).
-                        if (c.fadeInSamples > 0)
                         {
                             const int xL = sampleToX (c.timelineStartSamples);
                             const int xF = sampleToX (c.timelineStartSamples + c.fadeInSamples);
-                            g.setColour (brand::accentStatus.withAlpha (brand::alpha::ghost));
-                            juce::Path p;
-                            p.startNewSubPath ((float) xL, (float) inner2.getBottom());
-                            p.lineTo ((float) xF, (float) inner2.getY());
-                            g.strokePath (p, juce::PathStrokeType (1.4f));
+                            if (c.fadeInSamples > 0)
+                            {
+                                g.setColour (brand::accentStatus.withAlpha (brand::alpha::ghost));
+                                juce::Path p;
+                                p.startNewSubPath ((float) xL, (float) inner2.getBottom());
+                                p.lineTo ((float) xF, (float) inner2.getY());
+                                g.strokePath (p, juce::PathStrokeType (1.4f));
+                            }
+                            // Drag handle at the apex (top of the
+                            // diagonal). Visible even when fadeIn == 0
+                            // so the engineer has a grab-target to
+                            // introduce a fade from zero.
+                            const juce::Rectangle<float> handle (
+                                (float) xF - 3.5f, (float) inner2.getY(),
+                                7.0f, 7.0f);
+                            g.setColour (brand::accentStatus);
+                            g.fillRect (handle);
                         }
-                        if (c.fadeOutSamples > 0)
                         {
                             const int xR = sampleToX (c.timelineStartSamples + c.fileLengthSamples);
                             const int xF = sampleToX (c.timelineStartSamples + c.fileLengthSamples - c.fadeOutSamples);
-                            g.setColour (brand::accentStatus.withAlpha (brand::alpha::ghost));
-                            juce::Path p;
-                            p.startNewSubPath ((float) xF, (float) inner2.getY());
-                            p.lineTo ((float) xR, (float) inner2.getBottom());
-                            g.strokePath (p, juce::PathStrokeType (1.4f));
+                            if (c.fadeOutSamples > 0)
+                            {
+                                g.setColour (brand::accentStatus.withAlpha (brand::alpha::ghost));
+                                juce::Path p;
+                                p.startNewSubPath ((float) xF, (float) inner2.getY());
+                                p.lineTo ((float) xR, (float) inner2.getBottom());
+                                g.strokePath (p, juce::PathStrokeType (1.4f));
+                            }
+                            const juce::Rectangle<float> handle (
+                                (float) xF - 3.5f, (float) inner2.getY(),
+                                7.0f, 7.0f);
+                            g.setColour (brand::accentStatus);
+                            g.fillRect (handle);
                         }
                     }
                 }
@@ -1019,12 +1044,48 @@ namespace zynforge
                         };
                         // 6 px hit zone around each edge for trim;
                         // anything else inside a clip's body = Move.
+                        // Fade handles take priority over both — they
+                        // sit in the top-edge stripe and are visually
+                        // distinct dots.
                         const int hitZone = 6;
+                        const int fadeHandleZone = 8;
+                        const int laneTop = inner.getY();
                         for (int i = 0; i < (int) clips->size(); ++i)
                         {
                             const auto& c = (*clips)[(size_t) i];
                             const int xL = sampleToX (c.timelineStartSamples);
                             const int xR = sampleToX (c.timelineStartSamples + c.fileLengthSamples);
+                            const int xFadeIn  = sampleToX (c.timelineStartSamples + c.fadeInSamples);
+                            const int xFadeOut = sampleToX (c.timelineStartSamples
+                                                            + c.fileLengthSamples
+                                                            - c.fadeOutSamples);
+
+                            // Fade-in handle — top-edge band, near
+                            // (start + fadeIn).
+                            if (e.y - laneTop < fadeHandleZone
+                                && std::abs (e.x - xFadeIn) <= fadeHandleZone)
+                            {
+                                draggingClipIdx     = i;
+                                draggingClipModeInt = 3;  // FadeIn
+                                dragStartX          = e.x;
+                                lastDragSamples     = 0;
+                                dragStartFadeIn     = c.fadeInSamples;
+                                dragStartFadeOut    = c.fadeOutSamples;
+                                return;
+                            }
+                            // Fade-out handle.
+                            if (e.y - laneTop < fadeHandleZone
+                                && std::abs (e.x - xFadeOut) <= fadeHandleZone)
+                            {
+                                draggingClipIdx     = i;
+                                draggingClipModeInt = 4;  // FadeOut
+                                dragStartX          = e.x;
+                                lastDragSamples     = 0;
+                                dragStartFadeIn     = c.fadeInSamples;
+                                dragStartFadeOut    = c.fadeOutSamples;
+                                return;
+                            }
+
                             if (e.x >= xL - hitZone && e.x <= xL + hitZone)
                             {
                                 draggingClipIdx     = i;
@@ -1149,9 +1210,10 @@ namespace zynforge
             }
 
             // Clip edit drag — translate pixel delta back to sample
-            // delta and feed it to engine.editClip incrementally. We
-            // track lastDragSamples so each motion only applies the
-            // *delta* from the last frame (not a cumulative sum).
+            // delta and feed it to engine.editClip incrementally. Fade
+            // handles use the absolute drag delta from the drag start
+            // (so the fade tracks the mouse position rather than
+            // accumulating per-frame).
             if (draggingClipIdx >= 0)
             {
                 const auto& player = engine.getPlayer();
@@ -1162,6 +1224,37 @@ namespace zynforge
                 {
                     const double samplesPerPx = (double) totalSamples / (double) inner.getWidth();
                     const juce::int64 wantSamples = (juce::int64) ((e.x - dragStartX) * samplesPerPx);
+
+                    if (draggingClipModeInt == 3 || draggingClipModeInt == 4)
+                    {
+                        // Fade handles: absolute targets, not incremental.
+                        // Drag the fade-in apex right grows fadeIn;
+                        // drag the fade-out apex left grows fadeOut
+                        // (so 'further from the clip end' = more fade).
+                        const auto* clips = engine.tryClipsFor (index);
+                        if (clips == nullptr || draggingClipIdx >= (int) clips->size())
+                            return;
+                        const auto& c = (*clips)[(size_t) draggingClipIdx];
+                        if (draggingClipModeInt == 3)
+                        {
+                            const juce::int64 newIn = juce::jlimit<juce::int64> (
+                                0, c.fileLengthSamples - dragStartFadeOut,
+                                dragStartFadeIn + wantSamples);
+                            engine.setClipFades (index, draggingClipIdx, newIn, dragStartFadeOut);
+                        }
+                        else
+                        {
+                            // Drag right shrinks fade-out, drag left grows it.
+                            const juce::int64 newOut = juce::jlimit<juce::int64> (
+                                0, c.fileLengthSamples - dragStartFadeIn,
+                                dragStartFadeOut - wantSamples);
+                            engine.setClipFades (index, draggingClipIdx, dragStartFadeIn, newOut);
+                        }
+                        repaint();
+                        return;
+                    }
+
+                    // Trim / Move: incremental.
                     const juce::int64 stepSamples = wantSamples - lastDragSamples;
                     lastDragSamples = wantSamples;
                     if (std::abs (stepSamples) >= 1)
