@@ -363,6 +363,15 @@ namespace zynforge
 
         void paint (juce::Graphics& g) override
         {
+            // Same stale-index guard as resized() -- a paint cascade
+            // can fire after the engine's track vector has shrunk
+            // but before TrackList::rebuild has removed this row.
+            // Without this guard, getStripColour / the various
+            // engine.getRecorder().getTrack (index) calls below
+            // dereference out-of-bounds memory.
+            if (index >= engine.getRecorder().getNumTracks())
+                return;
+
             auto fillColour = getStripColour();
             // Every TrackRow paints itself in bgStrip (a lighter grey
             // than bgDeep). The EditPage's own background fills the
@@ -996,16 +1005,23 @@ namespace zynforge
 
         void resized() override
         {
+            // Stale-index guard. When the engineer creates a new
+            // session, MainComponent calls engine.setStripCount(0)
+            // immediately -- the recorder's track vector shrinks
+            // synchronously. But the TrackList's TrackRows still
+            // live until EditPage's 24 Hz timer fires rebuild().
+            // If a resize cascades through during that gap, this row
+            // would dereference recorder.getTrack(stale_index) and
+            // crash (EXC_BAD_ACCESS at ~0x2090 -- the 'name' field).
+            if (index >= engine.getRecorder().getNumTracks())
+                return;
+
             // Pro Tools-style three-column header.
             //   [swatch | LEFT block | METER block | RIGHT block]
             //              name+         wide       input/output
             //              R/I/S/M       LedMeter   + vol/pan
             //              + view btn    with dB    readout
             //                            labels
-            //
-            // The a/b/c/d send-dot column was dropped; the meter now
-            // takes its place at a width that's actually readable
-            // from arm's length under stage lighting.
             auto header = getLocalBounds().withWidth (headerW);
             header.removeFromLeft (swatchW);
             header.removeFromLeft (4);
