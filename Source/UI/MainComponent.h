@@ -67,6 +67,7 @@ private:
     void showStartupWelcome();
     void showKeyboardShortcuts();
     void showAboutDialog();
+    void showFirstRunTutorial();
     void launchNewSessionDialog();
     juce::File createSessionFolderStructure (const zynforge::NewSessionDialog::Result&);
     bool saveSessionStateTo (const juce::File& dir);

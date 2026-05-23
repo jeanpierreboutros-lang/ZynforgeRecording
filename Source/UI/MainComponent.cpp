@@ -9,6 +9,7 @@
 #include "EditToolsBar.h"
 #include "../Audio/MidiClockOut.h"
 #include "../Audio/NoiseAnalyzer.h"
+#include "NoiseReportDialog.h"
 #include "ClickSettingsDialog.h"
 #include "../Audio/SpectralClassifier.h"
 #include "SessionPropertiesDialog.h"
@@ -462,7 +463,26 @@ MainComponent::MainComponent()
     // If the previous run had a session pinned, rehydrate its setlist.
     loadSetlistFromActiveSession();
 
-    juce::Timer::callAfterDelay (350, [this] { showStartupWelcome(); });
+    // First-launch tutorial — gated by appProps so it only fires once.
+    // Engineers can replay it from Help ▸ Quick Start.
+    const bool firstRun = engine.getAppProps() == nullptr
+                        || ! engine.getAppProps()->getBoolValue ("tutorialShown", false);
+    if (firstRun)
+    {
+        juce::Timer::callAfterDelay (500, [this]
+        {
+            showFirstRunTutorial();
+            if (auto* p = engine.getAppProps())
+            {
+                p->setValue ("tutorialShown", true);
+                p->saveIfNeeded();
+            }
+        });
+    }
+    else
+    {
+        juce::Timer::callAfterDelay (350, [this] { showStartupWelcome(); });
+    }
 
    #if JUCE_MAC
     juce::MenuBarModel::setMacMainMenu (this);
@@ -1607,6 +1627,59 @@ void MainComponent::onBackupClicked()
         backupButton.setButtonText ("BACKUP ✓");
         showStatus ("Backup folder → " + dir.getFileName());
     });
+}
+
+void MainComponent::showFirstRunTutorial()
+{
+    // Sequential walkthrough — each AlertWindow chains the next via
+    // its modal callback. Plain dialogs (not arrow callouts) so the
+    // tutorial keeps working even if the layout shifts later.
+    struct Step { juce::String title; juce::String body; };
+    static const std::vector<Step> steps = {
+        { "Welcome to Zynforge Recording",
+          "Live multitrack recording + virtual soundcheck.\n\n"
+          "This 5-step tour shows you how to capture your first session. "
+          "You can replay this any time from Help \xE2\x96\xB8 Quick Start." },
+        { "Step 1 of 5 \xE2\x80\x94 Add channels",
+          "Click the green + CH button in the top-right header to add channels. "
+          "Pick a count (e.g. 8 for a basic drum kit) and tick Stereo for pairs. "
+          "Channels appear in the mixer left-to-right." },
+        { "Step 2 of 5 \xE2\x80\x94 Arm tracks",
+          "On each channel strip, click the red R button to ARM it for recording. "
+          "Click the green I button to also monitor (hear) it through your outputs." },
+        { "Step 3 of 5 \xE2\x80\x94 Record + play back",
+          "Press the red record button in the transport bar (centre-bottom of "
+          "the header) to start recording. Press it again to stop.\n\n"
+          "When you stop, the session auto-loads for playback. Press play "
+          "(green triangle) or just SPACEBAR to hear what you captured." },
+        { "Step 4 of 5 \xE2\x80\x94 Cue list for shows",
+          "For playback shows, build a setlist with the cue bar at the top. "
+          "Each cue snapshots fader / pan / routing \xE2\x80\x94 recall via cue "
+          "buttons OR number keys 1\xE2\x80\x93""9. Soft-takeover ramps prevent clicks." },
+        { "Step 5 of 5 \xE2\x80\x94 Help is always one menu away",
+          "Help \xE2\x96\xB8 Keyboard Shortcuts shows every shortcut.\n"
+          "Help \xE2\x96\xB8 Quick Start replays this tour.\n\n"
+          "You're ready. Press OK to start your first session." }
+    };
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    std::shared_ptr<std::function<void (int)>> runner = std::make_shared<std::function<void (int)>>();
+    *runner = [self, runner] (int idx)
+    {
+        if (self == nullptr || idx >= (int) steps.size()) return;
+        const auto& s = steps[(size_t) idx];
+        auto* aw = new juce::AlertWindow (s.title, s.body, juce::MessageBoxIconType::InfoIcon);
+        const bool last = (idx + 1 >= (int) steps.size());
+        aw->addButton (last ? "OK" : "Next", 1, juce::KeyPress (juce::KeyPress::returnKey));
+        if (! last) aw->addButton ("Skip tour", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        aw->enterModalState (true, juce::ModalCallbackFunction::create (
+            [aw, runner, idx, last] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            if (result == 1 && ! last && runner) (*runner) (idx + 1);
+        }));
+    };
+    (*runner) (0);
 }
 
 void MainComponent::showKeyboardShortcuts()
@@ -2923,17 +2996,14 @@ void MainComponent::runNoiseAnalysis()
             + " analysed — " + juce::String (humCount) + " with hum, "
             + juce::String (bumpCount) + " with mic bumps. Report saved to noise_report.json.";
 
-        juce::String detail;
-        for (const auto& f : findings)
-            detail << zynforge::NoiseAnalyzer::summaryLine (f) << "\n";
-
-        juce::MessageManager::callAsync ([self, summary, detail]
+        juce::MessageManager::callAsync ([self, summary, findings]
         {
             if (self == nullptr) return;
             self->showStatus (summary);
-            juce::AlertWindow::showMessageBoxAsync (
-                juce::MessageBoxIconType::InfoIcon,
-                "Noise analysis", detail, "OK");
+            // Sortable table replaces the text dump — engineer clicks
+            // column headers to sort by worst hum / most bumps /
+            // highest noise floor.
+            zynforge::NoiseReportDialog::launch (findings);
         });
     });
 }
