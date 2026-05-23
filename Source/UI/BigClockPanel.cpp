@@ -29,11 +29,23 @@ namespace zynforge
 
     void BigClockPanel::setDiskInfo (double gb, int ms, juce::int64 mis, double remainingSec)
     {
-        freeGB           = gb;
+        // Called at the MainComponent timer rate (24 Hz). Without
+        // change detection, the unconditional repaint here drives
+        // the BigClock to repaint 24 times a second even when the
+        // shown numbers haven't moved a single digit. Round each
+        // value to the visible precision so trivial float jitter
+        // doesn't defeat the check.
+        const double newFreeGB    = std::round (gb * 10.0) / 10.0;   // 1 dp
+        const int    newRemainSec = (int) std::round (remainingSec);
+        const bool changed = newFreeGB    != freeGB
+                          || ms           != lastWriteMs
+                          || mis          != missed
+                          || newRemainSec != (int) std::round (remainingSeconds);
+        freeGB           = newFreeGB;
         lastWriteMs      = ms;
         missed           = mis;
         remainingSeconds = remainingSec;
-        repaint();
+        if (changed) repaint();
     }
 
     void BigClockPanel::setArmedReady (bool ready)

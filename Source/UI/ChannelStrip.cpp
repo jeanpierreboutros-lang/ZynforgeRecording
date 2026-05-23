@@ -157,48 +157,75 @@ namespace zynforge
 
     void ChannelStrip::refreshAppearance()
     {
-        // Name: TrackState is authoritative; only update if it changed.
-        if (nameLabel.getText() != state.name)
-            nameLabel.setText (state.name, juce::dontSendNotification);
+        // refreshAppearance fires 10x per second. Most ticks nothing
+        // has changed -- without change detection the unconditional
+        // setColour + repaint at the bottom drives 10 Hz of paint
+        // churn per strip even on a silent mixer. Track whether any
+        // mirror operation actually mutated state; only repaint if so.
+        bool dirty = false;
 
-        // Mirror toggle-button visual state from TrackState atomics so
-        // OSC / MIDI / EDIT-view changes flip the buttons here too.
+        // Name
+        if (nameLabel.getText() != state.name)
+        {
+            nameLabel.setText (state.name, juce::dontSendNotification);
+            dirty = true;
+        }
+
+        // Toggle buttons (R / M / Mu / S)
         const bool armed  = state.armed .load (std::memory_order_relaxed);
         const bool mon    = state.monitor.load (std::memory_order_relaxed);
         const bool muted  = state.muted .load (std::memory_order_relaxed);
         const bool soloed = state.soloed.load (std::memory_order_relaxed);
-        if (armButton .getToggleState() != armed)  armButton .setToggleState (armed,  juce::dontSendNotification);
-        if (monButton .getToggleState() != mon)    monButton .setToggleState (mon,    juce::dontSendNotification);
-        if (muteButton.getToggleState() != muted)  muteButton.setToggleState (muted,  juce::dontSendNotification);
-        if (soloButton.getToggleState() != soloed) soloButton.setToggleState (soloed, juce::dontSendNotification);
+        if (armButton .getToggleState() != armed)  { armButton .setToggleState (armed,  juce::dontSendNotification); dirty = true; }
+        if (monButton .getToggleState() != mon)    { monButton .setToggleState (mon,    juce::dontSendNotification); dirty = true; }
+        if (muteButton.getToggleState() != muted)  { muteButton.setToggleState (muted,  juce::dontSendNotification); dirty = true; }
+        if (soloButton.getToggleState() != soloed) { soloButton.setToggleState (soloed, juce::dontSendNotification); dirty = true; }
 
-        // Mirror fader + pan slider value from TrackState too so OSC
-        // gain / pan changes (and stereo-pair sync) appear in the UI.
+        // Fader + pan
         const float gainDb = state.gainDb.load (std::memory_order_relaxed);
         const float panL   = state.pan   .load (std::memory_order_relaxed);
         if (std::abs ((float) gainFader.getValue() - gainDb) > 0.05f)
+        {
             gainFader.setValue (gainDb, juce::dontSendNotification);
+            dirty = true;
+        }
         if (std::abs ((float) panSlider.getValue() - panL) > 0.01f)
+        {
             panSlider.setValue (panL, juce::dontSendNotification);
+            dirty = true;
+        }
         if (pairState != nullptr)
         {
             const float panR = pairState->pan.load (std::memory_order_relaxed);
             if (std::abs ((float) panSliderR.getValue() - panR) > 0.01f)
+            {
                 panSliderR.setValue (panR, juce::dontSendNotification);
+                dirty = true;
+            }
         }
 
-        // Colour: re-resolve and push to the swatch + sliders so the
-        // fader fill / pan thumb track the live channel colour.
+        // Colour mirror -- only push to LookAndFeel if the resolved
+        // colour ARGB actually changed (engineer recoloured the strip,
+        // VCA group was reassigned, etc.). JUCE's setColour calls
+        // mark the slider as dirty whether or not the value changed,
+        // so guarding here prevents a 10 Hz repaint storm.
         const auto resolved = getResolvedColour();
-        const auto knobCol  = resolved.brighter (0.30f);
-        if (swatch != nullptr)
-            swatch->setDisplayColour (resolved);
-        gainFader.setColour (juce::Slider::thumbColourId, knobCol);
-        panSlider.setColour (juce::Slider::thumbColourId, knobCol);
-        panSlider.setColour (juce::Slider::rotarySliderFillColourId, knobCol);
-        panSliderR.setColour (juce::Slider::thumbColourId, knobCol);
-        panSliderR.setColour (juce::Slider::rotarySliderFillColourId, knobCol);
-        repaint();
+        if (resolved.getARGB() != lastAppliedColour)
+        {
+            lastAppliedColour = resolved.getARGB();
+            const auto knobCol = resolved.brighter (0.30f);
+            if (swatch != nullptr)
+                swatch->setDisplayColour (resolved);
+            gainFader.setColour (juce::Slider::thumbColourId, knobCol);
+            panSlider.setColour (juce::Slider::thumbColourId, knobCol);
+            panSlider.setColour (juce::Slider::rotarySliderFillColourId, knobCol);
+            panSliderR.setColour (juce::Slider::thumbColourId, knobCol);
+            panSliderR.setColour (juce::Slider::rotarySliderFillColourId, knobCol);
+            dirty = true;
+        }
+
+        if (dirty)
+            repaint();
     }
 
     void ChannelStrip::refreshRoutingSelection()

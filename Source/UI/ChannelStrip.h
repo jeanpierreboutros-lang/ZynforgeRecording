@@ -140,6 +140,11 @@ namespace zynforge
         std::unique_ptr<StripTimer> stripTimer;
 
         bool selected { false };
+        // Cached ARGB of the last colour pushed into the swatch + sliders
+        // so refreshAppearance only re-applies it on actual change.
+        // Zero is a safe "not yet applied" sentinel because any real
+        // colour has a non-zero alpha.
+        juce::uint32 lastAppliedColour { 0 };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ChannelStrip)
     };

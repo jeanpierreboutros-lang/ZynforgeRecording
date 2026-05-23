@@ -26,11 +26,14 @@ namespace zynforge
         const float rms  = state.rms .load (std::memory_order_relaxed);
         const bool  clip = state.clipped.load (std::memory_order_relaxed);
 
+        const float prevP = displayPeak, prevR = displayRms;
         // smooth display values
         displayPeak = juce::jmax (peak, displayPeak * 0.85f);
         displayRms  = juce::jmax (rms,  displayRms  * 0.7f);
+        const bool prevClip = showClip;
         if (clip) showClip = true;
 
+        float prevPR = displayPeakR, prevRR = displayRmsR;
         if (stereoR != nullptr)
         {
             const float pR = stereoR->peak.load (std::memory_order_relaxed);
@@ -40,7 +43,22 @@ namespace zynforge
             displayRmsR  = juce::jmax (rR, displayRmsR  * 0.7f);
             if (cR) showClip = true;
         }
-        repaint();
+
+        // Skip the repaint when nothing visibly changed. The decay
+        // step would still nudge the displayed value by a fraction of
+        // a dB, but if it's smaller than ~0.4 dB the segmented LED
+        // ladder doesn't show a new step, so the repaint is wasted.
+        // Idle mixers spend most of their life here: peak == 0 and
+        // displayPeak == 0, so the early-out saves N strips * 30 Hz
+        // of paint churn.
+        constexpr float kRedrawEps = 0.004f;   // ~0.4 dB on the segment scale
+        const bool moved = std::abs (displayPeak  - prevP)  > kRedrawEps
+                        || std::abs (displayRms   - prevR)  > kRedrawEps
+                        || std::abs (displayPeakR - prevPR) > kRedrawEps
+                        || std::abs (displayRmsR  - prevRR) > kRedrawEps
+                        || showClip != prevClip;
+        if (moved)
+            repaint();
     }
 
     void LedMeter::mouseDown (const juce::MouseEvent&)

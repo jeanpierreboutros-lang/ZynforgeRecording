@@ -14,11 +14,24 @@ namespace zynforge
                                     float ringFillPct,
                                     juce::int64 missedSamples)
     {
-        cpu    = juce::jlimit (0.0f, 100.0f, cpuPct);
-        disk   = juce::jmax (0.0f, diskMBPerSec);
-        buf    = juce::jlimit (0.0f, 100.0f, ringFillPct);
+        // Called at MainComponent's 24 Hz timer rate. Round inputs to
+        // the precision actually shown on screen so float jitter
+        // doesn't repeatedly trigger a repaint when the number isn't
+        // visibly moving. ~1 percentage point on CPU / buf, ~0.1 MB/s
+        // on disk -- enough resolution to track real changes, coarse
+        // enough to drop the no-op repaints.
+        const float newCpu  = std::round (juce::jlimit (0.0f, 100.0f, cpuPct));
+        const float newDisk = std::round (juce::jmax (0.0f, diskMBPerSec) * 10.0f) / 10.0f;
+        const float newBuf  = std::round (juce::jlimit (0.0f, 100.0f, ringFillPct));
+        const bool changed = newCpu  != cpu
+                          || newDisk != disk
+                          || newBuf  != buf
+                          || missedSamples != missed;
+        cpu    = newCpu;
+        disk   = newDisk;
+        buf    = newBuf;
         missed = missedSamples;
-        repaint();
+        if (changed) repaint();
     }
 
     static juce::Colour ledColour (float pct)
