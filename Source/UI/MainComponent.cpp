@@ -302,14 +302,8 @@ MainComponent::MainComponent()
     };
     addAndMakeVisible (automationToolbar);
 
-    if (editPage != nullptr)
-    {
-        editPage->setAutomationToolbar (&automationToolbar);
-        // Re-parent the EDIT tools bar from EditPage to MainComponent
-        // so it can share the same 28 px strip as the automation bar.
-        if (auto* tb = editPage->getEditToolsBar())
-            addAndMakeVisible (*tb);
-    }
+    // editPage doesn't exist yet here — the real wiring happens below
+    // after `editPage = std::make_unique<EditPage>(...)`.
 
     // onClearAll wipes the active parameter across every track.
     automationToolbar.onClearAll = [this]
@@ -390,6 +384,11 @@ MainComponent::MainComponent()
     // Wire the toolbar AFTER the page exists. The handlers above
     // captured 'this' so they will still see editPage when they fire.
     editPage->setAutomationToolbar (&automationToolbar);
+    // Re-parent the EDIT-tools palette onto MainComponent so it can
+    // share the same 28 px row as the automation toolbar. (The earlier
+    // if-block tried this too but ran before editPage existed.)
+    if (auto* tb = editPage->getEditToolsBar())
+        addAndMakeVisible (*tb);
     switchView (View::Mix);
 
     masterStrip = std::make_unique<zynforge::MasterStrip> (engine);
