@@ -22,7 +22,7 @@ namespace zynforge
             "1/8",       // eighth
             "1/16",      // sixteenth
             "3",         // triplet
-            "\xe2\x80\x94"  // em dash = silent
+            "-"  // hyphen = silent
         };
 
         class VoiceRow final : public juce::Component

@@ -315,7 +315,7 @@ namespace zynforge
             }
             else
             {
-                sendMenu.addItem (-1, "(no bus tracks — create one via +CH \xe2\x96\xb8 Bus)", false);
+                sendMenu.addItem (-1, "(no bus tracks - create one via +CH > Bus)", false);
             }
             menu.addSubMenu ("Send to bus", sendMenu);
         }

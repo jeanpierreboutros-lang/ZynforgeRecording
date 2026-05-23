@@ -71,7 +71,7 @@ namespace zynforge
         // Don't fight the combo's own dropdown — it owns the left-click
         // popup. Right-click on it still opens our menu.
         juce::PopupMenu menu;
-        menu.addItem (1, "Rename cue\xe2\x80\xa6", onRenameCue != nullptr);
+        menu.addItem (1, "Rename cue...", onRenameCue != nullptr);
         menu.addItem (2, "Delete cue",            onDeleteCue != nullptr);
         menu.addSeparator();
         menu.addItem (3, "Move cue up",            onMoveCue != nullptr);

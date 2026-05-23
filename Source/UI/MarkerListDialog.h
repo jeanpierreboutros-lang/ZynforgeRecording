@@ -98,7 +98,7 @@ namespace zynforge
             if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
             {
                 juce::PopupMenu m;
-                m.addItem (1, "Rename\xe2\x80\xa6");
+                m.addItem (1, "Rename...");
                 m.addItem (2, "Delete");
                 m.showMenuAsync (juce::PopupMenu::Options(), [this, row] (int chosen)
                 {

@@ -1359,7 +1359,7 @@ void MainComponent::timerCallback()
     {
         const auto& clock = engine.getMidiClockOut();
         const auto label = clock.isEnabled()
-            ? juce::String ("MIDI \xe2\x97\x8f ") + clock.getOutputDeviceName()
+            ? juce::String ("MIDI * ") + clock.getOutputDeviceName()
             : juce::String();
         if (midiStatusLabel.getText() != label)
             midiStatusLabel.setText (label, juce::dontSendNotification);
@@ -1373,7 +1373,7 @@ void MainComponent::timerCallback()
         {
             const auto n = d->getName();
             if (n.containsIgnoreCase ("Dante") || n.containsIgnoreCase ("DVS"))
-                txt = "DANTE \xE2\x97\x8F " + n;
+                txt = "DANTE * " + n;
         }
         if (danteLabel.getText() != txt)
             danteLabel.setText (txt, juce::dontSendNotification);
@@ -1798,28 +1798,28 @@ void MainComponent::showFirstRunTutorial()
         { "Welcome to Zynforge Recording",
           "Live multitrack recording + virtual soundcheck.\n\n"
           "This 5-step tour shows you how to capture your first session. "
-          "You can replay this any time from Help \xE2\x96\xB8 Quick Start." },
-        { "Step 1 of 5 \xE2\x80\x94 Add channels",
+          "You can replay this any time from Help > Quick Start." },
+        { "Step 1 of 5 — Add channels",
           "Click the green + CH button in the top-right header to add channels. "
           "Pick a count (e.g. 8 for a basic drum kit) and tick Stereo for pairs. "
           "Channels appear in the mixer left-to-right." },
-        { "Step 2 of 5 \xE2\x80\x94 Arm tracks",
+        { "Step 2 of 5 — Arm tracks",
           "On each channel strip, click the red R button to ARM it for recording. "
           "Click the green I button to also monitor (hear) it through your outputs.\n\n"
           "Tip: Shift-click multiple strips to select them, then bulk-arm / delete / "
-          "colour them via Edit \xE2\x96\xB8 Selection. Esc clears the selection." },
-        { "Step 3 of 5 \xE2\x80\x94 Record + play back",
+          "colour them via Edit > Selection. Esc clears the selection." },
+        { "Step 3 of 5 — Record + play back",
           "Press the red record button in the transport bar (centre-bottom of "
           "the header) to start recording. Press it again to stop.\n\n"
           "When you stop, the session auto-loads for playback. Press play "
           "(green triangle) or just SPACEBAR to hear what you captured." },
-        { "Step 4 of 5 \xE2\x80\x94 Cue list for shows",
+        { "Step 4 of 5 — Cue list for shows",
           "For playback shows, build a setlist with the cue bar at the top. "
-          "Each cue snapshots fader / pan / routing \xE2\x80\x94 recall via cue "
-          "buttons OR number keys 1\xE2\x80\x93""9. Soft-takeover ramps prevent clicks." },
-        { "Step 5 of 5 \xE2\x80\x94 Help is always one menu away",
-          "Help \xE2\x96\xB8 Keyboard Shortcuts shows every shortcut.\n"
-          "Help \xE2\x96\xB8 Quick Start replays this tour.\n\n"
+          "Each cue snapshots fader / pan / routing—recall via cue "
+          "buttons OR number keys 1-""9. Soft-takeover ramps prevent clicks." },
+        { "Step 5 of 5 — Help is always one menu away",
+          "Help > Keyboard Shortcuts shows every shortcut.\n"
+          "Help > Quick Start replays this tour.\n\n"
           "You're ready. Press OK to start your first session." }
     };
 
@@ -1851,7 +1851,7 @@ void MainComponent::showKeyboardShortcuts()
         "    M             Drop marker at playhead\n"
         "\n"
         "CUES\n"
-        "    1 \xE2\x80\x93 9         Jump to cue 1 \xE2\x80\x93 9\n"
+        "    1 - 9         Jump to cue 1 - 9\n"
         "\n"
         "EDIT\n"
         "    A             Solo selected strips\n"
@@ -1859,16 +1859,16 @@ void MainComponent::showKeyboardShortcuts()
         "    ,              Set range start at playhead\n"
         "    .              Set range end at playhead\n"
         "    4             Toggle snap mode\n"
-        "    \xE2\x8C\x98 + Z         Undo last clip edit\n"
-        "    \xE2\x8C\x98 + R         Redo\n"
-        "    \xE2\x8C\x98 + X         Cut selected strips\n"
-        "    \xE2\x8C\x98 + C         Copy selected strips\n"
-        "    \xE2\x8C\x98 + V         Paste strips\n"
+        "    Cmd + Z         Undo last clip edit\n"
+        "    Cmd + R         Redo\n"
+        "    Cmd + X         Cut selected strips\n"
+        "    Cmd + C         Copy selected strips\n"
+        "    Cmd + V         Paste strips\n"
         "\n"
         "MIXER\n"
         "    Shift + click strip\n"
         "                    Toggle multi-selection (additive)\n"
-        "    \xE2\x8C\x98 + A         Select every strip\n"
+        "    Cmd + A         Select every strip\n"
         "    Esc           Clear strip selection\n"
         "    Right-click strip\n"
         "                    Rename / Colour / Stereo / Stream send / VCA assign / Output-mute\n"
@@ -1908,9 +1908,9 @@ void MainComponent::showUserGuide()
         "CUE LIST (top bar)\n"
         "  + Cue captures current fader / pan / routing / mute / arm + "
         "playback position + tempo. Recall via cue buttons OR number "
-        "keys 1\xE2\x80\x93""9. 250 ms soft-takeover prevents clicks.\n\n"
+        "keys 1-""9. 250 ms soft-takeover prevents clicks.\n\n"
         "VCA PANEL (toggle with the VCA button)\n"
-        "  8 group faders. Assign strips via right-click \xE2\x96\xB8 Assign to VCA. "
+        "  8 group faders. Assign strips via right-click > Assign to VCA. "
         "VCA fader sums into each assigned strip's gain. VCA mute / solo "
         "follows console (solo-in-place) convention.\n\n"
         "TAKE SWAP (EDIT row right-click)\n"
@@ -1918,27 +1918,27 @@ void MainComponent::showUserGuide()
         "current state as a new take mid-comp; switch between takes "
         "without losing edits.\n\n"
         "DEVICE / FORMAT / BACKUP\n"
-        "  DEVICE opens the audio interface picker. FILE \xE2\x96\xB8 New Session "
+        "  DEVICE opens the audio interface picker. FILE > New Session "
         "configures format + sample rate. BACKUP picks a second drive "
         "where every track mirrors as you record.\n\n"
         "MIDI CLOCK\n"
-        "  Session \xE2\x96\xB8 MIDI clock out picks an output. Tempo drives "
+        "  Session > MIDI clock out picks an output. Tempo drives "
         "24 PPQN; play / pause / stop send midi-start / continue / stop.\n\n"
         "NOISE ANALYSIS\n"
-        "  Session \xE2\x96\xB8 Analyse for noise scans every WAV for "
+        "  Session > Analyse for noise scans every WAV for "
         "50 / 60 Hz hum, mic bumps, and high noise floor.\n\n"
         "DANTE\n"
         "  Native Dante requires Audinate's paid SDK + NDA. Practical "
         "path: install Audinate's free Dante Virtual Soundcard (DVS) "
         "from audinate.com. DVS exposes up to 64\xC3\x97""64 Dante channels "
-        "as a Core Audio device \xE2\x80\x94 just pick it in DEVICE and route "
+        "as a Core Audio device—just pick it in DEVICE and route "
         "strips to its channels via PATCH. ZynForge auto-detects DVS "
         "and shows a 'DANTE' badge in the status bar.\n\n"
         "NETWORK AUDIO (NDI)\n"
-        "  Session \xE2\x96\xB8 NDI broadcast pushes the master mix onto your "
+        "  Session > NDI broadcast pushes the master mix onto your "
         "LAN as an NDI Audio source. Any NDI receiver (NDI Tools, OBS, "
         "TouchDesigner) on the same network can monitor your live "
-        "stream. Requires NDI runtime from ndi.tv \xE2\x80\x94 free.";
+        "stream. Requires NDI runtime from ndi.tv—free.";
 
     auto* aw = new juce::AlertWindow ("Zynforge user guide", body,
                                       juce::MessageBoxIconType::InfoIcon);
@@ -1953,7 +1953,7 @@ void MainComponent::showAboutDialog()
         juce::MessageBoxIconType::InfoIcon,
         "Zynforge Recording",
         "Live multitrack recording + virtual soundcheck.\n\n"
-        "JUCE 8 \xE2\x80\xA2 C++20 \xE2\x80\xA2 macOS Universal\n"
+        "JUCE 8 * C++20 * macOS Universal\n"
         "\xC2\xA9 Zynforge",
         "OK");
 }
@@ -4482,9 +4482,9 @@ void MainComponent::showPreflightChecklist()
 
     auto chk = [] (bool ok, bool warn = false) -> juce::String
     {
-        return ok ? juce::String ("\xe2\x9c\x93  ")    // ✓
-              : warn ? juce::String ("\xe2\x9a\xa0  ") // ⚠
-                      : juce::String ("\xe2\x9c\x97  ");// ✗
+        return ok ? juce::String ("[OK]  ")    // ✓
+              : warn ? juce::String ("[!]  ") // ⚠
+                      : juce::String ("[X]  ");// ✗
     };
 
     juce::String body;
@@ -4521,13 +4521,13 @@ void MainComponent::showPreflightChecklist()
          << "\n";
 
     if (engine.getMidiClockOut().isEnabled())
-        body << "\xe2\x9c\x93  MIDI clock master: " << engine.getMidiClockOut().getOutputDeviceName() << "\n";
+        body << "[OK]  MIDI clock master: " << engine.getMidiClockOut().getOutputDeviceName() << "\n";
 
     if (device != nullptr)
     {
         const auto dn = device->getName();
         if (dn.containsIgnoreCase ("Dante") || dn.containsIgnoreCase ("DVS"))
-            body << "\xe2\x9c\x93  Dante network active (" << dn << ")\n";
+            body << "[OK]  Dante network active (" << dn << ")\n";
     }
 
     auto* aw = new juce::AlertWindow ("Pre-flight checklist",
@@ -4603,8 +4603,8 @@ void MainComponent::printSetlist()
          << "@media print{body{margin:12pt}}"
          << "</style></head><body>"
          << "<h1>" << sessName << "</h1>"
-         << "<h2>Setlist \xe2\x80\x94 " << juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H:%M")
-         << " \xe2\x80\xa2 " << (int) cues.size() << " cue" << (cues.size() == 1 ? "" : "s")
+         << "<h2>Setlist - " << juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H:%M")
+         << " * " << (int) cues.size() << " cue" << (cues.size() == 1 ? "" : "s")
          << "</h2>"
          << "<table><thead><tr><th class=\"n\">#</th><th>Cue</th><th>Time</th><th class=\"n\">BPM</th><th class=\"n\">Strips</th></tr></thead><tbody>";
 
@@ -4622,7 +4622,7 @@ void MainComponent::printSetlist()
         html << "<tr><td class=\"n\">" << (int) (i + 1) << "</td>"
              << "<td class=\"cue\">" << c.name.replace ("&", "&amp;").replace ("<", "&lt;") << "</td>"
              << "<td>" << timeStr << "</td>"
-             << "<td class=\"n bpm\">" << (c.tempoBpm > 0.0f ? juce::String (c.tempoBpm, 1) : juce::String ("\xe2\x80\x94"))
+             << "<td class=\"n bpm\">" << (c.tempoBpm > 0.0f ? juce::String (c.tempoBpm, 1) : juce::String (" -"))
              << "</td>"
              << "<td class=\"n\">" << (int) c.strips.size() << "</td></tr>";
     }
@@ -4630,7 +4630,7 @@ void MainComponent::printSetlist()
 
     target.replaceWithText (html);
     target.startAsProcess();    // open in default browser
-    showStatus ("Setlist \xe2\x86\x92 " + target.getFileName() + " (printable)");
+    showStatus ("Setlist -> " + target.getFileName() + " (printable)");
 }
 
 void MainComponent::promptDeleteSessionTemplate()

@@ -200,8 +200,8 @@ namespace zynforge
             void showContextMenu()
             {
                 juce::PopupMenu menu;
-                menu.addItem (1, "Rename\xe2\x80\xa6");
-                menu.addItem (2, "Change colour\xe2\x80\xa6");
+                menu.addItem (1, "Rename...");
+                menu.addItem (2, "Change colour...");
                 menu.addItem (3, "Reset colour to default");
                 menu.addSeparator();
                 // List every strip on this VCA bus, click to unassign.
