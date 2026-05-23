@@ -22,6 +22,19 @@ namespace zynforge
         std::atomic<float> gainDb  { 0.0f };           // -60 .. +12
         std::atomic<float> pan     { 0.0f };           // -1 = L, 0 = C, +1 = R
 
+        // Soft-takeover targets used during cue recall — the audio thread
+        // ramps gainDb / pan from their current value to these targets
+        // over rampSamplesRemaining samples so a cue change doesn't
+        // produce an audible step / click. When the ramp is inactive,
+        // these mirror gainDb / pan.
+        std::atomic<float>       rampTargetGainDb     { 0.0f };
+        std::atomic<float>       rampTargetPan        { 0.0f };
+        std::atomic<juce::int64> rampSamplesRemaining { 0 };
+        // Output muting — independent of `muted` (which gates BOTH the
+        // monitor bus AND the per-channel output). outputMuted gates the
+        // physical output only; muted continues to gate the monitor sum.
+        std::atomic<bool> outputMuted { false };
+
         // Routing. -1 = unrouted (no input captured / no output played).
         // Default of -2 means "use identity routing" (resolved at init).
         std::atomic<int> inputRouting  { -2 };

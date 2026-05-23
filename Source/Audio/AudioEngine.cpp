@@ -1089,8 +1089,81 @@ namespace zynforge
         // the fader was 'resetting itself' when the engineer pushed
         // it past the centre point.
         dB = juce::jlimit (-60.0f, 12.0f, dB);
-        recorder.getTrack (channelIndex).gainDb.store (dB, std::memory_order_relaxed);
+        auto& t = recorder.getTrack (channelIndex);
+        t.gainDb.store (dB, std::memory_order_relaxed);
+        // Direct set cancels any in-flight ramp so the engineer's slow
+        // physical fader move doesn't fight a finishing cue ramp.
+        t.rampTargetGainDb.store (dB, std::memory_order_relaxed);
+        t.rampSamplesRemaining.store (0, std::memory_order_relaxed);
         stripGains.setGainDb (channelIndex, dB);
+    }
+
+    void AudioEngine::setTrackGainDbRamped (int channelIndex, float dB, double seconds)
+    {
+        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
+        dB = juce::jlimit (-60.0f, 12.0f, dB);
+        auto& t = recorder.getTrack (channelIndex);
+        const auto sr = deviceSampleRate.load (std::memory_order_relaxed);
+        const juce::int64 samples = sr > 0.0
+            ? (juce::int64) (sr * juce::jmax (0.0, seconds))
+            : 0;
+        t.rampTargetGainDb     .store (dB,      std::memory_order_relaxed);
+        t.rampSamplesRemaining .store (samples, std::memory_order_relaxed);
+        if (samples == 0)
+            t.gainDb.store (dB, std::memory_order_relaxed);   // instant
+        stripGains.setGainDb (channelIndex, dB);              // persisted target
+    }
+
+    void AudioEngine::setTrackPanRamped (int channelIndex, float pan, double seconds)
+    {
+        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
+        pan = juce::jlimit (-1.0f, 1.0f, pan);
+        auto& t = recorder.getTrack (channelIndex);
+        const auto sr = deviceSampleRate.load (std::memory_order_relaxed);
+        const juce::int64 samples = sr > 0.0
+            ? (juce::int64) (sr * juce::jmax (0.0, seconds))
+            : 0;
+        t.rampTargetPan       .store (pan,     std::memory_order_relaxed);
+        // Reuse rampSamplesRemaining for pan — gain + pan ramp together
+        // during a cue recall, same duration, so one counter is enough.
+        // (Pan ramp uses the same countdown as the gain ramp.)
+        t.rampSamplesRemaining.store (samples, std::memory_order_relaxed);
+        if (samples == 0)
+            t.pan.store (pan, std::memory_order_relaxed);
+    }
+
+    void AudioEngine::tickRamps (int numSamples) noexcept
+    {
+        const int n = recorder.getNumTracks();
+        for (int i = 0; i < n; ++i)
+        {
+            auto& t = recorder.getTrack (i);
+            const auto remaining = t.rampSamplesRemaining.load (std::memory_order_relaxed);
+            if (remaining <= 0) continue;
+
+            const float curG = t.gainDb.load (std::memory_order_relaxed);
+            const float tgtG = t.rampTargetGainDb.load (std::memory_order_relaxed);
+            const float curP = t.pan   .load (std::memory_order_relaxed);
+            const float tgtP = t.rampTargetPan   .load (std::memory_order_relaxed);
+
+            const float frac = (float) numSamples / (float) juce::jmax<juce::int64> (numSamples, remaining);
+            const float newG = curG + (tgtG - curG) * frac;
+            const float newP = curP + (tgtP - curP) * frac;
+
+            const auto next = remaining - numSamples;
+            if (next <= 0)
+            {
+                t.gainDb.store (tgtG, std::memory_order_relaxed);
+                t.pan   .store (tgtP, std::memory_order_relaxed);
+                t.rampSamplesRemaining.store (0, std::memory_order_relaxed);
+            }
+            else
+            {
+                t.gainDb.store (newG, std::memory_order_relaxed);
+                t.pan   .store (newP, std::memory_order_relaxed);
+                t.rampSamplesRemaining.store (next, std::memory_order_relaxed);
+            }
+        }
     }
 
     void AudioEngine::setTrackPan (int channelIndex, float pan)
@@ -1165,6 +1238,11 @@ namespace zynforge
         }
 
         recorder.processBlock (routedInputs, juce::jmin (numTracks, kMaxStrips), numSamples);
+
+        // Soft-takeover ramps (cue recall) — step gain / pan per block
+        // toward their target values before they're read downstream by
+        // the monitor / per-channel output / stream-bus loops.
+        tickRamps (numSamples);
 
         // Have the player render into a scratch buffer per track, then we
         // route each track to its configured output channel.

@@ -892,6 +892,22 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         return true;
     }
 
+    // Number keys 1..9 jump to cue 1..9 if a setlist is loaded — turns
+    // the cue list into a real performance tool. Shift+number stores a
+    // new cue at the playhead (quick-build setlist).
+    {
+        const int code = key.getKeyCode();
+        if (code >= '1' && code <= '9' && ! key.getModifiers().isAnyModifierKeyDown())
+        {
+            const int target = code - '1';
+            if (target < (int) cues.size())
+            {
+                jumpToCue (target);
+                return true;
+            }
+        }
+    }
+
     const auto c = juce::CharacterFunctions::toLowerCase (key.getTextCharacter());
 
     if (c == 'm')
@@ -1268,6 +1284,28 @@ void MainComponent::onRecordClicked()
     }
 
     const auto dir = makeNewSessionDir();
+
+    // Disk-space pre-flight — abort if the drive can't hold at least
+    // 30 minutes at current SR × armed-track count × bit depth (assume
+    // 24-bit if unknown). Surface the actual free GB so the engineer
+    // knows what to clear.
+    {
+        const double sr = device->getCurrentSampleRate();
+        const int    bytesPerSample = 3;   // 24-bit ≈ worst-case PCM
+        const juce::int64 bytesPerSec    = (juce::int64) (sr * armed * bytesPerSample);
+        const juce::int64 wantBytes      = bytesPerSec * 60 * 30;  // 30 min headroom
+        const juce::int64 freeBytes      = dir.getParentDirectory().getBytesFreeOnVolume();
+        if (freeBytes > 0 && freeBytes < wantBytes)
+        {
+            const double freeGB = freeBytes / 1.0e9;
+            statusLabel.setText ("Drive has only "
+                                 + juce::String (freeGB, 1)
+                                 + " GB free — < 30 min headroom. Clear space before recording.",
+                                 juce::dontSendNotification);
+            return;
+        }
+    }
+
     if (engine.startRecording (dir))
     {
         auto msg = juce::String ("Recording ") + juce::String (armed) + "/"
@@ -1504,6 +1542,7 @@ void MainComponent::showStartupWelcome()
                         showStatus (n > 0
                                     ? "Loaded: " + recents[idx].getFileName()
                                     : "Failed to load " + recents[idx].getFileName());
+                        if (n > 0) warnIfSampleRateMismatch();
                     }
                 });
                 return;
@@ -2096,6 +2135,27 @@ void MainComponent::saveSetlistToActiveSession() const
     obj->setProperty ("updatedAt", juce::Time::getCurrentTime().toISO8601 (true));
 
     proj.replaceWithText (juce::JSON::toString (juce::var (obj.get())));
+
+    // Drop a timestamped backup copy into Session File Backups/ so a
+    // misclicked cue / accidental delete is recoverable from the show.
+    // Keep the most recent ~10 backups; older snapshots get pruned.
+    const auto backupsDir = engine.getActiveSessionDir().getChildFile ("Session File Backups");
+    if (backupsDir.createDirectory().wasOk())
+    {
+        const auto stamp = juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S");
+        const auto bk = backupsDir.getChildFile (proj.getFileNameWithoutExtension()
+                                                  + "_" + stamp + ".zfproj");
+        proj.copyFileTo (bk);
+
+        // Prune — keep only the 10 most recent.
+        auto snaps = backupsDir.findChildFiles (juce::File::findFiles, false, "*.zfproj");
+        if (snaps.size() > 10)
+        {
+            snaps.sort();   // alphabetical = chronological because of the stamp
+            for (int i = 0; i < snaps.size() - 10; ++i)
+                snaps[i].deleteFile();
+        }
+    }
 }
 
 void MainComponent::jumpToCue (int index)
@@ -2139,11 +2199,15 @@ void MainComponent::jumpToCue (int index)
     auto& rec = engine.getRecorder();
     const int total = rec.getNumTracks();
     const int n     = juce::jmin (total, (int) cue.strips.size());
+    // 250 ms soft-takeover — short enough to feel snappy on a cue
+    // jump, long enough to avoid an audible zipper / click when
+    // gain or pan jumps by 6+ dB.
+    constexpr double kCueRecallSeconds = 0.25;
     for (int i = 0; i < n; ++i)
     {
         const auto& s = cue.strips[(size_t) i];
-        engine.setTrackGainDb       (i, s.gainDb);
-        engine.setTrackPan          (i, s.pan);
+        engine.setTrackGainDbRamped (i, s.gainDb, kCueRecallSeconds);
+        engine.setTrackPanRamped    (i, s.pan,    kCueRecallSeconds);
         engine.setTrackInputRouting (i, s.inputRouting);
         engine.setTrackOutputRouting(i, s.outputRouting);
 
@@ -3594,6 +3658,25 @@ void MainComponent::onExportIndividualTrack (int channelIndex)
     });
 }
 
+void MainComponent::warnIfSampleRateMismatch()
+{
+    auto* dev = engine.getDeviceManager().getCurrentAudioDevice();
+    const double sessSR = engine.getPlayer().getSampleRate();
+    const double devSR  = dev != nullptr ? dev->getCurrentSampleRate() : 0.0;
+    if (sessSR <= 0.0 || devSR <= 0.0) return;
+    if (std::abs (sessSR - devSR) < 0.5) return;
+
+    juce::AlertWindow::showMessageBoxAsync (
+        juce::MessageBoxIconType::WarningIcon,
+        "Sample-rate mismatch",
+        "This session was recorded at " + juce::String ((int) sessSR)
+            + " Hz but your audio device is set to " + juce::String ((int) devSR)
+            + " Hz.\n\nPlayback will be pitched + sped up / slowed down. "
+              "Open DEVICE and switch to "
+            + juce::String ((int) sessSR) + " Hz for clean playback.",
+        "OK");
+}
+
 void MainComponent::onLoadSessionClicked()
 {
     chooser = std::make_unique<juce::FileChooser> (
@@ -3614,9 +3697,14 @@ void MainComponent::onLoadSessionClicked()
         loadSetlistFromActiveSession();
         const int n = engine.loadSession (dir);
         if (n > 0)
+        {
             statusLabel.setText ("Loaded " + juce::String (n) + " tracks", juce::dontSendNotification);
+            warnIfSampleRateMismatch();
+        }
         else
+        {
             statusLabel.setText ("No Track_*.wav found in folder", juce::dontSendNotification);
+        }
         playButton.setButtonText ("PLAY");
         updateTransportLabels();
     });

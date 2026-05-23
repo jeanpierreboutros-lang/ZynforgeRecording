@@ -131,6 +131,8 @@ private:
     juce::File makeNewSessionDir() const;
     juce::File getSessionsRoot() const;
     void timerCallback() override;
+    // Open a modal warning if the loaded session's SR doesn't match the device.
+    void warnIfSampleRateMismatch();
 
     zynforge::ZynForgeLookAndFeel laf;
     zynforge::AudioEngine         engine;

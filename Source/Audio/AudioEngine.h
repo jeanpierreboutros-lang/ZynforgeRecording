@@ -99,6 +99,14 @@ namespace zynforge
         // Per-channel playback gain (dB) + pan (-1..+1). Both persist.
         void  setTrackGainDb (int channelIndex, float dB);
         void  setTrackPan    (int channelIndex, float pan);
+        // Soft-takeover variants — interpolate over the given duration.
+        // Used by cue recall so a setlist jump doesn't audibly click
+        // when the cue's stored fader / pan values differ from the
+        // engineer's current settings.
+        void  setTrackGainDbRamped (int channelIndex, float dB,  double seconds);
+        void  setTrackPanRamped    (int channelIndex, float pan, double seconds);
+        // Per-block ramp stepper — called from the audio callback.
+        void  tickRamps (int numSamples) noexcept;
 
         // Routing. -1 = unrouted; values clamped to current device's range.
         void  setTrackInputRouting  (int channelIndex, int deviceCh);
