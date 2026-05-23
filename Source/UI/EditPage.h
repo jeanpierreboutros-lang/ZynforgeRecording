@@ -65,8 +65,10 @@ namespace zynforge
         std::unique_ptr<TrackList>         list;
         juce::Label                        emptyLabel;
 
-        int  lastTrackCount  { -1 };
-        bool lastLoaded      { false };
+        int        lastTrackCount  { -1 };
+        bool       lastLoaded      { false };
+        bool       lastRecording   { false };
+        juce::File lastSessionDir;
         AutomationToolbar*             toolbar  { nullptr };
         std::unique_ptr<EditToolsBar>  toolsBar;
         bool clickPresent { false };

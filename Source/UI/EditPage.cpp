@@ -319,6 +319,18 @@ namespace zynforge
             repaint();
         }
 
+        // Re-issue the thumbnail's input source from the current files so
+        // a file that's actively being written (recorder live-capture)
+        // gets re-scanned and the waveform grows on screen.
+        void reloadCurrentWaveformFiles()
+        {
+            if (currentFileL.existsAsFile())
+                thumbnailL.setSource (new juce::FileInputSource (currentFileL));
+            if (currentFileR.existsAsFile())
+                thumbnailR.setSource (new juce::FileInputSource (currentFileR));
+            repaint();
+        }
+
         // Drawn position of the playhead within this row, in pixels from
         // the start of the waveform pane. -1 = playhead not visible / no
         // session loaded.
@@ -1840,16 +1852,41 @@ namespace zynforge
                 for (auto& r : rows) r->setWaveformFiles ({}, {});
                 return;
             }
+            // Pro Tools-style: tracks live under "Audio Files/". Legacy
+            // sessions kept them at the root, so fall back to the root
+            // when the subfolder is absent.
+            const auto audioFiles = sessionDir.getChildFile ("Audio Files");
+            const auto base = audioFiles.isDirectory() ? audioFiles : sessionDir;
+            // Try .wav first, then .flac/.aif so backup-format sessions
+            // still draw thumbnails.
+            auto findTrackFile = [&] (int trackIdx) -> juce::File
+            {
+                auto pad = [] (int n) { return juce::String (n).paddedLeft ('0', 2); };
+                const juce::String stem = "Track_" + pad (trackIdx + 1);
+                const char* exts[] = { ".wav", ".flac", ".aif", ".aiff" };
+                for (auto* ext : exts)
+                {
+                    auto f = base.getChildFile (stem + ext);
+                    if (f.existsAsFile()) return f;
+                }
+                return base.getChildFile (stem + ".wav");
+            };
             for (auto& r : rows)
             {
                 const int trackIdx = r->getTrackIndex();
-                auto pad = [] (int n) { return juce::String (n).paddedLeft ('0', 2); };
-                const auto fL = sessionDir.getChildFile ("Track_" + pad (trackIdx + 1) + ".wav");
-                const auto fR = r->isStereoPair()
-                                ? sessionDir.getChildFile ("Track_" + pad (trackIdx + 2) + ".wav")
-                                : juce::File();
+                const auto fL = findTrackFile (trackIdx);
+                const auto fR = r->isStereoPair() ? findTrackFile (trackIdx + 1) : juce::File();
                 r->setWaveformFiles (fL, fR);
             }
+        }
+
+        // While recording, the WAV files grow on disk but the file path
+        // doesn't change — so setWaveformFiles' "if path changed"
+        // shortcut skips the refresh. Call this from the EditPage timer
+        // to force every row to re-scan its current file each tick.
+        void forceRefreshWaveforms()
+        {
+            for (auto& r : rows) r->reloadCurrentWaveformFiles();
         }
 
         void setPlayheadX (int px)
@@ -1963,11 +2000,13 @@ namespace zynforge
             resized();
         }
 
-        const auto& player = engine.getPlayer();
-        const auto sessionDir = player.getSessionDir();
+        // Use the engine-wide 'active' session (recorder takes priority
+        // over player) so waveforms render the file being WRITTEN, not
+        // just the file being read back.
+        const auto sessionDir = engine.getActiveSessionDir();
         list->setWaveformsFromSession (sessionDir);
 
-        const bool loaded = player.isLoaded();
+        const bool loaded = engine.getPlayer().isLoaded();
         emptyLabel.setVisible (! loaded && lastTrackCount > 0 ? false : false);
         // (Empty-state hint is now drawn inside each row.)
         lastLoaded = loaded;
@@ -1979,11 +2018,22 @@ namespace zynforge
         if (n != lastTrackCount)
             refresh();
 
-        // Pick up session swaps (loaded a session, recorded a new one…)
+        // Pick up session swaps — recording starts, recording stops,
+        // session loaded, session changed, ...
         const bool loaded = engine.getPlayer().isLoaded();
-        const auto sessionDir = engine.getPlayer().getSessionDir();
-        if (loaded != lastLoaded)
+        const bool rec    = engine.isRecording();
+        if (loaded != lastLoaded || rec != lastRecording || engine.getActiveSessionDir() != lastSessionDir)
+        {
+            lastSessionDir = engine.getActiveSessionDir();
+            lastRecording  = rec;
             refresh();
+        }
+
+        // While recording, the Track_NN files grow on disk but their
+        // path doesn't change — push a fresh InputSource into each row
+        // every tick so the AudioThumbnail re-scans the new bytes.
+        if (rec && list != nullptr)
+            list->forceRefreshWaveforms();
 
         // Playhead
         const auto& player = engine.getPlayer();

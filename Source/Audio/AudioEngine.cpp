@@ -334,8 +334,16 @@ namespace zynforge
             if (stripGains.hasPan (i))
                 t.pan.store    (stripGains.getPan (i), std::memory_order_relaxed);
 
-            t.inputRouting .store (stripRouting.hasInput  (i) ? stripRouting.getInput  (i) : i,
-                                   std::memory_order_relaxed);
+            // Default to channel i, but clamp to the device's active
+            // input count so a 4-strip session on a 1-input device still
+            // captures sound (strip i wraps to i % numInputs).
+            int wantIn = stripRouting.hasInput (i) ? stripRouting.getInput (i) : i;
+            const int numInputs = (deviceManager.getCurrentAudioDevice() != nullptr)
+                ? deviceManager.getCurrentAudioDevice()->getActiveInputChannels().countNumberOfSetBits()
+                : 0;
+            if (numInputs > 0 && (wantIn < 0 || wantIn >= numInputs))
+                wantIn = i % numInputs;
+            t.inputRouting .store (wantIn, std::memory_order_relaxed);
             // Default per-channel output is -1 (unrouted) → audio only
             // reaches the hardware via the master bus. Engineer picks a
             // specific output explicitly (e.g. for Virtual Soundcheck)
