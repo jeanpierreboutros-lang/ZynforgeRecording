@@ -199,9 +199,8 @@ namespace zynforge
                 styleFieldLabel (ioLabel);
                 addAndMakeVisible (ioCombo);
                 dialog::styleCombo (ioCombo);
-                ioCombo.addItem ("Last Used", 1);
+                ioCombo.addItem ("Last Used",  1);
                 ioCombo.addItem ("Stereo Mix", 2);
-                ioCombo.addItem ("5.1 Film",   3);
                 ioCombo.setSelectedId (1, juce::dontSendNotification);
 
                 addAndMakeVisible (interleaved);

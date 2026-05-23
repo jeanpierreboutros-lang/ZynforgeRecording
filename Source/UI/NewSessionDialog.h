@@ -21,7 +21,7 @@ namespace zynforge
             CaptureFormat captureFormat;   // derived from file type + bit depth
             double        sampleRate;
             bool          interleaved;
-            juce::String  ioSettings;      // "Last Used", "Stereo Mix", "5.1 Film", ...
+            juce::String  ioSettings;      // "Last Used", "Stereo Mix"
         };
 
         using ResultCallback = std::function<void (const Result&)>;

@@ -3881,70 +3881,85 @@ void MainComponent::confirmAndQuit()
     const auto activeDir = engine.getActiveSessionDir();
     const bool hasActiveSession = activeDir.isDirectory();
 
-    juce::String title, message;
-    juce::String b1, b2, b3;  // primary (positive), alt (Don't save), cancel
-
+    // Recording in progress is its own conversation -- two buttons,
+    // primary "Stop & Quit" / Cancel. No Save question because the
+    // engineer is mid-take and saving doesn't make sense yet.
     if (recording)
     {
-        title   = "Recording is still rolling";
-        message = "A recording is in progress.\n"
-                  "Stop the recording cleanly and quit?";
-        b1 = "Stop & Quit";
-        b2 = juce::String();   // no alt
-        b3 = "Cancel";
-    }
-    else if (hasActiveSession)
-    {
-        title   = "Quit Zynforge Recording?";
-        message = "Save session state for \"" + activeDir.getFileName() + "\" before quitting?";
-        b1 = "Save & Quit";
-        b2 = "Don't Save";
-        b3 = "Cancel";
-    }
-    else
-    {
-        title   = "Quit Zynforge Recording?";
-        message = "Any unsaved app state will be lost.";
-        b1 = "Quit";
-        b2 = juce::String();
-        b3 = "Cancel";
+        auto options = juce::MessageBoxOptions()
+                         .withIconType (juce::MessageBoxIconType::QuestionIcon)
+                         .withTitle ("Recording is still rolling")
+                         .withMessage ("A recording is in progress.\n"
+                                       "Stop the recording cleanly and quit?")
+                         .withButton ("Stop & Quit")
+                         .withButton ("Cancel")
+                         .withAssociatedComponent (this);
+
+        juce::AlertWindow::showAsync (options, [this] (int result)
+        {
+            if (result == 1) return;        // Cancel
+            engine.stopRecording();
+            if (auto* app = juce::JUCEApplication::getInstance())
+                app->quit();
+        });
+        return;
     }
 
+    // No active session -- nothing to save. Two buttons.
+    if (! hasActiveSession)
+    {
+        auto options = juce::MessageBoxOptions()
+                         .withIconType (juce::MessageBoxIconType::QuestionIcon)
+                         .withTitle ("Quit Zynforge Recording?")
+                         .withMessage ("No active session. Any unsaved app state will be lost.")
+                         .withButton ("Quit")
+                         .withButton ("Cancel")
+                         .withAssociatedComponent (this);
+
+        juce::AlertWindow::showAsync (options, [] (int result)
+        {
+            if (result == 1) return;        // Cancel
+            if (auto* app = juce::JUCEApplication::getInstance())
+                app->quit();
+        });
+        return;
+    }
+
+    // Pro Tools-style three-button save-on-quit dialog. Button order
+    // matches the Pro Tools convention the engineer expects:
+    //   [Don't Save]  [Cancel]  [Save]
+    // Save is the primary (Return key) action because that's what a
+    // tired engineer will hit by reflex. Cancel sits in the middle so
+    // it's never adjacent to either destructive action.
     auto options = juce::MessageBoxOptions()
                      .withIconType (juce::MessageBoxIconType::QuestionIcon)
-                     .withTitle (title)
-                     .withMessage (message)
-                     .withButton (b1)
+                     .withTitle ("Save changes to \"" + activeDir.getFileName()
+                                 + "\" before closing?")
+                     .withMessage ("Your session state, take history, cues and "
+                                   "markers will be written to the session folder.")
+                     .withButton ("Don't Save")
+                     .withButton ("Cancel")
+                     .withButton ("Save")
                      .withAssociatedComponent (this);
-    if (b2.isNotEmpty()) options = options.withButton (b2);
-    options = options.withButton (b3);
 
     juce::AlertWindow::showAsync (options,
-        [this, recording, hasActiveSession, b2nonEmpty = b2.isNotEmpty(), activeDir]
-        (int result)
+        [this, activeDir] (int result)
     {
-        // JUCE numbers buttons from 1 in the order they're added.
-        // Result 0 = first (primary), 1 = second, 2 = third.
-        // With 2 buttons (primary + cancel): cancel = 1.
-        // With 3 buttons (save + don't save + cancel): cancel = 2.
+        // Button index 0 = Don't Save, 1 = Cancel, 2 = Save.
+        if (result == 1) return;            // Cancel -- abort the quit
 
-        const int cancelIndex = b2nonEmpty ? 2 : 1;
-        if (result == cancelIndex) return;
-
-        if (recording)
+        if (result == 2)                    // Save -- write to existing session
         {
-            // Single primary action: stop and quit.
-            engine.stopRecording();
+            // Silent save: writes session_settings.json + the cue /
+            // marker / playlist blob into the active session folder.
+            // No file picker -- the engineer already chose the folder
+            // when they created the session.
+            saveSessionStateTo (activeDir);
         }
-        else if (hasActiveSession)
-        {
-            if (result == 0)        // Save & Quit
-                saveSessionStateTo (activeDir);
-            // result == 1 → Don't Save → fall through
-        }
+        // result == 0 -- Don't Save -- fall through to quit.
 
         if (auto* app = juce::JUCEApplication::getInstance())
-            app->quit();   // direct quit -- confirmAndQuit IS the confirmation
+            app->quit();
     });
 }
 
