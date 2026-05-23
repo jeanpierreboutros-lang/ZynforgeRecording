@@ -24,6 +24,13 @@ namespace zynforge
         juce::int64  fadeInSamples        { 0 };
         juce::int64  fadeOutSamples       { 0 };
         float        gainDb               { 0.0f };
+        // Editing flags.
+        //   muted  → clip outputs silence (still claims its timeline range)
+        //   locked → engine refuses trim / move / fade edits; UI greys
+        //            the handles. Use to pin a 'keeper' take during
+        //            virtual soundcheck so a stray drag can't ruin it.
+        bool         muted                { false };
+        bool         locked               { false };
     };
 
     // A 'take' is a named clip list. A track can hold many takes

@@ -225,6 +225,7 @@ namespace zynforge
                 juce::FloatVectorOperations::clear (out, numSamples);
                 for (const auto& c : *clips)
                 {
+                    if (c.muted) continue;   // muted clips render silence
                     const auto clipEndTL = c.timelineStartSamples + c.fileLengthSamples;
                     // Overlap of [startPos, startPos+playableThisBlock)
                     // with [c.timelineStartSamples, clipEndTL).
@@ -250,20 +251,29 @@ namespace zynforge
                     const juce::int64 fIn  = c.fadeInSamples;
                     const juce::int64 fOut = c.fadeOutSamples;
                     const juce::int64 fOutStart = c.fileLengthSamples - fOut;
+                    const float clipGain = juce::Decibels::decibelsToGain (c.gainDb, -60.0f);
                     if (fIn == 0 && fOut == 0)
                     {
-                        juce::FloatVectorOperations::copy (dst, src, spanLen);
+                        if (std::abs (clipGain - 1.0f) < 0.001f)
+                        {
+                            juce::FloatVectorOperations::copy (dst, src, spanLen);
+                        }
+                        else
+                        {
+                            for (int i = 0; i < spanLen; ++i)
+                                dst[i] = src[i] * clipGain;
+                        }
                     }
                     else
                     {
                         for (int i = 0; i < spanLen; ++i)
                         {
                             const juce::int64 clipPos = spanOffsetInClip + i;
-                            float gain = 1.0f;
+                            float gain = clipGain;
                             if (fIn > 0 && clipPos < fIn)
-                                gain = (float) clipPos / (float) fIn;
+                                gain *= (float) clipPos / (float) fIn;
                             else if (fOut > 0 && clipPos >= fOutStart)
-                                gain = (float) (c.fileLengthSamples - clipPos) / (float) fOut;
+                                gain *= (float) (c.fileLengthSamples - clipPos) / (float) fOut;
                             dst[i] = src[i] * gain;
                         }
                     }

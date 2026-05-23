@@ -784,6 +784,27 @@ namespace zynforge
                     };
                     for (const auto& c : *clips)
                     {
+                        const int xL_ = sampleToX (c.timelineStartSamples);
+                        const int xR_ = sampleToX (c.timelineStartSamples + c.fileLengthSamples);
+                        if (c.muted)
+                        {
+                            // Wash the muted clip's lane span with a soft
+                            // mute scrim so it visibly drops below the rest.
+                            g.setColour (brand::signalMute().withAlpha (0.22f));
+                            g.fillRect (juce::Rectangle<int> (xL_, inner2.getY(),
+                                                              juce::jmax (1, xR_ - xL_),
+                                                              inner2.getHeight()));
+                        }
+                        if (c.locked)
+                        {
+                            // Top-right corner lock glyph (4×4 px square +
+                            // shackle dot) so a held clip reads at a glance.
+                            const int lx = juce::jmax (xL_, xR_ - 9);
+                            const int ly = inner2.getY() + 2;
+                            g.setColour (brand::textPrimary.withAlpha (0.85f));
+                            g.fillRect (juce::Rectangle<int> (lx,     ly + 2, 6, 4));
+                            g.drawRect (juce::Rectangle<int> (lx + 1, ly,     4, 4), 1);
+                        }
                         if (c.timelineStartSamples > 0)
                         {
                             const int x = sampleToX (c.timelineStartSamples);
@@ -1335,8 +1356,12 @@ namespace zynforge
             const auto* clips = engine.tryClipsFor (index);
             if (clips == nullptr || clipIdx < 0 || clipIdx >= (int) clips->size())
                 { menuOpen = false; return; }
-            const auto fIn  = (*clips)[(size_t) clipIdx].fadeInSamples;
-            const auto fOut = (*clips)[(size_t) clipIdx].fadeOutSamples;
+            const auto& clip = (*clips)[(size_t) clipIdx];
+            const auto fIn   = clip.fadeInSamples;
+            const auto fOut  = clip.fadeOutSamples;
+            const bool muted  = clip.muted;
+            const bool locked = clip.locked;
+            const float gainDb = clip.gainDb;
 
             const double sr = engine.getPlayer().getSampleRate() > 0.0
                                  ? engine.getPlayer().getSampleRate()
@@ -1346,33 +1371,89 @@ namespace zynforge
                 return (juce::int64) ((double) ms * sr / 1000.0);
             };
 
+            juce::PopupMenu fadeIn;
+            fadeIn.addItem (101, "Off",     true, fIn == 0);
+            fadeIn.addItem (102, "10 ms",   true, fIn == msToSamples (10));
+            fadeIn.addItem (103, "50 ms",   true, fIn == msToSamples (50));
+            fadeIn.addItem (104, "200 ms",  true, fIn == msToSamples (200));
+            fadeIn.addItem (105, "500 ms",  true, fIn == msToSamples (500));
+            fadeIn.addItem (106, "1 s",     true, fIn == msToSamples (1000));
+
+            juce::PopupMenu fadeOut;
+            fadeOut.addItem (201, "Off",     true, fOut == 0);
+            fadeOut.addItem (202, "10 ms",   true, fOut == msToSamples (10));
+            fadeOut.addItem (203, "50 ms",   true, fOut == msToSamples (50));
+            fadeOut.addItem (204, "200 ms",  true, fOut == msToSamples (200));
+            fadeOut.addItem (205, "500 ms",  true, fOut == msToSamples (500));
+            fadeOut.addItem (206, "1 s",     true, fOut == msToSamples (1000));
+
+            juce::PopupMenu gain;
+            gain.addItem (501, "-12 dB",   true, std::abs (gainDb - (-12.0f)) < 0.05f);
+            gain.addItem (502, "-6 dB",    true, std::abs (gainDb - (-6.0f))  < 0.05f);
+            gain.addItem (503, "-3 dB",    true, std::abs (gainDb - (-3.0f))  < 0.05f);
+            gain.addItem (504, "0 dB",     true, std::abs (gainDb - 0.0f)     < 0.05f);
+            gain.addItem (505, "+3 dB",    true, std::abs (gainDb -  3.0f)    < 0.05f);
+            gain.addItem (506, "+6 dB",    true, std::abs (gainDb -  6.0f)    < 0.05f);
+            gain.addSeparator();
+            gain.addItem (510, "Set value…");
+
             juce::PopupMenu menu;
-            menu.addSectionHeader ("Fade In");
-            menu.addItem (101, "Off",     true, fIn == 0);
-            menu.addItem (102, "10 ms",   true, fIn == msToSamples (10));
-            menu.addItem (103, "50 ms",   true, fIn == msToSamples (50));
-            menu.addItem (104, "200 ms",  true, fIn == msToSamples (200));
-            menu.addItem (105, "500 ms",  true, fIn == msToSamples (500));
-            menu.addItem (106, "1 s",     true, fIn == msToSamples (1000));
+            menu.addItem (400, muted  ? "Unmute clip" : "Mute clip");
+            menu.addItem (401, locked ? "Unlock clip" : "Lock clip");
             menu.addSeparator();
-            menu.addSectionHeader ("Fade Out");
-            menu.addItem (201, "Off",     true, fOut == 0);
-            menu.addItem (202, "10 ms",   true, fOut == msToSamples (10));
-            menu.addItem (203, "50 ms",   true, fOut == msToSamples (50));
-            menu.addItem (204, "200 ms",  true, fOut == msToSamples (200));
-            menu.addItem (205, "500 ms",  true, fOut == msToSamples (500));
-            menu.addItem (206, "1 s",     true, fOut == msToSamples (1000));
+            menu.addItem (410, "Duplicate clip", ! locked);
+            menu.addItem (411, "Delete clip",    ! locked);
             menu.addSeparator();
-            menu.addItem (300, "Clear both fades");
+            menu.addSubMenu ("Clip gain",  gain);
+            menu.addSubMenu ("Fade in",    fadeIn,  ! locked);
+            menu.addSubMenu ("Fade out",   fadeOut, ! locked);
+            menu.addItem (300, "Clear both fades", ! locked);
 
             juce::Component::SafePointer<TrackRow> self (this);
             menu.showMenuAsync (juce::PopupMenu::Options()
                                   .withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 }),
-                [self, clipIdx, fIn, fOut, msToSamples] (int chosen)
+                [self, clipIdx, fIn, fOut, muted, locked, gainDb, msToSamples] (int chosen)
             {
                 if (self == nullptr) return;
                 self->menuOpen = false;
                 if (chosen == 0) return;
+
+                switch (chosen)
+                {
+                    case 400: self->engine.setClipMuted  (self->index, clipIdx, ! muted);  self->repaint(); return;
+                    case 401: self->engine.setClipLocked (self->index, clipIdx, ! locked); self->repaint(); return;
+                    case 410: self->engine.duplicateClip (self->index, clipIdx);           self->repaint(); return;
+                    case 411: self->engine.deleteClip    (self->index, clipIdx);           self->repaint(); return;
+                    case 501: self->engine.setClipGainDb (self->index, clipIdx, -12.0f);   self->repaint(); return;
+                    case 502: self->engine.setClipGainDb (self->index, clipIdx,  -6.0f);   self->repaint(); return;
+                    case 503: self->engine.setClipGainDb (self->index, clipIdx,  -3.0f);   self->repaint(); return;
+                    case 504: self->engine.setClipGainDb (self->index, clipIdx,   0.0f);   self->repaint(); return;
+                    case 505: self->engine.setClipGainDb (self->index, clipIdx,   3.0f);   self->repaint(); return;
+                    case 506: self->engine.setClipGainDb (self->index, clipIdx,   6.0f);   self->repaint(); return;
+                    case 510:
+                    {
+                        auto* aw = new juce::AlertWindow ("Clip gain",
+                            "Enter clip gain in dB (-60 .. +12).",
+                            juce::MessageBoxIconType::QuestionIcon);
+                        aw->addTextEditor ("dB", juce::String (gainDb, 2));
+                        aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
+                        aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+                        juce::Component::SafePointer<TrackRow> rowSafe (self);
+                        aw->enterModalState (true, juce::ModalCallbackFunction::create (
+                            [aw, rowSafe, clipIdx] (int r)
+                        {
+                            std::unique_ptr<juce::AlertWindow> own (aw);
+                            if (r != 1 || rowSafe == nullptr) return;
+                            const auto txt = own->getTextEditorContents ("dB");
+                            const float dB = juce::jlimit (-60.0f, 12.0f, txt.getFloatValue());
+                            rowSafe->engine.setClipGainDb (rowSafe->index, clipIdx, dB);
+                            rowSafe->repaint();
+                        }));
+                        return;
+                    }
+                    default: break;
+                }
+
                 juce::int64 newIn  = fIn;
                 juce::int64 newOut = fOut;
                 switch (chosen)

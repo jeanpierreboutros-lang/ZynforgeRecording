@@ -259,6 +259,17 @@ namespace zynforge
         bool setClipFades (int track, int clipIndex,
                            juce::int64 fadeInSamples, juce::int64 fadeOutSamples);
 
+        // The rest of the clip toolkit. Every call republishes the
+        // updated clip list to the player so audio honours the change
+        // on the next block.
+        bool setClipMuted    (int track, int clipIndex, bool muted);
+        bool setClipLocked   (int track, int clipIndex, bool locked);
+        bool setClipGainDb   (int track, int clipIndex, float dB);
+        bool deleteClip      (int track, int clipIndex);
+        // Duplicate the clip onto the same track, placed after the end
+        // of the source so the engineer doesn't have to nudge it.
+        bool duplicateClip   (int track, int clipIndex);
+
         // Recent sessions — maintained when loadSession / startRecording
         // succeed. Persisted in appProps as 'recentSession_<i>' (i = 0
         // most recent). Capped at kMaxRecent entries.

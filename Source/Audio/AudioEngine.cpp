@@ -435,6 +435,7 @@ namespace zynforge
         auto& list = trackClips[(size_t) track];
         if (clipIndex < 0 || clipIndex >= (int) list.size()) return false;
         auto& c = list[(size_t) clipIndex];
+        if (c.locked) return false;   // edits refused on locked clips
 
         // Min length: 1024 samples (~20 ms at 48 k) so a clip never
         // collapses to invisibility on a fast drag.
@@ -483,6 +484,7 @@ namespace zynforge
         auto& list = trackClips[(size_t) track];
         if (clipIndex < 0 || clipIndex >= (int) list.size()) return false;
         auto& c = list[(size_t) clipIndex];
+        if (c.locked) return false;
 
         fadeInSamples  = juce::jmax<juce::int64> (0, fadeInSamples);
         fadeOutSamples = juce::jmax<juce::int64> (0, fadeOutSamples);
@@ -491,6 +493,68 @@ namespace zynforge
         c.fadeInSamples  = fadeInSamples;
         c.fadeOutSamples = fadeOutSamples;
         player.setTrackClips (track, list);
+        return true;
+    }
+
+    // ─── Clip-edit helpers ──────────────────────────────────────────
+    namespace
+    {
+        std::vector<Clip>* validClipList (std::vector<std::vector<Clip>>& all,
+                                          int track, int clipIndex)
+        {
+            if (track < 0 || track >= (int) all.size()) return nullptr;
+            auto& list = all[(size_t) track];
+            if (clipIndex < 0 || clipIndex >= (int) list.size()) return nullptr;
+            return &list;
+        }
+    }
+
+    bool AudioEngine::setClipMuted (int track, int clipIndex, bool muted)
+    {
+        auto* list = validClipList (trackClips, track, clipIndex);
+        if (list == nullptr) return false;
+        (*list)[(size_t) clipIndex].muted = muted;
+        player.setTrackClips (track, *list);
+        return true;
+    }
+
+    bool AudioEngine::setClipLocked (int track, int clipIndex, bool locked)
+    {
+        auto* list = validClipList (trackClips, track, clipIndex);
+        if (list == nullptr) return false;
+        (*list)[(size_t) clipIndex].locked = locked;
+        player.setTrackClips (track, *list);
+        return true;
+    }
+
+    bool AudioEngine::setClipGainDb (int track, int clipIndex, float dB)
+    {
+        auto* list = validClipList (trackClips, track, clipIndex);
+        if (list == nullptr) return false;
+        (*list)[(size_t) clipIndex].gainDb = juce::jlimit (-60.0f, 12.0f, dB);
+        player.setTrackClips (track, *list);
+        return true;
+    }
+
+    bool AudioEngine::deleteClip (int track, int clipIndex)
+    {
+        auto* list = validClipList (trackClips, track, clipIndex);
+        if (list == nullptr) return false;
+        list->erase (list->begin() + clipIndex);
+        player.setTrackClips (track, *list);
+        return true;
+    }
+
+    bool AudioEngine::duplicateClip (int track, int clipIndex)
+    {
+        auto* list = validClipList (trackClips, track, clipIndex);
+        if (list == nullptr) return false;
+        Clip copy = (*list)[(size_t) clipIndex];
+        copy.timelineStartSamples += copy.fileLengthSamples;   // place after the source
+        copy.name = copy.name + " (copy)";
+        copy.locked = false;
+        list->insert (list->begin() + clipIndex + 1, std::move (copy));
+        player.setTrackClips (track, *list);
         return true;
     }
 
