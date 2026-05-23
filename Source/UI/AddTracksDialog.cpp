@@ -59,6 +59,16 @@ namespace zynforge
                 typeCombo.addItem ("Bus Track",   2);
                 typeCombo.setSelectedItemIndex (0, juce::dontSendNotification);
                 styleCombo (typeCombo);
+                // When the engineer flips the type combo, swap the default
+                // name accordingly -- but only if they haven't manually
+                // typed anything custom. nameIsAutoDefault tracks that.
+                typeCombo.onChange = [this]
+                {
+                    if (! nameIsAutoDefault) return;
+                    const auto def = isBus() ? juce::String ("Bus")
+                                             : juce::String ("Audio");
+                    nameEditor.setText (def, juce::dontSendNotification);
+                };
                 addAndMakeVisible (typeCombo);
 
                 nameLabel.setText ("Name:", juce::dontSendNotification);
@@ -71,6 +81,10 @@ namespace zynforge
                 nameEditor.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff000000));
                 nameEditor.setColour (juce::TextEditor::textColourId,       brand::textPrimary);
                 nameEditor.setColour (juce::TextEditor::outlineColourId,    brand::edge);
+                // First keystroke from the engineer flips nameIsAutoDefault
+                // off, so a subsequent type-combo change won't clobber the
+                // user's name.
+                nameEditor.onTextChange = [this] { nameIsAutoDefault = false; };
                 addAndMakeVisible (nameEditor);
 
                 plusButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
@@ -151,6 +165,11 @@ namespace zynforge
             juce::TextEditor nameEditor;
             juce::TextButton plusButton;
             juce::TextButton minusButton;
+
+            // True until the engineer types into the name editor.
+            // While true, switching the type combo (Audio <-> Bus)
+            // updates the editor text to match the new default.
+            bool nameIsAutoDefault { true };
         };
 
         class DialogContent final : public juce::Component
