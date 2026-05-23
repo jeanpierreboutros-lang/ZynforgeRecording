@@ -5,6 +5,7 @@
 #include "../Audio/AudioEngine.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
+#include "StripColourPicker.h"
 
 #include <array>
 
@@ -114,13 +115,15 @@ namespace zynforge
 
             void paint (juce::Graphics& g) override
             {
-                // Background + colour swatch strip.
+                // Background + colour swatch strip. The swatch is a
+                // thicker (6 px) bar so it's an obvious click target
+                // for the colour picker.
                 g.setColour (brand::bgPanel);
                 g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (1), 4);
                 const juce::uint32 c = engine.getVca (index).colourARGB.load (std::memory_order_relaxed);
                 const auto swatch = c != 0 ? juce::Colour (c) : brand::stripColour (index);
                 g.setColour (swatch);
-                g.fillRect (getLocalBounds().withTop (0).withHeight (3));
+                g.fillRect (getLocalBounds().withTop (0).withHeight (6));
                 g.setColour (brand::edge);
                 g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1), 4, 1);
 
@@ -153,7 +156,7 @@ namespace zynforge
             void resized() override
             {
                 auto r = getLocalBounds().reduced (3, 4);
-                r.removeFromTop (3);   // colour swatch
+                r.removeFromTop (6);   // colour swatch (matches paint)
                 nameLabel.setBounds (r.removeFromTop (14));
                 auto buttonRow = r.removeFromTop (16);
                 const int half = buttonRow.getWidth() / 2;
@@ -161,6 +164,83 @@ namespace zynforge
                 solo.setBounds (buttonRow.reduced (1));
                 r.removeFromBottom (14);   // dB readout space
                 fader.setBounds (r);
+            }
+
+            // Click in the swatch band → colour picker.
+            // Right-click anywhere → full menu (rename / colour /
+            // reset / list assigned strips).
+            void mouseDown (const juce::MouseEvent& e) override
+            {
+                if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
+                {
+                    showContextMenu();
+                    return;
+                }
+                // Top 6 px swatch band — open the colour picker.
+                if (e.y < 8)
+                    openColourPicker();
+            }
+
+            void openColourPicker()
+            {
+                const juce::uint32 cur = engine.getVca (index).colourARGB.load (std::memory_order_relaxed);
+                const auto current = cur != 0 ? juce::Colour (cur) : brand::stripColour (index);
+
+                auto picker = std::make_unique<StripColourPicker> (current,
+                    [this] (juce::Colour chosen)
+                    {
+                        engine.setVcaColour (index, chosen);
+                        repaint();
+                    });
+                juce::CallOutBox::launchAsynchronously (std::move (picker),
+                    getScreenBounds(), nullptr);
+            }
+
+            void showContextMenu()
+            {
+                juce::PopupMenu menu;
+                menu.addItem (1, "Rename\xe2\x80\xa6");
+                menu.addItem (2, "Change colour\xe2\x80\xa6");
+                menu.addItem (3, "Reset colour to default");
+                menu.addSeparator();
+                // List every strip on this VCA bus, click to unassign.
+                int assignedCount = 0;
+                juce::PopupMenu assigned;
+                for (int t = 0; t < engine.getRecorder().getNumTracks(); ++t)
+                {
+                    auto& ts = engine.getRecorder().getTrack (t);
+                    if (ts.vcaGroup.load (std::memory_order_relaxed) == index)
+                    {
+                        const auto nm = ts.name.isEmpty()
+                                          ? juce::String ("Strip ") + juce::String (t + 1)
+                                          : ts.name;
+                        assigned.addItem (100 + t, "Unassign " + nm);
+                        ++assignedCount;
+                    }
+                }
+                if (assignedCount > 0)
+                    menu.addSubMenu ("Assigned (" + juce::String (assignedCount) + ")", assigned);
+                else
+                    menu.addItem (-1, "(no strips assigned)", false);
+
+                juce::Component::SafePointer<VcaStripView> safe (this);
+                menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+                                    [safe] (int chosen)
+                {
+                    if (safe == nullptr || chosen == 0) return;
+                    if (chosen == 1) safe->nameLabel.showEditor();
+                    else if (chosen == 2) safe->openColourPicker();
+                    else if (chosen == 3)
+                    {
+                        safe->engine.setVcaColour (safe->index, juce::Colour ((juce::uint32) 0));
+                        safe->repaint();
+                    }
+                    else if (chosen >= 100)
+                    {
+                        // Unassign a strip from this VCA.
+                        safe->engine.setTrackVcaGroup (chosen - 100, -1);
+                    }
+                });
             }
 
         private:
