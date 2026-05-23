@@ -141,20 +141,27 @@ namespace zynforge
             auto& p = engine.getPlayer();
             p.setPositionSamples (p.getTotalLengthSamples());
         };
+        // Delegate transport actions to the host (MainComponent) when
+        // a hook is wired — that path runs the pre-flight checks
+        // (armed tracks, valid routing, status messages, …). Fall
+        // back to a direct engine call when no hook is set.
         play     ->onClick = [this]
         {
+            if (onRequestPlay) { onRequestPlay(); return; }
             auto& p = engine.getPlayer();
             if (! p.isLoaded()) return;
             if (p.isPlaying()) engine.stopPlayback(); else engine.startPlayback();
         };
         stop     ->onClick = [this]
         {
+            if (onRequestStop) { onRequestStop(); return; }
             if (engine.isRecording()) engine.stopRecording();
             engine.stopPlayback();
             engine.getPlayer().rewind();
         };
         record   ->onClick = [this]
         {
+            if (onRequestRecord) { onRequestRecord(); return; }
             if (engine.isRecording())
             {
                 engine.stopRecording();

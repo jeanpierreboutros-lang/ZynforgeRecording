@@ -14,6 +14,6 @@ namespace zynforge
     class PatchPage
     {
     public:
-        static void launch (AudioEngine& engine);
+        static juce::DialogWindow* launch (AudioEngine& engine);
     };
 }

@@ -20,6 +20,14 @@ namespace zynforge
         explicit TransportBar (AudioEngine&);
         ~TransportBar() override;
 
+        // Optional hooks — when set, the bar delegates to these instead
+        // of calling the engine directly. MainComponent wires them to
+        // its onRecord/onPlay/onStop handlers so the pre-flight checks
+        // + status messages also fire from the transport bar buttons.
+        std::function<void()> onRequestPlay;
+        std::function<void()> onRequestStop;
+        std::function<void()> onRequestRecord;
+
         void resized() override;
 
     private:

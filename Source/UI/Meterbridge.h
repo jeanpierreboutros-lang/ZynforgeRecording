@@ -12,6 +12,6 @@ namespace zynforge
     class Meterbridge
     {
     public:
-        static void launch (AudioEngine&);
+        static juce::DialogWindow* launch (AudioEngine&);
     };
 }

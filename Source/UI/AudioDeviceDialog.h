@@ -16,6 +16,8 @@ namespace zynforge
     class AudioDeviceDialog
     {
     public:
-        static void launch (AudioEngine& engine);
+        // Returns the live DialogWindow so the caller can keep a SafePointer
+        // and close it on a second click of the launching button.
+        static juce::DialogWindow* launch (AudioEngine& engine);
     };
 }

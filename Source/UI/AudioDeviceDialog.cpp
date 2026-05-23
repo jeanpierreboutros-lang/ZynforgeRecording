@@ -439,7 +439,7 @@ namespace zynforge
         };
     }
 
-    void AudioDeviceDialog::launch (AudioEngine& engine)
+    juce::DialogWindow* AudioDeviceDialog::launch (AudioEngine& engine)
     {
         auto content = std::make_unique<DialogContent> (engine);
 
@@ -450,6 +450,6 @@ namespace zynforge
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar            = true;
         opts.resizable                    = true;
-        opts.launchAsync();
+        return opts.launchAsync();
     }
 }

@@ -338,7 +338,7 @@ namespace zynforge
         };
     }
 
-    void PatchPage::launch (AudioEngine& engine)
+    juce::DialogWindow* PatchPage::launch (AudioEngine& engine)
     {
         auto content = std::make_unique<PatchPageContent> (engine);
 
@@ -349,6 +349,6 @@ namespace zynforge
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar            = true;
         opts.resizable                    = true;
-        opts.launchAsync();
+        return opts.launchAsync();
     }
 }

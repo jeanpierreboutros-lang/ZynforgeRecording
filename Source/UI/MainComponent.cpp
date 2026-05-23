@@ -82,7 +82,16 @@ MainComponent::MainComponent()
 
     patchButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus.darker (0.55f));
     patchButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus.brighter (0.10f));
-    patchButton.onClick = [this] { zynforge::PatchPage::launch (engine); };
+    patchButton.onClick = [this]
+    {
+        if (auto* w = patchDialog.getComponent())
+        {
+            w->closeButtonPressed();   // second click closes the open dialog
+            patchDialog = nullptr;
+            return;
+        }
+        patchDialog = zynforge::PatchPage::launch (engine);
+    };
 
     // VSC chip uses the dedicated brand::signalVsc() colour so the
     // 'virtual soundcheck' role has a unique visual identity (was
@@ -210,7 +219,16 @@ MainComponent::MainComponent()
 
     metersButton.setColour (juce::TextButton::buttonColourId,    brand::featureEngaged.darker (0.55f));
     metersButton.setColour (juce::TextButton::textColourOffId,   brand::featureEngaged.brighter (0.10f));
-    metersButton.onClick = [this] { zynforge::Meterbridge::launch (engine); };
+    metersButton.onClick = [this]
+    {
+        if (auto* w = metersDialog.getComponent())
+        {
+            w->closeButtonPressed();
+            metersDialog = nullptr;
+            return;
+        }
+        metersDialog = zynforge::Meterbridge::launch (engine);
+    };
     metersButton.setTooltip ("Open the floating meterbridge — drag onto a second display.");
     addAndMakeVisible (metersButton);
 
@@ -382,6 +400,9 @@ MainComponent::MainComponent()
     timeline = std::make_unique<zynforge::TimelineStrip> (engine);
 
     transportBar = std::make_unique<zynforge::TransportBar> (engine);
+    transportBar->onRequestPlay   = [this] { onPlayClicked();   };
+    transportBar->onRequestStop   = [this] { onStopClicked();   };
+    transportBar->onRequestRecord = [this] { onRecordClicked(); };
     addAndMakeVisible (*transportBar);
 
     stripsViewport.setViewedComponent (&stripsContainer, false);
@@ -839,15 +860,26 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
     // can hit space from anywhere in the app without thinking.
     if (key == juce::KeyPress::spaceKey)
     {
+        // Universal play / stop / pause toggle. Priority:
+        //   1. If recording → stop the recording
+        //   2. Else if playing → pause playback
+        //   3. Else if a session is loaded → start playback
+        //   4. Otherwise let the engineer know nothing's loaded
         auto& player = engine.getPlayer();
-        if (player.isPlaying())
+        if (engine.isRecording())
+        {
+            onStopClicked();
+        }
+        else if (player.isPlaying())
         {
             engine.stopPlayback();
+            playButton.setButtonText ("PLAY");
             showStatus ("Stopped");
         }
         else if (player.isLoaded())
         {
             engine.startPlayback();
+            playButton.setButtonText ("PAUSE");
             showStatus ("Playing");
         }
         else
@@ -3608,7 +3640,13 @@ juce::File MainComponent::getSessionsRoot() const
 
 void MainComponent::onDeviceClicked()
 {
-    zynforge::AudioDeviceDialog::launch (engine);
+    if (auto* w = deviceDialog.getComponent())
+    {
+        w->closeButtonPressed();
+        deviceDialog = nullptr;
+        return;
+    }
+    deviceDialog = zynforge::AudioDeviceDialog::launch (engine);
 }
 
 juce::File MainComponent::makeNewSessionDir() const

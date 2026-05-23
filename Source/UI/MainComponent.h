@@ -135,6 +135,13 @@ private:
     zynforge::ZynForgeLookAndFeel laf;
     zynforge::AudioEngine         engine;
 
+    // Live SafePointers to dialog windows opened by the header buttons.
+    // A second click on the launching button closes the dialog instead of
+    // opening another instance.
+    juce::Component::SafePointer<juce::DialogWindow> deviceDialog;
+    juce::Component::SafePointer<juce::DialogWindow> patchDialog;
+    juce::Component::SafePointer<juce::DialogWindow> metersDialog;
+
     juce::Label  titleLabel        { {}, "ZYNFORGE  RECORDING" };
     juce::Label  statusLabel       { {}, "Idle" };
     juce::Label  sessionLabel      { {}, "No session loaded" };

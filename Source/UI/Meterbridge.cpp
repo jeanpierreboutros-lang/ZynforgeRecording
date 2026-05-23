@@ -61,7 +61,7 @@ namespace zynforge
         };
     }
 
-    void Meterbridge::launch (AudioEngine& engine)
+    juce::DialogWindow* Meterbridge::launch (AudioEngine& engine)
     {
         auto content = std::make_unique<MeterbridgeContent> (engine);
 
@@ -72,6 +72,6 @@ namespace zynforge
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar            = true;
         opts.resizable                    = true;
-        opts.launchAsync();
+        return opts.launchAsync();
     }
 }
