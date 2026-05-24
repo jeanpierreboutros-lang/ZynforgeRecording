@@ -2,6 +2,9 @@
 
 #include <juce_graphics/juce_graphics.h>
 
+#include <cmath>
+#include <unordered_map>
+
 namespace zynforge::brand
 {
     // ── Motion / animation timings (milliseconds, Hz) ────────────────────
@@ -87,41 +90,72 @@ namespace zynforge::brand
         inline constexpr float h_display  = 28.0f;   // section hero numbers
         inline constexpr float h_hero     = 44.0f;   // BigClock timer
 
+        // Small (height, bold) -> Font cache. JUCE 8 routes
+        // juce::Font(FontOptions) through a CoreText typeface lookup
+        // that's not free; if a paint method asks for the same font
+        // every frame the cost compounds (profile showed ~10 % runtime
+        // in _hb_coretext_shaper_font_data_create before this).
+        // unordered_map keyed on (rounded-height, bold-flag, family-id)
+        // -- the hash hit is microseconds, the Font construction is
+        // ~10x slower.
+        namespace detail
+        {
+            inline juce::Font& cachedFont (const char* family, float height, bool bold)
+            {
+                // Key encodes height (rounded to nearest 0.5) + bold + family
+                // pointer (the two family strings are constexpr in this header,
+                // so pointer identity is stable).
+                const int    h2  = (int) std::round (height * 2.0f);
+                const size_t key = ((size_t) h2 << 2)
+                                 | (bold ? 1u : 0u)
+                                 | ((size_t) family << 16);
+                static std::unordered_map<size_t, juce::Font> cache;
+                auto it = cache.find (key);
+                if (it != cache.end()) return it->second;
+                auto opts = juce::FontOptions().withName (family).withHeight (height);
+                if (bold) opts = opts.withStyle ("Bold");
+                return cache.emplace (key, juce::Font (opts)).first->second;
+            }
+        }
+
         inline juce::Font ui (float height, bool bold = false)
         {
-            auto opts = juce::FontOptions().withName (uiFamily).withHeight (height);
-            if (bold) opts = opts.withStyle ("Bold");
-            return juce::Font (opts);
+            return detail::cachedFont (uiFamily, height, bold);
         }
 
         // Tabular / monospace digits. Anywhere a number is going to
         // change while the user is looking at it.
         inline juce::Font mono (float height, bool bold = false)
         {
-            auto opts = juce::FontOptions().withName (monoFamily).withHeight (height);
-            if (bold) opts = opts.withStyle ("Bold");
-            return juce::Font (opts);
+            return detail::cachedFont (monoFamily, height, bold);
         }
 
         // ── Named roles ───────────────────────────────────────────
-        inline juce::Font label()        { return ui   (h_label);          }
-        inline juce::Font ledLabel()     { return mono (9.0f, true);       }
-        inline juce::Font hint()         { return ui   (h_label);          }
-        inline juce::Font statusBar()    { return ui   (h_caption);        }
-        inline juce::Font uiLabel()      { return ui   (h_caption, true);  }
-        inline juce::Font caption()      { return ui   (h_caption);        }
-        inline juce::Font captionBold()  { return ui   (h_caption, true);  }
-        inline juce::Font uiBody()       { return ui   (h_body);           }
-        inline juce::Font channelName()  { return ui   (h_body, true);     }
-        inline juce::Font sectionTitle() { return ui   (h_title, true);    }
-        inline juce::Font headline()     { return ui   (h_headline, true); }
-        // 22 pt UI bold -- for cue-countdown / "Next: ..." pills that
-        // need to sit between body text and the BigClock numbers.
-        inline juce::Font subhead()      { return ui   (h_subhead, true);  }
-        // 28 pt mono bold -- for section hero numbers (cue index, etc.).
-        inline juce::Font display()      { return mono (h_display, true);  }
+        // Each named role caches a single static Font instance built
+        // once on first use. JUCE 8 routes juce::Font(FontOptions)
+        // construction through a CoreText typeface lookup that's
+        // measurable on every call (CPU profile showed ~10 % runtime
+        // burned in _hb_coretext_shaper_font_data_create when these
+        // accessors were called fresh every paint). The cache turns
+        // each accessor into a near-free copy of an already-resolved
+        // Font reference.
+        inline juce::Font label()        { static const juce::Font f = ui   (h_label);          return f; }
+        inline juce::Font ledLabel()     { static const juce::Font f = mono (9.0f, true);       return f; }
+        inline juce::Font hint()         { static const juce::Font f = ui   (h_label);          return f; }
+        inline juce::Font statusBar()    { static const juce::Font f = ui   (h_caption);        return f; }
+        inline juce::Font uiLabel()      { static const juce::Font f = ui   (h_caption, true);  return f; }
+        inline juce::Font caption()      { static const juce::Font f = ui   (h_caption);        return f; }
+        inline juce::Font captionBold()  { static const juce::Font f = ui   (h_caption, true);  return f; }
+        inline juce::Font uiBody()       { static const juce::Font f = ui   (h_body);           return f; }
+        inline juce::Font channelName()  { static const juce::Font f = ui   (h_body, true);     return f; }
+        inline juce::Font sectionTitle() { static const juce::Font f = ui   (h_title, true);    return f; }
+        inline juce::Font headline()     { static const juce::Font f = ui   (h_headline, true); return f; }
+        // 22 pt UI bold -- for cue-countdown / "Next: ..." pills.
+        inline juce::Font subhead()      { static const juce::Font f = ui   (h_subhead, true);  return f; }
+        // 28 pt mono bold -- for section hero numbers.
+        inline juce::Font display()      { static const juce::Font f = mono (h_display, true);  return f; }
         // 44 pt mono bold -- pinned for the BigClock timer.
-        inline juce::Font hero()         { return mono (h_hero, true);     }
+        inline juce::Font hero()         { static const juce::Font f = mono (h_hero, true);     return f; }
         // Numeric readouts -- every value-readout font goes through this.
         inline juce::Font readout (float height) { return mono (height, true); }
     }
