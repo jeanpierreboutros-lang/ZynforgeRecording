@@ -115,7 +115,15 @@ private:
     void servicePunch();        // called each timerCallback tick
     bool wasInsidePunch { false };
 
-    bool snapToMarkers { false };
+    // Snap modes -- cycled by the '4' key (also surfaced in the
+    // Edit menu). Off / Markers / Bars; Bars uses the engine's
+    // tempo map + time-sig to align edits to bar boundaries. The
+    // bool name is kept for source compatibility with code that
+    // checks "is snap on at all"; new code should branch on
+    // snapMode for the actual snap behaviour.
+    enum class SnapMode { Off = 0, Markers = 1, Bars = 2 };
+    SnapMode snapMode      { SnapMode::Off };
+    bool     snapToMarkers { false };   // mirrors (snapMode == Markers) for legacy reads
 
     // Edit-menu plumbing.
     juce::UndoManager undoManager;

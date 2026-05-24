@@ -42,6 +42,14 @@ namespace zynforge
         // muted flag also gates the strip's output.
         std::atomic<int> vcaGroup { -1 };
 
+        // Edit Group -- Pro Tools-style "linked editing" affordance.
+        // Strips sharing the same editGroup id receive broadcast
+        // edits: when one strip's gain / pan / mute / solo / arm
+        // changes via a user gesture, every other strip in the same
+        // group gets the same change applied. -1 = unlinked. Edit
+        // groups are independent of VCA assignment.
+        std::atomic<int> editGroup { -1 };
+
         // Bus track flag -- when true this strip is an aux / mix bus.
         // Bus tracks have no input routing, no recording, no R / I
         // buttons. They receive audio from other strips via AuxSends

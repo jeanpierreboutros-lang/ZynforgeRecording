@@ -553,6 +553,12 @@ namespace zynforge
             t.vcaGroup.store ((vca >= 0 && vca < kNumVcas) ? vca : -1,
                               std::memory_order_relaxed);
 
+            // Edit group -- persisted under strip_editgroup_<n>; -1 = unlinked.
+            const int egroup = appProps != nullptr
+                ? appProps->getIntValue ("strip_editgroup_" + juce::String (i), -1)
+                : -1;
+            t.editGroup.store (egroup, std::memory_order_relaxed);
+
             // Bus flag + 4 aux sends.
             if (appProps != nullptr)
             {
@@ -1191,6 +1197,34 @@ namespace zynforge
             appProps->setValue ("strip_vca_" + juce::String (channelIndex), clamped);
             appProps->saveIfNeeded();
         }
+    }
+
+    void AudioEngine::setTrackEditGroup (int channelIndex, int groupId)
+    {
+        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
+        recorder.getTrack (channelIndex).editGroup.store (groupId, std::memory_order_relaxed);
+        if (appProps != nullptr)
+        {
+            appProps->setValue ("strip_editgroup_" + juce::String (channelIndex), groupId);
+            appProps->saveIfNeeded();
+        }
+    }
+
+    int AudioEngine::getTrackEditGroup (int channelIndex) noexcept
+    {
+        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return -1;
+        return recorder.getTrack (channelIndex).editGroup.load (std::memory_order_relaxed);
+    }
+
+    std::vector<int> AudioEngine::getStripsInEditGroup (int groupId)
+    {
+        std::vector<int> out;
+        if (groupId < 0) return out;
+        const int n = recorder.getNumTracks();
+        for (int i = 0; i < n; ++i)
+            if (recorder.getTrack (i).editGroup.load (std::memory_order_relaxed) == groupId)
+                out.push_back (i);
+        return out;
     }
 
     void AudioEngine::tickRamps (int numSamples) noexcept

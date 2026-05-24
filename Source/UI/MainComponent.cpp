@@ -755,7 +755,21 @@ void MainComponent::rebuildStrips()
             engine.writeAutomationPointThinned (trackIdx, p, pos, value, minGap);
         };
 
-        auto gainCb   = [this, i, step, writeAutoIfPlaying] (float dB)
+        // Pro Tools-style Edit Group broadcast. When strip `i` is
+        // in an edit group, the gain / pan change is mirrored onto
+        // every other strip in the same group. Returns the list of
+        // peers (excluding self) so each callback can decide
+        // whether to also write automation for them.
+        auto editGroupPeers = [this] (int src) -> std::vector<int>
+        {
+            const int g = engine.getTrackEditGroup (src);
+            if (g < 0) return {};
+            auto all = engine.getStripsInEditGroup (g);
+            all.erase (std::remove (all.begin(), all.end(), src), all.end());
+            return all;
+        };
+
+        auto gainCb   = [this, i, step, writeAutoIfPlaying, editGroupPeers] (float dB)
         {
             engine.setTrackGainDb (i, dB);
             writeAutoIfPlaying (i, zynforge::AudioEngine::AutomationParam::Volume, dB);
@@ -764,15 +778,25 @@ void MainComponent::rebuildStrips()
                 engine.setTrackGainDb (i + 1, dB);
                 writeAutoIfPlaying (i + 1, zynforge::AudioEngine::AutomationParam::Volume, dB);
             }
+            for (int peer : editGroupPeers (i))
+            {
+                engine.setTrackGainDb (peer, dB);
+                writeAutoIfPlaying (peer, zynforge::AudioEngine::AutomationParam::Volume, dB);
+            }
         };
         // L pan persists to track i. For a stereo strip, the R pan
         // travels through its own panRCb (below) -- the two sides are
         // INDEPENDENT, not mirrored, so the engineer can pan the L
         // channel hard-left and R hard-right (or whatever they want).
-        auto panCb  = [this, i, writeAutoIfPlaying] (float pan)
+        auto panCb  = [this, i, writeAutoIfPlaying, editGroupPeers] (float pan)
         {
             engine.setTrackPan (i, pan);
             writeAutoIfPlaying (i, zynforge::AudioEngine::AutomationParam::Pan, pan);
+            for (int peer : editGroupPeers (i))
+            {
+                engine.setTrackPan (peer, pan);
+                writeAutoIfPlaying (peer, zynforge::AudioEngine::AutomationParam::Pan, pan);
+            }
         };
         auto panRCb = [this, i, writeAutoIfPlaying] (float pan)
         {

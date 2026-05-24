@@ -87,6 +87,35 @@ namespace zynforge
                 expectWithinAbsoluteError (eng.getRecorder().getTrack (0).pan.load(), 0.0f, 0.001f);
             }
 
+            beginTest ("Edit group assignment + membership query");
+            {
+                AudioEngine eng;
+                eng.setStripCount (6);
+                // Strips 0, 2, 4 share edit group 1.
+                eng.setTrackEditGroup (0, 1);
+                eng.setTrackEditGroup (2, 1);
+                eng.setTrackEditGroup (4, 1);
+                // Strip 3 in a different group.
+                eng.setTrackEditGroup (3, 7);
+                expectEquals (eng.getTrackEditGroup (0), 1);
+                expectEquals (eng.getTrackEditGroup (1), -1);
+                expectEquals (eng.getTrackEditGroup (3), 7);
+                auto group1 = eng.getStripsInEditGroup (1);
+                expectEquals ((int) group1.size(), 3);
+                expectEquals (group1[0], 0);
+                expectEquals (group1[1], 2);
+                expectEquals (group1[2], 4);
+                auto group7 = eng.getStripsInEditGroup (7);
+                expectEquals ((int) group7.size(), 1);
+                expectEquals (group7[0], 3);
+                // -1 query returns empty.
+                expect (eng.getStripsInEditGroup (-1).empty());
+                // Reset to unlinked.
+                eng.setTrackEditGroup (0, -1);
+                expectEquals (eng.getTrackEditGroup (0), -1);
+                expectEquals ((int) eng.getStripsInEditGroup (1).size(), 2);
+            }
+
             beginTest ("VCA group assignment + reset");
             {
                 AudioEngine eng;

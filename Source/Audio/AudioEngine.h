@@ -128,6 +128,16 @@ namespace zynforge
         void  setVcaColour  (int idx, juce::Colour c);
         void  setTrackVcaGroup (int channelIndex, int vcaIdx);  // -1 = unassigned
 
+        // Edit Group assignment. -1 = unlinked; any non-negative id
+        // links the strip with every other strip carrying the same
+        // id. Broadcasting is done at the UI layer when the engineer
+        // fires a fader / pan / mute / solo / arm gesture; the
+        // engine just stores the group id and exposes the membership
+        // query.
+        void  setTrackEditGroup (int channelIndex, int groupId);
+        int   getTrackEditGroup (int channelIndex) noexcept;
+        std::vector<int> getStripsInEditGroup (int groupId);
+
         // Aux sends + bus tracks ─────────────────────────────────────
         // setTrackIsBus marks a track as a bus destination (no input,
         // no record, sums sends + routes to outputs like a regular

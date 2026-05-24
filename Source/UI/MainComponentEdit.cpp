@@ -289,8 +289,16 @@ void MainComponent::editSetRangeToLoopRange()
 
 void MainComponent::editToggleSnap()
 {
-    snapToMarkers = ! snapToMarkers;
-    showStatus (snapToMarkers ? "Snap to markers: ON" : "Snap to markers: OFF");
+    // Cycle Off -> Markers -> Bars -> Off. Bars mode is meaningful
+    // only when the engine has a tempo map; we still allow the cycle
+    // to land on Bars in any session, just nothing snaps when there
+    // are no beats to snap to.
+    snapMode = (SnapMode) (((int) snapMode + 1) % 3);
+    snapToMarkers = (snapMode == SnapMode::Markers);
+    const char* label = snapMode == SnapMode::Off     ? "Snap: OFF"
+                       : snapMode == SnapMode::Markers ? "Snap: Markers"
+                                                       : "Snap: Bars";
+    showStatus (label);
 }
 
 void MainComponent::dropMarkerAndPromptName()
