@@ -1354,6 +1354,14 @@ namespace zynforge
 
         void mouseDown (const juce::MouseEvent& e) override
         {
+            // Mark this row as the active row for Tab-to-Transient.
+            // Any subsequent Tab press will restrict the onset
+            // search to this track's onsets only (instead of the
+            // pooled cross-track list). Reset by clicking on a
+            // different row.
+            if (auto* page = findParentComponentOfClass<EditPage>())
+                page->setActiveRowTrackIndex (index);
+
             // Pro Tools-style edit cursor. Any left-click that lands
             // in the wave pane sets the edit cursor at the corresponding
             // sample position. Works whether or not audio is loaded:

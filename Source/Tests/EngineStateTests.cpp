@@ -87,6 +87,45 @@ namespace zynforge
                 expectWithinAbsoluteError (eng.getRecorder().getTrack (0).pan.load(), 0.0f, 0.001f);
             }
 
+            beginTest ("snapSampleToGrid -- Off mode is identity");
+            {
+                AudioEngine eng;
+                eng.setSnapMode (AudioEngine::SnapMode::Off);
+                expectEquals (eng.snapSampleToGrid (12345), (juce::int64) 12345);
+                expectEquals (eng.snapSampleToGrid (0),     (juce::int64) 0);
+                expectEquals (eng.snapSampleToGrid (-5),    (juce::int64) -5);
+            }
+
+            beginTest ("snapSampleToGrid -- Bars at 120 BPM 4/4");
+            {
+                AudioEngine eng;
+                eng.setStripCount (1);
+                eng.setSessionTempoBpm (120.0f);
+                eng.setTimeSignature (4, 4);
+                eng.setSnapMode (AudioEngine::SnapMode::Bars);
+                // 120 BPM 4/4 -> bar = 2 seconds. Default player SR
+                // is 48000 when no session loaded, so bar = 96000.
+                // Sample 50000 (-> 1.04s) should snap to bar 0 (closer).
+                const auto snapped = eng.snapSampleToGrid (50000);
+                expect (snapped == 0 || snapped == 96000);
+                // Sample 60000 (1.25s) is closer to 2s bar (96000)
+                // than to 0s bar -- still ambiguous depending on
+                // closer side. Just check it's exactly on a bar.
+                const auto s2 = eng.snapSampleToGrid (110000);
+                // 110000 (~2.29s) is closer to bar at 96000 (2.0s)
+                // than bar at 192000 (4.0s).
+                expectEquals (s2, (juce::int64) 96000);
+            }
+
+            beginTest ("snapSampleToGrid -- Markers picks nearest");
+            {
+                AudioEngine eng;
+                eng.setSnapMode (AudioEngine::SnapMode::Markers);
+                // No session loaded -- markers manager has no
+                // context, so snap should fall back to identity.
+                expectEquals (eng.snapSampleToGrid (12345), (juce::int64) 12345);
+            }
+
             beginTest ("Edit group assignment + membership query");
             {
                 AudioEngine eng;

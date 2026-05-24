@@ -231,7 +231,11 @@ namespace zynforge
     bool AudioEngine::splitTrackAtPlayhead (int track)
     {
         if (track < 0 || track >= recorder.getNumTracks()) return false;
-        const auto pos = player.isLoaded() ? player.getPositionSamples() : juce::int64 (0);
+        auto pos = player.isLoaded() ? player.getPositionSamples() : juce::int64 (0);
+        // Honour the active snap grid. Bars mode lands the split on
+        // the nearest bar boundary so music edits sit cleanly; Markers
+        // snaps to the nearest user marker.
+        pos = snapSampleToGrid (pos);
         if (pos <= 0) return false;
 
         auto sessionDir = getActiveSessionDir();

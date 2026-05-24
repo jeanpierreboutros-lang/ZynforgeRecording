@@ -51,6 +51,14 @@ namespace zynforge
         void  setLogicalRowsVisible (const std::vector<int>& rows);
         void  scrollToSample (juce::int64 sample);
 
+        // Active row tracking for Tab-to-Transient. TrackRow's mouse-
+        // down handler sets the row index that was last clicked; the
+        // host (MainComponent) reads it to restrict Tab navigation
+        // to that one row's onsets. -1 = no active row, fall back to
+        // pooled (cross-track) search.
+        int  getActiveRowTrackIndex() const noexcept { return activeRowTrackIndex; }
+        void setActiveRowTrackIndex (int trackIdx) noexcept { activeRowTrackIndex = trackIdx; }
+
         // Optional hook into MainComponent's UndoManager. When set,
         // every automation-point add / remove / drag goes through
         // this wrapper so Cmd+Z reverts the lane to its prior state.
@@ -104,6 +112,7 @@ namespace zynforge
         bool       lastRecording   { false };
         juce::File lastSessionDir;
         float      zoom            { 1.0f };
+        int        activeRowTrackIndex { -1 };
         AutomationToolbar*             toolbar  { nullptr };
         std::unique_ptr<EditToolsBar>  toolsBar;
         std::unique_ptr<EditTimeRuler> ruler;

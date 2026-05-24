@@ -128,6 +128,20 @@ namespace zynforge
         void  setVcaColour  (int idx, juce::Colour c);
         void  setTrackVcaGroup (int channelIndex, int vcaIdx);  // -1 = unassigned
 
+        // Snap mode -- shared between the host (which sets it from
+        // the Edit menu / '4' hotkey) and the edit operations that
+        // should respect it (split, eventually clip move + loop in/out).
+        // Off = no snap, Markers = snap to nearest marker, Bars =
+        // snap to nearest bar boundary derived from the tempo map.
+        enum class SnapMode : int { Off = 0, Markers = 1, Bars = 2 };
+        void     setSnapMode (SnapMode m) noexcept { snapMode.store ((int) m, std::memory_order_relaxed); }
+        SnapMode getSnapMode() const noexcept { return (SnapMode) snapMode.load (std::memory_order_relaxed); }
+
+        // Snaps a sample position to the active snap grid. Off returns
+        // the input unchanged. Bars walks the tempo map to find the
+        // nearest bar boundary; Markers picks the nearest marker.
+        juce::int64 snapSampleToGrid (juce::int64 sample);
+
         // Edit Group assignment. -1 = unlinked; any non-negative id
         // links the strip with every other strip carrying the same
         // id. Broadcasting is done at the UI layer when the engineer
@@ -683,6 +697,10 @@ namespace zynforge
         // split / paste use the playhead as the fallback).
         std::atomic<juce::int64> editCursorSample { -1 };
         std::vector<TempoChange> tempoMap;   // sorted by samplePos; UI/message-thread only
+        // Active snap grid. Read by snapSampleToGrid + by the
+        // splitTrackAtPlayhead path. Default Off.
+        std::atomic<int> snapMode { 0 };
+
         // Pooled list of detected onsets across every Track_NN.wav in
         // the active session (sorted). Built lazily on first Tab-to-
         // transient query. Invalidated on session load + new record.

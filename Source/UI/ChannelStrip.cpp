@@ -345,6 +345,19 @@ namespace zynforge
                              true, curVca == i);
         menu.addSubMenu ("Assign to VCA", vcaMenu);
 
+        // Edit Group submenu. Group ids 1..8 (1-based for menu
+        // readability; engine stores raw int). -1 = unlinked.
+        // Gain / pan / mute / solo / arm broadcast to every other
+        // strip sharing the same id when the engineer fires a
+        // gesture on this strip.
+        juce::PopupMenu egMenu;
+        const int curEg = state.editGroup.load (std::memory_order_relaxed);
+        egMenu.addItem (900, "None", true, curEg < 0);
+        for (int i = 0; i < 8; ++i)
+            egMenu.addItem (901 + i, "Edit Group " + juce::String (i + 1),
+                            true, curEg == i);
+        menu.addSubMenu ("Assign to Edit Group", egMenu);
+
         // Aux send to a bus track (slot 0 only in the menu -- multi-send
         // gets its own dialog later). Hidden for bus tracks themselves
         // since sending a bus into another bus would feedback loop.
@@ -416,6 +429,15 @@ namespace zynforge
                         if (pairState)
                             pairState->vcaGroup.store (v, std::memory_order_relaxed);
                         if (onVcaGroupChanged) onVcaGroupChanged (v);
+                    }
+                    // Edit group assignment: 900 = None, 901..908 = group 0..7.
+                    else if (chosen == 900 || (chosen >= 901 && chosen <= 908))
+                    {
+                        const int g = (chosen == 900) ? -1 : (chosen - 901);
+                        state.editGroup.store (g, std::memory_order_relaxed);
+                        if (pairState)
+                            pairState->editGroup.store (g, std::memory_order_relaxed);
+                        if (onEditGroupChanged) onEditGroupChanged (g);
                     }
                     // Aux send target: 800 = None, 801..899 = bus index 0..N-1.
                     else if (chosen == 800 || (chosen >= 801 && chosen < 900))
@@ -539,6 +561,7 @@ namespace zynforge
             state.armed.store (armButton.getToggleState(), std::memory_order_relaxed);
             if (pairState) pairState->armed.store (armButton.getToggleState(),
                                                    std::memory_order_relaxed);
+            if (onAfterArmedToggle) onAfterArmedToggle (stripIndex);
         };
         // R (record arm) → red gradient when armed.
         armButton.setColour (juce::ToggleButton::tickColourId, brand::accentRecord);
@@ -550,6 +573,7 @@ namespace zynforge
             state.monitor.store (monButton.getToggleState(), std::memory_order_relaxed);
             if (pairState) pairState->monitor.store (monButton.getToggleState(),
                                                      std::memory_order_relaxed);
+            if (onAfterMonitorToggle) onAfterMonitorToggle (stripIndex);
         };
         // I (input monitor) → green gradient when on.
         monButton.setColour (juce::ToggleButton::tickColourId, brand::accentPlay);
@@ -561,6 +585,7 @@ namespace zynforge
             state.muted.store (muteButton.getToggleState(), std::memory_order_relaxed);
             if (pairState) pairState->muted.store (muteButton.getToggleState(),
                                                    std::memory_order_relaxed);
+            if (onAfterMuteToggle) onAfterMuteToggle (stripIndex);
         };
         // M (mute) → orange gradient when on.
         muteButton.setColour (juce::ToggleButton::tickColourId, brand::brandOrange);
@@ -572,6 +597,7 @@ namespace zynforge
             state.soloed.store (soloButton.getToggleState(), std::memory_order_relaxed);
             if (pairState) pairState->soloed.store (soloButton.getToggleState(),
                                                     std::memory_order_relaxed);
+            if (onAfterSoloToggle) onAfterSoloToggle (stripIndex);
         };
         // S (solo) → yellow gradient when on.
         soloButton.setColour (juce::ToggleButton::tickColourId, brand::accentSolo);

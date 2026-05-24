@@ -70,6 +70,11 @@ namespace zynforge
         // engine.setTrackVcaGroup so the assignment survives relaunch.
         IntCallback onVcaGroupChanged;
 
+        // Fired when the engineer assigns this strip to an Edit
+        // Group (-1 = unlinked). Host wires to engine.setTrackEditGroup
+        // so the assignment persists.
+        IntCallback onEditGroupChanged;
+
         // Aux send wiring -- host provides the live bus list
         // (busTrackIndex, displayName) so the right-click menu can
         // populate the 'Send to bus' submenu, and a callback the
@@ -89,6 +94,16 @@ namespace zynforge
         // strip context menu. Host wires this to
         // engine.setTrackAutomationSafe.
         std::function<void (bool /*safeOn*/)> onAutomationSafeChanged;
+
+        // Pro Tools-style Edit Group broadcast hook. Fired after the
+        // user toggles arm / monitor / mute / solo, so the host can
+        // mirror the new value to every other strip in the same
+        // edit group. The strip passes its own track index; the host
+        // looks up the group + peers via the engine.
+        std::function<void (int /*srcTrackIndex*/)> onAfterArmedToggle;
+        std::function<void (int /*srcTrackIndex*/)> onAfterMonitorToggle;
+        std::function<void (int /*srcTrackIndex*/)> onAfterMuteToggle;
+        std::function<void (int /*srcTrackIndex*/)> onAfterSoloToggle;
 
         juce::Colour getResolvedColour() const;
 

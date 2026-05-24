@@ -295,6 +295,11 @@ void MainComponent::editToggleSnap()
     // are no beats to snap to.
     snapMode = (SnapMode) (((int) snapMode + 1) % 3);
     snapToMarkers = (snapMode == SnapMode::Markers);
+    // Mirror to the engine so splitTrackAtPlayhead + future edit
+    // operations honour the same grid the engineer sees.
+    engine.setSnapMode (snapMode == SnapMode::Off     ? AudioEngine::SnapMode::Off
+                       : snapMode == SnapMode::Markers ? AudioEngine::SnapMode::Markers
+                                                       : AudioEngine::SnapMode::Bars);
     const char* label = snapMode == SnapMode::Off     ? "Snap: OFF"
                        : snapMode == SnapMode::Markers ? "Snap: Markers"
                                                        : "Snap: Bars";

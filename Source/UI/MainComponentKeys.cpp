@@ -35,15 +35,25 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
     if (key == juce::KeyPress::tabKey
         && dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) == nullptr)
     {
-        const auto pos    = engine.getPlayer().getPositionSamples();
+        const auto pos = engine.getPlayer().getPositionSamples();
+        // Active-row aware. If the engineer clicked a TrackRow
+        // recently, restrict Tab to that one track's onsets;
+        // otherwise fall back to the pooled cross-track list.
+        // Track index in the engine API is 1-based (Track_NN.wav),
+        // so we add 1 to the 0-based row index.
+        const int activeRow = editPage != nullptr
+                                 ? editPage->getActiveRowTrackIndex() : -1;
+        const int restrict  = (activeRow >= 0) ? activeRow + 1 : -1;
         const auto target = key.getModifiers().isShiftDown()
-                              ? engine.prevTransientSample (pos)
-                              : engine.nextTransientSample (pos);
+                              ? engine.prevTransientSample (pos, restrict)
+                              : engine.nextTransientSample (pos, restrict);
         if (target >= 0)
         {
             engine.getPlayer().setPositionSamples (target);
             showStatus ((key.getModifiers().isShiftDown() ? "Prev transient" : "Next transient")
-                        + juce::String (" -> ")
+                        + juce::String (restrict > 0 ? " (track " + juce::String (restrict) + ")"
+                                                      : " (all)")
+                        + " -> "
                         + juce::String ((double) target / 48000.0, 2) + "s");
         }
         else

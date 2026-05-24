@@ -861,6 +861,15 @@ void MainComponent::rebuildStrips()
             engine.setTrackVcaGroup (i, vcaIdx);
         };
 
+        s->onEditGroupChanged = [this, i] (int groupId)
+        {
+            engine.setTrackEditGroup (i, groupId);
+            showStatus (groupId < 0
+                          ? juce::String ("Strip ") + juce::String (i + 1) + " unlinked"
+                          : juce::String ("Strip ") + juce::String (i + 1)
+                              + " -> Edit Group " + juce::String (groupId + 1));
+        };
+
         // Aux send wiring -- feed the strip the live bus list so its
         // 'Send to bus' submenu populates, and persist whatever the
         // engineer picks for send slot 0. Unity post-fader default.
@@ -885,6 +894,30 @@ void MainComponent::rebuildStrips()
         // refuses every write to this track (Add, Remove, Paste,
         // WRITE-mode drops, TRIM offsets). The strip mirrors via
         // setAutomationLed in the slow poll below.
+        // Edit-group broadcast for the four toggles. The strip
+        // mutates its own state immediately; we mirror to every
+        // peer in the same edit group so a single click on, say,
+        // SnareTop's MUTE mutes the whole drum kit when it's
+        // grouped. No-op when the strip isn't grouped.
+        auto broadcastToggle = [this] (int src,
+                                       auto stateField)
+        {
+            const int g = engine.getTrackEditGroup (src);
+            if (g < 0) return;
+            const auto srcVal =
+                (engine.getRecorder().getTrack (src).*stateField).load (std::memory_order_relaxed);
+            for (int peer : engine.getStripsInEditGroup (g))
+            {
+                if (peer == src) continue;
+                (engine.getRecorder().getTrack (peer).*stateField)
+                    .store (srcVal, std::memory_order_relaxed);
+            }
+        };
+        s->onAfterArmedToggle    = [this, broadcastToggle] (int src) { broadcastToggle (src, &zynforge::TrackState::armed);   };
+        s->onAfterMonitorToggle  = [this, broadcastToggle] (int src) { broadcastToggle (src, &zynforge::TrackState::monitor); };
+        s->onAfterMuteToggle     = [this, broadcastToggle] (int src) { broadcastToggle (src, &zynforge::TrackState::muted);   };
+        s->onAfterSoloToggle     = [this, broadcastToggle] (int src) { broadcastToggle (src, &zynforge::TrackState::soloed);  };
+
         s->onAutomationSafeChanged = [this, i] (bool safeOn)
         {
             engine.setTrackAutomationSafe (i, safeOn);
