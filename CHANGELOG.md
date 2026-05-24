@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Changed (latest)
+- **MainComponent split, part 4.** Help / onboarding cluster extracted to `Source/UI/MainComponentHelp.cpp` (343 lines). Covers `showFirstRunTutorial`, `showKeyboardShortcuts`, `showUserGuide`, `showAboutDialog`, `showStartupWelcome`, `launchNewSessionDialog`, `offerSessionRecovery`. MainComponent.cpp: 2654 → 2335 lines. Cumulative since start of the split day: 5522 → 2335. While extracting, the Keyboard shortcuts dialog gained two new sections — `MARKERS` (`Cmd+1..9`) and `AUTOMATION` (Left/Right/Up/Down/Delete on focused point) — both already implemented, just not previously documented in the user-facing list.
+
 ### Added (latest)
 - **EDIT view -- keyboard automation-point navigation.** When a row is active (any prior click sets it) and the toolbar param is Volume / Pan / Mute, `Left` / `Right` walks the focused point through the active lane and seeks the playhead to it; `Up` / `Down` nudges the focused point's value (Volume 0.5 dB, Pan 0.05, Mute toggles between 0 and 1); `Delete` / `Backspace` removes it. Goes through the same `runAutomationEdit` wrapper as mouse edits so Cmd+Z reverts. The focused point paints a 12 px accent-Play ring so the engineer sees where Up/Down/Delete will act. Closes the keyboard-nav row from the design-system audit (was the last unchecked priority).
 - **Tooltip pass on EditPage TrackRow header.** Name label, R/I/M/S buttons each have a one-line description so a first-time engineer can understand the row without reading docs.

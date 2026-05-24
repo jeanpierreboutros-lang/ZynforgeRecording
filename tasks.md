@@ -15,7 +15,7 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Current Priorities
 
-- [ ] **Split `MainComponent.cpp`** (L) — ~5000 lines is a god class. Extract menu construction, layout, the 24 Hz refresh timer, and key handling into separate translation units. Coordinate with `architecture.md` §4.
+- [ ] **Continue splitting `MainComponent.cpp`** (M) — down from ~5500 lines to 2335 after parts 1–4 (timer, keys, layout, cues, edit, session-IO, menu, help). Remaining big lumps: ctor (~590 lines), `rebuildStrips` (~295 lines), batch-strip ops (~290 lines), tools/utilities (click track, punch, noise, soundcheck report — ~450 lines).
 - [ ] **Field-test the unified dialog chrome** (S) — the 2026-05-23 chrome pass shipped untested in a live rehearsal. Walk through every dialog (AudioDevice, NewSession, AddTracks, Export, Session Settings, Session Properties, Click Settings, Marker List, Noise Report) and every `AlertWindow.showAsync` site (reorder-during-playback, sample-rate mismatch, lock-against-overwrite, OSC bind failure). Look for clipping, divider misalignment, button width regressions.
 - [ ] **Companion server TLS** (M) — currently HTTP only. Decide between self-signed cert + TLS or migrating to WebRTC. See `decisions.md` open question.
 - [ ] **Per-session workspace layouts** (M) — strip widths, view selection, and tool selection are stored globally in `appProps`. Move into `.zfproj` so multiple gigs can have distinct layouts.
@@ -30,7 +30,6 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 - [ ] **Native iPad companion** (L) — replace the polled `/state.json` web client with a SwiftUI app over WebSocket.
 - [ ] **Audio-stream encryption** (M) — `/stream.wav` is plaintext PCM. Wrap in TLS or migrate to SRTP.
 - [ ] **Test harness for `Source/Audio/`** (L) — pure-C++ unit tests with a mocked `AudioIODeviceCallback` driver, runnable headless. See `testing.md`.
-- [ ] **Marker keyboard shortcuts** (S) — Cmd+1..9 to jump between marker indices.
 - [ ] **Configurable monitor bus outputs** (M) — currently pinned to outs 0+1. Surface a picker in Audio Device dialog.
 - [ ] **Stereo VCA assignment shortcut** (S) — right-click a strip with a stereo pair to assign both halves at once.
 - [ ] **Auto-arm-on-input-detect mode** (M) — optional setting where a strip arms itself when persistent signal is detected (useful for first-time pre-show configuration).
@@ -43,6 +42,10 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 ## Recently Completed
 
 ### 2026-05-24
+- [x] **MainComponent split, part 4 (help / onboarding)** (M) — extracted 343-line `MainComponentHelp.cpp`; MainComponent.cpp down to 2335 lines. See `CHANGELOG.md`.
+- [x] **Keyboard automation-point navigation in EDIT** (S) — Left/Right walks focused point, Up/Down nudges value, Delete removes; undo-wrapped; focus ring in paint. See `CHANGELOG.md`.
+- [x] **Marker keyboard shortcuts (`Cmd+1..9`)** (S) — was already implemented in `MainComponentKeys.cpp`; closed stale backlog row. Pro Tools-style Memory Location recall (zoom + visibleTracks) carries through.
+- [x] **Tooltip pass on EditPage TrackRow + 4 component docs + alpha catalog + timer change-detection + spacing token sweep** (M) — round-2 audit punch list. See `CHANGELOG.md`.
 - [x] **Automation phase 6 -- drag-handle continuous curve editing** (M) — new `AutomationPoint::tension` field, curve-aware lane rendering, draggable midpoint handles, `setAutomationTensionAt`, legacy ExpUp/ExpDown auto-mapped on load. Resolves the phase 5 deferral. See `CHANGELOG.md`.
 - [x] **Automation phase 5 -- advanced write controls** (L) — Touch/Latch/Write dropdown, SUSPEND + PUNCH toggles with shift-drag range on the time ruler, WRITE point thinning, per-track Automation Safe lock with header LED, `safe`/`vTrim`/`pTrim` persisted in `.zfproj`. See `CHANGELOG.md`.
 
