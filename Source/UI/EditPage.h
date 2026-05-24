@@ -57,7 +57,21 @@ namespace zynforge
         // to that one row's onsets. -1 = no active row, fall back to
         // pooled (cross-track) search.
         int  getActiveRowTrackIndex() const noexcept { return activeRowTrackIndex; }
-        void setActiveRowTrackIndex (int trackIdx) noexcept { activeRowTrackIndex = trackIdx; }
+        void setActiveRowTrackIndex (int trackIdx) noexcept
+        {
+            if (trackIdx != activeRowTrackIndex)
+            {
+                activeRowTrackIndex = trackIdx;
+                focusedPointIdx     = -1;
+            }
+        }
+
+        // Focused automation point index (within the active row's
+        // active lane). -1 = no focus. Set by arrow-key navigation.
+        // Paint shows the focused point with a brighter highlight
+        // ring so the engineer sees where Up/Down/Delete will act.
+        int  getFocusedPointIdx() const noexcept { return focusedPointIdx; }
+        void setFocusedPointIdx (int idx) noexcept { focusedPointIdx = idx; repaint(); }
 
         // Optional hook into MainComponent's UndoManager. When set,
         // every automation-point add / remove / drag goes through
@@ -113,6 +127,7 @@ namespace zynforge
         juce::File lastSessionDir;
         float      zoom            { 1.0f };
         int        activeRowTrackIndex { -1 };
+        int        focusedPointIdx     { -1 };
         AutomationToolbar*             toolbar  { nullptr };
         std::unique_ptr<EditToolsBar>  toolsBar;
         std::unique_ptr<EditTimeRuler> ruler;

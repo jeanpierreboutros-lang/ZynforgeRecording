@@ -176,6 +176,82 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         return true;
     }
 
+    // Arrow-key automation-point navigation. Active when EDIT view
+    // is showing AND an active row is set (click any row to set it)
+    // AND a volume/pan/mute lane is active. Left/Right walks
+    // between points; Up/Down nudges the focused point's value;
+    // Delete/Backspace removes it. Skips when a text editor has
+    // focus so name dialogs still receive arrow keys.
+    if (editPage != nullptr
+        && editPage->isVisible()
+        && editPage->getActiveRowTrackIndex() >= 0
+        && dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) == nullptr)
+    {
+        const int track = editPage->getActiveRowTrackIndex();
+        const auto p = automationToolbar.getParam() == AutomationToolbar::Param::Pan
+                          ? AudioEngine::AutomationParam::Pan
+                          : automationToolbar.getParam() == AutomationToolbar::Param::Mute
+                                ? AudioEngine::AutomationParam::Mute
+                                : AudioEngine::AutomationParam::Volume;
+        const auto& lane = engine.getAutomation (track, p);
+
+        if (key == juce::KeyPress::leftKey || key == juce::KeyPress::rightKey)
+        {
+            if (lane.empty()) return false;
+            int next = editPage->getFocusedPointIdx();
+            if (next < 0)
+            {
+                // Seed from playhead.
+                const auto pos = engine.getPlayer().getPositionSamples();
+                for (int i = 0; i < (int) lane.size(); ++i)
+                    if (lane[(size_t) i].samplePos >= pos) { next = i; break; }
+                if (next < 0) next = (int) lane.size() - 1;
+            }
+            next += (key == juce::KeyPress::rightKey ? 1 : -1);
+            next = juce::jlimit (0, (int) lane.size() - 1, next);
+            editPage->setFocusedPointIdx (next);
+            engine.getPlayer().setPositionSamples (lane[(size_t) next].samplePos);
+            return true;
+        }
+
+        const int focused = editPage->getFocusedPointIdx();
+        if (focused >= 0 && focused < (int) lane.size()
+            && (key == juce::KeyPress::upKey || key == juce::KeyPress::downKey))
+        {
+            const auto& pt = lane[(size_t) focused];
+            const float step = (key == juce::KeyPress::upKey ? +1.0f : -1.0f)
+                             * (p == AudioEngine::AutomationParam::Pan ? 0.05f
+                                : p == AudioEngine::AutomationParam::Mute ? 1.0f
+                                : 0.5f);
+            float v = pt.value + step;
+            if (p == AudioEngine::AutomationParam::Pan)    v = juce::jlimit (-1.0f, 1.0f, v);
+            if (p == AudioEngine::AutomationParam::Mute)   v = v >= 0.5f ? 1.0f : 0.0f;
+            if (p == AudioEngine::AutomationParam::Volume) v = juce::jlimit (-60.0f, 12.0f, v);
+            const auto samplePos = pt.samplePos;
+            runAutomationEdit ("Nudge automation point",
+                               [this, track, p, samplePos, v]
+                               {
+                                   engine.removeAutomationPointNear (track, p, samplePos, 1);
+                                   engine.addAutomationPoint        (track, p, samplePos, v);
+                               });
+            editPage->repaint();
+            return true;
+        }
+
+        if (focused >= 0 && focused < (int) lane.size()
+            && (key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey))
+        {
+            const auto samplePos = lane[(size_t) focused].samplePos;
+            runAutomationEdit ("Delete automation point",
+                               [this, track, p, samplePos]
+                               {
+                                   engine.removeAutomationPointNear (track, p, samplePos, 4096);
+                               });
+            editPage->setFocusedPointIdx (focused > 0 ? focused - 1 : -1);
+            return true;
+        }
+    }
+
     // Bare 1..9 is reserved for cue jumps (handled above). Markers
     // moved to Cmd+1..9 so the engineer always knows which list the
     // digit lands on; the old "bare digit jumps to cue OR marker

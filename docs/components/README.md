@@ -9,20 +9,21 @@ The format follows `/design-system document` output: description, when-to-use, v
 ### Shipped
 
 - [`ChannelStrip`](ChannelStrip.md) — per-channel vertical strip (MIXER view)
+- [`MasterStrip`](MasterStrip.md) — master fader + stereo/mono toggle
 - [`AutomationToolbar`](AutomationToolbar.md) — EDIT-view automation editing toolbar
+- [`EditToolsBar`](EditToolsBar.md) — Smart / Selector / Trim / Grabber / Fade / Scrubber tool palette
 - [`BigClockPanel`](BigClockPanel.md) — transport state + timer + armed-ready indicator
 - [`TransportBar`](TransportBar.md) — record / play / stop / skip buttons
 - [`EditTimeRuler`](EditTimeRuler.md) — three-strip ruler (markers / Bars\|Beats / Min:Secs)
 - [`EditPage::TrackRow`](EditPageTrackRow.md) — the per-track EDIT row with waveform, automation lane, clip-edit handles
 - [`Toast`](Toast.md) — non-modal feedback pill
 - [`PeakTally`](PeakTally.md) — global clip indicator
+- [`SessionRecoveryDialog`](SessionRecoveryDialog.md) — orphan-session recovery modal
+- [`WelcomeDialog`](WelcomeDialog.md) — first-launch and File ▸ New flow
 
-### TODO (lower priority dialogs)
+### TODO
 
-- `SessionRecoveryDialog` — orphan-session recovery modal
-- `WelcomeDialog` — first-launch and File ▸ New flow
-- `EditToolsBar` — Smart / Selector / Trim / Grabber / Fade / Scrubber tool palette
-- `MasterStrip` — master fader + stereo/mono toggle
+The remaining ~55 component files are mostly internal helpers (LedMeter, MiniSpectrum, TimelineStrip, StripColourPicker, etc.) and modal dialogs for specific settings flows (ClickSettings, ExportDialog, etc.). Document on demand when an engineer extends one of them; no value in pre-emptively covering every helper class.
 
 ## Style
 

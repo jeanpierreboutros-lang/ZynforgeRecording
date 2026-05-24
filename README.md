@@ -54,6 +54,7 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Ap
 - Pro Tools-style EDIT view: per-row size menu, custom heights, Smart / Selector / Trim / Grabber / Fade / Scrubber tools
 - **Per-track automation lanes** (Volume / Pan / Mute) with curve-aware rendering (Hold / Linear+continuous tension / S-Curve), draggable per-segment tension handles, copy / paste / clear range, undo-aware drag coalesce, persisted in `.zfproj`
 - **WRITE-mode automation**: Touch / Latch / Write dropdown + SUSPEND (read bypass) + PUNCH (shift-drag range on the time ruler gates writes) + per-track Automation Safe lock with a header LED
+- **Keyboard automation-point navigation** in EDIT: `←` / `→` step the focused point through the active lane (seeks the playhead), `↑` / `↓` nudge its value, `Delete` removes it — all wrapped in undo
 
 ### Cues + setlist
 - Drop cues at any transport position; per-cue snapshot of every strip's state

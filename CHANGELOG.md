@@ -17,6 +17,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Added (latest)
+- **EDIT view -- keyboard automation-point navigation.** When a row is active (any prior click sets it) and the toolbar param is Volume / Pan / Mute, `Left` / `Right` walks the focused point through the active lane and seeks the playhead to it; `Up` / `Down` nudges the focused point's value (Volume 0.5 dB, Pan 0.05, Mute toggles between 0 and 1); `Delete` / `Backspace` removes it. Goes through the same `runAutomationEdit` wrapper as mouse edits so Cmd+Z reverts. The focused point paints a 12 px accent-Play ring so the engineer sees where Up/Down/Delete will act. Closes the keyboard-nav row from the design-system audit (was the last unchecked priority).
+- **Tooltip pass on EditPage TrackRow header.** Name label, R/I/M/S buttons each have a one-line description so a first-time engineer can understand the row without reading docs.
+- **Four more component docs:** `SessionRecoveryDialog`, `WelcomeDialog`, `EditToolsBar`, `MasterStrip`. Component-docs index now shows 12 / 8 covered (was 8 / 8 in the original audit deliverable; the remaining ~55 helpers + setting dialogs are documented on demand).
+- **Alpha catalog in `BrandColors.h`.** The previously-unmapped values (0.06, 0.10, 0.14, 0.22, 0.25, 0.32, 0.45, 0.75) are now listed with their purpose so future contributors don't reach for an arbitrary literal when an existing tier already covers the case.
+
+### Changed (latest)
+- **Change-detection on AudioDeviceDialog InputMeter + PatchPage routing matrix timers.** Both previously called `repaint()` unconditionally every 60 ms; now compute a hash / quantised peak and only repaint when state actually changed. Idle CPU savings small but the pattern matches the rest of the app.
+- **Spacing sweep -- `removeFromTop(24/22/20/26)` literals replaced with `brand::space::btnH / ctrlH / ioH / rowH` tokens** across `Source/UI/*.{cpp,h}`. Visible behaviour unchanged; closes the last open token-coverage row from the audit.
+
 ### Changed (later)
 - **AudioEngine split (god class part 1):** Extracted the automation lane subsystem into `Source/Audio/AudioEngineAutomation.cpp` (551 lines). Covers `findLane`, `getAutomation`, `addAutomationPoint`, `removeAutomationPointNear`, `setAutomationCurveAt`, `setAutomationTensionAt`, `automationValueAt`, `clearAutomation`, `clearAutomationForTrack`, `copyAutomationRange`, `clearAutomationRange`, `pasteAutomationRange`, `setTrackAutomationSafe`, `isTrackAutomationSafe`, `writeAutomationPointThinned`, `setAutomationTrim`, `getAutomationTrim`, `clearAllAutomationTrims`, `automationToJson`, `loadAutomationFromJson`, plus the file-local `addPointLocked` helper. Real-time read path (`automationValueAt`) stays disciplined -- `ScopedTryLock` + atomic fallback unchanged. AudioEngine.cpp drops 2660 → 2128 lines.
 - **MainComponent split (part 3):** Session IO cluster extracted to `Source/UI/MainComponentSessionIO.cpp` (747 lines). Covers save / load / export / import / template ops. New `Source/UI/SessionProjPath.h` consolidates the previously-duplicated `findSessionProj` helper across three call sites. MainComponent.cpp 3872 → 3138 lines; cumulative 5522 → 3138 since start of day.

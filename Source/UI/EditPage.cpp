@@ -118,6 +118,7 @@ namespace zynforge
             nameLabel.setColour (juce::Label::textColourId, brand::textPrimary);
             nameLabel.setFont (brand::type::channelName());
             nameLabel.setEditable (false, true, false);
+            nameLabel.setTooltip ("Double-click to rename this track. Changes mirror to the MIXER + PATCH views.");
             nameLabel.onTextChange = [this]
             {
                 const auto newName = nameLabel.getText().trim();
@@ -144,6 +145,10 @@ namespace zynforge
             styleBtn (monButton,  brand::accentPlay);
             styleBtn (muteButton, brand::brandOrange);
             styleBtn (soloButton, brand::accentSolo);
+            armButton .setTooltip ("R -- arm this track for recording (red when on)");
+            monButton .setTooltip ("I -- input monitor (green when on); meter reflects live input even when not recording");
+            muteButton.setTooltip ("M -- mute the track's playback output (orange when on)");
+            soloButton.setTooltip ("S -- solo the track; other unmuted tracks drop out (yellow when on)");
             armButton .onClick = [this]
             {
                 engine.getRecorder().getTrack (index).armed.store (armButton.getToggleState());
@@ -874,14 +879,29 @@ namespace zynforge
                         g.drawEllipse ((float) xMid - 2.8f, (float) yMid - 2.8f, 5.6f, 5.6f, 1.0f);
                     }
 
-                    for (const auto& pt : points)
+                    // Keyboard focus ring -- visible only when this row
+                    // is the active row AND a point is focused (set by
+                    // Left/Right arrow navigation in MainComponentKeys).
+                    int focusedIdx = -1;
+                    if (auto* parentPage = findParentComponentOfClass<EditPage>())
+                        if (parentPage->getActiveRowTrackIndex() == index)
+                            focusedIdx = parentPage->getFocusedPointIdx();
+
+                    for (size_t i = 0; i < points.size(); ++i)
                     {
+                        const auto& pt = points[i];
                         const int x = sampleToX (pt.samplePos);
                         const int y = valueToY  (pt.value);
                         g.setColour (lineCol);
                         g.fillEllipse ((float) x - 3.5f, (float) y - 3.5f, 7.0f, 7.0f);
                         g.setColour (brand::shadow::elev3());
                         g.drawEllipse ((float) x - 3.5f, (float) y - 3.5f, 7.0f, 7.0f, 1.0f);
+                        if ((int) i == focusedIdx)
+                        {
+                            g.setColour (brand::accentPlay);
+                            g.drawEllipse ((float) x - 6.0f, (float) y - 6.0f,
+                                           12.0f, 12.0f, 1.5f);
+                        }
                     }
                 }
 
