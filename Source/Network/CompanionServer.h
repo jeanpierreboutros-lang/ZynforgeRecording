@@ -29,11 +29,31 @@ namespace zynforge
         ~CompanionServer();
 
         // Starts the accept thread on the given port. false if bind fails.
-        bool start (int port);
+        // bindAddress defaults to loopback so an unauthenticated open-by-
+        // accident never reaches the LAN; pass "0.0.0.0" explicitly when
+        // the engineer needs phone-on-Wi-Fi access. A fresh access token
+        // is generated on every start; every endpoint requires it via
+        // ?t=<token> or `Authorization: Bearer <token>`.
+        bool start (int port, const juce::String& bindAddress = "127.0.0.1");
         void stop();
 
         bool isRunning() const noexcept { return running.load(); }
         int  getPort()   const noexcept { return listenPort.load(); }
+
+        // The currently-active access token (empty when the server is
+        // stopped). Surface this to the engineer so they can paste the
+        // full URL into a phone -- the token is the only thing keeping
+        // someone else on the same Wi-Fi from arming tracks.
+        juce::String getAccessToken() const;
+
+        // Full URL the engineer should hand to their phone, including
+        // the token. Returns empty when stopped.
+        juce::String getAccessUrl() const;
+
+        // True when the server bound to a non-loopback address (i.e.
+        // is reachable from the LAN). Lets the host UI flag that the
+        // companion is exposed beyond this machine.
+        bool isExposedOnLan() const;
 
         // Audio thread feed: pushes PCM samples for /stream.wav. Non-
         // blocking; drops samples if no client is listening.
@@ -43,6 +63,9 @@ namespace zynforge
         AudioEngine&     engine;
         std::atomic<bool> running     { false };
         std::atomic<int>  listenPort  { -1 };
+        juce::String      bind        { "127.0.0.1" };
+        juce::String      accessToken;
+        mutable std::mutex tokenLock;
 
         std::unique_ptr<juce::StreamingSocket> listener;
         std::thread acceptThread;

@@ -68,6 +68,42 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Companion server is loopback-only with a per-session access token — 2026-05-24
+
+**Status:** Accepted
+**Context:** The HTTP companion (`/state.json`, `/cmd`, `/stream.wav`) used to bind `0.0.0.0` with zero auth. Anyone on the same Wi-Fi could arm tracks, mute strips, or hijack a stream. At a public-Wi-Fi venue this is a real attack class.
+**Decision:** `startCompanionServer(port)` binds `127.0.0.1` by default. LAN exposure is opt-in via the explicit `startCompanionServerOnLan(port)` API. Every request requires a 32-hex-char access token (regenerated each start) via `?t=<token>` query or `Authorization: Bearer <token>` header. Token-less / wrong-token requests get 401.
+**Rationale:** Default-deny matches how the engineer thinks ("I started a server, no one should be able to use it without me handing them the URL"). Token-in-URL is the cheapest UX -- the host copies the full URL to the clipboard on start so the engineer can paste it on a phone.
+**Consequences:** Existing phone clients break -- they must include the token. The loopback default means LAN access takes an extra menu item. Token regenerates per server start so an old bookmark stops working after a restart (acceptable -- engineers re-launch the app between sessions).
+**Alternatives Considered:** Per-session password (engineer-set) -- rejected for friction. WebSocket auth handshake -- rejected as over-engineering for an HTTP polling client. TLS / HTTPS -- still pending; the token closes the casual-attack gap and TLS would close the on-path-attacker gap.
+**Related Documents:** `Source/Network/CompanionServer.{h,cpp}`, `AudioEngine::startCompanionServer{,OnLan}`.
+
+---
+
+## Bare digit jumps to cues only; Cmd+digit jumps to markers — 2026-05-24
+
+**Status:** Accepted
+**Context:** Pressing `1`..`9` used to jump to a cue if the setlist had one, else fall through to a marker jump. Engineer's muscle memory depended on session contents -- a cue list shipped to a venue without an expected cue silently fell through to "jumped to marker 1," which could mean rewinding to bar 0 mid-show.
+**Decision:** Bare `1`..`9` is reserved for cue jumps. `Cmd+1`..`9` is the Pro Tools-style marker / Memory Location shortcut. The two never compete.
+**Rationale:** Predictable keys beat clever fallbacks on stage. Engineers always know which list the digit will hit.
+**Consequences:** Engineers who relied on the old fall-through have to retrain to `Cmd+N` for markers. The first time a digit press does nothing, the status bar surfaces the reason ("No cue N" or "No marker N -- drop one with M first").
+**Alternatives Considered:** Keep the fallback but log it to the status bar -- rejected because the muscle memory of "this key always does X" is more important than the convenience.
+**Related Documents:** `Source/UI/MainComponentKeys.cpp`.
+
+---
+
+## Test harness lives inside the GUI binary, behind `ZYNFORGE_RUN_TESTS=1` — 2026-05-24
+
+**Status:** Accepted
+**Context:** Until 2026-05-24 there were zero tests. Every change shipped on "the app launched at 49 MB and didn't crash for 9 seconds." A separate test target was discussed but adds CMake complexity (link-graph surgery, JUCE module duplication) and slows the dev loop.
+**Decision:** The GUI app binary doubles as a test runner. Setting `ZYNFORGE_RUN_TESTS=1` (or passing `--run-tests`) at launch makes `Main.cpp` instantiate a `juce::UnitTestRunner`, run every registered `juce::UnitTest`, print results to stderr AND `~/Library/Logs/Zynforge/test-report.log`, then `quit()` with the failure count as exit code. `AudioEngine::setTestModeSkipAudioInit(true)` lets tests construct the engine without opening a 256-channel audio device.
+**Rationale:** Lowest friction -- no extra target to maintain, the test binary always has the latest engine code, and adding a new test is one file (`Source/Tests/*.cpp`). Exit-code semantics let CI / shell scripts gate on test pass/fail.
+**Consequences:** Tests can't run in parallel with the real app. The single binary is slightly larger. Test-only state (the `s_testSkipAudioInit` static) lives in production code. The first test pass found and fixed a real correctness bug (write paths silently no-op'd on uninitialised lane storage) -- which justifies the investment.
+**Alternatives Considered:** Separate `juce_add_console_app` target -- rejected to avoid duplicate compilation of the audio engine + link-graph complexity.
+**Related Documents:** `Source/Main.cpp`, `Source/Tests/AutomationTests.cpp`.
+
+---
+
 ## Template
 
 ```

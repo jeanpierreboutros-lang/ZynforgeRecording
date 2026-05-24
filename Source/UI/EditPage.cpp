@@ -683,27 +683,10 @@ namespace zynforge
                     default: break;
                 }
 
-                // Resolve the active parameter from the toolbar (falls
-                // back to the per-row laneMode chosen via VIEW menu).
-                auto chosenParam = AudioEngine::AutomationParam::Volume;
-                if (toolbar != nullptr)
-                {
-                    switch (toolbar->getParam())
-                    {
-                        case AutomationToolbar::Param::Volume: chosenParam = AudioEngine::AutomationParam::Volume; break;
-                        case AutomationToolbar::Param::Pan:    chosenParam = AudioEngine::AutomationParam::Pan;    break;
-                        case AutomationToolbar::Param::Mute:   chosenParam = AudioEngine::AutomationParam::Mute;   break;
-                    }
-                }
-                else
-                {
-                    switch (laneMode)
-                    {
-                        case LaneMode::Pan:  chosenParam = AudioEngine::AutomationParam::Pan;  break;
-                        case LaneMode::Mute: chosenParam = AudioEngine::AutomationParam::Mute; break;
-                        default:             chosenParam = AudioEngine::AutomationParam::Volume; break;
-                    }
-                }
+                // currentLaneParam() is the single source of truth for
+                // which lane this row is editing -- paint, hit-test, and
+                // mouseDrag all read from it so they never disagree.
+                const auto chosenParam = currentLaneParam();
 
                 const auto& points = engine.getAutomation (index, chosenParam);
 
@@ -2342,10 +2325,7 @@ namespace zynforge
             // segment already has no bend (avoids a noop undo step).
             const float curTension = lane[(size_t) pointIdx].tension;
             const bool  hasBend    = std::abs (curTension) > 1.0e-3f;
-            m.addItem (706, juce::String ("Reset bend (handle)")
-                                + (hasBend ? "" : "  -- none")
-                                + "    ",
-                       hasBend && ! isMute, false);
+            m.addItem (706, "Reset bend (handle)", hasBend && ! isMute, false);
 
             juce::Component::SafePointer<TrackRow> safe (this);
             m.showMenuAsync (juce::PopupMenu::Options()

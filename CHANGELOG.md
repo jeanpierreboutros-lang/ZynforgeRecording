@@ -17,7 +17,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Security
+- **CompanionServer is no longer wide-open.** Used to bind `0.0.0.0` with zero auth, so anyone on the same Wi-Fi could arm tracks. Now binds `127.0.0.1` by default, requires a per-start 32-hex-char access token via `?t=<token>` or `Authorization: Bearer <token>`, and copies the full URL (with token) to the clipboard on startup so the engineer can paste it on a phone. LAN exposure is opt-in via the new `startCompanionServerOnLan(port)` API. See `decisions.md`.
+
 ### Added
+- **Test harness** (`Source/Tests/AutomationTests.cpp`). 9 automation lane tests cover insert/sort, kSnap collapse, Mute discretisation, tension interpolation, Safe-lock blocking, write thinning, punch gating, JSON round-trip, and legacy curve migration. Run with `ZYNFORGE_RUN_TESTS=1` or `--run-tests`; results go to stderr + `~/Library/Logs/Zynforge/test-report.log`. Exit code is the failure count. `AudioEngine::setTestModeSkipAudioInit(true)` lets tests construct an engine without opening a 256-channel audio device.
+
+### Fixed
+- **Write paths silently no-op'd on uninitialised lane storage.** `addAutomationPoint`, `removeAutomationPointNear`, `clearAutomationRange`, `pasteAutomationRange`, and `writeAutomationPointThinned` all early-returned when `track >= automationData.size()` -- which was usually true on a fresh strip since `setStripCount` doesn't pre-populate per-strip lane storage. Caught by the new test harness on its first run. Now auto-resizes (consistent with `findLane` / `setAutomationTrim` / `setTrackAutomationSafe` / `loadAutomationFromJson`).
+- **`writeAutomationPointThinned` duplicated `addAutomationPoint`'s body** (kSnap, Mute snap, sort). Both now share an `addPointLocked` helper. The misleading "we drop ours first / CriticalSection is recursive" comment is gone.
+- **Curve-picker "Reset bend -- none" label hack** -- the "-- none" suffix was a workaround for the fact that the item was already disabled by the boolean param. Label is now just "Reset bend (handle)"; enabled state continues to encode the rest.
+- **Tension drag-handle paint-vs-hit-test inconsistency in the lane-paint path** -- `paint()` had its own inline `toolbar->getParam()` switch that fell through to Volume for Click/Tempo, while `hitTestTensionHandle` already used `currentLaneParam()`. Both now use the helper.
+- **PUNCH range band painted at full alpha when PUNCH wasn't armed** (already shipped earlier today, noted here for completeness).
+- **Bare `1`..`9` cue-vs-marker ambiguity.** Pressing a digit used to jump to a cue OR a marker depending on which existed -- silent fall-through made the same key do different things in different sessions. Bare digits now do cues only; markers are always `Cmd+N`. See `decisions.md`.
+- **Modal stacking on first launch.** Recovery + tutorial + welcome each used their own `callAfterDelay` with no coordination; on a first-run launch with crashed sessions, three modals could stack. Now serialised through a single nested callback chain: recovery → tutorial → welcome.
+
+### Added (earlier today)
 - **Session recovery dialog** (`Source/UI/SessionRecoveryDialog.h`) replaces the easy-to-miss popup menu. Sortable table shows session name, track count, on-disk size, and last-modified date for every orphan; Recover loads the session and clears the `recording.session` marker, Delete removes the directory after a confirm, Skip leaves orphans for next launch. Dialog is DialogChrome-styled and fires at launch before the WelcomeDialog.
 - **Curve picker > Reset bend** menu entry on every automation point -- wipes per-segment tension back to 0 without changing the shape preset. Disabled when the segment isn't bent.
 - **Shift-snap on tension drag** -- holding Shift while dragging a curve handle snaps tension to a 0.25 grid so matched ramps across multiple segments are easy to dial in.

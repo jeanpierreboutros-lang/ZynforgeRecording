@@ -32,6 +32,12 @@ namespace zynforge
         AudioEngine();
         ~AudioEngine() override;
 
+        // Set BEFORE constructing the engine to skip
+        // AudioDeviceManager::initialise + addAudioCallback. Tests
+        // use this so they can exercise the lane / persistence
+        // surface without opening a 256-channel audio device.
+        static void setTestModeSkipAudioInit (bool skip) noexcept;
+
         juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
         MultitrackRecorder&       getRecorder()      noexcept { return recorder; }
         SessionPlayer&            getPlayer()        noexcept { return player; }
@@ -46,6 +52,9 @@ namespace zynforge
 
         // Companion HTTP server (read-only iPad / remote-audition).
         bool startCompanionServer (int port);
+        bool startCompanionServerOnLan (int port);
+        juce::String getCompanionAccessUrl() const;
+        bool         isCompanionExposedOnLan() const;
         void stopCompanionServer();
         bool isCompanionServerRunning() const noexcept;
         int  getCompanionServerPort() const noexcept;

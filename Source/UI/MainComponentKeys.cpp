@@ -112,21 +112,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         return true;
     }
 
-    // Pro Tools-style numeric jump: pressing 1..9 jumps to memory
-    // location 1..9 by sample position. Skips when a text editor
-    // has focus (engineer is typing) -- JUCE handles that elsewhere.
-    if (c >= '1' && c <= '9' && ! key.getModifiers().isCommandDown())
-    {
-        const int targetIdx = (c - '1');
-        const auto& list = engine.getMarkers().getAll();
-        if (targetIdx < (int) list.size())
-        {
-            engine.getPlayer().setPositionSamples (list[(size_t) targetIdx].sampleOffset);
-            showStatus ("Jumped to marker " + juce::String (targetIdx + 1)
-                        + ": " + list[(size_t) targetIdx].name);
-            return true;
-        }
-    }
+    // Bare 1..9 is reserved for cue jumps (handled above). Markers
+    // moved to Cmd+1..9 so the engineer always knows which list the
+    // digit lands on; the old "bare digit jumps to cue OR marker
+    // depending on which exists" rule was a stage trap.
     if (c == 'a') { editSoloSelection();    return true; }
     if (c == 's') { editSplitAtPlayhead();  return true; }
     if (c == ',') { editStartRange();       return true; }

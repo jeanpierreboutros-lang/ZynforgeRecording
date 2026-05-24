@@ -141,7 +141,25 @@ namespace zynforge
     bool AudioEngine::startCompanionServer (int port)
     {
         if (companion == nullptr) companion = std::make_unique<CompanionServer> (*this);
-        return companion->start (port);
+        // Default to loopback -- the engineer opts into LAN exposure
+        // via startCompanionServerOnLan when they actually need it.
+        return companion->start (port, "127.0.0.1");
+    }
+
+    bool AudioEngine::startCompanionServerOnLan (int port)
+    {
+        if (companion == nullptr) companion = std::make_unique<CompanionServer> (*this);
+        return companion->start (port, "0.0.0.0");
+    }
+
+    juce::String AudioEngine::getCompanionAccessUrl() const
+    {
+        return companion != nullptr ? companion->getAccessUrl() : juce::String();
+    }
+
+    bool AudioEngine::isCompanionExposedOnLan() const
+    {
+        return companion != nullptr && companion->isExposedOnLan();
     }
     void AudioEngine::stopCompanionServer()
     {
@@ -457,8 +475,9 @@ namespace zynforge
                                             juce::int64 startSample, juce::int64 endSample)
     {
         if (startSample > endSample) std::swap (startSample, endSample);
+        if (track < 0) return;
         const juce::ScopedLock sl (automationLock);
-        if (track < 0 || track >= (int) automationData.size()) return;
+        if (track >= (int) automationData.size()) return;
         if (automationData[(size_t) track].safe.load (std::memory_order_acquire)) return;
         auto* lane = findLane (track, p);
         if (lane == nullptr || lane->empty()) return;
@@ -474,8 +493,10 @@ namespace zynforge
                                             const std::vector<AutomationPoint>& points)
     {
         if (points.empty()) return;
+        if (track < 0) return;
         const juce::ScopedLock sl (automationLock);
-        if (track < 0 || track >= (int) automationData.size()) return;
+        if (track >= (int) automationData.size())
+            automationData.resize ((size_t) track + 1);
         if (automationData[(size_t) track].safe.load (std::memory_order_acquire)) return;
         auto* lane = findLane (track, p);
         if (lane == nullptr) return;
@@ -520,6 +541,12 @@ namespace zynforge
         return automationData[(size_t) track].safe.load (std::memory_order_acquire);
     }
 
+    // Forward decl -- the body lives next to addAutomationPoint
+    // below since both call sites share it.
+    static void addPointLocked (std::vector<AudioEngine::AutomationPoint>& lane,
+                                AudioEngine::AutomationParam p,
+                                juce::int64 samplePos, float value);
+
     void AudioEngine::writeAutomationPointThinned (int track, AutomationParam p,
                                                    juce::int64 samplePos, float value,
                                                    juce::int64 minSamplesBetween)
@@ -530,7 +557,8 @@ namespace zynforge
             return;
 
         const juce::ScopedLock sl (automationLock);
-        if (track >= (int) automationData.size()) return;
+        if (track >= (int) automationData.size())
+            automationData.resize ((size_t) track + 1);
         auto& a = automationData[(size_t) track];
         if (a.safe.load (std::memory_order_acquire)) return;
 
@@ -541,33 +569,9 @@ namespace zynforge
             return;     // too soon -- skip this drop, keep ramp resolution sensible
 
         a.lastWriteSample[idx].store (samplePos, std::memory_order_release);
-        // Hand off to the standard add path so kSnap + sort + Mute
-        // discretisation all stay in one place.
-        // Note: addAutomationPoint takes the lock again -- we drop ours first.
-        // (CriticalSection is recursive on macOS so this is safe either way.)
         auto* lane = findLane (track, p);
         if (lane == nullptr) return;
-
-        AutomationCurve newCurve = AutomationCurve::Linear;
-        float v = value;
-        if (p == AutomationParam::Mute)
-        {
-            v        = v >= 0.5f ? 1.0f : 0.0f;
-            newCurve = AutomationCurve::Hold;
-        }
-        constexpr juce::int64 kSnap = 4096;
-        for (auto& pt : *lane)
-        {
-            if (std::abs (pt.samplePos - samplePos) < kSnap)
-            {
-                pt.value = v;
-                if (p == AutomationParam::Mute) pt.curve = AutomationCurve::Hold;
-                return;
-            }
-        }
-        lane->push_back ({ samplePos, v, newCurve });
-        std::sort (lane->begin(), lane->end(),
-                   [] (const auto& a2, const auto& b2) { return a2.samplePos < b2.samplePos; });
+        addPointLocked (*lane, p, samplePos, value);
     }
 
     void AudioEngine::setAutomationTrim (int track, AutomationParam p, float trim)
@@ -1267,6 +1271,13 @@ namespace zynforge
         return true;
     }
 
+    namespace { std::atomic<bool> s_testSkipAudioInit { false }; }
+
+    void AudioEngine::setTestModeSkipAudioInit (bool skip) noexcept
+    {
+        s_testSkipAudioInit.store (skip, std::memory_order_release);
+    }
+
     AudioEngine::AudioEngine()
     {
         juce::PropertiesFile::Options opts;
@@ -1315,11 +1326,14 @@ namespace zynforge
                             std::memory_order_release);
 
         // Open with up to 256 inputs / 64 outputs by default -- adjust later from UI.
-        auto err = deviceManager.initialise (/*numInputs*/ 256, /*numOutputs*/ 64,
-                                             /*savedState*/ nullptr,
-                                             /*selectDefault*/ true);
-        if (err.isNotEmpty())
-            DBG ("AudioDeviceManager init: " << err);
+        if (! s_testSkipAudioInit.load (std::memory_order_acquire))
+        {
+            auto err = deviceManager.initialise (/*numInputs*/ 256, /*numOutputs*/ 64,
+                                                 /*savedState*/ nullptr,
+                                                 /*selectDefault*/ true);
+            if (err.isNotEmpty())
+                DBG ("AudioDeviceManager init: " << err);
+        }
 
         // Restore persisted VCA names + colours so a relaunch shows the
         // engineer's "DRUMS" / "VOX" labels instead of "VCA 1..8".
@@ -1333,12 +1347,14 @@ namespace zynforge
             vcas[(size_t) i].colourARGB.store (cc, std::memory_order_relaxed);
         }
 
-        deviceManager.addAudioCallback (this);
+        if (! s_testSkipAudioInit.load (std::memory_order_acquire))
+            deviceManager.addAudioCallback (this);
     }
 
     AudioEngine::~AudioEngine()
     {
-        deviceManager.removeAudioCallback (this);
+        if (! s_testSkipAudioInit.load (std::memory_order_acquire))
+            deviceManager.removeAudioCallback (this);
     }
 
     void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
@@ -1524,37 +1540,53 @@ namespace zynforge
         return emptyAutomation;
     }
 
-    void AudioEngine::addAutomationPoint (int track, AutomationParam p,
-                                          juce::int64 samplePos, float value)
+    // Caller holds automationLock. Encapsulates the kSnap + Mute-snap
+    // + sort semantics so both addAutomationPoint and the WRITE-mode
+    // thinned path share one implementation.
+    static void addPointLocked (std::vector<AudioEngine::AutomationPoint>& lane,
+                                AudioEngine::AutomationParam p,
+                                juce::int64 samplePos, float value)
     {
-        const juce::ScopedLock sl (automationLock);
-        if (track < 0 || track >= (int) automationData.size()) return;
-        if (automationData[(size_t) track].safe.load (std::memory_order_acquire)) return;
-        auto* lane = findLane (track, p);
-        if (lane == nullptr) return;
-
-        // Mute is discrete: any non-zero value snaps to 1, and the
-        // segment FROM a mute point holds (no fade through 0.5 etc).
-        AutomationCurve newCurve = AutomationCurve::Linear;
-        if (p == AutomationParam::Mute)
+        using C = AudioEngine::AutomationCurve;
+        C newCurve = C::Linear;
+        if (p == AudioEngine::AutomationParam::Mute)
         {
             value    = value >= 0.5f ? 1.0f : 0.0f;
-            newCurve = AutomationCurve::Hold;
+            newCurve = C::Hold;
         }
 
         constexpr juce::int64 kSnap = 4096;   // ~85 ms at 48 k -- replaces nearby points
-        for (auto& pt : *lane)
+        for (auto& pt : lane)
         {
             if (std::abs (pt.samplePos - samplePos) < kSnap)
             {
                 pt.value = value;
-                if (p == AutomationParam::Mute) pt.curve = AutomationCurve::Hold;
+                if (p == AudioEngine::AutomationParam::Mute) pt.curve = C::Hold;
                 return;
             }
         }
-        lane->push_back ({ samplePos, value, newCurve });
-        std::sort (lane->begin(), lane->end(),
+        lane.push_back ({ samplePos, value, newCurve, 0.0f });
+        std::sort (lane.begin(), lane.end(),
                    [] (const auto& a, const auto& b) { return a.samplePos < b.samplePos; });
+    }
+
+    void AudioEngine::addAutomationPoint (int track, AutomationParam p,
+                                          juce::int64 samplePos, float value)
+    {
+        if (track < 0) return;
+        const juce::ScopedLock sl (automationLock);
+        // Grow automationData lazily so writes on a freshly-created
+        // strip (setStripCount adds to the recorder, but the engine
+        // doesn't pre-populate per-strip lane storage) actually
+        // land instead of silently no-op'ing. Order matters: the
+        // resize HAS to happen before the safe-check so the safe
+        // atomic exists to read.
+        if (track >= (int) automationData.size())
+            automationData.resize ((size_t) track + 1);
+        if (automationData[(size_t) track].safe.load (std::memory_order_acquire)) return;
+        auto* lane = findLane (track, p);
+        if (lane == nullptr) return;
+        addPointLocked (*lane, p, samplePos, value);
     }
 
     void AudioEngine::setAutomationCurveAt (int track, AutomationParam p,
@@ -1712,8 +1744,9 @@ namespace zynforge
     void AudioEngine::removeAutomationPointNear (int track, AutomationParam p,
                                                  juce::int64 samplePos, juce::int64 tolerance)
     {
+        if (track < 0) return;
         const juce::ScopedLock sl (automationLock);
-        if (track < 0 || track >= (int) automationData.size()) return;
+        if (track >= (int) automationData.size()) return;   // nothing stored = nothing to remove
         if (automationData[(size_t) track].safe.load (std::memory_order_acquire)) return;
         auto* lane = findLane (track, p);
         if (lane == nullptr || lane->empty()) return;

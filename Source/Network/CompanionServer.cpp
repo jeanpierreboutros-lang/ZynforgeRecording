@@ -182,11 +182,29 @@ setInterval(tick, 500); tick();
 
     CompanionServer::~CompanionServer() { stop(); }
 
-    bool CompanionServer::start (int port)
+    bool CompanionServer::start (int port, const juce::String& bindAddress)
     {
         if (running.load()) return true;
+        bind = bindAddress.isEmpty() ? juce::String ("127.0.0.1") : bindAddress;
+
+        // Generate a fresh 32-hex-char access token each start. The
+        // token is the only thing keeping someone else on the same
+        // Wi-Fi from arming tracks when bound to 0.0.0.0 -- mint a
+        // new one per server lifetime so an old token from a prior
+        // session doesn't grant access to a fresh one.
+        {
+            std::lock_guard<std::mutex> g (tokenLock);
+            juce::Random rng (juce::Time::currentTimeMillis());
+            accessToken.clear();
+            for (int i = 0; i < 32; ++i)
+            {
+                const int v = rng.nextInt (16);
+                accessToken += juce::String::toHexString (v);
+            }
+        }
+
         listener = std::make_unique<juce::StreamingSocket>();
-        if (! listener->createListener (port, "0.0.0.0"))
+        if (! listener->createListener (port, bind))
         {
             listener.reset();
             return false;
@@ -204,6 +222,32 @@ setInterval(tick, 500); tick();
         if (acceptThread.joinable()) acceptThread.join();
         listener.reset();
         listenPort.store (-1);
+        {
+            std::lock_guard<std::mutex> g (tokenLock);
+            accessToken.clear();
+        }
+    }
+
+    juce::String CompanionServer::getAccessToken() const
+    {
+        std::lock_guard<std::mutex> g (tokenLock);
+        return accessToken;
+    }
+
+    juce::String CompanionServer::getAccessUrl() const
+    {
+        if (! running.load()) return {};
+        std::lock_guard<std::mutex> g (tokenLock);
+        const auto host = (bind == "127.0.0.1" || bind == "::1")
+                              ? juce::String ("localhost")
+                              : juce::IPAddress::getLocalAddress().toString();
+        return "http://" + host + ":" + juce::String (listenPort.load())
+             + "/?t=" + accessToken;
+    }
+
+    bool CompanionServer::isExposedOnLan() const
+    {
+        return running.load() && bind != "127.0.0.1" && bind != "::1";
     }
 
     void CompanionServer::feedStreamSamples (const float* L, const float* R, int n) noexcept
@@ -247,8 +291,42 @@ setInterval(tick, 500); tick();
         const auto firstLine = headers.upToFirstOccurrenceOf ("\r\n", false, false);
         const auto bits      = juce::StringArray::fromTokens (firstLine, " ", "");
         if (bits.size() < 2) return;
-        const auto& method = bits[0];
-        const auto& path   = bits[1];
+        const auto& method   = bits[0];
+        const auto& fullPath = bits[1];
+        const auto path      = fullPath.upToFirstOccurrenceOf ("?", false, false);
+        const auto query     = fullPath.fromFirstOccurrenceOf ("?", false, false);
+
+        // Token check on every endpoint. Accept either `?t=<token>`
+        // in the query OR `Authorization: Bearer <token>` in the
+        // headers (lets the engineer paste the URL into a browser
+        // bookmark OR use a script-driven client with a header).
+        // The 401 body is plain text so misconfigured clients have
+        // a chance of surfacing what went wrong.
+        const auto expected = getAccessToken();
+        if (expected.isEmpty())
+        {
+            writeRaw (*client, "503 Service Unavailable", "text/plain",
+                      "companion server starting");
+            return;
+        }
+        juce::String provided;
+        {
+            auto pieces = juce::StringArray::fromTokens (query, "&", "");
+            for (auto& p : pieces)
+                if (p.startsWith ("t="))
+                    provided = p.fromFirstOccurrenceOf ("=", false, false);
+            const auto authLine = headers.fromFirstOccurrenceOf ("\nAuthorization:", false, true)
+                                          .upToFirstOccurrenceOf ("\n", false, false)
+                                          .trim();
+            if (authLine.startsWithIgnoreCase ("Bearer "))
+                provided = authLine.substring (7).trim();
+        }
+        if (provided != expected)
+        {
+            writeRaw (*client, "401 Unauthorized", "text/plain",
+                      "missing or invalid access token (?t=<token>)");
+            return;
+        }
 
         if (method == "GET" && (path == "/" || path == "/index.html"))
             return writeHtmlPage (*client);

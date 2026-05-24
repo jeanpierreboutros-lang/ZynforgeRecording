@@ -567,36 +567,41 @@ MainComponent::MainComponent()
     rebuildStrips();
     updateTransportLabels();
 
-    juce::Timer::callAfterDelay (250, [this] { offerSessionRecovery(); });
     // If the previous run had a session pinned, rehydrate its setlist
     // AND its UI layout (view, strip width, VCA panel, EDIT zoom).
     loadSetlistFromActiveSession();
     juce::Timer::callAfterDelay (50, [this] { loadUILayoutFromActiveSession(); });
 
-    // First-launch tutorial -- gated by appProps so it only fires once.
-    // Engineers can replay it from Help ▸ Quick Start.
+    // Launch dialogs land in order so first-run + crash-recovery +
+    // welcome don't fight for the front. Recovery wins first (data
+    // loss is the highest-stakes prompt), then the optional first-
+    // run tutorial, then the Welcome dialog. ModalComponentManager
+    // serialises the queue for us once we hand each dialog over
+    // through its own callAfterDelay.
     const bool firstRun = engine.getAppProps() == nullptr
                         || ! engine.getAppProps()->getBoolValue ("tutorialShown", false);
-    if (firstRun)
+
+    juce::Timer::callAfterDelay (250, [this, firstRun]
     {
-        juce::Timer::callAfterDelay (500, [this]
+        offerSessionRecovery();
+        juce::Timer::callAfterDelay (450, [this, firstRun]
         {
-            showFirstRunTutorial();
-            if (auto* p = engine.getAppProps())
+            if (firstRun)
             {
-                p->setValue ("tutorialShown", true);
-                p->saveIfNeeded();
+                showFirstRunTutorial();
+                if (auto* p = engine.getAppProps())
+                {
+                    p->setValue ("tutorialShown", true);
+                    p->saveIfNeeded();
+                }
+                juce::Timer::callAfterDelay (350, [this] { showStartupWelcome(); });
             }
-            // After the tutorial, also surface the Welcome dialog so
-            // first-launch users immediately see the New / Open flow
-            // rather than landing on an empty mixer.
-            juce::Timer::callAfterDelay (350, [this] { showStartupWelcome(); });
+            else
+            {
+                showStartupWelcome();
+            }
         });
-    }
-    else
-    {
-        juce::Timer::callAfterDelay (350, [this] { showStartupWelcome(); });
-    }
+    });
 
    #if JUCE_MAC
     juce::MenuBarModel::setMacMainMenu (this);
@@ -898,7 +903,13 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
         }
         else if (engine.startCompanionServer (9000))
         {
-            showStatus ("Companion server on http://localhost:9000 -- open it from any browser / iPad");
+            const auto url = engine.getCompanionAccessUrl();
+            // Show + copy the full URL (with access token) so the
+            // engineer can paste it on their phone without typing
+            // the 32-hex token. Companion is loopback-only by
+            // default; LAN exposure is a separate menu item.
+            juce::SystemClipboard::copyTextToClipboard (url);
+            showStatus ("Companion on (loopback-only) -- URL copied to clipboard");
         }
         else
         {
