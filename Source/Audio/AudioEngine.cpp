@@ -1208,70 +1208,18 @@ namespace zynforge
     {
         const auto mode = getSnapMode();
         if (mode == SnapMode::Off || sample < 0) return sample;
-        const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
 
-        if (mode == SnapMode::Markers)
+        // Markers: pick the nearest marker. Empty marker list -> no snap.
+        const auto& list = markers.getAll();
+        if (list.empty()) return sample;
+        juce::int64 best = list.front().sampleOffset;
+        juce::int64 bestDist = std::abs (best - sample);
+        for (const auto& m : list)
         {
-            const auto& list = markers.getAll();
-            if (list.empty()) return sample;
-            juce::int64 best = list.front().sampleOffset;
-            juce::int64 bestDist = std::abs (best - sample);
-            for (const auto& m : list)
-            {
-                const auto d = std::abs (m.sampleOffset - sample);
-                if (d < bestDist) { bestDist = d; best = m.sampleOffset; }
-            }
-            return best;
+            const auto d = std::abs (m.sampleOffset - sample);
+            if (d < bestDist) { bestDist = d; best = m.sampleOffset; }
         }
-
-        // Bars: walk the tempo map to find the bar boundary nearest to
-        // `sample`. Mirrors the EditTimeRuler walker.
-        const int sigNum = juce::jmax (1, timeSigNumerator.load (std::memory_order_relaxed));
-        double bpm = (double) currentTempoBpm.load (std::memory_order_relaxed);
-        if (bpm < 1.0) bpm = 120.0;
-        double beatSec = 60.0 / bpm;
-
-        size_t nextTempoIdx = 0;
-        while (nextTempoIdx < tempoMap.size() && tempoMap[nextTempoIdx].samplePos == 0)
-        {
-            bpm = juce::jmax (1.0, (double) tempoMap[nextTempoIdx].bpm);
-            beatSec = 60.0 / bpm;
-            ++nextTempoIdx;
-        }
-
-        juce::int64 prevBar = 0;
-        juce::int64 thisBarSample = 0;
-        int beat = 1;
-        double t = 0.0;
-        const double targetSec = (double) sample / sr;
-        const double maxSec    = targetSec + beatSec * (double) sigNum * 2.0;
-
-        while (t <= maxSec + 1.0e-6)
-        {
-            const auto sampleAtT = (juce::int64) (t * sr);
-            while (nextTempoIdx < tempoMap.size()
-                   && tempoMap[nextTempoIdx].samplePos <= sampleAtT)
-            {
-                bpm = juce::jmax (1.0, (double) tempoMap[nextTempoIdx].bpm);
-                beatSec = 60.0 / bpm;
-                ++nextTempoIdx;
-            }
-            if (beat == 1)
-            {
-                if (sampleAtT > sample)
-                {
-                    // Pick whichever bar boundary is closer.
-                    const auto distPrev = std::abs (sample - prevBar);
-                    const auto distThis = std::abs (sampleAtT - sample);
-                    return (distPrev <= distThis) ? prevBar : sampleAtT;
-                }
-                prevBar = sampleAtT;
-                thisBarSample = sampleAtT;
-            }
-            t += beatSec;
-            if (++beat > sigNum) beat = 1;
-        }
-        return prevBar;
+        return best;
     }
 
     void AudioEngine::setTrackEditGroup (int channelIndex, int groupId)

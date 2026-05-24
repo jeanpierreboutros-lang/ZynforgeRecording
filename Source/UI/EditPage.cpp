@@ -55,7 +55,9 @@ namespace zynforge
                             std::function<void()> mutate)> automationEditWrapper;
         std::function<void()>                       automationDragBegin;
         std::function<void (const juce::String&)>   automationDragEnd;
-        bool   clickOverlay { false };
+        // Index of the Click track when one exists. Used to suppress
+        // automation-lane edits on that row (engineers don't draw
+        // gain points on the metronome). -1 = no click track.
         int    clickRowIdx  { -1 };
         // Drag tracking -- while > -1, mouseDrag moves the indexed
         // point on the active lane.
@@ -961,50 +963,6 @@ namespace zynforge
                 g.setFont (brand::type::caption());
                 g.drawText ("(no recording yet -- start a session and record to see waveforms)",
                             wavePane, juce::Justification::centred, false);
-            }
-
-            // ─── Click-beat overlay (waveform mode only) ───────────
-            // When the engineer has dropped a metronome track, every
-            // OTHER row gets faint vertical ticks at every beat so the
-            // click pulse is visible against the recorded audio.
-            if (clickOverlay && index != clickRowIdx)
-            {
-                const float bpm = engine.getSessionTempoBpm();
-                const auto& player = engine.getPlayer();
-                const juce::int64 totalSamples = player.isLoaded() ? player.getTotalLengthSamples()
-                                                                   : 0;
-                const double sr = player.getSampleRate() > 0.0
-                                    ? player.getSampleRate()
-                                    : (engine.getDeviceManager().getCurrentAudioDevice() != nullptr
-                                       ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
-                                       : 48000.0);
-                if (totalSamples > 0 && bpm > 0.0f && sr > 0.0)
-                {
-                    const double samplesPerBeat = 60.0 * sr / bpm;
-                    const auto inner2 = wavePane.reduced (brand::space::xs, brand::space::sm);
-                    const int  paneL  = inner2.getX();
-                    const int  paneW  = juce::jmax (1, inner2.getWidth());
-                    const double pxPerBeat = samplesPerBeat * (double) paneW
-                                           / (double) totalSamples;
-                    int stride = 1;
-                    while (pxPerBeat * stride < 6.0 && stride < 4096)
-                        stride *= 4;
-
-                    int beat = 0;
-                    for (double s = 0.0; s < (double) totalSamples;
-                         s += samplesPerBeat * stride, beat += stride)
-                    {
-                        const double prop = s / (double) totalSamples;
-                        const int x = paneL + (int) (prop * paneW);
-                        const bool downbeat = (beat % 4) == 0;
-                        g.setColour (downbeat
-                            ? brand::brandOrange.withAlpha (brand::alpha::ghost)
-                            : brand::accentStatus.withAlpha (brand::alpha::subtle));
-                        g.drawVerticalLine (x,
-                                            (float) inner2.getY(),
-                                            (float) inner2.getBottom());
-                    }
-                }
             }
 
             // ─── Clip boundary overlay (waveform mode only) ─────────
@@ -2816,7 +2774,6 @@ namespace zynforge
         // existing rows are mutated through updateRowContext().
         AutomationToolbar* sharedToolbar       { nullptr };
         EditToolsBar*      sharedToolsBar      { nullptr };
-        bool               sharedClickPresent  { false };
         int                sharedClickRowIdx   { -1 };
         // Forwarded from EditPage -> MainComponent. When set, every
         // per-point automation edit a TrackRow performs goes through
@@ -2834,7 +2791,6 @@ namespace zynforge
             {
                 r->toolbar                = sharedToolbar;
                 r->toolsBar               = sharedToolsBar;
-                r->clickOverlay           = sharedClickPresent;
                 r->clickRowIdx            = sharedClickRowIdx;
                 r->automationEditWrapper  = sharedAutomationEditWrapper;
                 r->automationDragBegin    = sharedAutomationDragBegin;
@@ -2871,7 +2827,6 @@ namespace zynforge
                 r->onSizeChosen = [this] (TrackRow&, TrackRow::Size) { resized(); };
                 r->toolbar                = sharedToolbar;
                 r->toolsBar               = sharedToolsBar;
-                r->clickOverlay           = sharedClickPresent;
                 r->clickRowIdx            = sharedClickRowIdx;
                 r->automationEditWrapper  = sharedAutomationEditWrapper;
                 r->automationDragBegin    = sharedAutomationDragBegin;
@@ -3135,8 +3090,7 @@ namespace zynforge
         clickTrackIdx = clickIdx;
         if (list != nullptr)
         {
-            list->sharedClickPresent = present;
-            list->sharedClickRowIdx  = clickIdx;
+            list->sharedClickRowIdx  = present ? clickIdx : -1;
             list->updateRowContext();
         }
         repaint();
@@ -3242,11 +3196,11 @@ namespace zynforge
     {
         auto bounds = getLocalBounds();
 
-        // Time ruler perches across the top, 44 px tall:
-        //   20 px marker strip + 24 px time scale = 44 total.
+        // Time ruler perches across the top, 46 px tall:
+        //   20 px marker strip + 26 px Min:Secs scale.
         // Spans the full width so the header label column aligns with
         // each TrackRow's header column.
-        const int rulerH = 64;   // 20 markers + 18 bars|beats + 26 min:secs
+        const int rulerH = 46;
         if (ruler != nullptr)
             ruler->setBounds (bounds.removeFromTop (rulerH));
 

@@ -8,11 +8,15 @@
 
 namespace zynforge
 {
-    // Pro Tools-style Min:Secs time ruler. Paints across the top of
-    // the EDIT view's wave-pane area showing 0:00, 0:10, 0:20, 1:00...
-    // ticks scaled by the current zoom level. The left "Min:Secs"
-    // label column matches the strip-header column width so columns
-    // line up.
+    // Min:Secs time ruler for the EDIT view. Paints a Markers strip
+    // across the top and a Min:Secs scale underneath (0:00, 0:10, 0:30,
+    // 1:00 ...) scaled by the current zoom. The left header column
+    // matches the strip-header width so columns line up.
+    //
+    // No Bars|Beats: this is a live recorder, not a DAW. Engineers
+    // navigate by wall-clock + markers, not by bars. Tempo math is
+    // still alive for the click track + cue tempo ramps; the ruler
+    // just doesn't visualise it.
     //
     // Tick density auto-adapts: at high zoom we show 1s ticks; at low
     // zoom we coalesce to 10s / 30s / 1m so labels never collide.
@@ -138,23 +142,18 @@ namespace zynforge
 
         void timerCallback() override { repaint(); }
 
-        // Paint splits vertically into THREE strips:
-        //   top    : marker strip       (kMarkerStripH px tall)
-        //   middle : Bars|Beats overlay (kBarsBeatsH  px tall)
-        //   bottom : Min:Secs scale     (remaining height)
-        // EditPage should size the ruler to ~64 px so all three rows
-        // have room. The Bars|Beats row reads tempo + time signature
-        // from the engine and lights bar lines + beat sub-ticks.
+        // Paint splits vertically into TWO strips:
+        //   top    : marker strip (kMarkerStripH px tall)
+        //   bottom : Min:Secs scale (remaining height)
+        // EditPage should size the ruler to ~46 px so both rows have
+        // room.
         static constexpr int kMarkerStripH = 20;
-        static constexpr int kBarsBeatsH   = 18;
 
         void paint (juce::Graphics& g) override
         {
             const int totalH        = getHeight();
-            const int markerStripH  = juce::jmin (kMarkerStripH, totalH / 3);
-            const int barsBeatsH    = juce::jmin (kBarsBeatsH,   (totalH - markerStripH) / 2);
-            const int barsBeatsTop  = markerStripH;
-            const int rulerTop      = markerStripH + barsBeatsH;
+            const int markerStripH  = juce::jmin (kMarkerStripH, totalH / 2);
+            const int rulerTop      = markerStripH;
             const int rulerH        = totalH - rulerTop;
 
             auto r = getLocalBounds().toFloat();
@@ -162,25 +161,18 @@ namespace zynforge
             g.fillRect (r);
             g.setColour (brand::edge);
             g.drawHorizontalLine (totalH - 1, 0.0f, (float) getWidth());
-            // Separators between the three strips.
+            // Separator between the two strips.
             g.setColour (brand::edge.withAlpha (brand::alpha::muted));
             g.drawHorizontalLine (markerStripH, 0.0f, (float) getWidth());
-            g.drawHorizontalLine (rulerTop,     0.0f, (float) getWidth());
 
-            // Left header column -- three stacked labels matching the
-            // three-row layout: 'Markers', 'Bars|Beats', 'Min:Secs'.
+            // Left header column -- two stacked labels matching the
+            // two-row layout: 'Markers' and 'Min:Secs'.
             const int headerInsetX = 8;
             g.setColour (brand::textMuted);
             g.setFont (brand::type::caption());
             g.drawText ("Markers",
                         juce::Rectangle<int> (headerInsetX, 0,
                                               headerW - headerInsetX, markerStripH),
-                        juce::Justification::centredLeft, false);
-            g.setColour (brand::engagedAmber);
-            g.setFont (brand::type::captionBold());
-            g.drawText ("Bars" + juce::String (juce::CharPointer_UTF8 ("\xc2\xa6")) + "Beats",
-                        juce::Rectangle<int> (headerInsetX, barsBeatsTop,
-                                              headerW - headerInsetX, barsBeatsH),
                         juce::Justification::centredLeft, false);
             g.setColour (brand::accentStatus);
             g.drawText ("Min:Secs",
@@ -208,7 +200,7 @@ namespace zynforge
             const int majorTickH = juce::jmax (8, (int) (rulerH * 0.55f));
             const int minorTickH = juce::jmax (4, (int) (rulerH * 0.30f));
 
-            // -------- Time scale (bottom strip) --------
+            // -------- Time scale --------
             g.setFont (brand::type::mono (10.5f, true));
             for (double tSec = 0.0; tSec <= totalSec + 0.5; tSec += subSec)
             {
@@ -231,85 +223,6 @@ namespace zynforge
                                 juce::Rectangle<int> (x + 3, rulerTop, 60,
                                                       rulerH - majorTickH - 2),
                                 juce::Justification::topLeft, false);
-                }
-            }
-
-            // -------- Bars|Beats strip --------
-            // Walks the engine's tempo map so accelerandi /
-            // ritardandi produce a correct grid (the previous pass
-            // used a single tempo across the whole session and got
-            // the bar positions wrong after any tempo change).
-            // Algorithm: step beat by beat, switching the active
-            // bpm whenever we cross the next tempo change.
-            {
-                const int sigNum = juce::jmax (1, engine.getTimeSignatureNumerator());
-                const auto& tempoMap = engine.getTempoMap();
-                double curBpm = (double) engine.getSessionTempoBpm();
-                if (curBpm < 1.0) curBpm = 120.0;
-
-                // Find the smallest beat width on the timeline to
-                // decide whether to draw sub-beats. Worst case (the
-                // fastest bpm in the map) sets the show-beats gate.
-                double maxBpm = curBpm;
-                for (const auto& tc : tempoMap)
-                    if ((double) tc.bpm > maxBpm) maxBpm = (double) tc.bpm;
-                const double minBarSec = 60.0 / juce::jmax (1.0, maxBpm) * (double) sigNum;
-                const bool   showBeats = (minBarSec * pxPerSec) >= 24.0;
-
-                const int barTickH  = juce::jmax (8, (int) (barsBeatsH * 0.65f));
-                const int beatTickH = juce::jmax (4, (int) (barsBeatsH * 0.35f));
-                g.setFont (brand::type::mono (10.0f, true));
-
-                // Walk samples-as-time, switching bpm at each map entry.
-                const double initialBpm =
-                    (! tempoMap.empty() && tempoMap.front().samplePos == 0)
-                        ? (double) tempoMap.front().bpm
-                        : curBpm;
-                double bpm = initialBpm;
-                double beatSec = 60.0 / bpm;
-                size_t nextTempoIdx = 0;
-                // Advance past any tempo events at samplePos 0 -- they're
-                // the initial bpm, already consumed.
-                while (nextTempoIdx < tempoMap.size()
-                       && tempoMap[nextTempoIdx].samplePos == 0)
-                    ++nextTempoIdx;
-
-                int bar = 1, beat = 1;
-                double t = 0.0;
-                while (t <= totalSec + 0.0001)
-                {
-                    const auto sampleAtT = (juce::int64) (t * sr);
-                    // Cross any pending tempo changes that fall on or
-                    // before this sample.
-                    while (nextTempoIdx < tempoMap.size()
-                           && tempoMap[nextTempoIdx].samplePos <= sampleAtT)
-                    {
-                        bpm = juce::jmax (1.0, (double) tempoMap[nextTempoIdx].bpm);
-                        beatSec = 60.0 / bpm;
-                        ++nextTempoIdx;
-                    }
-
-                    const int x = headerW + (int) (t * pxPerSec);
-                    if (x >= getWidth()) break;
-                    const bool isBar = (beat == 1);
-                    if (isBar || showBeats)
-                    {
-                        const int hPx = isBar ? barTickH : beatTickH;
-                        g.setColour (isBar ? brand::engagedAmber : brand::textMuted);
-                        g.drawVerticalLine (x, (float) (barsBeatsTop + barsBeatsH - hPx),
-                                            (float) (barsBeatsTop + barsBeatsH));
-                    }
-                    if (isBar)
-                    {
-                        g.setColour (brand::engagedAmber);
-                        g.drawText (juce::String (bar),
-                                    juce::Rectangle<int> (x + 3, barsBeatsTop,
-                                                          60, barsBeatsH - barTickH - 2),
-                                    juce::Justification::topLeft, false);
-                    }
-
-                    t += beatSec;
-                    if (++beat > sigNum) { beat = 1; ++bar; }
                 }
             }
 
@@ -349,9 +262,9 @@ namespace zynforge
 
             // -------- Marker strip (top strip) --------
             // Each marker gets a small downward-pointing flag at its
-            // sample position plus its name to the right. Pro Tools-
-            // style: name leans right, flag tip aligned to the exact
-            // marker x so it lines up with the time scale tick.
+            // sample position plus its name to the right. Name leans
+            // right, flag tip aligned to the exact marker x so it
+            // lines up with the time scale tick.
             const auto& list = engine.getMarkers().getAll();
             g.setFont (brand::type::mono (10.5f, true));
             for (const auto& m : list)

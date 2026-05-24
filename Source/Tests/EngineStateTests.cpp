@@ -96,62 +96,6 @@ namespace zynforge
                 expectEquals (eng.snapSampleToGrid (-5),    (juce::int64) -5);
             }
 
-            beginTest ("snapSampleToGrid -- Bars at 120 BPM 4/4");
-            {
-                AudioEngine eng;
-                eng.setStripCount (1);
-                eng.setSessionTempoBpm (120.0f);
-                eng.setTimeSignature (4, 4);
-                eng.setSnapMode (AudioEngine::SnapMode::Bars);
-                // 120 BPM 4/4 -> bar = 2 seconds. Default player SR
-                // is 48000 when no session loaded, so bar = 96000.
-                // Sample 50000 (-> 1.04s) should snap to bar 0 (closer).
-                const auto snapped = eng.snapSampleToGrid (50000);
-                expect (snapped == 0 || snapped == 96000);
-                // Sample 60000 (1.25s) is closer to 2s bar (96000)
-                // than to 0s bar -- still ambiguous depending on
-                // closer side. Just check it's exactly on a bar.
-                const auto s2 = eng.snapSampleToGrid (110000);
-                // 110000 (~2.29s) is closer to bar at 96000 (2.0s)
-                // than bar at 192000 (4.0s).
-                expectEquals (s2, (juce::int64) 96000);
-            }
-
-            beginTest ("snapSampleToGrid -- Bars honours tempo map mid-session");
-            {
-                AudioEngine eng;
-                eng.setStripCount (1);
-                eng.setSessionTempoBpm (120.0f);
-                eng.setTimeSignature (4, 4);
-                // Tempo doubles to 240 BPM at sample 96000 (= bar 2
-                // start at 120 bpm). 120 bpm 4/4 -> 2 s/bar = 96000.
-                // 240 bpm 4/4 -> 1 s/bar = 48000. Bars after the
-                // jump should land on 96000, 144000, 192000, ...
-                eng.addTempoChange (96000, 240.0f);
-                eng.setSnapMode (AudioEngine::SnapMode::Bars);
-                // 150000 (3.125 s) under a constant 120 bpm would
-                // snap to 192000 (4 s = bar 2). With the speed-up
-                // 144000 (3 s) is the bar nearer to 150000.
-                const auto s = eng.snapSampleToGrid (150000);
-                expectEquals (s, (juce::int64) 144000);
-                // 100000 -- post jump bar 2 (96000) is closest.
-                expectEquals (eng.snapSampleToGrid (100000), (juce::int64) 96000);
-                // 50000 -- pre-jump still 120 bpm, nearest bar is 0.
-                const auto s50 = eng.snapSampleToGrid (50000);
-                expect (s50 == 0 || s50 == 96000);   // either is the closer bar
-            }
-
-            beginTest ("snapSampleToGrid -- input at exact bar is unchanged");
-            {
-                AudioEngine eng;
-                eng.setSessionTempoBpm (120.0f);
-                eng.setTimeSignature (4, 4);
-                eng.setSnapMode (AudioEngine::SnapMode::Bars);
-                // 96000 IS bar 2 at 120 bpm.
-                expectEquals (eng.snapSampleToGrid (96000), (juce::int64) 96000);
-                expectEquals (eng.snapSampleToGrid (0),     (juce::int64) 0);
-            }
-
             beginTest ("snapSampleToGrid -- Markers picks nearest");
             {
                 AudioEngine eng;

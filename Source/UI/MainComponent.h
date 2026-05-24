@@ -121,7 +121,7 @@ private:
     // bool name is kept for source compatibility with code that
     // checks "is snap on at all"; new code should branch on
     // snapMode for the actual snap behaviour.
-    enum class SnapMode { Off = 0, Markers = 1, Bars = 2 };
+    enum class SnapMode { Off = 0, Markers = 1 };
     SnapMode snapMode      { SnapMode::Off };
     bool     snapToMarkers { false };   // mirrors (snapMode == Markers) for legacy reads
 

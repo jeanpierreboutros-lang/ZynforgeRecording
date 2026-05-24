@@ -289,21 +289,16 @@ void MainComponent::editSetRangeToLoopRange()
 
 void MainComponent::editToggleSnap()
 {
-    // Cycle Off -> Markers -> Bars -> Off. Bars mode is meaningful
-    // only when the engine has a tempo map; we still allow the cycle
-    // to land on Bars in any session, just nothing snaps when there
-    // are no beats to snap to.
-    snapMode = (SnapMode) (((int) snapMode + 1) % 3);
+    // Cycle Off -> Markers -> Off. (Bars snap used to exist but went
+    // away with the Bars|Beats ruler -- live engineers navigate by
+    // markers, not by bar boundaries.)
+    snapMode = (SnapMode) (((int) snapMode + 1) % 2);
     snapToMarkers = (snapMode == SnapMode::Markers);
     // Mirror to the engine so splitTrackAtPlayhead + future edit
     // operations honour the same grid the engineer sees.
-    engine.setSnapMode (snapMode == SnapMode::Off     ? AudioEngine::SnapMode::Off
-                       : snapMode == SnapMode::Markers ? AudioEngine::SnapMode::Markers
-                                                       : AudioEngine::SnapMode::Bars);
-    const char* label = snapMode == SnapMode::Off     ? "Snap: OFF"
-                       : snapMode == SnapMode::Markers ? "Snap: Markers"
-                                                       : "Snap: Bars";
-    showStatus (label);
+    engine.setSnapMode (snapMode == SnapMode::Markers ? AudioEngine::SnapMode::Markers
+                                                      : AudioEngine::SnapMode::Off);
+    showStatus (snapMode == SnapMode::Markers ? "Snap: Markers" : "Snap: OFF");
 }
 
 void MainComponent::dropMarkerAndPromptName()

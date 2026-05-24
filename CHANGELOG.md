@@ -17,6 +17,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Removed (latest)
+- **Bars|Beats ruler strip + everything bar/beat-visual** in the EDIT view. Live recorders navigate by wall-clock + markers, not by bars -- the 100+ amber bar numbers across the top of the ruler were visual clutter for zero operational gain. Cut:
+  - The middle Bars|Beats strip in `EditTimeRuler` (the entire `kBarsBeatsH` band + the tempo-map walker that lit it). Ruler is now Markers (top, 20 px) + Min:Secs (bottom, 26 px), 46 px total.
+  - The per-row click-beat overlay in `EditPage::TrackRow::paint` (faint vertical ticks at every beat under every non-click row when a Click track was present).
+  - `SnapMode::Bars` from both `MainComponent::SnapMode` and `AudioEngine::SnapMode`, plus the tempo-map-walking `snapSampleToGrid` math for bars. Snap cycle is now Off ↔ Markers.
+  - The three `snapSampleToGrid -- Bars ...` tests in `EngineStateTests` (45/48 tests remain, 0 failures).
+- **Tempo math survives:** Click track render, cue tempo ramps, BPM in the header tempo bar, BPM in cue snapshots all still work. Just no visual bars in the ruler / rows.
+
 ### Added (latest)
 - **Default session template.** File ▸ Templates ▸ Set default template lets the engineer "star" a `.zftemplate`. The default is auto-applied right after File ▸ New Session creates the session folder, so every show starts pre-patched with the engineer's preferred strip count / names / colours / routings. The starred template is marked `[default]` in the New Session from Template list; persisted in `appProps` so the choice survives relaunch.
 - **Per-session workspace layouts auto-save.** View, strip width, VCA-panel visibility, and EDIT zoom now write into the session's `.zfproj` on every change (previously only on explicit Save). Reopening a show restores its workspace exactly as the engineer left it. Global `appProps["stripWidthPreset"]` stays as the fallback for new / unsaved sessions. New `MainComponent::saveUILayoutToActiveSession()`; new `EditPage::onZoomChanged` callback so the host knows when to write.
