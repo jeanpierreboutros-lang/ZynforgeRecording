@@ -241,13 +241,17 @@ namespace zynforge
                 const int clampedOut = juce::jmin (getWidth(), xOut);
                 if (clampedOut > clampedIn)
                 {
+                    // Dim the band when PUNCH isn't armed so the
+                    // engineer can tell at a glance whether the range
+                    // is live (writes gated) or just remembered.
+                    const bool armed = engine.isAutomationPunchEnabled();
                     auto band = juce::Rectangle<float> ((float) clampedIn,
                                                         (float) rulerTop,
                                                         (float) (clampedOut - clampedIn),
                                                         (float) rulerH);
-                    g.setColour (brand::accentStatus.withAlpha (0.18f));
+                    g.setColour (brand::accentStatus.withAlpha (armed ? 0.22f : 0.08f));
                     g.fillRect (band);
-                    g.setColour (brand::accentStatus);
+                    g.setColour (brand::accentStatus.withAlpha (armed ? 1.0f : 0.45f));
                     g.drawVerticalLine (clampedIn,  (float) rulerTop, (float) (rulerTop + rulerH));
                     g.drawVerticalLine (clampedOut - 1, (float) rulerTop, (float) (rulerTop + rulerH));
                 }

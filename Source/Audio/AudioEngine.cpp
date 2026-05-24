@@ -1380,7 +1380,12 @@ namespace zynforge
         juce::Array<juce::File> incomplete;
         if (! sessionsRoot.isDirectory()) return incomplete;
 
-        const auto dirs = sessionsRoot.findChildFiles (juce::File::findDirectories, false, "Session_*");
+        // Match every session subdir, not just the auto-named
+        // `Session_*` ones. User-named sessions (created via
+        // File > New Session with a custom name) carry the same
+        // `recording.session` marker when they crash, and were
+        // previously invisible to the recovery scan.
+        const auto dirs = sessionsRoot.findChildFiles (juce::File::findDirectories, false);
         for (auto& d : dirs)
             if (d.getChildFile ("recording.session").existsAsFile())
                 incomplete.add (d);

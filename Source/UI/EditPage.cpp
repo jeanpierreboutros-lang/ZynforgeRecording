@@ -1879,12 +1879,17 @@ namespace zynforge
                 && draggingTensionSegIdx >= 0
                 && toolbar->getParam() != AutomationToolbar::Param::Mute)
             {
-                const auto p = toEngineParam (toolbar->getParam());
+                const auto p = currentLaneParam();
+                if (p == AudioEngine::AutomationParam::Mute) return;
                 const auto& lane = engine.getAutomation (index, p);
                 if (draggingTensionSegIdx + 1 < (int) lane.size())
                 {
                     const auto pointSample = lane[(size_t) draggingTensionSegIdx].samplePos;
-                    const float t = tensionFromHandleY (draggingTensionSegIdx, e.y);
+                    float t = tensionFromHandleY (draggingTensionSegIdx, e.y);
+                    // Shift snaps to a 0.25 grid so matched curves
+                    // between adjacent segments are easy to dial in.
+                    if (e.mods.isShiftDown())
+                        t = std::round (t * 4.0f) / 4.0f;
                     engine.setAutomationTensionAt (index, p, pointSample, 4096, t);
                     repaint();
                 }
@@ -2165,6 +2170,32 @@ namespace zynforge
             return -1;
         }
 
+        // Resolves the lane parameter that's CURRENTLY painted on
+        // this row. Mirrors the paint loop's chosenParam logic so
+        // the hit-test and drag handlers don't read from a different
+        // lane than the one the engineer sees. Falls through to
+        // Volume for Click / Tempo / unknown.
+        AudioEngine::AutomationParam currentLaneParam() const
+        {
+            if (toolbar != nullptr)
+            {
+                switch (toolbar->getParam())
+                {
+                    case AutomationToolbar::Param::Volume: return AudioEngine::AutomationParam::Volume;
+                    case AutomationToolbar::Param::Pan:    return AudioEngine::AutomationParam::Pan;
+                    case AutomationToolbar::Param::Mute:   return AudioEngine::AutomationParam::Mute;
+                    case AutomationToolbar::Param::Click:
+                    case AutomationToolbar::Param::Tempo:  break;     // not per-track lanes
+                }
+            }
+            switch (laneMode)
+            {
+                case LaneMode::Pan:  return AudioEngine::AutomationParam::Pan;
+                case LaneMode::Mute: return AudioEngine::AutomationParam::Mute;
+                default:             return AudioEngine::AutomationParam::Volume;
+            }
+        }
+
         // Returns the index of the SEGMENT (i.e. the prev point in
         // the lane) whose tension handle is under the cursor, or -1.
         // Mirrors the paint code: skip Hold + flat segments + ones
@@ -2173,10 +2204,7 @@ namespace zynforge
         {
             if (laneMode == LaneMode::Waveform || laneMode == LaneMode::Markers)
                 return -1;
-            const auto engineParam =
-                laneMode == LaneMode::Pan  ? AudioEngine::AutomationParam::Pan
-              : laneMode == LaneMode::Mute ? AudioEngine::AutomationParam::Mute
-                                            : AudioEngine::AutomationParam::Volume;
+            const auto engineParam = currentLaneParam();
             if (engineParam == AudioEngine::AutomationParam::Mute) return -1;
             const auto& lane = engine.getAutomation (index, engineParam);
             if (lane.size() < 2) return -1;
@@ -2261,9 +2289,7 @@ namespace zynforge
         // pinned at the endpoints (avoids log(0)).
         float tensionFromHandleY (int pointIdx, int yPx) const
         {
-            const auto engineParam =
-                laneMode == LaneMode::Pan ? AudioEngine::AutomationParam::Pan
-                                          : AudioEngine::AutomationParam::Volume;
+            const auto engineParam = currentLaneParam();
             const auto& lane = engine.getAutomation (index, engineParam);
             if (pointIdx < 0 || pointIdx + 1 >= (int) lane.size()) return 0.0f;
             const auto& prev = lane[(size_t) pointIdx];
@@ -2312,6 +2338,16 @@ namespace zynforge
             add (703, "S-Curve",             C::SCurve);
             add (704, "Exponential (ease in)",  C::ExpUp);
             add (705, "Exponential (ease out)", C::ExpDown);
+            m.addSeparator();
+            // Reset bend = clear the drag-handle tension back to 0
+            // without changing the shape preset. Disabled when the
+            // segment already has no bend (avoids a noop undo step).
+            const float curTension = lane[(size_t) pointIdx].tension;
+            const bool  hasBend    = std::abs (curTension) > 1.0e-3f;
+            m.addItem (706, juce::String ("Reset bend (handle)")
+                                + (hasBend ? "" : "  -- none")
+                                + "    ",
+                       hasBend && ! isMute, false);
 
             juce::Component::SafePointer<TrackRow> safe (this);
             m.showMenuAsync (juce::PopupMenu::Options()
@@ -2319,6 +2355,20 @@ namespace zynforge
                 [safe, engineParam, pointSample] (int chosen)
                 {
                     if (safe == nullptr || chosen == 0) return;
+                    if (chosen == 706)
+                    {
+                        auto editFn = [eng = &safe->engine, idx = safe->index,
+                                       engineParam, pointSample]
+                                      { eng->setAutomationTensionAt (idx, engineParam,
+                                                                      pointSample, 4096, 0.0f); };
+                        if (safe->automationEditWrapper)
+                            safe->automationEditWrapper ("Reset automation bend",
+                                                          std::move (editFn));
+                        else
+                            editFn();
+                        safe->repaint();
+                        return;
+                    }
                     C newCurve = C::Linear;
                     switch (chosen)
                     {

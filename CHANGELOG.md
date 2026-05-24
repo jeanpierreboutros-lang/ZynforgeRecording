@@ -18,6 +18,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ## [Unreleased]
 
 ### Added
+- **Session recovery dialog** (`Source/UI/SessionRecoveryDialog.h`) replaces the easy-to-miss popup menu. Sortable table shows session name, track count, on-disk size, and last-modified date for every orphan; Recover loads the session and clears the `recording.session` marker, Delete removes the directory after a confirm, Skip leaves orphans for next launch. Dialog is DialogChrome-styled and fires at launch before the WelcomeDialog.
+- **Curve picker > Reset bend** menu entry on every automation point -- wipes per-segment tension back to 0 without changing the shape preset. Disabled when the segment isn't bent.
+- **Shift-snap on tension drag** -- holding Shift while dragging a curve handle snaps tension to a 0.25 grid so matched ramps across multiple segments are easy to dial in.
+
+### Fixed
+- **Crash-recovery scan now finds user-named sessions.** `AudioEngine::findIncompleteSessions` used to filter to `Session_*` dirs only, silently skipping orphans from any session the engineer named themselves. Filter dropped -- every subdir of the Sessions root is now scanned for the `recording.session` marker.
+- **Tension drag-handles hit-test the wrong lane** when the toolbar's parameter and the row's lane-mode disagreed (e.g. toolbar on Pan, row defaulted to Volume). Lane painting used the toolbar override but hit-test fell back to raw lane-mode, so the visible handle and the clickable target were on different lanes. New `TrackRow::currentLaneParam()` is the single source of truth for both paint and hit-test.
+- **PUNCH range painted at full alpha when PUNCH wasn't armed**, making it look live even though writes weren't gated. Band now dims to 8% fill + 45% edge alpha when PUNCH is off, brightens when armed.
+
+### Added (earlier)
 - **Automation phase 6 -- continuous-curve drag handles**:
   - New `AutomationPoint::tension` float (-1..+1) bends Linear segments into ease-in (< 0) or ease-out (> 0) via a `t^(2^(-tension*4))` shaping function. 0 = straight.
   - **Tension drag handle** painted at the midpoint of every non-Hold segment in the EDIT lane. Drag vertically to bend the curve; what you see is the actual shape that `automationValueAt` produces at playback time (the lane renderer now mirrors the engine's interpolator exactly instead of step-painting).

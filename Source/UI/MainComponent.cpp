@@ -11,6 +11,7 @@
 #include "../Audio/MidiClockOut.h"
 #include "../Audio/NoiseAnalyzer.h"
 #include "NoiseReportDialog.h"
+#include "SessionRecoveryDialog.h"
 #include "MarkerListDialog.h"
 #include "ClickSettingsDialog.h"
 #include "../Audio/SpectralClassifier.h"
@@ -2353,26 +2354,21 @@ void MainComponent::offerSessionRecovery()
     const auto incomplete = zynforge::AudioEngine::findIncompleteSessions (getSessionsRoot());
     if (incomplete.isEmpty()) return;
 
-    juce::PopupMenu menu;
-    menu.addSectionHeader (juce::String (incomplete.size()) +
-                           " session(s) didn't stop cleanly");
-    for (int i = 0; i < incomplete.size(); ++i)
-        menu.addItem (i + 1, incomplete[i].getFileName());
-    menu.addSeparator();
-    menu.addItem (1000, "Dismiss");
-
-    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&statusLabel),
-                        [this, incomplete] (int chosen)
-    {
-        if (chosen <= 0 || chosen >= 1000) return;
-        const auto& dir = incomplete[chosen - 1];
-        // Clear the marker; the WAV files are intact thanks to periodic
-        // header flush. Load the session so the engineer can inspect it.
-        dir.getChildFile ("recording.session").deleteFile();
-        engine.loadSession (dir);
-        showStatus ("Recovered: " + dir.getFileName());
-        updateTransportLabels();
-    });
+    // Proper modal dialog (DialogChrome-styled) with a sortable
+    // table + Recover / Delete / Skip actions. Replaces the popup
+    // menu that engineers tended to miss when it fired behind the
+    // welcome dialog or while they were already mid-click on
+    // something else.
+    juce::Component::SafePointer<MainComponent> self (this);
+    SessionRecoveryDialog::launch (incomplete,
+        [self] (const juce::File& dir)
+        {
+            if (self == nullptr) return;
+            self->engine.loadSession (dir);
+            self->showStatus ("Recovered: " + dir.getFileName());
+            self->updateTransportLabels();
+            self->lastTrackCount = -1;
+        });
 }
 
 void MainComponent::onFileMenuClicked()
