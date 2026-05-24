@@ -363,15 +363,24 @@ namespace zynforge
                                           juce::int64 minSamplesBetween);
         // Curve type controls how the value evolves from this point
         // to the NEXT point. Hold = step (old behaviour); Linear =
-        // straight ramp; SCurve = smoothstep; ExpUp/ExpDown = power
-        // curves. Mute always ignores the curve and uses Hold so it
-        // never fades to a fractional value.
+        // straight ramp; SCurve = smoothstep; ExpUp/ExpDown = legacy
+        // presets, now expressed as a non-zero `tension` on a Linear
+        // curve and re-mapped on load (kept in the enum so old .zfproj
+        // files round-trip without losing shape). Mute always ignores
+        // both fields and behaves as Hold so it never fades through
+        // 0.5.
+        //
+        // `tension` is a continuous knob bent by the EDIT lane's
+        // drag handle. 0 = linear, +1 = strongly ease-out (slow
+        // start, fast end), -1 = strongly ease-in (fast start, slow
+        // end). Only honoured when curve == Linear.
         enum class AutomationCurve : int { Hold = 0, Linear = 1, SCurve = 2, ExpUp = 3, ExpDown = 4 };
         struct AutomationPoint
         {
             juce::int64     samplePos { 0 };
             float           value     { 0.0f };
             AutomationCurve curve     { AutomationCurve::Linear };
+            float           tension   { 0.0f };
         };
 
         // Returns the points for (track, parameter). Empty when none.
@@ -390,6 +399,13 @@ namespace zynforge
         void setAutomationCurveAt (int track, AutomationParam,
                                    juce::int64 samplePos, juce::int64 tolerance,
                                    AutomationCurve);
+        // Per-segment tension setter. Bends the Linear segment that
+        // starts at the matched point into an ease-in (-1..0) or
+        // ease-out (0..+1) curve. No-op when the point's curve is
+        // Hold or SCurve. Clamps tension to [-1, +1].
+        void setAutomationTensionAt (int track, AutomationParam,
+                                     juce::int64 samplePos, juce::int64 tolerance,
+                                     float tension);
 
         // Snapshot every track's automation lanes into a JSON-compatible
         // var so the engine can round-trip through .zfproj.

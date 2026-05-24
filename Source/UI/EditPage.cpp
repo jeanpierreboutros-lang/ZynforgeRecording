@@ -60,6 +60,11 @@ namespace zynforge
         // Drag tracking -- while > -1, mouseDrag moves the indexed
         // point on the active lane.
         int    draggingPointIdx { -1 };
+        // Tension drag tracking. When > -1, mouseDrag bends the
+        // segment starting at this point index (i.e. the segment
+        // between points[i] and points[i+1]) by translating the
+        // handle's current y into a tension value.
+        int    draggingTensionSegIdx { -1 };
 
         // Clip-edit drag tracking. When the engineer grabs a clip's
         // left edge, right edge, body, or a fade handle, draggingClipIdx
@@ -744,26 +749,109 @@ namespace zynforge
                 }
                 else
                 {
-                    // Render the point sequence as a stepped polyline +
-                    // round handles. Step style (no interpolation) for
-                    // now -- easier to read for the engineer when there
-                    // are only a handful of points.
+                    // Render the point sequence as a curve-aware
+                    // polyline. Each segment between point i and i+1
+                    // uses the curve type pinned on point i: Hold
+                    // draws a step, Linear honours per-point tension
+                    // for ease-in / ease-out, SCurve uses smoothstep,
+                    // legacy ExpUp / ExpDown use their power curves.
+                    // The renderer mirrors automationValueAt so what
+                    // the engineer sees matches what plays back.
                     g.setColour (lineCol);
                     juce::Path path;
-                    int prevY = valueToY (points.front().value);
-                    int prevX = inner.getX();
-                    path.startNewSubPath ((float) prevX, (float) prevY);
-                    for (const auto& pt : points)
+                    const int firstY = valueToY (points.front().value);
+                    path.startNewSubPath ((float) inner.getX(), (float) firstY);
+
+                    auto curveShape = [] (double tNorm, AudioEngine::AutomationCurve c,
+                                          float tension) -> double
                     {
-                        const int x = sampleToX (pt.samplePos);
-                        const int y = valueToY  (pt.value);
-                        path.lineTo ((float) x, (float) prevY);
-                        path.lineTo ((float) x, (float) y);
-                        prevY = y;
-                        prevX = x;
+                        switch (c)
+                        {
+                            case AudioEngine::AutomationCurve::Hold:    return 0.0;
+                            case AudioEngine::AutomationCurve::Linear:
+                            {
+                                const float tn = juce::jlimit (-1.0f, 1.0f, tension);
+                                if (std::abs (tn) < 1.0e-4f) return tNorm;
+                                const double exp = std::pow (2.0, (double) (-tn) * 4.0);
+                                return std::pow (tNorm, exp);
+                            }
+                            case AudioEngine::AutomationCurve::SCurve:
+                                return tNorm * tNorm * (3.0 - 2.0 * tNorm);
+                            case AudioEngine::AutomationCurve::ExpUp:
+                                return tNorm * tNorm;
+                            case AudioEngine::AutomationCurve::ExpDown:
+                                return 1.0 - (1.0 - tNorm) * (1.0 - tNorm);
+                        }
+                        return tNorm;
+                    };
+
+                    for (size_t i = 0; i < points.size(); ++i)
+                    {
+                        const auto& pt = points[i];
+                        const int x  = sampleToX (pt.samplePos);
+                        const int y  = valueToY  (pt.value);
+                        if (i == 0)
+                        {
+                            path.lineTo ((float) x, (float) y);
+                            continue;
+                        }
+                        const auto& prev = points[i - 1];
+                        const int xPrev = sampleToX (prev.samplePos);
+                        const int yPrev = valueToY  (prev.value);
+                        if (prev.curve == AudioEngine::AutomationCurve::Hold)
+                        {
+                            // Step: hold prev's y across the segment.
+                            path.lineTo ((float) x,    (float) yPrev);
+                            path.lineTo ((float) x,    (float) y);
+                            continue;
+                        }
+                        const int dx = juce::jmax (1, x - xPrev);
+                        // Step roughly every 4 px so curved segments
+                        // read smoothly without flooding the path
+                        // with sub-pixel verts on long segments.
+                        const int steps = juce::jlimit (4, 240, dx / 4);
+                        for (int s = 1; s <= steps; ++s)
+                        {
+                            const double tNorm = (double) s / (double) steps;
+                            const double shaped = curveShape (tNorm, prev.curve, prev.tension);
+                            const double v = (double) prev.value
+                                           + shaped * (double) (pt.value - prev.value);
+                            const int xx = xPrev + (int) std::round (tNorm * (double) (x - xPrev));
+                            const int yy = valueToY ((float) v);
+                            path.lineTo ((float) xx, (float) yy);
+                        }
                     }
-                    path.lineTo ((float) inner.getRight(), (float) prevY);
+                    path.lineTo ((float) inner.getRight(),
+                                 (float) valueToY (points.back().value));
                     g.strokePath (path, juce::PathStrokeType (1.6f));
+
+                    // Tension drag-handles on non-Hold segments.
+                    // Painted as a small hollow circle at the curve's
+                    // actual midpoint Y so dragging it matches what
+                    // the eye sees. Skip segments that are too narrow
+                    // (< 18 px) to host a handle without colliding
+                    // with the endpoints.
+                    const juce::Colour handleCol = lineCol.brighter (0.35f);
+                    for (size_t i = 1; i < points.size(); ++i)
+                    {
+                        const auto& prev = points[i - 1];
+                        if (prev.curve == AudioEngine::AutomationCurve::Hold) continue;
+                        if (chosenParam == AudioEngine::AutomationParam::Mute) continue;
+                        const auto& next = points[i];
+                        if (std::abs (next.value - prev.value) < 1.0e-4f) continue;
+                        const int xPrev = sampleToX (prev.samplePos);
+                        const int xNext = sampleToX (next.samplePos);
+                        if (xNext - xPrev < 18) continue;
+                        const double shapedMid = curveShape (0.5, prev.curve, prev.tension);
+                        const double vMid = (double) prev.value
+                                          + shapedMid * (double) (next.value - prev.value);
+                        const int xMid = (xPrev + xNext) / 2;
+                        const int yMid = valueToY ((float) vMid);
+                        g.setColour (handleCol.withAlpha (0.85f));
+                        g.fillEllipse ((float) xMid - 2.8f, (float) yMid - 2.8f, 5.6f, 5.6f);
+                        g.setColour (brand::bgPanel);
+                        g.drawEllipse ((float) xMid - 2.8f, (float) yMid - 2.8f, 5.6f, 5.6f, 1.0f);
+                    }
 
                     for (const auto& pt : points)
                     {
@@ -1581,6 +1669,16 @@ namespace zynforge
                     }
                     case AutomationToolbar::Tool::Select:
                     {
+                        // Tension handle wins over point selection so
+                        // the engineer can bend a segment without
+                        // accidentally re-grabbing one of its endpoints.
+                        const int segIdx = hitTestTensionHandle (e.getPosition());
+                        if (segIdx >= 0)
+                        {
+                            draggingTensionSegIdx = segIdx;
+                            if (automationDragBegin) automationDragBegin();
+                            return;
+                        }
                         // Try to grab the nearest point -- drag will move
                         // it if mouseDrag fires after this.
                         const auto& lane = engine.getAutomation (index, p);
@@ -1770,6 +1868,29 @@ namespace zynforge
                 return;
             }
 
+            // Tension-handle drag: translate the cursor's y into a
+            // tension value for the segment starting at draggingTensionSegIdx
+            // and push it through the engine. The segment is forced
+            // to Linear by setAutomationTensionAt (Hold / SCurve
+            // would ignore tension), giving the engineer a
+            // continuous-shape escape hatch from any preset.
+            if (toolbar != nullptr
+                && toolbar->getTool() == AutomationToolbar::Tool::Select
+                && draggingTensionSegIdx >= 0
+                && toolbar->getParam() != AutomationToolbar::Param::Mute)
+            {
+                const auto p = toEngineParam (toolbar->getParam());
+                const auto& lane = engine.getAutomation (index, p);
+                if (draggingTensionSegIdx + 1 < (int) lane.size())
+                {
+                    const auto pointSample = lane[(size_t) draggingTensionSegIdx].samplePos;
+                    const float t = tensionFromHandleY (draggingTensionSegIdx, e.y);
+                    engine.setAutomationTensionAt (index, p, pointSample, 4096, t);
+                    repaint();
+                }
+                return;
+            }
+
             // Otherwise: drag a held automation point with the Select tool.
             if (toolbar != nullptr
                 && toolbar->getTool() == AutomationToolbar::Tool::Select
@@ -1799,14 +1920,17 @@ namespace zynforge
             // grabbed; this closes it on mouseUp regardless of whether
             // any mouseDrag happened in between (a click-without-drag
             // produces a no-op undo step, which is acceptable).
-            const bool wasDraggingPoint = (draggingPointIdx >= 0);
+            const bool wasDraggingPoint   = (draggingPointIdx >= 0);
+            const bool wasDraggingTension = (draggingTensionSegIdx >= 0);
             dragging         = false;
             draggingPointIdx = -1;
+            draggingTensionSegIdx = -1;
             draggingClipIdx  = -1;
             draggingClipModeInt = 0;
             lastDragSamples  = 0;
-            if (wasDraggingPoint && automationDragEnd)
-                automationDragEnd ("Move automation point");
+            if ((wasDraggingPoint || wasDraggingTension) && automationDragEnd)
+                automationDragEnd (wasDraggingTension ? "Bend automation curve"
+                                                      : "Move automation point");
 
             // Reorder finishes here. If the user clicked the swatch
             // but never crossed the 8 px threshold, fall through to
@@ -2039,6 +2163,128 @@ namespace zynforge
                     return i;
             }
             return -1;
+        }
+
+        // Returns the index of the SEGMENT (i.e. the prev point in
+        // the lane) whose tension handle is under the cursor, or -1.
+        // Mirrors the paint code: skip Hold + flat segments + ones
+        // narrower than 18 px. Tolerance is 6 px around the handle.
+        int hitTestTensionHandle (juce::Point<int> pos) const
+        {
+            if (laneMode == LaneMode::Waveform || laneMode == LaneMode::Markers)
+                return -1;
+            const auto engineParam =
+                laneMode == LaneMode::Pan  ? AudioEngine::AutomationParam::Pan
+              : laneMode == LaneMode::Mute ? AudioEngine::AutomationParam::Mute
+                                            : AudioEngine::AutomationParam::Volume;
+            if (engineParam == AudioEngine::AutomationParam::Mute) return -1;
+            const auto& lane = engine.getAutomation (index, engineParam);
+            if (lane.size() < 2) return -1;
+
+            const auto& player = engine.getPlayer();
+            const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
+            const juce::int64 loadedSamples = player.isLoaded() ? player.getTotalLengthSamples() : 0;
+            const juce::int64 totalSamples  = loadedSamples > 0 ? loadedSamples
+                                                                : (juce::int64) (sr * 300.0);
+            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+            auto sampleToX = [&] (juce::int64 sp) -> int
+            {
+                const double prop = juce::jlimit (0.0, 1.0,
+                                                  (double) sp / (double) totalSamples);
+                return inner.getX() + juce::roundToInt (prop * inner.getWidth());
+            };
+            auto valueToY = [&] (float v) -> int
+            {
+                float yp = 0.5f;
+                switch (engineParam)
+                {
+                    case AudioEngine::AutomationParam::Volume:
+                        yp = 1.0f - juce::jlimit (0.0f, 1.0f, (v + 60.0f) / 72.0f);
+                        break;
+                    case AudioEngine::AutomationParam::Pan:
+                        yp = (1.0f - juce::jlimit (-1.0f, 1.0f, v)) * 0.5f;
+                        break;
+                    case AudioEngine::AutomationParam::Mute:
+                        yp = v > 0.5f ? 0.05f : 0.95f;
+                        break;
+                }
+                return inner.getY() + juce::roundToInt (yp * inner.getHeight());
+            };
+            auto curveShape = [] (double tNorm, AudioEngine::AutomationCurve c,
+                                  float tension) -> double
+            {
+                switch (c)
+                {
+                    case AudioEngine::AutomationCurve::Hold:    return 0.0;
+                    case AudioEngine::AutomationCurve::Linear:
+                    {
+                        const float tn = juce::jlimit (-1.0f, 1.0f, tension);
+                        if (std::abs (tn) < 1.0e-4f) return tNorm;
+                        const double exp = std::pow (2.0, (double) (-tn) * 4.0);
+                        return std::pow (tNorm, exp);
+                    }
+                    case AudioEngine::AutomationCurve::SCurve:
+                        return tNorm * tNorm * (3.0 - 2.0 * tNorm);
+                    case AudioEngine::AutomationCurve::ExpUp:
+                        return tNorm * tNorm;
+                    case AudioEngine::AutomationCurve::ExpDown:
+                        return 1.0 - (1.0 - tNorm) * (1.0 - tNorm);
+                }
+                return tNorm;
+            };
+
+            constexpr int kHitR = 6;
+            for (size_t i = 1; i < lane.size(); ++i)
+            {
+                const auto& prev = lane[i - 1];
+                if (prev.curve == AudioEngine::AutomationCurve::Hold) continue;
+                const auto& next = lane[i];
+                if (std::abs (next.value - prev.value) < 1.0e-4f) continue;
+                const int xPrev = sampleToX (prev.samplePos);
+                const int xNext = sampleToX (next.samplePos);
+                if (xNext - xPrev < 18) continue;
+                const double shapedMid = curveShape (0.5, prev.curve, prev.tension);
+                const double vMid = (double) prev.value
+                                  + shapedMid * (double) (next.value - prev.value);
+                const int xMid = (xPrev + xNext) / 2;
+                const int yMid = valueToY ((float) vMid);
+                if (std::abs (pos.x - xMid) <= kHitR
+                    && std::abs (pos.y - yMid) <= kHitR)
+                    return (int) (i - 1);
+            }
+            return -1;
+        }
+
+        // Maps a handle's y-position in the lane to the tension that
+        // would put the shaped midpoint at that y. Used by mouseDrag
+        // on a tension handle. Returns +1 / -1 if the handle is
+        // pinned at the endpoints (avoids log(0)).
+        float tensionFromHandleY (int pointIdx, int yPx) const
+        {
+            const auto engineParam =
+                laneMode == LaneMode::Pan ? AudioEngine::AutomationParam::Pan
+                                          : AudioEngine::AutomationParam::Volume;
+            const auto& lane = engine.getAutomation (index, engineParam);
+            if (pointIdx < 0 || pointIdx + 1 >= (int) lane.size()) return 0.0f;
+            const auto& prev = lane[(size_t) pointIdx];
+            const auto& next = lane[(size_t) pointIdx + 1];
+            if (std::abs (next.value - prev.value) < 1.0e-4f) return 0.0f;
+
+            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+            auto yToValue = [&] (int y) -> float
+            {
+                const float yp = juce::jlimit (0.0f, 1.0f,
+                                               (float) (y - inner.getY()) / (float) juce::jmax (1, inner.getHeight()));
+                if (engineParam == AudioEngine::AutomationParam::Pan)
+                    return juce::jlimit (-1.0f, 1.0f, 1.0f - 2.0f * yp);
+                return juce::jlimit (-60.0f, 12.0f, (1.0f - yp) * 72.0f - 60.0f);
+            };
+            const float vMid = yToValue (yPx);
+            float shaped = (vMid - prev.value) / (next.value - prev.value);
+            shaped = juce::jlimit (0.005f, 0.995f, shaped);
+            const double exp = std::log ((double) shaped) / std::log (0.5);
+            const double tension = -std::log2 (exp) / 4.0;
+            return juce::jlimit (-1.0f, 1.0f, (float) tension);
         }
 
         void showCurvePickerMenu (int pointIdx, juce::Point<int> screenPos)

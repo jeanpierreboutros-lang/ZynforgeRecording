@@ -43,7 +43,8 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 ## Recently Completed
 
 ### 2026-05-24
-- [x] **Automation phase 5 -- advanced write controls** (L) — Touch/Latch/Write dropdown, SUSPEND + PUNCH toggles with shift-drag range on the time ruler, WRITE point thinning, per-track Automation Safe lock with header LED, `safe`/`vTrim`/`pTrim` persisted in `.zfproj`. Drag-handle continuous curve editing deferred (needs model change). See `CHANGELOG.md`.
+- [x] **Automation phase 6 -- drag-handle continuous curve editing** (M) — new `AutomationPoint::tension` field, curve-aware lane rendering, draggable midpoint handles, `setAutomationTensionAt`, legacy ExpUp/ExpDown auto-mapped on load. Resolves the phase 5 deferral. See `CHANGELOG.md`.
+- [x] **Automation phase 5 -- advanced write controls** (L) — Touch/Latch/Write dropdown, SUSPEND + PUNCH toggles with shift-drag range on the time ruler, WRITE point thinning, per-track Automation Safe lock with header LED, `safe`/`vTrim`/`pTrim` persisted in `.zfproj`. See `CHANGELOG.md`.
 
 ### 2026-05-23 (later in day)
 - [x] **Phase 1 live-show safety pass** (M) — Record button shape distinctness, global PeakTally bar, STOP-while-recording two-tap guard, touch-target stacking at XS, brandOrange consolidation. See `CHANGELOG.md`.

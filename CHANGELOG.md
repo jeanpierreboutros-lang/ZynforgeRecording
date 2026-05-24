@@ -18,6 +18,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ## [Unreleased]
 
 ### Added
+- **Automation phase 6 -- continuous-curve drag handles**:
+  - New `AutomationPoint::tension` float (-1..+1) bends Linear segments into ease-in (< 0) or ease-out (> 0) via a `t^(2^(-tension*4))` shaping function. 0 = straight.
+  - **Tension drag handle** painted at the midpoint of every non-Hold segment in the EDIT lane. Drag vertically to bend the curve; what you see is the actual shape that `automationValueAt` produces at playback time (the lane renderer now mirrors the engine's interpolator exactly instead of step-painting).
+  - The EDIT lane renderer used to draw stepped polylines regardless of curve type; it now produces curve-aware paths (Hold steps, Linear with tension, SCurve smoothstep, legacy ExpUp / ExpDown power curves).
+  - `setAutomationTensionAt(...)` engine API promotes Hold / SCurve segments to Linear when bent (handle is a Linear affordance; preset shapes remain reachable via the right-click curve-picker menu).
+  - Picking a preset in the curve-picker menu now resets per-segment tension to 0 (so "Linear" always means straight, not "still bent from a previous drag").
+  - Legacy `ExpUp` / `ExpDown` enum values are auto-mapped to Linear with `tension = ±0.5` on load so old `.zfproj` files keep their visual shape and become drag-bendable.
+  - `.zfproj` round-trips the new `t` key per point (omitted when |tension| < 1e-4 to keep small lanes compact).
+  - Undo: tension drags open / close the same automation transaction as point drags, collapsing the whole gesture into one undo step.
+
+### Added (earlier)
 - **Automation phase 5 -- advanced write controls**:
   - **Touch / Latch / Write dropdown** on the automation toolbar replaces the single WRITE toggle. `AudioEngine::AutomationWriteMode` already had the three states; the toolbar now surfaces them so the engineer's mental model matches Pro Tools / LiveTrax even though the engine currently treats Touch/Latch/Write identically at the write-path level. Picking any non-Off value still forces TRIM off.
   - **SUSPEND toggle** -- engine ignores every lane at read time (`AudioEngine::automationReadSuspended` atomic, short-circuits `automationValueAt`). Lets the engineer audition raw fader / pan / mute moves without disturbing the stored pass.

@@ -619,6 +619,8 @@ namespace zynforge
                 o->setProperty ("s", (juce::int64) pt.samplePos);
                 o->setProperty ("v", (double) pt.value);
                 o->setProperty ("c", (int) pt.curve);
+                if (std::abs (pt.tension) > 1.0e-4f)
+                    o->setProperty ("t", (double) pt.tension);
                 arr.add (juce::var (o.get()));
             }
             return juce::var (arr);
@@ -661,6 +663,24 @@ namespace zynforge
                 pt.samplePos = (juce::int64) obj->getProperty ("s");
                 pt.value     = (float) (double) obj->getProperty ("v");
                 pt.curve     = (AutomationCurve) (int) obj->getProperty ("c");
+                if (obj->hasProperty ("t"))
+                    pt.tension = (float) (double) obj->getProperty ("t");
+                // Legacy preset migration -- old .zfproj files only
+                // had the discrete shape enum. Map the two power-curve
+                // presets onto an equivalent tension on a Linear
+                // segment so the drag handle finds them in the right
+                // place and the new interpolator produces the same
+                // shape the old switch produced.
+                if (pt.curve == AutomationCurve::ExpUp)
+                {
+                    pt.curve   = AutomationCurve::Linear;
+                    pt.tension = -0.5f;             // ease-in (t^2-ish)
+                }
+                else if (pt.curve == AutomationCurve::ExpDown)
+                {
+                    pt.curve   = AutomationCurve::Linear;
+                    pt.tension = +0.5f;             // ease-out
+                }
                 out.push_back (pt);
             }
         };
@@ -1547,6 +1567,38 @@ namespace zynforge
             if (std::abs (pt.samplePos - samplePos) <= tolerance)
             {
                 pt.curve = curve;
+                // Picking a preset shape resets the per-segment
+                // tension so the curve-picker menu always produces
+                // exactly what its label says (a "Linear" pick should
+                // be straight, not still bent from a previous drag).
+                pt.tension = 0.0f;
+                return;
+            }
+        }
+    }
+
+    void AudioEngine::setAutomationTensionAt (int track, AutomationParam p,
+                                              juce::int64 samplePos, juce::int64 tolerance,
+                                              float tension)
+    {
+        // Mute lanes always Hold -- tension is meaningless there.
+        if (p == AutomationParam::Mute) return;
+
+        const juce::ScopedLock sl (automationLock);
+        auto* lane = findLane (track, p);
+        if (lane == nullptr) return;
+        for (auto& pt : *lane)
+        {
+            if (std::abs (pt.samplePos - samplePos) <= tolerance)
+            {
+                // Hold and SCurve don't honour tension; promote to
+                // Linear so the drag has visible effect. (Engineer
+                // dragged the handle, the handle is a Linear
+                // affordance -- presets are reachable via the
+                // curve-picker right-click menu.)
+                if (pt.curve != AutomationCurve::Linear)
+                    pt.curve = AutomationCurve::Linear;
+                pt.tension = juce::jlimit (-1.0f, 1.0f, tension);
                 return;
             }
         }
@@ -1623,23 +1675,30 @@ namespace zynforge
         const double t = (double) (samplePos - prev->samplePos) / span;
 
         // Apply the curve type pinned on the PREV point. That field
-        // controls how value evolves FROM prev TO next.
+        // controls how value evolves FROM prev TO next. For Linear,
+        // the per-point `tension` warps the ramp into ease-in (<0)
+        // or ease-out (>0) via t^exp where exp = 2^(-tension*4).
         double shaped = t;
         switch (prev->curve)
         {
             case AutomationCurve::Hold:
                 return withTrim (prev->value);          // step
             case AutomationCurve::Linear:
-                shaped = t;
+            {
+                const float tn = juce::jlimit (-1.0f, 1.0f, prev->tension);
+                if (std::abs (tn) < 1.0e-4f) { shaped = t; break; }
+                const double exp = std::pow (2.0, (double) (-tn) * 4.0);
+                shaped = std::pow (t, exp);
                 break;
+            }
             case AutomationCurve::SCurve:
                 shaped = t * t * (3.0 - 2.0 * t);       // smoothstep
                 break;
             case AutomationCurve::ExpUp:
-                shaped = t * t;                          // ease-in
+                shaped = t * t;                          // legacy ease-in preset
                 break;
             case AutomationCurve::ExpDown:
-                shaped = 1.0 - (1.0 - t) * (1.0 - t);    // ease-out
+                shaped = 1.0 - (1.0 - t) * (1.0 - t);    // legacy ease-out preset
                 break;
         }
         return withTrim ((float) (prev->value + shaped * (next->value - prev->value)));
