@@ -3026,7 +3026,7 @@ namespace zynforge
         //   20 px marker strip + 24 px time scale = 44 total.
         // Spans the full width so the header label column aligns with
         // each TrackRow's header column.
-        const int rulerH = 44;
+        const int rulerH = 64;   // 20 markers + 18 bars|beats + 26 min:secs
         if (ruler != nullptr)
             ruler->setBounds (bounds.removeFromTop (rulerH));
 

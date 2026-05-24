@@ -138,31 +138,37 @@ namespace zynforge
 
         void timerCallback() override { repaint(); }
 
-        // Paint splits vertically into two strips:
-        //   top  : marker strip      (kMarkerStripH px tall)
-        //   bottom: time scale ticks (remaining height)
-        // EditPage now sizes the ruler to 44 px so the marker strip
-        // has room for a name + flag.
+        // Paint splits vertically into THREE strips:
+        //   top    : marker strip       (kMarkerStripH px tall)
+        //   middle : Bars|Beats overlay (kBarsBeatsH  px tall)
+        //   bottom : Min:Secs scale     (remaining height)
+        // EditPage should size the ruler to ~64 px so all three rows
+        // have room. The Bars|Beats row reads tempo + time signature
+        // from the engine and lights bar lines + beat sub-ticks.
         static constexpr int kMarkerStripH = 20;
+        static constexpr int kBarsBeatsH   = 18;
 
         void paint (juce::Graphics& g) override
         {
             const int totalH        = getHeight();
-            const int markerStripH  = juce::jmin (kMarkerStripH, totalH / 2);
-            const int rulerH        = totalH - markerStripH;
-            const int rulerTop      = markerStripH;
+            const int markerStripH  = juce::jmin (kMarkerStripH, totalH / 3);
+            const int barsBeatsH    = juce::jmin (kBarsBeatsH,   (totalH - markerStripH) / 2);
+            const int barsBeatsTop  = markerStripH;
+            const int rulerTop      = markerStripH + barsBeatsH;
+            const int rulerH        = totalH - rulerTop;
 
             auto r = getLocalBounds().toFloat();
             g.setGradientFill (brand::verticalGradient (brand::bgDeep, r, 0.06f, 0.12f));
             g.fillRect (r);
             g.setColour (brand::edge);
             g.drawHorizontalLine (totalH - 1, 0.0f, (float) getWidth());
-            // Separator between marker strip and time scale.
+            // Separators between the three strips.
             g.setColour (brand::edge.withAlpha (0.6f));
             g.drawHorizontalLine (markerStripH, 0.0f, (float) getWidth());
+            g.drawHorizontalLine (rulerTop,     0.0f, (float) getWidth());
 
-            // Left header column -- two stacked labels matching the
-            // two-row layout: 'Markers' on top, 'Min:Secs' below.
+            // Left header column -- three stacked labels matching the
+            // three-row layout: 'Markers', 'Bars|Beats', 'Min:Secs'.
             const int headerInsetX = 8;
             g.setColour (brand::textMuted);
             g.setFont (brand::type::caption());
@@ -170,8 +176,13 @@ namespace zynforge
                         juce::Rectangle<int> (headerInsetX, 0,
                                               headerW - headerInsetX, markerStripH),
                         juce::Justification::centredLeft, false);
-            g.setColour (brand::accentStatus);
+            g.setColour (brand::engagedAmber);
             g.setFont (brand::type::captionBold());
+            g.drawText ("Bars" + juce::String (juce::CharPointer_UTF8 ("\xc2\xa6")) + "Beats",
+                        juce::Rectangle<int> (headerInsetX, barsBeatsTop,
+                                              headerW - headerInsetX, barsBeatsH),
+                        juce::Justification::centredLeft, false);
+            g.setColour (brand::accentStatus);
             g.drawText ("Min:Secs",
                         juce::Rectangle<int> (headerInsetX, rulerTop,
                                               headerW - headerInsetX, rulerH),
@@ -220,6 +231,52 @@ namespace zynforge
                                 juce::Rectangle<int> (x + 3, rulerTop, 60,
                                                       rulerH - majorTickH - 2),
                                 juce::Justification::topLeft, false);
+                }
+            }
+
+            // -------- Bars|Beats strip --------
+            // Reads tempo + time signature from the engine. Major
+            // tick at every bar, minor at every beat. Skips beats
+            // when the bar would be < ~24 px wide so the strip
+            // doesn't turn into a wall of ticks at low zoom.
+            {
+                const double bpm     = (double) engine.getSessionTempoBpm();
+                const int    sigNum  = juce::jmax (1, engine.getTimeSignatureNumerator());
+                const double beatSec = bpm > 0.0 ? 60.0 / bpm : 0.5;
+                const double barSec  = beatSec * (double) sigNum;
+                const double pxPerBar = barSec * pxPerSec;
+                const bool   showBeats = pxPerBar >= 24.0;
+
+                const int barTickH  = juce::jmax (8, (int) (barsBeatsH * 0.65f));
+                const int beatTickH = juce::jmax (4, (int) (barsBeatsH * 0.35f));
+
+                g.setFont (brand::type::mono (10.0f, true));
+                if (beatSec > 0.0)
+                {
+                    int bar  = 1;
+                    int beat = 1;
+                    for (double t = 0.0; t <= totalSec + 0.0001; t += beatSec)
+                    {
+                        const int x = headerW + (int) (t * pxPerSec);
+                        if (x >= getWidth()) break;
+                        const bool isBar = (beat == 1);
+                        if (isBar || showBeats)
+                        {
+                            const int hPx = isBar ? barTickH : beatTickH;
+                            g.setColour (isBar ? brand::engagedAmber : brand::textMuted);
+                            g.drawVerticalLine (x, (float) (barsBeatsTop + barsBeatsH - hPx),
+                                                (float) (barsBeatsTop + barsBeatsH));
+                        }
+                        if (isBar)
+                        {
+                            g.setColour (brand::engagedAmber);
+                            g.drawText (juce::String (bar),
+                                        juce::Rectangle<int> (x + 3, barsBeatsTop,
+                                                              60, barsBeatsH - barTickH - 2),
+                                        juce::Justification::topLeft, false);
+                        }
+                        if (++beat > sigNum) { beat = 1; ++bar; }
+                    }
                 }
             }
 
