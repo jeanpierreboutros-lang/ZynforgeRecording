@@ -24,6 +24,15 @@ namespace zynforge::brand
     inline const auto borderSubtle  = juce::Colour::fromRGB (0x3a, 0x3a, 0x3a);
     inline const auto borderBright  = juce::Colour::fromRGB (0x5a, 0x5a, 0x5a);
 
+    // Background for text editors, combo bodies, and any other input
+    // chrome that wants to read as a recessed slot on the panel.
+    // Deliberately deeper than bgDeep so it sinks below the surface.
+    inline const auto inputBg       = juce::Colour::fromRGB (0x00, 0x00, 0x00);
+
+    // Loop-region / selection band -- Pro Tools-blue-adjacent.
+    // Used as a low-alpha fill + medium-alpha edge on the EDIT view.
+    inline const auto accentEdit    = juce::Colour::fromRGB (0x3a, 0x90, 0xe0);
+
     // ── Text (4-step, all WCAG-AA against bg-surface) ─────────────────────
     inline const auto textPrimary   = juce::Colour::fromRGB (0xff, 0xff, 0xff);
     inline const auto textSecondary = juce::Colour::fromRGB (0xb8, 0xc2, 0xcc);

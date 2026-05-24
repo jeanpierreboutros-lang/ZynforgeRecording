@@ -22,6 +22,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - **Curve picker > Reset bend** menu entry on every automation point -- wipes per-segment tension back to 0 without changing the shape preset. Disabled when the segment isn't bent.
 - **Shift-snap on tension drag** -- holding Shift while dragging a curve handle snaps tension to a 0.25 grid so matched ramps across multiple segments are easy to dial in.
 
+### Changed
+- **Design audit pass:** swept hardcoded colour literals out of chrome paint paths. Two new tokens:
+  - `brand::inputBg` = deep black for text-editor and combo bodies (was inline `Colour(0xff000000)` across `SetlistBar`, `AutomationToolbar`, `AddTracksDialog`, `SessionPropertiesDialog`).
+  - `brand::accentEdit` = Pro Tools-blue-adjacent for EDIT loop/selection bands (was inline `Colour::fromRGB(0x3a, 0x90, 0xe0)` in EditPage).
+- Replaced `juce::Colours::white` on saturated-accent backgrounds (VCA / BUS chips, EDIT take chip, PatchPage strip headers and active dots, EditToolsBar active tool icon) with `brand::onSignal(bg)` so foreground legibility follows the bg's perceived brightness instead of being pinned white. Yellow / amber / green / teal chips now self-correct.
+- Dropped a needless `juce::Font(...)` wrapper around an already-`Font` in PatchPage.
+
 ### Fixed
 - **Crash-recovery scan now finds user-named sessions.** `AudioEngine::findIncompleteSessions` used to filter to `Session_*` dirs only, silently skipping orphans from any session the engineer named themselves. Filter dropped -- every subdir of the Sessions root is now scanned for the `recording.session` marker.
 - **Tension drag-handles hit-test the wrong lane** when the toolbar's parameter and the row's lane-mode disagreed (e.g. toolbar on Pan, row defaulted to Volume). Lane painting used the toolbar override but hit-test fell back to raw lane-mode, so the visible handle and the clickable target were on different lanes. New `TrackRow::currentLaneParam()` is the single source of truth for both paint and hit-test.

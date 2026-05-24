@@ -29,7 +29,7 @@ namespace zynforge
                 countEditor.setInputRestrictions (3, "0123456789");
                 countEditor.setJustification (juce::Justification::centred);
                 countEditor.setFont (brand::type::captionBold());
-                countEditor.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff000000));
+                countEditor.setColour (juce::TextEditor::backgroundColourId, brand::inputBg);
                 countEditor.setColour (juce::TextEditor::textColourId,       brand::accentStatus);
                 countEditor.setColour (juce::TextEditor::outlineColourId,    brand::edge);
                 countEditor.setColour (juce::TextEditor::focusedOutlineColourId, brand::accentStatus);
@@ -78,7 +78,7 @@ namespace zynforge
 
                 nameEditor.setText ("Audio", juce::dontSendNotification);
                 nameEditor.setFont (brand::type::uiBody());
-                nameEditor.setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff000000));
+                nameEditor.setColour (juce::TextEditor::backgroundColourId, brand::inputBg);
                 nameEditor.setColour (juce::TextEditor::textColourId,       brand::textPrimary);
                 nameEditor.setColour (juce::TextEditor::outlineColourId,    brand::edge);
                 // First keystroke from the engineer flips nameIsAutoDefault

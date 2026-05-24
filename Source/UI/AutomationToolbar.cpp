@@ -30,7 +30,7 @@ namespace zynforge
         paramLabel.setColour (juce::Label::textColourId, brand::textSecondary);
         addAndMakeVisible (paramLabel);
 
-        paramCombo.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff000000));
+        paramCombo.setColour (juce::ComboBox::backgroundColourId, brand::inputBg);
         paramCombo.setColour (juce::ComboBox::outlineColourId,    brand::edge);
         paramCombo.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
         paramCombo.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
@@ -186,7 +186,7 @@ namespace zynforge
         // Off = neutral chrome; any write mode = brand-red so the
         // engineer's eye snags on it from across the venue.
         const bool armed = writeCombo.getSelectedId() > 1;
-        const juce::Colour bg     = armed ? brand::accentRecord : juce::Colour (0xff000000);
+        const juce::Colour bg     = armed ? brand::accentRecord : brand::inputBg;
         const juce::Colour fg     = armed ? brand::onSignal (brand::accentRecord) : brand::textPrimary;
         const juce::Colour outline= armed ? brand::accentRecord : brand::edge;
         writeCombo.setColour (juce::ComboBox::backgroundColourId, bg);

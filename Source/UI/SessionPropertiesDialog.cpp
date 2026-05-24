@@ -16,7 +16,7 @@ namespace zynforge
         static void styleEditor (juce::TextEditor& t)
         {
             t.setFont (brand::type::ui (14.0f));
-            t.setColour (juce::TextEditor::backgroundColourId,        juce::Colour (0xff000000));
+            t.setColour (juce::TextEditor::backgroundColourId,        brand::inputBg);
             t.setColour (juce::TextEditor::textColourId,              brand::textPrimary);
             t.setColour (juce::TextEditor::outlineColourId,           brand::edge);
             t.setColour (juce::TextEditor::focusedOutlineColourId,    brand::accentStatus);

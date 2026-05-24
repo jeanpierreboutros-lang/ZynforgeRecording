@@ -1082,11 +1082,9 @@ namespace zynforge
                         {
                             const juce::Rectangle<int> band (
                                 headerW + xA, 0, xB - xA, getHeight());
-                            g.setColour (juce::Colour::fromRGB (0x3a, 0x90, 0xe0)
-                                            .withAlpha (0.18f));
+                            g.setColour (brand::accentEdit.withAlpha (0.18f));
                             g.fillRect (band);
-                            g.setColour (juce::Colour::fromRGB (0x3a, 0x90, 0xe0)
-                                            .withAlpha (0.75f));
+                            g.setColour (brand::accentEdit.withAlpha (0.75f));
                             g.drawVerticalLine (band.getX(),     0.0f, (float) getHeight());
                             g.drawVerticalLine (band.getRight(), 0.0f, (float) getHeight());
                         }
@@ -1109,7 +1107,7 @@ namespace zynforge
                     g.fillRoundedRectangle (chip.toFloat(), 2.5f);
                     g.setColour (brand::featureEngaged.brighter (0.40f));
                     g.drawRoundedRectangle (chip.toFloat(), 2.5f, 0.75f);
-                    g.setColour (juce::Colours::white);
+                    g.setColour (brand::onSignal (brand::featureEngaged.darker (0.30f)));
                     g.setFont (brand::fonts::small());
                     g.drawText (label, chip, juce::Justification::centred, false);
                 }

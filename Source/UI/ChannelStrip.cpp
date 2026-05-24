@@ -800,7 +800,7 @@ namespace zynforge
             g.fillRoundedRectangle (badge, 2.5f);
             g.setColour (brand::featureEngaged.brighter (0.40f));
             g.drawRoundedRectangle (badge, 2.5f, 0.75f);
-            g.setColour (juce::Colours::white);
+            g.setColour (brand::onSignal (brand::featureEngaged.darker (0.30f)));
             g.setFont (brand::fonts::small());
             g.drawText (label, badge.toNearestInt(), juce::Justification::centred, false);
         }
@@ -818,7 +818,7 @@ namespace zynforge
             g.fillRoundedRectangle (badge, 2.5f);
             g.setColour (brand::alertAmber.brighter (0.20f));
             g.drawRoundedRectangle (badge, 2.5f, 0.75f);
-            g.setColour (juce::Colours::white);
+            g.setColour (brand::onSignal (brand::alertAmber.darker (0.30f)));
             g.setFont (brand::fonts::small());
             g.drawText ("BUS", badge.toNearestInt(), juce::Justification::centred, false);
         }

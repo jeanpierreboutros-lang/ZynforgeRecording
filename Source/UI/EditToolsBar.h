@@ -191,7 +191,7 @@ namespace zynforge
                     g.drawRoundedRectangle (rect.reduced (0.5f), 4.0f, 1.0f);
                 }
 
-                g.setColour (active ? juce::Colours::white : brand::textSecondary);
+                g.setColour (active ? brand::onSignal (accent) : brand::textSecondary);
                 paintGlyph (g, rect, tool);
             }
 

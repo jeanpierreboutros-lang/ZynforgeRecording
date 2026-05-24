@@ -22,7 +22,7 @@ namespace zynforge
         addAndMakeVisible (prevButton);
         addAndMakeVisible (nextButton);
 
-        cueCombo.setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff000000));
+        cueCombo.setColour (juce::ComboBox::backgroundColourId, brand::inputBg);
         cueCombo.setColour (juce::ComboBox::outlineColourId,    brand::edge);
         cueCombo.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
         cueCombo.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);

@@ -102,7 +102,7 @@ namespace zynforge
                     g.drawRoundedRectangle (inner.toFloat(), 5.0f, 1.0f);
 
                     // Big number (logical position)
-                    g.setColour (juce::Colours::white);
+                    g.setColour (brand::onSignal (stripCol));
                     g.setFont (brand::type::ui (22.0f, true));
                     g.drawText (juce::String (c + 1),
                                 juce::Rectangle<int> (inner.getX(), inner.getY() + 4, inner.getWidth(), 26),
@@ -124,7 +124,7 @@ namespace zynforge
                     {
                         g.setColour (stripCol);
                         g.fillRoundedRectangle (pill.toFloat(), pill.getHeight() * 0.5f);
-                        g.setColour (juce::Colours::white);
+                        g.setColour (brand::onSignal (stripCol));
                     }
                     else
                     {
@@ -153,7 +153,7 @@ namespace zynforge
                     // Row label
                     const bool isActiveRow = isRowRoutedToAnyStrip (row, logical);
                     g.setColour (isActiveRow ? brand::textPrimary : brand::textSecondary);
-                    g.setFont (juce::Font (brand::type::sectionTitle()));
+                    g.setFont (brand::type::sectionTitle());
                     g.drawText ((isInput ? "IN " : "OUT ") + juce::String (row + 1),
                                 juce::Rectangle<int> (14, y, L.rowHeaderW - 18, L.rowH),
                                 juce::Justification::centredLeft, false);
@@ -179,7 +179,7 @@ namespace zynforge
                                                   : brand::stripColour (trackIdx);
                             g.setColour (stripCol);
                             g.fillEllipse (dot);
-                            g.setColour (juce::Colours::white);
+                            g.setColour (brand::onSignal (stripCol));
                             g.drawEllipse (dot, 2.0f);
                         }
                         else
