@@ -57,6 +57,8 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/MainComponentSessionIO.cpp
     Source/UI/MainComponentMenu.cpp
     Source/UI/MainComponentHelp.cpp
+    Source/UI/MainComponentTools.cpp
+    Source/UI/MainComponentStrips.cpp
     Source/Tests/AutomationTests.cpp
     Source/Tests/MarkerTests.cpp
     Source/Tests/EngineStateTests.cpp

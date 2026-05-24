@@ -18,6 +18,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ## [Unreleased]
 
 ### Changed (latest)
+- **MainComponent split, parts 5 + 6.** Two more clusters extracted in one pass:
+  - `MainComponentTools.cpp` (467 lines) -- `generateOrRefreshClickTrack`, `togglePunchMode`, `servicePunch`, `runNoiseAnalysis`, `writeSoundcheckReport`, `showSessionProperties`.
+  - `MainComponentStrips.cpp` (306 lines) -- multi-selection cluster: `clearStripSelection`, `selectAllStrips`, `deleteSelectedStrips`, `colourSelectedStrips`, `physicalFromLogicalIdx`, `moveSelectedStrips`, `showBatchRenameDialog`, `showBatchColourDialog`.
+  - **MainComponent.cpp: 2335 → 1590 lines.** Cumulative since the start of the split work: 5522 → 1590 (-71 %). Remaining big lumps are the ctor (~590 lines, hard to move without breaking init ordering) and `rebuildStrips` (~295 lines, tightly coupled to MainComponent's strip vector).
 - **MainComponent split, part 4.** Help / onboarding cluster extracted to `Source/UI/MainComponentHelp.cpp` (343 lines). Covers `showFirstRunTutorial`, `showKeyboardShortcuts`, `showUserGuide`, `showAboutDialog`, `showStartupWelcome`, `launchNewSessionDialog`, `offerSessionRecovery`. MainComponent.cpp: 2654 → 2335 lines. Cumulative since start of the split day: 5522 → 2335. While extracting, the Keyboard shortcuts dialog gained two new sections — `MARKERS` (`Cmd+1..9`) and `AUTOMATION` (Left/Right/Up/Down/Delete on focused point) — both already implemented, just not previously documented in the user-facing list.
 
 ### Added (latest)
