@@ -74,9 +74,17 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
             const auto& list = engine.getMarkers().getAll();
             if (targetIdx < (int) list.size())
             {
-                engine.getPlayer().setPositionSamples (list[(size_t) targetIdx].sampleOffset);
+                const auto& m = list[(size_t) targetIdx];
+                engine.getPlayer().setPositionSamples (m.sampleOffset);
+                // Pro Tools-style Memory Location recall: if the
+                // marker carries layout fields, restore them too.
+                // Absent fields = jump position only (backward compat
+                // with markers.json files that pre-date this feature).
+                if (m.zoom > 0.0f && editPage != nullptr)
+                    editPage->setZoom (m.zoom);
                 showStatus ("Jumped to marker " + juce::String (targetIdx + 1)
-                            + ": " + list[(size_t) targetIdx].name);
+                            + ": " + m.name
+                            + (m.zoom > 0.0f ? " (layout restored)" : ""));
                 return true;
             }
             showStatus ("No marker " + juce::String (targetIdx + 1)

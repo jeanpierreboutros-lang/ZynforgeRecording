@@ -80,6 +80,55 @@ namespace zynforge
                 temp.deleteRecursively();
             }
 
+            beginTest ("zoom + visibleTracks round-trip through markers.json");
+            {
+                auto temp = juce::File::createTempFile ("");
+                temp.deleteRecursively();
+                temp.createDirectory();
+                {
+                    MarkersManager m;
+                    m.setContext (temp, 48000.0);
+                    m.drop (10000, "wide");
+                    m.drop (20000, "detail");
+                    // Mutate the fresh markers' layout fields.
+                    auto& w = const_cast<Marker&> (m.getAll()[0]);
+                    auto& d = const_cast<Marker&> (m.getAll()[1]);
+                    w.zoom = 1.0f;
+                    d.zoom = 8.0f;
+                    d.visibleTracks = { 0, 2, 4 };
+                    expect (m.save());
+                }
+                MarkersManager m2;
+                m2.setContext (temp, 48000.0);
+                expectEquals ((int) m2.getCount(), 2);
+                expectWithinAbsoluteError (m2.getAll()[0].zoom, 1.0f, 0.001f);
+                expectWithinAbsoluteError (m2.getAll()[1].zoom, 8.0f, 0.001f);
+                expectEquals ((int) m2.getAll()[0].visibleTracks.size(), 0);
+                expectEquals ((int) m2.getAll()[1].visibleTracks.size(), 3);
+                expectEquals (m2.getAll()[1].visibleTracks[0], 0);
+                expectEquals (m2.getAll()[1].visibleTracks[2], 4);
+                temp.deleteRecursively();
+            }
+
+            beginTest ("Legacy markers.json without zoom/visible loads with defaults");
+            {
+                auto temp = juce::File::createTempFile ("");
+                temp.deleteRecursively();
+                temp.createDirectory();
+                // Hand-craft a pre-feature markers.json.
+                const auto markersFile = temp.getChildFile ("markers.json");
+                markersFile.replaceWithText (
+                    R"({"sampleRate":48000,"markers":[{"sample":1000,"name":"legacy","type":"user"}]})");
+                MarkersManager m;
+                m.setContext (temp, 48000.0);
+                expectEquals (m.getCount(), 1);
+                expectEquals (m.getAll()[0].name, juce::String ("legacy"));
+                // Absent zoom = -1.0f sentinel = "no layout to recall."
+                expect (m.getAll()[0].zoom < 0.0f);
+                expect (m.getAll()[0].visibleTracks.empty());
+                temp.deleteRecursively();
+            }
+
             beginTest ("clear empties the list");
             {
                 MarkersManager m;

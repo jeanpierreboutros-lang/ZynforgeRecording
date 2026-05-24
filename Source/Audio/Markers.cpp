@@ -84,6 +84,14 @@ namespace zynforge
             o->setProperty ("sample", (juce::int64) m.sampleOffset);
             o->setProperty ("name",   m.name);
             o->setProperty ("type",   m.type);
+            if (m.zoom > 0.0f)
+                o->setProperty ("zoom", (double) m.zoom);
+            if (! m.visibleTracks.empty())
+            {
+                juce::Array<juce::var> vis;
+                for (int v : m.visibleTracks) vis.add (v);
+                o->setProperty ("visible", juce::var (vis));
+            }
             arr.add (juce::var (o.get()));
         }
         root->setProperty ("markers", arr);
@@ -120,6 +128,12 @@ namespace zynforge
                         m.name         = mo->getProperty ("name").toString();
                         m.type         = mo->getProperty ("type").toString();
                         if (m.type.isEmpty()) m.type = "user";
+                        if (mo->hasProperty ("zoom"))
+                            m.zoom = (float) (double) mo->getProperty ("zoom");
+                        if (mo->hasProperty ("visible"))
+                            if (auto* va = mo->getProperty ("visible").getArray())
+                                for (const auto& vv : *va)
+                                    m.visibleTracks.push_back ((int) vv);
                         markers.push_back (std::move (m));
                     }
                 }

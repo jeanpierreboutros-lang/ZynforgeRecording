@@ -11,6 +11,15 @@ namespace zynforge
         juce::int64  sampleOffset { 0 };
         juce::String name;
         juce::String type { "user" };   // "user", "scene", "song", ...
+
+        // Pro Tools-style "Memory Location" recall fields. When set,
+        // a Cmd+N jump to this marker also restores the EDIT-view
+        // zoom level and the logical-strip visibility mask. Absent
+        // (zoom <= 0) = jump position only, leave layout alone.
+        // visibleTracks is a list of logical strip indices that
+        // should be shown; empty + zoom > 0 means "show all".
+        float                     zoom         { -1.0f };
+        std::vector<int>          visibleTracks;
     };
 
     // Per-session marker list. Persisted as markers.json in the session dir.

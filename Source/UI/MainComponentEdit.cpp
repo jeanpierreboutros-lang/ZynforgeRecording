@@ -311,8 +311,16 @@ void MainComponent::dropMarkerAndPromptName()
     // 2. Apply the default name straight away so the marker is
     //    immediately visible in the timeline + Memory Locations list
     //    with a sensible label, even if the engineer cancels the
-    //    rename dialog.
+    //    rename dialog. Also capture the current EDIT-view zoom so
+    //    a later Cmd+N jump restores the engineer's layout (Pro
+    //    Tools-style Memory Location recall).
     engine.getMarkers().renameMarker (rowIndex, defaultName);
+    if (rowIndex >= 0 && rowIndex < (int) engine.getMarkers().getAll().size()
+        && editPage != nullptr)
+    {
+        auto& mut = const_cast<Marker&> (engine.getMarkers().getAll()[(size_t) rowIndex]);
+        mut.zoom = editPage->getZoom();
+    }
     engine.getMarkers().save();
     showStatus ("Marker " + juce::String (newCount) + " dropped");
 
