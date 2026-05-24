@@ -22,7 +22,7 @@ namespace zynforge
             t.setColour (juce::TextEditor::textColourId,         brand::textPrimary);
             t.setColour (juce::TextEditor::outlineColourId,      brand::edge);
             t.setColour (juce::TextEditor::focusedOutlineColourId, brand::accentStatus);
-            t.setColour (juce::TextEditor::highlightColourId,    brand::accentStatus.withAlpha (0.35f));
+            t.setColour (juce::TextEditor::highlightColourId,    brand::accentStatus.withAlpha (brand::alpha::dimmed));
         }
 
         static void styleCombo (juce::ComboBox& c)

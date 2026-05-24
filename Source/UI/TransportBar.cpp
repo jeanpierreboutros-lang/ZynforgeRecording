@@ -35,7 +35,7 @@ namespace zynforge
             // (amber) regardless of light conditions.
             if (icon == Icon::Record)
             {
-                g.setColour (brand::accentRecord.withAlpha (0.85f));
+                g.setColour (brand::accentRecord.withAlpha (brand::alpha::prominent));
                 g.drawRoundedRectangle (r.reduced (1.0f), brand::radius::md, 2.0f);
             }
             else

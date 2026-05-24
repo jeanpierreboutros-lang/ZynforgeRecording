@@ -104,9 +104,18 @@ namespace zynforge::brand
     // of these. No more inline magic 0.18 / 0.40 / 0.85 numbers.
     namespace alpha
     {
+        // Six-step opacity scale. Two new mid values (dimmed / muted)
+        // and a near-opaque (bold) cover the most common ad-hoc
+        // alpha literals in the codebase (counted by audit: 0.35,
+        // 0.55-0.60, 0.95). The 3-step (subtle/ghost/prominent)
+        // semantic intent is preserved -- the new values just give
+        // engineers a named slot instead of inventing 0.35 inline.
         inline constexpr float subtle    = 0.18f;  // grid lines, off-beat ticks
+        inline constexpr float dimmed    = 0.35f;  // background washes, mute scrim edges
         inline constexpr float ghost     = 0.40f;  // downbeats, secondary cues
+        inline constexpr float muted     = 0.55f;  // mid-contrast overlays
         inline constexpr float prominent = 0.85f;  // playhead, focus highlight
+        inline constexpr float bold      = 0.95f;  // near-opaque text on translucent bg
     }
 
     // ── Elevation / shadow scale ──────────────────────────────────────

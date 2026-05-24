@@ -96,7 +96,7 @@ namespace zynforge
                 case 4: text = juce::String (m.sampleOffset); break;
             }
             g.setColour (brand::textPrimary);
-            g.setFont (brand::fonts::body());
+            g.setFont (brand::type::uiBody());
             g.drawText (text, juce::Rectangle<int> (4, 0, w - 8, h),
                         col == 2 ? juce::Justification::centredLeft
                                   : juce::Justification::centredRight,

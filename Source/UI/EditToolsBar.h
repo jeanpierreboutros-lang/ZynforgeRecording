@@ -96,7 +96,7 @@ namespace zynforge
                                             ((float) r.getWidth() - 2, (float) r.getHeight() - 2),
                                         4, 1);
                 g.setColour (brand::textPrimary);
-                g.setFont (brand::fonts::body());
+                g.setFont (brand::type::uiBody());
                 g.drawText (t, r, juce::Justification::centred, false);
             };
             draw (rMinus, "-", false);

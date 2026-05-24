@@ -69,7 +69,7 @@ namespace zynforge
             auto r = getLocalBounds().toFloat().reduced (1.5f);
             g.setColour (displayColour);
             g.fillRoundedRectangle (r, 3.0f);
-            g.setColour (juce::Colours::white.withAlpha (0.35f));
+            g.setColour (juce::Colours::white.withAlpha (brand::alpha::dimmed));
             g.drawRoundedRectangle (r, 3.0f, 1.0f);
         }
 
@@ -742,7 +742,7 @@ namespace zynforge
         gainFader.setColour (juce::Slider::textBoxTextColourId,  brand::textPrimary);
         gainFader.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
         gainFader.setColour (juce::Slider::textBoxBackgroundColourId,
-                             brand::bgDeep.withAlpha (0.4f));
+                             brand::bgDeep.withAlpha (brand::alpha::ghost));
         // Same reasoning as the pan knob: scroll-wheel / trackpad
         // gestures should NEVER move the gain. The fader changes only
         // on a direct click+drag interaction.
@@ -827,7 +827,7 @@ namespace zynforge
             g.setColour (brand::featureEngaged.brighter (0.40f));
             g.drawRoundedRectangle (badge, 2.5f, 0.75f);
             g.setColour (brand::onSignal (brand::featureEngaged.darker (0.30f)));
-            g.setFont (brand::fonts::small());
+            g.setFont (brand::type::caption());
             g.drawText (label, badge.toNearestInt(), juce::Justification::centred, false);
         }
 
@@ -850,7 +850,7 @@ namespace zynforge
             g.setColour (brand::accentVS.brighter (0.40f));
             g.drawRoundedRectangle (badge, 2.5f, 0.75f);
             g.setColour (brand::onSignal (brand::accentVS.darker (0.30f)));
-            g.setFont (brand::fonts::small());
+            g.setFont (brand::type::caption());
             g.drawText (label, badge.toNearestInt(), juce::Justification::centred, false);
         }
 
@@ -868,7 +868,7 @@ namespace zynforge
             g.setColour (brand::alertAmber.brighter (0.20f));
             g.drawRoundedRectangle (badge, 2.5f, 0.75f);
             g.setColour (brand::onSignal (brand::alertAmber.darker (0.30f)));
-            g.setFont (brand::fonts::small());
+            g.setFont (brand::type::caption());
             g.drawText ("BUS", badge.toNearestInt(), juce::Justification::centred, false);
         }
 
@@ -880,7 +880,7 @@ namespace zynforge
         {
             const auto led = juce::Rectangle<float> (r.getX() + 4.0f, r.getY() + 20.0f, 6.0f, 6.0f);
             const auto c   = autoSafeOn ? brand::engagedAmber : brand::accentRecord;
-            g.setColour (c.withAlpha (0.95f));
+            g.setColour (c.withAlpha (brand::alpha::bold));
             g.fillEllipse (led);
             g.setColour (c.brighter (0.45f));
             g.drawEllipse (led, 0.6f);

@@ -163,7 +163,7 @@ namespace zynforge
             g.setColour (brand::edge);
             g.drawHorizontalLine (totalH - 1, 0.0f, (float) getWidth());
             // Separators between the three strips.
-            g.setColour (brand::edge.withAlpha (0.6f));
+            g.setColour (brand::edge.withAlpha (brand::alpha::muted));
             g.drawHorizontalLine (markerStripH, 0.0f, (float) getWidth());
             g.drawHorizontalLine (rulerTop,     0.0f, (float) getWidth());
 

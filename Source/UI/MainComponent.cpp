@@ -39,12 +39,12 @@ MainComponent::MainComponent()
 
     midiStatusLabel.setColour (juce::Label::textColourId, brand::featureEngaged);
     midiStatusLabel.setJustificationType (juce::Justification::centredLeft);
-    midiStatusLabel.setFont (brand::fonts::small());
+    midiStatusLabel.setFont (brand::type::caption());
     addAndMakeVisible (midiStatusLabel);
 
     nextCueLabel.setColour (juce::Label::textColourId, brand::accentVS);
     nextCueLabel.setJustificationType (juce::Justification::centredRight);
-    nextCueLabel.setFont (brand::fonts::body());
+    nextCueLabel.setFont (brand::type::uiBody());
     addAndMakeVisible (nextCueLabel);
 
     // DANTE pill -- shows when the active audio device is Dante Virtual
@@ -52,7 +52,7 @@ MainComponent::MainComponent()
     // Dante network. Updated from the existing timer.
     danteLabel.setColour (juce::Label::textColourId, brand::featureEngaged);
     danteLabel.setJustificationType (juce::Justification::centredLeft);
-    danteLabel.setFont (brand::fonts::small());
+    danteLabel.setFont (brand::type::caption());
     addAndMakeVisible (danteLabel);
 
     sessionLabel.setFont (brand::type::caption());
@@ -582,7 +582,7 @@ MainComponent::MainComponent()
     const bool firstRun = engine.getAppProps() == nullptr
                         || ! engine.getAppProps()->getBoolValue ("tutorialShown", false);
 
-    juce::Timer::callAfterDelay (250, [this, firstRun]
+    juce::Timer::callAfterDelay (brand::motion::launchDelayMs, [this, firstRun]
     {
         offerSessionRecovery();
         juce::Timer::callAfterDelay (450, [this, firstRun]

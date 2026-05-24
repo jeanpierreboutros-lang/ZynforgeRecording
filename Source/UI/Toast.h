@@ -83,9 +83,12 @@ namespace zynforge
         Phase             phase          { Phase::Idle };
 
         static constexpr int  kTickMs        = 16;       // ~60 Hz
-        static constexpr int  kFadeInMs      = 200;
-        static constexpr int  kFadeOutMs     = 320;
-        static constexpr int  kHoldMs        = 2800;
+        // Motion timings come from the shared brand::motion::
+        // namespace so the toast picks up any future "make the
+        // app feel snappier" pass without touching this file.
+        static constexpr int  kFadeInMs      = brand::motion::quickFadeMs;
+        static constexpr int  kFadeOutMs     = brand::motion::fadeOutMs;
+        static constexpr int  kHoldMs        = brand::motion::toastHoldMs;
 
         static juce::Colour colourForKind (Kind k)
         {

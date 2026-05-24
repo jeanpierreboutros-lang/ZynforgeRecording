@@ -250,7 +250,7 @@ namespace zynforge
                 case 4: text = formatTime (r.modifiedMs);           break;
             }
             g.setColour (fg);
-            g.setFont (brand::fonts::body());
+            g.setFont (brand::type::uiBody());
             g.drawText (text,
                         juce::Rectangle<int> (6, 0, width - 12, height),
                         columnId == 1 ? juce::Justification::centredLeft

@@ -47,12 +47,12 @@ void MainComponent::paint (juce::Graphics& g)
                         area.withTrimmedBottom (area.getHeight() * 0.55f).toNearestInt(),
                         juce::Justification::centredBottom, false);
             g.setColour (brand::textSecondary);
-            g.setFont (brand::fonts::body());
+            g.setFont (brand::type::uiBody());
             g.drawText ("Click +CH (top-right) to add your first channel.",
                         area.withSizeKeepingCentre (area.getWidth(), 24.0f).toNearestInt(),
                         juce::Justification::centred, false);
             g.setColour (brand::textTertiary);
-            g.setFont (brand::fonts::small());
+            g.setFont (brand::type::caption());
             g.drawText ("Then arm R, press the red record button, and play back with the green triangle.",
                         area.withTrimmedTop (area.getHeight() * 0.55f).toNearestInt(),
                         juce::Justification::centredTop, false);

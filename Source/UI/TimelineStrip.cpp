@@ -90,7 +90,7 @@ namespace zynforge
         {
             const int x0 = xForSample (player.getLoopStart());
             const int x1 = xForSample (player.getLoopEnd());
-            g.setColour (brand::accentVS.withAlpha (0.35f));
+            g.setColour (brand::accentVS.withAlpha (brand::alpha::dimmed));
             g.fillRect (juce::Rectangle<float> ((float) x0, trackY - 8.0f,
                                                 (float) (x1 - x0), 16.0f));
             g.setColour (brand::accentVS);

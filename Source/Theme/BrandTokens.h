@@ -4,6 +4,35 @@
 
 namespace zynforge::brand
 {
+    // ── Motion / animation timings (milliseconds, Hz) ────────────────────
+    //
+    // Every component that animates picks its own delay / duration / rate
+    // ad-hoc otherwise -- audit found Toast at 200ms fade-in, BigClock
+    // pulsing at 1 Hz, PEAK tally holding 1000 ms, the cue-ramp easing
+    // computing internally. Names below carry the design intent so all
+    // animated components share one rhythm.
+    namespace motion
+    {
+        // Fade-in for brief feedback (toast surface, status pills).
+        inline constexpr int  quickFadeMs   = 200;
+        // Fade-out for the same: longer than the fade-in so the
+        // engineer registers what just appeared before it leaves.
+        inline constexpr int  fadeOutMs     = 320;
+        // Hold duration for a non-modal toast before it begins fading.
+        inline constexpr int  toastHoldMs   = 2800;
+        // Hold for a one-shot clip indicator (PEAK tally bar, etc.)
+        // after the last clip event.
+        inline constexpr int  clipLatchMs   = 1000;
+        // Rate at which the BigClock pulses while recording / waiting.
+        inline constexpr float pulseHz      = 1.0f;
+        // Cross-strip soft-takeover ramp on cue recall. Seconds, not
+        // milliseconds, because the audio thread integrates per-sample.
+        inline constexpr float cueRampSec   = 0.50f;
+        // Standard delay before showing a launch-flow dialog so the
+        // window has finished sizing first.
+        inline constexpr int  launchDelayMs = 250;
+    }
+
     // ── Corner-radius scale (matches ZynForge Live's rounded.{sm,md,lg,xl}) ──
     namespace radius
     {
@@ -97,24 +126,13 @@ namespace zynforge::brand
         inline juce::Font readout (float height) { return mono (height, true); }
     }
 
-    // ── Font shorthand (re-exports type:: in shorter form) ────────────
-    // Site-code reads cleaner: brand::fonts::numeral16() vs
-    // brand::type::mono (16.0f, true). Cuts verbosity ~40 %.
-    namespace fonts
-    {
-        inline juce::Font small()       { return type::caption();        }
-        inline juce::Font body()        { return type::uiBody();         }
-        inline juce::Font bold()        { return type::channelName();    }
-        inline juce::Font title()       { return type::sectionTitle();   }
-        inline juce::Font headline()    { return type::headline();       }
-        inline juce::Font hero()        { return type::hero();           }
-        // Tabular numerals -- pick the closest size.
-        inline juce::Font numeral10()   { return type::mono (10.0f, true); }
-        inline juce::Font numeral11()   { return type::mono (11.0f, true); }
-        inline juce::Font numeral13()   { return type::mono (13.0f, true); }
-        inline juce::Font numeral16()   { return type::mono (16.0f, true); }
-        inline juce::Font numeral22()   { return type::mono (22.0f, true); }
-        inline juce::Font numeral28()   { return type::mono (28.0f, true); }
-        inline juce::Font numeral44()   { return type::mono (44.0f, true); }
-    }
+    // ── DEPRECATED: brand::fonts:: ────────────────────────────────────
+    // Was a verbosity shim over brand::type::. Migrated to canonical
+    // brand::type::* on 2026-05-24 -- the two were duplicating intent
+    // and engineers had two ways to ask for the same font. New code
+    // uses brand::type::* exclusively.
+    //
+    // If you reach for a numeral helper, use brand::type::mono(size,
+    // bold) directly; the old brand::fonts::numeralN aliases were
+    // size-pinned to fixed values that didn't compose.
 }

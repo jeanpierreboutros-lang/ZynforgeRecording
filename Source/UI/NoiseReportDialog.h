@@ -114,7 +114,7 @@ namespace zynforge
             }
 
             g.setColour (fg);
-            g.setFont (brand::fonts::body());
+            g.setFont (brand::type::uiBody());
             g.drawText (text, juce::Rectangle<int> (4, 0, width - 8, height),
                         columnId == 1 ? juce::Justification::centredLeft
                                        : juce::Justification::centredRight,

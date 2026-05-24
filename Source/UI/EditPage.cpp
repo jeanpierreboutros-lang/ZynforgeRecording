@@ -116,7 +116,7 @@ namespace zynforge
             nameLabel.setText (s.name, juce::dontSendNotification);
             nameLabel.setJustificationType (juce::Justification::centredLeft);
             nameLabel.setColour (juce::Label::textColourId, brand::textPrimary);
-            nameLabel.setFont (brand::fonts::bold());
+            nameLabel.setFont (brand::type::channelName());
             nameLabel.setEditable (false, true, false);
             nameLabel.onTextChange = [this]
             {
@@ -233,7 +233,7 @@ namespace zynforge
             // Input + output routing combos -- same wiring as the mixer.
             auto styleCombo = [] (juce::ComboBox& c)
             {
-                c.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep.withAlpha (0.55f));
+                c.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep.withAlpha (brand::alpha::muted));
                 c.setColour (juce::ComboBox::outlineColourId,    brand::edge);
                 c.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
                 c.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
@@ -462,20 +462,20 @@ namespace zynforge
                     auto laneR = inner.withTrimmedTop (laneH);
                     if (thumbnailL.getTotalLength() > 0.0)
                     {
-                        g.setColour (waveColour.withAlpha (0.55f));
+                        g.setColour (waveColour.withAlpha (brand::alpha::muted));
                         thumbnailL.drawChannels (g, laneL, 0.0,
                                                  thumbnailL.getTotalLength(), 1.0f);
                     }
                     if (thumbnailR.getTotalLength() > 0.0)
                     {
-                        g.setColour (waveColour.withAlpha (0.55f));
+                        g.setColour (waveColour.withAlpha (brand::alpha::muted));
                         thumbnailR.drawChannels (g, laneR, 0.0,
                                                  thumbnailR.getTotalLength(), 1.0f);
                     }
                 }
                 else if (thumbnailL.getTotalLength() > 0.0)
                 {
-                    g.setColour (waveColour.withAlpha (0.55f));
+                    g.setColour (waveColour.withAlpha (brand::alpha::muted));
                     thumbnailL.drawChannels (g, inner, 0.0,
                                              thumbnailL.getTotalLength(), 1.0f);
                 }
@@ -522,7 +522,7 @@ namespace zynforge
                 g.drawRect (inner, 1);
 
                 // Centre line for reference (zero / unity).
-                g.setColour (brand::edge.brighter (0.2f).withAlpha (0.6f));
+                g.setColour (brand::edge.brighter (0.2f).withAlpha (brand::alpha::muted));
                 g.drawHorizontalLine (inner.getCentreY(),
                                       (float) inner.getX(), (float) inner.getRight());
 
@@ -602,7 +602,7 @@ namespace zynforge
                                             + (int) (prop * inner.getWidth());
                                 const bool downbeat = (beat % 4) == 0;
                                 g.setColour (downbeat ? brand::brandOrange
-                                                       : brand::accentStatus.withAlpha (0.55f));
+                                                       : brand::accentStatus.withAlpha (brand::alpha::muted));
                                 g.drawVerticalLine (x,
                                                     (float) inner.getY(),
                                                     (float) inner.getBottom());
@@ -868,7 +868,7 @@ namespace zynforge
                                           + shapedMid * (double) (next.value - prev.value);
                         const int xMid = (xPrev + xNext) / 2;
                         const int yMid = valueToY ((float) vMid);
-                        g.setColour (handleCol.withAlpha (0.85f));
+                        g.setColour (handleCol.withAlpha (brand::alpha::prominent));
                         g.fillEllipse ((float) xMid - 2.8f, (float) yMid - 2.8f, 5.6f, 5.6f);
                         g.setColour (brand::bgPanel);
                         g.drawEllipse ((float) xMid - 2.8f, (float) yMid - 2.8f, 5.6f, 5.6f, 1.0f);
@@ -1025,7 +1025,7 @@ namespace zynforge
                             // shackle dot) so a held clip reads at a glance.
                             const int lx = juce::jmax (xL_, xR_ - 9);
                             const int ly = inner2.getY() + 2;
-                            g.setColour (brand::textPrimary.withAlpha (0.85f));
+                            g.setColour (brand::textPrimary.withAlpha (brand::alpha::prominent));
                             g.fillRect (juce::Rectangle<int> (lx,     ly + 2, 6, 4));
                             g.drawRect (juce::Rectangle<int> (lx + 1, ly,     4, 4), 1);
                         }
@@ -1108,7 +1108,7 @@ namespace zynforge
                                                                 inner2.getHeight());
                         g.setColour (brand::accentStatus.withAlpha (0.10f));
                         g.fillRect (band);
-                        g.setColour (brand::accentStatus.withAlpha (0.85f));
+                        g.setColour (brand::accentStatus.withAlpha (brand::alpha::prominent));
                         // Outgoing (a) -- top-left to bottom-right.
                         g.drawLine ((float) xL, (float) inner2.getY(),
                                     (float) xR, (float) inner2.getBottom(), 1.4f);
@@ -1145,7 +1145,7 @@ namespace zynforge
                         {
                             const juce::Rectangle<int> band (
                                 headerW + xA, 0, xB - xA, getHeight());
-                            g.setColour (brand::accentEdit.withAlpha (0.18f));
+                            g.setColour (brand::accentEdit.withAlpha (brand::alpha::subtle));
                             g.fillRect (band);
                             g.setColour (brand::accentEdit.withAlpha (0.75f));
                             g.drawVerticalLine (band.getX(),     0.0f, (float) getHeight());
@@ -1171,7 +1171,7 @@ namespace zynforge
                     g.setColour (brand::featureEngaged.brighter (0.40f));
                     g.drawRoundedRectangle (chip.toFloat(), 2.5f, 0.75f);
                     g.setColour (brand::onSignal (brand::featureEngaged.darker (0.30f)));
-                    g.setFont (brand::fonts::small());
+                    g.setFont (brand::type::caption());
                     g.drawText (label, chip, juce::Justification::centred, false);
                 }
             }
@@ -1196,7 +1196,7 @@ namespace zynforge
                     const double prop = juce::jlimit (0.0, 1.0,
                         (double) cursorSample / (double) totalSamples2);
                     const int cx = juce::roundToInt (prop * (wavePane.getWidth() - 8)) + 4;
-                    g.setColour (brand::textPrimary.withAlpha (0.95f));
+                    g.setColour (brand::textPrimary.withAlpha (brand::alpha::bold));
                     g.fillRect (juce::Rectangle<int> (headerW + cx, 0, 2, getHeight()));
                 }
             }

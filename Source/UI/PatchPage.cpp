@@ -72,7 +72,7 @@ namespace zynforge
 
                 // ─── Top-left label (HW IN / CH ->)
                 g.setColour (brand::textSecondary);
-                g.setFont (brand::fonts::bold());
+                g.setFont (brand::type::channelName());
                 g.drawText (isInput ? "HW IN" : "HW OUT",
                             juce::Rectangle<int> (0, 14, L.rowHeaderW, 18),
                             juce::Justification::centred, false);
@@ -98,7 +98,7 @@ namespace zynforge
                                                stripCol.darker  (0.10f), inner.getX(), inner.getBottom(), false);
                     g.setGradientFill (grad);
                     g.fillRoundedRectangle (inner.toFloat(), 5.0f);
-                    g.setColour (stripCol.brighter (0.30f).withAlpha (0.60f));
+                    g.setColour (stripCol.brighter (0.30f).withAlpha (brand::alpha::muted));
                     g.drawRoundedRectangle (inner.toFloat(), 5.0f, 1.0f);
 
                     // Big number (logical position)
@@ -130,7 +130,7 @@ namespace zynforge
                     {
                         g.setColour (brand::bgElevated);
                         g.fillRoundedRectangle (pill.toFloat(), pill.getHeight() * 0.5f);
-                        g.setColour (stripCol.brighter (0.20f).withAlpha (0.60f));
+                        g.setColour (stripCol.brighter (0.20f).withAlpha (brand::alpha::muted));
                         g.drawRoundedRectangle (pill.toFloat(), pill.getHeight() * 0.5f, 1.0f);
                         g.setColour (brand::textSecondary);
                     }
@@ -184,7 +184,7 @@ namespace zynforge
                         }
                         else
                         {
-                            g.setColour (brand::textTertiary.withAlpha (0.55f));
+                            g.setColour (brand::textTertiary.withAlpha (brand::alpha::muted));
                             g.drawEllipse (dot, 1.6f);
                         }
                     }

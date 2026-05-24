@@ -20,12 +20,12 @@ namespace zynforge
             t.setColour (juce::TextEditor::textColourId,              brand::textPrimary);
             t.setColour (juce::TextEditor::outlineColourId,           brand::edge);
             t.setColour (juce::TextEditor::focusedOutlineColourId,    brand::accentStatus);
-            t.setColour (juce::TextEditor::highlightColourId,         brand::accentStatus.withAlpha (0.35f));
+            t.setColour (juce::TextEditor::highlightColourId,         brand::accentStatus.withAlpha (brand::alpha::dimmed));
         }
 
         static void styleReadOnly (juce::Label& l)
         {
-            l.setFont (brand::fonts::bold());
+            l.setFont (brand::type::channelName());
             l.setColour (juce::Label::textColourId, brand::accentStatus);
         }
 

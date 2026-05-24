@@ -45,7 +45,7 @@ namespace zynforge
             g.setColour (brand::edge);
             g.drawRect (getLocalBounds(), 1);
             g.setColour (brand::textSecondary);
-            g.setFont (brand::fonts::bold());
+            g.setFont (brand::type::channelName());
             g.drawText ("VCA GROUPS", getLocalBounds().removeFromTop (22),
                         juce::Justification::centred, false);
         }
@@ -105,7 +105,7 @@ namespace zynforge
 
                 nameLabel.setEditable (false, true, false);
                 nameLabel.setJustificationType (juce::Justification::centred);
-                nameLabel.setFont (brand::fonts::bold());
+                nameLabel.setFont (brand::type::channelName());
                 nameLabel.setColour (juce::Label::textColourId, brand::textPrimary);
                 nameLabel.setText (engine.getVca (index).name, juce::dontSendNotification);
                 nameLabel.onTextChange = [this]
@@ -143,7 +143,7 @@ namespace zynforge
                 // Live dB readout.
                 const float dB = engine.getVca (index).gainDb.load (std::memory_order_relaxed);
                 g.setColour (brand::textSecondary);
-                g.setFont (brand::fonts::body());
+                g.setFont (brand::type::uiBody());
                 g.drawText (juce::String (dB, 1) + " dB",
                             getLocalBounds().withTop (getHeight() - 18).withHeight (16),
                             juce::Justification::centred, false);
