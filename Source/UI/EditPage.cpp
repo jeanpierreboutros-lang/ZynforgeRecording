@@ -907,10 +907,35 @@ namespace zynforge
                     }
                 }
 
+                // Value readout (e.g. "vol 0.0 dB") -- always pinned
+                // to the RIGHT EDGE OF THE VISIBLE VIEWPORT, not the
+                // right edge of the (possibly very wide) zoomed-in
+                // lane content. Without this clamp the label sits at
+                // the far right of the full content rect and scrolls
+                // off-screen at any zoom > 1×, leaving the engineer
+                // with no readout to dial automation against.
+                int labelRight = inner.getRight();
+                if (auto* vp = findParentComponentOfClass<juce::Viewport>())
+                {
+                    const int visRightInList = vp->getViewPositionX() + vp->getViewWidth();
+                    const int visRightInRow  = visRightInList - getX();
+                    if (visRightInRow < labelRight)
+                        labelRight = visRightInRow;
+                }
+                const int labelW = 110;
+                const int labelX = juce::jmax (inner.getX(),
+                                               labelRight - labelW);
+                juce::Rectangle<int> labelRect (labelX, inner.getY(),
+                                                 labelRight - labelX, inner.getHeight());
+                // Translucent backing pill so the value stays legible
+                // even when it overlaps automation curve / waveform.
+                g.setColour (brand::bgDeep.withAlpha (0.78f));
+                g.fillRoundedRectangle (labelRect.reduced (2, 2).toFloat(),
+                                        brand::radius::sm);
                 g.setColour (brand::textPrimary);
                 g.setFont (brand::type::uiLabel());
                 g.drawText (label,
-                            inner.reduced (6, 2),
+                            labelRect.reduced (6, 2),
                             juce::Justification::topRight, false);
 
                 if (playheadX >= 0 && playheadX < wavePane.getWidth())
