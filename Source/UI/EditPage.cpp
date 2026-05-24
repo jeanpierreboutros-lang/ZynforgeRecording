@@ -445,7 +445,7 @@ namespace zynforge
             // Paint the waveform in the strip's own colour so it tracks
             // any colour changes the user makes in the mixer or EDIT view.
             const auto waveColour = getStripColour().brighter (0.25f);
-            const auto inner = wavePane.reduced (4, 6);
+            const auto inner = wavePane.reduced (brand::space::xs, brand::space::sm);
 
             // Pro Tools-style: the waveform is ALWAYS the base layer,
             // even when a different lane mode (Volume / Pan / Mute /
@@ -961,7 +961,7 @@ namespace zynforge
                 if (totalSamples > 0 && bpm > 0.0f && sr > 0.0)
                 {
                     const double samplesPerBeat = 60.0 * sr / bpm;
-                    const auto inner2 = wavePane.reduced (4, 6);
+                    const auto inner2 = wavePane.reduced (brand::space::xs, brand::space::sm);
                     const int  paneL  = inner2.getX();
                     const int  paneW  = juce::jmax (1, inner2.getWidth());
                     const double pxPerBeat = samplesPerBeat * (double) paneW
@@ -999,7 +999,7 @@ namespace zynforge
                     ? player.getTotalLengthSamples() : 0;
                 if (totalSamples > 0)
                 {
-                    const auto inner2 = wavePane.reduced (4, 6);
+                    const auto inner2 = wavePane.reduced (brand::space::xs, brand::space::sm);
                     auto sampleToX = [&] (juce::int64 sp) -> int
                     {
                         const double prop = juce::jlimit (0.0, 1.0,
@@ -1237,7 +1237,7 @@ namespace zynforge
 
             // -------------- LEFT (name + buttons) --------------
             constexpr int leftBlockW = 140;
-            auto leftBlock = header.removeFromLeft (leftBlockW).reduced (4, 4);
+            auto leftBlock = header.removeFromLeft (leftBlockW).reduced (brand::space::xs, brand::space::xs);
 
             nameLabel.setBounds (leftBlock.removeFromTop (18));
             leftBlock.removeFromTop (3);
@@ -1318,7 +1318,7 @@ namespace zynforge
         LaneCoord laneCoordAt (juce::Point<int> p) const
         {
             const auto inner = getLocalBounds().withTrimmedLeft (headerW)
-                                                .reduced (4, 6);
+                                                .reduced (brand::space::xs, brand::space::sm);
             const auto& player = engine.getPlayer();
             const juce::int64 total = player.isLoaded() ? player.getTotalLengthSamples()
                                                         : (juce::int64) (engine.getDeviceManager().getCurrentAudioDevice() != nullptr
@@ -1387,7 +1387,7 @@ namespace zynforge
                 const juce::int64 totalSamples = loadedSamples > 0
                     ? loadedSamples
                     : (juce::int64) (sr * 300.0);    // 5-min notional span
-                const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+                const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
                 const double prop = juce::jlimit (0.0, 1.0,
                     (double) (e.x - inner.getX())
                         / (double) juce::jmax (1, inner.getWidth()));
@@ -1408,7 +1408,7 @@ namespace zynforge
                             ? player.getTotalLengthSamples() : 0;
                         if (totalSamples > 0)
                         {
-                            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+                            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
                             const auto sampleToX = [&] (juce::int64 sp) -> int
                             {
                                 const double prop = juce::jlimit (0.0, 1.0,
@@ -1488,7 +1488,7 @@ namespace zynforge
                     ? player.getTotalLengthSamples() : 0;
                 if (totalSamples > 0)
                 {
-                    const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+                    const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
                     const auto xToSample = [&] (int x) -> juce::int64
                     {
                         const double prop = juce::jlimit (0.0, 1.0,
@@ -1563,7 +1563,7 @@ namespace zynforge
                         ? player.getTotalLengthSamples() : 0;
                     if (totalSamples > 0)
                     {
-                        const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+                        const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
                         const auto sampleToX = [&] (juce::int64 sp) -> int
                         {
                             const double prop = juce::jlimit (0.0, 1.0,
@@ -1697,7 +1697,7 @@ namespace zynforge
                     const juce::int64 tol = juce::jmax<juce::int64> (1,
                         totalSamples / juce::jmax (1, getWidth() - headerW) * 8);
                     // Y → BPM (40..240 range mirrors the paint mapping).
-                    const auto inner2 = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+                    const auto inner2 = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
                     const float yProp = juce::jlimit (0.0f, 1.0f,
                         (float) (e.y - inner2.getY()) / juce::jmax (1, inner2.getHeight()));
                     const float bpm = juce::jlimit (40.0f, 240.0f,
@@ -1808,7 +1808,7 @@ namespace zynforge
                         ? player.getTotalLengthSamples() : 0;
                     if (totalSamples > 0)
                     {
-                        const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+                        const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
                         const double prop = juce::jlimit (0.0, 1.0,
                             (double) (e.x - inner.getX()) / (double) juce::jmax (1, inner.getWidth()));
                         const juce::int64 midSample = (juce::int64) (prop * (double) totalSamples);
@@ -1914,7 +1914,7 @@ namespace zynforge
                     ? player.getTotalLengthSamples() : 0;
                 if (totalSamples > 0)
                 {
-                    const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+                    const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
                     const double prop = juce::jlimit (0.0, 1.0,
                         (double) (e.x - inner.getX()) / (double) juce::jmax (1, inner.getWidth()));
                     const juce::int64 sx = (juce::int64) (prop * (double) totalSamples);
@@ -1943,7 +1943,7 @@ namespace zynforge
                 const auto& player = engine.getPlayer();
                 const juce::int64 totalSamples = player.isLoaded()
                     ? player.getTotalLengthSamples() : 0;
-                const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+                const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
                 if (totalSamples > 0 && inner.getWidth() > 0)
                 {
                     const double samplesPerPx = (double) totalSamples / (double) inner.getWidth();
@@ -2274,7 +2274,7 @@ namespace zynforge
             const juce::int64 totalSamples = player.isLoaded()
                 ? player.getTotalLengthSamples() : 0;
             if (totalSamples <= 0) return -1;
-            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
             auto sampleToX = [&] (juce::int64 sp) -> int
             {
                 const double prop = juce::jlimit (0.0, 1.0,
@@ -2316,7 +2316,7 @@ namespace zynforge
             const juce::int64 loadedSamples = player.isLoaded() ? player.getTotalLengthSamples() : 0;
             const juce::int64 totalSamples  = loadedSamples > 0 ? loadedSamples
                                                                 : (juce::int64) (sr * 300.0);
-            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
             auto sampleToX = [&] (juce::int64 sp) -> int
             {
                 const double prop = juce::jlimit (0.0, 1.0,
@@ -2378,7 +2378,7 @@ namespace zynforge
             const juce::int64 loadedSamples = player.isLoaded() ? player.getTotalLengthSamples() : 0;
             const juce::int64 totalSamples  = loadedSamples > 0 ? loadedSamples
                                                                 : (juce::int64) (sr * 300.0);
-            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
             auto sampleToX = [&] (juce::int64 sp) -> int
             {
                 const double prop = juce::jlimit (0.0, 1.0,
@@ -2460,7 +2460,7 @@ namespace zynforge
             const auto& next = lane[(size_t) pointIdx + 1];
             if (std::abs (next.value - prev.value) < 1.0e-4f) return 0.0f;
 
-            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
             auto yToValue = [&] (int y) -> float
             {
                 const float yp = juce::jlimit (0.0f, 1.0f,

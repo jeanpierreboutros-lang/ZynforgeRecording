@@ -10,17 +10,19 @@ The format follows `/design-system document` output: description, when-to-use, v
 
 - [`ChannelStrip`](ChannelStrip.md) — per-channel vertical strip (MIXER view)
 - [`AutomationToolbar`](AutomationToolbar.md) — EDIT-view automation editing toolbar
+- [`BigClockPanel`](BigClockPanel.md) — transport state + timer + armed-ready indicator
+- [`TransportBar`](TransportBar.md) — record / play / stop / skip buttons
+- [`EditTimeRuler`](EditTimeRuler.md) — three-strip ruler (markers / Bars\|Beats / Min:Secs)
+- [`EditPage::TrackRow`](EditPageTrackRow.md) — the per-track EDIT row with waveform, automation lane, clip-edit handles
+- [`Toast`](Toast.md) — non-modal feedback pill
+- [`PeakTally`](PeakTally.md) — global clip indicator
 
-### TODO (priority order)
+### TODO (lower priority dialogs)
 
-- `EditPage::TrackRow` — the per-track EDIT row with waveform, automation lane, clip-edit handles
-- `BigClockPanel` — transport state + timer + arming indicator
-- `TransportBar` — record / play / stop / skip buttons
-- `EditTimeRuler` — three-strip ruler (markers / Bars\|Beats / Min:Secs)
-- `Toast` — non-modal feedback pill
-- `PeakTally` — global clip indicator
 - `SessionRecoveryDialog` — orphan-session recovery modal
 - `WelcomeDialog` — first-launch and File ▸ New flow
+- `EditToolsBar` — Smart / Selector / Trim / Grabber / Fade / Scrubber tool palette
+- `MasterStrip` — master fader + stereo/mono toggle
 
 ## Style
 

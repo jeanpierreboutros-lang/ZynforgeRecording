@@ -52,7 +52,7 @@ namespace zynforge
 
         void resized() override
         {
-            auto r = getLocalBounds().withTrimmedTop (24).reduced (6, 6);
+            auto r = getLocalBounds().withTrimmedTop (24).reduced (brand::space::sm, brand::space::sm);
             const int gap = 4;
             const int n = (int) strips.size();
             const int stripW = (r.getWidth() - (n - 1) * gap) / juce::jmax (1, n);
@@ -168,7 +168,7 @@ namespace zynforge
 
             void resized() override
             {
-                auto r = getLocalBounds().reduced (4, 6);
+                auto r = getLocalBounds().reduced (brand::space::xs, brand::space::sm);
                 r.removeFromTop (6);   // colour swatch (matches paint)
                 nameLabel.setBounds (r.removeFromTop (20));
                 auto buttonRow = r.removeFromTop (24);

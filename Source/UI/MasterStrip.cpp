@@ -167,7 +167,7 @@ namespace zynforge
 
     void MasterStrip::resized()
     {
-        auto r = getLocalBounds().reduced (8, 10);
+        auto r = getLocalBounds().reduced (brand::space::md, brand::space::lg);
         const bool stereo = engine.getMasterStereo();
 
         title    .setBounds (r.removeFromTop (20));

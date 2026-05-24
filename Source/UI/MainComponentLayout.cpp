@@ -76,7 +76,7 @@ void MainComponent::resized()
     }
 
     // Row 1 -- title + status + LOCK + + CH + DEVICE + RECORD
-    auto row1 = r.removeFromTop (44).reduced (12, 8);
+    auto row1 = r.removeFromTop (44).reduced (brand::space::lg, brand::space::md);
     titleLabel   .setBounds ({});
     row1.removeFromLeft (brand::space::md);
     midiStatusLabel.setBounds (row1.removeFromLeft (220).reduced (0, 4));
@@ -99,7 +99,7 @@ void MainComponent::resized()
     preRollButton.setBounds ({});
 
     // Row 2 -- Transport bar | transport label | session label | view toggles
-    auto row2 = r.removeFromTop (52).reduced (12, 4);
+    auto row2 = r.removeFromTop (52).reduced (brand::space::lg, brand::space::xs);
 
     if (transportBar != nullptr)
         transportBar->setBounds (row2.removeFromLeft (340).reduced (0, 2));
@@ -135,14 +135,14 @@ void MainComponent::resized()
     playButton   .setBounds ({});
     stopButton   .setBounds ({});
 
-    auto clockRow = r.removeFromTop (96).reduced (12, 6);
-    perfDashboard.setBounds (clockRow.removeFromRight (240).reduced (4, 4));
+    auto clockRow = r.removeFromTop (96).reduced (brand::space::lg, brand::space::sm);
+    perfDashboard.setBounds (clockRow.removeFromRight (240).reduced (brand::space::xs, brand::space::xs));
     bigClock.setBounds (clockRow);
 
     auto bar = r.removeFromTop (36).reduced (12, 2);
     tempoBar  .setBounds (bar.removeFromRight (320));
     bar.removeFromRight (brand::space::md);
-    nextCueLabel.setBounds (bar.removeFromRight (200).reduced (4, 4));
+    nextCueLabel.setBounds (bar.removeFromRight (200).reduced (brand::space::xs, brand::space::xs));
     bar.removeFromRight (brand::space::sm);
     setlistBar.setBounds (bar);
 

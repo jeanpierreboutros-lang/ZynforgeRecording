@@ -215,7 +215,7 @@ namespace zynforge
         // All widths bumped ~50% for the larger toolbar height -- the
         // engineer can read the controls from arm's length and hit
         // the buttons under stage lighting.
-        auto r = getLocalBounds().reduced (10, 6);
+        auto r = getLocalBounds().reduced (brand::space::lg, brand::space::sm);
 
         title       .setBounds (r.removeFromLeft (130));
         r.removeFromLeft (brand::space::md);

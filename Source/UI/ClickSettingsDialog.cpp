@@ -96,7 +96,7 @@ namespace zynforge
 
             void resized() override
             {
-                auto r = getLocalBounds().reduced (10, 6);
+                auto r = getLocalBounds().reduced (brand::space::lg, brand::space::sm);
 
                 auto topRow = r.removeFromTop (24);
                 title  .setBounds (topRow.removeFromLeft (60));
@@ -226,7 +226,7 @@ namespace zynforge
 
             void resized() override
             {
-                auto r = getLocalBounds().reduced (16, 12);
+                auto r = getLocalBounds().reduced (brand::space::xl, brand::space::lg);
 
                 // Top banner: [ '120 BPM' centred ] [ ON pill on the right ].
                 auto banner = r.removeFromTop (72);

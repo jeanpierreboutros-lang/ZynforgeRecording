@@ -913,7 +913,7 @@ namespace zynforge
 
     void ChannelStrip::resized()
     {
-        auto r = getLocalBounds().reduced (6, 8);
+        auto r = getLocalBounds().reduced (brand::space::sm, brand::space::md);
 
         // ── 1. Name + colour swatch (top of strip) ─────────────────
         auto nameRow = r.removeFromTop (18);

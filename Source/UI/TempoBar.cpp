@@ -176,7 +176,7 @@ namespace zynforge
 
     void TempoBar::resized()
     {
-        auto r = getLocalBounds().reduced (8, 4);
+        auto r = getLocalBounds().reduced (brand::space::md, brand::space::xs);
 
         titleLabel  .setBounds (r.removeFromLeft (52));
         r.removeFromLeft (brand::space::xs);

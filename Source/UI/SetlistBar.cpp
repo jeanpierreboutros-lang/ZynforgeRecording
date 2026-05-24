@@ -114,7 +114,7 @@ namespace zynforge
         //   SETLIST | ◂ | combo(260px) | ▸ | + Cue | Update | Rename
         // The combo is fixed-width -- the engineer doesn't want it
         // swallowing the whole row. Empty space sits to the right.
-        auto r = getLocalBounds().reduced (8, 4);
+        auto r = getLocalBounds().reduced (brand::space::md, brand::space::xs);
 
         titleLabel  .setBounds (r.removeFromLeft (64));
         r.removeFromLeft (brand::space::xs);
