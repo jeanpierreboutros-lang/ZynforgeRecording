@@ -473,6 +473,36 @@ namespace zynforge
                 }
             }
 
+            // -------- Detected transient ticks (Tab-to-Transient hint) --------
+            // Drawn on top of the waveform as faint vertical marks so
+            // the engineer can SEE where Tab will land. Uses the
+            // engine's per-track cache (built lazily; empty until the
+            // first Tab press or a manual call to nextTransientSample).
+            {
+                const auto& player = engine.getPlayer();
+                const auto totalSamples = player.isLoaded()
+                    ? player.getTotalLengthSamples() : 0;
+                // The recorder numbers tracks 1-based on disk
+                // (Track_NN.wav); `index` here is 0-based, so +1.
+                const auto& onsets = engine.getTransientsForTrack (index + 1);
+                if (totalSamples > 0 && ! onsets.empty())
+                {
+                    const float alpha = 0.45f;
+                    g.setColour (brand::engagedAmber.withAlpha (alpha));
+                    for (auto pos : onsets)
+                    {
+                        if (pos <= 0 || pos >= totalSamples) continue;
+                        const double prop = (double) pos / (double) totalSamples;
+                        const int x = inner.getX() + (int) (prop * inner.getWidth());
+                        // Short tick at the top of the wave pane so
+                        // it doesn't clutter the waveform itself.
+                        g.drawVerticalLine (x,
+                                            (float) inner.getY(),
+                                            (float) (inner.getY() + 6));
+                    }
+                }
+            }
+
             // Automation lane modes -- flat horizontal line representing
             // the current value (overlaid on top of the dimmed waveform
             // base above). Time-varying automation is reserved for a
