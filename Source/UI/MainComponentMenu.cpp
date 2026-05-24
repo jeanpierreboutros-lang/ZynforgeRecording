@@ -188,8 +188,12 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                             ? juce::String ("Stop companion (port " + juce::String (engine.getCompanionServerPort()) + ")")
                             : juce::String ("Start companion server on :9000..."));
         menu.addSeparator();
-        menu.addItem (250, "Session Settings...", ! engine.isRecording());
-        menu.addItem (251, "Properties...",       engine.getActiveSessionDir().isDirectory());
+        // Session Settings = format / sample-rate / bit-depth (editable).
+        // Session Info     = name / notes / read-only config summary.
+        // The old "Settings" + "Properties" labels were too close;
+        // engineers couldn't tell which dialog owned what.
+        menu.addItem (250, "Session Format && Recording...", ! engine.isRecording());
+        menu.addItem (251, "Session Info && Notes...",       engine.getActiveSessionDir().isDirectory());
         menu.addSeparator();
         menu.addItem (280, "Spectral auto-name strips",
                       engine.getRecorder().getNumTracks() > 0);
