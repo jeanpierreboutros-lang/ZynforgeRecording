@@ -235,9 +235,19 @@ void MainComponent::showStartupWelcome()
         self->engine.setStripCount (0);
         self->lastTrackCount = -1;
 
+        // Default template auto-apply -- engineer set one via File ▸
+        // Templates ▸ Set default template. After the fresh-session
+        // reset above, lay its strips back in so the show starts
+        // pre-patched instead of with an empty mixer.
+        const auto def = self->getDefaultTemplate();
+        if (def.existsAsFile()) self->applySessionTemplate (def);
+
         self->refreshFormatButton();
         self->showStatus ("Session created: " + sessionFolder.getFileName()
-                          + " -- add channels with +CH");
+                          + (def.existsAsFile()
+                             ? juce::String (" -- applied default template '")
+                                 + def.getFileNameWithoutExtension() + "'"
+                             : juce::String (" -- add channels with +CH")));
     };
 
     auto onOpen = [self] (const juce::File& sessionDir)
@@ -316,7 +326,15 @@ void MainComponent::launchNewSessionDialog()
         self->engine.setStripCount (0);
         self->lastTrackCount = -1;
 
-        self->showStatus ("New session '" + r.name + "' -- add channels with +CH and arm REC to capture");
+        // Default template auto-apply (same path as showStartupWelcome).
+        const auto def = self->getDefaultTemplate();
+        if (def.existsAsFile()) self->applySessionTemplate (def);
+
+        self->showStatus ("New session '" + r.name + "'"
+                          + (def.existsAsFile()
+                             ? juce::String (" -- applied default template '")
+                                 + def.getFileNameWithoutExtension() + "'"
+                             : juce::String (" -- add channels with +CH and arm REC to capture")));
     });
 }
 

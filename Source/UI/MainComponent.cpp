@@ -534,6 +534,8 @@ MainComponent::MainComponent()
     editPage->automationDragBegin = [this] { beginAutomationTransaction(); };
     editPage->automationDragEnd   = [this] (const juce::String& label)
                                     { endAutomationTransaction (label); };
+    // Autosave per-session zoom into .zfproj on every change.
+    editPage->onZoomChanged = [this] (float) { saveUILayoutToActiveSession(); };
     // Re-parent the EDIT-tools palette onto MainComponent so it can
     // share the same 28 px row as the automation toolbar. (The earlier
     // if-block tried this too but ran before editPage existed.)
@@ -558,6 +560,7 @@ MainComponent::MainComponent()
         showVcaPanel = ! showVcaPanel;
         if (vcaPanel != nullptr) vcaPanel->setVisible (showVcaPanel);
         resized();
+        saveUILayoutToActiveSession();
     };
     addAndMakeVisible (vcaToggleButton);
 
@@ -637,6 +640,7 @@ void MainComponent::setStripWidthPreset (StripWidth p)
     stripMButton .setToggleState (p == StripWidth::M,  juce::dontSendNotification);
     stripLButton .setToggleState (p == StripWidth::L,  juce::dontSendNotification);
     resized();
+    saveUILayoutToActiveSession();
 }
 
 void MainComponent::switchView (View v)
@@ -650,6 +654,7 @@ void MainComponent::switchView (View v)
         editPage->setVisible (! mix);
         if (! mix) editPage->refresh();   // rescan session dir on entry
     }
+    saveUILayoutToActiveSession();
 
     // Automation toolbar is part of the EDIT-view chrome.
     automationToolbar.setVisible (! mix);
@@ -855,15 +860,19 @@ void MainComponent::rebuildStrips()
         // VCA assignment from the strip's right-click menu -- the
         // ChannelStrip sets state.vcaGroup directly for immediate
         // audio-thread effect; this callback persists the choice
-        // through appProps so a relaunch restores it.
-        s->onVcaGroupChanged = [this, i] (int vcaIdx)
+        // through appProps so a relaunch restores it. For stereo
+        // pairs both halves must persist, otherwise R loses its
+        // assignment on relaunch even though it ran with L in-memory.
+        s->onVcaGroupChanged = [this, i, step] (int vcaIdx)
         {
             engine.setTrackVcaGroup (i, vcaIdx);
+            if (step == 2) engine.setTrackVcaGroup (i + 1, vcaIdx);
         };
 
-        s->onEditGroupChanged = [this, i] (int groupId)
+        s->onEditGroupChanged = [this, i, step] (int groupId)
         {
             engine.setTrackEditGroup (i, groupId);
+            if (step == 2) engine.setTrackEditGroup (i + 1, groupId);
             showStatus (groupId < 0
                           ? juce::String ("Strip ") + juce::String (i + 1) + " unlinked"
                           : juce::String ("Strip ") + juce::String (i + 1)

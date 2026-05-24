@@ -343,7 +343,7 @@ namespace zynforge
         for (int i = 0; i < 8; ++i)
             vcaMenu.addItem (701 + i, "VCA " + juce::String (i + 1),
                              true, curVca == i);
-        menu.addSubMenu ("Assign to VCA", vcaMenu);
+        menu.addSubMenu (isStereo ? "Assign to VCA (L+R)" : "Assign to VCA", vcaMenu);
 
         // Edit Group submenu. Group ids 1..8 (1-based for menu
         // readability; engine stores raw int). -1 = unlinked.
@@ -356,7 +356,7 @@ namespace zynforge
         for (int i = 0; i < 8; ++i)
             egMenu.addItem (901 + i, "Edit Group " + juce::String (i + 1),
                             true, curEg == i);
-        menu.addSubMenu ("Assign to Edit Group", egMenu);
+        menu.addSubMenu (isStereo ? "Assign to Edit Group (L+R)" : "Assign to Edit Group", egMenu);
 
         // Aux send to a bus track (slot 0 only in the menu -- multi-send
         // gets its own dialog later). Hidden for bus tracks themselves

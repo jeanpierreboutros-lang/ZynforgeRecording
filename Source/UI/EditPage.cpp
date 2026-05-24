@@ -3293,5 +3293,6 @@ namespace zynforge
         zoom = z;
         resized();
         if (toolsBar != nullptr) toolsBar->setZoom (zoom);
+        if (onZoomChanged) onZoomChanged (zoom);
     }
 }

@@ -183,6 +183,17 @@ private:
     void  promptSaveSessionTemplate();
     void  applySessionTemplate (const juce::File& templateFile);
     void  promptDeleteSessionTemplate();
+    // Default template: File ▸ New Session pre-applies it after creating
+    // the session folder so the engineer starts with their preferred
+    // strip count / names / colours / routings. Empty File = no default.
+    juce::File  getDefaultTemplate() const;
+    void        setDefaultTemplate (const juce::File& templateFile);
+
+    // Push UI layout (view / strip width / VCA panel / EDIT zoom) into
+    // the active session's .zfproj. No-op when no session is active.
+    // Called on every layout change so reopening the show restores the
+    // exact workspace the engineer left.
+    void  saveUILayoutToActiveSession();
 
     // Setlist printing -- writes setlist.html into the active session
     // dir and opens it in the default browser (engineer prints from

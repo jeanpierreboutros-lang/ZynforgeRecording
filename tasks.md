@@ -18,8 +18,6 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 - [ ] **Optional: finish splitting `MainComponent.cpp`** (M) — down from ~5500 lines to 1590 after parts 1–6 (timer, keys, layout, cues, edit, session-IO, menu, help, tools, strips). The remaining lumps (ctor 590 lines, `rebuildStrips` 295 lines) are tightly coupled to MainComponent's member init / strip vector — extracting them needs a real refactor, not just a cut/paste. Park as low-priority unless someone wants to touch the strip-rebuild path.
 - [ ] **Field-test the unified dialog chrome** (S) — the 2026-05-23 chrome pass shipped untested in a live rehearsal. Walk through every dialog (AudioDevice, NewSession, AddTracks, Export, Session Settings, Session Properties, Click Settings, Marker List, Noise Report) and every `AlertWindow.showAsync` site (reorder-during-playback, sample-rate mismatch, lock-against-overwrite, OSC bind failure). Look for clipping, divider misalignment, button width regressions.
 - [ ] **Companion server TLS** (M) — currently HTTP only. Decide between self-signed cert + TLS or migrating to WebRTC. See `decisions.md` open question.
-- [ ] **Per-session workspace layouts** (M) — strip widths, view selection, and tool selection are stored globally in `appProps`. Move into `.zfproj` so multiple gigs can have distinct layouts.
-- [ ] **Crash recovery dialog on launch** (M) — detect orphan `recording.session` markers and offer to import the partial take.
 
 ## In Progress
 
@@ -31,9 +29,7 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 - [ ] **Audio-stream encryption** (M) — `/stream.wav` is plaintext PCM. Wrap in TLS or migrate to SRTP.
 - [ ] **Test harness for `Source/Audio/`** (L) — pure-C++ unit tests with a mocked `AudioIODeviceCallback` driver, runnable headless. See `testing.md`.
 - [ ] **Configurable monitor bus outputs** (M) — currently pinned to outs 0+1. Surface a picker in Audio Device dialog.
-- [ ] **Stereo VCA assignment shortcut** (S) — right-click a strip with a stereo pair to assign both halves at once.
 - [ ] **Auto-arm-on-input-detect mode** (M) — optional setting where a strip arms itself when persistent signal is detected (useful for first-time pre-show configuration).
-- [ ] **Session template "starred" picker** (S) — promote a `.zftemplate` to "default" so File ▸ New Session pre-selects it.
 
 ### Explicit non-goals (do not implement)
 
@@ -42,7 +38,11 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 ## Recently Completed
 
 ### 2026-05-25
+- [x] **Per-session workspace layouts auto-save** (M) — view / strip width / VCA-panel visibility / EDIT zoom now write into `.zfproj` on every change. New `saveUILayoutToActiveSession` + `EditPage::onZoomChanged` wiring. See `CHANGELOG.md`.
+- [x] **Default session template** (S) — File ▸ Templates ▸ Set default template; the starred `.zftemplate` is auto-applied after every File ▸ New Session. See `CHANGELOG.md`.
+- [x] **Stereo VCA / Edit Group persistence fix** (S) — `setTrackVcaGroup` / `setTrackEditGroup` now propagate to the R half of stereo pairs so assignments survive relaunch. Menu labels read "(L+R)" on stereo strips. See `CHANGELOG.md`.
 - [x] **MainComponent split, parts 5 + 6 (tools + multi-selection)** (M) — extracted 467-line `MainComponentTools.cpp` (click track, punch, noise, soundcheck report, session properties) and 306-line `MainComponentStrips.cpp` (multi-selection ops). MainComponent.cpp down to 1590 lines (5522 → 1590 across the split day, -71 %). See `CHANGELOG.md`.
+- [x] **Closed stale "crash recovery dialog on launch" priority** (S) — `offerSessionRecovery` + `SessionRecoveryDialog` already implement this; row removed from priorities.
 
 ### 2026-05-24
 - [x] **MainComponent split, part 4 (help / onboarding)** (M) — extracted 343-line `MainComponentHelp.cpp`; MainComponent.cpp down to 2335 lines. See `CHANGELOG.md`.

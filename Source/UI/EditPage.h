@@ -43,6 +43,11 @@ namespace zynforge
         void  setZoom (float z);
         float getZoom() const noexcept { return zoom; }
 
+        // Fires whenever zoom changes (toolbar, mouse wheel, Memory
+        // Location recall, etc.). Host uses this to autosave the per-
+        // session UI layout into .zfproj.
+        std::function<void (float)> onZoomChanged;
+
         // Memory-Location recall hooks. setLogicalRowsVisible takes a
         // list of logical strip indices to show (empty = show all).
         // scrollToSample centres the horizontal viewport on a sample

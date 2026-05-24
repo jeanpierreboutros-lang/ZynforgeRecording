@@ -56,32 +56,36 @@ bool MainComponent::saveSessionStateTo (const juce::File& dir)
 
     // Also persist the UI layout into the session's .zfproj so reopening
     // the show brings back the engineer's view choice, strip width,
-    // VCA-panel visibility, and EDIT zoom. Reads in
-    // loadUILayoutFromActiveSession().
-    {
-        const auto proj = findSessionProj (dir);
-        if (proj != juce::File{})
-        {
-            juce::DynamicObject::Ptr obj;
-            const auto parsed = juce::JSON::parse (proj);
-            if (parsed.isObject()) obj = parsed.getDynamicObject();
-            if (obj == nullptr)    obj = new juce::DynamicObject();
-
-            juce::DynamicObject::Ptr ui (new juce::DynamicObject());
-            ui->setProperty ("view",         currentView == View::Mix ? "Mix" : "Edit");
-            ui->setProperty ("stripWidth",
-                              stripWidthPreset == StripWidth::XS ? "XS"
-                            : stripWidthPreset == StripWidth::S  ? "S"
-                            : stripWidthPreset == StripWidth::L  ? "L"
-                                                                 : "M");
-            ui->setProperty ("vcaPanel",     showVcaPanel);
-            ui->setProperty ("editZoom",     editPage != nullptr ? (double) editPage->getZoom() : 1.0);
-            obj->setProperty ("ui", juce::var (ui.get()));
-            obj->setProperty ("updatedAt", juce::Time::getCurrentTime().toISO8601 (true));
-            proj.replaceWithText (juce::JSON::toString (juce::var (obj.get())));
-        }
-    }
+    // VCA-panel visibility, and EDIT zoom.
+    saveUILayoutToActiveSession();
     return wroteSettings;
+}
+
+void MainComponent::saveUILayoutToActiveSession()
+{
+    const auto dir = engine.getActiveSessionDir();
+    if (! dir.isDirectory()) return;
+
+    const auto proj = findSessionProj (dir);
+    if (proj == juce::File{}) return;
+
+    juce::DynamicObject::Ptr obj;
+    const auto parsed = juce::JSON::parse (proj);
+    if (parsed.isObject()) obj = parsed.getDynamicObject();
+    if (obj == nullptr)    obj = new juce::DynamicObject();
+
+    juce::DynamicObject::Ptr ui (new juce::DynamicObject());
+    ui->setProperty ("view",         currentView == View::Mix ? "Mix" : "Edit");
+    ui->setProperty ("stripWidth",
+                      stripWidthPreset == StripWidth::XS ? "XS"
+                    : stripWidthPreset == StripWidth::S  ? "S"
+                    : stripWidthPreset == StripWidth::L  ? "L"
+                                                         : "M");
+    ui->setProperty ("vcaPanel",     showVcaPanel);
+    ui->setProperty ("editZoom",     editPage != nullptr ? (double) editPage->getZoom() : 1.0);
+    obj->setProperty ("ui", juce::var (ui.get()));
+    obj->setProperty ("updatedAt", juce::Time::getCurrentTime().toISO8601 (true));
+    proj.replaceWithText (juce::JSON::toString (juce::var (obj.get())));
 }
 
 int MainComponent::exportTracksTo (const juce::File& destDir,
@@ -650,6 +654,32 @@ void MainComponent::loadUILayoutFromActiveSession()
         editPage->setZoom ((float) (double) ui->getProperty ("editZoom"));
 
     resized();
+}
+
+juce::File MainComponent::getDefaultTemplate() const
+{
+    if (auto* props = engine.getAppProps())
+    {
+        const auto path = props->getValue ("defaultTemplateFile", {});
+        if (path.isNotEmpty())
+        {
+            juce::File f (path);
+            if (f.existsAsFile()) return f;
+        }
+    }
+    return {};
+}
+
+void MainComponent::setDefaultTemplate (const juce::File& templateFile)
+{
+    if (auto* props = engine.getAppProps())
+    {
+        props->setValue ("defaultTemplateFile", templateFile.getFullPathName());
+        props->saveIfNeeded();
+    }
+    showStatus (templateFile == juce::File{}
+                  ? juce::String ("Default template cleared")
+                  : "Default template -> " + templateFile.getFileNameWithoutExtension());
 }
 
 void MainComponent::promptDeleteSessionTemplate()

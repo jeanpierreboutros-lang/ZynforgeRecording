@@ -68,14 +68,31 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                        && ! engine.isRecording());
 
         juce::PopupMenu templates;
-        const auto tList = listSessionTemplates();
+        const auto tList    = listSessionTemplates();
+        const auto starred  = getDefaultTemplate();
         for (int i = 0; i < tList.size(); ++i)
-            templates.addItem (200 + i, tList[i].getFileNameWithoutExtension());
+        {
+            const bool isDefault = (tList[i] == starred);
+            const auto label = tList[i].getFileNameWithoutExtension()
+                               + (isDefault ? juce::String ("  [default]") : juce::String());
+            templates.addItem (200 + i, label);
+        }
         if (tList.isEmpty())
             templates.addItem (-1, "(no templates yet)", false);
         else
         {
             templates.addSeparator();
+
+            // 'Set default template' sub-popup: lists every template + 'None'.
+            // The default auto-applies after File ▸ New Session creates the
+            // folder, so the engineer starts each show pre-patched.
+            juce::PopupMenu setDefault;
+            setDefault.addItem (260, "(None)", true, ! starred.existsAsFile());
+            for (int i = 0; i < tList.size(); ++i)
+                setDefault.addItem (261 + i, tList[i].getFileNameWithoutExtension(),
+                                    true, tList[i] == starred);
+            templates.addSubMenu ("Set default template", setDefault);
+
             templates.addItem (250, "Delete a template...");
         }
         menu.addSubMenu ("New Session from Template", templates, ! engine.isRecording());
@@ -237,6 +254,13 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
         if (idx >= 0 && idx < list.size()) applySessionTemplate (list[idx]);
     }
     else if (id == 250)  promptDeleteSessionTemplate();
+    else if (id == 260)  setDefaultTemplate ({});
+    else if (id >= 261 && id < 290)
+    {
+        const auto list = listSessionTemplates();
+        const int idx = id - 261;
+        if (idx >= 0 && idx < list.size()) setDefaultTemplate (list[idx]);
+    }
     else if (id == 900)  showKeyboardShortcuts();
     else if (id == 901)  showStartupWelcome();
     else if (id == 902)  showAboutDialog();

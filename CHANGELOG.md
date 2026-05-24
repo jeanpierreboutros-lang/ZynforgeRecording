@@ -17,6 +17,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Added (latest)
+- **Default session template.** File ▸ Templates ▸ Set default template lets the engineer "star" a `.zftemplate`. The default is auto-applied right after File ▸ New Session creates the session folder, so every show starts pre-patched with the engineer's preferred strip count / names / colours / routings. The starred template is marked `[default]` in the New Session from Template list; persisted in `appProps` so the choice survives relaunch.
+- **Per-session workspace layouts auto-save.** View, strip width, VCA-panel visibility, and EDIT zoom now write into the session's `.zfproj` on every change (previously only on explicit Save). Reopening a show restores its workspace exactly as the engineer left it. Global `appProps["stripWidthPreset"]` stays as the fallback for new / unsaved sessions. New `MainComponent::saveUILayoutToActiveSession()`; new `EditPage::onZoomChanged` callback so the host knows when to write.
+
+### Fixed (latest)
+- **Stereo strips lost their VCA / Edit Group assignment on relaunch.** `ChannelStrip` had been mirroring `state.vcaGroup` to `pairState` in memory, but `AudioEngine::setTrackVcaGroup` (and `setTrackEditGroup`) only persisted the L track's assignment to `appProps`. The host callbacks now propagate the call to `i+1` when `step == 2`, so both halves come back assigned on the next launch. Menu labels say "Assign to VCA (L+R)" / "Assign to Edit Group (L+R)" on stereo strips so the engineer knows it covers the pair.
+
 ### Changed (latest)
 - **MainComponent split, parts 5 + 6.** Two more clusters extracted in one pass:
   - `MainComponentTools.cpp` (467 lines) -- `generateOrRefreshClickTrack`, `togglePunchMode`, `servicePunch`, `runNoiseAnalysis`, `writeSoundcheckReport`, `showSessionProperties`.
