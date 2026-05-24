@@ -104,6 +104,21 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Read-only offline DSP is allowed; real-time signal-modifying DSP is not — 2026-05-24
+
+**Status:** Accepted
+**Context:** The 2026-05-24 audit flagged ambiguity: `Source/Audio/NoiseAnalyzer.h` runs FFT-based hum detection / bump counting / noise-floor analysis, and `SpectralClassifier` does spectral fingerprinting for auto-naming. Both are real DSP. The "no plugins, no effects" rule (`CLAUDE.md` workflow rule 6) is unambiguous about plugin hosting but doesn't draw a line for in-tree DSP. Without a written line, a future contributor could justify adding an EQ "just for the click track" or a noise gate "just for analysis preview" and the codebase would silently drift.
+**Decision:** Three-tier rule.
+  1. **Plugin hosting (AU / VST / AAX / LV2):** still NO. See *No plugin hosting* ADR above.
+  2. **Real-time signal-modifying DSP** (EQ, dynamics, reverb, gating, saturation, gain reduction, anything that changes what the engineer hears vs what landed on disk): NO. The recorder + virtual-soundcheck mission is to transport bits unmodified between the desk and disk. Any in-the-box DSP breaks the "what you record is what you'd hear back" contract that engineers rely on for verification.
+  3. **Offline read-only analysis** (FFT inspection, classifier output, level / phase / clip detection, hum / noise reporting): YES. These never touch the audio path; they produce metadata / reports, never modified audio. Examples in tree today: `NoiseAnalyzer` (post-record hum + noise + bump scan), `SpectralClassifier` (track auto-naming).
+**Rationale:** The mission boundary isn't "no DSP." It's "no audio-path DSP." Analysis-that-emits-metadata is the same category as a meter or a peak indicator — already accepted. Surface a written line so the next contributor doesn't have to relitigate.
+**Consequences:** Future analysis-style features (loudness measurement, polarity detection, click consistency report, automated phase-correlation history) are inside the line. Future signal-modifying features (per-strip EQ, headphone-mix processing, talkback ducking, summing reverb) are outside it -- regardless of how reasonable they sound in isolation.
+**Alternatives Considered:** Strict "zero DSP" -- rejected because that bans even the existing peak meter computation. "DSP allowed if it's optional" -- rejected because optionality always erodes; once the toggle exists, the next request is "default it on."
+**Related Documents:** `Source/Audio/NoiseAnalyzer.h`, `Source/Audio/SpectralClassifier.h`, `CLAUDE.md` workflow rule 6.
+
+---
+
 ## Template
 
 ```
