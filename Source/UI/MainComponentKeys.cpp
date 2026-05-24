@@ -116,6 +116,50 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
     // moved to Cmd+1..9 so the engineer always knows which list the
     // digit lands on; the old "bare digit jumps to cue OR marker
     // depending on which exists" rule was a stage trap.
+    // Alt+1..4 -- recall stored EDIT-view zoom preset. Alt+Shift+1..4
+    // stores the current zoom as that preset. Lets the engineer
+    // toggle between "overview" and "detail" zooms with a single
+    // keystroke instead of dragging the zoom slider every time.
+    // Backed by appProps so presets survive relaunch.
+    {
+        const int code = key.getKeyCode();
+        if (code >= '1' && code <= '4' && key.getModifiers().isAltDown())
+        {
+            const int slot = code - '0';   // 1..4
+            const auto storeKey  = "editZoomPreset_" + juce::String (slot);
+            if (auto* props = engine.getAppProps())
+            {
+                if (editPage != nullptr)
+                {
+                    if (key.getModifiers().isShiftDown())
+                    {
+                        const auto z = editPage->getZoom();
+                        props->setValue (storeKey, (double) z);
+                        props->saveIfNeeded();
+                        showStatus ("EDIT zoom preset " + juce::String (slot)
+                                    + " stored at " + juce::String (z, 2) + "x");
+                    }
+                    else
+                    {
+                        const double z = props->getDoubleValue (storeKey, -1.0);
+                        if (z > 0.0)
+                        {
+                            editPage->setZoom ((float) z);
+                            showStatus ("EDIT zoom preset " + juce::String (slot)
+                                        + " -> " + juce::String (z, 2) + "x");
+                        }
+                        else
+                        {
+                            showStatus ("No EDIT zoom preset " + juce::String (slot)
+                                        + " -- store one with Alt+Shift+" + juce::String (slot));
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+    }
+
     if (c == 'a') { editSoloSelection();    return true; }
     if (c == 's') { editSplitAtPlayhead();  return true; }
     if (c == ',') { editStartRange();       return true; }
