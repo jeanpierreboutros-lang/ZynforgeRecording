@@ -84,6 +84,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/SessionSettingsDialog.cpp
     Source/UI/BigClockPanel.cpp
     Source/Audio/AudioEngine.cpp
+    Source/Audio/AudioEngineAutomation.cpp
     Source/Audio/ClickEngine.cpp
     Source/Audio/MultitrackRecorder.cpp
     Source/Audio/SessionPlayer.cpp

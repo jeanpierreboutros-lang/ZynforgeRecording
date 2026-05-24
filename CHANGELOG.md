@@ -17,6 +17,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Changed (later)
+- **AudioEngine split (god class part 1):** Extracted the automation lane subsystem into `Source/Audio/AudioEngineAutomation.cpp` (551 lines). Covers `findLane`, `getAutomation`, `addAutomationPoint`, `removeAutomationPointNear`, `setAutomationCurveAt`, `setAutomationTensionAt`, `automationValueAt`, `clearAutomation`, `clearAutomationForTrack`, `copyAutomationRange`, `clearAutomationRange`, `pasteAutomationRange`, `setTrackAutomationSafe`, `isTrackAutomationSafe`, `writeAutomationPointThinned`, `setAutomationTrim`, `getAutomationTrim`, `clearAllAutomationTrims`, `automationToJson`, `loadAutomationFromJson`, plus the file-local `addPointLocked` helper. Real-time read path (`automationValueAt`) stays disciplined -- `ScopedTryLock` + atomic fallback unchanged. AudioEngine.cpp drops 2660 → 2128 lines.
+- **MainComponent split (part 3):** Session IO cluster extracted to `Source/UI/MainComponentSessionIO.cpp` (747 lines). Covers save / load / export / import / template ops. New `Source/UI/SessionProjPath.h` consolidates the previously-duplicated `findSessionProj` helper across three call sites. MainComponent.cpp 3872 → 3138 lines; cumulative 5522 → 3138 since start of day.
+
+### Added (later)
+- **More tests** -- `Source/Tests/MarkerTests.cpp` (6 tests) and `Source/Tests/EngineStateTests.cpp` (7 tests). Total test count 9 → 22. Marker tests round-trip through a real temp directory; engine state tests cover strip count / naming / colour / clamp behaviour / stereo / `swapTracks` / `clearAllStripOverrides` (the same path that caused the "first two tracks pre-panned from stale stripGains" bug earlier this week) / VCA assignment.
+
+### Deferred
+- **EditPage split.** Attempted, reverted in this session. The two big nested classes (`TrackRow` 2600 lines, `TrackList`) have inline method bodies inside `EditPage.cpp`; extracting them requires either promoting them to file-scope or moving the class definitions to a header. Real refactor deferred to its own dedicated session -- the safer half-measure (extracting just the EditPage shell methods) doesn't compile because the shell depends on `TrackList` internals.
+
 ### Changed
 - **MainComponent god-class split, part 2.** Two more clusters extracted:
   - `MainComponentCues.cpp` (628 lines) -- `loadSetlistFromActiveSession`, `saveSetlistToActiveSession`, `jumpToCue`, `promptCueName`, `addCueAtTransport`, `renameCurrentCue`, `updateCueAtTransport`, `startCueRampTo`, `updateCueRamp`, `printSetlist`. Carries its own file-local `snapshotStrip` (TrackState) helper.
