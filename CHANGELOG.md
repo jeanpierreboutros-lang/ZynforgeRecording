@@ -23,6 +23,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - **Shift-snap on tension drag** -- holding Shift while dragging a curve handle snaps tension to a 0.25 grid so matched ramps across multiple segments are easy to dial in.
 
 ### Changed
+- **Cmd+1..9 jumps to marker N** (Pro Tools "Memory Location" shortcut). Distinct from the bare 1..9 cue-jump so the two don't compete for the same key; surfaces a status hint when the slot is empty.
+- **MainComponent.cpp split (god-class refactor, part 1):** extracted `timerCallback` + `updateTransportLabels` into `MainComponentTimer.cpp`, `keyPressed` into `MainComponentKeys.cpp`, and `paint` + `resized` into `MainComponentLayout.cpp`. Main file drops 5522 → 4896 lines; the high-traffic refresh tick, shortcut table, and layout math are each editable in isolation. Menu construction (`getMenuForIndex`, `menuItemSelected`) is the next clean cut but is intertwined with too many helpers for a safe one-shot extraction -- left for a follow-up pass.
+
+### Changed
 - **Design audit pass:** swept hardcoded colour literals out of chrome paint paths. Two new tokens:
   - `brand::inputBg` = deep black for text-editor and combo bodies (was inline `Colour(0xff000000)` across `SetlistBar`, `AutomationToolbar`, `AddTracksDialog`, `SessionPropertiesDialog`).
   - `brand::accentEdit` = Pro Tools-blue-adjacent for EDIT loop/selection bands (was inline `Colour::fromRGB(0x3a, 0x90, 0xe0)` in EditPage).
