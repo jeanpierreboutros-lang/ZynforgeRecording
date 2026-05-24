@@ -307,6 +307,60 @@ namespace zynforge
             return automationTrimMode.load (std::memory_order_acquire)
                 && player.isPlaying();
         }
+
+        // Global read suspend. When on, automationValueAt returns the
+        // caller's fallback value (the live fader) regardless of lane
+        // contents. Lets the engineer hear raw faders without
+        // disturbing the stored automation.
+        void setAutomationReadSuspended (bool on) noexcept
+        {
+            automationReadSuspended.store (on, std::memory_order_release);
+        }
+        bool isAutomationReadSuspended() const noexcept
+        {
+            return automationReadSuspended.load (std::memory_order_acquire);
+        }
+
+        // Punch range. When on AND a valid [in, out) range is set,
+        // automation writes only fire while the playhead is inside
+        // the region. Outside the region, write calls are no-ops.
+        // Set both endpoints to -1 to clear.
+        void setAutomationPunchEnabled (bool on) noexcept
+        {
+            automationPunchEnabled.store (on, std::memory_order_release);
+        }
+        bool isAutomationPunchEnabled() const noexcept
+        {
+            return automationPunchEnabled.load (std::memory_order_acquire);
+        }
+        void setAutomationPunchRange (juce::int64 inSample, juce::int64 outSample) noexcept
+        {
+            automationPunchIn .store (inSample,  std::memory_order_release);
+            automationPunchOut.store (outSample, std::memory_order_release);
+        }
+        juce::int64 getAutomationPunchIn()  const noexcept { return automationPunchIn .load (std::memory_order_acquire); }
+        juce::int64 getAutomationPunchOut() const noexcept { return automationPunchOut.load (std::memory_order_acquire); }
+        bool isInsideAutomationPunchRange (juce::int64 samplePos) const noexcept
+        {
+            const auto in  = getAutomationPunchIn();
+            const auto out = getAutomationPunchOut();
+            if (in < 0 || out <= in) return true;  // no valid range = always in
+            return samplePos >= in && samplePos < out;
+        }
+
+        // Per-track Automation Safe lock. Engine refuses Add /
+        // Remove / Paste / WRITE / TRIM writes to a safe track.
+        void setTrackAutomationSafe (int track, bool safe);
+        bool isTrackAutomationSafe  (int track) const;
+
+        // WRITE-thinned point drop. Skips the call when the previous
+        // write to the same (track, param) was less than 'minSamples'
+        // ago. Used by the WRITE-mode fader callback so a 60 Hz
+        // fader.onValueChange stream doesn't fan out into 60
+        // points/sec of automation cruft.
+        void writeAutomationPointThinned (int track, AutomationParam,
+                                          juce::int64 samplePos, float value,
+                                          juce::int64 minSamplesBetween);
         // Curve type controls how the value evolves from this point
         // to the NEXT point. Hold = step (old behaviour); Linear =
         // straight ramp; SCurve = smoothstep; ExpUp/ExpDown = power
@@ -588,13 +642,26 @@ namespace zynforge
             std::atomic<float> volumeTrim { 0.0f };
             std::atomic<float> panTrim    { 0.0f };
 
+            // Per-track Automation Safe lock. Engine refuses writes
+            // to this track when true. Read path is unaffected.
+            std::atomic<bool>  safe { false };
+
+            // Last write sample per param -- used by writeAutomation-
+            // PointThinned to throttle WRITE-mode point drops.
+            // Index: 0 volume / 1 pan / 2 mute. -1 = no prior write.
+            std::atomic<juce::int64> lastWriteSample[3] { {-1}, {-1}, {-1} };
+
             TrackAutomation() = default;
             TrackAutomation (TrackAutomation&& o) noexcept
                 : volume (std::move (o.volume)),
                   pan    (std::move (o.pan)),
                   mute   (std::move (o.mute)),
                   volumeTrim (o.volumeTrim.load()),
-                  panTrim    (o.panTrim.load()) {}
+                  panTrim    (o.panTrim.load()),
+                  safe (o.safe.load())
+            {
+                for (int i = 0; i < 3; ++i) lastWriteSample[i].store (o.lastWriteSample[i].load());
+            }
             TrackAutomation& operator= (TrackAutomation&& o) noexcept
             {
                 volume = std::move (o.volume);
@@ -602,6 +669,8 @@ namespace zynforge
                 mute   = std::move (o.mute);
                 volumeTrim.store (o.volumeTrim.load());
                 panTrim   .store (o.panTrim   .load());
+                safe      .store (o.safe      .load());
+                for (int i = 0; i < 3; ++i) lastWriteSample[i].store (o.lastWriteSample[i].load());
                 return *this;
             }
             TrackAutomation (const TrackAutomation&) = delete;
@@ -611,6 +680,15 @@ namespace zynforge
         mutable juce::CriticalSection automationLock;
         std::atomic<int>              automationWriteMode { 0 };   // AutomationWriteMode::Off
         std::atomic<bool>             automationTrimMode  { false };
+        // SUSPEND: temporarily ignore every lane's stored points at
+        // read time so the engineer can audition raw fader / pan /
+        // mute values. PUNCH: when on, WRITE is gated to a single
+        // [punchInSample, punchOutSample) range; outside that range
+        // the engine reads existing automation but does not record.
+        std::atomic<bool>             automationReadSuspended { false };
+        std::atomic<bool>             automationPunchEnabled  { false };
+        std::atomic<juce::int64>      automationPunchIn       { -1 };
+        std::atomic<juce::int64>      automationPunchOut      { -1 };
         // Per-track clip lists. Empty/missing entry → 'play the whole
         // Track_NN.wav' (the current behaviour). Once the engineer
         // splits or trims, the entry has one or more Clips covering

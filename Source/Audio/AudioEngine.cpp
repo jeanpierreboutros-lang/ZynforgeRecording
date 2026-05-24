@@ -458,6 +458,8 @@ namespace zynforge
     {
         if (startSample > endSample) std::swap (startSample, endSample);
         const juce::ScopedLock sl (automationLock);
+        if (track < 0 || track >= (int) automationData.size()) return;
+        if (automationData[(size_t) track].safe.load (std::memory_order_acquire)) return;
         auto* lane = findLane (track, p);
         if (lane == nullptr || lane->empty()) return;
         auto pred = [startSample, endSample] (const AutomationPoint& pt)
@@ -473,6 +475,8 @@ namespace zynforge
     {
         if (points.empty()) return;
         const juce::ScopedLock sl (automationLock);
+        if (track < 0 || track >= (int) automationData.size()) return;
+        if (automationData[(size_t) track].safe.load (std::memory_order_acquire)) return;
         auto* lane = findLane (track, p);
         if (lane == nullptr) return;
         // Pre-clear the paste span so the new points don't visually
@@ -498,6 +502,72 @@ namespace zynforge
         }
         std::sort (lane->begin(), lane->end(),
                    [] (const auto& a, const auto& b) { return a.samplePos < b.samplePos; });
+    }
+
+    void AudioEngine::setTrackAutomationSafe (int track, bool safe)
+    {
+        const juce::ScopedLock sl (automationLock);
+        if (track < 0) return;
+        if (track >= (int) automationData.size())
+            automationData.resize ((size_t) track + 1);
+        automationData[(size_t) track].safe.store (safe, std::memory_order_release);
+    }
+
+    bool AudioEngine::isTrackAutomationSafe (int track) const
+    {
+        const juce::ScopedLock sl (automationLock);
+        if (track < 0 || track >= (int) automationData.size()) return false;
+        return automationData[(size_t) track].safe.load (std::memory_order_acquire);
+    }
+
+    void AudioEngine::writeAutomationPointThinned (int track, AutomationParam p,
+                                                   juce::int64 samplePos, float value,
+                                                   juce::int64 minSamplesBetween)
+    {
+        if (track < 0) return;
+        // Punch-gate first -- skip cheap before grabbing the lock.
+        if (isAutomationPunchEnabled() && ! isInsideAutomationPunchRange (samplePos))
+            return;
+
+        const juce::ScopedLock sl (automationLock);
+        if (track >= (int) automationData.size()) return;
+        auto& a = automationData[(size_t) track];
+        if (a.safe.load (std::memory_order_acquire)) return;
+
+        const int idx = (p == AutomationParam::Volume) ? 0
+                      : (p == AutomationParam::Pan)    ? 1 : 2;
+        const auto last = a.lastWriteSample[idx].load (std::memory_order_acquire);
+        if (last >= 0 && std::llabs ((long long) (samplePos - last)) < (long long) minSamplesBetween)
+            return;     // too soon -- skip this drop, keep ramp resolution sensible
+
+        a.lastWriteSample[idx].store (samplePos, std::memory_order_release);
+        // Hand off to the standard add path so kSnap + sort + Mute
+        // discretisation all stay in one place.
+        // Note: addAutomationPoint takes the lock again -- we drop ours first.
+        // (CriticalSection is recursive on macOS so this is safe either way.)
+        auto* lane = findLane (track, p);
+        if (lane == nullptr) return;
+
+        AutomationCurve newCurve = AutomationCurve::Linear;
+        float v = value;
+        if (p == AutomationParam::Mute)
+        {
+            v        = v >= 0.5f ? 1.0f : 0.0f;
+            newCurve = AutomationCurve::Hold;
+        }
+        constexpr juce::int64 kSnap = 4096;
+        for (auto& pt : *lane)
+        {
+            if (std::abs (pt.samplePos - samplePos) < kSnap)
+            {
+                pt.value = v;
+                if (p == AutomationParam::Mute) pt.curve = AutomationCurve::Hold;
+                return;
+            }
+        }
+        lane->push_back ({ samplePos, v, newCurve });
+        std::sort (lane->begin(), lane->end(),
+                   [] (const auto& a2, const auto& b2) { return a2.samplePos < b2.samplePos; });
     }
 
     void AudioEngine::setAutomationTrim (int track, AutomationParam p, float trim)
@@ -562,6 +632,9 @@ namespace zynforge
             trk->setProperty ("volume", laneToVar (a.volume));
             trk->setProperty ("pan",    laneToVar (a.pan));
             trk->setProperty ("mute",   laneToVar (a.mute));
+            trk->setProperty ("safe",   a.safe.load (std::memory_order_acquire));
+            trk->setProperty ("vTrim",  (double) a.volumeTrim.load (std::memory_order_acquire));
+            trk->setProperty ("pTrim",  (double) a.panTrim   .load (std::memory_order_acquire));
             tracks.add (juce::var (trk.get()));
         }
         return juce::var (tracks);
@@ -604,6 +677,12 @@ namespace zynforge
             varToLane (trk->getProperty ("volume"), a.volume);
             varToLane (trk->getProperty ("pan"),    a.pan);
             varToLane (trk->getProperty ("mute"),   a.mute);
+            if (trk->hasProperty ("safe"))
+                a.safe.store ((bool) trk->getProperty ("safe"), std::memory_order_release);
+            if (trk->hasProperty ("vTrim"))
+                a.volumeTrim.store ((float) (double) trk->getProperty ("vTrim"), std::memory_order_release);
+            if (trk->hasProperty ("pTrim"))
+                a.panTrim.store ((float) (double) trk->getProperty ("pTrim"), std::memory_order_release);
         }
     }
 
@@ -1424,6 +1503,8 @@ namespace zynforge
                                           juce::int64 samplePos, float value)
     {
         const juce::ScopedLock sl (automationLock);
+        if (track < 0 || track >= (int) automationData.size()) return;
+        if (automationData[(size_t) track].safe.load (std::memory_order_acquire)) return;
         auto* lane = findLane (track, p);
         if (lane == nullptr) return;
 
@@ -1475,6 +1556,10 @@ namespace zynforge
                                           juce::int64 samplePos,
                                           float fallback) const noexcept
     {
+        // SUSPEND short-circuits every lane to the live fader value
+        // so the engineer can audition raw moves without the engine
+        // pulling them back to stored automation.
+        if (automationReadSuspended.load (std::memory_order_acquire)) return fallback;
         const juce::ScopedTryLock stl (automationLock);
         if (! stl.isLocked()) return fallback;     // UI mid-edit -- use the slider value
         if (track < 0 || track >= (int) automationData.size()) return fallback;
@@ -1564,6 +1649,8 @@ namespace zynforge
                                                  juce::int64 samplePos, juce::int64 tolerance)
     {
         const juce::ScopedLock sl (automationLock);
+        if (track < 0 || track >= (int) automationData.size()) return;
+        if (automationData[(size_t) track].safe.load (std::memory_order_acquire)) return;
         auto* lane = findLane (track, p);
         if (lane == nullptr || lane->empty()) return;
 

@@ -18,6 +18,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ## [Unreleased]
 
 ### Added
+- **Automation phase 5 -- advanced write controls**:
+  - **Touch / Latch / Write dropdown** on the automation toolbar replaces the single WRITE toggle. `AudioEngine::AutomationWriteMode` already had the three states; the toolbar now surfaces them so the engineer's mental model matches Pro Tools / LiveTrax even though the engine currently treats Touch/Latch/Write identically at the write-path level. Picking any non-Off value still forces TRIM off.
+  - **SUSPEND toggle** -- engine ignores every lane at read time (`AudioEngine::automationReadSuspended` atomic, short-circuits `automationValueAt`). Lets the engineer audition raw fader / pan / mute moves without disturbing the stored pass.
+  - **PUNCH toggle + range** -- shift-drag on the EDIT time ruler defines a `[in, out)` range painted as a translucent `accentStatus` band; the toolbar PUNCH button gates WRITE-mode drops to that range. Outside the range, write calls are no-ops (`AudioEngine::isInsideAutomationPunchRange`). Shift-click without drag clears the range.
+  - **WRITE point thinning** -- new `AudioEngine::writeAutomationPointThinned (..., minSamplesBetween)` skips drops less than ~50 ms apart so a 60 Hz fader callback stream stops fanning out into automation cruft. `writeAutoIfPlaying` now calls the thinned path.
+  - **Per-track Automation Safe lock** -- new `TrackAutomation::safe` atomic + `setTrackAutomationSafe(int, bool)` blocks every write (Add, Remove, Paste, Range-clear, WRITE-mode drops, TRIM offsets) on a single track. Exposed as 'Automation Safe' in the ChannelStrip context menu; persists through `.zfproj` via `automationToJson` (`safe`, `vTrim`, `pTrim` keys).
+  - **Strip R/W LED** -- 6 px dot under the colour swatch on each ChannelStrip header. Red = WRITE-mode armed AND playback rolling; amber = Safe-locked (Safe wins). MainComponent's 10 Hz polling pushes state via `ChannelStrip::setAutomationLed`.
+
+### Added (earlier)
 - **Phase 1 live-show safety pass** (from the 2026-05-23 UX audit):
   - **Record button is shape-distinct from Play**: permanent brand-red 2 px border at idle + concentric-ring "target" glyph (outer ring + inner disc) instead of a solid circle. Readable as RECORD vs PLAY by silhouette under stage glare without relying on colour alone.
   - **Global PEAK tally** (`Source/UI/PeakTally.h`) — a 4 px brand-red bar pinned across the top of the mixer that pulses at 2 Hz whenever any strip clips and holds for ~1 s after the last clip. Click anywhere on the bar to clear every strip's clip latch in one gesture.

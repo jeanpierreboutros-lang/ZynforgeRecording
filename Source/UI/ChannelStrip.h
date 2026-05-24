@@ -78,6 +78,18 @@ namespace zynforge
         std::function<std::vector<std::pair<int, juce::String>>()> getBusList;
         std::function<void (int /*targetBus*/)> onSendTargetChanged;
 
+        // Automation state surfaced to the strip header. Host polls
+        // engine state on a slow timer and pushes any changes here
+        // so the LED stays in sync without the strip needing a
+        // direct engine pointer. writeArmed = WRITE-mode active AND
+        // playback rolling; safeOn = per-track Safe lock.
+        void setAutomationLed (bool writeArmed, bool safeOn);
+
+        // Fired when the engineer toggles 'Automation Safe' in the
+        // strip context menu. Host wires this to
+        // engine.setTrackAutomationSafe.
+        std::function<void (bool /*safeOn*/)> onAutomationSafeChanged;
+
         juce::Colour getResolvedColour() const;
 
         void paint (juce::Graphics&) override;
@@ -140,6 +152,11 @@ namespace zynforge
         std::unique_ptr<StripTimer> stripTimer;
 
         bool selected { false };
+        // Automation LED state -- painted as a tiny 6 px badge in the
+        // strip header. writeArmed lights brand-red; safeOn lights
+        // amber. Both together = safe overrides (writes are blocked).
+        bool autoWriteArmed { false };
+        bool autoSafeOn     { false };
         // Cached ARGB of the last colour pushed into the swatch + sliders
         // so refreshAppearance only re-applies it on actual change.
         // Zero is a safe "not yet applied" sentinel because any real

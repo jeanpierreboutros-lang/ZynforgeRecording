@@ -52,6 +52,8 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Ap
 - Adaptive LED meter (smooth gradient at small heights, 20-segment LEDs at full size)
 - Stereo pairs collapse into one logical strip / row / column in **all three views**
 - Pro Tools-style EDIT view: per-row size menu, custom heights, Smart / Selector / Trim / Grabber / Fade / Scrubber tools
+- **Per-track automation lanes** (Volume / Pan / Mute) with five segment curve shapes (Hold / Linear / SCurve / ExpUp / ExpDown), copy / paste / clear range, undo-aware drag coalesce, persisted in `.zfproj`
+- **WRITE-mode automation**: Touch / Latch / Write dropdown + SUSPEND (read bypass) + PUNCH (shift-drag range on the time ruler gates writes) + per-track Automation Safe lock with a header LED
 
 ### Cues + setlist
 - Drop cues at any transport position; per-cue snapshot of every strip's state

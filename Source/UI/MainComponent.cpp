@@ -393,15 +393,24 @@ MainComponent::MainComponent()
         showStatus ("Cleared automation points for the active parameter (Cmd+Z to undo)");
     };
 
-    // WRITE toggle -- forward to engine's write-mode state. While
-    // on AND playback is rolling, every fader/pan move drops a new
-    // automation point at the current playhead.
-    automationToolbar.onWriteModeChanged = [this] (bool writeOn)
+    // WRITE-mode dropdown -- forward to engine's write-mode state.
+    // While the mode is anything other than Off AND playback is
+    // rolling, every fader / pan / mute move drops a new automation
+    // point at the current playhead (thinned to ~50 ms resolution by
+    // writeAutomationPointThinned in writeAutoIfPlaying below).
+    automationToolbar.onWriteModeChanged = [this] (zynforge::AutomationToolbar::WriteMode wm)
     {
-        using M = zynforge::AudioEngine::AutomationWriteMode;
-        engine.setAutomationWriteMode (writeOn ? M::Write : M::Off);
-        showStatus (writeOn ? "Automation WRITE armed (rolling playback will record fader / pan moves)"
-                            : "Automation WRITE off");
+        using EM = zynforge::AudioEngine::AutomationWriteMode;
+        engine.setAutomationWriteMode ((EM) (int) wm);
+        const char* label = "Off";
+        switch (wm)
+        {
+            case zynforge::AutomationToolbar::WriteMode::Off:   label = "Off";   break;
+            case zynforge::AutomationToolbar::WriteMode::Touch: label = "Touch"; break;
+            case zynforge::AutomationToolbar::WriteMode::Latch: label = "Latch"; break;
+            case zynforge::AutomationToolbar::WriteMode::Write: label = "Write"; break;
+        }
+        showStatus (juce::String ("Automation WRITE: ") + label);
     };
 
     automationToolbar.onTrimModeChanged = [this] (bool trimOn)
@@ -409,6 +418,36 @@ MainComponent::MainComponent()
         engine.setAutomationTrimMode (trimOn);
         showStatus (trimOn ? "Automation TRIM armed (fader moves nudge the per-track trim, not the lane shape)"
                            : "Automation TRIM off");
+    };
+
+    // SUSPEND -- engine ignores every lane at read time. Useful for
+    // auditioning a raw fader pass without overwriting automation.
+    automationToolbar.onSuspendChanged = [this] (bool on)
+    {
+        engine.setAutomationReadSuspended (on);
+        showStatus (on ? "Automation SUSPEND on -- playback ignores every lane (raw faders only)"
+                       : "Automation SUSPEND off -- playback follows stored automation again");
+    };
+
+    // PUNCH -- writes only fire inside the engine's punch range
+    // (the EDIT page's selection on the time ruler, when one
+    // exists). Outside the range, writes are no-ops.
+    automationToolbar.onPunchChanged = [this] (bool on)
+    {
+        engine.setAutomationPunchEnabled (on);
+        if (on)
+        {
+            const auto in  = engine.getAutomationPunchIn();
+            const auto out = engine.getAutomationPunchOut();
+            if (in < 0 || out <= in)
+                showStatus ("PUNCH on -- no range set yet; drag a selection on the EDIT timeline to define one");
+            else
+                showStatus ("PUNCH on -- automation writes will only fire inside the selected range");
+        }
+        else
+        {
+            showStatus ("PUNCH off -- automation writes fire anywhere on the timeline");
+        }
     };
 
     tempoBar.setBpm (engine.getSessionTempoBpm());
@@ -1345,7 +1384,16 @@ void MainComponent::rebuildStrips()
             }
             if (! engine.isAutomationWriting()) return;
             const auto pos = engine.getPlayer().getPositionSamples();
-            engine.addAutomationPoint (trackIdx, p, pos, value);
+            // Punch gate -- when PUNCH is on, only write inside the
+            // engine's punch range. Outside the range, do nothing.
+            if (engine.isAutomationPunchEnabled()
+                && ! engine.isInsideAutomationPunchRange (pos))
+                return;
+            // Throttle WRITE-mode drops to ~50 ms apart so a 60 Hz
+            // fader.onValueChange stream doesn't blow up the lane.
+            const auto sr = (juce::int64) juce::jmax (1.0, engine.getPlayer().getSampleRate());
+            const auto minGap = sr / 20;        // 50 ms
+            engine.writeAutomationPointThinned (trackIdx, p, pos, value, minGap);
         };
 
         auto gainCb   = [this, i, step, writeAutoIfPlaying] (float dB)
@@ -1448,6 +1496,19 @@ void MainComponent::rebuildStrips()
         s->onSendTargetChanged = [this, i] (int target)
         {
             engine.setTrackSend (i, 0, target, 0.0f /* dB */, true /* post */);
+        };
+
+        // Per-track Automation Safe lock. When on, the engine
+        // refuses every write to this track (Add, Remove, Paste,
+        // WRITE-mode drops, TRIM offsets). The strip mirrors via
+        // setAutomationLed in the slow poll below.
+        s->onAutomationSafeChanged = [this, i] (bool safeOn)
+        {
+            engine.setTrackAutomationSafe (i, safeOn);
+            if (safeOn) showStatus (juce::String ("Track ") + juce::String (i + 1)
+                                    + ": Automation Safe -- writes blocked");
+            else        showStatus (juce::String ("Track ") + juce::String (i + 1)
+                                    + ": Automation Safe off");
         };
 
         // Hook shift/cmd-click selection. The toggle handler is keyed
@@ -1561,13 +1622,20 @@ void MainComponent::timerCallback()
 
     // Keep each strip's input/output combos in sync with engine state --
     // the PATCH page can mutate routing behind the strip's back. Also
-    // refresh name + colour so changes made from the EDIT view show up.
-    for (auto& s : strips)
-        if (s != nullptr)
-        {
-            s->refreshRoutingSelection();
-            s->refreshAppearance();
-        }
+    // refresh name + colour so changes made from the EDIT view show up,
+    // and push the per-track automation LED state (WRITE-armed +
+    // Safe-locked) so the strip header reads true.
+    const bool autoWriting = engine.isAutomationWriting();
+    for (size_t k = 0; k < strips.size(); ++k)
+    {
+        auto& s = strips[k];
+        if (s == nullptr) continue;
+        s->refreshRoutingSelection();
+        s->refreshAppearance();
+        const int trackIdx = s->getStripIndex();
+        const bool safe = engine.isTrackAutomationSafe (trackIdx);
+        s->setAutomationLed (autoWriting && ! safe, safe);
+    }
 
     updateTransportLabels();
 

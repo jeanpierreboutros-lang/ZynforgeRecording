@@ -329,6 +329,10 @@ namespace zynforge
         const bool outMuted = state.outputMuted.load (std::memory_order_relaxed);
         menu.addItem (6, outMuted ? "Unmute physical output" : "Mute physical output (FOH only)",
                       true, outMuted);
+        menu.addSeparator();
+        menu.addItem (20, autoSafeOn ? "Automation Safe -- ON (writes blocked)"
+                                      : "Automation Safe -- OFF",
+                      true, autoSafeOn);
 
         // VCA assignment submenu. Engineer picks a bus index 1..8 or
         // "None" to detach. Persisted on engine; mute / gain inherited
@@ -391,6 +395,18 @@ namespace zynforge
                 case 10: if (addCb)        addCb();        break;
                 case 11: if (deleteCb)     deleteCb();     break;
                 case 12: if (linkStereoCb) linkStereoCb(); break;
+                case 20:
+                    {
+                        const bool next = ! autoSafeOn;
+                        // Optimistic local update so the LED flips
+                        // before the host polls back; host will re-
+                        // push via setAutomationLed and that's a
+                        // no-op when the state already matches.
+                        autoSafeOn = next;
+                        repaint();
+                        if (onAutomationSafeChanged) onAutomationSafeChanged (next);
+                    }
+                    break;
                 default:
                     // VCA assignment: 700 = None, 701..708 = VCA 1..8.
                     if (chosen == 700 || (chosen >= 701 && chosen <= 708))
@@ -806,6 +822,28 @@ namespace zynforge
             g.setFont (brand::fonts::small());
             g.drawText ("BUS", badge.toNearestInt(), juce::Justification::centred, false);
         }
+
+        // Automation LED -- 6 px dot just below the colour swatch in
+        // the top-left. Red when WRITE-mode is armed and playback is
+        // rolling, amber when the strip is locked Safe. Both at once
+        // = Safe (Safe always wins because writes are blocked).
+        if (autoWriteArmed || autoSafeOn)
+        {
+            const auto led = juce::Rectangle<float> (r.getX() + 4.0f, r.getY() + 20.0f, 6.0f, 6.0f);
+            const auto c   = autoSafeOn ? brand::engagedAmber : brand::accentRecord;
+            g.setColour (c.withAlpha (0.95f));
+            g.fillEllipse (led);
+            g.setColour (c.brighter (0.45f));
+            g.drawEllipse (led, 0.6f);
+        }
+    }
+
+    void ChannelStrip::setAutomationLed (bool writeArmed, bool safeOn)
+    {
+        if (writeArmed == autoWriteArmed && safeOn == autoSafeOn) return;
+        autoWriteArmed = writeArmed;
+        autoSafeOn     = safeOn;
+        repaint();
     }
 
     void ChannelStrip::mouseEnter (const juce::MouseEvent&)

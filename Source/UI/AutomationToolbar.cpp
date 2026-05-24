@@ -53,28 +53,38 @@ namespace zynforge
         clearButton.onClick = [this] { if (onClearAll) onClearAll(); };
         addAndMakeVisible (clearButton);
 
-        // WRITE toggle. When on + playback rolling, every fader / pan
-        // move writes a point at the current playhead. Off = lanes
-        // are read-only during playback. Mutually exclusive with
-        // TRIM (turning one on clears the other).
-        writeButton.setClickingTogglesState (true);
-        writeButton.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
-        writeButton.setColour (juce::TextButton::buttonOnColourId,  brand::accentRecord);
-        writeButton.setColour (juce::TextButton::textColourOffId,   brand::textPrimary);
-        writeButton.setColour (juce::TextButton::textColourOnId,    brand::onSignal (brand::accentRecord));
-        writeButton.setTooltip ("WRITE mode: fader and pan moves during playback record automation points. "
-                                "Toggle off to play back without overwriting existing points.");
-        writeButton.onClick = [this]
+        // WRITE-mode dropdown. Off = lanes are read-only during
+        // playback. Touch / Latch / Write progressively expose more
+        // aggressive write semantics (the engine today treats them
+        // identically; the toolbar still surfaces them so the
+        // engineer's mental model matches Pro Tools). Picking any
+        // non-Off value forces TRIM off.
+        writeLabel.setText ("Write:", juce::dontSendNotification);
+        writeLabel.setFont (brand::type::captionBold());
+        writeLabel.setColour (juce::Label::textColourId, brand::textSecondary);
+        addAndMakeVisible (writeLabel);
+
+        writeCombo.addItem ("Off",   1);
+        writeCombo.addItem ("Touch", 2);
+        writeCombo.addItem ("Latch", 3);
+        writeCombo.addItem ("Write", 4);
+        writeCombo.setSelectedId (1, juce::dontSendNotification);
+        styleWriteCombo();
+        writeCombo.setTooltip ("WRITE mode: fader / pan / mute moves during playback record automation. "
+                                "Touch holds the value while touching, then snaps back. Latch holds and "
+                                "stays. Write overwrites the whole pass. Off = read-only playback.");
+        writeCombo.onChange = [this]
         {
-            const bool on = writeButton.getToggleState();
-            if (on && trimButton.getToggleState())
+            const auto wm = (WriteMode) (writeCombo.getSelectedId() - 1);
+            if (wm != WriteMode::Off && trimButton.getToggleState())
             {
                 trimButton.setToggleState (false, juce::dontSendNotification);
                 if (onTrimModeChanged) onTrimModeChanged (false);
             }
-            if (onWriteModeChanged) onWriteModeChanged (on);
+            styleWriteCombo();
+            if (onWriteModeChanged) onWriteModeChanged (wm);
         };
-        addAndMakeVisible (writeButton);
+        addAndMakeVisible (writeCombo);
 
         // TRIM toggle. When on + playback rolling, fader / pan moves
         // add to the per-track trim offset instead of dropping new
@@ -90,14 +100,47 @@ namespace zynforge
         trimButton.onClick = [this]
         {
             const bool on = trimButton.getToggleState();
-            if (on && writeButton.getToggleState())
+            if (on && writeCombo.getSelectedId() > 1)
             {
-                writeButton.setToggleState (false, juce::dontSendNotification);
-                if (onWriteModeChanged) onWriteModeChanged (false);
+                writeCombo.setSelectedId (1, juce::dontSendNotification);
+                styleWriteCombo();
+                if (onWriteModeChanged) onWriteModeChanged (WriteMode::Off);
             }
             if (onTrimModeChanged) onTrimModeChanged (on);
         };
         addAndMakeVisible (trimButton);
+
+        // SUSPEND -- engine ignores stored automation at read time,
+        // letting the engineer audition raw fader / pan / mute moves.
+        // Toggle off to restore the recorded pass.
+        suspendButton.setClickingTogglesState (true);
+        suspendButton.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
+        suspendButton.setColour (juce::TextButton::buttonOnColourId,  brand::textMuted);
+        suspendButton.setColour (juce::TextButton::textColourOffId,   brand::textPrimary);
+        suspendButton.setColour (juce::TextButton::textColourOnId,    brand::onSignal (brand::textMuted));
+        suspendButton.setTooltip ("SUSPEND: engine ignores every automation lane at read time so the "
+                                  "raw fader / pan / mute values pass through. Toggle off to resume playback.");
+        suspendButton.onClick = [this]
+        {
+            if (onSuspendChanged) onSuspendChanged (suspendButton.getToggleState());
+        };
+        addAndMakeVisible (suspendButton);
+
+        // PUNCH -- automation writes only fire while the playhead is
+        // inside the engine's punch range (set via the EDIT page's
+        // range-select on the timeline).
+        punchButton.setClickingTogglesState (true);
+        punchButton.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
+        punchButton.setColour (juce::TextButton::buttonOnColourId,  brand::accentStatus);
+        punchButton.setColour (juce::TextButton::textColourOffId,   brand::textPrimary);
+        punchButton.setColour (juce::TextButton::textColourOnId,    brand::onSignal (brand::accentStatus));
+        punchButton.setTooltip ("PUNCH: when on, WRITE-mode writes only fire inside the punch range. "
+                                "Outside the range, the engine reads existing points but doesn't record.");
+        punchButton.onClick = [this]
+        {
+            if (onPunchChanged) onPunchChanged (punchButton.getToggleState());
+        };
+        addAndMakeVisible (punchButton);
     }
 
     void AutomationToolbar::styleToolButton (juce::TextButton& b, juce::Colour activeColour)
@@ -115,6 +158,41 @@ namespace zynforge
         if (param == p) return;
         param = p;
         paramCombo.setSelectedId ((int) p + 1, juce::dontSendNotification);
+    }
+
+    void AutomationToolbar::setWriteModeSilently (WriteMode m)
+    {
+        writeCombo.setSelectedId ((int) m + 1, juce::dontSendNotification);
+        styleWriteCombo();
+    }
+
+    void AutomationToolbar::setSuspendSilently (bool on)
+    {
+        suspendButton.setToggleState (on, juce::dontSendNotification);
+    }
+
+    void AutomationToolbar::setPunchSilently (bool on)
+    {
+        punchButton.setToggleState (on, juce::dontSendNotification);
+    }
+
+    void AutomationToolbar::setTrimSilently (bool on)
+    {
+        trimButton.setToggleState (on, juce::dontSendNotification);
+    }
+
+    void AutomationToolbar::styleWriteCombo()
+    {
+        // Off = neutral chrome; any write mode = brand-red so the
+        // engineer's eye snags on it from across the venue.
+        const bool armed = writeCombo.getSelectedId() > 1;
+        const juce::Colour bg     = armed ? brand::accentRecord : juce::Colour (0xff000000);
+        const juce::Colour fg     = armed ? brand::onSignal (brand::accentRecord) : brand::textPrimary;
+        const juce::Colour outline= armed ? brand::accentRecord : brand::edge;
+        writeCombo.setColour (juce::ComboBox::backgroundColourId, bg);
+        writeCombo.setColour (juce::ComboBox::textColourId,       fg);
+        writeCombo.setColour (juce::ComboBox::outlineColourId,    outline);
+        writeCombo.setColour (juce::ComboBox::arrowColourId,      fg);
     }
 
     void AutomationToolbar::selectTool (Tool t)
@@ -154,9 +232,15 @@ namespace zynforge
         r.removeFromLeft (16);
 
         clearButton .setBounds (r.removeFromLeft (110).reduced (0, 3));
-        r.removeFromLeft (8);
-        writeButton .setBounds (r.removeFromLeft (70).reduced (0, 3));
+        r.removeFromLeft (12);
+        writeLabel  .setBounds (r.removeFromLeft (52));
+        r.removeFromLeft (brand::space::sm);
+        writeCombo  .setBounds (r.removeFromLeft (100).reduced (0, 3));
         r.removeFromLeft (4);
         trimButton  .setBounds (r.removeFromLeft (70).reduced (0, 3));
+        r.removeFromLeft (10);
+        suspendButton.setBounds (r.removeFromLeft (84).reduced (0, 3));
+        r.removeFromLeft (4);
+        punchButton  .setBounds (r.removeFromLeft (72).reduced (0, 3));
     }
 }

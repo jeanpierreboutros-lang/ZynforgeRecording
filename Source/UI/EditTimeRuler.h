@@ -35,6 +35,41 @@ namespace zynforge
         // dialog. The hit-test mirrors the paint layout: the flag is
         // an 8 px-wide triangle at the marker's x; the name extends
         // 120 px to the right of the flag tip.
+        // Shift-drag on the time-scale strip defines the automation
+        // punch range. The drag's start x = punch in, end x = punch
+        // out. The range is pushed straight into engine atomics so
+        // PUNCH (when armed on the toolbar) gates writes immediately.
+        // Plain mouseDown still goes through the wave pane's edit-
+        // cursor handler -- only Shift-modified drags hit this path.
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            if (! e.mods.isShiftDown()) return;
+            if (e.y < kMarkerStripH)    return;     // marker strip ignores
+            punchDragInSample  = pixelToSample (e.x);
+            punchDragOutSample = punchDragInSample;
+            engine.setAutomationPunchRange (punchDragInSample, punchDragInSample);
+            repaint();
+        }
+        void mouseDrag (const juce::MouseEvent& e) override
+        {
+            if (! e.mods.isShiftDown() || punchDragInSample < 0) return;
+            punchDragOutSample = pixelToSample (e.x);
+            const auto lo = juce::jmin (punchDragInSample, punchDragOutSample);
+            const auto hi = juce::jmax (punchDragInSample, punchDragOutSample);
+            engine.setAutomationPunchRange (lo, hi);
+            repaint();
+        }
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            if (! e.mods.isShiftDown() || punchDragInSample < 0) return;
+            // Collapse a no-drag click to "clear the range" so the
+            // engineer can wipe the in/out by shift-clicking once.
+            if (std::llabs ((long long) (punchDragOutSample - punchDragInSample)) < 16)
+                engine.setAutomationPunchRange (-1, -1);
+            punchDragInSample = punchDragOutSample = -1;
+            repaint();
+        }
+
         void mouseDoubleClick (const juce::MouseEvent& e) override
         {
             if (e.y >= kMarkerStripH) return;   // double-clicks on the time scale ignored
@@ -188,6 +223,36 @@ namespace zynforge
                 }
             }
 
+            // -------- Punch range overlay --------
+            // Drawn on the time-scale strip as a translucent green
+            // band with two solid edges so the engineer can see the
+            // in / out points at a glance. Painted regardless of
+            // whether PUNCH is armed -- the band represents the
+            // engine's stored range, the toolbar arms it.
+            const auto pIn  = engine.getAutomationPunchIn();
+            const auto pOut = engine.getAutomationPunchOut();
+            if (pIn >= 0 && pOut > pIn)
+            {
+                const double inSec  = (double) pIn  / sr;
+                const double outSec = (double) pOut / sr;
+                const int xIn  = headerW + (int) (inSec  * pxPerSec);
+                const int xOut = headerW + (int) (outSec * pxPerSec);
+                const int clampedIn  = juce::jmax (headerW, xIn);
+                const int clampedOut = juce::jmin (getWidth(), xOut);
+                if (clampedOut > clampedIn)
+                {
+                    auto band = juce::Rectangle<float> ((float) clampedIn,
+                                                        (float) rulerTop,
+                                                        (float) (clampedOut - clampedIn),
+                                                        (float) rulerH);
+                    g.setColour (brand::accentStatus.withAlpha (0.18f));
+                    g.fillRect (band);
+                    g.setColour (brand::accentStatus);
+                    g.drawVerticalLine (clampedIn,  (float) rulerTop, (float) (rulerTop + rulerH));
+                    g.drawVerticalLine (clampedOut - 1, (float) rulerTop, (float) (rulerTop + rulerH));
+                }
+            }
+
             // -------- Marker strip (top strip) --------
             // Each marker gets a small downward-pointing flag at its
             // sample position plus its name to the right. Pro Tools-
@@ -226,9 +291,25 @@ namespace zynforge
             }
         }
 
+        // Maps a pixel x on the time-scale strip back to a session
+        // sample position. Returns 0 when x is left of the header.
+        juce::int64 pixelToSample (int xPx) const
+        {
+            const auto& player = engine.getPlayer();
+            const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
+            const auto total = player.getTotalLengthSamples();
+            const double totalSec = total > 0 ? (double) total / sr : 300.0;
+            const int waveW = juce::jmax (1, contentW - headerW);
+            const double pxPerSec = (double) waveW / juce::jmax (0.001, totalSec);
+            const double sec = juce::jmax (0.0, (double) (xPx - headerW) / juce::jmax (1.0, pxPerSec));
+            return (juce::int64) (sec * sr);
+        }
+
         AudioEngine& engine;
         int headerW   { 380 };   // matches TrackRow::headerW
         int contentW  { 1024 };
+        juce::int64 punchDragInSample  { -1 };
+        juce::int64 punchDragOutSample { -1 };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EditTimeRuler)
     };
