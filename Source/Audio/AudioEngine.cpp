@@ -270,19 +270,23 @@ namespace zynforge
     {
         transientCacheValid = false;
         transientCache.clear();
+        transientPerTrack.clear();
     }
 
     // Lazy build. Scans every Track_NN.wav (in either Audio Files/
-    // or the session root) and pools the onset positions into one
-    // sorted list. Sequential, no threading -- the engineer presses
-    // Tab once and the first hit pays the analysis cost (typically
-    // sub-second for a 24-track 5-min session); the cache survives
-    // for the rest of the session.
-    static std::vector<juce::int64>
-    buildTransientCache (const juce::File& sessionDir)
+    // or the session root) and stores onsets BOTH per-track AND
+    // pooled+dedupe into one sorted list. Sequential, no threading
+    // -- the engineer presses Tab once and the first hit pays the
+    // analysis cost (typically sub-second for a 24-track 5-min
+    // session); the cache survives for the rest of the session.
+    static void
+    buildTransientCacheInto (const juce::File& sessionDir,
+                             std::vector<juce::int64>& pooledOut,
+                             std::vector<std::vector<juce::int64>>& perTrackOut)
     {
-        std::vector<juce::int64> pooled;
-        if (! sessionDir.isDirectory()) return pooled;
+        pooledOut.clear();
+        perTrackOut.clear();
+        if (! sessionDir.isDirectory()) return;
 
         const auto audioDir = sessionDir.getChildFile ("Audio Files");
         auto files = audioDir.isDirectory()
@@ -290,48 +294,69 @@ namespace zynforge
                        : sessionDir.findChildFiles (juce::File::findFiles, false, "Track_*.wav");
         for (auto& f : files)
         {
+            const auto stem = f.getFileNameWithoutExtension();
+            const int idx = stem.fromLastOccurrenceOf ("_", false, false).getIntValue();
+            if (idx <= 0) continue;
+            if ((int) perTrackOut.size() < idx) perTrackOut.resize ((size_t) idx);
             auto onsets = zynforge::TransientDetector::detectInFile (f);
-            pooled.insert (pooled.end(), onsets.begin(), onsets.end());
+            perTrackOut[(size_t) idx - 1] = onsets;
+            pooledOut.insert (pooledOut.end(), onsets.begin(), onsets.end());
         }
-        std::sort (pooled.begin(), pooled.end());
-        // De-dupe nearby onsets (different tracks firing on the same
-        // beat). 24-ms window matches the detector's refractory.
+        std::sort (pooledOut.begin(), pooledOut.end());
         constexpr juce::int64 kDedupeWindow = 48000 / 40;   // ~25 ms @ 48k
-        if (! pooled.empty())
+        if (! pooledOut.empty())
         {
             std::vector<juce::int64> dedup;
-            dedup.reserve (pooled.size());
-            dedup.push_back (pooled.front());
-            for (size_t i = 1; i < pooled.size(); ++i)
-                if (pooled[i] - dedup.back() >= kDedupeWindow)
-                    dedup.push_back (pooled[i]);
-            pooled.swap (dedup);
+            dedup.reserve (pooledOut.size());
+            dedup.push_back (pooledOut.front());
+            for (size_t i = 1; i < pooledOut.size(); ++i)
+                if (pooledOut[i] - dedup.back() >= kDedupeWindow)
+                    dedup.push_back (pooledOut[i]);
+            pooledOut.swap (dedup);
         }
-        return pooled;
     }
 
-    juce::int64 AudioEngine::nextTransientSample (juce::int64 fromSample)
+    static const std::vector<juce::int64> emptyTransients;
+
+    const std::vector<juce::int64>& AudioEngine::getTransientsForTrack (int trackIdx)
     {
         if (! transientCacheValid)
         {
-            transientCache = buildTransientCache (getActiveSessionDir());
+            buildTransientCacheInto (getActiveSessionDir(), transientCache, transientPerTrack);
             transientCacheValid = true;
         }
-        if (transientCache.empty()) return -1;
-        auto it = std::upper_bound (transientCache.begin(), transientCache.end(), fromSample);
-        return it == transientCache.end() ? -1 : *it;
+        if (trackIdx < 1 || trackIdx > (int) transientPerTrack.size()) return emptyTransients;
+        return transientPerTrack[(size_t) trackIdx - 1];
     }
 
-    juce::int64 AudioEngine::prevTransientSample (juce::int64 fromSample)
+    juce::int64 AudioEngine::nextTransientSample (juce::int64 fromSample, int restrictToTrack)
     {
         if (! transientCacheValid)
         {
-            transientCache = buildTransientCache (getActiveSessionDir());
+            buildTransientCacheInto (getActiveSessionDir(), transientCache, transientPerTrack);
             transientCacheValid = true;
         }
-        if (transientCache.empty()) return -1;
-        auto it = std::lower_bound (transientCache.begin(), transientCache.end(), fromSample);
-        if (it == transientCache.begin()) return -1;
+        const auto* list = (restrictToTrack >= 1 && restrictToTrack <= (int) transientPerTrack.size())
+                              ? &transientPerTrack[(size_t) restrictToTrack - 1]
+                              : &transientCache;
+        if (list->empty()) return -1;
+        auto it = std::upper_bound (list->begin(), list->end(), fromSample);
+        return it == list->end() ? -1 : *it;
+    }
+
+    juce::int64 AudioEngine::prevTransientSample (juce::int64 fromSample, int restrictToTrack)
+    {
+        if (! transientCacheValid)
+        {
+            buildTransientCacheInto (getActiveSessionDir(), transientCache, transientPerTrack);
+            transientCacheValid = true;
+        }
+        const auto* list = (restrictToTrack >= 1 && restrictToTrack <= (int) transientPerTrack.size())
+                              ? &transientPerTrack[(size_t) restrictToTrack - 1]
+                              : &transientCache;
+        if (list->empty()) return -1;
+        auto it = std::lower_bound (list->begin(), list->end(), fromSample);
+        if (it == list->begin()) return -1;
         --it;
         return *it;
     }

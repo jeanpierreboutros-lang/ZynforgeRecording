@@ -260,9 +260,19 @@ namespace zynforge
         // in the active session and caches the result; subsequent
         // calls reuse the cache. invalidateTransientCache() forces
         // a rescan on the next query (call after a fresh record).
-        juce::int64 nextTransientSample (juce::int64 fromSample);
-        juce::int64 prevTransientSample (juce::int64 fromSample);
+        //
+        // restrictToTrack >= 0 limits the search to onsets detected
+        // on that single Track_NN.wav (1-based file index, matching
+        // the recorder's numbering). Pass -1 to search the pooled
+        // list across every track (legacy behaviour).
+        juce::int64 nextTransientSample (juce::int64 fromSample, int restrictToTrack = -1);
+        juce::int64 prevTransientSample (juce::int64 fromSample, int restrictToTrack = -1);
         void invalidateTransientCache();
+
+        // Returns the transient list for a single track index
+        // (1-based, matching Track_NN.wav). Empty if not detected
+        // yet OR if the track has no audio file.
+        const std::vector<juce::int64>& getTransientsForTrack (int trackIdx);
 
         // Session tempo. setSessionTempoBpm() is the canonical setter --
         // it updates currentTempoBpm + persists to appProps. The tempo
@@ -667,6 +677,10 @@ namespace zynforge
         // the active session (sorted). Built lazily on first Tab-to-
         // transient query. Invalidated on session load + new record.
         std::vector<juce::int64> transientCache;
+        // Per-track onsets keyed by 1-based track index (matching
+        // Track_NN.wav). Populated alongside `transientCache` so
+        // track-restricted Tab can search the relevant lane only.
+        std::vector<std::vector<juce::int64>> transientPerTrack;
         bool                     transientCacheValid { false };
 
         // Per-track, per-parameter automation. UI-thread only for now

@@ -43,6 +43,14 @@ namespace zynforge
         void  setZoom (float z);
         float getZoom() const noexcept { return zoom; }
 
+        // Memory-Location recall hooks. setLogicalRowsVisible takes a
+        // list of logical strip indices to show (empty = show all).
+        // scrollToSample centres the horizontal viewport on a sample
+        // position. Both no-op when the row list / session isn't
+        // ready yet.
+        void  setLogicalRowsVisible (const std::vector<int>& rows);
+        void  scrollToSample (juce::int64 sample);
+
         // Optional hook into MainComponent's UndoManager. When set,
         // every automation-point add / remove / drag goes through
         // this wrapper so Cmd+Z reverts the lane to its prior state.

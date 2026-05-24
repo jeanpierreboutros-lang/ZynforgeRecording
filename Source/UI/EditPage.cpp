@@ -2775,6 +2775,23 @@ namespace zynforge
 
         int rowCount() const { return (int) rows.size(); }
 
+        // Used by EditPage::setLogicalRowsVisible for Memory-Location
+        // recall. visibleRows is a list of logical row indices to
+        // show; empty list = show all.
+        void setRowsVisibility (const std::vector<int>& visibleRows)
+        {
+            const bool showAll = visibleRows.empty();
+            for (size_t i = 0; i < rows.size(); ++i)
+                if (rows[i] != nullptr)
+                {
+                    const bool wanted = showAll
+                        || std::find (visibleRows.begin(), visibleRows.end(), (int) i)
+                               != visibleRows.end();
+                    rows[i]->setVisible (wanted);
+                }
+            resized();
+        }
+
     private:
         AudioEngine&                              engine;
         juce::AudioFormatManager&                 formats;
@@ -3043,6 +3060,27 @@ namespace zynforge
         // pixels-per-second matches the wave pane below it.
         if (ruler != nullptr)
             ruler->setContentWidth (contentW);
+    }
+
+    void EditPage::setLogicalRowsVisible (const std::vector<int>& visibleRows)
+    {
+        if (list == nullptr) return;
+        list->setRowsVisibility (visibleRows);
+    }
+
+    void EditPage::scrollToSample (juce::int64 sample)
+    {
+        if (list == nullptr || sample < 0) return;
+        const auto& player = engine.getPlayer();
+        const auto totalSamples = player.isLoaded() ? player.getTotalLengthSamples() : 0;
+        if (totalSamples <= 0) return;
+        const int contentW = list->getWidth();
+        if (contentW <= 0) return;
+        const double prop = (double) sample / (double) totalSamples;
+        const int    targetX = (int) (prop * (double) contentW);
+        const int    halfV   = viewport.getViewWidth() / 2;
+        viewport.setViewPosition (juce::jmax (0, targetX - halfV),
+                                  viewport.getViewPositionY());
     }
 
     void EditPage::setZoom (float z)

@@ -108,11 +108,29 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
                 // marker carries layout fields, restore them too.
                 // Absent fields = jump position only (backward compat
                 // with markers.json files that pre-date this feature).
-                if (m.zoom > 0.0f && editPage != nullptr)
-                    editPage->setZoom (m.zoom);
+                bool layoutRestored = false;
+                if (editPage != nullptr)
+                {
+                    if (m.zoom > 0.0f)
+                    {
+                        editPage->setZoom (m.zoom);
+                        layoutRestored = true;
+                    }
+                    // visibleTracks is treated as authoritative when
+                    // it's set on the marker; empty = no override.
+                    if (! m.visibleTracks.empty())
+                    {
+                        editPage->setLogicalRowsVisible (m.visibleTracks);
+                        layoutRestored = true;
+                    }
+                    // Centre the EDIT viewport on the marker's sample
+                    // so the jump actually shows the marker position
+                    // (rather than leaving the scroll wherever it was).
+                    editPage->scrollToSample (m.sampleOffset);
+                }
                 showStatus ("Jumped to marker " + juce::String (targetIdx + 1)
                             + ": " + m.name
-                            + (m.zoom > 0.0f ? " (layout restored)" : ""));
+                            + (layoutRestored ? " (layout restored)" : ""));
                 return true;
             }
             showStatus ("No marker " + juce::String (targetIdx + 1)
