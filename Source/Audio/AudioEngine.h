@@ -254,6 +254,16 @@ namespace zynforge
         juce::int64   getEditCursorSample() const noexcept;
         void          clearEditCursor() noexcept { setEditCursorSample (-1); }
 
+        // Tab-to-transient (Pro Tools-style). Returns the nearest
+        // detected onset sample position after / before `fromSample`,
+        // or -1 if none. First call lazily scans every Track_NN.wav
+        // in the active session and caches the result; subsequent
+        // calls reuse the cache. invalidateTransientCache() forces
+        // a rescan on the next query (call after a fresh record).
+        juce::int64 nextTransientSample (juce::int64 fromSample);
+        juce::int64 prevTransientSample (juce::int64 fromSample);
+        void invalidateTransientCache();
+
         // Session tempo. setSessionTempoBpm() is the canonical setter --
         // it updates currentTempoBpm + persists to appProps. The tempo
         // map is a sorted list of (samplePos, bpm) change points; the
@@ -653,6 +663,11 @@ namespace zynforge
         // split / paste use the playhead as the fallback).
         std::atomic<juce::int64> editCursorSample { -1 };
         std::vector<TempoChange> tempoMap;   // sorted by samplePos; UI/message-thread only
+        // Pooled list of detected onsets across every Track_NN.wav in
+        // the active session (sorted). Built lazily on first Tab-to-
+        // transient query. Invalidated on session load + new record.
+        std::vector<juce::int64> transientCache;
+        bool                     transientCacheValid { false };
 
         // Per-track, per-parameter automation. UI-thread only for now
         // (audio thread doesn't yet consume these -- the engineer reads

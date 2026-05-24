@@ -1,6 +1,7 @@
 #include "AudioEngine.h"
 #include "OscRemote.h"
 #include "FastAccumulate.h"
+#include "TransientDetector.h"
 #include "../Network/CompanionServer.h"
 
 namespace zynforge
@@ -123,6 +124,9 @@ namespace zynforge
     {
         const auto sessionDir = recorder.getActiveSessionDir();
         recorder.stopRecording();
+        // Fresh audio on disk -- the transient cache from the last
+        // session is now stale.
+        invalidateTransientCache();
         // Drop the threaded writer -- its destructor flushes the queue and
         // closes the underlying AudioFormatWriter cleanly.
         stereoMixWriter.reset();
@@ -242,6 +246,7 @@ namespace zynforge
             markers.setContext (sessionDir, player.getSampleRate());
             rememberRecentSession (sessionDir);
             seedDefaultClips();
+            invalidateTransientCache();   // different session = different audio
         }
         return n;
     }
@@ -259,6 +264,76 @@ namespace zynforge
     juce::int64 AudioEngine::getEditCursorSample() const noexcept
     {
         return editCursorSample.load (std::memory_order_acquire);
+    }
+
+    void AudioEngine::invalidateTransientCache()
+    {
+        transientCacheValid = false;
+        transientCache.clear();
+    }
+
+    // Lazy build. Scans every Track_NN.wav (in either Audio Files/
+    // or the session root) and pools the onset positions into one
+    // sorted list. Sequential, no threading -- the engineer presses
+    // Tab once and the first hit pays the analysis cost (typically
+    // sub-second for a 24-track 5-min session); the cache survives
+    // for the rest of the session.
+    static std::vector<juce::int64>
+    buildTransientCache (const juce::File& sessionDir)
+    {
+        std::vector<juce::int64> pooled;
+        if (! sessionDir.isDirectory()) return pooled;
+
+        const auto audioDir = sessionDir.getChildFile ("Audio Files");
+        auto files = audioDir.isDirectory()
+                       ? audioDir.findChildFiles (juce::File::findFiles, false, "Track_*.wav")
+                       : sessionDir.findChildFiles (juce::File::findFiles, false, "Track_*.wav");
+        for (auto& f : files)
+        {
+            auto onsets = zynforge::TransientDetector::detectInFile (f);
+            pooled.insert (pooled.end(), onsets.begin(), onsets.end());
+        }
+        std::sort (pooled.begin(), pooled.end());
+        // De-dupe nearby onsets (different tracks firing on the same
+        // beat). 24-ms window matches the detector's refractory.
+        constexpr juce::int64 kDedupeWindow = 48000 / 40;   // ~25 ms @ 48k
+        if (! pooled.empty())
+        {
+            std::vector<juce::int64> dedup;
+            dedup.reserve (pooled.size());
+            dedup.push_back (pooled.front());
+            for (size_t i = 1; i < pooled.size(); ++i)
+                if (pooled[i] - dedup.back() >= kDedupeWindow)
+                    dedup.push_back (pooled[i]);
+            pooled.swap (dedup);
+        }
+        return pooled;
+    }
+
+    juce::int64 AudioEngine::nextTransientSample (juce::int64 fromSample)
+    {
+        if (! transientCacheValid)
+        {
+            transientCache = buildTransientCache (getActiveSessionDir());
+            transientCacheValid = true;
+        }
+        if (transientCache.empty()) return -1;
+        auto it = std::upper_bound (transientCache.begin(), transientCache.end(), fromSample);
+        return it == transientCache.end() ? -1 : *it;
+    }
+
+    juce::int64 AudioEngine::prevTransientSample (juce::int64 fromSample)
+    {
+        if (! transientCacheValid)
+        {
+            transientCache = buildTransientCache (getActiveSessionDir());
+            transientCacheValid = true;
+        }
+        if (transientCache.empty()) return -1;
+        auto it = std::lower_bound (transientCache.begin(), transientCache.end(), fromSample);
+        if (it == transientCache.begin()) return -1;
+        --it;
+        return *it;
     }
 
     int AudioEngine::dropMarkerAtCurrentPosition()

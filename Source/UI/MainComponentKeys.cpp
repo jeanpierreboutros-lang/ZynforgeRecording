@@ -27,6 +27,34 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         return true;
     }
 
+    // Tab / Shift+Tab -- jump to next / previous transient. Pro
+    // Tools-style. Uses the engine's lazy transient cache (built
+    // from every Track_NN.wav on first hit, reused thereafter).
+    // Skips when a text editor has focus so name dialogs still
+    // tab between fields.
+    if (key == juce::KeyPress::tabKey
+        && dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) == nullptr)
+    {
+        const auto pos    = engine.getPlayer().getPositionSamples();
+        const auto target = key.getModifiers().isShiftDown()
+                              ? engine.prevTransientSample (pos)
+                              : engine.nextTransientSample (pos);
+        if (target >= 0)
+        {
+            engine.getPlayer().setPositionSamples (target);
+            showStatus ((key.getModifiers().isShiftDown() ? "Prev transient" : "Next transient")
+                        + juce::String (" -> ")
+                        + juce::String ((double) target / 48000.0, 2) + "s");
+        }
+        else
+        {
+            showStatus (key.getModifiers().isShiftDown()
+                          ? "No earlier transient"
+                          : "No later transient (load a session first?)");
+        }
+        return true;
+    }
+
     if (key == juce::KeyPress::spaceKey)
     {
         // Universal play / stop / pause toggle. Priority:
