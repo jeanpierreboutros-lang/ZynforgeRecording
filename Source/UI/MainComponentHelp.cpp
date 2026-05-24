@@ -11,8 +11,199 @@
 #include "MainComponent.h"
 #include "NewSessionDialog.h"
 #include "SessionRecoveryDialog.h"
+#include "../Theme/BrandColors.h"
+#include "../Theme/BrandTokens.h"
+#include "../Theme/DialogChrome.h"
 
 using namespace zynforge;
+
+namespace
+{
+    // Two-column reference table for the Keyboard Shortcuts dialog.
+    // Painted directly (not a TableListBox) since the content is
+    // small, static, and we want section headers between groups.
+    // Colours follow the brand grey palette so this dialog matches
+    // every other DialogChrome modal: bgPanel body, textPrimary
+    // headings, textSecondary descriptions, bgDeep zebra rows.
+    class ShortcutsTable final : public juce::Component
+    {
+    public:
+        ShortcutsTable()
+        {
+            addAndMakeVisible (viewport);
+            viewport.setViewedComponent (&content, false);
+            viewport.setScrollBarsShown (true, false);
+            content.setSize (640, computeContentHeight());
+        }
+
+        void resized() override
+        {
+            viewport.setBounds (getLocalBounds());
+            content.setSize (juce::jmax (640, viewport.getWidth()
+                                                - viewport.getScrollBarThickness()),
+                             computeContentHeight());
+        }
+
+    private:
+        struct Row { juce::String shortcut; juce::String description; };
+        struct Section { juce::String title; std::vector<Row> rows; };
+
+        static std::vector<Section> sections()
+        {
+            return {
+                { "Transport", {
+                    { "Space",        "Play / pause (stops recording if armed)" },
+                    { "M",            "Drop marker at playhead" },
+                }},
+                { "Cues", {
+                    { "1 – 9",        "Jump to cue 1 – 9" },
+                }},
+                { "Markers", {
+                    { "Cmd + 1 – 9",  "Jump to marker 1 – 9 (recalls layout if stored)" },
+                }},
+                { "Edit", {
+                    { "A",            "Solo selected strips" },
+                    { "S",            "Split clip at playhead" },
+                    { ",",            "Set range start at playhead" },
+                    { ".",            "Set range end at playhead" },
+                    { "4",            "Toggle snap mode" },
+                    { "Cmd + Z",      "Undo last clip edit" },
+                    { "Cmd + R",      "Redo" },
+                    { "Cmd + X",      "Cut selected strips" },
+                    { "Cmd + C",      "Copy selected strips" },
+                    { "Cmd + V",      "Paste strips" },
+                }},
+                { "Automation (EDIT view, click a row to activate)", {
+                    { "← / →",        "Walk to prev / next automation point (seeks playhead)" },
+                    { "↑ / ↓",        "Nudge focused point's value" },
+                    { "Delete",       "Remove focused point" },
+                }},
+                { "Mixer", {
+                    { "Shift + click", "Toggle multi-selection (additive)" },
+                    { "Cmd + A",      "Select every strip" },
+                    { "Esc",          "Clear strip selection" },
+                    { "Right-click strip",
+                                      "Rename / Colour / Stereo / Stream send / VCA assign / Output-mute" },
+                }},
+                { "Edit view", {
+                    { "Right-click row",  "Row size + Take swap (comp playlists)" },
+                    { "Right-click clip", "Mute / Lock / Duplicate / Delete / Gain / Fade in & out" },
+                    { "Drag swatch",      "Reorder strip (paused only)" },
+                }},
+            };
+        }
+
+        static constexpr int kHeaderH  = 26;
+        static constexpr int kRowH     = 24;
+        static constexpr int kColSplit = 200;   // left column width (shortcut)
+        static constexpr int kHPad     = 14;
+
+        static int computeContentHeight()
+        {
+            int h = 8;   // top pad
+            for (const auto& s : sections())
+                h += kHeaderH + (int) s.rows.size() * kRowH + 6;
+            return h + 8;
+        }
+
+        class Content final : public juce::Component
+        {
+        public:
+            void paint (juce::Graphics& g) override
+            {
+                int y = 8;
+                bool zebra = false;
+                for (const auto& s : sections())
+                {
+                    // Section header -- light grey on slightly lifted
+                    // panel, brand-orange accent stripe so groups read
+                    // distinctly without colour collisions.
+                    juce::Rectangle<int> hdr (0, y, getWidth(), kHeaderH);
+                    g.setColour (brand::bgElevated);
+                    g.fillRect (hdr);
+                    g.setColour (brand::brandOrange);
+                    g.fillRect (hdr.removeFromLeft (3));
+                    g.setColour (brand::textPrimary);
+                    g.setFont (brand::type::uiLabel());
+                    g.drawText (s.title.toUpperCase(),
+                                hdr.withTrimmedLeft (kHPad),
+                                juce::Justification::centredLeft, false);
+                    y += kHeaderH;
+
+                    for (const auto& r : s.rows)
+                    {
+                        juce::Rectangle<int> row (0, y, getWidth(), kRowH);
+                        // Zebra: even rows get a slight tint over bgPanel
+                        // so the eye can track across the row.
+                        if (zebra)
+                        {
+                            g.setColour (brand::bgDeep.withAlpha (0.45f));
+                            g.fillRect (row);
+                        }
+                        zebra = ! zebra;
+
+                        // Left column -- shortcut, mono, light grey.
+                        g.setColour (brand::textPrimary);
+                        g.setFont (brand::type::mono (12.0f, true));
+                        g.drawText (r.shortcut,
+                                    row.withTrimmedLeft (kHPad).withWidth (kColSplit - kHPad),
+                                    juce::Justification::centredLeft, false);
+
+                        // Right column -- description, sans, mid grey.
+                        g.setColour (brand::textSecondary);
+                        g.setFont (brand::type::uiBody());
+                        g.drawText (r.description,
+                                    row.withTrimmedLeft (kColSplit)
+                                       .withTrimmedRight (kHPad),
+                                    juce::Justification::centredLeft, true);
+                        y += kRowH;
+                    }
+                    y += 6;
+                    zebra = false;   // reset zebra at each section
+                }
+            }
+        };
+
+        juce::Viewport viewport;
+        Content        content;
+    };
+
+    class KeyboardShortcutsDialog final : public juce::Component
+    {
+    public:
+        KeyboardShortcutsDialog()
+        {
+            addAndMakeVisible (table);
+            okButton.setButtonText ("OK");
+            dialog::stylePrimary (okButton);
+            okButton.onClick = [this]
+            {
+                if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
+                    dw->exitModalState (0);
+            };
+            addAndMakeVisible (okButton);
+            setSize (700, 560);
+        }
+
+        void paint (juce::Graphics& g) override
+        {
+            dialog::paintChrome (g, *this, "KEYBOARD SHORTCUTS");
+        }
+
+        void resized() override
+        {
+            table.setBounds (dialog::bodyBounds (*this).reduced (brand::space::md,
+                                                                  brand::space::sm));
+            auto footer = dialog::footerBounds (*this);
+            okButton.setBounds (footer.removeFromRight (dialog::btnPrimary)
+                                       .reduced (0, brand::space::xs));
+        }
+
+    private:
+        ShortcutsTable    table;
+        juce::TextButton  okButton;
+    };
+}
 
 void MainComponent::showFirstRunTutorial()
 {
@@ -71,56 +262,19 @@ void MainComponent::showFirstRunTutorial()
 
 void MainComponent::showKeyboardShortcuts()
 {
-    const juce::String body =
-        "TRANSPORT\n"
-        "    Space        Play / pause (stops recording if armed)\n"
-        "    M             Drop marker at playhead\n"
-        "\n"
-        "CUES\n"
-        "    1 - 9         Jump to cue 1 - 9\n"
-        "\n"
-        "MARKERS\n"
-        "    Cmd + 1 - 9   Jump to marker 1 - 9 (recalls layout if stored)\n"
-        "\n"
-        "EDIT\n"
-        "    A             Solo selected strips\n"
-        "    S             Split clip at playhead\n"
-        "    ,              Set range start at playhead\n"
-        "    .              Set range end at playhead\n"
-        "    4             Toggle snap mode\n"
-        "    Cmd + Z         Undo last clip edit\n"
-        "    Cmd + R         Redo\n"
-        "    Cmd + X         Cut selected strips\n"
-        "    Cmd + C         Copy selected strips\n"
-        "    Cmd + V         Paste strips\n"
-        "\n"
-        "AUTOMATION (EDIT view, click a row to make it active)\n"
-        "    Left / Right  Walk to prev / next automation point (seeks playhead)\n"
-        "    Up / Down     Nudge focused point's value\n"
-        "    Delete        Remove focused point\n"
-        "\n"
-        "MIXER\n"
-        "    Shift + click strip\n"
-        "                    Toggle multi-selection (additive)\n"
-        "    Cmd + A         Select every strip\n"
-        "    Esc           Clear strip selection\n"
-        "    Right-click strip\n"
-        "                    Rename / Colour / Stereo / Stream send / VCA assign / Output-mute\n"
-        "\n"
-        "EDIT VIEW\n"
-        "    Right-click row\n"
-        "                    Row size + Take swap (comp playlists)\n"
-        "    Right-click clip\n"
-        "                    Mute / Lock / Duplicate / Delete / Gain / Fade in & out\n"
-        "    Drag swatch (left edge)\n"
-        "                    Reorder strip (paused only)";
-
-    auto* aw = new juce::AlertWindow ("Keyboard shortcuts",
-                                      body,
-                                      juce::MessageBoxIconType::NoIcon);
-    aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    aw->enterModalState (true, juce::ModalCallbackFunction::create (
-        [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }));
+    // Real two-column DialogChrome modal (no longer a centred-text
+    // AlertWindow dump). Same grey/light-grey palette as every other
+    // dialog in the app -- bgPanel body, brand-orange title stripe,
+    // textPrimary headings, textSecondary descriptions.
+    auto content = std::make_unique<KeyboardShortcutsDialog>();
+    juce::DialogWindow::LaunchOptions opts;
+    opts.dialogTitle             = "Keyboard shortcuts";
+    opts.dialogBackgroundColour  = brand::bgPanel;
+    opts.escapeKeyTriggersCloseButton = true;
+    opts.useNativeTitleBar       = false;
+    opts.resizable               = false;
+    opts.content.setOwned (content.release());
+    opts.launchAsync();
 }
 
 void MainComponent::showUserGuide()
@@ -235,19 +389,12 @@ void MainComponent::showStartupWelcome()
         self->engine.setStripCount (0);
         self->lastTrackCount = -1;
 
-        // Default template auto-apply -- engineer set one via File ▸
-        // Templates ▸ Set default template. After the fresh-session
-        // reset above, lay its strips back in so the show starts
-        // pre-patched instead of with an empty mixer.
-        const auto def = self->getDefaultTemplate();
-        if (def.existsAsFile()) self->applySessionTemplate (def);
-
+        // Fresh session starts EMPTY -- no auto-applied template,
+        // no leftover names. Engineers add channels with +CH or pick
+        // a template explicitly from File ▸ New Session from Template.
         self->refreshFormatButton();
         self->showStatus ("Session created: " + sessionFolder.getFileName()
-                          + (def.existsAsFile()
-                             ? juce::String (" -- applied default template '")
-                                 + def.getFileNameWithoutExtension() + "'"
-                             : juce::String (" -- add channels with +CH")));
+                          + " -- add channels with +CH");
     };
 
     auto onOpen = [self] (const juce::File& sessionDir)
@@ -326,15 +473,10 @@ void MainComponent::launchNewSessionDialog()
         self->engine.setStripCount (0);
         self->lastTrackCount = -1;
 
-        // Default template auto-apply (same path as showStartupWelcome).
-        const auto def = self->getDefaultTemplate();
-        if (def.existsAsFile()) self->applySessionTemplate (def);
-
-        self->showStatus ("New session '" + r.name + "'"
-                          + (def.existsAsFile()
-                             ? juce::String (" -- applied default template '")
-                                 + def.getFileNameWithoutExtension() + "'"
-                             : juce::String (" -- add channels with +CH and arm REC to capture")));
+        // Fresh session starts EMPTY (see showStartupWelcome for the
+        // same rule). Templates apply only via explicit menu choice.
+        self->showStatus ("New session '" + r.name
+                          + "' -- add channels with +CH and arm REC to capture");
     });
 }
 

@@ -415,10 +415,17 @@ namespace zynforge
         {
             for (int i = 0; i < 256; ++i)
             {
-                appProps->removeValue ("strip_stereo_" + juce::String (i));
-                appProps->removeValue ("strip_uid_"    + juce::String (i));
-                appProps->removeValue ("strip_vca_"    + juce::String (i));
-                appProps->removeValue ("strip_outmute_" + juce::String (i));
+                const auto suffix = juce::String (i);
+                appProps->removeValue ("strip_stereo_"    + suffix);
+                appProps->removeValue ("strip_uid_"       + suffix);
+                appProps->removeValue ("strip_vca_"       + suffix);
+                appProps->removeValue ("strip_editgroup_" + suffix);
+                appProps->removeValue ("strip_outmute_"   + suffix);
+                appProps->removeValue ("strip_isbus_"     + suffix);
+                // Aux sends -- 4 slots per strip can route to a bus.
+                for (int s = 0; s < 4; ++s)
+                    appProps->removeValue ("strip_send_" + juce::String (s)
+                                           + "_" + suffix);
             }
             appProps->saveIfNeeded();
         }
