@@ -17,6 +17,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Changed (latest)
+- **Monitor bus is fully configurable** — no more hardcoded outputs 0+1 on the side-channel feeds.
+  - Real-time click mix in `AudioEngine::audioDeviceIOCallbackWithContext` now routes through `masterOutL` / `masterOutR` (was pinned to outs 0+1).
+  - NDI Audio transmit and Companion HTTP stream both follow the same monitor pair (were also pinned to 0+1).
+  - **Audio Device dialog gains a "Monitor Bus" card** with L + R hardware-output pickers. Drives `engine.setMasterOutputs`, persisted in `appProps` under `masterOutL`/`masterOutR`, mirrored in the existing MasterStrip combo. Dialog grows from 640 × 460 → 640 × 560 to accommodate.
+  - Fixed stale tooltip on the per-strip `MON` button: was hardcoded to "(outputs 1 + 2)", now reads "output pair set in Audio Device dialog".
+
 ### Removed (latest)
 - **Bars|Beats ruler strip + everything bar/beat-visual** in the EDIT view. Live recorders navigate by wall-clock + markers, not by bars -- the 100+ amber bar numbers across the top of the ruler were visual clutter for zero operational gain. Cut:
   - The middle Bars|Beats strip in `EditTimeRuler` (the entire `kBarsBeatsH` band + the tempo-map walker that lit it). Ruler is now Markers (top, 20 px) + Min:Secs (bottom, 26 px), 46 px total.

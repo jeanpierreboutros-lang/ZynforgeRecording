@@ -118,10 +118,11 @@ namespace zynforge
         public:
             explicit DialogContent (AudioEngine& eng)
                 : engine (eng),
-                  outputCard ("Output",       brand::accentPlay),
-                  inputCard  ("Input",        brand::accentRecord),
-                  rateCard   ("Sample Rate",  brand::featureEngaged),
-                  bufferCard ("Buffer Size",  brand::engagedAmber),
+                  outputCard  ("Output",       brand::accentPlay),
+                  inputCard   ("Input",        brand::accentRecord),
+                  rateCard    ("Sample Rate",  brand::featureEngaged),
+                  bufferCard  ("Buffer Size",  brand::engagedAmber),
+                  monitorCard ("Monitor Bus",  brand::brandOrange),
                   inputMeter (eng)
             {
                 auto& dm = engine.getDeviceManager();
@@ -139,20 +140,36 @@ namespace zynforge
                 styleCombo (inputBox);
                 styleCombo (rateBox);
                 styleCombo (bufferBox);
+                styleCombo (monitorOutLBox);
+                styleCombo (monitorOutRBox);
 
-                outputBox.onChange = [this] { onDeviceChanged (false); };
-                inputBox .onChange = [this] { onDeviceChanged (true);  };
-                rateBox  .onChange = [this] { onSampleRateChanged();   };
-                bufferBox.onChange = [this] { onBufferSizeChanged();   };
+                outputBox.onChange     = [this] { onDeviceChanged (false); };
+                inputBox .onChange     = [this] { onDeviceChanged (true);  };
+                rateBox  .onChange     = [this] { onSampleRateChanged();   };
+                bufferBox.onChange     = [this] { onBufferSizeChanged();   };
+                monitorOutLBox.onChange = [this] { onMonitorOutChanged(); };
+                monitorOutRBox.onChange = [this] { onMonitorOutChanged(); };
 
                 addAndMakeVisible (outputCard);
                 addAndMakeVisible (inputCard);
                 addAndMakeVisible (rateCard);
                 addAndMakeVisible (bufferCard);
+                addAndMakeVisible (monitorCard);
                 addAndMakeVisible (outputBox);
                 addAndMakeVisible (inputBox);
                 addAndMakeVisible (rateBox);
                 addAndMakeVisible (bufferBox);
+                addAndMakeVisible (monitorOutLBox);
+                addAndMakeVisible (monitorOutRBox);
+
+                monitorLLabel.setText ("Monitor L", juce::dontSendNotification);
+                monitorRLabel.setText ("Monitor R", juce::dontSendNotification);
+                for (auto* l : { &monitorLLabel, &monitorRLabel })
+                {
+                    l->setFont (brand::type::caption());
+                    l->setColour (juce::Label::textColourId, brand::textTertiary);
+                    addAndMakeVisible (*l);
+                }
 
                 outChanLabel.setText ("Active outputs:", juce::dontSendNotification);
                 inChanLabel .setText ("Active inputs:",  juce::dontSendNotification);
@@ -198,7 +215,7 @@ namespace zynforge
                 addAndMakeVisible (cancelButton);
 
                 refreshAll();
-                setSize (640, 460);
+                setSize (640, 560);
             }
 
             ~DialogContent() override
@@ -221,20 +238,32 @@ namespace zynforge
                 auto footer = r.removeFromBottom (60).reduced (brand::space::md);
                 r.reduce (brand::space::md, brand::space::sm);
 
-                // 2x2 card grid
-                const int cardH = (r.getHeight() - brand::space::sm) / 2;
-                auto topRow = r.removeFromTop (cardH);
-                r.removeFromTop (brand::space::sm);
-                auto botRow = r;
+                // 3-row card layout:
+                //   row 1: Output | Input
+                //   row 2: Sample Rate | Buffer Size
+                //   row 3: Monitor Bus (full width)
+                const int totalH      = r.getHeight();
+                const int rowGap      = brand::space::sm;
+                const int row3H       = 96;                              // Monitor card -- single short row
+                const int dualRowsH   = totalH - row3H - rowGap * 2;     // height shared by rows 1 + 2
+                const int cardH       = (dualRowsH - rowGap) / 2;
 
-                const int half = (topRow.getWidth() - brand::space::sm) / 2;
+                auto topRow = r.removeFromTop (cardH);
+                r.removeFromTop (rowGap);
+                auto midRow = r.removeFromTop (cardH);
+                r.removeFromTop (rowGap);
+                auto monRow = r.removeFromTop (row3H);
+
+                const int half = (topRow.getWidth() - rowGap) / 2;
                 outputCard.setBounds (topRow.removeFromLeft (half));
-                topRow.removeFromLeft (brand::space::sm);
+                topRow.removeFromLeft (rowGap);
                 inputCard .setBounds (topRow);
 
-                rateCard  .setBounds (botRow.removeFromLeft (half));
-                botRow.removeFromLeft (brand::space::sm);
-                bufferCard.setBounds (botRow);
+                rateCard  .setBounds (midRow.removeFromLeft (half));
+                midRow.removeFromLeft (rowGap);
+                bufferCard.setBounds (midRow);
+
+                monitorCard.setBounds (monRow);
 
                 // Card contents
                 auto outBody = outputCard.bodyArea().translated (outputCard.getX(), outputCard.getY());
@@ -258,6 +287,22 @@ namespace zynforge
 
                 auto bufBody = bufferCard.bodyArea().translated (bufferCard.getX(), bufferCard.getY());
                 bufferBox.setBounds (bufBody.removeFromTop (brand::space::ctrlH));
+
+                // Monitor card -- 2 columns of label + combo. The L / R
+                // pickers drive engine.setMasterOutputs, which all the
+                // monitor-bound feeds (master sum, click, NDI, companion
+                // stream) follow.
+                auto monBody = monitorCard.bodyArea().translated (monitorCard.getX(),
+                                                                  monitorCard.getY());
+                const int halfMon = (monBody.getWidth() - brand::space::md) / 2;
+                auto leftCol  = monBody.removeFromLeft (halfMon);
+                monBody.removeFromLeft (brand::space::md);
+                auto rightCol = monBody;
+
+                monitorLLabel  .setBounds (leftCol .removeFromTop (brand::space::xl).withWidth (halfMon));
+                monitorOutLBox .setBounds (leftCol .removeFromTop (brand::space::ctrlH));
+                monitorRLabel  .setBounds (rightCol.removeFromTop (brand::space::xl).withWidth (halfMon));
+                monitorOutRBox .setBounds (rightCol.removeFromTop (brand::space::ctrlH));
 
                 applyButton .setBounds (footer.removeFromRight (110).reduced (0, brand::space::xs));
                 footer.removeFromRight (brand::space::sm);
@@ -331,12 +376,50 @@ namespace zynforge
                                           juce::dontSendNotification);
                     inChanValue .setText (channelsToString (dev->getActiveInputChannels()),
                                           juce::dontSendNotification);
+
+                    // Monitor L / R combos. Listed item per active
+                    // hardware output (1-based to match console
+                    // numbering, e.g. "Out 1", "Out 2"). The current
+                    // engine.masterOutL / masterOutR get selected.
+                    monitorOutLBox.clear (juce::dontSendNotification);
+                    monitorOutRBox.clear (juce::dontSendNotification);
+                    const auto active = dev->getActiveOutputChannels();
+                    const int numOut  = dev->getOutputChannelNames().size();
+                    for (int i = 0; i < numOut; ++i)
+                    {
+                        const auto label = "Out " + juce::String (i + 1)
+                                         + (active[i] ? juce::String() : juce::String (" (off)"));
+                        monitorOutLBox.addItem (label, i + 1);
+                        monitorOutRBox.addItem (label, i + 1);
+                    }
+                    monitorOutLBox.setSelectedId (
+                        juce::jlimit (1, juce::jmax (1, numOut),
+                                      engine.getMasterOutputL() + 1),
+                        juce::dontSendNotification);
+                    monitorOutRBox.setSelectedId (
+                        juce::jlimit (1, juce::jmax (1, numOut),
+                                      engine.getMasterOutputR() + 1),
+                        juce::dontSendNotification);
                 }
                 else
                 {
                     outChanValue.setText ("--", juce::dontSendNotification);
                     inChanValue .setText ("--", juce::dontSendNotification);
+                    monitorOutLBox.clear (juce::dontSendNotification);
+                    monitorOutRBox.clear (juce::dontSendNotification);
                 }
+            }
+
+            void onMonitorOutChanged()
+            {
+                if (refreshing) return;
+                const int l = juce::jmax (0, monitorOutLBox.getSelectedId() - 1);
+                const int r = juce::jmax (0, monitorOutRBox.getSelectedId() - 1);
+                engine.setMasterOutputs (l, r);
+                statusLabel.setText (
+                    "Monitor bus -> Out " + juce::String (l + 1)
+                    + " / Out " + juce::String (r + 1),
+                    juce::dontSendNotification);
             }
 
             static juce::String channelsToString (const juce::BigInteger& bits)
@@ -431,9 +514,11 @@ namespace zynforge
 
             AudioEngine& engine;
 
-            Card outputCard, inputCard, rateCard, bufferCard;
+            Card outputCard, inputCard, rateCard, bufferCard, monitorCard;
             juce::ComboBox outputBox, inputBox, rateBox, bufferBox;
+            juce::ComboBox monitorOutLBox, monitorOutRBox;
             juce::Label    outChanLabel, outChanValue, inChanLabel, inChanValue;
+            juce::Label    monitorLLabel, monitorRLabel;
             InputMeter     inputMeter;
             juce::TextButton testButton   { "Test" };
             juce::TextButton applyButton  { "Apply" };

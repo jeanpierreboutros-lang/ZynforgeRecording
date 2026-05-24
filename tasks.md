@@ -28,7 +28,6 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 - [ ] **Native iPad companion** (L) — replace the polled `/state.json` web client with a SwiftUI app over WebSocket.
 - [ ] **Audio-stream encryption** (M) — `/stream.wav` is plaintext PCM. Wrap in TLS or migrate to SRTP.
 - [ ] **Test harness for `Source/Audio/`** (L) — pure-C++ unit tests with a mocked `AudioIODeviceCallback` driver, runnable headless. See `testing.md`.
-- [ ] **Configurable monitor bus outputs** (M) — currently pinned to outs 0+1. Surface a picker in Audio Device dialog.
 - [ ] **Auto-arm-on-input-detect mode** (M) — optional setting where a strip arms itself when persistent signal is detected (useful for first-time pre-show configuration).
 
 ### Explicit non-goals (do not implement)
@@ -38,6 +37,7 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 ## Recently Completed
 
 ### 2026-05-25
+- [x] **Configurable monitor bus outputs** (M) — real-time click, NDI transmit, and Companion stream now route through `masterOutL` / `masterOutR` instead of hardcoded 0+1. New Monitor Bus card in the Audio Device dialog with L + R pickers; stale MON tooltip fixed. See `CHANGELOG.md`.
 - [x] **Per-session workspace layouts auto-save** (M) — view / strip width / VCA-panel visibility / EDIT zoom now write into `.zfproj` on every change. New `saveUILayoutToActiveSession` + `EditPage::onZoomChanged` wiring. See `CHANGELOG.md`.
 - [x] **Default session template** (S) — File ▸ Templates ▸ Set default template; the starred `.zftemplate` is auto-applied after every File ▸ New Session. See `CHANGELOG.md`.
 - [x] **Stereo VCA / Edit Group persistence fix** (S) — `setTrackVcaGroup` / `setTrackEditGroup` now propagate to the R half of stereo pairs so assignments survive relaunch. Menu labels read "(L+R)" on stereo strips. See `CHANGELOG.md`.

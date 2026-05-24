@@ -622,7 +622,7 @@ namespace zynforge
         inputCombo .setTooltip ("Hardware input this strip records from.");
         outputCombo.setTooltip ("Hardware output this strip plays VSC audio to.");
         armButton  .setTooltip ("ARM -- include this channel when RECORD is rolling.");
-        monButton  .setTooltip ("Input monitor -- sum this input into the stereo monitor bus (outputs 1 + 2).");
+        monButton  .setTooltip ("Input monitor -- sum this input into the stereo monitor bus (output pair set in Audio Device dialog).");
         muteButton .setTooltip ("Mute -- silence this channel in monitor + playback. Recording still hits disk.");
         soloButton .setTooltip ("Solo -- when any track is soloed, only soloed tracks are audible.");
         spectrum   .setTooltip ("Live FFT spectrum of this channel's input signal.");

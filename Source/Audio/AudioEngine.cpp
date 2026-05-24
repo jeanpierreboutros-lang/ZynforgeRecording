@@ -1838,13 +1838,15 @@ namespace zynforge
         }
 
         // Companion stream feed -- runs at the very end so it captures
-        // EVERYTHING the engineer hears at outputs 0+1 (per-channel
+        // EVERYTHING the engineer hears on the monitor bus (per-channel
         // routing + stream-bus + monitor sum, all collapsed into the
         // float output buffers by now).
         // ── Real-time click mix ────────────────────────────────────
         // Click runs on the audio thread so a tempo / voice change
         // takes effect on the next beat -- no file reload, no glitch.
-        // Mixed into outputs 0+1 (the engineer's monitor bus).
+        // Routed through the master output pair (masterOutL / masterOutR)
+        // so it follows the engineer's monitor-bus choice instead of
+        // pinning to hardware outs 0+1.
         if (click.isEnabled())
         {
             // If a tempo map exists and the player is rolling, look
@@ -1862,23 +1864,40 @@ namespace zynforge
                 }
                 click.setTempoBpm (bpm);
             }
-            float* L = (numOutputs > 0) ? outputs[0] : nullptr;
-            float* R = (numOutputs > 1) ? outputs[1] : nullptr;
+            const int cOutL = juce::jlimit (0, numOutputs - 1,
+                                            masterOutL.load (std::memory_order_relaxed));
+            const int cOutR = juce::jlimit (0, numOutputs - 1,
+                                            masterOutR.load (std::memory_order_relaxed));
+            float* L = (cOutL < numOutputs) ? outputs[cOutL] : nullptr;
+            float* R = (cOutR < numOutputs && cOutR != cOutL) ? outputs[cOutR] : nullptr;
             click.processBlock (L, R, numSamples);
         }
 
         if (companion != nullptr && companion->isRunning())
         {
-            const float* L = (numOutputs > 0) ? outputs[0] : nullptr;
-            const float* R = (numOutputs > 1) ? outputs[1] : nullptr;
+            const int sOutL = juce::jlimit (0, numOutputs - 1,
+                                            masterOutL.load (std::memory_order_relaxed));
+            const int sOutR = juce::jlimit (0, numOutputs - 1,
+                                            masterOutR.load (std::memory_order_relaxed));
+            const float* L = (sOutL < numOutputs) ? outputs[sOutL] : nullptr;
+            const float* R = (sOutR < numOutputs) ? outputs[sOutR] : nullptr;
             companion->feedStreamSamples (L, R, numSamples);
         }
 
         // NDI Audio transmit -- push the master mix onto the LAN as an
-        // NDI source. Cheap: pushStereo is a memcpy + one libndi call;
-        // a no-op when the runtime isn't installed.
+        // NDI source. Reads from the monitor-bus output channels so the
+        // network feed matches what the engineer hears at the console.
+        // Cheap: pushStereo is a memcpy + one libndi call; a no-op when
+        // the runtime isn't installed.
         if (ndi.isEnabled() && numOutputs >= 2)
-            ndi.pushStereo (outputs[0], outputs[1], numSamples);
+        {
+            const int nOutL = juce::jlimit (0, numOutputs - 1,
+                                            masterOutL.load (std::memory_order_relaxed));
+            const int nOutR = juce::jlimit (0, numOutputs - 1,
+                                            masterOutR.load (std::memory_order_relaxed));
+            if (outputs[nOutL] != nullptr && outputs[nOutR] != nullptr)
+                ndi.pushStereo (outputs[nOutL], outputs[nOutR], numSamples);
+        }
 
         // CPU-load: (callback wall time) / (block period). EMA-smoothed
         // with a fast attack and slower release so the engineer sees
