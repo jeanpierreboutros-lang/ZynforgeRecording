@@ -242,7 +242,7 @@ namespace zynforge
                 nameLabel.setBounds (b.removeFromTop (18));
                 b.removeFromTop (brand::space::xs);
                 nameEditor.setBounds (b.removeFromTop (36));
-                b.removeFromTop (24);
+                b.removeFromTop (brand::space::btnH);
 
                 auto local = b.removeFromTop (28);
                 localRadio.setBounds (local.removeFromLeft (150));
@@ -250,7 +250,7 @@ namespace zynforge
                 pathButton.setBounds (local.removeFromLeft (juce::jmin (local.getWidth(), 360)));
                 b.removeFromTop (28);
 
-                sectionHeader.setBounds (b.removeFromTop (22));
+                sectionHeader.setBounds (b.removeFromTop (brand::space::ctrlH));
                 b.removeFromTop (brand::space::md);
 
                 auto row1 = b.removeFromTop (60);
@@ -286,15 +286,15 @@ namespace zynforge
                 }
                 b.removeFromTop (12);
 
-                interleaved.setBounds (b.removeFromTop (26).removeFromLeft (180));
+                interleaved.setBounds (b.removeFromTop (brand::space::rowH).removeFromLeft (180));
                 b.removeFromTop (18);
 
-                fromTemplate.setBounds (b.removeFromTop (26).removeFromLeft (240));
+                fromTemplate.setBounds (b.removeFromTop (brand::space::rowH).removeFromLeft (240));
                 b.removeFromTop (14);
 
-                templatesHeader.setBounds (b.removeFromTop (22));
+                templatesHeader.setBounds (b.removeFromTop (brand::space::ctrlH));
                 b.removeFromTop (brand::space::xs);
-                templatesHint.setBounds (b.removeFromTop (20));
+                templatesHint.setBounds (b.removeFromTop (brand::space::ioH));
             }
 
         private:
@@ -384,13 +384,13 @@ namespace zynforge
                 auto b = getLocalBounds().reduced (kContentPad, 16);
                 header.setBounds (b.removeFromTop (28));
                 b.removeFromTop (brand::space::xs);
-                hint.setBounds (b.removeFromTop (20));
-                b.removeFromTop (20);
+                hint.setBounds (b.removeFromTop (brand::space::ioH));
+                b.removeFromTop (brand::space::ioH);
                 pickButton.setBounds (b.removeFromTop (40).removeFromLeft (260));
                 b.removeFromTop (30);
-                recentHeader.setBounds (b.removeFromTop (22));
+                recentHeader.setBounds (b.removeFromTop (brand::space::ctrlH));
                 b.removeFromTop (brand::space::xs);
-                recentHint.setBounds (b.removeFromTop (20));
+                recentHint.setBounds (b.removeFromTop (brand::space::ioH));
             }
 
         private:

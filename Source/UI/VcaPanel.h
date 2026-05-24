@@ -46,7 +46,7 @@ namespace zynforge
             g.drawRect (getLocalBounds(), 1);
             g.setColour (brand::textSecondary);
             g.setFont (brand::type::channelName());
-            g.drawText ("VCA GROUPS", getLocalBounds().removeFromTop (22),
+            g.drawText ("VCA GROUPS", getLocalBounds().removeFromTop (brand::space::ctrlH),
                         juce::Justification::centred, false);
         }
 
@@ -170,8 +170,8 @@ namespace zynforge
             {
                 auto r = getLocalBounds().reduced (brand::space::xs, brand::space::sm);
                 r.removeFromTop (6);   // colour swatch (matches paint)
-                nameLabel.setBounds (r.removeFromTop (20));
-                auto buttonRow = r.removeFromTop (24);
+                nameLabel.setBounds (r.removeFromTop (brand::space::ioH));
+                auto buttonRow = r.removeFromTop (brand::space::btnH);
                 const int half = buttonRow.getWidth() / 2;
                 mute.setBounds (buttonRow.removeFromLeft (half).reduced (2));
                 solo.setBounds (buttonRow.reduced (2));

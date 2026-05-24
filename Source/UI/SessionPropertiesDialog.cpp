@@ -141,16 +141,16 @@ namespace zynforge
                 {
                     auto col = cfg.removeFromLeft (colW);
                     sampleRateCap.setBounds (col.removeFromTop (brand::space::xl));
-                    sampleRateVal.setBounds (col.removeFromTop (24));
+                    sampleRateVal.setBounds (col.removeFromTop (brand::space::btnH));
                 }
                 {
                     auto col = cfg.removeFromLeft (colW);
                     bitDepthCap.setBounds (col.removeFromTop (brand::space::xl));
-                    bitDepthVal.setBounds (col.removeFromTop (24));
+                    bitDepthVal.setBounds (col.removeFromTop (brand::space::btnH));
                 }
                 {
                     formatCap.setBounds (cfg.removeFromTop (brand::space::xl));
-                    formatVal.setBounds (cfg.removeFromTop (24));
+                    formatVal.setBounds (cfg.removeFromTop (brand::space::btnH));
                 }
 
                 auto footer = getLocalBounds().removeFromBottom (56).reduced (24, 12);

@@ -85,9 +85,30 @@ namespace zynforge
             }
 
         private:
-            void timerCallback() override { repaint(); }
+            void timerCallback() override
+            {
+                // Sample the peak level. Only repaint when the lit
+                // bar would move by at least 1 px (~1.5 % at the
+                // dialog's input-meter width). Without this the
+                // meter repaints 24 Hz even when the level is
+                // perfectly stable.
+                float level = 0.0f;
+                auto& rec = engine.getRecorder();
+                for (int i = 0; i < rec.getNumTracks(); ++i)
+                {
+                    const auto p = rec.getTrack (i).peak.load (std::memory_order_relaxed);
+                    if (p > level) level = p;
+                }
+                const float quantised = std::round (juce::jlimit (0.0f, 1.0f, level) * 100.0f) / 100.0f;
+                if (std::abs (quantised - lastLevel) >= 0.005f)
+                {
+                    lastLevel = quantised;
+                    repaint();
+                }
+            }
 
             AudioEngine& engine;
+            float        lastLevel { -1.0f };   // -1 = never painted, force first paint
         };
 
         // ─── The main dialog content ───────────────────────────────────────
@@ -222,7 +243,7 @@ namespace zynforge
                 outChanLabel.setBounds (outBody.removeFromTop (brand::space::xl).withWidth (110));
                 outChanValue.setBounds (outBody.removeFromTop (18));
                 outBody.removeFromTop (brand::space::xs);
-                testButton  .setBounds (outBody.removeFromTop (24).reduced (0, 0));
+                testButton  .setBounds (outBody.removeFromTop (brand::space::btnH).reduced (0, 0));
 
                 auto inBody = inputCard.bodyArea().translated (inputCard.getX(), inputCard.getY());
                 inputBox   .setBounds (inBody.removeFromTop (brand::space::ctrlH));

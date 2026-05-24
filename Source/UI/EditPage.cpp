@@ -1286,9 +1286,9 @@ namespace zynforge
             // -------------- RIGHT (routing + vol/pan readout) --------------
             auto rightBlock = header.removeFromLeft (header.getWidth() - 8).reduced (2, 4);
 
-            inputCombo .setBounds (rightBlock.removeFromTop (20));
+            inputCombo .setBounds (rightBlock.removeFromTop (brand::space::ioH));
             rightBlock.removeFromTop (3);
-            outputCombo.setBounds (rightBlock.removeFromTop (20));
+            outputCombo.setBounds (rightBlock.removeFromTop (brand::space::ioH));
             // Vol / pan readout area is painted directly (no child
             // component) so the rest of the right block is left for
             // paint() to label.

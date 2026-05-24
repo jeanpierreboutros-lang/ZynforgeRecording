@@ -170,13 +170,13 @@ namespace zynforge
         auto r = getLocalBounds().reduced (brand::space::md, brand::space::lg);
         const bool stereo = engine.getMasterStereo();
 
-        title    .setBounds (r.removeFromTop (20));
+        title    .setBounds (r.removeFromTop (brand::space::ioH));
         r.removeFromTop (brand::space::sm);
-        modeButton.setBounds (r.removeFromTop (22));
+        modeButton.setBounds (r.removeFromTop (brand::space::ctrlH));
         r.removeFromTop (brand::space::xs);
-        outputCombo.setBounds (r.removeFromTop (22));
+        outputCombo.setBounds (r.removeFromTop (brand::space::ctrlH));
         r.removeFromTop (brand::space::sm);
-        muteButton.setBounds (r.removeFromTop (24));
+        muteButton.setBounds (r.removeFromTop (brand::space::btnH));
         r.removeFromTop (brand::space::sm);
         gainLabel.setBounds (r.removeFromTop (brand::space::xl));
         r.removeFromTop (brand::space::xs);

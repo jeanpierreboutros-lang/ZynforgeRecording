@@ -15,7 +15,31 @@ namespace zynforge
             ~PatchMatrix() override { stopTimer(); }
 
         private:
-            void timerCallback() override { repaint(); }
+            void timerCallback() override
+            {
+                // Compute a cheap state hash for the routing surface:
+                // track count, plus each track's routing + stereo +
+                // colour atomics. Repaint only when the hash differs
+                // from last tick. Without this guard the PATCH page
+                // repaints 10 Hz unconditionally even when nothing
+                // has moved.
+                auto& rec = engine.getRecorder();
+                const int n = rec.getNumTracks();
+                std::size_t h = (std::size_t) n;
+                for (int i = 0; i < n; ++i)
+                {
+                    auto& t = rec.getTrack (i);
+                    const auto r = isInput ? t.inputRouting.load (std::memory_order_relaxed)
+                                            : t.outputRouting.load (std::memory_order_relaxed);
+                    const auto s = t.isStereo .load (std::memory_order_relaxed) ? 1 : 0;
+                    const auto c = (std::size_t) t.colourARGB.load (std::memory_order_relaxed);
+                    h = h * 1315423911u ^ (std::size_t) (r + 7);
+                    h = h * 1315423911u ^ (std::size_t) (s + 11);
+                    h = h * 1315423911u ^ c;
+                }
+                if (h != lastHash) { lastHash = h; repaint(); }
+            }
+            std::size_t lastHash { 0 };
         public:
 
             struct Layout

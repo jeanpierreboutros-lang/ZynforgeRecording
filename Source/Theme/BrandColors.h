@@ -116,6 +116,39 @@ namespace zynforge::brand
         inline constexpr float muted     = 0.55f;  // mid-contrast overlays
         inline constexpr float prominent = 0.85f;  // playhead, focus highlight
         inline constexpr float bold      = 0.95f;  // near-opaque text on translucent bg
+
+        // ── Ad-hoc values that DON'T fit the scale ──────────────
+        // Audit catalog of every withAlpha(...) literal that doesn't
+        // map to a named token above, with the reason it was picked.
+        // Document new ad-hoc alphas HERE instead of leaving them
+        // inline as magic numbers; if a new use case repeats one of
+        // these often, promote it to a named token in the scale.
+        //
+        //   0.06  -- BigClock gloss highlight top, intentionally near-
+        //            invisible to read as light source, not bg colour
+        //   0.10  -- crossfade band fill (EditPage), the lightest
+        //            possible band that's still visible against the
+        //            waveform pane's mid-grey
+        //   0.14  -- BigClock Mode::Playing background tint, a touch
+        //            lighter than gloss-bg so the panel reads "active
+        //            but not recording"
+        //   0.22  -- mute scrim wash (EditPage TrackRow), strong
+        //            enough to drop the muted clip below the rest
+        //            without obscuring waveform shape
+        //   0.25  -- timeline-strip player-position fade trail,
+        //            picked to leave a visible streak without
+        //            stealing attention from the playhead
+        //   0.32  -- engaged-control surround (PUNCH toggle when on),
+        //            mid-strength bloom around the toggle to read
+        //            "this is what's controlling writes right now"
+        //   0.45  -- transient-tick alpha (EditPage TrackRow); also
+        //            Toast inner glow + LedMeter peak-lit segment.
+        //            Repeated enough times we should promote, but
+        //            each use has a slightly different bg so a single
+        //            named token would lie about intent
+        //   0.75  -- EditPage selection-band edge contrast (selector
+        //            tool drag-region). Strong stroke without being
+        //            opaque -- still lets the waveform show through
     }
 
     // ── Elevation / shadow scale ──────────────────────────────────────

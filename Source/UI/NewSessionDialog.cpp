@@ -180,20 +180,20 @@ namespace zynforge
                 b.removeFromTop (brand::space::xl);
 
                 // Local Storage row: [○] Local Storage:  [path]
-                auto local = b.removeFromTop (24);
+                auto local = b.removeFromTop (brand::space::btnH);
                 localRadio.setBounds (local.removeFromLeft (130));
                 local.removeFromLeft (brand::space::xs);
                 pathButton.setBounds (local.removeFromLeft (juce::jmin (local.getWidth(), 280)));
                 b.removeFromTop (brand::space::sm);
 
                 // Cloud row
-                auto cloud = b.removeFromTop (24);
+                auto cloud = b.removeFromTop (brand::space::btnH);
                 cloudRadio.setBounds (cloud.removeFromLeft (130));
                 cloudHelp .setBounds (cloud.removeFromLeft (22));
                 b.removeFromTop (18);
 
                 // Section header
-                sectionHeader.setBounds (b.removeFromTop (22));
+                sectionHeader.setBounds (b.removeFromTop (brand::space::ctrlH));
                 b.removeFromTop (brand::space::md);
 
                 // Row: File Type / Sample Rate
@@ -231,7 +231,7 @@ namespace zynforge
                 }
                 b.removeFromTop (14);
 
-                interleavedToggle.setBounds (b.removeFromTop (24).removeFromLeft (160));
+                interleavedToggle.setBounds (b.removeFromTop (brand::space::btnH).removeFromLeft (160));
 
                 // Footer
                 auto footer = getLocalBounds().removeFromBottom (52).reduced (20, 10);

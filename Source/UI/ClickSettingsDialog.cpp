@@ -98,7 +98,7 @@ namespace zynforge
             {
                 auto r = getLocalBounds().reduced (brand::space::lg, brand::space::sm);
 
-                auto topRow = r.removeFromTop (24);
+                auto topRow = r.removeFromTop (brand::space::btnH);
                 title  .setBounds (topRow.removeFromLeft (60));
                 topRow.removeFromLeft (brand::space::lg);
                 voice  .setBounds (topRow.removeFromRight (160));
