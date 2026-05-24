@@ -48,14 +48,27 @@ namespace zynforge
                 for (int i = 0; i < strips; ++i)
                 {
                     auto& t = engine.getRecorder().getTrack (i);
-                    t.gainDb .store (0.0f);
-                    t.pan    .store (0.0f);
-                    t.muted  .store (false);
-                    t.soloed .store (false);
-                    t.armed  .store (false);
-                    t.monitor.store (false);
+                    t.gainDb  .store (0.0f);
+                    t.pan     .store (0.0f);
+                    t.muted   .store (false);
+                    t.soloed  .store (false);
+                    t.armed   .store (false);
+                    t.monitor .store (false);
+                    t.vcaGroup.store (-1);   // unassigned
+                    t.isStereo.store (false);
                     engine.setTrackInputRouting  (i, juce::jlimit (-1, numInputs - 1, i));
                     engine.setTrackOutputRouting (i, -1);   // master-only
+                    engine.setTrackVcaGroup      (i, -1);   // also wipes appProps key
+                }
+                // Reset every VCA to a clean baseline so leftover
+                // gain/mute/solo from a prior test doesn't leak.
+                for (int v = 0; v < AudioEngine::kNumVcas; ++v)
+                {
+                    auto& vca = engine.getVca (v);
+                    vca.gainDb.store (0.0f);
+                    vca.muted .store (false);
+                    vca.soloed.store (false);
+                    vca.rampSamplesRemaining.store (0);
                 }
                 inBuf .clear();
                 outBuf.clear();
@@ -230,6 +243,194 @@ namespace zynforge
                 // Cap at 100 so we don't assert on a flaky CI bound.
                 const float load = f.engine.getAudioLoadPct();
                 expect (load >= 0.0f && load <= 100.0f);
+            }
+
+            // ─── Solo isolation ──────────────────────────────────────
+            beginTest ("Solo isolates: only soloed strip contributes to monitor sum");
+            {
+                CallbackFixture f (3, 3, 2);
+                for (int i = 0; i < 3; ++i)
+                {
+                    auto& t = f.engine.getRecorder().getTrack (i);
+                    t.armed.store (true); t.monitor.store (true);
+                }
+                f.engine.setMasterOutputs (0, 1);
+                f.writeInput (0, 0.5f, 256);
+                f.writeInput (1, 0.5f, 256);
+                f.writeInput (2, 0.5f, 256);
+
+                // Baseline: nothing soloed -> all three contribute.
+                f.process (256);
+                const float baseline = f.peakOut (0, 256);
+                expect (baseline > 0.20f);
+
+                // Solo strip 1 -> strips 0 + 2 drop out.
+                f.engine.getRecorder().getTrack (1).soloed.store (true);
+                f.process (256);
+                const float soloOnly = f.peakOut (0, 256);
+                // Only one strip contributing instead of three -> peak
+                // is roughly 1/3 of baseline. We just need it to be
+                // strictly smaller (and still non-zero).
+                expect (soloOnly > 0.0f);
+                expect (soloOnly < baseline * 0.7f);
+            }
+
+            beginTest ("Solo gates a muted-strip from being heard");
+            {
+                CallbackFixture f (2, 2, 2);
+                auto& s0 = f.engine.getRecorder().getTrack (0);
+                auto& s1 = f.engine.getRecorder().getTrack (1);
+                s0.armed.store (true); s0.monitor.store (true);
+                s1.armed.store (true); s1.monitor.store (true);
+                // Mute strip 0, solo strip 1. With no solo, mute would
+                // gate strip 0; with solo on strip 1, mute is moot
+                // because only strip 1 passes anyway.
+                s0.muted .store (true);
+                s1.soloed.store (true);
+                f.engine.setMasterOutputs (0, 1);
+                f.writeInput (0, 0.5f, 256);
+                f.writeInput (1, 0.5f, 256);
+                f.process (256);
+                // Only strip 1's input contributes.
+                expect (f.peakOut (0, 256) > 0.20f);
+            }
+
+            // ─── VCA groups ──────────────────────────────────────────
+            beginTest ("VCA group assignment round-trips through the audio thread");
+            {
+                // Design note: VCA *gain* applies only on the per-strip
+                // output-routing path (effectiveGainDb, summed at the
+                // FOH-style strip-out stage) -- NOT on the engineer's
+                // monitor sum, which uses the strip's gainDb directly.
+                // VCA *mute* and *solo* gate via channelAudible, which
+                // DOES feed the monitor sum (see the next two tests).
+                // Exercising VCA gain end-to-end needs a loaded session
+                // (playerScratch must have data), which is out of scope
+                // for these headless tests. We round-trip the state to
+                // confirm the atomics + API wiring at least.
+                CallbackFixture f (2, 2, 4);
+                f.engine.setTrackVcaGroup (0, 3);
+                f.engine.setTrackVcaGroup (1, 3);
+                f.engine.getVca (3).gainDb.store (-12.0f);
+                expectEquals (f.engine.getRecorder().getTrack (0).vcaGroup.load(), 3);
+                expectEquals (f.engine.getRecorder().getTrack (1).vcaGroup.load(), 3);
+                expectWithinAbsoluteError (f.engine.getVca (3).gainDb.load(), -12.0f, 0.001f);
+                // Process a block; nothing should crash.
+                f.writeInput (0, 0.5f, 256);
+                f.process (256);
+            }
+
+            beginTest ("VCA mute gates every strip assigned to that bus");
+            {
+                CallbackFixture f (2, 2, 2);
+                for (int i = 0; i < 2; ++i)
+                {
+                    auto& t = f.engine.getRecorder().getTrack (i);
+                    t.armed.store (true); t.monitor.store (true);
+                    f.engine.setTrackVcaGroup (i, 0);
+                }
+                f.engine.getVca (0).muted.store (true);
+                f.engine.setMasterOutputs (0, 1);
+                f.writeInput (0, 0.5f, 256);
+                f.writeInput (1, 0.5f, 256);
+                f.process (256);
+                expectEquals (f.peakOut (0, 256), 0.0f);
+                expectEquals (f.peakOut (1, 256), 0.0f);
+            }
+
+            beginTest ("VCA solo silences ungrouped strips");
+            {
+                CallbackFixture f (3, 3, 2);
+                for (int i = 0; i < 3; ++i)
+                {
+                    auto& t = f.engine.getRecorder().getTrack (i);
+                    t.armed.store (true); t.monitor.store (true);
+                }
+                // Strip 0 -> VCA 0 (soloed). Strips 1 + 2 ungrouped.
+                f.engine.setTrackVcaGroup (0, 0);
+                f.engine.getVca (0).soloed.store (true);
+                f.engine.getVca (0).gainDb.store (0.0f);
+                f.engine.setMasterOutputs (0, 1);
+                f.writeInput (0, 0.5f, 256);
+                f.writeInput (1, 0.5f, 256);
+                f.writeInput (2, 0.5f, 256);
+                // Let any soft-takeover ramps settle.
+                for (int n = 0; n < 8; ++n) f.process (256);
+                // Only strip 0 (VCA-soloed) passes; 1 + 2 drop out.
+                // Result is ~ one strip's worth on the monitor bus
+                // (constant 0.5 input * constant-power 0.707 = 0.353).
+                const float pk = f.peakOut (0, 256);
+                expect (pk > 0.20f);
+                expect (pk < 0.50f);
+            }
+
+            // ─── Click track follows the monitor bus ─────────────────
+            beginTest ("Click engine writes to the configured master output pair");
+            {
+                CallbackFixture f (0, 0, 8);
+                f.engine.getClickEngine().setEnabled (true);
+                f.engine.setMasterStereo (true);
+                f.engine.setMasterOutputs (4, 5);
+                // ClickEngine fires at the first sample of the first
+                // block (samplesUntilNextBeat1 = 0 after prepare).
+                f.process (256);
+                // Click sample should land on outs 4/5; not on 0/1.
+                expect      (f.peakOut (4, 256) > 0.0f);
+                expectEquals (f.peakOut (0, 256), 0.0f);
+                expectEquals (f.peakOut (1, 256), 0.0f);
+            }
+
+            // ─── Stereo-pair summing ─────────────────────────────────
+            // The engine does not have special "stereo pair" audio
+            // processing -- each track is mono with constant-power pan.
+            // A stereo pair is engineered by setting strip 0 (L) pan
+            // hard-left and strip 1 (R) pan hard-right.
+            beginTest ("Hard-left pan routes audio to monitor L only");
+            {
+                CallbackFixture f (1, 1, 2);
+                auto& t = f.engine.getRecorder().getTrack (0);
+                t.armed.store (true); t.monitor.store (true);
+                t.pan.store (-1.0f);   // full left
+                f.engine.setMasterOutputs (0, 1);
+                f.writeInput (0, 0.5f, 256);
+                f.process (256);
+                expect (f.peakOut (0, 256) > 0.30f);
+                expect (f.peakOut (1, 256) < 0.01f);   // ~zero (constant-power pan)
+            }
+
+            beginTest ("Hard-right pan routes audio to monitor R only");
+            {
+                CallbackFixture f (1, 1, 2);
+                auto& t = f.engine.getRecorder().getTrack (0);
+                t.armed.store (true); t.monitor.store (true);
+                t.pan.store (1.0f);   // full right
+                f.engine.setMasterOutputs (0, 1);
+                f.writeInput (0, 0.5f, 256);
+                f.process (256);
+                expect (f.peakOut (1, 256) > 0.30f);
+                expect (f.peakOut (0, 256) < 0.01f);
+            }
+
+            beginTest ("Stereo pair (L hard-left + R hard-right) splits to L+R outs");
+            {
+                CallbackFixture f (2, 2, 2);
+                // Strip 0 = L track, fed from input 0, panned hard L.
+                // Strip 1 = R track, fed from input 1, panned hard R.
+                for (int i = 0; i < 2; ++i)
+                {
+                    auto& t = f.engine.getRecorder().getTrack (i);
+                    t.armed.store (true); t.monitor.store (true);
+                }
+                f.engine.setTrackStereo (0, true);   // mark as stereo pair
+                f.engine.getRecorder().getTrack (0).pan.store (-1.0f);
+                f.engine.getRecorder().getTrack (1).pan.store ( 1.0f);
+                f.engine.setMasterOutputs (0, 1);
+                f.writeInput (0, 0.4f, 256);
+                f.writeInput (1, 0.4f, 256);
+                f.process (256);
+                // L input lands on monitor L, R input on monitor R.
+                expect (f.peakOut (0, 256) > 0.20f);
+                expect (f.peakOut (1, 256) > 0.20f);
             }
         }
     };
