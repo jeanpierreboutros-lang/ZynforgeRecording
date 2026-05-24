@@ -77,6 +77,14 @@ namespace zynforge
         //   4 = FadeOut    (drag the fade-out apex)
         int draggingClipIdx     { -1 };
         int draggingClipModeInt {  0 };
+        // Crossfade-midpoint drag. When >= 0, the engineer grabbed
+        // the 6 px dot that paints at the midpoint of an overlap
+        // between adjacent clips. draggingXfadeAIdx is the OUTGOING
+        // clip's index in the per-track list; the incoming is
+        // AIdx + 1. We slide the equal-power crossfade point by
+        // updating both clips' fade lengths so the midpoint follows
+        // the mouse.
+        int draggingXfadeAIdx { -1 };
         int dragStartX          {  0 };
         juce::int64 lastDragSamples { 0 };
         juce::int64 dragStartFadeIn  { 0 };
@@ -1529,6 +1537,20 @@ namespace zynforge
                 }
             }
 
+            // Crossfade midpoint drag wins over clip-edit drag --
+            // the handle sits inside the overlap band so the engineer
+            // expects clicking it to grab the crossfade balance
+            // rather than starting a clip move on the underlying clip.
+            if (laneMode == LaneMode::Waveform && e.x >= headerW)
+            {
+                const int xfadeA = hitTestCrossfadeHandle (e.getPosition());
+                if (xfadeA >= 0)
+                {
+                    draggingXfadeAIdx = xfadeA;
+                    return;
+                }
+            }
+
             // Clip drag-edit. Only when we're on the waveform lane (so
             // automation lanes still own their own drag semantics) and
             // the track actually has clips to grab.
@@ -1768,6 +1790,48 @@ namespace zynforge
 
         void mouseDrag (const juce::MouseEvent& e) override
         {
+            // Crossfade midpoint drag. Convert the mouse x to a
+            // sample position, then set both adjacent clips' fades
+            // so the equal-power crossfade point lands there.
+            //   bFadeIn  = midSample - bStart
+            //   aFadeOut = aEnd      - midSample
+            // The midpoint is clamped inside [bStart+1, aEnd-1] so
+            // a fade never goes to zero (which would visually drop
+            // one side of the crossfade entirely).
+            if (draggingXfadeAIdx >= 0)
+            {
+                auto* clips = engine.tryClipsFor (index);
+                if (clips != nullptr && draggingXfadeAIdx + 1 < (int) clips->size())
+                {
+                    const auto& player = engine.getPlayer();
+                    const juce::int64 totalSamples = player.isLoaded()
+                        ? player.getTotalLengthSamples() : 0;
+                    if (totalSamples > 0)
+                    {
+                        const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+                        const double prop = juce::jlimit (0.0, 1.0,
+                            (double) (e.x - inner.getX()) / (double) juce::jmax (1, inner.getWidth()));
+                        const juce::int64 midSample = (juce::int64) (prop * (double) totalSamples);
+                        const auto& a = (*clips)[(size_t) draggingXfadeAIdx];
+                        const auto& b = (*clips)[(size_t) (draggingXfadeAIdx + 1)];
+                        const auto aEnd   = a.timelineStartSamples + a.fileLengthSamples;
+                        const auto bStart = b.timelineStartSamples;
+                        const juce::int64 clamped = juce::jlimit (bStart + 1, aEnd - 1, midSample);
+                        const juce::int64 bFadeIn  = clamped - bStart;
+                        const juce::int64 aFadeOut = aEnd - clamped;
+                        // Preserve existing fadeIn / fadeOut on the
+                        // OPPOSITE edge of each clip; only the
+                        // crossfade-side fade is being adjusted.
+                        engine.setClipFades (index, draggingXfadeAIdx,
+                                             a.fadeInSamples, aFadeOut);
+                        engine.setClipFades (index, draggingXfadeAIdx + 1,
+                                             bFadeIn, b.fadeOutSamples);
+                        repaint();
+                    }
+                }
+                return;
+            }
+
             // Strip reorder via swatch drag -- once the engineer's
             // vertical movement crosses one row height, swap with the
             // adjacent strip and reset the drag origin so a continuous
@@ -1993,6 +2057,7 @@ namespace zynforge
             draggingTensionSegIdx = -1;
             draggingClipIdx  = -1;
             draggingClipModeInt = 0;
+            draggingXfadeAIdx = -1;
             lastDragSamples  = 0;
             if ((wasDraggingPoint || wasDraggingTension) && automationDragEnd)
                 automationDragEnd (wasDraggingTension ? "Bend automation curve"
@@ -2197,6 +2262,44 @@ namespace zynforge
         // (row-local) position, or -1 if none. Hit tolerance is 7 px
         // around the painted handle (which is 7 px wide), so a sloppy
         // right-click still lands the menu.
+        // Returns the index of the OUTGOING clip whose crossfade
+        // midpoint handle is under the cursor, or -1. Mirrors the
+        // paint code's overlap detection. 6 px tolerance around
+        // the handle.
+        int hitTestCrossfadeHandle (juce::Point<int> pos) const
+        {
+            const auto* clips = engine.tryClipsFor (index);
+            if (clips == nullptr || clips->size() < 2) return -1;
+            const auto& player = engine.getPlayer();
+            const juce::int64 totalSamples = player.isLoaded()
+                ? player.getTotalLengthSamples() : 0;
+            if (totalSamples <= 0) return -1;
+            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+            auto sampleToX = [&] (juce::int64 sp) -> int
+            {
+                const double prop = juce::jlimit (0.0, 1.0,
+                    (double) sp / (double) totalSamples);
+                return inner.getX() + (int) (prop * inner.getWidth());
+            };
+            for (size_t i = 0; i + 1 < clips->size(); ++i)
+            {
+                const auto& a = (*clips)[i];
+                const auto& b = (*clips)[i + 1];
+                const auto aEnd   = a.timelineStartSamples + a.fileLengthSamples;
+                const auto bStart = b.timelineStartSamples;
+                if (bStart >= aEnd) continue;
+                if (aEnd - bStart < 64) continue;
+                const int xL = sampleToX (bStart);
+                const int xR = sampleToX (aEnd);
+                if (xR - xL < 4) continue;
+                const int xMid = (xL + xR) / 2;
+                const int yMid = inner.getY() + inner.getHeight() / 2;
+                if (std::abs (pos.x - xMid) <= 6 && std::abs (pos.y - yMid) <= 6)
+                    return (int) i;
+            }
+            return -1;
+        }
+
         int hitTestAutomationPoint (juce::Point<int> pos) const
         {
             if (laneMode == LaneMode::Waveform || laneMode == LaneMode::Markers)

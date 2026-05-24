@@ -831,6 +831,29 @@ namespace zynforge
             g.drawText (label, badge.toNearestInt(), juce::Justification::centred, false);
         }
 
+        // Edit Group badge -- second chip stacked below the VCA
+        // chip (or in the same slot if no VCA). Pro Tools shows
+        // group names per strip so engineers can see at a glance
+        // which strips will move together. "EG N" matches the
+        // context-menu labels (Edit Group 1..8).
+        const int eg = state.editGroup.load (std::memory_order_relaxed);
+        if (eg >= 0 && eg < 8)
+        {
+            const juce::String label = "EG" + juce::String (eg + 1);
+            // Stack underneath the VCA chip when both are present;
+            // share the slot otherwise.
+            const float yOffset = (vca >= 0 && vca < 8) ? 18.0f : 4.0f;
+            auto badge = juce::Rectangle<float> (r.getRight() - 26.0f,
+                                                  r.getY() + yOffset, 22.0f, 12.0f);
+            g.setColour (brand::accentVS.darker (0.30f));
+            g.fillRoundedRectangle (badge, 2.5f);
+            g.setColour (brand::accentVS.brighter (0.40f));
+            g.drawRoundedRectangle (badge, 2.5f, 0.75f);
+            g.setColour (brand::onSignal (brand::accentVS.darker (0.30f)));
+            g.setFont (brand::fonts::small());
+            g.drawText (label, badge.toNearestInt(), juce::Justification::centred, false);
+        }
+
         // BUS badge -- top-right, mirroring the VCA chip position.
         // Bus strips and VCA-grouped strips are mutually exclusive
         // (a bus is itself a group target, never a member of one),
