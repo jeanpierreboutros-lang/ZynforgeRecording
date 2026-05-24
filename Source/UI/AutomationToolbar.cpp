@@ -55,7 +55,8 @@ namespace zynforge
 
         // WRITE toggle. When on + playback rolling, every fader / pan
         // move writes a point at the current playhead. Off = lanes
-        // are read-only during playback.
+        // are read-only during playback. Mutually exclusive with
+        // TRIM (turning one on clears the other).
         writeButton.setClickingTogglesState (true);
         writeButton.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
         writeButton.setColour (juce::TextButton::buttonOnColourId,  brand::accentRecord);
@@ -65,9 +66,38 @@ namespace zynforge
                                 "Toggle off to play back without overwriting existing points.");
         writeButton.onClick = [this]
         {
-            if (onWriteModeChanged) onWriteModeChanged (writeButton.getToggleState());
+            const bool on = writeButton.getToggleState();
+            if (on && trimButton.getToggleState())
+            {
+                trimButton.setToggleState (false, juce::dontSendNotification);
+                if (onTrimModeChanged) onTrimModeChanged (false);
+            }
+            if (onWriteModeChanged) onWriteModeChanged (on);
         };
         addAndMakeVisible (writeButton);
+
+        // TRIM toggle. When on + playback rolling, fader / pan moves
+        // add to the per-track trim offset instead of dropping new
+        // points. Engineer can ride a level by ±N dB without
+        // overwriting the existing automation shape.
+        trimButton.setClickingTogglesState (true);
+        trimButton.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
+        trimButton.setColour (juce::TextButton::buttonOnColourId,  brand::engagedAmber);
+        trimButton.setColour (juce::TextButton::textColourOffId,   brand::textPrimary);
+        trimButton.setColour (juce::TextButton::textColourOnId,    brand::onSignal (brand::engagedAmber));
+        trimButton.setTooltip ("TRIM mode: fader and pan moves during playback nudge the per-track "
+                                "trim offset, leaving the automation curve shape untouched.");
+        trimButton.onClick = [this]
+        {
+            const bool on = trimButton.getToggleState();
+            if (on && writeButton.getToggleState())
+            {
+                writeButton.setToggleState (false, juce::dontSendNotification);
+                if (onWriteModeChanged) onWriteModeChanged (false);
+            }
+            if (onTrimModeChanged) onTrimModeChanged (on);
+        };
+        addAndMakeVisible (trimButton);
     }
 
     void AutomationToolbar::styleToolButton (juce::TextButton& b, juce::Colour activeColour)
@@ -125,6 +155,8 @@ namespace zynforge
 
         clearButton .setBounds (r.removeFromLeft (110).reduced (0, 3));
         r.removeFromLeft (8);
-        writeButton .setBounds (r.removeFromLeft (80).reduced (0, 3));
+        writeButton .setBounds (r.removeFromLeft (70).reduced (0, 3));
+        r.removeFromLeft (4);
+        trimButton  .setBounds (r.removeFromLeft (70).reduced (0, 3));
     }
 }

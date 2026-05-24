@@ -53,6 +53,8 @@ namespace zynforge
         EditToolsBar*      toolsBar { nullptr };
         std::function<void (const juce::String& label,
                             std::function<void()> mutate)> automationEditWrapper;
+        std::function<void()>                       automationDragBegin;
+        std::function<void (const juce::String&)>   automationDragEnd;
         bool   clickOverlay { false };
         int    clickRowIdx  { -1 };
         // Drag tracking -- while > -1, mouseDrag moves the indexed
@@ -1270,15 +1272,24 @@ namespace zynforge
                         }
                     }
                 }
-                // Automation lane right-click: when an automation
-                // param is being viewed AND there's a loop region
-                // (which the Selector tool sets), offer Copy / Paste
-                // / Clear for that range on the active param.
+                // Automation lane right-click priority:
+                //   1. directly on a point handle  -> curve-type picker
+                //   2. with a loop region set      -> range copy / paste / clear
+                //   3. otherwise                   -> row-size menu
                 if (laneMode != LaneMode::Waveform && laneMode != LaneMode::Markers
-                    && engine.getPlayer().hasLoopRegion())
+                    && e.x >= headerW)
                 {
-                    showAutomationRangeMenu (e.getScreenPosition());
-                    return;
+                    const int hitPoint = hitTestAutomationPoint (e.getPosition());
+                    if (hitPoint >= 0)
+                    {
+                        showCurvePickerMenu (hitPoint, e.getScreenPosition());
+                        return;
+                    }
+                    if (engine.getPlayer().hasLoopRegion())
+                    {
+                        showAutomationRangeMenu (e.getScreenPosition());
+                        return;
+                    }
                 }
                 showSizeMenu (e.getScreenPosition());
                 return;
@@ -1583,7 +1594,11 @@ namespace zynforge
                             if (std::abs (lane[i].samplePos - coord.samplePos) < tol)
                             {
                                 draggingPointIdx = (int) i;
-                                break;
+                                // Open an automation transaction so the
+                                // entire drag becomes one undo step.
+                                // mouseUp closes it via automationDragEnd.
+                                if (automationDragBegin) automationDragBegin();
+                                return;
                             }
                         }
                         return;
@@ -1779,11 +1794,19 @@ namespace zynforge
 
         void mouseUp (const juce::MouseEvent&) override
         {
+            // Close the automation drag transaction (if one is open).
+            // mouseDown on the Select tool opened it when a point was
+            // grabbed; this closes it on mouseUp regardless of whether
+            // any mouseDrag happened in between (a click-without-drag
+            // produces a no-op undo step, which is acceptable).
+            const bool wasDraggingPoint = (draggingPointIdx >= 0);
             dragging         = false;
             draggingPointIdx = -1;
             draggingClipIdx  = -1;
             draggingClipModeInt = 0;
             lastDragSamples  = 0;
+            if (wasDraggingPoint && automationDragEnd)
+                automationDragEnd ("Move automation point");
 
             // Reorder finishes here. If the user clicked the swatch
             // but never crossed the 8 px threshold, fall through to
@@ -1978,6 +2001,99 @@ namespace zynforge
         {
             static std::vector<AudioEngine::AutomationPoint> clip;
             return clip;
+        }
+
+        // Returns the index of the automation point under the given
+        // (row-local) position, or -1 if none. Hit tolerance is 7 px
+        // around the painted handle (which is 7 px wide), so a sloppy
+        // right-click still lands the menu.
+        int hitTestAutomationPoint (juce::Point<int> pos) const
+        {
+            if (laneMode == LaneMode::Waveform || laneMode == LaneMode::Markers)
+                return -1;
+            const auto engineParam =
+                laneMode == LaneMode::Pan  ? AudioEngine::AutomationParam::Pan
+              : laneMode == LaneMode::Mute ? AudioEngine::AutomationParam::Mute
+                                            : AudioEngine::AutomationParam::Volume;
+            const auto& lane = engine.getAutomation (index, engineParam);
+            if (lane.empty()) return -1;
+
+            const auto& player = engine.getPlayer();
+            const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
+            const juce::int64 loadedSamples = player.isLoaded() ? player.getTotalLengthSamples() : 0;
+            const juce::int64 totalSamples  = loadedSamples > 0 ? loadedSamples
+                                                                : (juce::int64) (sr * 300.0);
+            const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (4, 6);
+            auto sampleToX = [&] (juce::int64 sp) -> int
+            {
+                const double prop = juce::jlimit (0.0, 1.0,
+                                                  (double) sp / (double) totalSamples);
+                return inner.getX() + juce::roundToInt (prop * inner.getWidth());
+            };
+
+            constexpr int kHitR = 7;
+            for (int i = 0; i < (int) lane.size(); ++i)
+            {
+                const int px = sampleToX (lane[(size_t) i].samplePos);
+                if (std::abs (pos.x - px) <= kHitR)
+                    return i;
+            }
+            return -1;
+        }
+
+        void showCurvePickerMenu (int pointIdx, juce::Point<int> screenPos)
+        {
+            const auto engineParam =
+                laneMode == LaneMode::Pan  ? AudioEngine::AutomationParam::Pan
+              : laneMode == LaneMode::Mute ? AudioEngine::AutomationParam::Mute
+                                            : AudioEngine::AutomationParam::Volume;
+            const auto& lane = engine.getAutomation (index, engineParam);
+            if (pointIdx < 0 || pointIdx >= (int) lane.size()) return;
+            const auto current = lane[(size_t) pointIdx].curve;
+            const auto pointSample = lane[(size_t) pointIdx].samplePos;
+
+            juce::PopupMenu m;
+            using C = AudioEngine::AutomationCurve;
+            // Mute points are forced to Hold -- show the menu greyed
+            // for Mute so the engineer sees the limitation explicitly.
+            const bool isMute = (engineParam == AudioEngine::AutomationParam::Mute);
+            auto add = [&] (int id, const juce::String& label, C c)
+            {
+                m.addItem (id, label, ! isMute, c == current);
+            };
+            add (701, "Hold (step)",         C::Hold);
+            add (702, "Linear",              C::Linear);
+            add (703, "S-Curve",             C::SCurve);
+            add (704, "Exponential (ease in)",  C::ExpUp);
+            add (705, "Exponential (ease out)", C::ExpDown);
+
+            juce::Component::SafePointer<TrackRow> safe (this);
+            m.showMenuAsync (juce::PopupMenu::Options()
+                                 .withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 }),
+                [safe, engineParam, pointSample] (int chosen)
+                {
+                    if (safe == nullptr || chosen == 0) return;
+                    C newCurve = C::Linear;
+                    switch (chosen)
+                    {
+                        case 701: newCurve = C::Hold;     break;
+                        case 702: newCurve = C::Linear;   break;
+                        case 703: newCurve = C::SCurve;   break;
+                        case 704: newCurve = C::ExpUp;    break;
+                        case 705: newCurve = C::ExpDown;  break;
+                        default: return;
+                    }
+                    auto editFn = [eng = &safe->engine, idx = safe->index,
+                                   engineParam, pointSample, newCurve]
+                                  { eng->setAutomationCurveAt (idx, engineParam,
+                                                                pointSample, 4096, newCurve); };
+                    if (safe->automationEditWrapper)
+                        safe->automationEditWrapper ("Change automation curve",
+                                                      std::move (editFn));
+                    else
+                        editFn();
+                    safe->repaint();
+                });
         }
 
         void showAutomationRangeMenu (juce::Point<int> screenPos)
@@ -2230,6 +2346,10 @@ namespace zynforge
         // this wrapper so Cmd+Z reverts it.
         std::function<void (const juce::String& label,
                             std::function<void()> mutate)> sharedAutomationEditWrapper;
+        // Drag begin / end -- coalesces a multi-tick drag into one
+        // undo step.
+        std::function<void()>                       sharedAutomationDragBegin;
+        std::function<void (const juce::String&)>   sharedAutomationDragEnd;
 
         void updateRowContext()
         {
@@ -2240,6 +2360,8 @@ namespace zynforge
                 r->clickOverlay           = sharedClickPresent;
                 r->clickRowIdx            = sharedClickRowIdx;
                 r->automationEditWrapper  = sharedAutomationEditWrapper;
+                r->automationDragBegin    = sharedAutomationDragBegin;
+                r->automationDragEnd      = sharedAutomationDragEnd;
                 r->repaint();
             }
         }
@@ -2275,6 +2397,8 @@ namespace zynforge
                 r->clickOverlay           = sharedClickPresent;
                 r->clickRowIdx            = sharedClickRowIdx;
                 r->automationEditWrapper  = sharedAutomationEditWrapper;
+                r->automationDragBegin    = sharedAutomationDragBegin;
+                r->automationDragEnd      = sharedAutomationDragEnd;
                 addAndMakeVisible (*r);
                 rows.push_back (std::move (r));
                 i += stereo ? 2 : 1;
@@ -2476,6 +2600,8 @@ namespace zynforge
         if (list != nullptr)
         {
             list->sharedAutomationEditWrapper = automationEditWrapper;
+            list->sharedAutomationDragBegin   = automationDragBegin;
+            list->sharedAutomationDragEnd     = automationDragEnd;
             list->updateRowContext();
         }
     }

@@ -55,6 +55,13 @@ namespace zynforge
         void setAutomationEditWrapper (AutoEditWrapper fn);
         AutoEditWrapper automationEditWrapper;
 
+        // Begin / end an automation drag transaction. The host
+        // (MainComponent) snapshots automation lanes at begin and
+        // again at end, pushing a single AutomationSnapshotAction
+        // so the whole drag is one undo step instead of N.
+        std::function<void()>                       automationDragBegin;
+        std::function<void (const juce::String&)>   automationDragEnd;
+
         // Force every row's lane content to follow the toolbar's
         // Param choice. Called whenever the toolbar's onParamChanged
         // fires.

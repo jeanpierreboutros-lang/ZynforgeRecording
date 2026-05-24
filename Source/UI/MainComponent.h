@@ -148,6 +148,13 @@ private:
     void runAutomationEdit (const juce::String& label,
                             std::function<void()> mutate);
 
+    // Drag-coalesce variant. beginAutomationTransaction snapshots
+    // the engine's current automation lanes; endAutomationTransaction
+    // snapshots again and pushes ONE AutomationSnapshotAction so a
+    // multi-tick mouseDrag becomes a single undo step.
+    void beginAutomationTransaction();
+    void endAutomationTransaction (const juce::String& label);
+
     int    pendingContainer  { 0 };       // 0 = WAV, 1 = AIFF, 2 = FLAC
     int    pendingBitDepth   { 24 };      // 16 / 24 / 32 (32 = float)
     double pendingSampleRate { 48000.0 };
@@ -247,6 +254,10 @@ private:
     // timestamp of the first arming tap; second tap within 2 s fires
     // the stop. Zero = not armed.
     juce::uint32 stopArmedAtMs { 0 };
+    // Held during a multi-tick automation drag so endAutomationTransaction
+    // can compare against the pre-drag state.
+    juce::var pendingAutomationBefore;
+    bool      automationTransactionOpen { false };
     zynforge::AutomationToolbar automationToolbar;
 
     // Per-session cue list -- populated from <SessionName>.zfproj on

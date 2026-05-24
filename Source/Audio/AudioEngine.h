@@ -294,6 +294,19 @@ namespace zynforge
             return getAutomationWriteMode() != AutomationWriteMode::Off
                 && player.isPlaying();
         }
+
+        // TRIM mode (mutually exclusive with WRITE on the toolbar).
+        // When on + playing, fader / pan moves nudge the per-track
+        // trim atomic instead of dropping new automation points.
+        void setAutomationTrimMode (bool on) noexcept
+        {
+            automationTrimMode.store (on, std::memory_order_release);
+        }
+        bool isAutomationTrimming() const noexcept
+        {
+            return automationTrimMode.load (std::memory_order_acquire)
+                && player.isPlaying();
+        }
         // Curve type controls how the value evolves from this point
         // to the NEXT point. Hold = step (old behaviour); Linear =
         // straight ramp; SCurve = smoothstep; ExpUp/ExpDown = power
@@ -597,6 +610,7 @@ namespace zynforge
         std::vector<TrackAutomation> automationData;
         mutable juce::CriticalSection automationLock;
         std::atomic<int>              automationWriteMode { 0 };   // AutomationWriteMode::Off
+        std::atomic<bool>             automationTrimMode  { false };
         // Per-track clip lists. Empty/missing entry → 'play the whole
         // Track_NN.wav' (the current behaviour). Once the engineer
         // splits or trims, the entry has one or more Clips covering

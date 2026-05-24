@@ -30,6 +30,10 @@ namespace zynforge
         // Fired when the engineer toggles WRITE on/off. Host wires
         // this to engine.setAutomationWriteMode.
         std::function<void (bool /*writeOn*/)> onWriteModeChanged;
+        // Fired when TRIM is toggled. WRITE and TRIM are mutually
+        // exclusive on the toolbar (the toggle code clears the
+        // other), so the host only ever sees one as active.
+        std::function<void (bool /*trimOn*/)>  onTrimModeChanged;
 
         void paint (juce::Graphics&) override;
         void resized() override;
@@ -51,6 +55,7 @@ namespace zynforge
 
         juce::TextButton clearButton   { "Clear all" };
         juce::TextButton writeButton   { "Write" };
+        juce::TextButton trimButton    { "Trim" };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AutomationToolbar)
     };

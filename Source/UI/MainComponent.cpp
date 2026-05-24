@@ -404,6 +404,13 @@ MainComponent::MainComponent()
                             : "Automation WRITE off");
     };
 
+    automationToolbar.onTrimModeChanged = [this] (bool trimOn)
+    {
+        engine.setAutomationTrimMode (trimOn);
+        showStatus (trimOn ? "Automation TRIM armed (fader moves nudge the per-track trim, not the lane shape)"
+                           : "Automation TRIM off");
+    };
+
     tempoBar.setBpm (engine.getSessionTempoBpm());
     tempoBar.onBpmChanged = [this] (float bpm)
     {
@@ -483,6 +490,9 @@ MainComponent::MainComponent()
         {
             runAutomationEdit (label, std::move (fn));
         });
+    editPage->automationDragBegin = [this] { beginAutomationTransaction(); };
+    editPage->automationDragEnd   = [this] (const juce::String& label)
+                                    { endAutomationTransaction (label); };
     // Re-parent the EDIT-tools palette onto MainComponent so it can
     // share the same 28 px row as the automation toolbar. (The earlier
     // if-block tried this too but ran before editPage existed.)
@@ -1311,13 +1321,28 @@ void MainComponent::rebuildStrips()
             }
         };
         auto nameCb   = [this, i] (juce::String chosen) { engine.setTrackName   (i, chosen); };
-        // Helper: if automation write mode is on AND we're playing,
-        // drop a point at the current playhead too. The engineer's
-        // fader / pan moves become recorded automation in real time.
+        // Helper: routes fader / pan moves into one of three sinks
+        // depending on toolbar state:
+        //   WRITE  - drop a new automation point at the playhead
+        //   TRIM   - nudge the per-track trim atomic by (new - prev)
+        //   neither- direct only (engine.setTrack* already ran)
         auto writeAutoIfPlaying = [this] (int trackIdx,
                                           zynforge::AudioEngine::AutomationParam p,
                                           float value)
         {
+            if (engine.isAutomationTrimming())
+            {
+                // Trim: store the absolute fader value as the trim
+                // delta from the lane value at the playhead. Result:
+                // moving the fader to -3 dB while the lane reads 0
+                // sets trim = -3, riding the automation down 3 dB.
+                const auto pos       = engine.getPlayer().getPositionSamples();
+                const float laneVal  = engine.getAutomation (trackIdx, p).empty()
+                                       ? 0.0f
+                                       : engine.automationValueAt (trackIdx, p, pos, 0.0f);
+                engine.setAutomationTrim (trackIdx, p, value - laneVal);
+                return;
+            }
             if (! engine.isAutomationWriting()) return;
             const auto pos = engine.getPlayer().getPositionSamples();
             engine.addAutomationPoint (trackIdx, p, pos, value);
@@ -2699,6 +2724,29 @@ void MainComponent::runAutomationEdit (const juce::String& label,
 
     undoManager.beginNewTransaction (label);
     undoManager.perform (new AutomationSnapshotAction (engine, before, after));
+    if (editPage != nullptr) editPage->repaint();
+}
+
+void MainComponent::beginAutomationTransaction()
+{
+    // Re-entry guard. If a drag fires mouseDown again before mouseUp
+    // (shouldn't happen, but JUCE event ordering occasionally bunches
+    // things up under stress), the earlier snapshot wins.
+    if (automationTransactionOpen) return;
+    pendingAutomationBefore = engine.automationToJson();
+    automationTransactionOpen = true;
+}
+
+void MainComponent::endAutomationTransaction (const juce::String& label)
+{
+    if (! automationTransactionOpen) return;
+    automationTransactionOpen = false;
+    const auto after = engine.automationToJson();
+    undoManager.beginNewTransaction (label);
+    undoManager.perform (new AutomationSnapshotAction (engine,
+                                                       pendingAutomationBefore,
+                                                       after));
+    pendingAutomationBefore = juce::var();
     if (editPage != nullptr) editPage->repaint();
 }
 
