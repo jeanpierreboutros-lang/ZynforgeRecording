@@ -56,6 +56,8 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/MainComponentEdit.cpp
     Source/UI/MainComponentSessionIO.cpp
     Source/Tests/AutomationTests.cpp
+    Source/Tests/MarkerTests.cpp
+    Source/Tests/EngineStateTests.cpp
     Source/UI/ChannelStrip.cpp
     Source/UI/LedMeter.cpp
     Source/UI/MiniSpectrum.cpp
