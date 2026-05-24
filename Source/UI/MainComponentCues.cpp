@@ -11,20 +11,12 @@
 #include "MainComponent.h"
 #include "../Theme/DialogChrome.h"
 #include "../Audio/SpectralClassifier.h"
+#include "SessionProjPath.h"
 
 using namespace zynforge;
 
-// File-local helpers -- moved with the cue methods that exclusively
-// use them. Live here (not in a header) so the rest of the codebase
-// can't pick them up by accident.
-static juce::File findSessionProj (const juce::File& dir)
-{
-    if (! dir.isDirectory()) return {};
-    for (auto& f : dir.findChildFiles (juce::File::findFiles, false, "*.zfproj"))
-        return f;
-    return dir.getChildFile (dir.getFileName() + ".zfproj");
-}
-
+// File-local helper -- moved with the cue methods that exclusively
+// use it.
 static zynforge::SetlistBar::StripSnapshot snapshotStrip (zynforge::TrackState& t)
 {
     zynforge::SetlistBar::StripSnapshot s;
