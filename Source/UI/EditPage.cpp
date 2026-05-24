@@ -1072,6 +1072,48 @@ namespace zynforge
                             g.fillRect (handle);
                         }
                     }
+
+                    // -------- Crossfade visualisation --------
+                    // Pro Tools-style. When two adjacent clips
+                    // overlap on the timeline, paint a combined
+                    // X shape on the overlap span: descending line
+                    // for the outgoing clip, ascending for the
+                    // incoming. Translucent green fill underneath
+                    // ties them together visually. Engineers can
+                    // tell at a glance that "these two clips
+                    // crossfade" instead of seeing two separate
+                    // hard edits.
+                    for (size_t ci = 0; ci + 1 < clips->size(); ++ci)
+                    {
+                        const auto& a = (*clips)[ci];
+                        const auto& b = (*clips)[ci + 1];
+                        const auto aEnd   = a.timelineStartSamples + a.fileLengthSamples;
+                        const auto bStart = b.timelineStartSamples;
+                        if (bStart >= aEnd) continue;          // no overlap
+                        const auto overlap = aEnd - bStart;
+                        if (overlap < 64) continue;            // too small to read
+                        const int xL = sampleToX (bStart);
+                        const int xR = sampleToX (aEnd);
+                        if (xR - xL < 4) continue;
+                        const auto band = juce::Rectangle<int> (xL, inner2.getY(),
+                                                                xR - xL,
+                                                                inner2.getHeight());
+                        g.setColour (brand::accentStatus.withAlpha (0.10f));
+                        g.fillRect (band);
+                        g.setColour (brand::accentStatus.withAlpha (0.85f));
+                        // Outgoing (a) -- top-left to bottom-right.
+                        g.drawLine ((float) xL, (float) inner2.getY(),
+                                    (float) xR, (float) inner2.getBottom(), 1.4f);
+                        // Incoming (b) -- bottom-left to top-right.
+                        g.drawLine ((float) xL, (float) inner2.getBottom(),
+                                    (float) xR, (float) inner2.getY(), 1.4f);
+                        // Midpoint handle for future drag-to-adjust.
+                        const int xMid = (xL + xR) / 2;
+                        const int yMid = inner2.getY() + inner2.getHeight() / 2;
+                        g.setColour (brand::accentStatus);
+                        g.fillEllipse ((float) xMid - 3.0f, (float) yMid - 3.0f,
+                                       6.0f, 6.0f);
+                    }
                 }
             }
 
