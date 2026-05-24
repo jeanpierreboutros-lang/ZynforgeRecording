@@ -17,6 +17,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Changed
+- **MainComponent god-class split, part 2.** Two more clusters extracted:
+  - `MainComponentCues.cpp` (628 lines) -- `loadSetlistFromActiveSession`, `saveSetlistToActiveSession`, `jumpToCue`, `promptCueName`, `addCueAtTransport`, `renameCurrentCue`, `updateCueAtTransport`, `startCueRampTo`, `updateCueRamp`, `printSetlist`. Carries its own file-local `snapshotStrip` (TrackState) helper.
+  - `MainComponentEdit.cpp` (457 lines) -- the full undo / redo / cut / copy / paste / solo / crop / split / range-marker / marker-drop / automation-transaction surface. Carries the anonymous-namespace block with `snapshotStrip(eng,idx)`, `restoreStrip`, `physicalFromLogical`, `currentPlayheadSamples`, `AutomationSnapshotAction`, and `MixerSnapshotAction` -- all of which were only used by these methods.
+  - `findSessionProj` is duplicated as a `static` helper in both `MainComponent.cpp` and `MainComponentCues.cpp` while the session-IO cluster still lives in `MainComponent.cpp`; should consolidate into a shared header when that cluster gets extracted next.
+  - **Main file: 4896 → 3872 lines (-1024 cumulative).** Going from 5522 at the start of today to under 4000 lines in two passes. Menu construction (`getMenuForIndex` + `menuItemSelected`) and session I/O remain the two big lumps.
+
 ### Security
 - **CompanionServer is no longer wide-open.** Used to bind `0.0.0.0` with zero auth, so anyone on the same Wi-Fi could arm tracks. Now binds `127.0.0.1` by default, requires a per-start 32-hex-char access token via `?t=<token>` or `Authorization: Bearer <token>`, and copies the full URL (with token) to the clipboard on startup so the engineer can paste it on a phone. LAN exposure is opt-in via the new `startCompanionServerOnLan(port)` API. See `decisions.md`.
 

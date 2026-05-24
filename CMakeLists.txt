@@ -52,6 +52,8 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/MainComponentTimer.cpp
     Source/UI/MainComponentKeys.cpp
     Source/UI/MainComponentLayout.cpp
+    Source/UI/MainComponentCues.cpp
+    Source/UI/MainComponentEdit.cpp
     Source/Tests/AutomationTests.cpp
     Source/UI/ChannelStrip.cpp
     Source/UI/LedMeter.cpp
