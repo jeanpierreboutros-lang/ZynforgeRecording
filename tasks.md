@@ -27,7 +27,7 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 - [ ] **Native iPad companion** (L) — replace the polled `/state.json` web client with a SwiftUI app over WebSocket.
 - [ ] **Audio-stream encryption** (M) — `/stream.wav` is plaintext PCM. Wrap in TLS or migrate to SRTP.
-- [ ] **Test harness for `Source/Audio/`** (L) — pure-C++ unit tests with a mocked `AudioIODeviceCallback` driver, runnable headless. See `testing.md`.
+- [ ] **Expand audio-thread test harness** (M) — first 8 tests landed in `Source/Tests/AudioCallbackTests.cpp` (2026-05-25) covering monitor-bus routing, master gain/mute, per-track mute, silence invariants. Worth growing to cover: solo isolation, automation playback (volume/pan/mute curves at known sample positions), VCA groups, click track output routing, stereo-pair (L/R adjacent track) summing.
 - [ ] **Auto-arm-on-input-detect mode** (M) — optional setting where a strip arms itself when persistent signal is detected (useful for first-time pre-show configuration).
 
 ### Explicit non-goals (do not implement)
@@ -37,6 +37,7 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 ## Recently Completed
 
 ### 2026-05-25
+- [x] **Audio-thread test harness — first 8 tests** (M) — new `AudioCallbackTests.cpp` drives `audioDeviceIOCallbackWithContext` headlessly with synthetic buffers. Covers monitor-bus routing (including the just-shipped `setMasterOutputs` fix), master gain/mute, per-track mute, silence invariants. New `AudioEngine::prepareForTests(sr, blockSize)` lets tests set up scratch buffers without a real device. Test count 45 → 53. See `CHANGELOG.md`.
 - [x] **Configurable monitor bus outputs** (M) — real-time click, NDI transmit, and Companion stream now route through `masterOutL` / `masterOutR` instead of hardcoded 0+1. New Monitor Bus card in the Audio Device dialog with L + R pickers; stale MON tooltip fixed. See `CHANGELOG.md`.
 - [x] **Per-session workspace layouts auto-save** (M) — view / strip width / VCA-panel visibility / EDIT zoom now write into `.zfproj` on every change. New `saveUILayoutToActiveSession` + `EditPage::onZoomChanged` wiring. See `CHANGELOG.md`.
 - [x] **Default session template** (S) — File ▸ Templates ▸ Set default template; the starred `.zftemplate` is auto-applied after every File ▸ New Session. See `CHANGELOG.md`.

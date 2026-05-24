@@ -64,6 +64,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/EngineStateTests.cpp
     Source/Tests/RecorderPlayerTests.cpp
     Source/Tests/TransientTests.cpp
+    Source/Tests/AudioCallbackTests.cpp
     Source/UI/ChannelStrip.cpp
     Source/UI/LedMeter.cpp
     Source/UI/MiniSpectrum.cpp

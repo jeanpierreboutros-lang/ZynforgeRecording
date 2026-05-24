@@ -38,6 +38,13 @@ namespace zynforge
         // surface without opening a 256-channel audio device.
         static void setTestModeSkipAudioInit (bool skip) noexcept;
 
+        // Test-only: do the same setup `audioDeviceAboutToStart` does
+        // (sample rate, scratch buffers, recorder/player prepare) but
+        // without needing a real `juce::AudioIODevice`. Lets unit tests
+        // call `audioDeviceIOCallbackWithContext` directly with
+        // synthetic buffers and assert what comes out.
+        void prepareForTests (double sampleRate, int blockSize);
+
         juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
         MultitrackRecorder&       getRecorder()      noexcept { return recorder; }
         SessionPlayer&            getPlayer()        noexcept { return player; }

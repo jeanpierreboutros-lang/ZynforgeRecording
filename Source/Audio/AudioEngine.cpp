@@ -748,6 +748,25 @@ namespace zynforge
         s_testSkipAudioInit.store (skip, std::memory_order_release);
     }
 
+    void AudioEngine::prepareForTests (double sr, int blockSize)
+    {
+        // Mirrors audioDeviceAboutToStart minus the device-specific
+        // calls (workgroup join, etc.). Safe to call repeatedly --
+        // recorder.prepare / player.prepare are idempotent on the
+        // same sr/blockSize.
+        deviceSampleRate.store (sr, std::memory_order_relaxed);
+        audioLoadPct    .store (0.0f, std::memory_order_relaxed);
+        recorder.setAudioWorkgroup ({});   // empty workgroup -- no scheduler hint in tests
+        click.prepare (sr);
+        click.setTempoBpm (currentTempoBpm.load (std::memory_order_relaxed));
+        recorder.prepare (sr, blockSize, getStripCount());
+        player  .prepare (sr, blockSize);
+        stereoMixScratch.setSize (2, blockSize, false, true, true);
+        monitorAccum    .setSize (2, blockSize, false, true, true);
+        outputAccum     .setSize (64, blockSize, false, true, true);
+        applyPersistedStripState();
+    }
+
     AudioEngine::AudioEngine()
     {
         juce::PropertiesFile::Options opts;
