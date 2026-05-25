@@ -35,11 +35,18 @@ namespace zynforge
             const bool recOn   = isRec && recording;
             const bool blinkOn = isRec && armed && ! recording && blinkPhase;
 
+            // Play / Loop "lit" state -- when active (playing / looping)
+            // the button glows in its own accent (green for PLAY) so the
+            // engineer can see at a glance that transport is running, even
+            // when it was started from the space bar rather than a click.
+            const bool litActive = active && ! isRec;
+
             auto base = (down ? brand::controlBgDown
                               : over ? brand::controlBgHover
                                      : brand::controlBg);
-            if      (recOn)   base = brand::accentRecord;               // ON AIR -- stable
-            else if (blinkOn) base = brand::accentRecord.darker (0.30f); // armed -- blink lit
+            if      (recOn)     base = brand::accentRecord;                // ON AIR -- stable
+            else if (blinkOn)   base = brand::accentRecord.darker (0.30f); // armed -- blink lit
+            else if (litActive) base = baseColour;                         // PLAY lit -- green
             g.setGradientFill (brand::verticalGradient (base, r, 0.10f, 0.18f));
             g.fillRoundedRectangle (r, brand::radius::md);
 
@@ -56,6 +63,12 @@ namespace zynforge
                 g.setColour (brand::accentRecord.withAlpha (a));
                 g.drawRoundedRectangle (r.reduced (1.0f), brand::radius::md, 2.0f);
             }
+            else if (litActive)
+            {
+                // Bright accent ring around the lit (running) button.
+                g.setColour (baseColour.brighter (0.20f));
+                g.drawRoundedRectangle (r.reduced (1.0f), brand::radius::md, 2.0f);
+            }
             else
             {
                 g.setColour (brand::controlBorder);
@@ -67,10 +80,12 @@ namespace zynforge
             const float cx = ic.getCentreX();
             const float cy = ic.getCentreY();
 
-            // On a red body (rolling / blink-lit) the glyph needs a
-            // legible foreground; otherwise the per-button accent.
+            // On a coloured body (rolling / blink-lit / lit-active) the
+            // glyph needs a legible foreground; otherwise the per-button
+            // accent.
             g.setColour ((recOn || blinkOn) ? brand::onSignal (brand::accentRecord)
-                                            : (active ? baseColour.brighter (0.3f) : baseColour));
+                         : litActive        ? brand::onSignal (baseColour)
+                                            : baseColour);
 
             switch (icon)
             {
@@ -148,6 +163,29 @@ namespace zynforge
                     break;
                 }
             }
+
+            // ─── Action flash. A brief baseColour wash over the whole
+            // button when an action fires (e.g. STOP), so the engineer
+            // gets visual confirmation even when the trigger was the
+            // space bar rather than a click. The transport bar's 10 Hz
+            // timer decays flashLevel back to 0.
+            if (flashLevel > 0.0f)
+            {
+                g.setColour (baseColour.withAlpha (juce::jlimit (0.0f, 0.85f, flashLevel)));
+                g.fillRoundedRectangle (r, brand::radius::md);
+            }
+        }
+
+        // Kick off a one-shot flash (full intensity); the bar's timer
+        // fades it. tickFlash() returns true while still fading so the
+        // caller knows to keep ticking.
+        void triggerFlash() { flashLevel = 1.0f; repaint(); }
+        bool tickFlash()
+        {
+            if (flashLevel <= 0.0f) return false;
+            flashLevel = (flashLevel > 0.08f) ? flashLevel * 0.55f : 0.0f;
+            repaint();
+            return flashLevel > 0.0f;
         }
 
     private:
@@ -156,6 +194,7 @@ namespace zynforge
         bool         recording  { false };
         bool         armed      { false };
         bool         blinkPhase { false };
+        float        flashLevel { 0.0f };
         juce::Colour baseColour { brand::textPrimary };
     };
 
@@ -268,13 +307,22 @@ namespace zynforge
         }
     }
 
-    void TransportBar::timerCallback() { refreshStates(); }
+    void TransportBar::timerCallback()
+    {
+        refreshStates();
+        if (stop != nullptr) stop->tickFlash();   // fade the STOP flash
+    }
 
     void TransportBar::refreshStates()
     {
         const bool rec  = engine.isRecording();
         const bool pl   = engine.isPlaying();
         const bool lp   = engine.getPlayer().hasLoopRegion();
+
+        // A transport stop -- playback or recording just went from on to
+        // off, whatever triggered it (space bar, button, stop-all). Flash
+        // the STOP button so the engineer sees the action registered.
+        const bool stopped = (lastPlaying && ! pl) || (lastRecording && ! rec);
 
         // "Record armed" == at least one track armed, transport primed
         // but not yet rolling. Mirrors the BigClock's armed-ready signal
@@ -289,6 +337,8 @@ namespace zynforge
         if (recordArmed != lastArmed)     { record->setArmed (recordArmed); lastArmed = recordArmed; }
         if (pl          != lastPlaying)   { play  ->setActive (pl);       lastPlaying   = pl;  }
         if (lp          != lastLooping)   { loop  ->setActive (lp);       lastLooping   = lp;  }
+
+        if (stopped && stop != nullptr) stop->triggerFlash();
 
         // Drive the arm blink at ~1 Hz (brand::motion::pulseHz) off the
         // 10 Hz timer: flip the phase every 5 ticks → 0.5 s on / 0.5 s off.
