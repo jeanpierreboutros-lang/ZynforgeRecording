@@ -1535,6 +1535,18 @@ namespace zynforge
                              juce::jmin (playerScratch.getNumChannels(), numTracks),
                              numSamples);
 
+        // Strip's effective dB = its own gain + its VCA bus gain. Defined
+        // once here so every consumer below (aux sends, per-channel mix,
+        // stream bus) shares one definition instead of re-deriving it.
+        const auto effectiveGainDb = [this] (int i) noexcept -> float
+        {
+            auto& t = recorder.getTrack (i);
+            const float dB = t.gainDb.load (std::memory_order_relaxed);
+            const int   g  = t.vcaGroup.load (std::memory_order_relaxed);
+            return (g >= 0 && g < kNumVcas)
+                 ? dB + vcas[(size_t) g].gainDb.load (std::memory_order_relaxed) : dB;
+        };
+
         // Aux sends → bus tracks. For every non-bus strip with a send
         // pointing at a bus track, sum (strip_audio × send_gain × (post
         // ? strip_gain : 1)) into that bus's row of playerScratch. The
@@ -1548,14 +1560,8 @@ namespace zynforge
             const float* srcAudio = playerScratch.getReadPointer (i);
             if (srcAudio == nullptr) continue;
 
-            // Pre-compute strip's effective gain for post-fader sends.
-            // (Inlined because the effectiveGainDb lambda lives further
-            // down the callback -- out of scope here.)
-            const float baseDb = src.gainDb.load (std::memory_order_relaxed);
-            const int   g      = src.vcaGroup.load (std::memory_order_relaxed);
-            const float vcaDb  = (g >= 0 && g < kNumVcas)
-                ? vcas[(size_t) g].gainDb.load (std::memory_order_relaxed) : 0.0f;
-            const float stripGain = juce::Decibels::decibelsToGain (baseDb + vcaDb, -60.0f);
+            // Strip's effective gain for post-fader sends.
+            const float stripGain = juce::Decibels::decibelsToGain (effectiveGainDb (i), -60.0f);
 
             for (int s = 0; s < TrackState::kNumSends; ++s)
             {
@@ -1645,17 +1651,6 @@ namespace zynforge
             }
             if (anySolo) return t.soloed.load (std::memory_order_relaxed);
             return ! t.muted.load (std::memory_order_relaxed);
-        };
-
-        // Returns the strip's effective dB = strip + VCA bus gain.
-        auto effectiveGainDb = [&] (int i) -> float
-        {
-            auto& t = recorder.getTrack (i);
-            const float dB = t.gainDb.load (std::memory_order_relaxed);
-            const int g = t.vcaGroup.load (std::memory_order_relaxed);
-            if (g >= 0 && g < kNumVcas)
-                return dB + vcas[(size_t) g].gainDb.load (std::memory_order_relaxed);
-            return dB;
         };
 
         // Mix the routed track scratch onto the device outputs honoring

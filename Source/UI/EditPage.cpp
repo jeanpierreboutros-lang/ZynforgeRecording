@@ -10,6 +10,30 @@
 
 namespace zynforge
 {
+    // Single home for the timeline<->pixel mapping that the EDIT lanes do
+    // ~a dozen times. Build one per paint/event from the lane's inner
+    // rect + the session length, then map. toX rounds (the form most
+    // call sites used); toXFloor truncates (preserves the two sites that
+    // historically did so); toSample is the inverse for hit-testing.
+    struct TimelineMapper
+    {
+        int    x0, width;
+        double total;
+
+        static TimelineMapper forLane (juce::Rectangle<int> inner, juce::int64 totalSamples) noexcept
+        {
+            return { inner.getX(), inner.getWidth(), (double) juce::jmax<juce::int64> (1, totalSamples) };
+        }
+        double prop (juce::int64 s) const noexcept { return juce::jlimit (0.0, 1.0, (double) s / total); }
+        int    toX      (juce::int64 s) const noexcept { return x0 + juce::roundToInt (prop (s) * (double) width); }
+        int    toXFloor (juce::int64 s) const noexcept { return x0 + (int) (prop (s) * (double) width); }
+        juce::int64 toSample (int x) const noexcept
+        {
+            const double p = juce::jlimit (0.0, 1.0, (double) (x - x0) / (double) juce::jmax (1, width));
+            return (juce::int64) (p * total);
+        }
+    };
+
     // Per-track row: header on the left (colour wash + name + REC/MUTE/SOLO),
     // waveform on the right. The TrackList builds one of these per track and
     // stacks them vertically inside the EditPage's viewport.
@@ -679,11 +703,7 @@ namespace zynforge
                             return inner.getY() + juce::roundToInt (yp * inner.getHeight());
                         };
                         auto sampleToX = [&] (juce::int64 sp) -> int
-                        {
-                            const double prop = juce::jlimit (0.0, 1.0,
-                                (double) sp / juce::jmax<double> (1.0, (double) totalSamples));
-                            return inner.getX() + juce::roundToInt (prop * inner.getWidth());
-                        };
+                        { return TimelineMapper::forLane (inner, totalSamples).toX (sp); };
 
                         const float sessionBpm = engine.getSessionTempoBpm();
                         g.setColour (brand::brandOrange);
@@ -789,12 +809,7 @@ namespace zynforge
                 const juce::int64 totalSamples = player.isLoaded() ? player.getTotalLengthSamples()
                                                                    : (juce::int64) (48000.0 * 60.0);
                 auto sampleToX = [&] (juce::int64 sp) -> int
-                {
-                    if (totalSamples <= 0) return inner.getX();
-                    const double prop = juce::jlimit (0.0, 1.0,
-                                                      (double) sp / (double) totalSamples);
-                    return inner.getX() + juce::roundToInt (prop * inner.getWidth());
-                };
+                { return TimelineMapper::forLane (inner, totalSamples).toX (sp); };
 
                 if (points.empty())
                 {
@@ -1035,11 +1050,7 @@ namespace zynforge
                 {
                     const auto inner2 = wavePane.reduced (brand::space::xs, brand::space::sm);
                     auto sampleToX = [&] (juce::int64 sp) -> int
-                    {
-                        const double prop = juce::jlimit (0.0, 1.0,
-                            (double) sp / (double) totalSamples);
-                        return inner2.getX() + (int) (prop * inner2.getWidth());
-                    };
+                    { return TimelineMapper::forLane (inner2, totalSamples).toXFloor (sp); };
                     for (const auto& c : *clips)
                     {
                         const int xL_ = sampleToX (c.timelineStartSamples);
@@ -1460,11 +1471,7 @@ namespace zynforge
                         {
                             const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
                             const auto sampleToX = [&] (juce::int64 sp) -> int
-                            {
-                                const double prop = juce::jlimit (0.0, 1.0,
-                                                                  (double) sp / (double) totalSamples);
-                                return inner.getX() + juce::roundToInt (prop * inner.getWidth());
-                            };
+                            { return TimelineMapper::forLane (inner, totalSamples).toX (sp); };
                             for (int i = 0; i < (int) clips->size(); ++i)
                             {
                                 const auto& c = (*clips)[(size_t) i];
@@ -1540,11 +1547,7 @@ namespace zynforge
                 {
                     const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
                     const auto xToSample = [&] (int x) -> juce::int64
-                    {
-                        const double prop = juce::jlimit (0.0, 1.0,
-                            (double) (x - inner.getX()) / (double) juce::jmax (1, inner.getWidth()));
-                        return (juce::int64) (prop * (double) totalSamples);
-                    };
+                    { return TimelineMapper::forLane (inner, totalSamples).toSample (x); };
 
                     if (activeTool == EditToolsBar::Tool::Fade)
                     {
@@ -1622,11 +1625,7 @@ namespace zynforge
                     {
                         const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
                         const auto sampleToX = [&] (juce::int64 sp) -> int
-                        {
-                            const double prop = juce::jlimit (0.0, 1.0,
-                                                              (double) sp / (double) totalSamples);
-                            return inner.getX() + juce::roundToInt (prop * inner.getWidth());
-                        };
+                        { return TimelineMapper::forLane (inner, totalSamples).toX (sp); };
                         // 6 px hit zone around each edge for trim;
                         // anything else inside a clip's body = Move.
                         // Fade handles take priority over both -- they
@@ -2355,11 +2354,7 @@ namespace zynforge
             if (totalSamples <= 0) return -1;
             const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
             auto sampleToX = [&] (juce::int64 sp) -> int
-            {
-                const double prop = juce::jlimit (0.0, 1.0,
-                    (double) sp / (double) totalSamples);
-                return inner.getX() + (int) (prop * inner.getWidth());
-            };
+            { return TimelineMapper::forLane (inner, totalSamples).toXFloor (sp); };
             for (size_t i = 0; i + 1 < clips->size(); ++i)
             {
                 const auto& a = (*clips)[i];
@@ -2397,11 +2392,7 @@ namespace zynforge
                                                                 : (juce::int64) (sr * 300.0);
             const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
             auto sampleToX = [&] (juce::int64 sp) -> int
-            {
-                const double prop = juce::jlimit (0.0, 1.0,
-                                                  (double) sp / (double) totalSamples);
-                return inner.getX() + juce::roundToInt (prop * inner.getWidth());
-            };
+            { return TimelineMapper::forLane (inner, totalSamples).toX (sp); };
 
             constexpr int kHitR = 7;
             for (int i = 0; i < (int) lane.size(); ++i)
@@ -2459,11 +2450,7 @@ namespace zynforge
                                                                 : (juce::int64) (sr * 300.0);
             const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
             auto sampleToX = [&] (juce::int64 sp) -> int
-            {
-                const double prop = juce::jlimit (0.0, 1.0,
-                                                  (double) sp / (double) totalSamples);
-                return inner.getX() + juce::roundToInt (prop * inner.getWidth());
-            };
+            { return TimelineMapper::forLane (inner, totalSamples).toX (sp); };
             auto valueToY = [&] (float v) -> int
             {
                 float yp = 0.5f;
