@@ -1587,6 +1587,13 @@ namespace zynforge
                 }
             }
 
+            // Snapshot clip state for Cmd+Z before any clip-edit drag
+            // (crossfade / trim / move / fade) can arm below. The commit
+            // in mouseUp no-ops when nothing actually moved.
+            if (laneMode == LaneMode::Waveform && e.x >= headerW)
+                if (auto* page = findParentComponentOfClass<EditPage>())
+                    page->beginClipEdit();
+
             // Crossfade midpoint drag wins over clip-edit drag --
             // the handle sits inside the overlap band so the engineer
             // expects clicking it to grab the crossfade balance
@@ -2102,6 +2109,7 @@ namespace zynforge
             // produces a no-op undo step, which is acceptable).
             const bool wasDraggingPoint   = (draggingPointIdx >= 0);
             const bool wasDraggingTension = (draggingTensionSegIdx >= 0);
+            const bool wasDraggingClip    = (draggingClipIdx >= 0 || draggingXfadeAIdx >= 0);
             dragging         = false;
             draggingPointIdx = -1;
             draggingTensionSegIdx = -1;
@@ -2112,6 +2120,11 @@ namespace zynforge
             if ((wasDraggingPoint || wasDraggingTension) && automationDragEnd)
                 automationDragEnd (wasDraggingTension ? "Bend automation curve"
                                                       : "Move automation point");
+            // Commit the clip-edit drag as a single Cmd+Z step (trim /
+            // move / fade / crossfade). No-ops if nothing actually moved.
+            if (wasDraggingClip)
+                if (auto* page = findParentComponentOfClass<EditPage>())
+                    page->commitClipEdit ("Edit clip");
 
             // Reorder finishes here. If the user clicked the swatch
             // but never crossed the 8 px threshold, fall through to

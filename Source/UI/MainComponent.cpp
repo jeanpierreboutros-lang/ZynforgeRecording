@@ -564,6 +564,14 @@ MainComponent::MainComponent()
     {
         return selectedLogical.count (logicalFromPhysicalIdx (physTrack)) > 0;
     };
+    // Clip-edit undo bridge: a clip drag (trim / move / fade) snapshots
+    // the playlist JSON at mouse-down and pushes a single Cmd+Z step at
+    // mouse-up. pushClipUndo no-ops when nothing changed.
+    editPage->captureClipsForUndo = [this] { return engine.playlistsToJson(); };
+    editPage->commitClipUndo = [this] (const juce::var& before, const juce::String& label)
+    {
+        pushClipUndo (label, before);
+    };
     // Re-parent the EDIT-tools palette onto MainComponent so it can
     // share the same 28 px row as the automation toolbar. (The earlier
     // if-block tried this too but ran before editPage existed.)

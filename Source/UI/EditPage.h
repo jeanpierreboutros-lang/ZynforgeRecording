@@ -69,6 +69,21 @@ namespace zynforge
         std::function<void (int /*physTrack*/, bool /*additive*/)> onRowSelect;
         std::function<bool (int /*physTrack*/)>                    isTrackSelected;
 
+        // Clip-edit undo bridge. A TrackRow calls beginClipEdit() when a
+        // clip drag (trim / move / fade) starts and commitClipEdit() when
+        // it ends; the host turns the before/after clip state into a
+        // Cmd+Z step (no-op when nothing actually changed). Wired by
+        // MainComponent to engine.playlistsToJson + pushClipUndo.
+        std::function<juce::var ()>                                 captureClipsForUndo;
+        std::function<void (const juce::var&, const juce::String&)> commitClipUndo;
+        void beginClipEdit()  { if (captureClipsForUndo) clipUndoBefore = captureClipsForUndo(); }
+        void commitClipEdit (const juce::String& label)
+        {
+            if (commitClipUndo && ! clipUndoBefore.isVoid())
+                commitClipUndo (clipUndoBefore, label);
+            clipUndoBefore = juce::var();
+        }
+
         // Memory-Location recall hooks. setLogicalRowsVisible takes a
         // list of logical strip indices to show (empty = show all).
         // scrollToSample centres the horizontal viewport on a sample
@@ -153,6 +168,7 @@ namespace zynforge
         juce::File lastSessionDir;
         float      zoom            { 1.0f };
         float      vZoom           { 1.0f };
+        juce::var  clipUndoBefore;   // playlist snapshot taken at clip-drag start
         int        activeRowTrackIndex { -1 };
         int        focusedPointIdx     { -1 };
         AutomationToolbar*             toolbar  { nullptr };

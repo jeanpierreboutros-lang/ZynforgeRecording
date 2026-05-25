@@ -139,6 +139,42 @@ namespace
         juce::var afterState;
         bool      afterCaptured { false };
     };
+
+    // Clip / playlist undo. The edit has ALREADY happened by the time we
+    // push this (the caller captured 'before' first), so perform() is a
+    // no-op on first run and re-applies 'after' on redo. undo() restores
+    // 'before'. State is the engine's full playlists JSON.
+    struct ClipSnapshotAction final : public juce::UndoableAction
+    {
+        ClipSnapshotAction (zynforge::AudioEngine& e, juce::var before, juce::var after)
+            : eng (e), beforeState (std::move (before)), afterState (std::move (after)) {}
+
+        bool perform() override
+        {
+            if (firstRun) { firstRun = false; return true; }   // already applied
+            eng.loadPlaylistsFromJson (afterState);
+            return true;
+        }
+        bool undo() override
+        {
+            eng.loadPlaylistsFromJson (beforeState);
+            return true;
+        }
+
+        zynforge::AudioEngine& eng;
+        juce::var beforeState, afterState;
+        bool      firstRun { true };
+    };
+}
+
+void MainComponent::pushClipUndo (const juce::String& label, const juce::var& before)
+{
+    const auto after = engine.playlistsToJson();
+    // Only record if the clips actually changed (callers capture 'before'
+    // eagerly on mouse-down, so a plain click mustn't litter the stack).
+    if (juce::JSON::toString (before) == juce::JSON::toString (after)) return;
+    undoManager.beginNewTransaction (label);
+    undoManager.perform (new ClipSnapshotAction (engine, before, after));
 }
 void MainComponent::recordUndoSnapshot (const juce::String& label)
 {
@@ -340,7 +376,9 @@ void MainComponent::editCropToLoopRange()
         {
             std::unique_ptr<juce::AlertWindow> dispose (aw);
             if (result != kCrop) return;
+            const auto before = engine.playlistsToJson();
             const int kept = engine.cropToRange (a, b);
+            pushClipUndo ("Crop to loop range", before);   // Cmd+Z reverts the crop
             engine.getPlayer().clearLoopRegion();
             if (editPage != nullptr) editPage->repaint();
             saveUILayoutToActiveSession();   // persist the new clip layout
@@ -505,12 +543,13 @@ void MainComponent::editSplitAtPlayhead()
     int splits = 0;
     if (! selectedLogical.empty())
     {
-        recordUndoSnapshot ("Split clips at playhead");
+        const auto before = engine.playlistsToJson();   // clip-aware undo
         for (int logical : selectedLogical)
         {
             const int phys = physicalFromLogicalIdx (logical);
             if (engine.splitTrackAtPlayhead (phys)) ++splits;
         }
+        pushClipUndo ("Split clips at playhead", before);
     }
     if (editPage != nullptr) editPage->repaint();
     showStatus ((splits > 0

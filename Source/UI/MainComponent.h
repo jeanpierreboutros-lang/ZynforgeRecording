@@ -130,6 +130,9 @@ private:
     juce::UndoManager undoManager;
     juce::var         stripClipboard;   // JSON of cut/copied strip settings
     void recordUndoSnapshot (const juce::String& label);
+    // Clip/playlist undo: capture engine.playlistsToJson() before the edit,
+    // pass it here after; records an undoable step only if clips changed.
+    void pushClipUndo (const juce::String& label, const juce::var& before);
     void restoreUndoSnapshot (const juce::var& snapshot);
     void editUndo();
     void editRedo();
