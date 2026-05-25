@@ -124,6 +124,13 @@ void MainComponent::timerCallback()
         // volume's free bytes is one syscall per drive; cheap.
         if ((++diskTick % 48) == 0)
             engine.refreshDiskMinutesRemaining();
+        // Update disk-keep-up at the same cadence -- if actual bytes/
+        // sec falls below ~85 % of expected for ~6 s, we flip the
+        // "disk struggling" flag and the status bar warns the engineer
+        // before missed samples start landing.
+        if ((diskTick % 12) == 0)
+            engine.getRecorder().updateDiskHealth (
+                engine.getRecorder().estimateBytesPerSecondForArmedTracks());
     }
     else if (engine.isPlaying())
     {
@@ -172,6 +179,23 @@ void MainComponent::timerCallback()
                               engine.getDiskMBPerSec(),
                               engine.getRingFillPct(),
                               recorder.getMissedSamples());
+
+    // Live show-day warnings -- only while recording, refreshed at the
+    // timer cadence. Both flags clear automatically when the condition
+    // recovers (e.g. swap drives + the new primary write succeeds, or
+    // disk catches back up). Status bar is the engineer's first read.
+    if (rec)
+    {
+        const bool primFail   = recorder.hasPrimaryFailed();
+        const bool diskTrouble = recorder.isDiskStruggling();
+        if (primFail || diskTrouble)
+        {
+            juce::String warn;
+            if (primFail)    warn << "⚠ PRIMARY WRITE FAILED -- recording on backup/mirror  ";
+            if (diskTrouble) warn << "⚠ DISK STRUGGLING -- missed samples imminent";
+            statusLabel.setText (warn.trim(), juce::dontSendNotification);
+        }
+    }
 }
 
 void MainComponent::updateTransportLabels()

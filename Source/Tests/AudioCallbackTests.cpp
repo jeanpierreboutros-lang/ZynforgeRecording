@@ -1060,6 +1060,39 @@ namespace zynforge
                 mirrorRoot.deleteRecursively();
             }
 
+            // ─── Hot-swap failover detection ─────────────────────────
+            beginTest ("Primary-failure flag stays false on a healthy take");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    CallbackFixture f (1, 1, 2);
+                    auto& rec = f.engine.getRecorder();
+                    rec.getTrack (0).armed.store (true);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.3f, 256);
+                    for (int b = 0; b < 32; ++b) f.process (256);
+                    f.engine.stopRecording();
+                    expect (! rec.hasPrimaryFailed());
+                }
+                // session.report.json carries primaryFailed=false too.
+                const auto rep = sessionDir.getChildFile ("session.report.json");
+                const auto j = juce::JSON::parse (rep);
+                if (auto* obj = j.getDynamicObject())
+                    expect (! (bool) obj->getProperty ("primaryFailed"));
+                sessionDir.deleteRecursively();
+            }
+
+            beginTest ("Disk-struggling flag stays false when keep-up is healthy");
+            {
+                CallbackFixture f (1, 1, 2);
+                auto& rec = f.engine.getRecorder();
+                expect (! rec.isDiskStruggling());
+                // updateDiskHealth with 0 expectedBytesPerSec resets
+                // the streak -- safe to call when not recording.
+                rec.updateDiskHealth (0);
+                expect (! rec.isDiskStruggling());
+            }
+
             beginTest ("Auto-split threshold defaults restore after test override clears");
             {
                 MultitrackRecorder::setAutoSplitThresholdBytesForTests (0);

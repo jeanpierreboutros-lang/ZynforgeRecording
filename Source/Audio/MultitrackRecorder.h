@@ -115,6 +115,22 @@ namespace zynforge
         int         estimateMinutesRemaining (const juce::File& primaryVolume,
                                               const juce::File& backupVolume) const noexcept;
 
+        // Disk-keep-up health, as a proxy for the SMART data we don't
+        // (currently) read. Returns true if actual bytes/sec has been
+        // < ~85 % of expected (estimateBytesPerSecondForArmedTracks)
+        // for sustained windows -- means the disk is failing to drain
+        // the ring as fast as audio arrives, missed samples are
+        // imminent. UI surfaces this as "⚠ DISK STRUGGLING".
+        bool isDiskStruggling() const noexcept
+        {
+            return diskStrugglingFlag.load (std::memory_order_relaxed);
+        }
+        // Update the disk-struggling flag from the latest sampled
+        // throughput. Called from the UI's timer; cheap (one atomic
+        // compare + EMA). Pass the current expected bytes/sec so the
+        // recorder doesn't have to re-derive the arm + format setup.
+        void updateDiskHealth (juce::int64 expectedBytesPerSec) noexcept;
+
         // Optional second copy of every track to a backup folder.
         // Pass an empty File to disable. Only effective for the next session.
         void setBackupDirectory (const juce::File& dir);
@@ -349,8 +365,29 @@ namespace zynforge
 
         juce::File activeSessionDir;
         juce::File backupDir;
-        std::atomic<bool> backupActive { false };
-        std::atomic<bool> backupFailed { false };
+        std::atomic<bool> backupActive  { false };
+        std::atomic<bool> backupFailed  { false };
+
+        // Primary-writer failure. Drain thread sets true when a
+        // writeFromFloatArrays returns false (disk full, path gone).
+        // The audio thread keeps capturing into the ring buffer; the
+        // engineer just loses the primary file's tail. UI surfaces
+        // this so the operator can act (swap drives, etc.) -- audio
+        // continues to land on backup + any mirrors.
+        std::atomic<bool> primaryFailed { false };
+
+        // Disk-struggling flag + 2-second EMA of the keep-up ratio.
+        // Updated by updateDiskHealth() from the UI timer; the audio
+        // thread + writer threads don't read these.
+        std::atomic<bool>  diskStrugglingFlag { false };
+        float              diskKeepUpEma      { 1.0f };  // 0..1, 1.0 = caught up
+        int                diskStrugglingStreak { 0 };   // consecutive low samples
+    public:
+        bool hasPrimaryFailed() const noexcept
+        {
+            return primaryFailed.load (std::memory_order_relaxed);
+        }
+    private:
 
         // Extra mirror destinations beyond primary + backup. Editable
         // only while not recording; the active take captures whatever

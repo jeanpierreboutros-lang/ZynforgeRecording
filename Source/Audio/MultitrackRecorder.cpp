@@ -484,6 +484,7 @@ namespace zynforge
 
         backupActive.store (backupDir.isDirectory(), std::memory_order_relaxed);
         backupFailed.store (false, std::memory_order_relaxed);
+        primaryFailed.store (false, std::memory_order_relaxed);
 
         // Recovery marker -- deleted on clean stop.
         {
@@ -514,6 +515,30 @@ namespace zynforge
     {
         s_autoSplitThresholdOverride.store (juce::jmax ((juce::int64) 0, bytes),
                                             std::memory_order_release);
+    }
+
+    void MultitrackRecorder::updateDiskHealth (juce::int64 expectedBytesPerSec) noexcept
+    {
+        // Only meaningful while recording AND we have an expected rate.
+        if (! recording.load (std::memory_order_acquire) || expectedBytesPerSec <= 0)
+        {
+            diskStrugglingStreak = 0;
+            diskStrugglingFlag.store (false, std::memory_order_relaxed);
+            return;
+        }
+        const float actual = getDiskBytesPerSec();
+        const float ratio  = juce::jmin (1.0f, actual / (float) expectedBytesPerSec);
+        // EMA smoother so a single short stall doesn't trigger.
+        diskKeepUpEma = 0.7f * diskKeepUpEma + 0.3f * ratio;
+        // Below 85 % keep-up for ~3 consecutive samples (~6 s at 2 Hz
+        // polling) flips the warning. Reset the streak on recovery so
+        // the warning clears once the disk catches up.
+        if (diskKeepUpEma < 0.85f)
+            ++diskStrugglingStreak;
+        else
+            diskStrugglingStreak = 0;
+        diskStrugglingFlag.store (diskStrugglingStreak >= 3,
+                                  std::memory_order_relaxed);
     }
 
     void MultitrackRecorder::setMirrors (const std::vector<MirrorConfig>& configs)
@@ -650,6 +675,7 @@ namespace zynforge
             report->setProperty ("missedSamples",  (juce::int64) totalMissed);
             report->setProperty ("backupActive",   backupWasRunning);
             report->setProperty ("backupFailed",   backupHadFailure);
+            report->setProperty ("primaryFailed",  primaryFailed.load (std::memory_order_relaxed));
             report->setProperty ("captureFormat",  (int) captureFormat);
             report->setProperty ("preRollSeconds", preRollSeconds);
 
@@ -1005,9 +1031,22 @@ namespace zynforge
                 const float* const channels[] = { ptr };
                 if (w.writer != nullptr)
                 {
-                    w.writer->writeFromFloatArrays (channels, 1, scope.blockSize1);
-                    w.bytesWrittenPrimary += (juce::int64) scope.blockSize1 * w.bytesPerSamplePrimary;
-                    w.totalSamplesPrimary += scope.blockSize1;
+                    if (! w.writer->writeFromFloatArrays (channels, 1, scope.blockSize1))
+                    {
+                        // Primary write failed mid-take (disk full,
+                        // path disappeared, permissions). Close the
+                        // writer so we don't keep hammering a bad
+                        // handle, flip the failure flag so UI + report
+                        // surface it, and let backup + mirrors keep
+                        // capturing without interruption.
+                        w.writer.reset();
+                        primaryFailed.store (true, std::memory_order_relaxed);
+                    }
+                    else
+                    {
+                        w.bytesWrittenPrimary += (juce::int64) scope.blockSize1 * w.bytesPerSamplePrimary;
+                        w.totalSamplesPrimary += scope.blockSize1;
+                    }
                 }
                 if (w.backupWriter != nullptr
                     && ! w.backupWriter->writeFromFloatArrays (channels, 1, scope.blockSize1))
@@ -1041,9 +1080,16 @@ namespace zynforge
                 const float* const channels[] = { ptr };
                 if (w.writer != nullptr)
                 {
-                    w.writer->writeFromFloatArrays (channels, 1, scope.blockSize2);
-                    w.bytesWrittenPrimary += (juce::int64) scope.blockSize2 * w.bytesPerSamplePrimary;
-                    w.totalSamplesPrimary += scope.blockSize2;
+                    if (! w.writer->writeFromFloatArrays (channels, 1, scope.blockSize2))
+                    {
+                        w.writer.reset();
+                        primaryFailed.store (true, std::memory_order_relaxed);
+                    }
+                    else
+                    {
+                        w.bytesWrittenPrimary += (juce::int64) scope.blockSize2 * w.bytesPerSamplePrimary;
+                        w.totalSamplesPrimary += scope.blockSize2;
+                    }
                 }
                 if (w.backupWriter != nullptr
                     && ! w.backupWriter->writeFromFloatArrays (channels, 1, scope.blockSize2))
