@@ -3110,11 +3110,10 @@ namespace zynforge
         ruler = std::make_unique<EditTimeRuler> (engine);
         addAndMakeVisible (*ruler);
 
-        emptyLabel.setText ("No session loaded -- load or record a session to see waveforms here.",
-                            juce::dontSendNotification);
-        emptyLabel.setJustificationType (juce::Justification::centred);
-        emptyLabel.setColour (juce::Label::textColourId, brand::textTertiary);
-        addChildComponent (emptyLabel);
+        // Reusable loading/empty/error surface, overlaid on the wave area.
+        // It manages its own visibility -- shown when no session is loaded,
+        // cleared once waveforms are present (see refresh()).
+        addChildComponent (placeholder);
 
         refresh();
         startTimerHz (24);
@@ -3258,9 +3257,19 @@ namespace zynforge
 
         list->setWaveformsFromSession (sessionDir);
 
+        // Empty state: when no session is loaded there are no waveforms to
+        // show, so surface the reusable placeholder. Transition only on a
+        // change of loaded-ness so we don't re-announce to VoiceOver every
+        // refresh.
         const bool loaded = engine.getPlayer().isLoaded();
-        emptyLabel.setVisible (! loaded && lastTrackCount > 0 ? false : false);
-        // (Empty-state hint is now drawn inside each row.)
+        const auto want = loaded ? PlaceholderView::State::Hidden
+                                 : PlaceholderView::State::Empty;
+        if (placeholder.getState() != want)
+        {
+            if (loaded) placeholder.clear();
+            else        placeholder.showEmpty ("No session loaded",
+                            "Load or record a session to see waveforms here.");
+        }
         lastLoaded = loaded;
     }
 
@@ -3332,6 +3341,7 @@ namespace zynforge
             ruler->setBounds (bounds.removeFromTop (rulerH));
 
         viewport.setBounds (bounds);
+        placeholder.setBounds (bounds);   // overlays the wave area when shown
         list->setViewportHeight (viewport.getHeight());
         // Apply the zoom factor -- content widens past the viewport when
         // zoom > 1; the horizontal scrollbar lights up to navigate.

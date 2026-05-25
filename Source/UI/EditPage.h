@@ -5,6 +5,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "../Audio/AudioEngine.h"
+#include "PlaceholderView.h"
 
 #include <memory>
 #include <functional>
@@ -160,7 +161,7 @@ namespace zynforge
         juce::AudioThumbnailCache          thumbnailCache { 256 };
         juce::Viewport                     viewport;
         std::unique_ptr<TrackList>         list;
-        juce::Label                        emptyLabel;
+        PlaceholderView                    placeholder;
 
         int        lastTrackCount  { -1 };
         bool       lastLoaded      { false };
