@@ -5,7 +5,10 @@ namespace zynforge
     StripNames::StripNames()
     {
         juce::PropertiesFile::Options opts;
-        opts.applicationName     = "Zynforge Recording";
+        // Tests persist to a separate file so they never touch the real
+        // per-channel names the engineer set.
+        opts.applicationName     = testModeFlag() ? "Zynforge Recording (tests)"
+                                                   : "Zynforge Recording";
         opts.filenameSuffix      = ".settings";
         opts.folderName          = "Zynforge Recording";
         opts.osxLibrarySubFolder = "Application Support";

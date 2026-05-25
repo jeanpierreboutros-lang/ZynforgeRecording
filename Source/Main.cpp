@@ -3,6 +3,7 @@
 #include "UI/MainComponent.h"
 #include "Theme/BrandColors.h"
 #include "Theme/BrandTokens.h"
+#include "Audio/StripNames.h"
 
 class ZynforgeRecordingApp final : public juce::JUCEApplication
 {
@@ -47,6 +48,10 @@ public:
             };
             DualLogger dual (reportFile);
             juce::Logger::setCurrentLogger (&dual);
+
+            // Isolate persistent state so the tests never write to the
+            // engineer's real per-channel names ("kick" etc.).
+            zynforge::StripNames::setTestMode (true);
 
             juce::UnitTestRunner runner;
             runner.setAssertOnFailure (false);
