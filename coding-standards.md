@@ -41,12 +41,18 @@ The goal of this document is to keep the codebase consistent enough that any con
 - Use `std::atomic` for any value crossed between the audio thread and any other thread.
 - Pass `juce::String` by const reference. Pass small POD by value.
 - Wrap external commands (`lame`, `rclone`) in `juce::ChildProcess` and check the exit code.
+- Set the grey ZynForge LookAndFeel on **every** `juce::AlertWindow` at construction — `aw->setLookAndFeel (&laf)` in a `MainComponent` method, or `&getLookAndFeel()` / `&self->getLookAndFeel()` from a `Component` / captured SafePointer. Prompts must read grey + light grey app-wide.
+- Map EDIT-view timeline samples ↔ lane pixels through `TimelineMapper` (`EditPage.cpp`), not a re-inlined lambda: `toX` rounds, `toXFloor` truncates, `toSample` inverts. Build one per paint/event from the lane's inner rect + session length.
+- Compute a strip's effective gain (own gain + VCA-bus gain) **once** per audio block and share it; don't re-derive it per consumer inside the callback.
+- Resolve stereo logical ↔ physical strip mapping through `AudioEngine::physicalFromLogical` / `logicalFromPhysical` — it's model topology, not UI state. Don't re-implement the stereo-collapse walk in a view.
+- When a consumer needs only a slice of the engine, depend on a segregated interface (`ITransport`, with more facets to follow) rather than the whole `AudioEngine&`. New facets keep the same shape: pure-virtual contract, `AudioEngine` implements it.
 
 ### Never
 
 - Allocate, lock, log, or call `Component::repaint` from the audio callback.
 - Construct a raw `juce::Font` outside `Source/Theme/`. Use `brand::type::*` or `brand::fonts::*`.
 - Use `juce::Colour::fromRGB(...)` or `juce::Colours::black/white` outside `Source/Theme/`. Use `brand::*` tokens or `brand::onSignal(bg)`. The **one** sanctioned white is a specular gloss / light scrim — route it through `brand::gloss(alpha)`, never an inline `Colours::white.withAlpha(...)`.
+- Call `juce::LookAndFeel::setDefaultLookAndFeel(...)`. The app's global default is JUCE's, by design: a global ZynForge default crashes JUCE text shaping (`SimpleShapedText::shape`). Set the LAF **per window** instead (see the AlertWindow rule above).
 - Inline a `withAlpha(0.xx)` literal. Use a named step from `brand::alpha::` (`subtle`/`dimmed`/`ghost`/`scrim`/`muted`/`prominent`/`bold`). If none fits, add a line to the ad-hoc catalog in `BrandColors.h` rather than leaving the magic number undocumented.
 - Pass a raw corner-radius float to `fill/drawRoundedRectangle`. Use `brand::radius::{sm,md,lg,xl}`. Sub-2 px micro-radii on meter segments / icon glyphs are the only exception (geometry-forced, radius < half the element height).
 - Reference a strip by its array index in any persisted form. Use `TrackState::stripId`.
@@ -83,9 +89,10 @@ g.setColour (brand::shadow::elev2());
 See `testing.md` for the full strategy. High level:
 
 - Every change is **build-tested** (`cmake --build build --config Release`).
+- Every change runs the **headless test suite** (`Source/Tests/`, `juce::UnitTest`): `ZYNFORGE_RUN_TESTS=1 "…/Zynforge Recording.app/Contents/MacOS/Zynforge Recording"` (or `--run-tests`). Report lands at `~/Library/Logs/Zynforge/test-report.log`. **Quit any running GUI instance first** — otherwise LaunchServices re-focuses it and the test process exits without running (the log isn't rewritten; check its mtime before trusting the pass count).
+- New `Source/Audio/` behaviour gets a test. Clip edits + recording integrity are covered (`RecorderPlayerTests`, `RecordingIntegrityTests`, `AudioCallbackTests`); add to them rather than starting a parallel harness.
 - Every change is **smoke-tested** (launch, confirm no new crash report, RSS / CPU healthy).
-- Changes touching `Source/Audio/` are **field-tested** before being declared done.
-- Formal unit tests are not yet in place; a harness for `Source/Audio/` is on the roadmap (see `tasks.md`).
+- UI-only behaviour (paint, hit-test, modal flow) isn't covered by the headless suite — say so explicitly and eyeball it; don't claim UI correctness from a green build.
 
 ## Documentation and Comments
 

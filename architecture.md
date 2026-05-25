@@ -176,8 +176,9 @@ sequenceDiagram
 
 ## 8. Future Considerations / Known Limitations
 
-- **`MainComponent.cpp` is ~5000 lines.** Splitting into `MainMenu`, `MainLayout`, `MainTimer`, `MainKeyHandling` is on the roadmap (see `tasks.md`). [TODO: confirm preferred split.]
-- **No formal unit tests** — current strategy is build + smoke + field rehearsal (see `testing.md`). A future test harness for `Source/Audio/` (pure C++ with a mocked `AudioIODeviceCallback` driver) is desirable.
+- **`AudioEngine` is still one ~255-method hub.** Interface segregation has begun — `ITransport` (`Source/Audio/ITransport.h`) is the first extracted facet the engine implements — but current consumers (TransportBar, EditPage) still hold a full `AudioEngine&` because they reach through `getPlayer()`/`getRecorder()`. Migrating consumers to narrow interfaces (`ITransport`, future `IClipEditor`/`IRouting`) is incremental, per-consumer work.
+- **`MainComponent.cpp` is already split** along functional lines (`MainComponentTimer/Keys/Layout/Cues/Edit/SessionIO/Menu/Strips/Help/Tools/...`); see §5. Stereo logical↔physical mapping now lives on `AudioEngine`, not the UI.
+- **Headless unit tests exist** (`Source/Tests/`, `juce::UnitTest`, run via `--run-tests` / `ZYNFORGE_RUN_TESTS=1`): recorder/player state, clip edits (split/crop/trim/move/fade/mute/delete/duplicate/lock + undo round-trips), recording integrity, audio-callback routing, transients, automation, markers. See `testing.md`. UI paint/hit-test/modal flow is still out of scope for the suite and must be eyeballed.
 - **Companion server runs unencrypted HTTP.** TLS / WebRTC migration is open. [TODO: target release.]
 - **iOS / iPad companion is web-only** today. Native client is a future consideration.
 - **Dante support depends on Audinate's Dante Virtual Soundcard** being installed and selected as the system audio device — no native Dante API integration.
