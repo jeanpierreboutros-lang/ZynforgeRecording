@@ -1442,44 +1442,49 @@ void MainComponent::confirmAndQuit()
     // Recording in progress is its own conversation -- two buttons,
     // primary "Stop & Quit" / Cancel. No Save question because the
     // engineer is mid-take and saving doesn't make sense yet.
+    // Explicit addButton return values -- MessageBoxOptions' index-based
+    // result mapping is unreliable across platforms (see the three-button
+    // dialog below), which made the bare "Quit" button do nothing.
     if (recording)
     {
-        auto options = juce::MessageBoxOptions()
-                         .withIconType (juce::MessageBoxIconType::NoIcon)
-                         .withTitle ("Recording is still rolling")
-                         .withMessage ("A recording is in progress.\n"
-                                       "Stop the recording cleanly and quit?")
-                         .withButton ("Stop & Quit")
-                         .withButton ("Cancel")
-                         .withAssociatedComponent (this);
-
-        juce::AlertWindow::showAsync (options, [this] (int result)
-        {
-            if (result == 1) return;        // Cancel
-            engine.stopRecording();
-            if (auto* app = juce::JUCEApplication::getInstance())
-                app->quit();
-        });
+        constexpr int kStopQuit = 1, kCancel = 2;
+        auto* aw = new juce::AlertWindow ("Recording is still rolling",
+                                          "A recording is in progress.\n"
+                                          "Stop the recording cleanly and quit?",
+                                          juce::MessageBoxIconType::NoIcon, this);
+        aw->addButton ("Stop & Quit", kStopQuit, juce::KeyPress (juce::KeyPress::returnKey));
+        aw->addButton ("Cancel",      kCancel,   juce::KeyPress (juce::KeyPress::escapeKey));
+        aw->enterModalState (true,
+            juce::ModalCallbackFunction::create ([this, aw] (int result)
+            {
+                std::unique_ptr<juce::AlertWindow> dispose (aw);
+                if (result == kCancel) return;       // stay in app
+                engine.stopRecording();
+                if (auto* app = juce::JUCEApplication::getInstance())
+                    app->quit();
+            }),
+            false);
         return;
     }
 
     // No active session -- nothing to save. Two buttons.
     if (! hasActiveSession)
     {
-        auto options = juce::MessageBoxOptions()
-                         .withIconType (juce::MessageBoxIconType::NoIcon)
-                         .withTitle ("Quit Zynforge Recording?")
-                         .withMessage ("No active session. Any unsaved app state will be lost.")
-                         .withButton ("Quit")
-                         .withButton ("Cancel")
-                         .withAssociatedComponent (this);
-
-        juce::AlertWindow::showAsync (options, [] (int result)
-        {
-            if (result == 1) return;        // Cancel
-            if (auto* app = juce::JUCEApplication::getInstance())
-                app->quit();
-        });
+        constexpr int kQuit = 1, kCancel = 2;
+        auto* aw = new juce::AlertWindow ("Quit Zynforge Recording?",
+                                          "No active session. Any unsaved app state will be lost.",
+                                          juce::MessageBoxIconType::NoIcon, this);
+        aw->addButton ("Quit",   kQuit,   juce::KeyPress (juce::KeyPress::returnKey));
+        aw->addButton ("Cancel", kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
+        aw->enterModalState (true,
+            juce::ModalCallbackFunction::create ([aw] (int result)
+            {
+                std::unique_ptr<juce::AlertWindow> dispose (aw);
+                if (result == kCancel) return;       // stay in app
+                if (auto* app = juce::JUCEApplication::getInstance())
+                    app->quit();
+            }),
+            false);
         return;
     }
 
