@@ -973,6 +973,93 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            // ─── N-way mirror destinations ───────────────────────────
+            beginTest ("3-way mirror writes Track_NN.wav to primary + backup + extra root");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                const auto backupRoot = makeTempSessionDir();   // 2nd drive
+                const auto mirrorRoot = makeTempSessionDir();   // 3rd drive
+                {
+                    CallbackFixture f (1, 1, 2);
+                    auto& rec = f.engine.getRecorder();
+                    rec.getTrack (0).armed.store (true);
+                    rec.setCaptureFormat (CaptureFormat::Wav24);
+                    rec.setBackupDirectory (backupRoot);
+                    rec.setBackupCaptureFormat (CaptureFormat::Wav24);
+                    rec.setMirrors ({ { mirrorRoot, CaptureFormat::Wav24 } });
+
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.3f, 256);
+                    for (int b = 0; b < 32; ++b) f.process (256);
+                    f.engine.stopRecording();
+                    rec.setMirrors ({});  // reset for following tests
+                    rec.setBackupDirectory ({});
+                }
+
+                // All three roots should now have an Audio Files/Track_01.wav.
+                const auto primaryWav = sessionDir.getChildFile ("Audio Files")
+                                                  .getChildFile ("Track_01.wav");
+                const auto backupWav  = backupRoot.getChildFile (sessionDir.getFileName())
+                                                  .getChildFile ("Audio Files")
+                                                  .getChildFile ("Track_01.wav");
+                const auto mirrorWav  = mirrorRoot.getChildFile (sessionDir.getFileName())
+                                                  .getChildFile ("Audio Files")
+                                                  .getChildFile ("Track_01.wav");
+                expect (primaryWav.existsAsFile());
+                expect (backupWav .existsAsFile());
+                expect (mirrorWav .existsAsFile());
+
+                // Each file should be a valid WAV with audible content.
+                juce::WavAudioFormat fmt;
+                for (const auto& f : { primaryWav, backupWav, mirrorWav })
+                {
+                    std::unique_ptr<juce::FileInputStream> in (f.createInputStream());
+                    std::unique_ptr<juce::AudioFormatReader> reader (
+                        fmt.createReaderFor (in.release(), true));
+                    expect (reader != nullptr);
+                    if (reader != nullptr && reader->lengthInSamples > 0)
+                    {
+                        juce::AudioBuffer<float> buf (1, (int) reader->lengthInSamples);
+                        reader->read (&buf, 0, (int) reader->lengthInSamples, 0, true, false);
+                        expect (buf.getMagnitude (0, 0, buf.getNumSamples()) > 0.20f);
+                    }
+                }
+
+                // session.report.json should enumerate the mirror as
+                // a 'mirrors' array on the track entry.
+                const auto report = sessionDir.getChildFile ("session.report.json");
+                const auto json = juce::JSON::parse (report);
+                if (auto* root = json.getDynamicObject())
+                {
+                    auto* tracks = root->getProperty ("tracks").getArray();
+                    if (tracks != nullptr && tracks->size() > 0)
+                    {
+                        auto* t0 = (*tracks)[0].getDynamicObject();
+                        auto* mirrors = t0->getProperty ("mirrors").getArray();
+                        expect (mirrors != nullptr);
+                        if (mirrors != nullptr)
+                        {
+                            expectEquals (mirrors->size(), 1);
+                            if (mirrors->size() >= 1)
+                            {
+                                auto* m0 = (*mirrors)[0].getDynamicObject();
+                                expectEquals (m0->getProperty ("root").toString(),
+                                              mirrorRoot.getFullPathName());
+                                auto* mFiles = m0->getProperty ("files").getArray();
+                                expect (mFiles != nullptr && mFiles->size() == 1);
+                                if (mFiles != nullptr && mFiles->size() >= 1)
+                                    expectEquals ((*mFiles)[0].toString(),
+                                                  juce::String ("Track_01.wav"));
+                            }
+                        }
+                    }
+                }
+
+                sessionDir.deleteRecursively();
+                backupRoot.deleteRecursively();
+                mirrorRoot.deleteRecursively();
+            }
+
             beginTest ("Auto-split threshold defaults restore after test override clears");
             {
                 MultitrackRecorder::setAutoSplitThresholdBytesForTests (0);

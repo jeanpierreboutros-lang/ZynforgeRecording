@@ -451,6 +451,32 @@ namespace zynforge
                     w.partFilesBackup.add (backupFile.getFileName());
             }
 
+            // Extra N-way mirror destinations beyond primary + backup.
+            for (const auto& mc : mirrorConfigs)
+            {
+                if (! mc.root.isDirectory())
+                {
+                    // Try to create -- root might be a path the
+                    // engineer set up before plugging in the drive.
+                    if (! mc.root.createDirectory().wasOk()) continue;
+                }
+                const auto mirrorSession = mc.root.getChildFile (sessionDir.getFileName())
+                                                    .getChildFile ("Audio Files");
+                mirrorSession.createDirectory();
+                const auto mFmt = resolve (mc.format);
+                const auto mFile = mirrorSession.getChildFile (trackName + mFmt.ext);
+                WriterChannel::Mirror m;
+                m.writer.reset (openWriterAtPath (mFile, mFmt.container, mFmt.bitDepth));
+                m.baseFile       = mirrorSession.getChildFile (trackName);
+                m.ext            = mFmt.ext;
+                m.container      = mFmt.container;
+                m.bitDepth       = mFmt.bitDepth;
+                m.bytesPerSample = mFmt.bitDepth / 8;
+                if (m.writer != nullptr)
+                    m.partFiles.add (mFile.getFileName());
+                w.mirrors.push_back (std::move (m));
+            }
+
             writers.push_back (std::move (w));
 
             fifos[i]->fifo.reset();
@@ -488,6 +514,20 @@ namespace zynforge
     {
         s_autoSplitThresholdOverride.store (juce::jmax ((juce::int64) 0, bytes),
                                             std::memory_order_release);
+    }
+
+    void MultitrackRecorder::setMirrors (const std::vector<MirrorConfig>& configs)
+    {
+        if (isRecording()) return;     // only editable when stopped
+        mirrorConfigs = configs;
+    }
+
+    bool MultitrackRecorder::anyMirrorFailed() const noexcept
+    {
+        for (const auto& w : writers)
+            for (const auto& m : w.mirrors)
+                if (m.failed) return true;
+        return false;
     }
 
     juce::int64 MultitrackRecorder::maxBytesForContainer (int containerCode) noexcept
@@ -560,20 +600,37 @@ namespace zynforge
         // the writers vector. The report needs this to enumerate the
         // Track_NN.wav + Track_NN_partXX.wav parts produced by the
         // auto-split logic.
+        struct MirrorReport
+        {
+            juce::File   root;
+            juce::int64  totalSamples;
+            juce::StringArray partFiles;
+            bool failed;
+        };
         struct WriterReport
         {
             juce::int64 totalSamplesPrimary;
             juce::int64 totalSamplesBackup;
             juce::StringArray partFilesPrimary;
             juce::StringArray partFilesBackup;
+            std::vector<MirrorReport> mirrors;
         };
         std::vector<WriterReport> writerSnapshots;
         writerSnapshots.reserve (writers.size());
         for (auto& wc : writers)
-            writerSnapshots.push_back ({ wc.totalSamplesPrimary,
-                                         wc.totalSamplesBackup,
-                                         wc.partFilesPrimary,
-                                         wc.partFilesBackup });
+        {
+            WriterReport wr { wc.totalSamplesPrimary, wc.totalSamplesBackup,
+                              wc.partFilesPrimary, wc.partFilesBackup, {} };
+            for (size_t mi = 0; mi < wc.mirrors.size(); ++mi)
+            {
+                const auto& m = wc.mirrors[mi];
+                const juce::File root = (mi < mirrorConfigs.size())
+                                            ? mirrorConfigs[mi].root
+                                            : juce::File();
+                wr.mirrors.push_back ({ root, m.totalSamples, m.partFiles, m.failed });
+            }
+            writerSnapshots.push_back (std::move (wr));
+        }
 
         closeWriters();
         backupActive.store (false, std::memory_order_relaxed);
@@ -665,6 +722,33 @@ namespace zynforge
                         }
                         t->setProperty ("backupFiles",  juce::var (backupFiles));
                         t->setProperty ("backupSha256", juce::var (backupShas));
+                    }
+
+                    // N-way mirrors -- one report entry per mirror
+                    // destination configured at startRecording.
+                    if (! ws.mirrors.empty())
+                    {
+                        juce::Array<juce::var> mirrorArr;
+                        for (const auto& mr : ws.mirrors)
+                        {
+                            juce::DynamicObject::Ptr mo (new juce::DynamicObject());
+                            mo->setProperty ("root",         mr.root.getFullPathName());
+                            mo->setProperty ("totalSamples", (juce::int64) mr.totalSamples);
+                            mo->setProperty ("failed",       mr.failed);
+                            juce::Array<juce::var> mFiles;
+                            juce::Array<juce::var> mShas;
+                            const auto mDir = mr.root.getChildFile (activeSessionDir.getFileName())
+                                                      .getChildFile ("Audio Files");
+                            for (const auto& fn : mr.partFiles)
+                            {
+                                mFiles.add (juce::var (fn));
+                                mShas .add (juce::var (sha256File (mDir.getChildFile (fn))));
+                            }
+                            mo->setProperty ("files",  juce::var (mFiles));
+                            mo->setProperty ("sha256", juce::var (mShas));
+                            mirrorArr.add (juce::var (mo.get()));
+                        }
+                        t->setProperty ("mirrors", juce::var (mirrorArr));
                     }
                 }
                 trackArray.add (juce::var (t.get()));
@@ -891,6 +975,27 @@ namespace zynforge
                             wc.partFilesBackup.add (nextFile.getFileName());
                     }
                 }
+                // Mirror writers -- same per-destination roll logic.
+                for (auto& m : wc.mirrors)
+                {
+                    if (m.writer == nullptr || m.failed) continue;
+                    const juce::int64 projected = m.bytesWritten
+                        + (juce::int64) samplesPending * m.bytesPerSample;
+                    if (projected >= maxBytesForContainer (m.container))
+                    {
+                        m.writer.reset();
+                        ++m.partNumber;
+                        const auto nextFile = m.baseFile.getParentDirectory()
+                            .getChildFile (m.baseFile.getFileName()
+                                           + "_part"
+                                           + juce::String::formatted ("%02d", m.partNumber)
+                                           + m.ext);
+                        m.writer.reset (openWriterAtPath (nextFile, m.container, m.bitDepth));
+                        m.bytesWritten = 0;
+                        if (m.writer != nullptr)
+                            m.partFiles.add (nextFile.getFileName());
+                    }
+                }
             };
 
             if (scope.blockSize1 > 0)
@@ -915,6 +1020,18 @@ namespace zynforge
                     w.bytesWrittenBackup += (juce::int64) scope.blockSize1 * w.bytesPerSampleBackup;
                     w.totalSamplesBackup += scope.blockSize1;
                 }
+                for (auto& m : w.mirrors)
+                {
+                    if (m.writer == nullptr || m.failed) continue;
+                    if (! m.writer->writeFromFloatArrays (channels, 1, scope.blockSize1))
+                    {
+                        m.writer.reset();
+                        m.failed = true;
+                        continue;
+                    }
+                    m.bytesWritten += (juce::int64) scope.blockSize1 * m.bytesPerSample;
+                    m.totalSamples += scope.blockSize1;
+                }
                 totalWritten += scope.blockSize1;
             }
             if (scope.blockSize2 > 0)
@@ -938,6 +1055,18 @@ namespace zynforge
                 {
                     w.bytesWrittenBackup += (juce::int64) scope.blockSize2 * w.bytesPerSampleBackup;
                     w.totalSamplesBackup += scope.blockSize2;
+                }
+                for (auto& m : w.mirrors)
+                {
+                    if (m.writer == nullptr || m.failed) continue;
+                    if (! m.writer->writeFromFloatArrays (channels, 1, scope.blockSize2))
+                    {
+                        m.writer.reset();
+                        m.failed = true;
+                        continue;
+                    }
+                    m.bytesWritten += (juce::int64) scope.blockSize2 * m.bytesPerSample;
+                    m.totalSamples += scope.blockSize2;
                 }
                 totalWritten += scope.blockSize2;
             }

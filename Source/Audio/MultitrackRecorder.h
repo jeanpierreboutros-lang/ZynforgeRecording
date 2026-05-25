@@ -120,6 +120,23 @@ namespace zynforge
         void setBackupDirectory (const juce::File& dir);
         juce::File getBackupDirectory() const               { return backupDir; }
         bool       isBackupActive() const noexcept          { return backupActive.load (std::memory_order_relaxed); }
+
+        // ── N-way mirror destinations ──────────────────────────────
+        // Beyond primary + backup, the engineer can register any
+        // number of extra mirror destinations -- each gets a full
+        // parallel copy of every armed track, in its own configurable
+        // format. Useful for broadcast / archival workflows that want
+        // primary (fast SSD) + backup (different drive) + off-board
+        // mirror (NAS / second machine) running concurrently.
+        struct MirrorConfig
+        {
+            juce::File    root;
+            CaptureFormat format { CaptureFormat::Wav24 };
+        };
+        void setMirrors (const std::vector<MirrorConfig>& configs);
+        std::vector<MirrorConfig> getMirrors() const               { return mirrorConfigs; }
+        // Any mirror failed during the active take? Cleared at start.
+        bool anyMirrorFailed() const noexcept;
         bool       hasBackupFailed() const noexcept         { return backupFailed.load (std::memory_order_relaxed); }
 
     private:
@@ -188,6 +205,36 @@ namespace zynforge
             juce::StringArray partFilesBackup;
             int          partNumberPrimary    { 1 };
             int          partNumberBackup     { 1 };
+
+            // N-way mirror writers. The primary + backup pair stays
+            // intact (engineers know that workflow); these are ADDITIONAL
+            // mirror destinations on top, for crews who need three+
+            // simultaneous copies (e.g. live broadcast houses running
+            // an on-board SSD + a backup HDD + an off-board NAS).
+            // Each mirror is independent: own file path, own bytes
+            // counter, own auto-split state, own failure flag.
+            struct Mirror
+            {
+                std::unique_ptr<juce::AudioFormatWriter> writer;
+                juce::File   baseFile;
+                juce::String ext;
+                int          container         { 0 };
+                int          bitDepth          { 24 };
+                int          bytesPerSample    { 3 };
+                juce::int64  bytesWritten      { 0 };   // resets at each roll
+                juce::int64  totalSamples      { 0 };   // never resets
+                int          partNumber        { 1 };
+                juce::StringArray partFiles;
+                // Drain thread sets this to true if the mirror writer
+                // returns false from writeFromFloatArrays (disk full,
+                // path disappeared). No atomic needed -- only the
+                // drain thread for THIS channel ever touches it during
+                // a take; the report reads it on the message thread
+                // after closeWriters has serialised. Mirror with
+                // failed=true is skipped on subsequent writes.
+                bool         failed            { false };
+            };
+            std::vector<Mirror> mirrors;
             juce::File   primaryBaseFile;     // "Audio Files/Track_01" (no extension)
             juce::File   backupBaseFile;
             juce::String primaryExt;          // ".wav" etc
@@ -304,6 +351,11 @@ namespace zynforge
         juce::File backupDir;
         std::atomic<bool> backupActive { false };
         std::atomic<bool> backupFailed { false };
+
+        // Extra mirror destinations beyond primary + backup. Editable
+        // only while not recording; the active take captures whatever
+        // was configured at startRecording.
+        std::vector<MirrorConfig> mirrorConfigs;
 
         std::vector<float> scratch;
 
