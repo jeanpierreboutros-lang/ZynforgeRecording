@@ -3054,6 +3054,8 @@ namespace zynforge
         // addAndMakeVisible().
         toolsBar = std::make_unique<EditToolsBar>();
         toolsBar->onZoomChanged = [this] (float z) { setZoom (z); };
+        toolsBar->onVerticalZoomChanged = [this] (float z) { setVerticalZoom (z); };
+        toolsBar->setVerticalZoom (vZoom);
 
         list = std::make_unique<TrackList> (engine, formatManager, thumbnailCache);
         list->sharedToolsBar = toolsBar.get();
@@ -3341,6 +3343,7 @@ namespace zynforge
         if (std::abs (z - vZoom) < 0.001f) return;
         vZoom = z;
         if (list != nullptr) list->repaint();
+        if (toolsBar != nullptr) toolsBar->setVerticalZoom (vZoom);
     }
 
     void EditPage::wheelZoomHorizontal (float delta)
