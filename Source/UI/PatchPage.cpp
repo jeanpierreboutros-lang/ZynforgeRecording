@@ -7,11 +7,22 @@ namespace zynforge
     namespace
     {
         // One half of the patch page -- either input or output routing.
-        class PatchMatrix final : public juce::Component, private juce::Timer
+        class PatchMatrix final : public juce::Component,
+                                  private juce::Timer,
+                                  private juce::ScrollBar::Listener
         {
         public:
+            // Reserved gutter on the right edge for the vertical scrollbar.
+            static constexpr int kScrollW = 12;
+
             PatchMatrix (AudioEngine& eng, bool inputSide)
-                : engine (eng), isInput (inputSide) { startTimerHz (10); }
+                : engine (eng), isInput (inputSide)
+            {
+                vscroll.setAutoHide (false);
+                vscroll.addListener (this);
+                addAndMakeVisible (vscroll);
+                startTimerHz (10);
+            }
             ~PatchMatrix() override { stopTimer(); }
 
         private:
@@ -25,7 +36,10 @@ namespace zynforge
                 // has moved.
                 auto& rec = engine.getRecorder();
                 const int n = rec.getNumTracks();
+                const int numHw = isInput ? engine.getCurrentDeviceInputCount()
+                                          : engine.getCurrentDeviceOutputCount();
                 std::size_t h = (std::size_t) n;
+                h = h * 1315423911u ^ (std::size_t) (numHw + 3);
                 for (int i = 0; i < n; ++i)
                 {
                     auto& t = rec.getTrack (i);
@@ -37,7 +51,12 @@ namespace zynforge
                     h = h * 1315423911u ^ (std::size_t) (s + 11);
                     h = h * 1315423911u ^ c;
                 }
-                if (h != lastHash) { lastHash = h; repaint(); }
+                if (h != lastHash)
+                {
+                    lastHash = h;
+                    updateScrollRange();   // HW count / track count may have changed
+                    repaint();
+                }
             }
             std::size_t lastHash { 0 };
         public:
@@ -79,7 +98,7 @@ namespace zynforge
                 L.muteBandH  = 32;
                 L.colHeaderH = L.colorBandH + L.muteBandH;
                 L.rowH       = 56;
-                const int avail = getWidth() - L.rowHeaderW;
+                const int avail = getWidth() - L.rowHeaderW - kScrollW;
                 L.colW = juce::jmax (60, avail / juce::jmax (1, numStrips));
                 return L;
             }
@@ -162,56 +181,93 @@ namespace zynforge
                     g.drawText (stereoCol ? "ST" : "M", pill, juce::Justification::centred, false);
                 }
 
-                // ─── Rows
-                for (int row = 0; row < numHw; ++row)
+                // ─── Rows (scrollable body, clipped below the frozen
+                // header band so rows never paint over the strip headers).
                 {
-                    const int y = L.colHeaderH + row * L.rowH;
-                    const auto rowRect = juce::Rectangle<int> (0, y, getWidth(), L.rowH);
+                    juce::Graphics::ScopedSaveState clip (g);
+                    g.reduceClipRegion (0, L.colHeaderH, getWidth(),
+                                        juce::jmax (0, getHeight() - L.colHeaderH));
 
-                    if (row % 2 == 0)
+                    for (int row = 0; row < numHw; ++row)
                     {
-                        g.setColour (brand::bgStrip.withAlpha (brand::alpha::scrim));
-                        g.fillRect (rowRect);
-                    }
+                        const int y = L.colHeaderH + row * L.rowH - scrollY;
+                        if (y + L.rowH <= L.colHeaderH || y >= getHeight())
+                            continue;   // scrolled out of view -- skip
+                        const auto rowRect = juce::Rectangle<int> (0, y, getWidth(), L.rowH);
 
-                    // Row label
-                    const bool isActiveRow = isRowRoutedToAnyStrip (row, logical);
-                    g.setColour (isActiveRow ? brand::textPrimary : brand::textSecondary);
-                    g.setFont (brand::type::sectionTitle());
-                    g.drawText ((isInput ? "IN " : "OUT ") + juce::String (row + 1),
-                                juce::Rectangle<int> (14, y, L.rowHeaderW - 18, L.rowH),
-                                juce::Justification::centredLeft, false);
-
-                    // Dots
-                    for (int c = 0; c < numStrips; ++c)
-                    {
-                        const int x = L.rowHeaderW + c * L.colW;
-                        const auto cell = juce::Rectangle<int> (x, y, L.colW, L.rowH);
-                        const auto dot  = cell.withSizeKeepingCentre (22, 22).toFloat();
-
-                        const int trackIdx   = logical[(std::size_t) c].trackIndex;
-                        const int rtL        = currentRoutingForTrack (trackIdx);
-                        // For stereo columns only the L position is drawn;
-                        // R is implicit (always L+1).
-                        const bool active = (rtL == row);
-
-                        if (active)
+                        if (row % 2 == 0)
                         {
-                            auto& t = engine.getRecorder().getTrack (trackIdx);
-                            const auto stripCol = t.colourARGB.load() != 0
-                                                  ? juce::Colour ((juce::uint32) t.colourARGB.load())
-                                                  : brand::stripColour (trackIdx);
-                            g.setColour (stripCol);
-                            g.fillEllipse (dot);
-                            g.setColour (brand::onSignal (stripCol));
-                            g.drawEllipse (dot, 2.0f);
+                            g.setColour (brand::bgStrip.withAlpha (brand::alpha::scrim));
+                            g.fillRect (rowRect);
                         }
-                        else
+
+                        // Row label
+                        const bool isActiveRow = isRowRoutedToAnyStrip (row, logical);
+                        g.setColour (isActiveRow ? brand::textPrimary : brand::textSecondary);
+                        g.setFont (brand::type::sectionTitle());
+                        g.drawText ((isInput ? "IN " : "OUT ") + juce::String (row + 1),
+                                    juce::Rectangle<int> (14, y, L.rowHeaderW - 18, L.rowH),
+                                    juce::Justification::centredLeft, false);
+
+                        // Dots
+                        for (int c = 0; c < numStrips; ++c)
                         {
-                            g.setColour (brand::textTertiary.withAlpha (brand::alpha::muted));
-                            g.drawEllipse (dot, 1.6f);
+                            const int x = L.rowHeaderW + c * L.colW;
+                            const auto cell = juce::Rectangle<int> (x, y, L.colW, L.rowH);
+                            const auto dot  = cell.withSizeKeepingCentre (22, 22).toFloat();
+
+                            const int trackIdx   = logical[(std::size_t) c].trackIndex;
+                            const int rtL        = currentRoutingForTrack (trackIdx);
+                            // For stereo columns only the L position is drawn;
+                            // R is implicit (always L+1).
+                            const bool active = (rtL == row);
+
+                            if (active)
+                            {
+                                auto& t = engine.getRecorder().getTrack (trackIdx);
+                                const auto stripCol = t.colourARGB.load() != 0
+                                                      ? juce::Colour ((juce::uint32) t.colourARGB.load())
+                                                      : brand::stripColour (trackIdx);
+                                g.setColour (stripCol);
+                                g.fillEllipse (dot);
+                                g.setColour (brand::onSignal (stripCol));
+                                g.drawEllipse (dot, 2.0f);
+                            }
+                            else
+                            {
+                                g.setColour (brand::textTertiary.withAlpha (brand::alpha::muted));
+                                g.drawEllipse (dot, 1.6f);
+                            }
                         }
                     }
+                }
+            }
+
+            void resized() override
+            {
+                vscroll.setBounds (getLocalBounds().removeFromRight (kScrollW));
+                updateScrollRange();
+            }
+
+            void mouseWheelMove (const juce::MouseEvent&,
+                                 const juce::MouseWheelDetails& w) override
+            {
+                const auto L = computeLayout();
+                const int viewH = juce::jmax (0, getHeight() - L.colHeaderH);
+                const int maxScroll = juce::jmax (0, numRows() * L.rowH - viewH);
+                if (maxScroll <= 0) return;
+                scrollY = juce::jlimit (0, maxScroll,
+                                        scrollY - juce::roundToInt (w.deltaY * (float) L.rowH * 3.0f));
+                vscroll.setCurrentRangeStart ((double) scrollY);
+                repaint();
+            }
+
+            void scrollBarMoved (juce::ScrollBar* sb, double newStart) override
+            {
+                if (sb == &vscroll)
+                {
+                    scrollY = juce::roundToInt (newStart);
+                    repaint();
                 }
             }
 
@@ -248,7 +304,7 @@ namespace zynforge
                 }
 
                 const int x = e.x - L.rowHeaderW;
-                const int y = e.y - L.colHeaderH;
+                const int y = e.y - L.colHeaderH + scrollY;   // body is scrolled
                 if (x < 0 || y < 0) { dragActive = false; return; }
 
                 const int col = x / L.colW;
@@ -279,7 +335,7 @@ namespace zynforge
                                               : engine.getCurrentDeviceOutputCount();
                 const auto L = computeLayout();
 
-                const int y = e.y - L.colHeaderH;
+                const int y = e.y - L.colHeaderH + scrollY;   // body is scrolled
                 if (y < 0) return;
                 int row = y / L.rowH;
                 row = juce::jlimit (0, numHw - 1, row);
@@ -313,6 +369,28 @@ namespace zynforge
             }
 
         private:
+            int numRows() const
+            {
+                return isInput ? engine.getCurrentDeviceInputCount()
+                               : engine.getCurrentDeviceOutputCount();
+            }
+
+            // Sync the scrollbar to the current content/viewport heights.
+            // Called from resized() and whenever the HW count / track set
+            // changes (timer). Hides the bar when everything already fits.
+            void updateScrollRange()
+            {
+                const auto L = computeLayout();
+                const int viewH    = juce::jmax (0, getHeight() - L.colHeaderH);
+                const int contentH = numRows() * L.rowH;
+                const int maxScroll = juce::jmax (0, contentH - viewH);
+
+                scrollY = juce::jlimit (0, maxScroll, scrollY);
+                vscroll.setRangeLimits (0.0, (double) juce::jmax (contentH, viewH));
+                vscroll.setCurrentRange ((double) scrollY, (double) viewH);
+                vscroll.setVisible (contentH > viewH);
+            }
+
             int currentRoutingForTrack (int trackIndex) const
             {
                 auto& t = engine.getRecorder().getTrack (trackIndex);
@@ -332,6 +410,11 @@ namespace zynforge
 
             AudioEngine& engine;
             bool         isInput;
+
+            // Vertical scroll over the HW-channel rows (up to 128). Headers
+            // stay frozen; only the row body scrolls.
+            juce::ScrollBar vscroll { true };
+            int             scrollY = 0;
 
             // Drag-patch state -- set in mouseDown, consumed in mouseDrag.
             bool dragActive   = false;
