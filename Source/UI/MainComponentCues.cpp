@@ -331,6 +331,7 @@ void MainComponent::promptCueName (const juce::String& title,
     auto* aw = new juce::AlertWindow (title,
                                       "Cue name:",
                                       juce::MessageBoxIconType::NoIcon);
+    aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
     aw->addTextEditor ("cueName", initial, juce::String{});
     dialog::primeNameEditor (*aw, "cueName");
     aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
@@ -540,6 +541,7 @@ void MainComponent::promptMirrorHost()
                                       "Enter the primary Mac's address (host:port). "
                                       "The primary must have its companion server running.",
                                       juce::MessageBoxIconType::NoIcon);
+    aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
     aw->addTextEditor ("addr", "192.168.1.42:9000", "Primary host:");
     dialog::primeNameEditor (*aw, "addr");
     aw->addButton ("Start", 1, juce::KeyPress (juce::KeyPress::returnKey));

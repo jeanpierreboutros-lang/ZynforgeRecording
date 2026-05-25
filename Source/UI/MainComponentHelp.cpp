@@ -247,6 +247,7 @@ void MainComponent::showFirstRunTutorial()
         if (self == nullptr || idx >= (int) steps.size()) return;
         const auto& s = steps[(size_t) idx];
         auto* aw = new juce::AlertWindow (s.title, s.body, juce::MessageBoxIconType::NoIcon);
+        aw->setLookAndFeel (&self->getLookAndFeel());   // grey ZynForge chrome, not JUCE default
         const bool last = (idx + 1 >= (int) steps.size());
         aw->addButton (last ? "OK" : "Next", 1, juce::KeyPress (juce::KeyPress::returnKey));
         if (! last) aw->addButton ("Skip tour", 0, juce::KeyPress (juce::KeyPress::escapeKey));
@@ -330,6 +331,7 @@ void MainComponent::showUserGuide()
 
     auto* aw = new juce::AlertWindow ("Zynforge user guide", body,
                                       juce::MessageBoxIconType::NoIcon);
+    aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
     aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
         [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }));

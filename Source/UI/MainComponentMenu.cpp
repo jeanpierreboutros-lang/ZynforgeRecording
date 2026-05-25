@@ -364,6 +364,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
                                           "  aws s3 sync {SESSION} s3://my-bucket/sessions/\n"
                                           "  rsync -a {SESSION} engineer@studio:/sessions/",
                                           juce::MessageBoxIconType::NoIcon);
+        aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
         const auto current = engine.getAppProps() != nullptr
                               ? engine.getAppProps()->getValue ("cloudUploadCommand")
                               : juce::String();

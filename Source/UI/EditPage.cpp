@@ -2281,6 +2281,7 @@ namespace zynforge
                         auto* aw = new juce::AlertWindow ("Clip gain",
                             "Enter clip gain in dB (-60 .. +12).",
                             juce::MessageBoxIconType::NoIcon);
+                        aw->setLookAndFeel (&self->getLookAndFeel());   // grey ZynForge chrome
                         aw->addTextEditor ("dB", juce::String (gainDb, 2));
                         dialog::primeNameEditor (*aw, "dB");
                         aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
@@ -2765,6 +2766,7 @@ namespace zynforge
                     const auto cur   = row->engine.getTakeName (row->index, active);
                     auto* aw = new juce::AlertWindow ("Rename take",
                         "Take name:", juce::MessageBoxIconType::NoIcon);
+                    aw->setLookAndFeel (&row->getLookAndFeel());   // grey ZynForge chrome
                     aw->addTextEditor ("n", cur, {});
                     dialog::primeNameEditor (*aw, "n");
                     aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));

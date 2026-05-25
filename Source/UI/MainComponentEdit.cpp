@@ -457,6 +457,7 @@ void MainComponent::dropMarkerAndPromptName()
                                       "Name this memory location:",
                                       juce::MessageBoxIconType::NoIcon,
                                       this);
+    aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
     aw->addTextEditor ("markerName", defaultName, {});
     if (auto* ed = aw->getTextEditor ("markerName"))
     {

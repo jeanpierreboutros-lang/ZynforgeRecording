@@ -190,6 +190,7 @@ namespace zynforge
         auto* aw = new juce::AlertWindow ("Rename marker",
                                           "Enter a new name:",
                                           juce::MessageBoxIconType::NoIcon);
+        aw->setLookAndFeel (&getLookAndFeel());   // grey ZynForge chrome, not JUCE default
         aw->addTextEditor ("name", current, {});
         dialog::primeNameEditor (*aw, "name");
         aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));

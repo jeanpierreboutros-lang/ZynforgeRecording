@@ -1632,6 +1632,7 @@ void MainComponent::showPreflightChecklist()
 
     auto* aw = new juce::AlertWindow ("Pre-flight checklist",
                                       body, juce::MessageBoxIconType::NoIcon);
+    aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
     aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
         [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }));

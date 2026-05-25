@@ -544,6 +544,7 @@ void MainComponent::promptSaveSessionTemplate()
     auto* aw = new juce::AlertWindow ("Save session template",
                                        "Name this template:",
                                        juce::MessageBoxIconType::NoIcon);
+    aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
     aw->addTextEditor ("name", "", {});
     aw->addButton ("Save",   1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
