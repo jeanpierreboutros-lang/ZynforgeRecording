@@ -12,9 +12,77 @@
 
 #include "MainComponent.h"
 #include "../Theme/BrandColors.h"
+#include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
 
 using namespace zynforge;
+
+namespace
+{
+    // Scrollable per-channel rename table: a row per channel showing its
+    // input number + an editable name field. applyTo() writes every name
+    // back through the engine (MIXER / EDIT then pick them up via their
+    // own polling). Embedded in the Rename Channels AlertWindow.
+    class RenameTable final : public juce::Component
+    {
+    public:
+        explicit RenameTable (AudioEngine& eng)
+        {
+            const int n = eng.getRecorder().getNumTracks();
+            for (int i = 0; i < n; ++i)
+            {
+                auto r = std::make_unique<Row>();
+                r->index = i;
+                r->num.setText ("In " + juce::String (i + 1), juce::dontSendNotification);
+                r->num.setColour (juce::Label::textColourId, brand::textTertiary);
+                r->num.setFont (brand::type::uiLabel());
+                r->num.setJustificationType (juce::Justification::centredLeft);
+                r->editor.setText (eng.getRecorder().getTrack (i).name, juce::dontSendNotification);
+                r->editor.setFont (brand::type::uiBody());
+                dialog::styleTextEditor (r->editor);
+                r->editor.setSelectAllWhenFocused (true);
+                content.addAndMakeVisible (r->num);
+                content.addAndMakeVisible (r->editor);
+                rows.push_back (std::move (r));
+            }
+            viewport.setViewedComponent (&content, false);
+            viewport.setScrollBarsShown (true, false);
+            addAndMakeVisible (viewport);
+        }
+
+        void resized() override
+        {
+            viewport.setBounds (getLocalBounds());
+            const int rowH = 28, gap = 3, numW = 52, pad = 4;
+            const int w = juce::jmax (120, viewport.getWidth() - 14);
+            content.setSize (w, (int) rows.size() * (rowH + gap) + pad);
+            int y = pad;
+            for (auto& r : rows)
+            {
+                r->num   .setBounds (6, y, numW, rowH);
+                r->editor.setBounds (6 + numW + 8, y, w - numW - 24, rowH);
+                y += rowH + gap;
+            }
+        }
+
+        void applyTo (AudioEngine& eng)
+        {
+            for (auto& r : rows)
+                eng.setTrackName (r->index, r->editor.getText().trim());
+        }
+
+        int preferredHeight() const
+        {
+            return juce::jlimit (140, 460, (int) rows.size() * 31 + 8);
+        }
+
+    private:
+        struct Row { int index { 0 }; juce::Label num; juce::TextEditor editor; };
+        juce::Viewport viewport;
+        juce::Component content;
+        std::vector<std::unique_ptr<Row>> rows;
+    };
+}
 
 void MainComponent::clearStripSelection()
 {
@@ -201,46 +269,29 @@ void MainComponent::showBatchRenameDialog()
     const int total = engine.getRecorder().getNumTracks();
     if (total <= 0) { showStatus ("No channels to rename"); return; }
 
-    auto* aw = new juce::AlertWindow ("Batch Rename Channels",
-                                      "Apply a numbered name to a range of channels.\n"
-                                      "Example: prefix 'Drums', first 1, last 8, start 1\n"
-                                      "         → 'Drums 1', 'Drums 2', ... 'Drums 8'.",
+    auto* aw = new juce::AlertWindow ("Rename Channels",
+                                      "Edit any channel name, then Apply. Changes show "
+                                      "immediately in the MIXER and EDIT views.",
                                       juce::MessageBoxIconType::NoIcon);
-    aw->addTextEditor ("prefix", "Drums",              "Prefix:");
-    dialog::primeNameEditor (*aw, "prefix");
-    aw->addTextEditor ("first",  "1",                  "First channel:");
-    dialog::primeNameEditor (*aw, "first");
-    aw->addTextEditor ("last",   juce::String (total), "Last channel:");
-    aw->addTextEditor ("start",  "1",                  "Start number:");
+    aw->setLookAndFeel (&laf);   // grey ZynForge chrome (not JUCE-default navy)
+
+    auto* table = new RenameTable (engine);
+    table->setSize (440, table->preferredHeight());
+    aw->addCustomComponent (table);   // AlertWindow lays it out but doesn't own it
+
     aw->addButton ("Apply",  1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
     aw->enterModalState (true,
-        juce::ModalCallbackFunction::create ([this, aw, total] (int result)
+        juce::ModalCallbackFunction::create ([this, aw, table] (int result)
         {
-            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            std::unique_ptr<juce::AlertWindow> disposeAw (aw);
+            std::unique_ptr<RenameTable>       disposeTable (table);
             if (result != 1) return;
 
-            const auto prefix = aw->getTextEditorContents ("prefix").trim();
-            const int firstCh = juce::jlimit (1, total,
-                                              aw->getTextEditorContents ("first").getIntValue());
-            const int lastCh  = juce::jlimit (firstCh, total,
-                                              aw->getTextEditorContents ("last").getIntValue());
-            const int startN  = juce::jmax (0,
-                                            aw->getTextEditorContents ("start").getIntValue());
-
-            int suffix = startN;
-            for (int ch = firstCh - 1; ch < lastCh; ++ch, ++suffix)
-            {
-                const auto name = prefix.isEmpty()
-                                     ? juce::String (suffix)
-                                     : prefix + " " + juce::String (suffix);
-                engine.setTrackName (ch, name);
-            }
-            showStatus ("Renamed channels " + juce::String (firstCh)
-                        + "-" + juce::String (lastCh)
-                        + " (" + prefix + " " + juce::String (startN) + "...)");
-            lastTrackCount = -1;   // force strip rebuild so names show up
+            table->applyTo (engine);
+            lastTrackCount = -1;   // force a strip rebuild so names refresh
+            showStatus ("Channel names updated");
         }),
         false);
 }
