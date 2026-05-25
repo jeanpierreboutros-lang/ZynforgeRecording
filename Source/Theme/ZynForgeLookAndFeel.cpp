@@ -32,16 +32,25 @@ namespace zynforge
     juce::Typeface::Ptr ZynForgeLookAndFeel::getTypefaceForFont (const juce::Font& f)
     {
         // Load Inter / JetBrains Mono from the BinaryData target the
-        // moment any font requests those typeface names. Cached, so
-        // the second call is free.
-        static juce::Typeface::Ptr interReg = juce::Typeface::createSystemTypefaceFor (
-            BinaryData::InterRegular_ttf, BinaryData::InterRegular_ttfSize);
-        static juce::Typeface::Ptr interBold = juce::Typeface::createSystemTypefaceFor (
-            BinaryData::InterBold_ttf,    BinaryData::InterBold_ttfSize);
-        static juce::Typeface::Ptr monoReg  = juce::Typeface::createSystemTypefaceFor (
-            BinaryData::JetBrainsMonoRegular_ttf, BinaryData::JetBrainsMonoRegular_ttfSize);
-        static juce::Typeface::Ptr monoBold = juce::Typeface::createSystemTypefaceFor (
-            BinaryData::JetBrainsMonoBold_ttf,    BinaryData::JetBrainsMonoBold_ttfSize);
+        // moment any font requests those typeface names, then hold them
+        // as MEMBERS (not function-local statics). Members die with the
+        // LookAndFeel -- which MainComponent owns and destroys during
+        // shutdown(), while CoreText is still alive. A function-local
+        // static Typeface::Ptr would instead survive to __cxa_finalize
+        // and run its CoreText destructor after the framework is gone,
+        // crashing the process on quit. Called on the message thread
+        // only (paint), so the lazy init needs no lock.
+        if (interReg == nullptr)
+        {
+            interReg  = juce::Typeface::createSystemTypefaceFor (
+                BinaryData::InterRegular_ttf, BinaryData::InterRegular_ttfSize);
+            interBold = juce::Typeface::createSystemTypefaceFor (
+                BinaryData::InterBold_ttf,    BinaryData::InterBold_ttfSize);
+            monoReg   = juce::Typeface::createSystemTypefaceFor (
+                BinaryData::JetBrainsMonoRegular_ttf, BinaryData::JetBrainsMonoRegular_ttfSize);
+            monoBold  = juce::Typeface::createSystemTypefaceFor (
+                BinaryData::JetBrainsMonoBold_ttf,    BinaryData::JetBrainsMonoBold_ttfSize);
+        }
 
         const auto name  = f.getTypefaceName();
         const bool bold  = f.isBold();

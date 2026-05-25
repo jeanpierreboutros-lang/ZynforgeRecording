@@ -2,6 +2,7 @@
 
 #include "UI/MainComponent.h"
 #include "Theme/BrandColors.h"
+#include "Theme/BrandTokens.h"
 
 class ZynforgeRecordingApp final : public juce::JUCEApplication
 {
@@ -68,7 +69,16 @@ public:
         mainWindow = std::make_unique<MainWindow> (getApplicationName());
     }
 
-    void shutdown() override { mainWindow.reset(); }
+    void shutdown() override
+    {
+        // Tear the UI down first (no more paints), THEN release every
+        // cached juce::Font while CoreText is still alive. Both the
+        // BrandTokens font cache and the LookAndFeel's bundled typefaces
+        // would otherwise destruct at __cxa_finalize -- after CoreText is
+        // gone -- and terminate() the process on quit.
+        mainWindow.reset();
+        zynforge::brand::type::clearFontCache();
+    }
 
     void systemRequestedQuit() override
     {

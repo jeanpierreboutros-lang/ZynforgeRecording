@@ -43,5 +43,13 @@ namespace zynforge
         int  getAlertBoxWindowFlags() override;
         juce::Array<int> getWidthsForTextButtons (juce::AlertWindow&,
                                                   const juce::Array<juce::TextButton*>&) override;
+
+    private:
+        // Bundled faces, loaded lazily on first getTypefaceForFont call.
+        // Members (not function-local statics) so they're released when
+        // this LookAndFeel is destroyed during app shutdown -- while
+        // CoreText is still alive -- rather than at __cxa_finalize after
+        // CoreText is gone (which terminate()s the process on quit).
+        juce::Typeface::Ptr interReg, interBold, monoReg, monoBold;
     };
 }
