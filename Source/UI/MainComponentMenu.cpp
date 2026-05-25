@@ -15,6 +15,7 @@
 #include "MarkerListDialog.h"
 #include "ClickSettingsDialog.h"
 #include "SessionSettingsDialog.h"
+#include "MirrorDrivesDialog.h"
 
 using namespace zynforge;
 
@@ -99,6 +100,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
 
         menu.addSeparator();
         menu.addItem (60, "Choose Backup Folder...", ! engine.isRecording());
+        menu.addItem (61, "Mirror Drives...",        ! engine.isRecording());
         menu.addSeparator();
         menu.addItem (99, "Quit Zynforge Recording...");
     }
@@ -560,6 +562,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
         }
     }
     else if (id == 60)   onBackupClicked();
+    else if (id == 61)   MirrorDrivesDialog::launch (engine);
     // Edit menu
     else if (id == 300)  editUndo();
     else if (id == 301)  editRedo();

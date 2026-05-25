@@ -598,6 +598,16 @@ namespace zynforge
 
         // Forwards to MultitrackRecorder.
         void setBackupDirectory (const juce::File& dir) { recorder.setBackupDirectory (dir); }
+
+        // N-way mirror destinations. Wraps recorder.setMirrors and
+        // persists via appProps so the engineer's mirror setup
+        // survives an app restart (mirror_count + mirror_root_<n> +
+        // mirror_format_<n>).
+        void setMirrors (const std::vector<MultitrackRecorder::MirrorConfig>& configs);
+        std::vector<MultitrackRecorder::MirrorConfig> getMirrors() const
+        {
+            return recorder.getMirrors();
+        }
         juce::File getBackupDirectory() const           { return recorder.getBackupDirectory(); }
         bool       isBackupActive() const noexcept       { return recorder.isBackupActive(); }
         bool       hasBackupFailed() const noexcept      { return recorder.hasBackupFailed(); }

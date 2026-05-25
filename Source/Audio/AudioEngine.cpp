@@ -249,6 +249,29 @@ namespace zynforge
         }
     }
 
+    void AudioEngine::setMirrors (const std::vector<MultitrackRecorder::MirrorConfig>& configs)
+    {
+        recorder.setMirrors (configs);
+        if (appProps == nullptr) return;
+
+        // Wipe any prior persisted mirror slots so we don't leave a
+        // stale entry behind when the engineer reduces the count.
+        for (int i = 0; i < 16; ++i)
+        {
+            appProps->removeValue ("mirror_root_"   + juce::String (i));
+            appProps->removeValue ("mirror_format_" + juce::String (i));
+        }
+        appProps->setValue ("mirror_count", (int) configs.size());
+        for (size_t i = 0; i < configs.size() && i < 16; ++i)
+        {
+            appProps->setValue ("mirror_root_"   + juce::String ((int) i),
+                                configs[i].root.getFullPathName());
+            appProps->setValue ("mirror_format_" + juce::String ((int) i),
+                                (int) configs[i].format);
+        }
+        appProps->saveIfNeeded();
+    }
+
     int AudioEngine::loadSession (const juce::File& sessionDir)
     {
         const auto n = player.loadSession (sessionDir);
@@ -792,6 +815,27 @@ namespace zynforge
         // engineer's preference survives restart.
         recordStereoMixFlag.store (appProps->getBoolValue ("recordStereoMix", false),
                                    std::memory_order_release);
+
+        // Restore N-way mirror destinations from prefs. Skip any whose
+        // root no longer exists (drive unplugged); the engineer can
+        // re-add it via the UI when it's back.
+        {
+            const int count = appProps->getIntValue ("mirror_count", 0);
+            std::vector<MultitrackRecorder::MirrorConfig> mirrors;
+            for (int i = 0; i < count && i < 16; ++i)
+            {
+                const auto rootStr = appProps->getValue ("mirror_root_" + juce::String (i), {});
+                if (rootStr.isEmpty()) continue;
+                juce::File f (rootStr);
+                if (! f.exists()) continue;
+                MultitrackRecorder::MirrorConfig c;
+                c.root   = f;
+                c.format = (CaptureFormat) appProps->getIntValue (
+                    "mirror_format_" + juce::String (i), (int) CaptureFormat::Wav24);
+                mirrors.push_back (c);
+            }
+            if (! mirrors.empty()) recorder.setMirrors (mirrors);
+        }
 
         currentTempoBpm.store ((float) appProps->getDoubleValue ("sessionTempoBpm", 120.0),
                                std::memory_order_relaxed);
