@@ -22,7 +22,9 @@ namespace zynforge::dialog
     inline void paintBackground (juce::Graphics& g, juce::Component& host) noexcept
     {
         auto r = host.getLocalBounds().toFloat();
-        g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.05f, 0.15f));
+        // Neutral grey (bgElevated), matching the rest of the app's prompts
+        // -- not the blue-tinted bgPanel.
+        g.setGradientFill (brand::verticalGradient (brand::bgElevated, r, 0.05f, 0.15f));
         g.fillAll();
     }
 

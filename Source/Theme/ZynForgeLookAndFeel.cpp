@@ -24,9 +24,11 @@ namespace zynforge
         setColour (juce::PopupMenu::backgroundColourId,       brand::bgElevated);
         setColour (juce::PopupMenu::textColourId,             brand::textPrimary);
         setColour (juce::PopupMenu::highlightedBackgroundColourId, brand::edge);
-        setColour (juce::AlertWindow::backgroundColourId,     brand::bgPanel);
+        // Prompts read as neutral grey (bgElevated), not the blue-tinted
+        // bgPanel/bgDeep -- so dialogs match the rest of the app.
+        setColour (juce::AlertWindow::backgroundColourId,     brand::bgElevated);
         setColour (juce::AlertWindow::textColourId,           brand::textPrimary);
-        setColour (juce::AlertWindow::outlineColourId,        brand::edge);
+        setColour (juce::AlertWindow::outlineColourId,        brand::borderSubtle);
     }
 
     juce::Typeface::Ptr ZynForgeLookAndFeel::getTypefaceForFont (const juce::Font& f)
@@ -176,17 +178,19 @@ namespace zynforge
 
         const auto full = alert.getLocalBounds().toFloat();
 
-        // Whole panel base
-        g.fillAll (brand::bgPanel);
+        // Whole panel base -- neutral grey (bgElevated), matching the rest
+        // of the app's prompts. NOT the blue-tinted bgPanel.
+        g.fillAll (brand::bgElevated);
 
-        // Footer area -- last 64 px shaded darker for visual weight.
+        // Footer area -- last 64 px shaded a touch darker (still neutral
+        // grey) for visual weight.
         const float footerH = 64.0f;
         const auto footerRect = full.withTop (full.getBottom() - footerH);
-        g.setColour (brand::bgDeep);
+        g.setColour (brand::bgElevated.darker (0.30f));
         g.fillRect (footerRect);
 
         // Hairline divider between message body and footer.
-        g.setColour (brand::edge);
+        g.setColour (brand::borderSubtle);
         g.drawHorizontalLine ((int) footerRect.getY(),
                               full.getX(), full.getRight());
 
