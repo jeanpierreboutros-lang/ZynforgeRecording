@@ -27,7 +27,7 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 - [ ] **Native iPad companion** (L) — replace the polled `/state.json` web client with a SwiftUI app over WebSocket.
 - [ ] **Audio-stream encryption** (M) — `/stream.wav` is plaintext PCM. Wrap in TLS or migrate to SRTP.
-- [ ] **Expand audio-thread test harness, round 2** (M) — 17 tests in `Source/Tests/AudioCallbackTests.cpp` after the 2026-05-25 batch: monitor-bus routing, master gain/mute, per-track mute, silence invariants, solo isolation (incl. solo-overrides-mute), VCA mute/solo gating, VCA assignment round-trip, click engine output routing, hard-pan L/R, stereo-pair summing. **Gaps**: VCA gain end-to-end (needs a loaded session — `playerScratch` feed), automation playback (same dependency), aux send routing, stream-bus path, recorder write path (needs file-system fixture).
+- [ ] **Expand audio-thread test harness, round 3** (M) — 23 tests in `Source/Tests/AudioCallbackTests.cpp` after the 2026-05-25 batches: monitor-bus routing, master gain/mute, per-track mute, silence invariants, solo isolation (incl. solo-overrides-mute), VCA mute/solo gating, VCA assignment round-trip, click engine output routing, hard-pan L/R, stereo-pair summing, **recorder write path end-to-end** (Track_NN.wav files, session.report.json, isRecording state). **Gaps**: VCA gain end-to-end and automation playback both need a loaded `playerScratch` feed (load a tiny real WAV in a fixture); aux send routing; stream-bus path (needs companion server); BWF metadata round-trip; pre-roll behaviour.
 - [ ] **Auto-arm-on-input-detect mode** (M) — optional setting where a strip arms itself when persistent signal is detected (useful for first-time pre-show configuration).
 
 ### Explicit non-goals (do not implement)
@@ -37,6 +37,7 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 ## Recently Completed
 
 ### 2026-05-25
+- [x] **Audio-thread test harness — round 3 (recorder write path)** (M) — 6 new tests drive the IO callback while recording into a temp dir, then read `Track_NN.wav` back and assert length + content + `session.report.json`. Total tests 62 → 68, 0 failures. See `CHANGELOG.md`.
 - [x] **Audio-thread test harness — round 2 (9 more tests)** (M) — solo isolation (incl. solo-overrides-mute), VCA mute/solo gating, VCA group state round-trip, click engine follows monitor bus, hard-pan L/R, stereo-pair summing. Total tests 53 → 62, 0 failures. Surfaced an engine design note: VCA *gain* applies only on the per-strip output-routing path (not monitor sum). See `CHANGELOG.md`.
 - [x] **Audio-thread test harness — first 8 tests** (M) — new `AudioCallbackTests.cpp` drives `audioDeviceIOCallbackWithContext` headlessly with synthetic buffers. Covers monitor-bus routing (including the just-shipped `setMasterOutputs` fix), master gain/mute, per-track mute, silence invariants. New `AudioEngine::prepareForTests(sr, blockSize)` lets tests set up scratch buffers without a real device. Test count 45 → 53. See `CHANGELOG.md`.
 - [x] **Configurable monitor bus outputs** (M) — real-time click, NDI transmit, and Companion stream now route through `masterOutL` / `masterOutR` instead of hardcoded 0+1. New Monitor Bus card in the Audio Device dialog with L + R pickers; stale MON tooltip fixed. See `CHANGELOG.md`.

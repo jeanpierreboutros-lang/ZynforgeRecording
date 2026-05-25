@@ -411,6 +411,174 @@ namespace zynforge
                 expect (f.peakOut (0, 256) < 0.01f);
             }
 
+            // ─── Recorder write path ─────────────────────────────────
+            // End-to-end test of the lock-free per-channel ring +
+            // background WAV writer. Drives the IO callback with
+            // synthetic input while recording is rolling, then reads
+            // the resulting Track_NN.wav back from disk and asserts
+            // its length + content.
+            auto makeTempSessionDir = []
+            {
+                auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                              .getChildFile ("zynforge-test-" + juce::Uuid().toString());
+                dir.createDirectory();
+                return dir;
+            };
+
+            beginTest ("Recording produces Track_01.wav of the expected length");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    CallbackFixture f (1, 1, 2);
+                    auto& t = f.engine.getRecorder().getTrack (0);
+                    t.armed.store (true);
+                    f.engine.getRecorder().setCaptureFormat (CaptureFormat::Wav24);
+                    expect (f.engine.startRecording (sessionDir));
+                    expect (f.engine.isRecording());
+
+                    // Feed ~0.5 s of constant 0.25 (192 blocks * 256 samples
+                    // / 48000 Hz). Constant DC is a deliberately ugly
+                    // signal -- it survives any silent-section guard.
+                    f.writeInput (0, 0.25f, 256);
+                    constexpr int kBlocks = 192;
+                    for (int b = 0; b < kBlocks; ++b)
+                        f.process (256);
+                    f.engine.stopRecording();
+                    expect (! f.engine.isRecording());
+                }
+
+                const auto wav = sessionDir.getChildFile ("Audio Files")
+                                            .getChildFile ("Track_01.wav");
+                expect (wav.existsAsFile());
+                expect (wav.getSize() > 4096);   // header + meaningful payload
+
+                // Read it back and verify length + non-silence.
+                juce::WavAudioFormat fmt;
+                std::unique_ptr<juce::FileInputStream> in (wav.createInputStream());
+                expect (in != nullptr);
+                std::unique_ptr<juce::AudioFormatReader> reader (
+                    fmt.createReaderFor (in.release(), true));
+                expect (reader != nullptr);
+                if (reader != nullptr)
+                {
+                    // 192 * 256 = 49152 samples. Recorder may drain a
+                    // tiny extra block on stop; we just need at least
+                    // most of what we fed.
+                    expect (reader->lengthInSamples >= 40000);
+                    expectWithinAbsoluteError ((double) reader->sampleRate, 48000.0, 1.0);
+
+                    juce::AudioBuffer<float> buf (1, (int) reader->lengthInSamples);
+                    reader->read (&buf, 0, (int) reader->lengthInSamples, 0, true, false);
+                    const float peak = buf.getMagnitude (0, 0, buf.getNumSamples());
+                    expect (peak > 0.20f);   // non-silent
+                }
+
+                sessionDir.deleteRecursively();
+            }
+
+            beginTest ("Two armed strips produce two separate WAV files");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    CallbackFixture f (2, 2, 2);
+                    f.engine.getRecorder().getTrack (0).armed.store (true);
+                    f.engine.getRecorder().getTrack (1).armed.store (true);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.30f, 256);
+                    f.writeInput (1, 0.40f, 256);
+                    for (int b = 0; b < 96; ++b) f.process (256);
+                    f.engine.stopRecording();
+                }
+                const auto audioDir = sessionDir.getChildFile ("Audio Files");
+                expect (audioDir.getChildFile ("Track_01.wav").existsAsFile());
+                expect (audioDir.getChildFile ("Track_02.wav").existsAsFile());
+                sessionDir.deleteRecursively();
+            }
+
+            beginTest ("Unarmed strip produces no audio data (file is silent or absent)");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    CallbackFixture f (2, 2, 2);
+                    f.engine.getRecorder().getTrack (0).armed.store (true);
+                    // strip 1 not armed
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.30f, 256);
+                    f.writeInput (1, 0.50f, 256);
+                    for (int b = 0; b < 64; ++b) f.process (256);
+                    f.engine.stopRecording();
+                }
+                const auto audioDir = sessionDir.getChildFile ("Audio Files");
+                const auto wav0 = audioDir.getChildFile ("Track_01.wav");
+                const auto wav1 = audioDir.getChildFile ("Track_02.wav");
+                expect (wav0.existsAsFile());
+
+                if (wav1.existsAsFile())
+                {
+                    // Some recorders open writers for every strip up-front
+                    // and rely on the arm gate inside processBlock to
+                    // skip writes. If the file exists, verify it's
+                    // effectively empty / silent.
+                    juce::WavAudioFormat fmt;
+                    std::unique_ptr<juce::FileInputStream> in (wav1.createInputStream());
+                    std::unique_ptr<juce::AudioFormatReader> reader (
+                        fmt.createReaderFor (in.release(), true));
+                    if (reader != nullptr && reader->lengthInSamples > 0)
+                    {
+                        juce::AudioBuffer<float> buf (1, (int) reader->lengthInSamples);
+                        reader->read (&buf, 0, (int) reader->lengthInSamples, 0, true, false);
+                        const float peak = buf.getMagnitude (0, 0, buf.getNumSamples());
+                        expect (peak < 0.01f);
+                    }
+                }
+                sessionDir.deleteRecursively();
+            }
+
+            beginTest ("session.report.json is written on stop");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    CallbackFixture f (1, 1, 2);
+                    f.engine.getRecorder().getTrack (0).armed.store (true);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.3f, 256);
+                    for (int b = 0; b < 32; ++b) f.process (256);
+                    f.engine.stopRecording();
+                }
+                // Recorder writes session.report.json into the active
+                // session dir on stop -- see MultitrackRecorder::stopRecording.
+                const auto report = sessionDir.getChildFile ("session.report.json");
+                expect (report.existsAsFile());
+                const auto json = juce::JSON::parse (report);
+                expect (json.isObject());
+                if (auto* obj = json.getDynamicObject())
+                {
+                    expect ((double) obj->getProperty ("sampleRate") > 0.0);
+                    expect ((int) obj->getProperty ("numTracks") == 1);
+                }
+                sessionDir.deleteRecursively();
+            }
+
+            beginTest ("isRecording flips false after stopRecording");
+            {
+                CallbackFixture f (1, 1, 2);
+                const auto sessionDir = makeTempSessionDir();
+                f.engine.getRecorder().getTrack (0).armed.store (true);
+                expect (! f.engine.isRecording());
+                expect (f.engine.startRecording (sessionDir));
+                expect (f.engine.isRecording());
+                f.engine.stopRecording();
+                expect (! f.engine.isRecording());
+                sessionDir.deleteRecursively();
+            }
+
+            beginTest ("stopRecording without startRecording is a no-op");
+            {
+                CallbackFixture f (1, 1, 2);
+                f.engine.stopRecording();   // must not crash
+                expect (! f.engine.isRecording());
+            }
+
             beginTest ("Stereo pair (L hard-left + R hard-right) splits to L+R outs");
             {
                 CallbackFixture f (2, 2, 2);
