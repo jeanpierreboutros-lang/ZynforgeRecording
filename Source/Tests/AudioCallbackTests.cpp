@@ -808,6 +808,88 @@ namespace zynforge
                 expect (! s0.outputMuted.load());
             }
 
+            // ─── Auto-split on 4 GiB WAV ceiling ─────────────────────
+            // Drives the per-format chunk-size guard by forcing the
+            // threshold low via setAutoSplitThresholdBytesForTests.
+            // The real production threshold is 3.9 GiB which would
+            // need writing actual gigabytes -- not practical in CI.
+            beginTest ("Recorder auto-splits to Track_NN_partXX.wav at the byte threshold");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    // 256 KB threshold -> at WAV/24 mono = 144 KB/sec,
+                    // that's ~1.8 s per part. ~3.0 s of audio should
+                    // produce 2 or 3 parts.
+                    MultitrackRecorder::setAutoSplitThresholdBytesForTests (256 * 1024);
+
+                    CallbackFixture f (1, 1, 2);
+                    auto& rec = f.engine.getRecorder();
+                    rec.getTrack (0).armed.store (true);
+                    rec.setCaptureFormat (CaptureFormat::Wav24);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.3f, 256);
+                    // Drain after each block so the ring doesn't
+                    // accumulate the entire take before the writer
+                    // thread runs. Without this, in a test that feeds
+                    // the IO callback synchronously, all samples queue
+                    // up and roll in one huge write -- part 1 ends up
+                    // with one block, part 2 with everything else.
+                    constexpr int kBlocks = 576;        // 576 * 256 / 48000 ≈ 3.07 s
+                    for (int b = 0; b < kBlocks; ++b)
+                    {
+                        f.process (256);
+                        f.engine.getRecorder().drainPendingForTests();
+                    }
+                    f.engine.stopRecording();
+
+                    // Restore the production threshold so subsequent
+                    // tests aren't affected.
+                    MultitrackRecorder::setAutoSplitThresholdBytesForTests (0);
+                }
+
+                const auto audioDir = sessionDir.getChildFile ("Audio Files");
+                const auto part1 = audioDir.getChildFile ("Track_01.wav");
+                const auto part2 = audioDir.getChildFile ("Track_01_part02.wav");
+                expect (part1.existsAsFile());
+                expect (part2.existsAsFile());
+
+                // Each part should be a valid WAV with audible content.
+                juce::WavAudioFormat fmt;
+                for (const auto& p : { part1, part2 })
+                {
+                    std::unique_ptr<juce::FileInputStream> in (p.createInputStream());
+                    expect (in != nullptr);
+                    std::unique_ptr<juce::AudioFormatReader> reader (
+                        fmt.createReaderFor (in.release(), true));
+                    expect (reader != nullptr);
+                    if (reader != nullptr)
+                    {
+                        expect (reader->lengthInSamples > 0);
+                        juce::AudioBuffer<float> buf (1, (int) reader->lengthInSamples);
+                        reader->read (&buf, 0, (int) reader->lengthInSamples, 0, true, false);
+                        expect (buf.getMagnitude (0, 0, buf.getNumSamples()) > 0.20f);
+                    }
+                }
+
+                // Part 1 must be under the test threshold (plus some
+                // slack for the header rewrite). Confirms the split
+                // actually triggered on size.
+                expect (part1.getSize() < (juce::int64) (350 * 1024));
+
+                sessionDir.deleteRecursively();
+            }
+
+            beginTest ("Auto-split threshold defaults restore after test override clears");
+            {
+                MultitrackRecorder::setAutoSplitThresholdBytesForTests (0);
+                expect (MultitrackRecorder::maxBytesForContainer (0)   // WAV
+                          > (juce::int64) 3LL * 1024 * 1024 * 1024);
+                expect (MultitrackRecorder::maxBytesForContainer (1)   // AIFF
+                          > (juce::int64) 1LL * 1024 * 1024 * 1024);
+                expect (MultitrackRecorder::maxBytesForContainer (1)   // AIFF < WAV
+                          < MultitrackRecorder::maxBytesForContainer (0));
+            }
+
             // ─── BWF metadata round-trip ─────────────────────────────
             beginTest ("Recorded WAV carries BWF bext metadata");
             {

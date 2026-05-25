@@ -119,6 +119,22 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Auto-split on chunk-size ceiling, not RF64 promotion — 2026-05-25
+
+**Status:** Accepted
+**Context:** Standard RIFF WAV caps the data chunk's size field at 32-bit unsigned → 4 GiB. AIFF caps at 2 GiB (signed 32-bit). At 48 kHz / 24-bit / mono that's ~8.3 h per WAV, ~4.1 h per AIFF. A 24-hour install, an all-day festival capture, or a 96 kHz session can hit the wall mid-take and silently emit a malformed-header file. Two ways to handle this: (a) **RF64 promotion** — when the writer notices it's about to overflow, rewrite the header into the RF64 / WAV64 extended format that supports 64-bit sizes; (b) **Auto-split** — close the current file at the threshold and open `Track_NN_part02.<ext>`, continuing the recording across multiple files.
+**Decision:** Auto-split, not RF64.
+**Rationale:**
+  1. JUCE's `WavAudioFormat` does not natively support RF64 writing. Implementing it would mean subclassing the writer or forking JUCE — significant code, hard to keep in sync upstream, and AIFF would still need its own solution (AIFF-C / AIFF64 are even less standard).
+  2. Every tool that opens a Pro Tools / Logic / Reaper session reads RIFF WAV. RF64 support is uneven — older plugins, broadcast playout systems, and some hardware players reject it. Auto-split produces files every tool can read.
+  3. The user mental model — "if a 10-hour record needs to be a 10 GB file, fine, but if it needs to be three 3.3 GB files, that's also fine and I'll just import them all" — matches engineers' existing experience (Pro Tools and many field recorders do exactly this).
+  4. Implementation is small: a few hundred lines in `MultitrackRecorder` (byte counter per writer + a roll function called from the drain loop). The roll is on the writer thread, never the audio thread; no real-time concern.
+**Consequences:** Long sessions emit `Track_01.wav` + `Track_01_part02.wav` + ... numbered sequentially. Mix engineers consolidate by re-importing in order (Pro Tools' "Import Audio" + numerical sort, or any DAW's equivalent). The `session.report.json` does not currently list every part file individually — a future improvement would be to enumerate parts there. Backup writers roll independently to keep the mirror layout consistent.
+**Alternatives Considered:** RF64 promotion (per above), accepting the limit and documenting it (rejected — silent file corruption is a real show-day failure mode), capping recording duration in the UI (rejected — it's the engineer's call, not the app's).
+**Related Documents:** `Source/Audio/MultitrackRecorder.{h,cpp}` (`maxBytesForContainer`, `openWriterAtPath`, the drain-loop roll logic), `Source/Tests/AudioCallbackTests.cpp` (auto-split test).
+
+---
+
 ## Template
 
 ```

@@ -37,6 +37,7 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 ## Recently Completed
 
 ### 2026-05-25
+- [x] **Auto-split on WAV/AIFF/FLAC chunk-size ceiling** (M) — new `Track_NN_part02.<ext>` rollover when a writer approaches its format's chunk-size ceiling (3.9 GiB WAV/FLAC, 1.9 GiB AIFF). Both primary and backup writers roll independently. ADR in `decisions.md` explains why auto-split over RF64 promotion. Test count 77 → 79. See `CHANGELOG.md`.
 - [x] **Audio-thread test harness — round 5 (markers, clip latch, output mute)** (M) — marker drop during record (engine entry point), no-context returns -1, sequential drops auto-increment; master clip latch sets at peak ≥ 0.999, stays sticky across blocks, clears via direct atomic store; `outputMuted` round-trip per strip. Total tests 71 → 77. See `CHANGELOG.md`.
 - [x] **Audio-thread test harness — round 4 (pre-roll + BWF metadata)** (M) — pre-roll history backfill round-trip (low-amp pre-record segment lands at the front of the WAV, high-amp live segment lands at the tail); pre-roll = 0 baseline; BWF `bext` chunk metadata round-trip (originator, origination date / time / description). Total tests 68 → 71. See `CHANGELOG.md`.
 - [x] **Audio-thread test harness — round 3 (recorder write path)** (M) — 6 new tests drive the IO callback while recording into a temp dir, then read `Track_NN.wav` back and assert length + content + `session.report.json`. Total tests 62 → 68, 0 failures. See `CHANGELOG.md`.

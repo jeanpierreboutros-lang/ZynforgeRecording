@@ -150,6 +150,28 @@ namespace zynforge
         {
             std::unique_ptr<juce::AudioFormatWriter> writer;
             std::unique_ptr<juce::AudioFormatWriter> backupWriter;
+
+            // Auto-split state. WAV RIFF caps file size at 4 GiB
+            // (32-bit unsigned chunk header); AIFF caps at 2 GiB
+            // (signed 32-bit). When a writer approaches its format's
+            // limit the drain loop closes the current file and opens
+            // Track_NN_partNN with the same parameters so a long
+            // multi-hour show keeps capturing past the limit instead
+            // of silently producing a malformed header.
+            juce::int64  bytesWrittenPrimary  { 0 };
+            juce::int64  bytesWrittenBackup   { 0 };
+            int          partNumberPrimary    { 1 };
+            int          partNumberBackup     { 1 };
+            juce::File   primaryBaseFile;     // "Audio Files/Track_01" (no extension)
+            juce::File   backupBaseFile;
+            juce::String primaryExt;          // ".wav" etc
+            juce::String backupExt;
+            int          primaryBitDepth      { 24 };
+            int          backupBitDepth       { 24 };
+            int          primaryContainer     { 0 };   // Container enum value
+            int          backupContainer      { 0 };
+            int          bytesPerSamplePrimary { 3 };
+            int          bytesPerSampleBackup  { 3 };
         };
 
         // Per-channel rolling history used for pre-roll. Audio thread is the
@@ -179,6 +201,39 @@ namespace zynforge
         void closeWriters();
         void allocatePreRollBuffers();
         void dumpPreRollToWriters();
+
+        // Open a writer at the given path with the given format.
+        // containerCode: 0 = WAV, 1 = AIFF, 2 = FLAC. Used both at
+        // startRecording and by the drain loop's auto-split path so a
+        // long take that crosses the WAV 4 GiB / AIFF 2 GiB chunk
+        // limit gets a fresh Track_NN_partXX.<ext> file instead of a
+        // corrupt-header tail. Returns nullptr on failure (e.g. disk
+        // full, permissions).
+        juce::AudioFormatWriter* openWriterAtPath (const juce::File& target,
+                                                   int containerCode,
+                                                   int bits) noexcept;
+
+    public:
+        // Safe byte-count ceiling per container. WAV / FLAC: 3.9 GiB.
+        // AIFF: 1.9 GiB. (The actual format limits are 4 GiB unsigned
+        // for RIFF and 2 GiB signed for AIFF; we cut some margin so
+        // header rewrites + tail flushes don't push over the line.)
+        // containerCode: 0 = WAV, 1 = AIFF, 2 = FLAC.
+        static juce::int64 maxBytesForContainer (int containerCode) noexcept;
+
+        // Test hook: when > 0, overrides maxBytesForContainer for all
+        // formats so a unit test can force the auto-split path without
+        // writing actual gigabytes. 0 = use real limits (production).
+        static void setAutoSplitThresholdBytesForTests (juce::int64 bytes) noexcept;
+
+        // Test hook: force a writer-thread drain. Production code lets
+        // the JUCE TimeSliceThread schedule this; tests feed the IO
+        // callback synchronously and need a way to flush the ring
+        // between blocks so the auto-split path doesn't roll one
+        // gigantic accumulated write.
+        void drainPendingForTests() { drainOnce(); }
+
+    private:
 
         double sampleRate { 48000.0 };
         int    blockSize  { 512 };

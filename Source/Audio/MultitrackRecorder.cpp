@@ -377,61 +377,28 @@ namespace zynforge
         writers.clear();
         writers.reserve (tracks.size());
 
-        juce::WavAudioFormat  wav;
-        juce::AiffAudioFormat aiff;
-        juce::FlacAudioFormat flac;
-
-        // Resolves a CaptureFormat to its container + bit-depth + file
-        // extension so primary and backup writers can use different
-        // formats and the rest of the open-writer code stays uniform.
-        enum class Container { Wav, Aiff, Flac };
-        auto resolve = [] (CaptureFormat f)
+        // Resolves a CaptureFormat to its container code + bit-depth +
+        // file extension. Container codes match the integer scheme used
+        // by openWriterAtPath / WriterChannel::primaryContainer:
+        //   0 = WAV, 1 = AIFF, 2 = FLAC.
+        struct Resolved { int container; int bitDepth; const char* ext; };
+        auto resolve = [] (CaptureFormat f) -> Resolved
         {
-            struct Resolved { Container container; int bitDepth; const char* ext; };
             switch (f)
             {
-                case CaptureFormat::Wav16:       return Resolved { Container::Wav,  16, ".wav" };
-                case CaptureFormat::Wav24:       return Resolved { Container::Wav,  24, ".wav" };
-                case CaptureFormat::Wav32Float:  return Resolved { Container::Wav,  32, ".wav" };
-                case CaptureFormat::Aiff16:      return Resolved { Container::Aiff, 16, ".aif" };
-                case CaptureFormat::Aiff24:      return Resolved { Container::Aiff, 24, ".aif" };
-                case CaptureFormat::Aiff32Float: return Resolved { Container::Aiff, 32, ".aif" };
-                case CaptureFormat::Flac16:      return Resolved { Container::Flac, 16, ".flac" };
-                case CaptureFormat::Flac24:      return Resolved { Container::Flac, 24, ".flac" };
+                case CaptureFormat::Wav16:       return { 0, 16, ".wav" };
+                case CaptureFormat::Wav24:       return { 0, 24, ".wav" };
+                case CaptureFormat::Wav32Float:  return { 0, 32, ".wav" };
+                case CaptureFormat::Aiff16:      return { 1, 16, ".aif" };
+                case CaptureFormat::Aiff24:      return { 1, 24, ".aif" };
+                case CaptureFormat::Aiff32Float: return { 1, 32, ".aif" };
+                case CaptureFormat::Flac16:      return { 2, 16, ".flac" };
+                case CaptureFormat::Flac24:      return { 2, 24, ".flac" };
             }
-            return Resolved { Container::Wav, 24, ".wav" };
+            return { 0, 24, ".wav" };
         };
         const auto primary = resolve (captureFormat);
         const auto backup  = resolve (backupCaptureFormat);
-
-        const auto now = juce::Time::getCurrentTime();
-
-        auto openWriter = [&] (const juce::File& target, Container c, int bits) -> juce::AudioFormatWriter*
-        {
-            target.deleteFile();
-            auto* out = target.createOutputStream().release();
-            if (out == nullptr) return nullptr;
-
-            juce::StringPairArray meta;
-            if (c == Container::Wav)
-            {
-                meta.set (juce::WavAudioFormat::bwavDescription,
-                          "Zynforge Recording -- " + sessionDir.getFileName()
-                            + " -- " + target.getFileNameWithoutExtension());
-                meta.set (juce::WavAudioFormat::bwavOriginator,      "Zynforge Recording");
-                meta.set (juce::WavAudioFormat::bwavOriginatorRef,   sessionDir.getFileName());
-                meta.set (juce::WavAudioFormat::bwavOriginationDate, now.formatted ("%Y-%m-%d"));
-                meta.set (juce::WavAudioFormat::bwavOriginationTime, now.formatted ("%H:%M:%S"));
-                meta.set (juce::WavAudioFormat::bwavTimeReference,   "0");
-            }
-
-            juce::AudioFormatWriter* w = nullptr;
-            if      (c == Container::Flac) w = flac.createWriterFor (out, sampleRate, 1, bits, meta, 5);
-            else if (c == Container::Aiff) w = aiff.createWriterFor (out, sampleRate, 1, bits, meta, 0);
-            else                           w = wav .createWriterFor (out, sampleRate, 1, bits, meta, 0);
-            if (w == nullptr) delete out;
-            return w;
-        };
 
         for (std::size_t i = 0; i < tracks.size(); ++i)
         {
@@ -451,7 +418,12 @@ namespace zynforge
 
             // Primary writer -- under <session>/Audio Files/Track_NN.<ext>.
             const auto primaryFile = audioFilesDir.getChildFile (trackName + primary.ext);
-            w.writer.reset (openWriter (primaryFile, primary.container, primary.bitDepth));
+            w.writer.reset (openWriterAtPath (primaryFile, primary.container, primary.bitDepth));
+            w.primaryBaseFile       = audioFilesDir.getChildFile (trackName);
+            w.primaryExt            = primary.ext;
+            w.primaryBitDepth       = primary.bitDepth;
+            w.primaryContainer      = primary.container;
+            w.bytesPerSamplePrimary = primary.bitDepth / 8;
 
             // Optional second copy -- may be in a different format from
             // the primary, so the engineer can run e.g. WAV/24 to the
@@ -464,7 +436,12 @@ namespace zynforge
                                               .getChildFile ("Audio Files");
                 backupSession.createDirectory();
                 const auto backupFile = backupSession.getChildFile (trackName + backup.ext);
-                w.backupWriter.reset (openWriter (backupFile, backup.container, backup.bitDepth));
+                w.backupWriter.reset (openWriterAtPath (backupFile, backup.container, backup.bitDepth));
+                w.backupBaseFile       = backupSession.getChildFile (trackName);
+                w.backupExt            = backup.ext;
+                w.backupBitDepth       = backup.bitDepth;
+                w.backupContainer      = backup.container;
+                w.bytesPerSampleBackup = backup.bitDepth / 8;
             }
 
             writers.push_back (std::move (w));
@@ -477,6 +454,7 @@ namespace zynforge
 
         // Recovery marker -- deleted on clean stop.
         {
+            const auto now = juce::Time::getCurrentTime();
             juce::DynamicObject::Ptr m (new juce::DynamicObject());
             m->setProperty ("startedAt",  now.toISO8601 (true));
             m->setProperty ("sampleRate", sampleRate);
@@ -495,6 +473,65 @@ namespace zynforge
         writersReady.store (true,  std::memory_order_release);
         recording   .store (true,  std::memory_order_release);
         return true;
+    }
+
+    namespace { std::atomic<juce::int64> s_autoSplitThresholdOverride { 0 }; }
+
+    void MultitrackRecorder::setAutoSplitThresholdBytesForTests (juce::int64 bytes) noexcept
+    {
+        s_autoSplitThresholdOverride.store (juce::jmax ((juce::int64) 0, bytes),
+                                            std::memory_order_release);
+    }
+
+    juce::int64 MultitrackRecorder::maxBytesForContainer (int containerCode) noexcept
+    {
+        // Test override (set via setAutoSplitThresholdBytesForTests) wins
+        // when > 0. Lets unit tests force the roll path without writing
+        // actual gigabytes.
+        const auto override_ = s_autoSplitThresholdOverride.load (std::memory_order_acquire);
+        if (override_ > 0) return override_;
+
+        // Keep some headroom below the real format limits so the closing
+        // header rewrite + any in-flight flush don't tip us over.
+        // WAV/FLAC: 4 GiB chunk-size ceiling -> roll at 3.9 GiB.
+        // AIFF: 2 GiB signed-32-bit chunk-size ceiling -> roll at 1.9 GiB.
+        constexpr juce::int64 kWavFlacMax = (juce::int64) 3900LL * 1024 * 1024;
+        constexpr juce::int64 kAiffMax    = (juce::int64) 1900LL * 1024 * 1024;
+        return (containerCode == 1) ? kAiffMax : kWavFlacMax;
+    }
+
+    juce::AudioFormatWriter* MultitrackRecorder::openWriterAtPath (const juce::File& target,
+                                                                   int containerCode,
+                                                                   int bits) noexcept
+    {
+        target.deleteFile();
+        auto* out = target.createOutputStream().release();
+        if (out == nullptr) return nullptr;
+
+        juce::WavAudioFormat  wav;
+        juce::AiffAudioFormat aiff;
+        juce::FlacAudioFormat flac;
+
+        juce::StringPairArray meta;
+        if (containerCode == 0)   // WAV gets the BWF bext chunk so mix
+        {                         // engineers can identify the take.
+            const auto now = juce::Time::getCurrentTime();
+            meta.set (juce::WavAudioFormat::bwavDescription,
+                      "Zynforge Recording -- " + activeSessionDir.getFileName()
+                        + " -- " + target.getFileNameWithoutExtension());
+            meta.set (juce::WavAudioFormat::bwavOriginator,      "Zynforge Recording");
+            meta.set (juce::WavAudioFormat::bwavOriginatorRef,   activeSessionDir.getFileName());
+            meta.set (juce::WavAudioFormat::bwavOriginationDate, now.formatted ("%Y-%m-%d"));
+            meta.set (juce::WavAudioFormat::bwavOriginationTime, now.formatted ("%H:%M:%S"));
+            meta.set (juce::WavAudioFormat::bwavTimeReference,   "0");
+        }
+
+        juce::AudioFormatWriter* w = nullptr;
+        if      (containerCode == 2) w = flac.createWriterFor (out, sampleRate, 1, bits, meta, 5);
+        else if (containerCode == 1) w = aiff.createWriterFor (out, sampleRate, 1, bits, meta, 0);
+        else                         w = wav .createWriterFor (out, sampleRate, 1, bits, meta, 0);
+        if (w == nullptr) delete out;
+        return w;
     }
 
     void MultitrackRecorder::stopRecording()
@@ -671,29 +708,92 @@ namespace zynforge
 
             const auto scope = cf.fifo.read (available);
 
+            // Roll a writer over to the next part file when it's about
+            // to cross its format's chunk-size ceiling. Closing the
+            // current writer (.reset()) finalises the header so the
+            // file we're leaving behind is valid; opening the next
+            // part keeps recording continuous from the engineer's POV.
+            auto rollIfNeeded = [this] (WriterChannel& wc, int samplesPending) noexcept
+            {
+                if (wc.writer != nullptr)
+                {
+                    const juce::int64 projected = wc.bytesWrittenPrimary
+                        + (juce::int64) samplesPending * wc.bytesPerSamplePrimary;
+                    if (projected >= maxBytesForContainer (wc.primaryContainer))
+                    {
+                        wc.writer.reset();   // closes + finalises header
+                        ++wc.partNumberPrimary;
+                        const auto nextFile = wc.primaryBaseFile.getParentDirectory()
+                            .getChildFile (wc.primaryBaseFile.getFileName()
+                                           + "_part"
+                                           + juce::String::formatted ("%02d", wc.partNumberPrimary)
+                                           + wc.primaryExt);
+                        wc.writer.reset (openWriterAtPath (nextFile, wc.primaryContainer,
+                                                           wc.primaryBitDepth));
+                        wc.bytesWrittenPrimary = 0;
+                    }
+                }
+                if (wc.backupWriter != nullptr)
+                {
+                    const juce::int64 projected = wc.bytesWrittenBackup
+                        + (juce::int64) samplesPending * wc.bytesPerSampleBackup;
+                    if (projected >= maxBytesForContainer (wc.backupContainer))
+                    {
+                        wc.backupWriter.reset();
+                        ++wc.partNumberBackup;
+                        const auto nextFile = wc.backupBaseFile.getParentDirectory()
+                            .getChildFile (wc.backupBaseFile.getFileName()
+                                           + "_part"
+                                           + juce::String::formatted ("%02d", wc.partNumberBackup)
+                                           + wc.backupExt);
+                        wc.backupWriter.reset (openWriterAtPath (nextFile, wc.backupContainer,
+                                                                  wc.backupBitDepth));
+                        wc.bytesWrittenBackup = 0;
+                    }
+                }
+            };
+
             if (scope.blockSize1 > 0)
             {
+                rollIfNeeded (w, scope.blockSize1);
                 const float* ptr = cf.data.data() + scope.startIndex1;
                 const float* const channels[] = { ptr };
-                w.writer->writeFromFloatArrays (channels, 1, scope.blockSize1);
+                if (w.writer != nullptr)
+                {
+                    w.writer->writeFromFloatArrays (channels, 1, scope.blockSize1);
+                    w.bytesWrittenPrimary += (juce::int64) scope.blockSize1 * w.bytesPerSamplePrimary;
+                }
                 if (w.backupWriter != nullptr
                     && ! w.backupWriter->writeFromFloatArrays (channels, 1, scope.blockSize1))
                 {
                     w.backupWriter.reset();
                     backupFailed.store (true, std::memory_order_relaxed);
                 }
+                else if (w.backupWriter != nullptr)
+                {
+                    w.bytesWrittenBackup += (juce::int64) scope.blockSize1 * w.bytesPerSampleBackup;
+                }
                 totalWritten += scope.blockSize1;
             }
             if (scope.blockSize2 > 0)
             {
+                rollIfNeeded (w, scope.blockSize2);
                 const float* ptr = cf.data.data() + scope.startIndex2;
                 const float* const channels[] = { ptr };
-                w.writer->writeFromFloatArrays (channels, 1, scope.blockSize2);
+                if (w.writer != nullptr)
+                {
+                    w.writer->writeFromFloatArrays (channels, 1, scope.blockSize2);
+                    w.bytesWrittenPrimary += (juce::int64) scope.blockSize2 * w.bytesPerSamplePrimary;
+                }
                 if (w.backupWriter != nullptr
                     && ! w.backupWriter->writeFromFloatArrays (channels, 1, scope.blockSize2))
                 {
                     w.backupWriter.reset();
                     backupFailed.store (true, std::memory_order_relaxed);
+                }
+                else if (w.backupWriter != nullptr)
+                {
+                    w.bytesWrittenBackup += (juce::int64) scope.blockSize2 * w.bytesPerSampleBackup;
                 }
                 totalWritten += scope.blockSize2;
             }
