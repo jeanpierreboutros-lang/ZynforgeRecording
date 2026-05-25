@@ -158,8 +158,16 @@ namespace zynforge
             // Track_NN_partNN with the same parameters so a long
             // multi-hour show keeps capturing past the limit instead
             // of silently producing a malformed header.
-            juce::int64  bytesWrittenPrimary  { 0 };
+            juce::int64  bytesWrittenPrimary  { 0 };  // resets at each roll
             juce::int64  bytesWrittenBackup   { 0 };
+            juce::int64  totalSamplesPrimary  { 0 };  // never resets (sum across parts)
+            juce::int64  totalSamplesBackup   { 0 };
+            // Filenames of every part written, in order. Reported in
+            // session.report.json so the mix engineer can confirm at a
+            // glance which files belong to which track when a long take
+            // produced multiple parts.
+            juce::StringArray partFilesPrimary;
+            juce::StringArray partFilesBackup;
             int          partNumberPrimary    { 1 };
             int          partNumberBackup     { 1 };
             juce::File   primaryBaseFile;     // "Audio Files/Track_01" (no extension)

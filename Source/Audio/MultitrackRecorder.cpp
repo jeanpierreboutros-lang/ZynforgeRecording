@@ -424,6 +424,8 @@ namespace zynforge
             w.primaryBitDepth       = primary.bitDepth;
             w.primaryContainer      = primary.container;
             w.bytesPerSamplePrimary = primary.bitDepth / 8;
+            if (w.writer != nullptr)
+                w.partFilesPrimary.add (primaryFile.getFileName());
 
             // Optional second copy -- may be in a different format from
             // the primary, so the engineer can run e.g. WAV/24 to the
@@ -442,6 +444,8 @@ namespace zynforge
                 w.backupBitDepth       = backup.bitDepth;
                 w.backupContainer      = backup.container;
                 w.bytesPerSampleBackup = backup.bitDepth / 8;
+                if (w.backupWriter != nullptr)
+                    w.partFilesBackup.add (backupFile.getFileName());
             }
 
             writers.push_back (std::move (w));
@@ -549,6 +553,25 @@ namespace zynforge
         const bool backupWasRunning = backupDir.isDirectory();
         const bool backupHadFailure = backupFailed.load (std::memory_order_relaxed);
 
+        // Snapshot per-writer file-part info BEFORE closeWriters clears
+        // the writers vector. The report needs this to enumerate the
+        // Track_NN.wav + Track_NN_partXX.wav parts produced by the
+        // auto-split logic.
+        struct WriterReport
+        {
+            juce::int64 totalSamplesPrimary;
+            juce::int64 totalSamplesBackup;
+            juce::StringArray partFilesPrimary;
+            juce::StringArray partFilesBackup;
+        };
+        std::vector<WriterReport> writerSnapshots;
+        writerSnapshots.reserve (writers.size());
+        for (auto& wc : writers)
+            writerSnapshots.push_back ({ wc.totalSamplesPrimary,
+                                         wc.totalSamplesBackup,
+                                         wc.partFilesPrimary,
+                                         wc.partFilesBackup });
+
         closeWriters();
         backupActive.store (false, std::memory_order_relaxed);
 
@@ -583,6 +606,33 @@ namespace zynforge
                 t->setProperty ("inputRouting",   ts.inputRouting .load (std::memory_order_relaxed));
                 t->setProperty ("outputRouting",  ts.outputRouting.load (std::memory_order_relaxed));
                 t->setProperty ("isStereo",       ts.isStereo.load (std::memory_order_relaxed));
+
+                // Auto-split bookkeeping: list every part file the
+                // recorder produced for this track, in order. The mix
+                // engineer reads this to confirm at a glance that a
+                // long take rolled over correctly and to know which
+                // files to import in sequence. Bus tracks (no writer)
+                // get an empty array.
+                if (i < writerSnapshots.size())
+                {
+                    const auto& ws = writerSnapshots[i];
+                    t->setProperty ("totalSamplesPrimary",
+                                    (juce::int64) ws.totalSamplesPrimary);
+                    juce::Array<juce::var> files;
+                    for (const auto& fn : ws.partFilesPrimary)
+                        files.add (juce::var (fn));
+                    t->setProperty ("files", juce::var (files));
+
+                    if (backupWasRunning)
+                    {
+                        t->setProperty ("totalSamplesBackup",
+                                        (juce::int64) ws.totalSamplesBackup);
+                        juce::Array<juce::var> backupFiles;
+                        for (const auto& fn : ws.partFilesBackup)
+                            backupFiles.add (juce::var (fn));
+                        t->setProperty ("backupFiles", juce::var (backupFiles));
+                    }
+                }
                 trackArray.add (juce::var (t.get()));
             }
             report->setProperty ("tracks", juce::var (trackArray));
@@ -731,6 +781,8 @@ namespace zynforge
                         wc.writer.reset (openWriterAtPath (nextFile, wc.primaryContainer,
                                                            wc.primaryBitDepth));
                         wc.bytesWrittenPrimary = 0;
+                        if (wc.writer != nullptr)
+                            wc.partFilesPrimary.add (nextFile.getFileName());
                     }
                 }
                 if (wc.backupWriter != nullptr)
@@ -749,6 +801,8 @@ namespace zynforge
                         wc.backupWriter.reset (openWriterAtPath (nextFile, wc.backupContainer,
                                                                   wc.backupBitDepth));
                         wc.bytesWrittenBackup = 0;
+                        if (wc.backupWriter != nullptr)
+                            wc.partFilesBackup.add (nextFile.getFileName());
                     }
                 }
             };
@@ -762,6 +816,7 @@ namespace zynforge
                 {
                     w.writer->writeFromFloatArrays (channels, 1, scope.blockSize1);
                     w.bytesWrittenPrimary += (juce::int64) scope.blockSize1 * w.bytesPerSamplePrimary;
+                    w.totalSamplesPrimary += scope.blockSize1;
                 }
                 if (w.backupWriter != nullptr
                     && ! w.backupWriter->writeFromFloatArrays (channels, 1, scope.blockSize1))
@@ -772,6 +827,7 @@ namespace zynforge
                 else if (w.backupWriter != nullptr)
                 {
                     w.bytesWrittenBackup += (juce::int64) scope.blockSize1 * w.bytesPerSampleBackup;
+                    w.totalSamplesBackup += scope.blockSize1;
                 }
                 totalWritten += scope.blockSize1;
             }
@@ -784,6 +840,7 @@ namespace zynforge
                 {
                     w.writer->writeFromFloatArrays (channels, 1, scope.blockSize2);
                     w.bytesWrittenPrimary += (juce::int64) scope.blockSize2 * w.bytesPerSamplePrimary;
+                    w.totalSamplesPrimary += scope.blockSize2;
                 }
                 if (w.backupWriter != nullptr
                     && ! w.backupWriter->writeFromFloatArrays (channels, 1, scope.blockSize2))
@@ -794,6 +851,7 @@ namespace zynforge
                 else if (w.backupWriter != nullptr)
                 {
                     w.bytesWrittenBackup += (juce::int64) scope.blockSize2 * w.bytesPerSampleBackup;
+                    w.totalSamplesBackup += scope.blockSize2;
                 }
                 totalWritten += scope.blockSize2;
             }

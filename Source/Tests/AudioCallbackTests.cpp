@@ -879,6 +879,66 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            beginTest ("session.report.json enumerates Track_NN_partXX files in order");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    MultitrackRecorder::setAutoSplitThresholdBytesForTests (256 * 1024);
+                    CallbackFixture f (1, 1, 2);
+                    auto& rec = f.engine.getRecorder();
+                    rec.getTrack (0).armed.store (true);
+                    rec.setCaptureFormat (CaptureFormat::Wav24);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.3f, 256);
+                    for (int b = 0; b < 576; ++b)
+                    {
+                        f.process (256);
+                        rec.drainPendingForTests();
+                    }
+                    f.engine.stopRecording();
+                    MultitrackRecorder::setAutoSplitThresholdBytesForTests (0);
+                }
+
+                const auto report = sessionDir.getChildFile ("session.report.json");
+                expect (report.existsAsFile());
+                const auto json = juce::JSON::parse (report);
+                auto* root = json.getDynamicObject();
+                expect (root != nullptr);
+                if (root != nullptr)
+                {
+                    auto* tracks = root->getProperty ("tracks").getArray();
+                    expect (tracks != nullptr);
+                    if (tracks != nullptr && tracks->size() > 0)
+                    {
+                        auto* t0 = (*tracks)[0].getDynamicObject();
+                        expect (t0 != nullptr);
+                        if (t0 != nullptr)
+                        {
+                            auto* files = t0->getProperty ("files").getArray();
+                            expect (files != nullptr);
+                            if (files != nullptr)
+                            {
+                                // Must enumerate both parts in order.
+                                expect (files->size() >= 2);
+                                if (files->size() >= 2)
+                                {
+                                    expectEquals ((*files)[0].toString(),
+                                                  juce::String ("Track_01.wav"));
+                                    expectEquals ((*files)[1].toString(),
+                                                  juce::String ("Track_01_part02.wav"));
+                                }
+                            }
+                            // totalSamplesPrimary spans across ALL parts
+                            // (sum-not-per-part), so it must equal the
+                            // total samples we fed in.
+                            const auto total = (juce::int64) t0->getProperty ("totalSamplesPrimary");
+                            expect (total >= (juce::int64) 576 * 256 - 1024);
+                        }
+                    }
+                }
+                sessionDir.deleteRecursively();
+            }
+
             beginTest ("Auto-split threshold defaults restore after test override clears");
             {
                 MultitrackRecorder::setAutoSplitThresholdBytesForTests (0);
