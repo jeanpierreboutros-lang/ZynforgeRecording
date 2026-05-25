@@ -48,6 +48,14 @@ namespace zynforge
         // session UI layout into .zfproj.
         std::function<void (float)> onZoomChanged;
 
+        // Channel selection, shared with the MIXER. A header click on a
+        // track row calls onRowSelect(physicalTrackIndex, additive) so the
+        // host can fold it into the same selection set the MIXER uses
+        // (drives Option+R bulk arm). isTrackSelected lets a row draw its
+        // selection highlight by asking the host whether it's selected.
+        std::function<void (int /*physTrack*/, bool /*additive*/)> onRowSelect;
+        std::function<bool (int /*physTrack*/)>                    isTrackSelected;
+
         // Memory-Location recall hooks. setLogicalRowsVisible takes a
         // list of logical strip indices to show (empty = show all).
         // scrollToSample centres the horizontal viewport on a sample

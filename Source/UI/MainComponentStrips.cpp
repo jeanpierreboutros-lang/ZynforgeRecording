@@ -134,6 +134,20 @@ int MainComponent::physicalFromLogicalIdx (int logical)
     return phys;
 }
 
+// Inverse of physicalFromLogicalIdx: collapse a physical track index to
+// the logical strip ordinal that contains it (stereo pairs count once).
+int MainComponent::logicalFromPhysicalIdx (int physical)
+{
+    auto& rec = engine.getRecorder();
+    int logical = 0, p = 0;
+    while (p < physical && p < rec.getNumTracks())
+    {
+        p += rec.getTrack (p).isStereo.load (std::memory_order_relaxed) ? 2 : 1;
+        ++logical;
+    }
+    return logical;
+}
+
 void MainComponent::moveSelectedStrips (int delta)
 {
     if (selectedLogical.empty() || engine.isRecording()) return;

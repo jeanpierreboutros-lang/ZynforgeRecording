@@ -439,6 +439,18 @@ namespace zynforge
             g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
             g.drawVerticalLine (headerW - 1, 0.0f, (float) getHeight());
 
+            // ─── Selection highlight (shared with the MIXER) -- a faint
+            // brand-orange wash + left stripe on rows the engineer has
+            // selected, so Option+R bulk arm has a visible target.
+            if (auto* page = findParentComponentOfClass<EditPage>())
+                if (page->isTrackSelected && page->isTrackSelected (index))
+                {
+                    g.setColour (brand::brandOrange.withAlpha (brand::alpha::subtle));
+                    g.fillRect (header);
+                    g.setColour (brand::brandOrange);
+                    g.fillRect (juce::Rectangle<int> (swatchW, 0, 3, getHeight()));
+                }
+
             // The bottom-right 'vol X.X / pan C' readout pill was
             // removed per user request -- the fader + pan values are
             // already visible on the MIXER strip and the EDIT view's
@@ -1371,7 +1383,23 @@ namespace zynforge
             // pooled cross-track list). Reset by clicking on a
             // different row.
             if (auto* page = findParentComponentOfClass<EditPage>())
+            {
                 page->setActiveRowTrackIndex (index);
+
+                // Header click (between the swatch column and the wave
+                // pane, i.e. empty header space -- the R/M/Mu/S buttons
+                // and combos are child components that swallow their own
+                // clicks) selects this channel into the shared MIXER/EDIT
+                // selection. Shift/Cmd extends; a plain click selects only
+                // this one. Drives Option+R bulk arm from the EDIT view.
+                if (! (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
+                    && e.x >= swatchW && e.x < headerW
+                    && page->onRowSelect)
+                {
+                    page->onRowSelect (index, e.mods.isShiftDown()
+                                              || e.mods.isCommandDown());
+                }
+            }
 
             // Pro Tools-style edit cursor. Any left-click that lands
             // in the wave pane sets the edit cursor at the corresponding

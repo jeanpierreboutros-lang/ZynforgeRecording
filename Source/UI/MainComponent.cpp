@@ -536,6 +536,34 @@ MainComponent::MainComponent()
                                     { endAutomationTransaction (label); };
     // Autosave per-session zoom into .zfproj on every change.
     editPage->onZoomChanged = [this] (float) { saveUILayoutToActiveSession(); };
+
+    // EDIT-view channel selection feeds the SAME shared selection set the
+    // MIXER uses, so a click in either view drives Option+R bulk arm and
+    // both views highlight together. The EDIT row hands us a physical
+    // track index; map it to a logical strip ordinal first.
+    editPage->onRowSelect = [this] (int physTrack, bool additive)
+    {
+        const int logical = logicalFromPhysicalIdx (physTrack);
+        if (logical < 0 || logical >= (int) strips.size()) return;
+        if (additive)
+        {
+            if (selectedLogical.count (logical)) selectedLogical.erase (logical);
+            else                                 selectedLogical.insert (logical);
+        }
+        else
+        {
+            selectedLogical.clear();
+            selectedLogical.insert (logical);
+        }
+        for (int i = 0; i < (int) strips.size(); ++i)
+            if (strips[(size_t) i] != nullptr)
+                strips[(size_t) i]->setSelected (selectedLogical.count (i) > 0);
+        if (editPage != nullptr) editPage->repaint();
+    };
+    editPage->isTrackSelected = [this] (int physTrack) -> bool
+    {
+        return selectedLogical.count (logicalFromPhysicalIdx (physTrack)) > 0;
+    };
     // Re-parent the EDIT-tools palette onto MainComponent so it can
     // share the same 28 px row as the automation toolbar. (The earlier
     // if-block tried this too but ran before editPage existed.)

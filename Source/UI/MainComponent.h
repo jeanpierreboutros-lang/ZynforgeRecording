@@ -101,6 +101,7 @@ private:
     void clearStripSelection();
     void selectAllStrips();
     int  physicalFromLogicalIdx (int logical);
+    int  logicalFromPhysicalIdx (int physical);
 
     // Multi-select: indices are LOGICAL strip indices (stereo pairs
     // counted as one). Engineer toggles via shift/cmd-click on a strip.
