@@ -274,6 +274,79 @@ namespace zynforge
 
                 dir.deleteRecursively();
             }
+
+            // Mute + Delete are only "wired" if they change what the player
+            // actually outputs. Render real blocks through SessionPlayer and
+            // assert silence vs audio -- the audible contract, not just the
+            // flag. (Mute skips the clip; a deleted region with other clips
+            // still present plays silence.)
+            beginTest ("Mute + Delete actually silence the player output");
+            {
+                auto dir = recordSession (numCh, numBlocks, block);
+                AudioEngine eng;
+                eng.setSnapMode (AudioEngine::SnapMode::Off);
+                expect (eng.loadSession (dir) > 0, "session failed to load");
+
+                auto& player = eng.getPlayer();
+                player.prepare (48000.0, block);
+
+                // Render one block at pos -> peak |sample| on channel 0 only.
+                // Track i maps to output i, and we only edit track 0, so we
+                // must measure track 0's output (not the still-playing
+                // neighbour, which would mask the mute under a max-of-all).
+                auto peakAt = [&] (juce::int64 pos) -> float
+                {
+                    player.start();
+                    player.setPositionSamples (pos);
+                    std::vector<std::vector<float>> ob ((size_t) numCh, std::vector<float> ((size_t) block, 0.0f));
+                    std::vector<float*> op ((size_t) numCh);
+                    for (int ch = 0; ch < numCh; ++ch) op[(size_t) ch] = ob[(size_t) ch].data();
+                    player.processBlock (op.data(), numCh, block);
+                    float pk = 0.0f;
+                    for (int i = 0; i < block; ++i)
+                        pk = juce::jmax (pk, std::abs (ob[0][(size_t) i]));
+                    return pk;
+                };
+                // The BufferingAudioReader fills in the background, so the
+                // first reads at a fresh position can be silent. Poll until
+                // audio shows up (bounded ~0.5 s) before trusting a baseline.
+                auto warmPeakAt = [&] (juce::int64 pos) -> float
+                {
+                    float pk = 0.0f;
+                    for (int t = 0; t < 100 && pk < 0.05f; ++t)
+                    {
+                        pk = peakAt (pos);
+                        if (pk < 0.05f) juce::Thread::sleep (5);
+                    }
+                    return pk;
+                };
+
+                const juce::int64 probe = total / 2;   // inside the full clip
+
+                expect (warmPeakAt (probe) > 0.05f, "clip never produced audio (warmup failed)");
+
+                // Mute the (single) clip -> that region is now pure silence.
+                expect (eng.setClipMuted (0, 0, true));
+                expect (peakAt (probe) < 1.0e-6f, "muted clip still produced audio");
+
+                // Unmute -> audible again.
+                expect (eng.setClipMuted (0, 0, false));
+                expect (warmPeakAt (probe) > 0.05f, "unmute did not restore audio");
+
+                // Split into two clips, then delete the first. Its old
+                // region must go silent while the surviving clip still plays.
+                player.setPositionSamples (probe);
+                expect (eng.splitTrackAtPlayhead (0), "split failed");
+                expectEquals ((int) eng.clipsFor (0).size(), 2);
+                expect (eng.deleteClip (0, 0), "delete failed");
+                expectEquals ((int) eng.clipsFor (0).size(), 1);
+
+                expect (peakAt (total / 4)       < 1.0e-6f, "deleted region still produced audio");
+                expect (warmPeakAt (total * 3 / 4) > 0.05f, "surviving clip went silent");
+
+                player.stop();
+                dir.deleteRecursively();
+            }
         }
     };
 
