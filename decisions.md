@@ -135,6 +135,21 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Single writer thread for capture (multi-shard parallelism disabled) — 2026-05-25
+
+**Status:** Accepted
+**Context:** The recorder drained its per-channel lock-free FIFOs to disk on a *pool* of `juce::TimeSliceThread`s — one shard per channel-range, round-robined across threads — to "parallelise" disk writes. In practice this corrupted recordings: under real multi-core parallelism whole channels came back as **white-noise garbage** (lag-1 autocorrelation ≈ 0 instead of ≈ 1 for a real signal), **non-deterministically**, and **worse with more channels**. Real takes also showed on-disk truncation (WAV header claiming the full length, far less data actually written). A new headless integrity test (`RecordingIntegrityTests`) pushes a known per-channel signal through the recorder and re-reads every WAV; it reproduces the garbage at **2+ writer threads** and passes with **0 failures at 1** across 8/16/48-channel configs. Per-FIFO single-producer/single-consumer usage, the JUCE `AbstractFifo` scoped API, and `writeFromFloatArrays` (channel-local buffers) were each verified correct in isolation — yet parallel draining still corrupts, so the race is in the multi-shard interaction and was not worth the risk to keep hunting while shipping a broken recorder.
+**Decision:** Serialise all disk writing onto a **single** writer thread (`chooseShardCount()` returns 1 → one shard covering every channel). The shard machinery is retained so re-enabling parallelism is a one-line change once the race is found and a test proves it safe.
+**Rationale:**
+  1. **Correctness is non-negotiable for a recorder.** A reproduced data-corruption bug outranks a throughput optimisation.
+  2. **The parallelism bought nothing real.** 48 tracks × 24-bit × 48 kHz ≈ 6.6 MB/s — one thread drains that with the multi-second FIFO never near full. SSDs do hundreds of MB/s.
+  3. **Proven by test.** The same headless test that reproduces the bug at N>1 is green at N=1; it now guards against regressions.
+**Consequences:** All armed tracks finalise at the same correct length and round-trip cleanly. If a future workload genuinely needs parallel disk I/O (very high channel/sample-rate counts on slow media), the sharding can be revived — but only behind a green `RecordingIntegrityTests` at the target thread count.
+**Alternatives Considered:** Keep hunting the race while shipping broken recordings (rejected — unacceptable for a recorder); add per-FIFO mutexes (rejected — defeats the lock-free design and the FIFO usage is already correct); cap channel count (rejected — doesn't address the root cause).
+**Related Documents:** `Source/Audio/MultitrackRecorder.cpp` (`chooseShardCount`, `drainShard`, `rebuildShards`), `Source/Tests/RecordingIntegrityTests.cpp`.
+
+---
+
 ## Template
 
 ```

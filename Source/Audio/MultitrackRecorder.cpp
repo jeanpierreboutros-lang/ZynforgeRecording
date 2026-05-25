@@ -37,8 +37,24 @@ namespace zynforge
     // small-block I/O and we don't want to starve other UI work.
     static int chooseShardCount()
     {
-        const int hw = juce::SystemStats::getNumPhysicalCpus();
-        return juce::jlimit (2, 8, hw > 0 ? hw / 2 : 4);
+        // Single writer thread, deliberately.
+        //
+        // The multi-shard design (one TimeSliceThread per channel-range)
+        // was meant to parallelise disk writes, but it corrupted captures:
+        // under real parallelism whole channels came back as white-noise
+        // garbage, non-deterministically, worse with more channels. The
+        // headless RecordingIntegrityTests reproduce it at 2+ writer
+        // threads and show ZERO failures at 1 -- see decisions.md
+        // "Single writer thread for capture".
+        //
+        // The parallelism bought us nothing real anyway: 48 tracks of
+        // 24-bit/48 kHz is ~6.6 MB/s, which one thread drains with the
+        // multi-second FIFO never coming close to full. Correctness of the
+        // recording is non-negotiable for a recorder, so we serialise all
+        // writing onto one thread until/unless the sharding race is found
+        // and fixed. The shard machinery is kept (one shard covering every
+        // channel) so re-enabling is a one-line change once it's proven.
+        return 1;
     }
 
     MultitrackRecorder::MultitrackRecorder()
