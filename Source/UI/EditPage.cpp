@@ -466,18 +466,16 @@ namespace zynforge
             const auto waveColour = getStripColour().brighter (0.25f);
             const auto inner = wavePane.reduced (brand::space::xs, brand::space::sm);
 
-            // Per-track vertical fit. A live multitrack take is often well
-            // below 0 dBFS, so at unity the waveform is a thin line in a
-            // tall lane. Scale each track so its loudest peak fills ~90% of
-            // the lane (capped at 8x so a quiet track doesn't blow the noise
-            // floor up to full height; near-silent tracks stay flat). Gives
-            // the readable, filled DAW-style shape regardless of input gain.
-            auto waveZoom = [] (const juce::AudioThumbnail& tn) -> float
+            // True-level waveform with a user-controlled vertical (amplitude)
+            // zoom -- so the real dynamics show (like a DAW) and the engineer
+            // can pull up quiet tracks on demand instead of every track being
+            // auto-normalised to the same height.
+            float vz = 1.0f;
+            if (auto* page = findParentComponentOfClass<EditPage>())
+                vz = page->getVerticalZoom();
+            auto waveZoom = [vz] (const juce::AudioThumbnail& tn) -> float
             {
-                if (tn.getTotalLength() <= 0.0) return 1.0f;
-                const float peak = tn.getApproximatePeak();
-                if (peak < 0.02f) return 1.0f;                     // ~silent: leave flat
-                return juce::jlimit (1.0f, 8.0f, 0.9f / peak);     // fit ~90% of lane
+                return tn.getTotalLength() > 0.0 ? vz : 1.0f;
             };
 
             // Pro Tools-style: the waveform is ALWAYS the base layer,
@@ -2836,6 +2834,26 @@ namespace zynforge
                    juce::AudioThumbnailCache& cache)
             : engine (eng), formats (fm), thumbCache (cache) {}
 
+        // Zoom gestures (DAW-standard): Cmd/Ctrl + wheel zooms the timeline
+        // horizontally; add Shift for vertical (amplitude) zoom. A plain
+        // wheel is forwarded to the viewport so normal scrolling is intact.
+        void mouseWheelMove (const juce::MouseEvent& e,
+                             const juce::MouseWheelDetails& w) override
+        {
+            const bool cmd = e.mods.isCommandDown() || e.mods.isCtrlDown();
+            if (cmd)
+            {
+                if (auto* page = findParentComponentOfClass<EditPage>())
+                {
+                    if (e.mods.isShiftDown()) page->wheelZoomVertical   (w.deltaY);
+                    else                      page->wheelZoomHorizontal (w.deltaY);
+                    return;
+                }
+            }
+            if (auto* vp = findParentComponentOfClass<juce::Viewport>())
+                vp->mouseWheelMove (e.getEventRelativeTo (vp), w);
+        }
+
         // Push-down configuration: toolbar pointer + click-overlay state.
         // Stored here so newly-created rows pick them up automatically;
         // existing rows are mutated through updateRowContext().
@@ -3315,5 +3333,31 @@ namespace zynforge
         resized();
         if (toolsBar != nullptr) toolsBar->setZoom (zoom);
         if (onZoomChanged) onZoomChanged (zoom);
+    }
+
+    void EditPage::setVerticalZoom (float z)
+    {
+        z = juce::jlimit (0.25f, 32.0f, z);
+        if (std::abs (z - vZoom) < 0.001f) return;
+        vZoom = z;
+        if (list != nullptr) list->repaint();
+    }
+
+    void EditPage::wheelZoomHorizontal (float delta)
+    {
+        // Keep the time under the viewport centre stable across the zoom.
+        const double centreFrac = (viewport.getViewPositionX()
+                                   + viewport.getWidth() * 0.5)
+                                  / (double) juce::jmax (1, list->getWidth());
+        setZoom (zoom * (delta > 0.0f ? 1.18f : 1.0f / 1.18f));
+        const int newW = list->getWidth();
+        viewport.setViewPosition (
+            juce::jmax (0, (int) (centreFrac * newW - viewport.getWidth() * 0.5)),
+            viewport.getViewPositionY());
+    }
+
+    void EditPage::wheelZoomVertical (float delta)
+    {
+        setVerticalZoom (vZoom * (delta > 0.0f ? 1.18f : 1.0f / 1.18f));
     }
 }

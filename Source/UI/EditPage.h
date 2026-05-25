@@ -43,6 +43,19 @@ namespace zynforge
         void  setZoom (float z);
         float getZoom() const noexcept { return zoom; }
 
+        // Vertical (amplitude) zoom for the waveforms. 1.0 = true level
+        // (peak 0 dBFS fills the lane). Lets the engineer pull up quiet
+        // tracks without normalising away the dynamics. Read by each
+        // TrackRow when it draws its thumbnail.
+        void  setVerticalZoom (float z);
+        float getVerticalZoom() const noexcept { return vZoom; }
+
+        // Wheel-zoom helpers, called from the row list. Horizontal zooms
+        // around the viewport centre (keeps the visible time stable);
+        // vertical just scales amplitude. delta > 0 zooms in.
+        void  wheelZoomHorizontal (float delta);
+        void  wheelZoomVertical   (float delta);
+
         // Fires whenever zoom changes (toolbar, mouse wheel, Memory
         // Location recall, etc.). Host uses this to autosave the per-
         // session UI layout into .zfproj.
@@ -139,6 +152,7 @@ namespace zynforge
         bool       lastRecording   { false };
         juce::File lastSessionDir;
         float      zoom            { 1.0f };
+        float      vZoom           { 1.0f };
         int        activeRowTrackIndex { -1 };
         int        focusedPointIdx     { -1 };
         AutomationToolbar*             toolbar  { nullptr };
