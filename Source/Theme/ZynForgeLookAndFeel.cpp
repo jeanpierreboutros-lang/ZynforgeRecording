@@ -222,15 +222,21 @@ namespace zynforge
     juce::Array<int> ZynForgeLookAndFeel::getWidthsForTextButtons (
         juce::AlertWindow&, const juce::Array<juce::TextButton*>& btns)
     {
-        // Force every alert-box button to the dialog::stylePrimary /
-        // styleSecondary treatment. First button is the affirmative
-        // action (matches JUCE's MessageBoxOptions::withButton order).
+        // Keep alert buttons neutral grey + light grey (no coloured
+        // accent) per the prompt-colour rule. The first/default button
+        // gets a slightly brighter grey for subtle emphasis; the rest are
+        // the standard secondary grey.
         for (int i = 0; i < btns.size(); ++i)
         {
             if (auto* b = btns[i])
             {
-                if (i == 0) dialog::stylePrimary   (*b);
-                else        dialog::styleSecondary (*b);
+                dialog::styleSecondary (*b);
+                if (i == 0)
+                {
+                    b->setColour (juce::TextButton::buttonColourId, brand::bgElevated.brighter (0.12f));
+                    b->setColour (juce::TextButton::textColourOffId, brand::textPrimary);
+                    b->setColour (juce::TextButton::textColourOnId,  brand::textPrimary);
+                }
             }
         }
         juce::Array<int> widths;

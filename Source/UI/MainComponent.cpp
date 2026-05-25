@@ -24,11 +24,6 @@ using namespace zynforge;
 MainComponent::MainComponent()
 {
     setLookAndFeel (&laf);
-    // Also make it the GLOBAL default so top-level AlertWindows / quit
-    // prompts use our grey chrome too -- without this they fall back to
-    // JUCE's default (blue-tinted) look. Reset in the destructor before
-    // 'laf' is torn down.
-    juce::LookAndFeel::setDefaultLookAndFeel (&laf);
 
     // Title text removed from the header -- the macOS window title +
     // app icon already identify the product, no need to repeat it.
@@ -651,7 +646,6 @@ MainComponent::~MainComponent()
     juce::MenuBarModel::setMacMainMenu (nullptr);
    #endif
     removeKeyListener (this);
-    juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
     setLookAndFeel (nullptr);
 }
 
@@ -1458,6 +1452,7 @@ void MainComponent::confirmAndQuit()
                                           "A recording is in progress.\n"
                                           "Stop the recording cleanly and quit?",
                                           juce::MessageBoxIconType::NoIcon, this);
+        aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
         aw->addButton ("Stop & Quit", kStopQuit, juce::KeyPress (juce::KeyPress::returnKey));
         aw->addButton ("Cancel",      kCancel,   juce::KeyPress (juce::KeyPress::escapeKey));
         aw->enterModalState (true,
@@ -1480,6 +1475,7 @@ void MainComponent::confirmAndQuit()
         auto* aw = new juce::AlertWindow ("Quit Zynforge Recording?",
                                           "No active session. Any unsaved app state will be lost.",
                                           juce::MessageBoxIconType::NoIcon, this);
+        aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
         aw->addButton ("Quit",   kQuit,   juce::KeyPress (juce::KeyPress::returnKey));
         aw->addButton ("Cancel", kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
         aw->enterModalState (true,
@@ -1514,6 +1510,7 @@ void MainComponent::confirmAndQuit()
                                       "markers will be written to the session folder.",
                                       juce::MessageBoxIconType::NoIcon,
                                       this);
+    aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
     aw->addButton ("Don't Save", kDontSave);
     aw->addButton ("Cancel",     kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
     aw->addButton ("Save",       kSave,   juce::KeyPress (juce::KeyPress::returnKey));
