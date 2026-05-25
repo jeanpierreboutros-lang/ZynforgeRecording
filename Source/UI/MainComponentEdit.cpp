@@ -256,6 +256,51 @@ void MainComponent::editSoloSelection()
     }
 }
 
+// Option+R -- bulk record-arm toggle over the current strip selection.
+// Select the channels you want, then Option+R arms them all in one
+// shot; if they're already all armed, the same shortcut disarms them.
+// Mirrors across stereo pairs. UI buttons (MIXER / EDIT / PATCH) follow
+// automatically off the 10 Hz refresh since they read TrackState.armed.
+void MainComponent::armSelection()
+{
+    if (selectedLogical.empty())
+    {
+        showStatus ("Select channels first, then Option+R to arm / disarm");
+        return;
+    }
+
+    auto& rec = engine.getRecorder();
+
+    // Group toggle: arm unless every selected strip is already armed,
+    // in which case disarm. Reads the L track of each logical strip.
+    bool allArmed = true;
+    for (int logical : selectedLogical)
+    {
+        const int phys = physicalFromLogical (engine, logical);
+        if (phys < rec.getNumTracks()
+            && ! rec.getTrack (phys).armed.load (std::memory_order_relaxed))
+        {
+            allArmed = false;
+            break;
+        }
+    }
+    const bool arm = ! allArmed;
+
+    recordUndoSnapshot (arm ? "Arm selection" : "Disarm selection");
+    for (int logical : selectedLogical)
+    {
+        const int phys = physicalFromLogical (engine, logical);
+        if (phys >= rec.getNumTracks()) continue;
+        rec.getTrack (phys).armed.store (arm, std::memory_order_relaxed);
+        if (rec.getTrack (phys).isStereo.load (std::memory_order_relaxed)
+            && phys + 1 < rec.getNumTracks())
+            rec.getTrack (phys + 1).armed.store (arm, std::memory_order_relaxed);
+    }
+
+    showStatus ((arm ? "Armed " : "Disarmed ")
+                + juce::String ((int) selectedLogical.size()) + " selected strip(s)");
+}
+
 void MainComponent::editCropToLoopRange()
 {
     auto& player = engine.getPlayer();

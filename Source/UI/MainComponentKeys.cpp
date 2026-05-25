@@ -27,6 +27,19 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         return true;
     }
 
+    // Option(Alt)+R -- bulk record-arm toggle over the selected strips.
+    // Select the channels, then Option+R arms them all at once; press
+    // again (while all armed) to disarm. Uses the physical key code so
+    // a macOS dead-key/® remap on Alt+R doesn't swallow it. Not
+    // Command+R (that's Redo).
+    if (key.getKeyCode() == 'R'
+        && key.getModifiers().isAltDown()
+        && ! key.getModifiers().isCommandDown())
+    {
+        armSelection();
+        return true;
+    }
+
     // Tab / Shift+Tab -- jump to next / previous transient. Pro
     // Tools-style. Uses the engine's lazy transient cache (built
     // from every Track_NN.wav on first hit, reused thereafter).

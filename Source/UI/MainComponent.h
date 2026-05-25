@@ -135,6 +135,8 @@ private:
     void editCutSelected (bool cut);
     void editPasteSelected();
     void editSoloSelection();
+    // Option+R bulk record-arm toggle over the current strip selection.
+    void armSelection();
     void editCropToLoopRange();
     void editSetRangeToLoopRange();
     void editToggleSnap();
