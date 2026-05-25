@@ -232,6 +232,102 @@ namespace zynforge
                 expectWithinAbsoluteError (eng.clipsFor (0)[0].gainDb, 0.0f, 0.001f);
                 expect (! eng.clipsFor (0)[1].muted);
             }
+
+            // The EDIT-view trim drag feeds editClip(TrimLeft/TrimRight),
+            // the body drag feeds Move, and the fade handles feed
+            // setClipFades. These pin the geometry each produces + undo.
+            beginTest ("Trim (slip-left / right) geometry + undo");
+            {
+                AudioEngine eng;
+                auto& clips = eng.clipsFor (0);
+                clips.clear();
+                Clip c;
+                c.timelineStartSamples = 10000;
+                c.fileStartSamples     = 5000;
+                c.fileLengthSamples    = 100000;
+                clips.push_back (c);
+                eng.syncActiveTake (0);
+                const auto before = eng.playlistsToJson();
+
+                // Slip-trim the left edge in by 4000: fileStart and
+                // timelineStart advance together, fileLength contracts.
+                expect (eng.editClip (0, 0, AudioEngine::ClipEdit::TrimLeft, 4000));
+                {
+                    const auto& e = eng.clipsFor (0)[0];
+                    expectEquals (e.fileStartSamples,     (juce::int64) 9000);
+                    expectEquals (e.timelineStartSamples, (juce::int64) 14000);
+                    expectEquals (e.fileLengthSamples,    (juce::int64) 96000);
+                }
+                // Trim the right edge out by 8000 (length only).
+                expect (eng.editClip (0, 0, AudioEngine::ClipEdit::TrimRight, 8000));
+                expectEquals (eng.clipsFor (0)[0].fileLengthSamples, (juce::int64) 104000);
+
+                // Over-trim past the 1024-sample floor is refused.
+                expect (! eng.editClip (0, 0, AudioEngine::ClipEdit::TrimRight, -200000));
+
+                // Undo the whole edit back to the original geometry.
+                eng.loadPlaylistsFromJson (before);
+                const auto& e = eng.clipsFor (0)[0];
+                expectEquals (e.fileStartSamples,     (juce::int64) 5000);
+                expectEquals (e.timelineStartSamples, (juce::int64) 10000);
+                expectEquals (e.fileLengthSamples,    (juce::int64) 100000);
+            }
+
+            beginTest ("Move shifts timeline start and clamps at zero");
+            {
+                AudioEngine eng;
+                auto& clips = eng.clipsFor (0);
+                clips.clear();
+                Clip c;
+                c.timelineStartSamples = 50000;
+                c.fileStartSamples     = 0;
+                c.fileLengthSamples    = 100000;
+                clips.push_back (c);
+                eng.syncActiveTake (0);
+
+                expect (eng.editClip (0, 0, AudioEngine::ClipEdit::Move, 25000));
+                expectEquals (eng.clipsFor (0)[0].timelineStartSamples, (juce::int64) 75000);
+                // A move never touches the file window.
+                expectEquals (eng.clipsFor (0)[0].fileStartSamples,  (juce::int64) 0);
+                expectEquals (eng.clipsFor (0)[0].fileLengthSamples, (juce::int64) 100000);
+
+                // Dragging far left clamps to timeline 0, never negative.
+                expect (eng.editClip (0, 0, AudioEngine::ClipEdit::Move, -999999));
+                expectEquals (eng.clipsFor (0)[0].timelineStartSamples, (juce::int64) 0);
+            }
+
+            beginTest ("Fades set, refuse over-length, refuse on locked, undo");
+            {
+                AudioEngine eng;
+                auto& clips = eng.clipsFor (0);
+                clips.clear();
+                Clip c;
+                c.fileLengthSamples = 100000;
+                clips.push_back (c);
+                eng.syncActiveTake (0);
+                const auto before = eng.playlistsToJson();
+
+                expect (eng.setClipFades (0, 0, 20000, 30000));
+                expectEquals (eng.clipsFor (0)[0].fadeInSamples,  (juce::int64) 20000);
+                expectEquals (eng.clipsFor (0)[0].fadeOutSamples, (juce::int64) 30000);
+
+                // fadeIn + fadeOut may not exceed the clip length.
+                expect (! eng.setClipFades (0, 0, 70000, 70000));
+                expectEquals (eng.clipsFor (0)[0].fadeInSamples,  (juce::int64) 20000);
+                expectEquals (eng.clipsFor (0)[0].fadeOutSamples, (juce::int64) 30000);
+
+                // A locked clip refuses both fade and trim edits.
+                expect (eng.setClipLocked (0, 0, true));
+                expect (! eng.setClipFades (0, 0, 1000, 1000));
+                expect (! eng.editClip (0, 0, AudioEngine::ClipEdit::TrimRight, -5000));
+                expect (eng.clipsFor (0)[0].locked);
+
+                // Undo wipes the fades + lock back to the clean clip.
+                eng.loadPlaylistsFromJson (before);
+                expectEquals (eng.clipsFor (0)[0].fadeInSamples,  (juce::int64) 0);
+                expectEquals (eng.clipsFor (0)[0].fadeOutSamples, (juce::int64) 0);
+                expect (! eng.clipsFor (0)[0].locked);
+            }
         }
     };
 
