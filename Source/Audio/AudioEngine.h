@@ -10,6 +10,7 @@
 #include "../Network/NDIBridge.h"
 
 #include <array>
+#include "ITransport.h"
 #include "ClipModel.h"
 #include "MultitrackRecorder.h"
 #include "SessionPlayer.h"
@@ -26,7 +27,8 @@ namespace zynforge
     class OscRemote;
     class CompanionServer;
 
-    class AudioEngine final : public juce::AudioIODeviceCallback
+    class AudioEngine final : public juce::AudioIODeviceCallback,
+                              public ITransport
     {
     public:
         AudioEngine();
