@@ -466,6 +466,20 @@ namespace zynforge
             const auto waveColour = getStripColour().brighter (0.25f);
             const auto inner = wavePane.reduced (brand::space::xs, brand::space::sm);
 
+            // Per-track vertical fit. A live multitrack take is often well
+            // below 0 dBFS, so at unity the waveform is a thin line in a
+            // tall lane. Scale each track so its loudest peak fills ~90% of
+            // the lane (capped at 8x so a quiet track doesn't blow the noise
+            // floor up to full height; near-silent tracks stay flat). Gives
+            // the readable, filled DAW-style shape regardless of input gain.
+            auto waveZoom = [] (const juce::AudioThumbnail& tn) -> float
+            {
+                if (tn.getTotalLength() <= 0.0) return 1.0f;
+                const float peak = tn.getApproximatePeak();
+                if (peak < 0.02f) return 1.0f;                     // ~silent: leave flat
+                return juce::jlimit (1.0f, 8.0f, 0.9f / peak);     // fit ~90% of lane
+            };
+
             // Pro Tools-style: the waveform is ALWAYS the base layer,
             // even when a different lane mode (Volume / Pan / Mute /
             // Click / Tempo / Markers) is selected. The lane data is
@@ -483,20 +497,20 @@ namespace zynforge
                     {
                         g.setColour (waveColour.withAlpha (brand::alpha::muted));
                         thumbnailL.drawChannels (g, laneL, 0.0,
-                                                 thumbnailL.getTotalLength(), 1.0f);
+                                                 thumbnailL.getTotalLength(), waveZoom (thumbnailL));
                     }
                     if (thumbnailR.getTotalLength() > 0.0)
                     {
                         g.setColour (waveColour.withAlpha (brand::alpha::muted));
                         thumbnailR.drawChannels (g, laneR, 0.0,
-                                                 thumbnailR.getTotalLength(), 1.0f);
+                                                 thumbnailR.getTotalLength(), waveZoom (thumbnailR));
                     }
                 }
                 else if (thumbnailL.getTotalLength() > 0.0)
                 {
                     g.setColour (waveColour.withAlpha (brand::alpha::muted));
                     thumbnailL.drawChannels (g, inner, 0.0,
-                                             thumbnailL.getTotalLength(), 1.0f);
+                                             thumbnailL.getTotalLength(), waveZoom (thumbnailL));
                 }
             }
 
@@ -969,12 +983,12 @@ namespace zynforge
                 if (thumbnailL.getTotalLength() > 0.0)
                 {
                     g.setColour (waveColour);
-                    thumbnailL.drawChannels (g, laneL, 0.0, thumbnailL.getTotalLength(), 1.0f);
+                    thumbnailL.drawChannels (g, laneL, 0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
                 }
                 if (thumbnailR.getTotalLength() > 0.0)
                 {
                     g.setColour (waveColour);
-                    thumbnailR.drawChannels (g, laneR, 0.0, thumbnailR.getTotalLength(), 1.0f);
+                    thumbnailR.drawChannels (g, laneR, 0.0, thumbnailR.getTotalLength(), waveZoom (thumbnailR));
                 }
                 // Thin divider between lanes
                 g.setColour (brand::edge);
@@ -992,7 +1006,7 @@ namespace zynforge
             else if (thumbnailL.getTotalLength() > 0.0)
             {
                 g.setColour (waveColour);
-                thumbnailL.drawChannels (g, inner, 0.0, thumbnailL.getTotalLength(), 1.0f);
+                thumbnailL.drawChannels (g, inner, 0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
             }
             else
             {
