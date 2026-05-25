@@ -1,5 +1,8 @@
 #include "MultitrackRecorder.h"
 
+#include <juce_cryptography/juce_cryptography.h>
+#include <limits>
+
 namespace zynforge
 {
     static constexpr int kFifoSeconds     = 4;   // per-channel FIFO length
@@ -618,19 +621,50 @@ namespace zynforge
                     const auto& ws = writerSnapshots[i];
                     t->setProperty ("totalSamplesPrimary",
                                     (juce::int64) ws.totalSamplesPrimary);
+
+                    // SHA-256 per part file. Computed offline after
+                    // the writers have flushed + closed, so this never
+                    // touches the audio thread. Mix engineers store the
+                    // report alongside the audio and can verify months
+                    // later that the file they're reading is bit-
+                    // identical to what was captured at the gig.
+                    const auto sha256File = [] (const juce::File& f) -> juce::String
+                    {
+                        if (! f.existsAsFile()) return {};
+                        juce::FileInputStream in (f);
+                        if (! in.openedOk()) return {};
+                        const juce::SHA256 digest (in);
+                        return digest.toHexString();
+                    };
+
+                    const auto primaryAudioDir =
+                        activeSessionDir.getChildFile ("Audio Files");
                     juce::Array<juce::var> files;
+                    juce::Array<juce::var> shas;
                     for (const auto& fn : ws.partFilesPrimary)
+                    {
                         files.add (juce::var (fn));
-                    t->setProperty ("files", juce::var (files));
+                        shas .add (juce::var (sha256File (primaryAudioDir.getChildFile (fn))));
+                    }
+                    t->setProperty ("files",  juce::var (files));
+                    t->setProperty ("sha256", juce::var (shas));
 
                     if (backupWasRunning)
                     {
+                        const auto backupAudioDir =
+                            backupDir.getChildFile (activeSessionDir.getFileName())
+                                     .getChildFile ("Audio Files");
                         t->setProperty ("totalSamplesBackup",
                                         (juce::int64) ws.totalSamplesBackup);
                         juce::Array<juce::var> backupFiles;
+                        juce::Array<juce::var> backupShas;
                         for (const auto& fn : ws.partFilesBackup)
+                        {
                             backupFiles.add (juce::var (fn));
-                        t->setProperty ("backupFiles", juce::var (backupFiles));
+                            backupShas .add (juce::var (sha256File (backupAudioDir.getChildFile (fn))));
+                        }
+                        t->setProperty ("backupFiles",  juce::var (backupFiles));
+                        t->setProperty ("backupSha256", juce::var (backupShas));
                     }
                 }
                 trackArray.add (juce::var (t.get()));
@@ -713,6 +747,58 @@ namespace zynforge
             if (v > worst) worst = v;
         }
         return (float) worst;
+    }
+
+    juce::int64 MultitrackRecorder::estimateBytesPerSecondForArmedTracks() const noexcept
+    {
+        // bytesPerSec for a single armed mono track = sampleRate * bitsPerSample / 8.
+        auto bitsFor = [] (CaptureFormat f) -> int
+        {
+            switch (f)
+            {
+                case CaptureFormat::Wav16:  case CaptureFormat::Aiff16: case CaptureFormat::Flac16: return 16;
+                case CaptureFormat::Wav32Float: case CaptureFormat::Aiff32Float:                    return 32;
+                default: return 24;
+            }
+        };
+        const int bytesPerSampPrimary = bitsFor (captureFormat)       / 8;
+        const int bytesPerSampBackup  = bitsFor (backupCaptureFormat) / 8;
+        const bool backupOn = backupDir.isDirectory();
+
+        int armedCount = 0;
+        for (const auto& t : tracks)
+            if (t->armed.load (std::memory_order_relaxed)
+                && ! t->isBus.load (std::memory_order_relaxed))
+                ++armedCount;
+
+        // FLAC compresses ~50% typical; treat its byte rate as the
+        // worst case (uncompressed equivalent) to keep the estimate
+        // pessimistic. Engineers don't want a "you have 6 h" estimate
+        // that turns into 3 h because today's audio compressed poorly.
+        return (juce::int64) (sampleRate
+                              * (juce::int64) armedCount
+                              * (bytesPerSampPrimary
+                                 + (backupOn ? bytesPerSampBackup : 0)));
+    }
+
+    int MultitrackRecorder::estimateMinutesRemaining (const juce::File& primaryVolume,
+                                                      const juce::File& backupVolume) const noexcept
+    {
+        const auto rate = estimateBytesPerSecondForArmedTracks();
+        if (rate <= 0) return 0;
+        constexpr int kEffectivelyUnbounded = std::numeric_limits<int>::max() / 2;
+
+        auto minutesForVolume = [&] (const juce::File& vol) -> int
+        {
+            if (! vol.exists()) return kEffectivelyUnbounded;
+            const auto free = vol.getBytesFreeOnVolume();
+            if (free <= 0) return kEffectivelyUnbounded;       // unknown -> don't pessimize
+            return (int) (free / (rate * (juce::int64) 60));
+        };
+        int minutes = minutesForVolume (primaryVolume);
+        if (backupVolume.exists() && backupDir.isDirectory())
+            minutes = juce::jmin (minutes, minutesForVolume (backupVolume));
+        return minutes;
     }
 
     void MultitrackRecorder::drainOnce()

@@ -1064,6 +1064,14 @@ void MainComponent::onRecordClicked()
                  + juce::String (numTracks) + " tracks → " + dir.getFileName();
         if (autoRouted > 0)
             msg << " (auto-routed " << autoRouted << ")";
+        // Free-space pre-flight: warn loudly if the engineer is about to
+        // start a take with very little room on either the primary or
+        // backup volume. Pre-show beats mid-show discovery every time.
+        const int mins = engine.getEstimatedMinutesRemaining();
+        if (mins > 0 && mins < 30)
+            msg << "  --  ⚠ DISK ~" << mins << " min remaining";
+        else if (mins > 0)
+            msg << "  --  ~" << mins << " min remaining";
         statusLabel.setText (msg, juce::dontSendNotification);
         recordButton.setButtonText ("STOP");
     }

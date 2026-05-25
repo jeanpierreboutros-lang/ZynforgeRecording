@@ -97,6 +97,24 @@ namespace zynforge
         float getRingFillPct()     const noexcept;
         juce::File  getActiveSessionDir()  const          { return activeSessionDir; }
 
+        // Free-space pre-flight + live "minutes remaining" estimate.
+        //
+        // estimateBytesPerSecondForArmedTracks computes the worst-case
+        // per-second disk-write rate for the current arm + format
+        // configuration, summed across primary + (when active) backup.
+        // Engineers see this before they hit record and can decide
+        // whether to add storage or change format.
+        //
+        // estimateMinutesRemaining queries the free space on the
+        // active session's volume (and the backup root's volume when
+        // backup is active), divides by the projected rate, and
+        // returns whichever drive runs out first. Returns 0 if no
+        // session is active or no tracks are armed; returns INT_MAX
+        // when free space is effectively unbounded.
+        juce::int64 estimateBytesPerSecondForArmedTracks() const noexcept;
+        int         estimateMinutesRemaining (const juce::File& primaryVolume,
+                                              const juce::File& backupVolume) const noexcept;
+
         // Optional second copy of every track to a backup folder.
         // Pass an empty File to disable. Only effective for the next session.
         void setBackupDirectory (const juce::File& dir);

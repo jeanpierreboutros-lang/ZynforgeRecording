@@ -125,6 +125,7 @@ target_link_libraries(ZynforgeRecording PRIVATE
     juce::juce_gui_extra
     juce::juce_dsp
     juce::juce_osc
+    juce::juce_cryptography
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags

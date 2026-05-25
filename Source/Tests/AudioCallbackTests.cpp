@@ -939,6 +939,40 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            beginTest ("session.report.json includes SHA-256 per part file");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    CallbackFixture f (1, 1, 2);
+                    f.engine.getRecorder().getTrack (0).armed.store (true);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.3f, 256);
+                    for (int b = 0; b < 32; ++b) f.process (256);
+                    f.engine.stopRecording();
+                }
+                const auto report = sessionDir.getChildFile ("session.report.json");
+                const auto json = juce::JSON::parse (report);
+                auto* root = json.getDynamicObject();
+                expect (root != nullptr);
+                if (root != nullptr)
+                {
+                    auto* tracks = root->getProperty ("tracks").getArray();
+                    expect (tracks != nullptr && tracks->size() > 0);
+                    if (tracks != nullptr && tracks->size() > 0)
+                    {
+                        auto* t0 = (*tracks)[0].getDynamicObject();
+                        auto* shas = t0->getProperty ("sha256").getArray();
+                        expect (shas != nullptr && shas->size() == 1);
+                        if (shas != nullptr && shas->size() >= 1)
+                        {
+                            // Each SHA-256 is 64 hex chars.
+                            expectEquals ((*shas)[0].toString().length(), 64);
+                        }
+                    }
+                }
+                sessionDir.deleteRecursively();
+            }
+
             beginTest ("Auto-split threshold defaults restore after test override clears");
             {
                 MultitrackRecorder::setAutoSplitThresholdBytesForTests (0);

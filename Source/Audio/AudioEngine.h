@@ -698,6 +698,30 @@ namespace zynforge
         // 0-100 % units.
         std::atomic<double> deviceSampleRate { 0.0 };
         std::atomic<float>  audioLoadPct     { 0.0f };
+
+        // Free-space pre-flight cache. Set at startRecording, refreshed
+        // periodically by the timer / UI poll. Worst-case across primary
+        // + backup volumes. 0 = no estimate yet (no session / no armed
+        // tracks). Exposed via getEstimatedMinutesRemaining().
+        std::atomic<int>    diskMinutesRemaining { 0 };
+    public:
+        int   getEstimatedMinutesRemaining() const noexcept
+        {
+            return diskMinutesRemaining.load (std::memory_order_relaxed);
+        }
+        // Force a fresh free-space probe. Cheap (one syscall per
+        // volume); UI calls this every few seconds while recording so
+        // the displayed remaining time tracks the live drain rate.
+        void  refreshDiskMinutesRemaining()
+        {
+            const auto sessionDir = recorder.getActiveSessionDir();
+            if (! sessionDir.isDirectory()) { diskMinutesRemaining.store (0); return; }
+            diskMinutesRemaining.store (
+                recorder.estimateMinutesRemaining (sessionDir,
+                                                    recorder.getBackupDirectory()),
+                std::memory_order_relaxed);
+        }
+    private:
         std::atomic<float>  currentTempoBpm     { 120.0f };
         std::atomic<int>    timeSigNumerator    { 4 };
         std::atomic<int>    timeSigDenominator  { 4 };

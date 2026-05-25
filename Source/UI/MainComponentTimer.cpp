@@ -118,6 +118,12 @@ void MainComponent::timerCallback()
     {
         m = BigClockPanel::Mode::Recording;
         elapsed = recorder.getSamplesSinceStart();
+
+        // Refresh the free-space estimate every ~2 s of timer ticks
+        // (the timer runs at 24 Hz, so divide by 48). Querying the
+        // volume's free bytes is one syscall per drive; cheap.
+        if ((++diskTick % 48) == 0)
+            engine.refreshDiskMinutesRemaining();
     }
     else if (engine.isPlaying())
     {

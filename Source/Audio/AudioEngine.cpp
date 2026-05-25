@@ -89,6 +89,17 @@ namespace zynforge
             sr = device->getCurrentSampleRate();
         markers.setContext (sessionDir, sr);
 
+        // Free-space pre-flight: estimate how long this session can
+        // capture before either drive fills. UI polls
+        // estimatedMinutesRemaining for the live "X min remaining"
+        // indicator; this initial value is also exposed via
+        // startRecordingDiskWarning so the host can show a one-shot
+        // warning if we're under 30 min.
+        diskMinutesRemaining.store (
+            recorder.estimateMinutesRemaining (sessionDir,
+                                                recorder.getBackupDirectory()),
+            std::memory_order_relaxed);
+
         // Open the stereo mix file if the user opted in via setRecordStereoMix.
         if (recordStereoMixFlag.load (std::memory_order_acquire))
         {

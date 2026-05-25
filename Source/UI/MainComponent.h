@@ -331,5 +331,10 @@ private:
     std::vector<std::unique_ptr<zynforge::ChannelStrip>> strips;
     int  lastTrackCount { -1 };
 
+    // Timer-tick counter for cheap "every N frames" gates (e.g. the
+    // free-space pre-flight refresh, which queries the volume only
+    // every ~2 s rather than at the full timer rate).
+    int  diskTick { 0 };
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };
