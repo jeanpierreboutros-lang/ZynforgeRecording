@@ -114,6 +114,12 @@ void MainComponent::timerCallback()
     juce::int64 elapsed = 0;
     double      timerSR = deviceSR;
 
+    // Auto-arm on input detect -- only meaningful while NOT recording.
+    // ~0.5 s sustained input above -40 dBFS arms the strip. Cheap;
+    // skipped instantly when the flag is off.
+    if (! engine.isRecording())
+        engine.serviceAutoArm (12 /* ~0.5 s @ 24 Hz */, 0.01f /* -40 dBFS */);
+
     if (engine.isRecording())
     {
         m = BigClockPanel::Mode::Recording;

@@ -1176,6 +1176,72 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            // ─── Auto-arm on input detect ────────────────────────────
+            beginTest ("Auto-arm: peak above threshold for sustained period arms the strip");
+            {
+                CallbackFixture f (2, 2, 2);
+                auto& s0 = f.engine.getRecorder().getTrack (0);
+                auto& s1 = f.engine.getRecorder().getTrack (1);
+                expect (! s0.armed.load());
+                expect (! s1.armed.load());
+
+                f.engine.setAutoArmOnInputDetect (true);
+
+                // Force the peak above threshold on strip 0 only.
+                // serviceAutoArm reads track.peak directly -- not the
+                // input buffer -- so we can set it manually here. In
+                // production the audio thread sets peak each block.
+                s0.peak.store (0.5f, std::memory_order_relaxed);
+                s1.peak.store (0.0f, std::memory_order_relaxed);
+
+                // Threshold 5 ticks, amp 0.01. Strip 0 hits the streak,
+                // strip 1 doesn't.
+                for (int i = 0; i < 6; ++i)
+                    f.engine.serviceAutoArm (5, 0.01f);
+                expect (s0.armed.load());
+                expect (! s1.armed.load());
+
+                f.engine.setAutoArmOnInputDetect (false);
+            }
+
+            beginTest ("Auto-arm: streak resets if peak drops below threshold");
+            {
+                CallbackFixture f (1, 1, 2);
+                auto& t = f.engine.getRecorder().getTrack (0);
+                f.engine.setAutoArmOnInputDetect (true);
+
+                // 4 ticks above threshold (just shy of arming) ...
+                t.peak.store (0.5f, std::memory_order_relaxed);
+                for (int i = 0; i < 4; ++i)
+                    f.engine.serviceAutoArm (10, 0.01f);
+                expect (! t.armed.load());
+
+                // ... then silence resets the streak.
+                t.peak.store (0.0f, std::memory_order_relaxed);
+                for (int i = 0; i < 5; ++i)
+                    f.engine.serviceAutoArm (10, 0.01f);
+                expect (! t.armed.load());
+
+                // 10 ticks of input again, NOW it arms.
+                t.peak.store (0.5f, std::memory_order_relaxed);
+                for (int i = 0; i < 11; ++i)
+                    f.engine.serviceAutoArm (10, 0.01f);
+                expect (t.armed.load());
+
+                f.engine.setAutoArmOnInputDetect (false);
+            }
+
+            beginTest ("Auto-arm: disabled flag makes serviceAutoArm a no-op");
+            {
+                CallbackFixture f (1, 1, 2);
+                auto& t = f.engine.getRecorder().getTrack (0);
+                f.engine.setAutoArmOnInputDetect (false);
+                t.peak.store (0.99f, std::memory_order_relaxed);
+                for (int i = 0; i < 100; ++i)
+                    f.engine.serviceAutoArm (2, 0.01f);
+                expect (! t.armed.load());
+            }
+
             beginTest ("Failed mirror writer doesn't block the others");
             {
                 // 3-destination scenario where one mirror's root is

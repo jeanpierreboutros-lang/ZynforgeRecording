@@ -608,6 +608,25 @@ namespace zynforge
         {
             return recorder.getMirrors();
         }
+
+        // Auto-arm on persistent input. When enabled, any unarmed
+        // track that sees its input peak rise above the threshold for
+        // a sustained run of timer ticks gets armed automatically.
+        // Useful for first-time pre-show channel-discovery: walk the
+        // stage shouting "check check" into each mic; the strips
+        // arm as you hit them. Lives in the engine so the UI timer
+        // is a thin caller. Persisted in appProps as "autoArmOnInput".
+        void setAutoArmOnInputDetect (bool on);
+        bool isAutoArmOnInputDetect() const noexcept
+        {
+            return autoArmOnInputFlag.load (std::memory_order_acquire);
+        }
+        // Polls each track's peak; arms unarmed tracks whose peak has
+        // stayed above ampThreshold for >= periodTicks consecutive
+        // calls. Cheap (one atomic load per track + one int update).
+        // No-op while recording -- mid-take arming is the audio
+        // thread's job, not this polling shim.
+        void serviceAutoArm (int periodTicks, float ampThreshold);
         juce::File getBackupDirectory() const           { return recorder.getBackupDirectory(); }
         bool       isBackupActive() const noexcept       { return recorder.isBackupActive(); }
         bool       hasBackupFailed() const noexcept      { return recorder.hasBackupFailed(); }
@@ -714,6 +733,13 @@ namespace zynforge
         // + backup volumes. 0 = no estimate yet (no session / no armed
         // tracks). Exposed via getEstimatedMinutesRemaining().
         std::atomic<int>    diskMinutesRemaining { 0 };
+
+        // Auto-arm-on-input state. Flag = engineer toggled on/off.
+        // The streak vector is sized to recorder.getNumTracks() on
+        // first serviceAutoArm call; entries grow when strips are
+        // added.
+        std::atomic<bool>   autoArmOnInputFlag { false };
+        std::vector<int>    autoArmStreaks;
     public:
         int   getEstimatedMinutesRemaining() const noexcept
         {

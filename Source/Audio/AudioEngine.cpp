@@ -249,6 +249,46 @@ namespace zynforge
         }
     }
 
+    void AudioEngine::setAutoArmOnInputDetect (bool on)
+    {
+        autoArmOnInputFlag.store (on, std::memory_order_release);
+        if (! on) std::fill (autoArmStreaks.begin(), autoArmStreaks.end(), 0);
+        if (appProps != nullptr)
+        {
+            appProps->setValue ("autoArmOnInput", on);
+            appProps->saveIfNeeded();
+        }
+    }
+
+    void AudioEngine::serviceAutoArm (int periodTicks, float ampThreshold)
+    {
+        if (! autoArmOnInputFlag.load (std::memory_order_acquire)) return;
+        if (recorder.isRecording()) return;            // mid-take arming is audio thread's job
+
+        const int n = recorder.getNumTracks();
+        if ((int) autoArmStreaks.size() < n)
+            autoArmStreaks.resize ((size_t) n, 0);
+
+        for (int i = 0; i < n; ++i)
+        {
+            auto& t = recorder.getTrack (i);
+            if (t.armed.load (std::memory_order_relaxed)) { autoArmStreaks[(size_t) i] = 0; continue; }
+            if (t.isBus.load (std::memory_order_relaxed)) continue;
+
+            const float pk = t.peak.load (std::memory_order_relaxed);
+            if (pk >= ampThreshold)
+                ++autoArmStreaks[(size_t) i];
+            else
+                autoArmStreaks[(size_t) i] = 0;
+
+            if (autoArmStreaks[(size_t) i] >= periodTicks)
+            {
+                t.armed.store (true, std::memory_order_relaxed);
+                autoArmStreaks[(size_t) i] = 0;
+            }
+        }
+    }
+
     void AudioEngine::setMirrors (const std::vector<MultitrackRecorder::MirrorConfig>& configs)
     {
         recorder.setMirrors (configs);
@@ -814,6 +854,8 @@ namespace zynforge
         // Restore the stereo-mix-recording flag from the prefs file so the
         // engineer's preference survives restart.
         recordStereoMixFlag.store (appProps->getBoolValue ("recordStereoMix", false),
+                                   std::memory_order_release);
+        autoArmOnInputFlag.store (appProps->getBoolValue ("autoArmOnInput", false),
                                    std::memory_order_release);
 
         // Restore N-way mirror destinations from prefs. Skip any whose

@@ -169,6 +169,12 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                       engine.getActiveSessionDir().isDirectory());
         menu.addItem (53, "Memory Locations...");
         menu.addSeparator();
+        // Auto-arm toggle. Convenience for first-time pre-show
+        // channel discovery (walk the stage, hit each mic, watch the
+        // strips arm themselves). Marked with a check when on.
+        menu.addItem (62, "Auto-arm on input detect", true,
+                      engine.isAutoArmOnInputDetect());
+        menu.addSeparator();
         menu.addItem (55, engine.getNDIBridge().isEnabled()
                               ? juce::String ("Stop NDI broadcast")
                               : juce::String ("Start NDI broadcast..."));
@@ -563,6 +569,13 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     }
     else if (id == 60)   onBackupClicked();
     else if (id == 61)   MirrorDrivesDialog::launch (engine);
+    else if (id == 62)
+    {
+        engine.setAutoArmOnInputDetect (! engine.isAutoArmOnInputDetect());
+        showStatus (engine.isAutoArmOnInputDetect()
+                      ? "Auto-arm on input detect: ON"
+                      : "Auto-arm on input detect: OFF");
+    }
     // Edit menu
     else if (id == 300)  editUndo();
     else if (id == 301)  editRedo();
