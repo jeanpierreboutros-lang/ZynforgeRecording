@@ -137,6 +137,18 @@ void MainComponent::timerCallback()
         if ((diskTick % 12) == 0)
             engine.getRecorder().updateDiskHealth (
                 engine.getRecorder().estimateBytesPerSecondForArmedTracks());
+        // Slow SMART status poll -- diskutil info is 50-200 ms
+        // blocking, so we run it every ~30 s (24 Hz * 30 = 720 ticks)
+        // and only when recording. Failing status flips a hard warning.
+        if ((diskTick % 720) == 0)
+        {
+            const auto sd = engine.getActiveSessionDir();
+            if (sd.isDirectory())
+                smartPrimaryStatus = (int) MultitrackRecorder::querySmartStatus (sd);
+            const auto bd = engine.getRecorder().getBackupDirectory();
+            if (bd.isDirectory())
+                smartBackupStatus = (int) MultitrackRecorder::querySmartStatus (bd);
+        }
     }
     else if (engine.isPlaying())
     {
@@ -194,9 +206,12 @@ void MainComponent::timerCallback()
     {
         const bool primFail   = recorder.hasPrimaryFailed();
         const bool diskTrouble = recorder.isDiskStruggling();
-        if (primFail || diskTrouble)
+        const bool smartBad = (smartPrimaryStatus == (int) MultitrackRecorder::SmartStatus::Failing)
+                           || (smartBackupStatus  == (int) MultitrackRecorder::SmartStatus::Failing);
+        if (primFail || diskTrouble || smartBad)
         {
             juce::String warn;
+            if (smartBad)    warn << "⚠ SMART FAILING -- replace this drive  ";
             if (primFail)    warn << "⚠ PRIMARY WRITE FAILED -- recording on backup/mirror  ";
             if (diskTrouble) warn << "⚠ DISK STRUGGLING -- missed samples imminent";
             statusLabel.setText (warn.trim(), juce::dontSendNotification);

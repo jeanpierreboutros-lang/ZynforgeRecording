@@ -131,6 +131,19 @@ namespace zynforge
         // recorder doesn't have to re-derive the arm + format setup.
         void updateDiskHealth (juce::int64 expectedBytesPerSec) noexcept;
 
+        // SMART status query. macOS-only at present; shells out to
+        // `diskutil info <mountPoint>` and parses the SMART Status
+        // line. Slow (~50-200 ms blocking subprocess call) -- the
+        // host calls this from a low-frequency timer (every 30 s),
+        // not the audio path. Returns:
+        //   Verified  -- drive's SMART controller reports healthy
+        //   Failing   -- imminent hardware failure predicted
+        //   Unknown   -- internal disk that doesn't report SMART
+        //                (some NVMe + APFS containers), network mount,
+        //                or query failed
+        enum class SmartStatus { Verified, Failing, Unknown };
+        static SmartStatus querySmartStatus (const juce::File& mountPoint);
+
         // Optional second copy of every track to a backup folder.
         // Pass an empty File to disable. Only effective for the next session.
         void setBackupDirectory (const juce::File& dir);

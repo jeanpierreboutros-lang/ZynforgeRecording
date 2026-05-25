@@ -1177,6 +1177,24 @@ namespace zynforge
             }
 
             // ─── Auto-arm on input detect ────────────────────────────
+            // ─── SMART status query ──────────────────────────────────
+            beginTest ("querySmartStatus returns a value (no crash) for the system root");
+            {
+                const auto status = MultitrackRecorder::querySmartStatus (juce::File ("/"));
+                // On macOS the boot volume usually reports Verified;
+                // on internal NVMe Apple Silicon sometimes Unknown.
+                // Either is fine; we just need the call to return.
+                const int v = (int) status;
+                expect (v >= 0 && v <= 2);
+            }
+
+            beginTest ("querySmartStatus on a nonexistent path returns Unknown");
+            {
+                const auto status = MultitrackRecorder::querySmartStatus (
+                    juce::File ("/nonexistent/path/" + juce::Uuid().toString()));
+                expect (status == MultitrackRecorder::SmartStatus::Unknown);
+            }
+
             beginTest ("Auto-arm: peak above threshold for sustained period arms the strip");
             {
                 CallbackFixture f (2, 2, 2);

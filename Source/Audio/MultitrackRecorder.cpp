@@ -517,6 +517,32 @@ namespace zynforge
                                             std::memory_order_release);
     }
 
+    MultitrackRecorder::SmartStatus MultitrackRecorder::querySmartStatus (const juce::File& mountPoint)
+    {
+       #if JUCE_MAC
+        if (! mountPoint.exists()) return SmartStatus::Unknown;
+
+        juce::ChildProcess proc;
+        const juce::StringArray cmd { "/usr/sbin/diskutil", "info",
+                                       mountPoint.getFullPathName() };
+        if (! proc.start (cmd, juce::ChildProcess::wantStdOut)) return SmartStatus::Unknown;
+        const auto out = proc.readAllProcessOutput();
+        proc.waitForProcessToFinish (2000);
+
+        for (const auto& line : juce::StringArray::fromLines (out))
+        {
+            if (! line.containsIgnoreCase ("SMART Status")) continue;
+            if (line.containsIgnoreCase ("Verified")) return SmartStatus::Verified;
+            if (line.containsIgnoreCase ("Failing"))  return SmartStatus::Failing;
+            return SmartStatus::Unknown;
+        }
+        return SmartStatus::Unknown;
+       #else
+        juce::ignoreUnused (mountPoint);
+        return SmartStatus::Unknown;
+       #endif
+    }
+
     void MultitrackRecorder::updateDiskHealth (juce::int64 expectedBytesPerSec) noexcept
     {
         // Only meaningful while recording AND we have an expected rate.

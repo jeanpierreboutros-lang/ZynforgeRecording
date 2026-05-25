@@ -336,5 +336,12 @@ private:
     // every ~2 s rather than at the full timer rate).
     int  diskTick { 0 };
 
+    // SMART status cache. Polled in a slow timer because `diskutil
+    // info` is a 50-200 ms blocking subprocess call; we don't want it
+    // running every 24 Hz frame. -1 = unset, 0 = Verified, 1 = Failing,
+    // 2 = Unknown. Mirrors record their own slot per index.
+    int  smartPrimaryStatus { -1 };
+    int  smartBackupStatus  { -1 };
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };
