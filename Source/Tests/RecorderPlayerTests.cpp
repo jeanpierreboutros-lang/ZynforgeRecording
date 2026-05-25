@@ -328,6 +328,77 @@ namespace zynforge
                 expectEquals (eng.clipsFor (0)[0].fadeOutSamples, (juce::int64) 0);
                 expect (! eng.clipsFor (0)[0].locked);
             }
+
+            beginTest ("Duplicate copies the clip after the source, undoes");
+            {
+                AudioEngine eng;
+                auto& clips = eng.clipsFor (0);
+                clips.clear();
+                Clip c;
+                c.name                 = "kick";
+                c.timelineStartSamples = 1000;
+                c.fileStartSamples     = 200;
+                c.fileLengthSamples    = 50000;
+                c.gainDb               = -4.0f;
+                c.locked               = true;     // source locked on purpose
+                clips.push_back (c);
+                eng.syncActiveTake (0);
+                const auto before = eng.playlistsToJson();
+
+                expect (eng.duplicateClip (0, 0));
+                expectEquals ((int) eng.clipsFor (0).size(), 2);
+                const auto& src = eng.clipsFor (0)[0];
+                const auto& cpy = eng.clipsFor (0)[1];
+                // Copy reads the same audio window as the source...
+                expectEquals (cpy.fileStartSamples,  src.fileStartSamples);
+                expectEquals (cpy.fileLengthSamples, src.fileLengthSamples);
+                // ...sits immediately after it on the timeline...
+                expectEquals (cpy.timelineStartSamples,
+                              src.timelineStartSamples + src.fileLengthSamples);
+                // ...keeps the gain, is named (copy), and never inherits lock.
+                expectWithinAbsoluteError (cpy.gainDb, -4.0f, 0.001f);
+                expect (cpy.name.contains ("copy"));
+                expect (! cpy.locked);
+
+                eng.loadPlaylistsFromJson (before);
+                expectEquals ((int) eng.clipsFor (0).size(), 1);
+            }
+
+            beginTest ("Lock blocks trim/move/fade; unlock restores; undoable");
+            {
+                AudioEngine eng;
+                auto& clips = eng.clipsFor (0);
+                clips.clear();
+                Clip c;
+                c.timelineStartSamples = 10000;
+                c.fileStartSamples     = 0;
+                c.fileLengthSamples    = 100000;
+                clips.push_back (c);
+                eng.syncActiveTake (0);
+                const auto before = eng.playlistsToJson();
+
+                expect (eng.setClipLocked (0, 0, true));
+                expect (eng.clipsFor (0)[0].locked);
+
+                // Every geometry / fade edit is refused while locked.
+                expect (! eng.editClip (0, 0, AudioEngine::ClipEdit::TrimLeft,  5000));
+                expect (! eng.editClip (0, 0, AudioEngine::ClipEdit::TrimRight, 5000));
+                expect (! eng.editClip (0, 0, AudioEngine::ClipEdit::Move,      5000));
+                expect (! eng.setClipFades (0, 0, 1000, 1000));
+                expectEquals (eng.clipsFor (0)[0].timelineStartSamples, (juce::int64) 10000);
+                expectEquals (eng.clipsFor (0)[0].fileLengthSamples,    (juce::int64) 100000);
+                expectEquals (eng.clipsFor (0)[0].fadeInSamples,        (juce::int64) 0);
+
+                // Unlock -> edits land again.
+                expect (eng.setClipLocked (0, 0, false));
+                expect (eng.editClip (0, 0, AudioEngine::ClipEdit::Move, 5000));
+                expectEquals (eng.clipsFor (0)[0].timelineStartSamples, (juce::int64) 15000);
+
+                // Undo the whole sequence back to the clean unlocked clip.
+                eng.loadPlaylistsFromJson (before);
+                expect (! eng.clipsFor (0)[0].locked);
+                expectEquals (eng.clipsFor (0)[0].timelineStartSamples, (juce::int64) 10000);
+            }
         }
     };
 

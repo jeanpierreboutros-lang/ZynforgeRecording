@@ -355,6 +355,60 @@ namespace zynforge
                 player.stop();
                 dir.deleteRecursively();
             }
+
+            beginTest ("Duplicate plays the copied audio in a new region");
+            {
+                auto dir = recordSession (numCh, numBlocks, block);
+                AudioEngine eng;
+                eng.setSnapMode (AudioEngine::SnapMode::Off);
+                expect (eng.loadSession (dir) > 0, "session failed to load");
+
+                auto& player = eng.getPlayer();
+                player.prepare (48000.0, block);
+
+                auto peakAt = [&] (juce::int64 pos) -> float
+                {
+                    player.start();
+                    player.setPositionSamples (pos);
+                    std::vector<std::vector<float>> ob ((size_t) numCh, std::vector<float> ((size_t) block, 0.0f));
+                    std::vector<float*> op ((size_t) numCh);
+                    for (int ch = 0; ch < numCh; ++ch) op[(size_t) ch] = ob[(size_t) ch].data();
+                    player.processBlock (op.data(), numCh, block);
+                    float pk = 0.0f;
+                    for (int i = 0; i < block; ++i) pk = juce::jmax (pk, std::abs (ob[0][(size_t) i]));
+                    return pk;
+                };
+                auto warmPeakAt = [&] (juce::int64 pos) -> float
+                {
+                    float pk = 0.0f;
+                    for (int t = 0; t < 100 && pk < 0.05f; ++t)
+                    { pk = peakAt (pos); if (pk < 0.05f) juce::Thread::sleep (5); }
+                    return pk;
+                };
+
+                // Shrink the single clip to the first half so the second
+                // half of the timeline is uncovered (silent).
+                expect (eng.editClip (0, 0, AudioEngine::ClipEdit::TrimRight, -(total / 2)));
+                expectEquals (eng.clipsFor (0)[0].fileLengthSamples, total / 2);
+                expect (warmPeakAt (total / 4)     > 0.05f, "first-half clip not audible");
+                expect (peakAt     (total * 3 / 4) < 1.0e-6f, "second half not silent pre-duplicate");
+
+                // Duplicate -> copy lands right after the source, filling the
+                // previously-silent second half with the same audio.
+                const auto before = eng.playlistsToJson();
+                expect (eng.duplicateClip (0, 0), "duplicate failed");
+                expectEquals ((int) eng.clipsFor (0).size(), 2);
+                expectEquals (eng.clipsFor (0)[1].timelineStartSamples, total / 2);
+                expect (warmPeakAt (total * 3 / 4) > 0.05f, "duplicate did not play in the new region");
+
+                // Undo removes the copy -> that region is silent again.
+                eng.loadPlaylistsFromJson (before);
+                expectEquals ((int) eng.clipsFor (0).size(), 1);
+                expect (peakAt (total * 3 / 4) < 1.0e-6f, "undo left the duplicate playing");
+
+                player.stop();
+                dir.deleteRecursively();
+            }
         }
     };
 
