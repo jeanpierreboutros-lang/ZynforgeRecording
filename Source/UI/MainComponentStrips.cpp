@@ -306,6 +306,7 @@ void MainComponent::showBatchColourDialog()
     auto* aw = new juce::AlertWindow ("Batch Colour Channels",
                                       "Apply a colour to a contiguous range of channels.",
                                       juce::MessageBoxIconType::NoIcon);
+    aw->setLookAndFeel (&laf);   // grey ZynForge chrome (not JUCE-default navy)
     aw->addTextEditor ("first", "1",                  "First channel:");
     aw->addTextEditor ("last",  juce::String (total), "Last channel:");
     aw->addButton ("Pick colour...", 1, juce::KeyPress (juce::KeyPress::returnKey));

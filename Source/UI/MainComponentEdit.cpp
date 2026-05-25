@@ -304,15 +304,106 @@ void MainComponent::armSelection()
 void MainComponent::editCropToLoopRange()
 {
     auto& player = engine.getPlayer();
-    if (! player.hasLoopRegion()) { showStatus ("No loop region to crop to"); return; }
+    if (! player.hasLoopRegion()) { showStatus ("Set a loop region first, then Crop"); return; }
+    if (engine.isRecording())     { showStatus ("Stop recording before cropping"); return; }
 
-    // Drop a 'Range In' + 'Range Out' marker pair at the loop boundaries.
-    // True audio crop (rewriting Track_NN.wav) is a separate workflow we
-    // route through Save Session As for now.
-    auto& m = engine.getMarkers();
-    m.drop (player.getLoopStart(), "Crop In");
-    m.drop (player.getLoopEnd(),   "Crop Out");
-    showStatus ("Crop markers placed -- use Save Session As to commit the trim");
+    const auto dir = engine.getActiveSessionDir();
+    if (! dir.isDirectory())      { showStatus ("No active session to crop"); return; }
+
+    // Multi-part takes (Track_NN_partNN.wav) span several files -- cropping
+    // those correctly is out of scope, so refuse rather than mangle them.
+    const auto audioDir = dir.getChildFile ("Audio Files");
+    for (auto& f : audioDir.findChildFiles (juce::File::findFiles, false, "Track_*.wav"))
+        if (f.getFileNameWithoutExtension().containsIgnoreCase ("_part"))
+        { showStatus ("Cannot crop a multi-part take -- use Save Session As"); return; }
+
+    const juce::int64 a = player.getLoopStart();
+    const juce::int64 b = player.getLoopEnd();
+    const double secs = (double) (b - a) / juce::jmax (1.0, player.getSampleRate());
+
+    constexpr int kCrop = 1, kCancel = 2;
+    auto* aw = new juce::AlertWindow ("Crop to loop range?",
+        "Trim every track in \"" + dir.getFileName() + "\" to the "
+        + juce::String (secs, 2) + " s loop region?\n"
+        "The originals are backed up to \"Session File Backups\" first.",
+        juce::MessageBoxIconType::NoIcon, this);
+    aw->setLookAndFeel (&laf);
+    aw->addButton ("Crop",   kCrop,   juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
+    aw->enterModalState (true,
+        juce::ModalCallbackFunction::create ([this, aw, dir, a, b] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            if (result != kCrop) return;
+            cropSessionToRange (dir, a, b);
+        }),
+        false);
+}
+
+void MainComponent::cropSessionToRange (const juce::File& dir,
+                                        juce::int64 startSample, juce::int64 endSample)
+{
+    engine.stopPlayback();
+
+    const auto audioDir = dir.getChildFile ("Audio Files");
+    const auto backupDir = dir.getChildFile ("Session File Backups")
+                              .getChildFile ("Pre-Crop "
+                                  + juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S"));
+    backupDir.createDirectory();
+
+    juce::AudioFormatManager fm;
+    fm.registerBasicFormats();
+
+    int cropped = 0;
+    for (auto& f : audioDir.findChildFiles (juce::File::findFiles, false, "Track_*.wav"))
+    {
+        std::unique_ptr<juce::AudioFormatReader> rd (fm.createReaderFor (f));
+        if (rd == nullptr) continue;
+
+        const juce::int64 start = juce::jlimit ((juce::int64) 0, (juce::int64) rd->lengthInSamples, startSample);
+        const juce::int64 end   = juce::jlimit (start, (juce::int64) rd->lengthInSamples, endSample);
+        const juce::int64 len   = end - start;
+        if (len <= 0) continue;
+
+        const int    bits = (int) juce::jmax ((unsigned int) 16, rd->bitsPerSample);
+        const double sr   = rd->sampleRate;
+        const int    chans = (int) rd->numChannels;
+        const auto   tmp  = f.getSiblingFile (f.getFileNameWithoutExtension() + ".cropping.wav");
+        tmp.deleteFile();
+
+        bool ok = false;
+        if (auto os = tmp.createOutputStream())
+        {
+            juce::WavAudioFormat wav;
+            if (auto* wr = wav.createWriterFor (os.get(), sr, (unsigned int) chans, bits, {}, 0))
+            {
+                os.release();   // writer owns the stream now
+                std::unique_ptr<juce::AudioFormatWriter> writer (wr);
+                juce::AudioBuffer<float> buf (chans, (int) juce::jmin (len, (juce::int64) 65536));
+                juce::int64 done = 0;
+                ok = true;
+                while (done < len)
+                {
+                    const int n = (int) juce::jmin ((juce::int64) buf.getNumSamples(), len - done);
+                    rd->read (&buf, 0, n, start + done, true, true);
+                    if (! writer->writeFromAudioSampleBuffer (buf, 0, n)) { ok = false; break; }
+                    done += n;
+                }
+            }
+        }
+        rd.reset();   // close the source before moving it
+
+        if (ok && f.moveFileTo (backupDir.getChildFile (f.getFileName()))
+               && tmp.moveFileTo (f))
+            ++cropped;
+        else
+            tmp.deleteFile();
+    }
+
+    engine.getPlayer().clearLoopRegion();
+    engine.loadSession (dir);
+    lastTrackCount = -1;
+    showStatus ("Cropped " + juce::String (cropped) + " track(s); originals backed up");
 }
 
 void MainComponent::editSetRangeToLoopRange()

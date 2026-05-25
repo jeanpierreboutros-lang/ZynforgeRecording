@@ -139,6 +139,10 @@ private:
     // Option+R bulk record-arm toggle over the current strip selection.
     void armSelection();
     void editCropToLoopRange();
+    // Destructive crop: trims every track in the session to [start,end),
+    // backing the originals up to "Session File Backups" first.
+    void cropSessionToRange (const juce::File& sessionDir,
+                             juce::int64 startSample, juce::int64 endSample);
     void editSetRangeToLoopRange();
     void editToggleSnap();
     void editSplitAtPlayhead();
