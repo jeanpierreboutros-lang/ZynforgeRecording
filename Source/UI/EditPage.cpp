@@ -466,16 +466,23 @@ namespace zynforge
             const auto waveColour = getStripColour().brighter (0.25f);
             const auto inner = wavePane.reduced (brand::space::xs, brand::space::sm);
 
-            // True-level waveform with a user-controlled vertical (amplitude)
-            // zoom -- so the real dynamics show (like a DAW) and the engineer
-            // can pull up quiet tracks on demand instead of every track being
-            // auto-normalised to the same height.
+            // Waveform vertical scale = auto-fit-to-peak (so even a quiet
+            // -40 dBFS take is visible, like a DAW's peaks view) multiplied
+            // by the user's vertical-zoom control. The auto-fit floors at 1x
+            // (true level) and caps high so a near-silent track gets boosted
+            // into view without the noise floor going full-height. vZoom (the
+            // V +/- buttons / Cmd+Shift+wheel) scales on top of that.
             float vz = 1.0f;
             if (auto* page = findParentComponentOfClass<EditPage>())
                 vz = page->getVerticalZoom();
             auto waveZoom = [vz] (const juce::AudioThumbnail& tn) -> float
             {
-                return tn.getTotalLength() > 0.0 ? vz : 1.0f;
+                if (tn.getTotalLength() <= 0.0) return 1.0f;
+                const float peak = tn.getApproximatePeak();
+                const float fit  = peak > 0.0005f
+                                     ? juce::jlimit (1.0f, 64.0f, 0.85f / peak)
+                                     : 1.0f;
+                return fit * vz;
             };
 
             // Pro Tools-style: the waveform is ALWAYS the base layer,
