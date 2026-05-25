@@ -2251,18 +2251,32 @@ namespace zynforge
                 self->menuOpen = false;
                 if (chosen == 0) return;
 
+                // Route every clip-mutating menu action through the EDIT
+                // page's clip-undo bridge so it joins Cmd+Z, consistent
+                // with the drag-edit and Split/Crop paths. The before/after
+                // guard in pushClipUndo drops no-ops (e.g. selecting the
+                // gain the clip already has).
+                auto withUndo = [self] (const juce::String& label, auto&& op)
+                {
+                    auto* page = self->findParentComponentOfClass<EditPage>();
+                    if (page != nullptr) page->beginClipEdit();
+                    op();
+                    if (page != nullptr) page->commitClipEdit (label);
+                    self->repaint();
+                };
+
                 switch (chosen)
                 {
-                    case 400: self->engine.setClipMuted  (self->index, clipIdx, ! muted);  self->repaint(); return;
-                    case 401: self->engine.setClipLocked (self->index, clipIdx, ! locked); self->repaint(); return;
-                    case 410: self->engine.duplicateClip (self->index, clipIdx);           self->repaint(); return;
-                    case 411: self->engine.deleteClip    (self->index, clipIdx);           self->repaint(); return;
-                    case 501: self->engine.setClipGainDb (self->index, clipIdx, -12.0f);   self->repaint(); return;
-                    case 502: self->engine.setClipGainDb (self->index, clipIdx,  -6.0f);   self->repaint(); return;
-                    case 503: self->engine.setClipGainDb (self->index, clipIdx,  -3.0f);   self->repaint(); return;
-                    case 504: self->engine.setClipGainDb (self->index, clipIdx,   0.0f);   self->repaint(); return;
-                    case 505: self->engine.setClipGainDb (self->index, clipIdx,   3.0f);   self->repaint(); return;
-                    case 506: self->engine.setClipGainDb (self->index, clipIdx,   6.0f);   self->repaint(); return;
+                    case 400: withUndo (muted  ? "Unmute clip" : "Mute clip",   [&]{ self->engine.setClipMuted  (self->index, clipIdx, ! muted); });  return;
+                    case 401: withUndo (locked ? "Unlock clip" : "Lock clip",   [&]{ self->engine.setClipLocked (self->index, clipIdx, ! locked); }); return;
+                    case 410: withUndo ("Duplicate clip", [&]{ self->engine.duplicateClip (self->index, clipIdx); });           return;
+                    case 411: withUndo ("Delete clip",    [&]{ self->engine.deleteClip    (self->index, clipIdx); });           return;
+                    case 501: withUndo ("Clip gain", [&]{ self->engine.setClipGainDb (self->index, clipIdx, -12.0f); });        return;
+                    case 502: withUndo ("Clip gain", [&]{ self->engine.setClipGainDb (self->index, clipIdx,  -6.0f); });        return;
+                    case 503: withUndo ("Clip gain", [&]{ self->engine.setClipGainDb (self->index, clipIdx,  -3.0f); });        return;
+                    case 504: withUndo ("Clip gain", [&]{ self->engine.setClipGainDb (self->index, clipIdx,   0.0f); });        return;
+                    case 505: withUndo ("Clip gain", [&]{ self->engine.setClipGainDb (self->index, clipIdx,   3.0f); });        return;
+                    case 506: withUndo ("Clip gain", [&]{ self->engine.setClipGainDb (self->index, clipIdx,   6.0f); });        return;
                     case 510:
                     {
                         auto* aw = new juce::AlertWindow ("Clip gain",
@@ -2280,7 +2294,10 @@ namespace zynforge
                             if (r != 1 || rowSafe == nullptr) return;
                             const auto txt = own->getTextEditorContents ("dB");
                             const float dB = juce::jlimit (-60.0f, 12.0f, txt.getFloatValue());
+                            auto* page = rowSafe->findParentComponentOfClass<EditPage>();
+                            if (page != nullptr) page->beginClipEdit();
                             rowSafe->engine.setClipGainDb (rowSafe->index, clipIdx, dB);
+                            if (page != nullptr) page->commitClipEdit ("Clip gain");
                             rowSafe->repaint();
                         }));
                         return;
@@ -2307,8 +2324,7 @@ namespace zynforge
                     case 300: newIn = 0; newOut = 0;        break;
                     default: return;
                 }
-                self->engine.setClipFades (self->index, clipIdx, newIn, newOut);
-                self->repaint();
+                withUndo ("Clip fades", [&]{ self->engine.setClipFades (self->index, clipIdx, newIn, newOut); });
             });
         }
 
