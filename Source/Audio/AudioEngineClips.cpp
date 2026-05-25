@@ -301,7 +301,14 @@ namespace zynforge
 
     bool AudioEngine::splitTrackAtPlayhead (int track)
     {
-        if (track < 0 || track >= recorder.getNumTracks()) return false;
+        // Bound against whichever subsystem currently knows about tracks:
+        // the recorder (just-captured, not yet reloaded) OR the player (a
+        // loaded / reopened session). Guarding only on the recorder broke
+        // Split after opening an audio folder -- the player had the tracks
+        // but the recorder's count was still 0. The trackFile.existsAsFile
+        // check below is the real gate on whether there's audio to split.
+        const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
+        if (track < 0 || track >= maxTracks) return false;
         auto pos = player.isLoaded() ? player.getPositionSamples() : juce::int64 (0);
         // Honour the active snap grid. Bars mode lands the split on
         // the nearest bar boundary so music edits sit cleanly; Markers

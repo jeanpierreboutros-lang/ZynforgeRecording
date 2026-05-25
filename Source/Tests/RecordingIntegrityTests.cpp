@@ -18,6 +18,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "../Audio/MultitrackRecorder.h"
+#include "../Audio/AudioEngine.h"
 
 namespace zynforge
 {
@@ -156,4 +157,125 @@ namespace zynforge
     };
 
     static RecordingIntegrityTests recordingIntegrityTestsInstance;
+
+    // End-to-end Split + Crop on a REAL recorded session (Track_NN.wav on
+    // disk, loaded through AudioEngine), driving the exact engine calls the
+    // EDIT-view Split / Crop buttons fire. Verifies the resulting clip
+    // geometry AND that each edit round-trips through the undo path
+    // (playlistsToJson -> loadPlaylistsFromJson) -- the active-take desync
+    // fix made these undoable / persistable.
+    class ClipSplitCropTests final : public juce::UnitTest
+    {
+    public:
+        ClipSplitCropTests() : UnitTest ("Clip split + crop (file-backed)", "zynforge") {}
+
+        // Capture a short multitrack take to disk so split/crop have real
+        // files + a loaded player to act on. Unpaced (fits the FIFO).
+        juce::File recordSession (int numCh, int numBlocks, int block)
+        {
+            const double sr = 48000.0;
+            auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                           .getChildFile ("zf_splitcrop_" + juce::String (numCh) + "ch");
+            dir.deleteRecursively();
+
+            MultitrackRecorder rec;
+            rec.prepare (sr, block, numCh);
+            for (int ch = 0; ch < numCh; ++ch)
+                rec.getTrack (ch).armed.store (true, std::memory_order_relaxed);
+            rec.startRecording (dir);
+
+            std::vector<std::vector<float>> buf ((size_t) numCh, std::vector<float> ((size_t) block));
+            std::vector<const float*> ptrs ((size_t) numCh);
+            juce::int64 gi = 0;
+            for (int b = 0; b < numBlocks; ++b)
+            {
+                for (int ch = 0; ch < numCh; ++ch)
+                {
+                    for (int i = 0; i < block; ++i)
+                        buf[(size_t) ch][(size_t) i] = 0.25f * (float) std::sin (
+                            2.0 * juce::MathConstants<double>::pi * 220.0
+                            * (double) (gi + i) / 48000.0);
+                    ptrs[(size_t) ch] = buf[(size_t) ch].data();
+                }
+                rec.processBlock (ptrs.data(), numCh, block);
+                gi += block;
+            }
+            rec.stopRecording();
+            return dir;
+        }
+
+        void runTest() override
+        {
+            AudioEngine::setTestModeSkipAudioInit (true);
+
+            const int block = 512, numBlocks = 200, numCh = 2;
+            const juce::int64 total = (juce::int64) numBlocks * block;   // 102400 (~2.1 s)
+
+            beginTest ("Split at playhead -> two contiguous clips, undoable");
+            {
+                auto dir = recordSession (numCh, numBlocks, block);
+                AudioEngine eng;
+                eng.setSnapMode (AudioEngine::SnapMode::Off);   // no grid quantise
+                expect (eng.loadSession (dir) > 0, "session failed to load");
+                expectEquals ((int) eng.clipsFor (0).size(), 1, "seed should give one full clip");
+
+                const juce::int64 splitAt = total / 2;
+                eng.getPlayer().setPositionSamples (splitAt);
+
+                const auto before = eng.playlistsToJson();
+                expect (eng.splitTrackAtPlayhead (0), "split returned false");
+
+                auto& clips = eng.clipsFor (0);
+                expectEquals ((int) clips.size(), 2, "expected two clips after split");
+                expectEquals (clips[0].timelineStartSamples, (juce::int64) 0);
+                // Left ends exactly where right begins -- no gap, no overlap.
+                expectEquals (clips[0].timelineStartSamples + clips[0].fileLengthSamples,
+                              clips[1].timelineStartSamples, "clips not adjacent on timeline");
+                // And contiguous in the source file -- no audio skipped/duplicated.
+                expectEquals (clips[0].fileStartSamples + clips[0].fileLengthSamples,
+                              clips[1].fileStartSamples, "clips not contiguous in file");
+
+                const auto after = eng.playlistsToJson();
+                expect (juce::JSON::toString (before) != juce::JSON::toString (after),
+                        "split not captured in the playlist (would break undo + save)");
+                eng.loadPlaylistsFromJson (before);
+                expectEquals ((int) eng.clipsFor (0).size(), 1, "undo did not restore single clip");
+
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Crop to range -> keeps only the range, shifted to t=0, undoable");
+            {
+                auto dir = recordSession (numCh, numBlocks, block);
+                AudioEngine eng;
+                eng.setSnapMode (AudioEngine::SnapMode::Off);
+                expect (eng.loadSession (dir) > 0, "session failed to load");
+
+                const juce::int64 a = total / 4;          // 25600
+                const juce::int64 b = (total * 3) / 4;     // 76800
+                const juce::int64 keptLen = b - a;         // 51200
+
+                const auto before = eng.playlistsToJson();
+                expect (eng.cropToRange (a, b) > 0, "crop kept no tracks");
+
+                auto& clips = eng.clipsFor (0);
+                expectEquals ((int) clips.size(), 1, "crop should leave one clip");
+                expectEquals (clips[0].timelineStartSamples, (juce::int64) 0,
+                              "crop must shift the range start to timeline 0");
+                expectEquals (clips[0].fileLengthSamples, keptLen, "cropped length wrong");
+                expectEquals (clips[0].fileStartSamples, a,
+                              "crop must offset into the file by the range start");
+
+                const auto after = eng.playlistsToJson();
+                expect (juce::JSON::toString (before) != juce::JSON::toString (after));
+                eng.loadPlaylistsFromJson (before);
+                expectEquals (eng.clipsFor (0)[0].fileLengthSamples, total,
+                              "undo did not restore the full-length clip");
+
+                dir.deleteRecursively();
+            }
+        }
+    };
+
+    static ClipSplitCropTests clipSplitCropTestsInstance;
 }
