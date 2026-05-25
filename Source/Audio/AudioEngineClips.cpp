@@ -47,6 +47,26 @@ namespace zynforge
         }
     }
 
+    void AudioEngine::syncActiveTake (int track)
+    {
+        if (track < 0 || track >= (int) trackClips.size()) return;
+        if (track >= (int) trackPlaylists.size())
+            trackPlaylists.resize ((size_t) track + 1);
+
+        auto& p = trackPlaylists[(size_t) track];
+        if (p.takes.empty())
+        {
+            Take t1;
+            t1.name = "Take 1";
+            p.takes.push_back (std::move (t1));
+            p.activeTake = 0;
+        }
+        if (p.activeTake < 0 || p.activeTake >= (int) p.takes.size())
+            p.activeTake = 0;
+
+        p.takes[(size_t) p.activeTake].clips = trackClips[(size_t) track];
+    }
+
     int AudioEngine::cropToRange (juce::int64 startSample, juce::int64 endSample)
     {
         const juce::int64 len = endSample - startSample;
@@ -91,15 +111,7 @@ namespace zynforge
 
             trackClips[(size_t) t] = out;
             player.setTrackClips (t, out);
-
-            // Mirror into the active take so it persists + survives a take
-            // swap (matches setActiveTake's contract).
-            if (t < (int) trackPlaylists.size())
-            {
-                auto& p = trackPlaylists[(size_t) t];
-                if (p.activeTake >= 0 && p.activeTake < (int) p.takes.size())
-                    p.takes[(size_t) p.activeTake].clips = out;
-            }
+            syncActiveTake (t);   // keep the active take == trackClips
 
             if (! out.empty()) ++tracksWithAudio;
         }
@@ -335,7 +347,11 @@ namespace zynforge
         }
         // Publish the updated list to the player so playback honours
         // the cut on the next block.
-        if (did) player.setTrackClips (track, list);
+        if (did)
+        {
+            player.setTrackClips (track, list);
+            syncActiveTake (track);   // persist + make undoable
+        }
         return did;
     }
 
@@ -384,6 +400,7 @@ namespace zynforge
         // Publish the updated list to the player so playback honours
         // the edit on the next audio block.
         player.setTrackClips (track, list);
+        syncActiveTake (track);
         return true;
     }
 
@@ -403,6 +420,7 @@ namespace zynforge
         c.fadeInSamples  = fadeInSamples;
         c.fadeOutSamples = fadeOutSamples;
         player.setTrackClips (track, list);
+        syncActiveTake (track);
         return true;
     }
 
@@ -425,6 +443,7 @@ namespace zynforge
         if (list == nullptr) return false;
         (*list)[(size_t) clipIndex].muted = muted;
         player.setTrackClips (track, *list);
+        syncActiveTake (track);
         return true;
     }
 
@@ -434,6 +453,7 @@ namespace zynforge
         if (list == nullptr) return false;
         (*list)[(size_t) clipIndex].locked = locked;
         player.setTrackClips (track, *list);
+        syncActiveTake (track);
         return true;
     }
 
@@ -443,6 +463,7 @@ namespace zynforge
         if (list == nullptr) return false;
         (*list)[(size_t) clipIndex].gainDb = juce::jlimit (-60.0f, 12.0f, dB);
         player.setTrackClips (track, *list);
+        syncActiveTake (track);
         return true;
     }
 
@@ -452,6 +473,7 @@ namespace zynforge
         if (list == nullptr) return false;
         list->erase (list->begin() + clipIndex);
         player.setTrackClips (track, *list);
+        syncActiveTake (track);
         return true;
     }
 
@@ -465,6 +487,7 @@ namespace zynforge
         copy.locked = false;
         list->insert (list->begin() + clipIndex + 1, std::move (copy));
         player.setTrackClips (track, *list);
+        syncActiveTake (track);
         return true;
     }
 

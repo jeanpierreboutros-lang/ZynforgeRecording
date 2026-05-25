@@ -518,6 +518,14 @@ namespace zynforge
         // Track_NN.wav otherwise.
         std::vector<Clip>& clipsFor (int track);
         const std::vector<Clip>* tryClipsFor (int track) const;
+        // Mirror the live trackClips[track] into the active take so the
+        // documented "active take == trackClips" invariant holds after
+        // every clip edit. Without this, split / trim / move / fade /
+        // gain / mute / delete / duplicate mutate trackClips but leave
+        // the take stale -- which silently breaks both .zfproj
+        // persistence AND playlistsToJson-based undo (the snapshot reads
+        // the take, not the live clips). Creates Take 1 if none exists.
+        void syncActiveTake (int track);
         // Populate every track with a single full-range clip so the EDIT
         // tools have something to grab. Called after loadSession() or
         // when stopRecording() auto-loads the just-captured files.

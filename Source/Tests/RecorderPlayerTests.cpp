@@ -157,7 +157,86 @@ namespace zynforge
         }
     };
 
+    // Regression guard for the clip-edit / take desync bug: live clip
+    // edits (editClip / gain / mute / delete / duplicate / split / crop)
+    // used to mutate trackClips but never mirror into the active take.
+    // Because playlistsToJson serialises the *take*, this silently broke
+    // both .zfproj persistence (edits lost on reload) and clip-aware
+    // undo (the before/after snapshot was identical, so Cmd+Z no-oped).
+    // Every mutator now calls syncActiveTake; these tests pin that.
+    class ClipEditPersistenceTests final : public juce::UnitTest
+    {
+    public:
+        ClipEditPersistenceTests() : UnitTest ("Clip edit persistence/undo", "zynforge") {}
+
+        void runTest() override
+        {
+            AudioEngine::setTestModeSkipAudioInit (true);
+
+            beginTest ("editClip reaches playlistsToJson and round-trips for undo");
+            {
+                AudioEngine eng;
+                auto& clips = eng.clipsFor (0);
+                clips.clear();
+                Clip c;
+                c.name                 = "T0";
+                c.timelineStartSamples = 0;
+                c.fileStartSamples     = 0;
+                c.fileLengthSamples    = 480000;     // 10 s @ 48k
+                clips.push_back (c);
+                eng.syncActiveTake (0);              // baseline take, as seedDefaultClips would
+
+                const auto before = eng.playlistsToJson();
+
+                expect (eng.editClip (0, 0, AudioEngine::ClipEdit::TrimRight, -48000));
+                expectEquals (eng.clipsFor (0)[0].fileLengthSamples, (juce::int64) 432000);
+
+                const auto after = eng.playlistsToJson();
+                // The core of the bug: after must differ from before.
+                expect (juce::JSON::toString (before) != juce::JSON::toString (after));
+
+                // Undo restores the original length...
+                eng.loadPlaylistsFromJson (before);
+                expectEquals (eng.clipsFor (0)[0].fileLengthSamples, (juce::int64) 480000);
+                // ...and redo re-applies the trim.
+                eng.loadPlaylistsFromJson (after);
+                expectEquals (eng.clipsFor (0)[0].fileLengthSamples, (juce::int64) 432000);
+            }
+
+            beginTest ("gain / mute / delete all reach the take and undo cleanly");
+            {
+                AudioEngine eng;
+                auto& clips = eng.clipsFor (0);
+                clips.clear();
+                for (int i = 0; i < 3; ++i)
+                {
+                    Clip c;
+                    c.name                 = "c" + juce::String (i);
+                    c.timelineStartSamples = (juce::int64) i * 100000;
+                    c.fileLengthSamples    = 100000;
+                    clips.push_back (c);
+                }
+                eng.syncActiveTake (0);
+                const auto before = eng.playlistsToJson();
+
+                expect (eng.setClipGainDb (0, 0, -6.0f));
+                expect (eng.setClipMuted  (0, 1, true));
+                expect (eng.deleteClip    (0, 2));
+                expectEquals ((int) eng.clipsFor (0).size(), 2);
+
+                const auto after = eng.playlistsToJson();
+                expect (juce::JSON::toString (before) != juce::JSON::toString (after));
+
+                eng.loadPlaylistsFromJson (before);
+                expectEquals ((int) eng.clipsFor (0).size(), 3);
+                expectWithinAbsoluteError (eng.clipsFor (0)[0].gainDb, 0.0f, 0.001f);
+                expect (! eng.clipsFor (0)[1].muted);
+            }
+        }
+    };
+
     static RecorderStateTests       recorderStateTestsInstance;
     static SessionPlayerStateTests  sessionPlayerStateTestsInstance;
     static PunchModeTests           punchModeTestsInstance;
+    static ClipEditPersistenceTests clipEditPersistenceTestsInstance;
 }
