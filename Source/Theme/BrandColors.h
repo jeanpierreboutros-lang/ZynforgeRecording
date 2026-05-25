@@ -113,6 +113,7 @@ namespace zynforge::brand
         inline constexpr float subtle    = 0.18f;  // grid lines, off-beat ticks
         inline constexpr float dimmed    = 0.35f;  // background washes, mute scrim edges
         inline constexpr float ghost     = 0.40f;  // downbeats, secondary cues
+        inline constexpr float scrim     = 0.45f;  // zebra-row tints, surface-dimming washes
         inline constexpr float muted     = 0.55f;  // mid-contrast overlays
         inline constexpr float prominent = 0.85f;  // playhead, focus highlight
         inline constexpr float bold      = 0.95f;  // near-opaque text on translucent bg
@@ -141,14 +142,24 @@ namespace zynforge::brand
         //   0.32  -- engaged-control surround (PUNCH toggle when on),
         //            mid-strength bloom around the toggle to read
         //            "this is what's controlling writes right now"
-        //   0.45  -- transient-tick alpha (EditPage TrackRow); also
-        //            Toast inner glow + LedMeter peak-lit segment.
-        //            Repeated enough times we should promote, but
-        //            each use has a slightly different bg so a single
-        //            named token would lie about intent
+        //   0.45  -- PROMOTED: the surface-scrim use (zebra-row tints on
+        //            the help + patch tables) is now alpha::scrim. The
+        //            remaining 0.45 literals are component-internal
+        //            accents, NOT surface scrims, so they stay ad-hoc:
+        //              · Toast inner glow (base.brighter.withAlpha) --
+        //                lift on the toast's own border, not a wash
+        //              · LedMeter peak-lit segment -- a dimmed copy of
+        //                the segment's own meter colour, tied to meter
+        //                geometry rather than a layered overlay
+        //            A single named token across all three would lie
+        //            about intent, which is why only the scrim promoted.
         //   0.75  -- EditPage selection-band edge contrast (selector
         //            tool drag-region). Strong stroke without being
         //            opaque -- still lets the waveform show through
+        //   0.78  -- EditPage automation value-label backing pill. One
+        //            notch below prominent (0.85): opaque enough to keep
+        //            the dB readout legible over a busy automation curve
+        //            / waveform, but still hints at the lane underneath
     }
 
     // ── Elevation / shadow scale ──────────────────────────────────────
@@ -160,6 +171,17 @@ namespace zynforge::brand
         inline juce::Colour elev1() { return juce::Colours::black.withAlpha (0.25f); }
         inline juce::Colour elev2() { return juce::Colours::black.withAlpha (0.40f); }
         inline juce::Colour elev3() { return juce::Colours::black.withAlpha (0.55f); }
+    }
+
+    // ── Specular / scrim white-overlay helper ─────────────────────────
+    // The one sanctioned use of pure white in chrome: a top-edge gloss
+    // highlight or a light scrim that reads as a *light source*, not a
+    // brand colour. Centralises the `Colours::white.withAlpha(a)` idiom
+    // (fader caps, BigClock glass, channel-strip chip edge) so a re-skin
+    // has a single seam. Use this instead of inlining Colours::white.
+    inline juce::Colour gloss (float a) noexcept
+    {
+        return juce::Colours::white.withAlpha (a);
     }
 
     // ── Text-on-accent helper ─────────────────────────────────────────

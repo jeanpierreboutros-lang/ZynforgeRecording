@@ -59,9 +59,9 @@ namespace zynforge
     {
         auto r = getLocalBounds().toFloat().reduced (2.0f);
         g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.10f, 0.14f));
-        g.fillRoundedRectangle (r, 4.0f);
+        g.fillRoundedRectangle (r, brand::radius::md);
         g.setColour (brand::edge);
-        g.drawRoundedRectangle (r, 4.0f, 1.0f);
+        g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
 
         // Track baseline
         const auto trackY = r.getCentreY();

@@ -1170,9 +1170,9 @@ namespace zynforge
                                      + " / " + juce::String (takeCount);
                     auto chip = juce::Rectangle<int> (headerW - 78, 4, 70, 13);
                     g.setColour (brand::featureEngaged.darker (0.30f));
-                    g.fillRoundedRectangle (chip.toFloat(), 2.5f);
+                    g.fillRoundedRectangle (chip.toFloat(), brand::radius::sm);
                     g.setColour (brand::featureEngaged.brighter (0.40f));
-                    g.drawRoundedRectangle (chip.toFloat(), 2.5f, 0.75f);
+                    g.drawRoundedRectangle (chip.toFloat(), brand::radius::sm, 0.75f);
                     g.setColour (brand::onSignal (brand::featureEngaged.darker (0.30f)));
                     g.setFont (brand::type::caption());
                     g.drawText (label, chip, juce::Justification::centred, false);

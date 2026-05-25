@@ -1,5 +1,6 @@
 #include "StripColourPicker.h"
 #include "../Theme/BrandColors.h"
+#include "../Theme/BrandTokens.h"
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
@@ -60,12 +61,12 @@ namespace zynforge
             juce::Rectangle<float> r ((float) x, (float) y, (float) kSize, (float) kSize);
 
             g.setColour (presets[(std::size_t) i]);
-            g.fillRoundedRectangle (r, 4.0f);
+            g.fillRoundedRectangle (r, brand::radius::md);
 
             const bool isCurrent = (presets[(std::size_t) i].withAlpha (1.0f).getARGB()
                                     == current.withAlpha (1.0f).getARGB());
             g.setColour (isCurrent ? brand::accentStatus : brand::edge);
-            g.drawRoundedRectangle (r, 4.0f, isCurrent ? 2.0f : 1.0f);
+            g.drawRoundedRectangle (r, brand::radius::md, isCurrent ? 2.0f : 1.0f);
         }
     }
 

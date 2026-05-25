@@ -132,7 +132,7 @@ namespace zynforge
     private:
         Icon         icon;
         bool         active     { false };
-        juce::Colour baseColour { juce::Colours::white };
+        juce::Colour baseColour { brand::textPrimary };
     };
 
     TransportBar::TransportBar (AudioEngine& eng) : engine (eng)

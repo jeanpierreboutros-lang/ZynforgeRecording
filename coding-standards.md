@@ -46,7 +46,9 @@ The goal of this document is to keep the codebase consistent enough that any con
 
 - Allocate, lock, log, or call `Component::repaint` from the audio callback.
 - Construct a raw `juce::Font` outside `Source/Theme/`. Use `brand::type::*` or `brand::fonts::*`.
-- Use `juce::Colour::fromRGB(...)` or `juce::Colours::black/white` outside `Source/Theme/`. Use `brand::*` tokens or `brand::onSignal(bg)`.
+- Use `juce::Colour::fromRGB(...)` or `juce::Colours::black/white` outside `Source/Theme/`. Use `brand::*` tokens or `brand::onSignal(bg)`. The **one** sanctioned white is a specular gloss / light scrim — route it through `brand::gloss(alpha)`, never an inline `Colours::white.withAlpha(...)`.
+- Inline a `withAlpha(0.xx)` literal. Use a named step from `brand::alpha::` (`subtle`/`dimmed`/`ghost`/`scrim`/`muted`/`prominent`/`bold`). If none fits, add a line to the ad-hoc catalog in `BrandColors.h` rather than leaving the magic number undocumented.
+- Pass a raw corner-radius float to `fill/drawRoundedRectangle`. Use `brand::radius::{sm,md,lg,xl}`. Sub-2 px micro-radii on meter segments / icon glyphs are the only exception (geometry-forced, radius < half the element height).
 - Reference a strip by its array index in any persisted form. Use `TrackState::stripId`.
 - Add a plugin hosting hook. See `decisions.md` *No plugin hosting*.
 - Credit Harrison LiveTrax / Waves Tracks Live anywhere.

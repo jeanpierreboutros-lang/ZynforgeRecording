@@ -121,9 +121,9 @@ namespace zynforge
                     juce::ColourGradient grad (stripCol.brighter (0.10f), inner.getX(), inner.getY(),
                                                stripCol.darker  (0.10f), inner.getX(), inner.getBottom(), false);
                     g.setGradientFill (grad);
-                    g.fillRoundedRectangle (inner.toFloat(), 5.0f);
+                    g.fillRoundedRectangle (inner.toFloat(), brand::radius::lg);
                     g.setColour (stripCol.brighter (0.30f).withAlpha (brand::alpha::muted));
-                    g.drawRoundedRectangle (inner.toFloat(), 5.0f, 1.0f);
+                    g.drawRoundedRectangle (inner.toFloat(), brand::radius::lg, 1.0f);
 
                     // Big number (logical position)
                     g.setColour (brand::onSignal (stripCol));
@@ -170,7 +170,7 @@ namespace zynforge
 
                     if (row % 2 == 0)
                     {
-                        g.setColour (brand::bgStrip.withAlpha (0.45f));
+                        g.setColour (brand::bgStrip.withAlpha (brand::alpha::scrim));
                         g.fillRect (rowRect);
                     }
 

@@ -80,7 +80,7 @@ namespace zynforge
                              float displayPeakLocal, float displayRmsLocal) const
     {
         g.setColour (brand::bgDeep);
-        g.fillRoundedRectangle (r, 3.0f);
+        g.fillRoundedRectangle (r, brand::radius::sm);
 
         const float litPeak = linearToNormalisedDb (displayPeakLocal);
         const float litRms  = linearToNormalisedDb (displayRmsLocal);
@@ -116,7 +116,7 @@ namespace zynforge
 
             // Background -- idle bar.
             g.setColour (brand::meterIdle);
-            g.fillRoundedRectangle (r.reduced (1.0f), 2.0f);
+            g.fillRoundedRectangle (r.reduced (1.0f), brand::radius::sm);
 
             // RMS region: solid, peak above it: half-alpha.
             const float rmsH  = h * litRms;

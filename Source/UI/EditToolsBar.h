@@ -71,9 +71,9 @@ namespace zynforge
         void paint (juce::Graphics& g) override
         {
             g.setColour (brand::bgPanel);
-            g.fillRoundedRectangle (getLocalBounds().toFloat(), 6.0f);
+            g.fillRoundedRectangle (getLocalBounds().toFloat(), brand::radius::lg);
             g.setColour (brand::edge);
-            g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), 6.0f, 1.0f);
+            g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), brand::radius::lg, 1.0f);
 
             // Zoom controls: [-]  100%  [+] painted inline with explicit
             // gaps so the buttons don't visually touch the readout box.
@@ -179,16 +179,16 @@ namespace zynforge
                     g.setGradientFill (juce::ColourGradient (
                         accent.brighter (0.18f), rect.getCentreX(), rect.getY(),
                         accent.darker  (0.20f), rect.getCentreX(), rect.getBottom(), false));
-                    g.fillRoundedRectangle (rect, 4.0f);
+                    g.fillRoundedRectangle (rect, brand::radius::md);
                     g.setColour (accent.brighter (0.30f));
-                    g.drawRoundedRectangle (rect.reduced (0.5f), 4.0f, 1.0f);
+                    g.drawRoundedRectangle (rect.reduced (0.5f), brand::radius::md, 1.0f);
                 }
                 else
                 {
                     g.setColour (hover ? brand::controlBgHover : brand::bgPanel);
-                    g.fillRoundedRectangle (rect, 4.0f);
+                    g.fillRoundedRectangle (rect, brand::radius::md);
                     g.setColour (brand::edge);
-                    g.drawRoundedRectangle (rect.reduced (0.5f), 4.0f, 1.0f);
+                    g.drawRoundedRectangle (rect.reduced (0.5f), brand::radius::md, 1.0f);
                 }
 
                 g.setColour (active ? brand::onSignal (accent) : brand::textSecondary);

@@ -1,4 +1,5 @@
 #include "CompanionServer.h"
+#include "../Theme/BrandColors.h"
 
 #include <cstring>
 #include <thread>
@@ -363,7 +364,7 @@ setInterval(tick, 500); tick();
             td->setProperty ("peak",   t.peak  .load());
             const auto argb = t.colourARGB.load();
             const auto col  = argb != 0 ? juce::Colour ((juce::uint32) argb)
-                                        : juce::Colour::fromRGB (0x5a, 0x5a, 0x60);
+                                        : zynforge::brand::swatchGraphite;
             td->setProperty ("colour", "#" + col.toString().substring (2));
             arr.add (juce::var (td.get()));
         }

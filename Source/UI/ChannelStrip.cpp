@@ -68,9 +68,9 @@ namespace zynforge
         {
             auto r = getLocalBounds().toFloat().reduced (1.5f);
             g.setColour (displayColour);
-            g.fillRoundedRectangle (r, 3.0f);
-            g.setColour (juce::Colours::white.withAlpha (brand::alpha::dimmed));
-            g.drawRoundedRectangle (r, 3.0f, 1.0f);
+            g.fillRoundedRectangle (r, brand::radius::sm);
+            g.setColour (brand::gloss (brand::alpha::dimmed));
+            g.drawRoundedRectangle (r, brand::radius::sm, 1.0f);
         }
 
         void mouseDown (const juce::MouseEvent&) override { if (onClick) onClick(); }
@@ -823,9 +823,9 @@ namespace zynforge
             const juce::String label = "V" + juce::String (vca + 1);
             auto badge = juce::Rectangle<float> (r.getRight() - 26.0f, r.getY() + 4.0f, 22.0f, 12.0f);
             g.setColour (brand::featureEngaged.darker (0.30f));
-            g.fillRoundedRectangle (badge, 2.5f);
+            g.fillRoundedRectangle (badge, brand::radius::sm);
             g.setColour (brand::featureEngaged.brighter (0.40f));
-            g.drawRoundedRectangle (badge, 2.5f, 0.75f);
+            g.drawRoundedRectangle (badge, brand::radius::sm, 0.75f);
             g.setColour (brand::onSignal (brand::featureEngaged.darker (0.30f)));
             g.setFont (brand::type::caption());
             g.drawText (label, badge.toNearestInt(), juce::Justification::centred, false);
@@ -846,9 +846,9 @@ namespace zynforge
             auto badge = juce::Rectangle<float> (r.getRight() - 26.0f,
                                                   r.getY() + yOffset, 22.0f, 12.0f);
             g.setColour (brand::accentVS.darker (0.30f));
-            g.fillRoundedRectangle (badge, 2.5f);
+            g.fillRoundedRectangle (badge, brand::radius::sm);
             g.setColour (brand::accentVS.brighter (0.40f));
-            g.drawRoundedRectangle (badge, 2.5f, 0.75f);
+            g.drawRoundedRectangle (badge, brand::radius::sm, 0.75f);
             g.setColour (brand::onSignal (brand::accentVS.darker (0.30f)));
             g.setFont (brand::type::caption());
             g.drawText (label, badge.toNearestInt(), juce::Justification::centred, false);
@@ -864,9 +864,9 @@ namespace zynforge
         {
             auto badge = juce::Rectangle<float> (r.getRight() - 30.0f, r.getY() + 4.0f, 26.0f, 12.0f);
             g.setColour (brand::alertAmber.darker (0.30f));
-            g.fillRoundedRectangle (badge, 2.5f);
+            g.fillRoundedRectangle (badge, brand::radius::sm);
             g.setColour (brand::alertAmber.brighter (0.20f));
-            g.drawRoundedRectangle (badge, 2.5f, 0.75f);
+            g.drawRoundedRectangle (badge, brand::radius::sm, 0.75f);
             g.setColour (brand::onSignal (brand::alertAmber.darker (0.30f)));
             g.setFont (brand::type::caption());
             g.drawText ("BUS", badge.toNearestInt(), juce::Justification::centred, false);

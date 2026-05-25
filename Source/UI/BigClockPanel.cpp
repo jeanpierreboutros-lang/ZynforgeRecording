@@ -109,16 +109,16 @@ namespace zynforge
             bg.brighter (0.12f), bgRect.getCentreX(), bgRect.getY(),
             bg.darker   (0.18f), bgRect.getCentreX(), bgRect.getBottom(),
             false));
-        g.fillRoundedRectangle (bgRect, 6.0f);
+        g.fillRoundedRectangle (bgRect, brand::radius::lg);
 
         // Soft top highlight -- reinforces the glass / depth feel and
         // makes the timer read as raised metal under stage lights.
         auto hi = bgRect.withTrimmedBottom (bgRect.getHeight() * 0.60f);
         g.setGradientFill (juce::ColourGradient (
-            juce::Colours::white.withAlpha (0.06f), hi.getCentreX(), hi.getY(),
-            juce::Colours::white.withAlpha (0.0f),  hi.getCentreX(), hi.getBottom(),
+            brand::gloss (0.06f), hi.getCentreX(), hi.getY(),
+            brand::gloss (0.0f),  hi.getCentreX(), hi.getBottom(),
             false));
-        g.fillRoundedRectangle (hi, 6.0f);
+        g.fillRoundedRectangle (hi, brand::radius::lg);
 
         // Armed-but-not-rolling border. Uses signalArmedReady
         // (engagedAmber -- the BYPASS / LIVE / LOCK token) so the
@@ -130,12 +130,12 @@ namespace zynforge
             const float pulse = 0.5f + 0.5f * std::sin (pulsePhase);
             const auto  col   = brand::signalArmedReady().withMultipliedBrightness (0.85f + 0.25f * pulse);
             g.setColour (col);
-            g.drawRoundedRectangle (r.reduced (2.0f), 6.0f, 2.0f);
+            g.drawRoundedRectangle (r.reduced (2.0f), brand::radius::lg, 2.0f);
         }
         else
         {
             g.setColour (brand::edge);
-            g.drawRoundedRectangle (r.reduced (2.0f), 6.0f, 1.0f);
+            g.drawRoundedRectangle (r.reduced (2.0f), brand::radius::lg, 1.0f);
         }
 
         auto inner = r.reduced (16.0f, 10.0f);

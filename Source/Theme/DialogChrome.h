@@ -139,6 +139,6 @@ namespace zynforge::dialog
         t.setColour (juce::TextEditor::outlineColourId,        brand::edge);
         t.setColour (juce::TextEditor::focusedOutlineColourId, brand::accentStatus);
         t.setColour (juce::TextEditor::highlightColourId,
-                     brand::accentStatus.withAlpha (0.35f));
+                     brand::accentStatus.withAlpha (brand::alpha::dimmed));
     }
 }

@@ -44,6 +44,9 @@ For ad-hoc architecture questions, the source of truth is the code itself — st
 - Fonts come from `Source/Theme/BrandTokens.h` via `brand::type::*`. Never construct a raw `juce::Font`.
 - Dialog modals use `Source/Theme/DialogChrome.h::dialog::paintChrome(...)`. Custom dialog `paint()` is a smell.
 - Shadows: `brand::shadow::elev1/elev2/elev3`. Never inline `Colours::black.withAlpha(...)`.
+- Specular gloss / light scrim (the one sanctioned white): `brand::gloss(alpha)`. Never inline `Colours::white.withAlpha(...)`.
+- Alpha: `brand::alpha::{subtle,dimmed,ghost,scrim,muted,prominent,bold}`. Never inline `withAlpha(0.xx)`; if no step fits, catalog it in `BrandColors.h`.
+- Corner radius: `brand::radius::{sm,md,lg,xl}`. Never pass a raw float (sub-2 px meter/icon micro-radii excepted).
 - Text on a saturated accent: `brand::onSignal(bg)`. Never hardcode black or white.
 
 ### Stereo + view linkage

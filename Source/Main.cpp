@@ -1,6 +1,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 
 #include "UI/MainComponent.h"
+#include "Theme/BrandColors.h"
 
 class ZynforgeRecordingApp final : public juce::JUCEApplication
 {
@@ -89,7 +90,7 @@ private:
     public:
         explicit MainWindow (const juce::String& name)
             : DocumentWindow (name,
-                              juce::Colour::fromRGB (0x0a, 0x0a, 0x0d),
+                              zynforge::brand::brandDeep,
                               DocumentWindow::allButtons)
         {
             setUsingNativeTitleBar (true);
