@@ -478,6 +478,7 @@ namespace zynforge
     {
         auto* list = validClipList (trackClips, track, clipIndex);
         if (list == nullptr) return false;
+        if ((*list)[(size_t) clipIndex].locked) return false;   // lock protects against delete
         list->erase (list->begin() + clipIndex);
         player.setTrackClips (track, *list);
         syncActiveTake (track);
@@ -488,6 +489,7 @@ namespace zynforge
     {
         auto* list = validClipList (trackClips, track, clipIndex);
         if (list == nullptr) return false;
+        if ((*list)[(size_t) clipIndex].locked) return false;   // lock protects against duplicate
         Clip copy = (*list)[(size_t) clipIndex];
         copy.timelineStartSamples += copy.fileLengthSamples;   // place after the source
         copy.name = copy.name + " (copy)";

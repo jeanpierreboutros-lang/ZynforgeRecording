@@ -340,7 +340,6 @@ namespace zynforge
                 c.fileStartSamples     = 200;
                 c.fileLengthSamples    = 50000;
                 c.gainDb               = -4.0f;
-                c.locked               = true;     // source locked on purpose
                 clips.push_back (c);
                 eng.syncActiveTake (0);
                 const auto before = eng.playlistsToJson();
@@ -355,7 +354,7 @@ namespace zynforge
                 // ...sits immediately after it on the timeline...
                 expectEquals (cpy.timelineStartSamples,
                               src.timelineStartSamples + src.fileLengthSamples);
-                // ...keeps the gain, is named (copy), and never inherits lock.
+                // ...keeps the gain, is named (copy), and starts unlocked.
                 expectWithinAbsoluteError (cpy.gainDb, -4.0f, 0.001f);
                 expect (cpy.name.contains ("copy"));
                 expect (! cpy.locked);
@@ -364,7 +363,7 @@ namespace zynforge
                 expectEquals ((int) eng.clipsFor (0).size(), 1);
             }
 
-            beginTest ("Lock blocks trim/move/fade; unlock restores; undoable");
+            beginTest ("Lock blocks trim/move/fade/delete/duplicate; unlock restores; undoable");
             {
                 AudioEngine eng;
                 auto& clips = eng.clipsFor (0);
@@ -385,6 +384,11 @@ namespace zynforge
                 expect (! eng.editClip (0, 0, AudioEngine::ClipEdit::TrimRight, 5000));
                 expect (! eng.editClip (0, 0, AudioEngine::ClipEdit::Move,      5000));
                 expect (! eng.setClipFades (0, 0, 1000, 1000));
+                // ...and so are delete + duplicate (engine-enforced now,
+                // not merely disabled in the right-click menu).
+                expect (! eng.deleteClip    (0, 0));
+                expect (! eng.duplicateClip (0, 0));
+                expectEquals ((int) eng.clipsFor (0).size(), 1);
                 expectEquals (eng.clipsFor (0)[0].timelineStartSamples, (juce::int64) 10000);
                 expectEquals (eng.clipsFor (0)[0].fileLengthSamples,    (juce::int64) 100000);
                 expectEquals (eng.clipsFor (0)[0].fadeInSamples,        (juce::int64) 0);
