@@ -21,6 +21,9 @@ namespace zynforge
                 vscroll.setAutoHide (false);
                 vscroll.addListener (this);
                 addAndMakeVisible (vscroll);
+                hscroll.setAutoHide (false);
+                hscroll.addListener (this);
+                addAndMakeVisible (hscroll);
                 startTimerHz (10);
             }
             ~PatchMatrix() override { stopTimer(); }
@@ -124,104 +127,120 @@ namespace zynforge
                             juce::Rectangle<int> (0, 34, L.rowHeaderW, 18),
                             juce::Justification::centred, false);
 
-                // ─── Column headers (coloured band + M / ST pill)
-                for (int c = 0; c < numStrips; ++c)
-                {
-                    const auto& ls = logical[(std::size_t) c];
-                    auto& t = engine.getRecorder().getTrack (ls.trackIndex);
-                    const bool stereoCol = ls.stereo;
-                    const auto stripCol = t.colourARGB.load() != 0
-                                          ? juce::Colour ((juce::uint32) t.colourARGB.load())
-                                          : brand::stripColour (ls.trackIndex);
+                // Frozen-pane geometry. The HW-channel label column (left)
+                // and the strip-header band (top) stay put; the dot body
+                // scrolls in both axes, the header band scrolls with X, the
+                // label column scrolls with Y. Gutters on the right/bottom
+                // hold the two scrollbars.
+                const int bodyX = L.rowHeaderW;
+                const int bodyY = L.colHeaderH;
+                const int bodyW = juce::jmax (0, getWidth()  - bodyX - kScrollW);
+                const int bodyH = juce::jmax (0, getHeight() - bodyY - kScrollW);
 
-                    // Coloured band
-                    juce::Rectangle<int> head (L.rowHeaderW + c * L.colW, 0, L.colW, L.colorBandH);
-                    auto inner = head.reduced (3, 3);
-                    juce::ColourGradient grad (stripCol.brighter (0.10f), inner.getX(), inner.getY(),
-                                               stripCol.darker  (0.10f), inner.getX(), inner.getBottom(), false);
-                    g.setGradientFill (grad);
-                    g.fillRoundedRectangle (inner.toFloat(), brand::radius::lg);
-                    g.setColour (stripCol.brighter (0.30f).withAlpha (brand::alpha::muted));
-                    g.drawRoundedRectangle (inner.toFloat(), brand::radius::lg, 1.0f);
-
-                    // Big number (logical position)
-                    g.setColour (brand::onSignal (stripCol));
-                    g.setFont (brand::type::ui (22.0f, true));
-                    g.drawText (juce::String (c + 1),
-                                juce::Rectangle<int> (inner.getX(), inner.getY() + 4, inner.getWidth(), 26),
-                                juce::Justification::centred, false);
-
-                    // Actual track name -- same string as mixer + edit view.
-                    g.setFont (brand::type::uiLabel());
-                    const auto displayName = t.name.isNotEmpty() ? t.name
-                                                                  : juce::String ("In ") + juce::String (ls.trackIndex + 1);
-                    g.drawText (displayName,
-                                juce::Rectangle<int> (inner.getX() + 2, inner.getY() + 32,
-                                                      inner.getWidth() - 4, 18),
-                                juce::Justification::centred, false);
-
-                    // Mono / stereo indicator pill -- click to toggle.
-                    juce::Rectangle<int> pillCell (L.rowHeaderW + c * L.colW, L.colorBandH, L.colW, L.muteBandH);
-                    auto pill = pillCell.reduced (10, 4);
-                    if (stereoCol)
-                    {
-                        g.setColour (stripCol);
-                        g.fillRoundedRectangle (pill.toFloat(), pill.getHeight() * 0.5f);
-                        g.setColour (brand::onSignal (stripCol));
-                    }
-                    else
-                    {
-                        g.setColour (brand::bgElevated);
-                        g.fillRoundedRectangle (pill.toFloat(), pill.getHeight() * 0.5f);
-                        g.setColour (stripCol.brighter (0.20f).withAlpha (brand::alpha::muted));
-                        g.drawRoundedRectangle (pill.toFloat(), pill.getHeight() * 0.5f, 1.0f);
-                        g.setColour (brand::textSecondary);
-                    }
-                    g.setFont (brand::type::uiLabel());
-                    g.drawText (stereoCol ? "ST" : "M", pill, juce::Justification::centred, false);
-                }
-
-                // ─── Rows (scrollable body, clipped below the frozen
-                // header band so rows never paint over the strip headers).
+                // ─── Column headers -- frozen vertically, scroll with X.
                 {
                     juce::Graphics::ScopedSaveState clip (g);
-                    g.reduceClipRegion (0, L.colHeaderH, getWidth(),
-                                        juce::jmax (0, getHeight() - L.colHeaderH));
+                    g.reduceClipRegion (bodyX, 0, bodyW, L.colHeaderH);
+                    for (int c = 0; c < numStrips; ++c)
+                    {
+                        const int colX = bodyX + c * L.colW - scrollX;
+                        if (colX + L.colW <= bodyX || colX >= bodyX + bodyW) continue;
 
+                        const auto& ls = logical[(std::size_t) c];
+                        auto& t = engine.getRecorder().getTrack (ls.trackIndex);
+                        const bool stereoCol = ls.stereo;
+                        const auto stripCol = t.colourARGB.load() != 0
+                                              ? juce::Colour ((juce::uint32) t.colourARGB.load())
+                                              : brand::stripColour (ls.trackIndex);
+
+                        juce::Rectangle<int> head (colX, 0, L.colW, L.colorBandH);
+                        auto inner = head.reduced (3, 3);
+                        juce::ColourGradient grad (stripCol.brighter (0.10f), inner.getX(), inner.getY(),
+                                                   stripCol.darker  (0.10f), inner.getX(), inner.getBottom(), false);
+                        g.setGradientFill (grad);
+                        g.fillRoundedRectangle (inner.toFloat(), brand::radius::lg);
+                        g.setColour (stripCol.brighter (0.30f).withAlpha (brand::alpha::muted));
+                        g.drawRoundedRectangle (inner.toFloat(), brand::radius::lg, 1.0f);
+
+                        g.setColour (brand::onSignal (stripCol));
+                        g.setFont (brand::type::ui (22.0f, true));
+                        g.drawText (juce::String (c + 1),
+                                    juce::Rectangle<int> (inner.getX(), inner.getY() + 4, inner.getWidth(), 26),
+                                    juce::Justification::centred, false);
+
+                        g.setFont (brand::type::uiLabel());
+                        const auto displayName = t.name.isNotEmpty() ? t.name
+                                                                      : juce::String ("In ") + juce::String (ls.trackIndex + 1);
+                        g.drawText (displayName,
+                                    juce::Rectangle<int> (inner.getX() + 2, inner.getY() + 32,
+                                                          inner.getWidth() - 4, 18),
+                                    juce::Justification::centred, false);
+
+                        juce::Rectangle<int> pillCell (colX, L.colorBandH, L.colW, L.muteBandH);
+                        auto pill = pillCell.reduced (10, 4);
+                        if (stereoCol)
+                        {
+                            g.setColour (stripCol);
+                            g.fillRoundedRectangle (pill.toFloat(), pill.getHeight() * 0.5f);
+                            g.setColour (brand::onSignal (stripCol));
+                        }
+                        else
+                        {
+                            g.setColour (brand::bgElevated);
+                            g.fillRoundedRectangle (pill.toFloat(), pill.getHeight() * 0.5f);
+                            g.setColour (stripCol.brighter (0.20f).withAlpha (brand::alpha::muted));
+                            g.drawRoundedRectangle (pill.toFloat(), pill.getHeight() * 0.5f, 1.0f);
+                            g.setColour (brand::textSecondary);
+                        }
+                        g.setFont (brand::type::uiLabel());
+                        g.drawText (stereoCol ? "ST" : "M", pill, juce::Justification::centred, false);
+                    }
+                }
+
+                // ─── Row labels (HW channel) -- frozen horizontally, scroll Y.
+                {
+                    juce::Graphics::ScopedSaveState clip (g);
+                    g.reduceClipRegion (0, bodyY, L.rowHeaderW, bodyH);
                     for (int row = 0; row < numHw; ++row)
                     {
-                        const int y = L.colHeaderH + row * L.rowH - scrollY;
-                        if (y + L.rowH <= L.colHeaderH || y >= getHeight())
-                            continue;   // scrolled out of view -- skip
-                        const auto rowRect = juce::Rectangle<int> (0, y, getWidth(), L.rowH);
-
+                        const int y = bodyY + row * L.rowH - scrollY;
+                        if (y + L.rowH <= bodyY || y >= bodyY + bodyH) continue;
                         if (row % 2 == 0)
                         {
                             g.setColour (brand::bgStrip.withAlpha (brand::alpha::scrim));
-                            g.fillRect (rowRect);
+                            g.fillRect (juce::Rectangle<int> (0, y, L.rowHeaderW, L.rowH));
                         }
-
-                        // Row label
                         const bool isActiveRow = isRowRoutedToAnyStrip (row, logical);
                         g.setColour (isActiveRow ? brand::textPrimary : brand::textSecondary);
                         g.setFont (brand::type::sectionTitle());
                         g.drawText ((isInput ? "IN " : "OUT ") + juce::String (row + 1),
                                     juce::Rectangle<int> (14, y, L.rowHeaderW - 18, L.rowH),
                                     juce::Justification::centredLeft, false);
+                    }
+                }
 
-                        // Dots
+                // ─── Dot body -- scrolls in both axes.
+                {
+                    juce::Graphics::ScopedSaveState clip (g);
+                    g.reduceClipRegion (bodyX, bodyY, bodyW, bodyH);
+                    for (int row = 0; row < numHw; ++row)
+                    {
+                        const int y = bodyY + row * L.rowH - scrollY;
+                        if (y + L.rowH <= bodyY || y >= bodyY + bodyH) continue;
+                        if (row % 2 == 0)
+                        {
+                            g.setColour (brand::bgStrip.withAlpha (brand::alpha::scrim));
+                            g.fillRect (juce::Rectangle<int> (bodyX, y, bodyW, L.rowH));
+                        }
                         for (int c = 0; c < numStrips; ++c)
                         {
-                            const int x = L.rowHeaderW + c * L.colW;
+                            const int x = bodyX + c * L.colW - scrollX;
+                            if (x + L.colW <= bodyX || x >= bodyX + bodyW) continue;
                             const auto cell = juce::Rectangle<int> (x, y, L.colW, L.rowH);
                             const auto dot  = cell.withSizeKeepingCentre (22, 22).toFloat();
 
-                            const int trackIdx   = logical[(std::size_t) c].trackIndex;
-                            const int rtL        = currentRoutingForTrack (trackIdx);
-                            // For stereo columns only the L position is drawn;
-                            // R is implicit (always L+1).
-                            const bool active = (rtL == row);
-
+                            const int trackIdx = logical[(std::size_t) c].trackIndex;
+                            const bool active  = (currentRoutingForTrack (trackIdx) == row);
                             if (active)
                             {
                                 auto& t = engine.getRecorder().getTrack (trackIdx);
@@ -245,7 +264,8 @@ namespace zynforge
 
             void resized() override
             {
-                vscroll.setBounds (getLocalBounds().removeFromRight (kScrollW));
+                vscroll.setBounds (getWidth()  - kScrollW, 0, kScrollW, getHeight() - kScrollW);
+                hscroll.setBounds (0, getHeight() - kScrollW, getWidth() - kScrollW, kScrollW);
                 updateScrollRange();
             }
 
@@ -253,22 +273,32 @@ namespace zynforge
                                  const juce::MouseWheelDetails& w) override
             {
                 const auto L = computeLayout();
-                const int viewH = juce::jmax (0, getHeight() - L.colHeaderH);
-                const int maxScroll = juce::jmax (0, numRows() * L.rowH - viewH);
-                if (maxScroll <= 0) return;
-                scrollY = juce::jlimit (0, maxScroll,
-                                        scrollY - juce::roundToInt (w.deltaY * (float) L.rowH * 3.0f));
-                vscroll.setCurrentRangeStart ((double) scrollY);
-                repaint();
+                const int viewH = juce::jmax (0, getHeight() - L.colHeaderH - kScrollW);
+                const int viewW = juce::jmax (0, getWidth()  - L.rowHeaderW - kScrollW);
+                const int maxY  = juce::jmax (0, numRows()        * L.rowH - viewH);
+                const int maxX  = juce::jmax (0, numStripsCount() * L.colW - viewW);
+                bool did = false;
+                if (maxY > 0 && w.deltaY != 0.0f)
+                {
+                    scrollY = juce::jlimit (0, maxY,
+                                            scrollY - juce::roundToInt (w.deltaY * (float) L.rowH * 3.0f));
+                    vscroll.setCurrentRangeStart ((double) scrollY);
+                    did = true;
+                }
+                if (maxX > 0 && w.deltaX != 0.0f)
+                {
+                    scrollX = juce::jlimit (0, maxX,
+                                            scrollX - juce::roundToInt (w.deltaX * (float) L.colW * 3.0f));
+                    hscroll.setCurrentRangeStart ((double) scrollX);
+                    did = true;
+                }
+                if (did) repaint();
             }
 
             void scrollBarMoved (juce::ScrollBar* sb, double newStart) override
             {
-                if (sb == &vscroll)
-                {
-                    scrollY = juce::roundToInt (newStart);
-                    repaint();
-                }
+                if      (sb == &vscroll) { scrollY = juce::roundToInt (newStart); repaint(); }
+                else if (sb == &hscroll) { scrollX = juce::roundToInt (newStart); repaint(); }
             }
 
             void mouseDown (const juce::MouseEvent& e) override
@@ -282,8 +312,8 @@ namespace zynforge
                 // Mono / stereo pill click -- toggles isStereo on this column.
                 if (e.y >= L.colorBandH && e.y < L.colHeaderH)
                 {
-                    const int x = e.x - L.rowHeaderW;
-                    if (x < 0) return;
+                    const int x = e.x - L.rowHeaderW + scrollX;   // header scrolls in X
+                    if (e.x < L.rowHeaderW || x < 0) return;
                     const int col = x / L.colW;
                     if (col < 0 || col >= numStrips) return;
                     const auto& ls = logical[(std::size_t) col];
@@ -303,9 +333,10 @@ namespace zynforge
                     return;
                 }
 
-                const int x = e.x - L.rowHeaderW;
-                const int y = e.y - L.colHeaderH + scrollY;   // body is scrolled
-                if (x < 0 || y < 0) { dragActive = false; return; }
+                const int x = e.x - L.rowHeaderW + scrollX;   // body scrolls in X
+                const int y = e.y - L.colHeaderH + scrollY;   // body scrolls in Y
+                if (e.x < L.rowHeaderW || e.y < L.colHeaderH || x < 0 || y < 0)
+                    { dragActive = false; return; }
 
                 const int col = x / L.colW;
                 const int row = y / L.rowH;
@@ -374,21 +405,29 @@ namespace zynforge
                 return isInput ? engine.getCurrentDeviceInputCount()
                                : engine.getCurrentDeviceOutputCount();
             }
+            int numStripsCount() const { return (int) logicalStrips().size(); }
 
-            // Sync the scrollbar to the current content/viewport heights.
+            // Sync both scrollbars to the current content/viewport sizes.
             // Called from resized() and whenever the HW count / track set
-            // changes (timer). Hides the bar when everything already fits.
+            // changes (timer). Each bar hides when its axis already fits.
             void updateScrollRange()
             {
                 const auto L = computeLayout();
-                const int viewH    = juce::jmax (0, getHeight() - L.colHeaderH);
-                const int contentH = numRows() * L.rowH;
-                const int maxScroll = juce::jmax (0, contentH - viewH);
+                const int viewH    = juce::jmax (0, getHeight() - L.colHeaderH - kScrollW);
+                const int viewW    = juce::jmax (0, getWidth()  - L.rowHeaderW - kScrollW);
+                const int contentH = numRows()        * L.rowH;
+                const int contentW = numStripsCount() * L.colW;
 
-                scrollY = juce::jlimit (0, maxScroll, scrollY);
+                scrollY = juce::jlimit (0, juce::jmax (0, contentH - viewH), scrollY);
+                scrollX = juce::jlimit (0, juce::jmax (0, contentW - viewW), scrollX);
+
                 vscroll.setRangeLimits (0.0, (double) juce::jmax (contentH, viewH));
                 vscroll.setCurrentRange ((double) scrollY, (double) viewH);
                 vscroll.setVisible (contentH > viewH);
+
+                hscroll.setRangeLimits (0.0, (double) juce::jmax (contentW, viewW));
+                hscroll.setCurrentRange ((double) scrollX, (double) viewW);
+                hscroll.setVisible (contentW > viewW);
             }
 
             int currentRoutingForTrack (int trackIndex) const
@@ -411,10 +450,13 @@ namespace zynforge
             AudioEngine& engine;
             bool         isInput;
 
-            // Vertical scroll over the HW-channel rows (up to 128). Headers
-            // stay frozen; only the row body scrolls.
-            juce::ScrollBar vscroll { true };
+            // Scroll over the HW-channel rows (up to 128) and the strip
+            // columns. The HW-channel labels and strip headers stay frozen;
+            // only their respective bodies scroll.
+            juce::ScrollBar vscroll { true };   // vertical   -- rows
+            juce::ScrollBar hscroll { false };  // horizontal -- columns
             int             scrollY = 0;
+            int             scrollX = 0;
 
             // Drag-patch state -- set in mouseDown, consumed in mouseDrag.
             bool dragActive   = false;
