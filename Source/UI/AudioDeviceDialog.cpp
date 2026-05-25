@@ -181,10 +181,19 @@ namespace zynforge
                     l->setColour (juce::Label::textColourId, brand::textTertiary);
                     addAndMakeVisible (*l);
                 }
+                // Recessed boxed field -- bgDeep body + edge outline, the
+                // same finish as the device combos above, so the active
+                // channel list reads as a contained value rather than
+                // free text that clips at the card edge.
                 for (auto* l : { &outChanValue, &inChanValue })
                 {
-                    l->setFont (brand::type::captionBold());
-                    l->setColour (juce::Label::textColourId, brand::textPrimary);
+                    l->setFont (brand::type::mono (brand::type::h_caption, true));
+                    l->setColour (juce::Label::textColourId,       brand::textPrimary);
+                    l->setColour (juce::Label::backgroundColourId, brand::bgDeep);
+                    l->setColour (juce::Label::outlineColourId,    brand::edge);
+                    l->setJustificationType (juce::Justification::centredLeft);
+                    l->setBorderSize (juce::BorderSize<int> (2, brand::space::sm, 2, brand::space::sm));
+                    l->setMinimumHorizontalScale (0.85f);
                     addAndMakeVisible (*l);
                 }
 
@@ -270,7 +279,7 @@ namespace zynforge
                 outputBox   .setBounds (outBody.removeFromTop (brand::space::ctrlH));
                 outBody.removeFromTop (brand::space::sm);
                 outChanLabel.setBounds (outBody.removeFromTop (brand::space::xl).withWidth (110));
-                outChanValue.setBounds (outBody.removeFromTop (18));
+                outChanValue.setBounds (outBody.removeFromTop (brand::space::ctrlH));
                 outBody.removeFromTop (brand::space::xs);
                 testButton  .setBounds (outBody.removeFromTop (brand::space::btnH).reduced (0, 0));
 
@@ -278,7 +287,7 @@ namespace zynforge
                 inputBox   .setBounds (inBody.removeFromTop (brand::space::ctrlH));
                 inBody.removeFromTop (brand::space::sm);
                 inChanLabel.setBounds (inBody.removeFromTop (brand::space::xl).withWidth (110));
-                inChanValue.setBounds (inBody.removeFromTop (18));
+                inChanValue.setBounds (inBody.removeFromTop (brand::space::ctrlH));
                 inBody.removeFromTop (brand::space::xs);
                 inputMeter .setBounds (inBody.removeFromTop (14));
 
@@ -422,12 +431,26 @@ namespace zynforge
                     juce::dontSendNotification);
             }
 
+            // Collapse the active-channel bitmask into compact ranges plus
+            // a total count, e.g. "1-64  (64 ch)" or "1-8, 17-24  (16 ch)".
+            // A Dante card exposes 64+ channels; the old comma-joined list
+            // overran the single-line field and clipped to "...".
             static juce::String channelsToString (const juce::BigInteger& bits)
             {
-                juce::StringArray parts;
-                for (int i = 0; i < 128; ++i)
-                    if (bits[i]) parts.add (juce::String (i + 1));
-                return parts.isEmpty() ? juce::String ("none") : parts.joinIntoString (", ");
+                juce::StringArray ranges;
+                int total = 0;
+                for (int i = 0; i < 128; )
+                {
+                    if (! bits[i]) { ++i; continue; }
+                    const int start = i;
+                    while (i < 128 && bits[i]) { ++total; ++i; }
+                    const int end = i - 1;
+                    ranges.add (start == end
+                                    ? juce::String (start + 1)
+                                    : juce::String (start + 1) + "-" + juce::String (end + 1));
+                }
+                if (total == 0) return "none";
+                return ranges.joinIntoString (", ") + "  (" + juce::String (total) + " ch)";
             }
 
             void onDeviceChanged (bool isInput)
