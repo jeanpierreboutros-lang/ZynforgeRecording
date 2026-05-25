@@ -52,14 +52,6 @@ namespace zynforge
 
         Tool getTool() const noexcept { return tool; }
 
-        // Set by EditPage to reflect the current zoom levels on the small
-        // read-out chips between the H (horizontal) and V (vertical) +/-
-        // buttons.
-        void setZoom (float z)         { zoomLevel  = z; repaint(); }
-        void setVerticalZoom (float z) { vZoomLevel = z; repaint(); }
-        std::function<void (float)> onZoomChanged;          // horizontal
-        std::function<void (float)> onVerticalZoomChanged;  // vertical
-
         void setTool (Tool t)
         {
             if (t == tool) return;
@@ -77,48 +69,8 @@ namespace zynforge
             g.fillRoundedRectangle (getLocalBounds().toFloat(), brand::radius::lg);
             g.setColour (brand::edge);
             g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (0.5f), brand::radius::lg, 1.0f);
-
-            // Two labelled zoom groups pinned to the right:
-            //   H  [-] 150% [+]    V  [-] 200% [+]
-            // H = horizontal (timeline), V = vertical (amplitude). Geometry
-            // is shared with mouseDown via zoomLayout() so hit-tests match.
-            const auto L = zoomLayout();
-            const auto chip = [&] (juce::Rectangle<int> r, juce::String t, bool isText)
-            {
-                g.setColour (isText ? brand::bgPanel : brand::controlBg);
-                g.fillRoundedRectangle (r.toFloat().reduced (1), 4);
-                g.setColour (brand::edge);
-                g.drawRoundedRectangle (r.toFloat().reduced (1).withSizeKeepingCentre
-                                            ((float) r.getWidth() - 2, (float) r.getHeight() - 2),
-                                        4, 1);
-                g.setColour (brand::textPrimary);
-                g.setFont (brand::type::uiBody());
-                g.drawText (t, r, juce::Justification::centred, false);
-            };
-            const auto label = [&] (juce::Rectangle<int> r, juce::String t)
-            {
-                g.setColour (brand::textTertiary);
-                g.setFont (brand::type::uiLabel());
-                g.drawText (t, r, juce::Justification::centredRight, false);
-            };
-            label (L.hLabel, "H");
-            chip  (L.hMinus, "-", false);
-            chip  (L.hText, juce::String ((int) std::round (zoomLevel * 100.0f)) + "%", true);
-            chip  (L.hPlus, "+", false);
-            label (L.vLabel, "V");
-            chip  (L.vMinus, "-", false);
-            chip  (L.vText, juce::String ((int) std::round (vZoomLevel * 100.0f)) + "%", true);
-            chip  (L.vPlus, "+", false);
-        }
-
-        void mouseDown (const juce::MouseEvent& e) override
-        {
-            const auto L = zoomLayout();
-            const auto p = e.getPosition();
-            if      (L.hMinus.contains (p) && onZoomChanged)         onZoomChanged         (juce::jlimit (1.0f, 16.0f,  zoomLevel  * 0.71f));
-            else if (L.hPlus .contains (p) && onZoomChanged)         onZoomChanged         (juce::jlimit (1.0f, 16.0f,  zoomLevel  * 1.41f));
-            else if (L.vMinus.contains (p) && onVerticalZoomChanged) onVerticalZoomChanged (juce::jlimit (0.25f, 32.0f, vZoomLevel * 0.71f));
-            else if (L.vPlus .contains (p) && onVerticalZoomChanged) onVerticalZoomChanged (juce::jlimit (0.25f, 32.0f, vZoomLevel * 1.41f));
+            // Zoom now lives on the edge of the EDIT view (DAW-style +/-
+            // clusters), not in this toolbar.
         }
 
         void resized() override
@@ -131,32 +83,6 @@ namespace zynforge
                 b->setBounds (r.removeFromLeft (btnW));
                 r.removeFromLeft (gap);
             }
-        }
-
-        struct ZoomLayout
-        {
-            juce::Rectangle<int> hLabel, hMinus, hText, hPlus;
-            juce::Rectangle<int> vLabel, vMinus, vText, vPlus;
-        };
-
-        // Shared geometry for the two zoom groups (drawn in paint, hit-
-        // tested in mouseDown). ~250 px column pinned to the right edge.
-        ZoomLayout zoomLayout() const noexcept
-        {
-            const int lblW = 16, btnW = 24, textW = 44, gap = 4, grpGap = 14;
-            auto z = getLocalBounds().withTrimmedLeft (getWidth() - 250)
-                                     .withTrimmedRight (6)
-                                     .reduced (0, brand::space::xs);
-            ZoomLayout L;
-            L.hLabel = z.removeFromLeft (lblW); z.removeFromLeft (gap);
-            L.hMinus = z.removeFromLeft (btnW); z.removeFromLeft (gap);
-            L.hText  = z.removeFromLeft (textW); z.removeFromLeft (gap);
-            L.hPlus  = z.removeFromLeft (btnW); z.removeFromLeft (grpGap);
-            L.vLabel = z.removeFromLeft (lblW); z.removeFromLeft (gap);
-            L.vMinus = z.removeFromLeft (btnW); z.removeFromLeft (gap);
-            L.vText  = z.removeFromLeft (textW); z.removeFromLeft (gap);
-            L.vPlus  = z.removeFromLeft (btnW);
-            return L;
         }
 
     private:
@@ -300,8 +226,6 @@ namespace zynforge
         }
 
         Tool  tool        { Tool::None };
-        float zoomLevel   { 1.0f };
-        float vZoomLevel  { 1.0f };
         std::vector<std::unique_ptr<ToolButton>> buttons;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EditToolsBar)

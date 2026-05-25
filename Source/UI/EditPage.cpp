@@ -3053,9 +3053,6 @@ namespace zynforge
         // toolbar -- the host re-parents it via getEditToolsBar() +
         // addAndMakeVisible().
         toolsBar = std::make_unique<EditToolsBar>();
-        toolsBar->onZoomChanged = [this] (float z) { setZoom (z); };
-        toolsBar->onVerticalZoomChanged = [this] (float z) { setVerticalZoom (z); };
-        toolsBar->setVerticalZoom (vZoom);
 
         list = std::make_unique<TrackList> (engine, formatManager, thumbnailCache);
         list->sharedToolsBar = toolsBar.get();
@@ -3063,6 +3060,24 @@ namespace zynforge
         // Both scrollbars -- horizontal lights up as soon as zoom > 1.
         viewport.setScrollBarsShown (true, true);
         addAndMakeVisible (viewport);
+
+        // DAW-style edge zoom clusters, overlaid on top of the viewport.
+        // V (amplitude) stacked at the right edge; H (timeline) at the
+        // bottom-right. Step a fixed ratio per click.
+        for (auto* b : { &zoomVIn, &zoomVOut, &zoomHIn, &zoomHOut })
+        {
+            b->setColour (juce::TextButton::buttonColourId, brand::controlBg);
+            b->setColour (juce::TextButton::textColourOffId, brand::textPrimary);
+            addAndMakeVisible (*b);
+        }
+        zoomVIn .setTooltip ("Taller waveforms (vertical zoom in)");
+        zoomVOut.setTooltip ("Shorter waveforms (vertical zoom out)");
+        zoomHIn .setTooltip ("Zoom in on the timeline");
+        zoomHOut.setTooltip ("Zoom out (1× = whole take)");
+        zoomVIn .onClick = [this] { setVerticalZoom (vZoom * 1.41f); };
+        zoomVOut.onClick = [this] { setVerticalZoom (vZoom * 0.71f); };
+        zoomHIn .onClick = [this] { setZoom (zoom * 1.41f); };
+        zoomHOut.onClick = [this] { setZoom (zoom * 0.71f); };
 
         // Pro Tools-style Min:Secs time ruler perched above the track
         // list. Reads session length + sample rate from the engine via
@@ -3304,6 +3319,20 @@ namespace zynforge
         // pixels-per-second matches the wave pane below it.
         if (ruler != nullptr)
             ruler->setContentWidth (contentW);
+
+        // Edge zoom clusters, overlaid in the bottom-right corner:
+        //   V+        (vertical / amplitude, stacked)
+        //   V-
+        //   H- H+     (horizontal / timeline, side by side)
+        const int zb = 26, pad = 8;
+        const int rightX = bounds.getRight()  - zb - pad;
+        const int botY   = bounds.getBottom() - zb - pad;
+        zoomVIn .setBounds (rightX,            botY - 2 * (zb + 4), zb, zb);
+        zoomVOut.setBounds (rightX,            botY -     (zb + 4), zb, zb);
+        zoomHOut.setBounds (rightX - zb - 4,   botY,                zb, zb);
+        zoomHIn .setBounds (rightX,            botY,                zb, zb);
+        for (auto* b : { &zoomVIn, &zoomVOut, &zoomHIn, &zoomHOut })
+            b->toFront (false);
     }
 
     void EditPage::setLogicalRowsVisible (const std::vector<int>& visibleRows)
@@ -3333,7 +3362,6 @@ namespace zynforge
         if (std::abs (z - zoom) < 0.01f) return;
         zoom = z;
         resized();
-        if (toolsBar != nullptr) toolsBar->setZoom (zoom);
         if (onZoomChanged) onZoomChanged (zoom);
     }
 
@@ -3343,7 +3371,6 @@ namespace zynforge
         if (std::abs (z - vZoom) < 0.001f) return;
         vZoom = z;
         if (list != nullptr) list->repaint();
-        if (toolsBar != nullptr) toolsBar->setVerticalZoom (vZoom);
     }
 
     void EditPage::wheelZoomHorizontal (float delta)

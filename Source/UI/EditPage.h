@@ -158,6 +158,13 @@ namespace zynforge
         AutomationToolbar*             toolbar  { nullptr };
         std::unique_ptr<EditToolsBar>  toolsBar;
         std::unique_ptr<EditTimeRuler> ruler;
+
+        // DAW-style edge zoom clusters overlaid on the view: a vertical
+        // (amplitude) +/- pair stacked at the right edge, and a horizontal
+        // (timeline) +/- pair at the bottom-right. Wired to setVerticalZoom
+        // / setZoom.
+        juce::TextButton zoomVIn  { "+" }, zoomVOut { "-" };
+        juce::TextButton zoomHIn  { "+" }, zoomHOut { "-" };
         bool clickPresent { false };
         int  clickTrackIdx { -1 };
 
