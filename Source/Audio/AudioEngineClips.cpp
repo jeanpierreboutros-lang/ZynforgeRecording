@@ -47,6 +47,65 @@ namespace zynforge
         }
     }
 
+    int AudioEngine::cropToRange (juce::int64 startSample, juce::int64 endSample)
+    {
+        const juce::int64 len = endSample - startSample;
+        if (len <= 0) return 0;
+
+        const int n = (int) trackClips.size();
+        int tracksWithAudio = 0;
+
+        for (int t = 0; t < n; ++t)
+        {
+            // An empty clip list means "play the whole file" -- synthesise
+            // a full-range clip so the crop has something to intersect,
+            // otherwise the track would be silently dropped.
+            std::vector<Clip> src = trackClips[(size_t) t];
+            if (src.empty())
+            {
+                Clip full;
+                full.timelineStartSamples = 0;
+                full.fileStartSamples     = 0;
+                full.fileLengthSamples    = player.getTrackLengthSamples (t);
+                if (full.fileLengthSamples > 0) src.push_back (full);
+            }
+
+            std::vector<Clip> out;
+            for (const auto& c : src)
+            {
+                const juce::int64 cs = c.timelineStartSamples;
+                const juce::int64 ce = cs + c.fileLengthSamples;
+                const juce::int64 is = juce::jmax (cs, startSample);   // intersection
+                const juce::int64 ie = juce::jmin (ce, endSample);
+                if (ie <= is) continue;                                 // clip outside range
+
+                Clip nc = c;
+                const juce::int64 lead = is - cs;                       // trimmed off the front
+                nc.fileStartSamples     = c.fileStartSamples + lead;
+                nc.fileLengthSamples    = ie - is;
+                nc.timelineStartSamples = is - startSample;             // range start -> timeline 0
+                nc.fadeInSamples  = juce::jmin (nc.fadeInSamples,  nc.fileLengthSamples);
+                nc.fadeOutSamples = juce::jmin (nc.fadeOutSamples, nc.fileLengthSamples);
+                out.push_back (nc);
+            }
+
+            trackClips[(size_t) t] = out;
+            player.setTrackClips (t, out);
+
+            // Mirror into the active take so it persists + survives a take
+            // swap (matches setActiveTake's contract).
+            if (t < (int) trackPlaylists.size())
+            {
+                auto& p = trackPlaylists[(size_t) t];
+                if (p.activeTake >= 0 && p.activeTake < (int) p.takes.size())
+                    p.takes[(size_t) p.activeTake].clips = out;
+            }
+
+            if (! out.empty()) ++tracksWithAudio;
+        }
+        return tracksWithAudio;
+    }
+
     int AudioEngine::getTakeCount (int track) const
     {
         if (track < 0 || track >= (int) trackPlaylists.size()) return 0;

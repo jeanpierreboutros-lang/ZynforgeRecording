@@ -562,6 +562,15 @@ namespace zynforge
         enum class ClipEdit { TrimLeft, TrimRight, Move };
         bool editClip (int track, int clipIndex, ClipEdit, juce::int64 deltaSamples);
 
+        // Non-destructive crop: on EVERY track, replace its clip list with
+        // the parts that fall inside the timeline range [start, end),
+        // shifted so the range start becomes timeline 0. The underlying
+        // Track_NN.wav files are never touched -- only the clip references
+        // change -- so it round-trips through the .zfproj playlists and is
+        // fully reversible (re-crop to the full range, or reload). Returns
+        // the number of tracks left with at least one clip.
+        int cropToRange (juce::int64 startSample, juce::int64 endSample);
+
         // Set linear fade-in / fade-out lengths on a clip. Either side
         // can be 0 to disable that fade. SessionPlayer applies the
         // envelope sample-by-sample during the clip-aware render path.
