@@ -687,6 +687,127 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            // ─── Marker drop during recording ────────────────────────
+            beginTest ("dropMarkerAtCurrentPosition with no session returns -1");
+            {
+                CallbackFixture f (1, 1, 2);
+                expectEquals (f.engine.dropMarkerAtCurrentPosition(), -1);
+            }
+
+            beginTest ("dropMarkerAtCurrentPosition during recording captures the position");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    CallbackFixture f (1, 1, 2);
+                    f.engine.getRecorder().getTrack (0).armed.store (true);
+                    expect (f.engine.startRecording (sessionDir));
+
+                    // Process some blocks to advance samplesSinceStart.
+                    f.writeInput (0, 0.2f, 256);
+                    constexpr int kBlocks = 32;            // 32 * 256 = 8192 samples
+                    for (int b = 0; b < kBlocks; ++b) f.process (256);
+
+                    // Drop a marker at the live recorder position.
+                    const int count = f.engine.dropMarkerAtCurrentPosition();
+                    expect (count == 1);
+                    const auto& markers = f.engine.getMarkers().getAll();
+                    expectEquals ((int) markers.size(), 1);
+                    if (! markers.empty())
+                    {
+                        // Marker sample should be within the recorded
+                        // window. We've processed 32 blocks but the
+                        // recorder rounds up; just need a sensible
+                        // non-zero value bounded by the elapsed range.
+                        expect (markers.front().sampleOffset > 0);
+                        expect (markers.front().sampleOffset <= (juce::int64) kBlocks * 256);
+                    }
+                    f.engine.stopRecording();
+                }
+                sessionDir.deleteRecursively();
+            }
+
+            beginTest ("Two markers in sequence auto-name and increment count");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    CallbackFixture f (1, 1, 2);
+                    f.engine.getRecorder().getTrack (0).armed.store (true);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.2f, 256);
+                    for (int b = 0; b < 16; ++b) f.process (256);
+                    expectEquals (f.engine.dropMarkerAtCurrentPosition(), 1);
+                    for (int b = 0; b < 16; ++b) f.process (256);
+                    expectEquals (f.engine.dropMarkerAtCurrentPosition(), 2);
+                    const auto& list = f.engine.getMarkers().getAll();
+                    expectEquals ((int) list.size(), 2);
+                    // Second marker must be at a later sample than the
+                    // first (we processed more blocks between them).
+                    if (list.size() >= 2)
+                        expect (list[1].sampleOffset > list[0].sampleOffset);
+                    f.engine.stopRecording();
+                }
+                sessionDir.deleteRecursively();
+            }
+
+            // ─── Master clip latch ───────────────────────────────────
+            beginTest ("Master clip latch sets when output peak hits >= 0.999");
+            {
+                CallbackFixture f (1, 1, 2);
+                auto& t = f.engine.getRecorder().getTrack (0);
+                t.armed.store (true); t.monitor.store (true);
+                f.engine.getMasterState().clipped.store (false);
+                f.engine.setMasterOutputs (0, 1);
+                // Force the input way over unity so the monitor sum
+                // crashes through 0 dBFS. With pan-centre = 0.707 the
+                // accumulator hits ~2.83 per sample; only the FLOAT
+                // output gets that. The clip latch in the master block
+                // reads the PRE-downcast accumulator peak.
+                f.writeInput (0, 4.0f, 256);
+                f.process (256);
+                expect (f.engine.getMasterState().clipped.load());
+            }
+
+            beginTest ("Master clip latch is sticky until explicitly cleared");
+            {
+                CallbackFixture f (1, 1, 2);
+                auto& t = f.engine.getRecorder().getTrack (0);
+                t.armed.store (true); t.monitor.store (true);
+                f.engine.setMasterOutputs (0, 1);
+
+                // Trip it.
+                f.writeInput (0, 5.0f, 256);
+                f.process (256);
+                expect (f.engine.getMasterState().clipped.load());
+
+                // Now feed silence -- latch must remain true so the
+                // engineer sees the indicator across blocks.
+                f.writeInput (0, 0.0f, 256);
+                for (int b = 0; b < 5; ++b) f.process (256);
+                expect (f.engine.getMasterState().clipped.load());
+
+                // Engineer clicks to clear -> direct atomic store.
+                f.engine.getMasterState().clipped.store (false);
+                expect (! f.engine.getMasterState().clipped.load());
+                // A silent block should not re-trip it.
+                f.process (256);
+                expect (! f.engine.getMasterState().clipped.load());
+            }
+
+            // ─── Per-track output mute ───────────────────────────────
+            beginTest ("outputMuted atomic round-trips per strip + per stereo partner");
+            {
+                CallbackFixture f (2, 2, 2);
+                auto& s0 = f.engine.getRecorder().getTrack (0);
+                auto& s1 = f.engine.getRecorder().getTrack (1);
+                expect (! s0.outputMuted.load());
+                expect (! s1.outputMuted.load());
+                s0.outputMuted.store (true);
+                expect (s0.outputMuted.load());
+                expect (! s1.outputMuted.load());   // independent
+                s0.outputMuted.store (false);
+                expect (! s0.outputMuted.load());
+            }
+
             // ─── BWF metadata round-trip ─────────────────────────────
             beginTest ("Recorded WAV carries BWF bext metadata");
             {
