@@ -4,6 +4,7 @@
 #include "Theme/BrandColors.h"
 #include "Theme/BrandTokens.h"
 #include "Audio/StripNames.h"
+#include "Audio/StripGains.h"
 
 class ZynforgeRecordingApp final : public juce::JUCEApplication
 {
@@ -50,8 +51,9 @@ public:
             juce::Logger::setCurrentLogger (&dual);
 
             // Isolate persistent state so the tests never write to the
-            // engineer's real per-channel names ("kick" etc.).
+            // engineer's real per-channel names / gains / pans.
             zynforge::StripNames::setTestMode (true);
+            zynforge::StripGains::setTestMode (true);
 
             juce::UnitTestRunner runner;
             runner.setAssertOnFailure (false);

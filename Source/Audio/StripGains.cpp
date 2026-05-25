@@ -5,7 +5,8 @@ namespace zynforge
     StripGains::StripGains()
     {
         juce::PropertiesFile::Options opts;
-        opts.applicationName     = "Zynforge Recording";
+        opts.applicationName     = testModeFlag() ? "Zynforge Recording (tests)"
+                                                   : "Zynforge Recording";
         opts.filenameSuffix      = ".settings";
         opts.folderName          = "Zynforge Recording";
         opts.osxLibrarySubFolder = "Application Support";
