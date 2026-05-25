@@ -63,11 +63,14 @@ namespace zynforge
         // RT-safe: fills outputs[i] with samples from track i, position advances.
         void processBlock (float* const* outputs, int numOutputs, int numSamples) noexcept;
 
-        // Per-track clip list -- when present, processBlock honours it
-        // (renders only the audio that falls inside a clip; silence
-        // elsewhere). Empty / missing → legacy 'play the whole file'.
-        // Setter is UI-thread; the audio thread reads under a lock that
-        // the setter holds only briefly while swapping the vector.
+        // Per-track clip list -- when a track has been given an explicit
+        // clip list (even an EMPTY one), processBlock honours it: it
+        // renders only the audio inside clips, silence elsewhere, and an
+        // empty list means the whole track is silent (e.g. every clip
+        // deleted). A track the engine has NEVER set clips for falls back
+        // to the legacy 'play the whole file' path -- so untouched tracks
+        // still play. Setter is UI-thread; the audio thread reads under a
+        // lock the setter holds only briefly while swapping the vector.
         void setTrackClips (int trackIdx, std::vector<Clip> clips);
         void clearAllClips();
 
@@ -87,6 +90,10 @@ namespace zynforge
         // under clipsLock -- UI thread holds it just long enough to
         // std::move a new vector in.
         std::vector<std::vector<Clip>> activeClips;
+        // Parallel to activeClips: 1 once the engine has explicitly set a
+        // clip list for that track. Disambiguates "empty list = silence"
+        // (authoritative) from "no list = play whole file" (never set).
+        std::vector<char>              clipsAuthoritative;
         mutable juce::CriticalSection  clipsLock;
 
         std::atomic<bool>        loaded      { false };

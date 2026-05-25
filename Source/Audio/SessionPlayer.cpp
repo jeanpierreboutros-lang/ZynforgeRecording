@@ -38,6 +38,14 @@ namespace zynforge
         tracks.clear();
         readerCount.store (0, std::memory_order_release);
         loaded.store (false, std::memory_order_release);
+        {
+            // New session = new tracks; drop any clip state from the
+            // previous one so a stale authoritative flag can't silence a
+            // freshly loaded track before seedDefaultClips repopulates.
+            const juce::ScopedLock sl (clipsLock);
+            activeClips.clear();
+            clipsAuthoritative.clear();
+        }
 
         if (! sessionDir.isDirectory()) return 0;
 
@@ -148,14 +156,17 @@ namespace zynforge
     {
         if (trackIdx < 0) return;
         const juce::ScopedLock sl (clipsLock);
-        if (trackIdx >= (int) activeClips.size()) activeClips.resize ((size_t) trackIdx + 1);
-        activeClips[(size_t) trackIdx] = std::move (clips);
+        if (trackIdx >= (int) activeClips.size())        activeClips.resize ((size_t) trackIdx + 1);
+        if (trackIdx >= (int) clipsAuthoritative.size()) clipsAuthoritative.resize ((size_t) trackIdx + 1, 0);
+        activeClips[(size_t) trackIdx]        = std::move (clips);
+        clipsAuthoritative[(size_t) trackIdx] = 1;   // explicit list (even if empty)
     }
 
     void SessionPlayer::clearAllClips()
     {
         const juce::ScopedLock sl (clipsLock);
         activeClips.clear();
+        clipsAuthoritative.clear();
     }
 
     void SessionPlayer::processBlock (float* const* outputs, int numOutputs, int numSamples) noexcept
@@ -214,9 +225,12 @@ namespace zynforge
             // Otherwise fall through to the legacy 'whole file' read.
             const std::vector<Clip>* clips = nullptr;
             if (stl.isLocked()
-                && i < (int) activeClips.size()
-                && ! activeClips[(size_t) i].empty())
+                && i < (int) clipsAuthoritative.size()
+                && clipsAuthoritative[(size_t) i]
+                && i < (int) activeClips.size())
             {
+                // Authoritative list -- honour it even when empty (every
+                // clip deleted => the track is silent, not whole-file).
                 clips = &activeClips[(size_t) i];
             }
 

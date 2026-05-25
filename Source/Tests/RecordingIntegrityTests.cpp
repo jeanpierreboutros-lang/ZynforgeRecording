@@ -344,6 +344,14 @@ namespace zynforge
                 expect (peakAt (total / 4)       < 1.0e-6f, "deleted region still produced audio");
                 expect (warmPeakAt (total * 3 / 4) > 0.05f, "surviving clip went silent");
 
+                // Delete the remaining (now last) clip -> the whole track
+                // must go SILENT, not revert to legacy whole-file playback.
+                expectEquals ((int) eng.clipsFor (0).size(), 1);
+                expect (eng.deleteClip (0, 0), "delete last clip failed");
+                expectEquals ((int) eng.clipsFor (0).size(), 0);
+                expect (peakAt (total * 3 / 4) < 1.0e-6f,
+                        "track reverted to whole-file after deleting the last clip");
+
                 player.stop();
                 dir.deleteRecursively();
             }
