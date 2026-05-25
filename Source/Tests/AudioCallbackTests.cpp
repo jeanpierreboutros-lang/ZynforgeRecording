@@ -579,6 +579,150 @@ namespace zynforge
                 expect (! f.engine.isRecording());
             }
 
+            // ─── Pre-roll history backfill ───────────────────────────
+            beginTest ("Pre-roll dumps pre-record history into Track_01.wav");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    CallbackFixture f (1, 1, 2);
+                    auto& rec = f.engine.getRecorder();
+                    rec.getTrack (0).armed.store (true);
+                    rec.setCaptureFormat (CaptureFormat::Wav24);
+                    rec.setPreRollSeconds (1);     // 1-second history buffer
+
+                    // Pre-record fill: 0.5 s of constant 0.30. Audio
+                    // thread pushes these blocks into the pre-roll ring
+                    // even though recording hasn't started.
+                    f.writeInput (0, 0.30f, 256);
+                    constexpr int kPreBlocks = 96;     // ~0.5 s @ 48 kHz / 256
+                    for (int b = 0; b < kPreBlocks; ++b) f.process (256);
+                    expect (! f.engine.isRecording());
+
+                    // Start recording -- dumps the history at the front.
+                    expect (f.engine.startRecording (sessionDir));
+
+                    // Live record: 0.3 s of 0.70 amplitude. Easy to
+                    // distinguish from the 0.30 pre-roll segment.
+                    f.writeInput (0, 0.70f, 256);
+                    constexpr int kLiveBlocks = 56;   // ~0.3 s
+                    for (int b = 0; b < kLiveBlocks; ++b) f.process (256);
+
+                    f.engine.stopRecording();
+                }
+
+                const auto wav = sessionDir.getChildFile ("Audio Files")
+                                            .getChildFile ("Track_01.wav");
+                expect (wav.existsAsFile());
+                juce::WavAudioFormat fmt;
+                std::unique_ptr<juce::FileInputStream> in (wav.createInputStream());
+                std::unique_ptr<juce::AudioFormatReader> reader (
+                    fmt.createReaderFor (in.release(), true));
+                expect (reader != nullptr);
+                if (reader != nullptr)
+                {
+                    // Total length must include BOTH the pre-roll dump
+                    // AND the live segment. Pre-roll ring filled with
+                    // 0.5 s of audio, live segment is 0.3 s. Allowing
+                    // some slack, total samples must exceed 0.7 s.
+                    expect (reader->lengthInSamples > (juce::int64) (0.7 * 48000.0));
+
+                    juce::AudioBuffer<float> buf (1, (int) reader->lengthInSamples);
+                    reader->read (&buf, 0, (int) reader->lengthInSamples, 0, true, false);
+
+                    // First 0.4 s of the recorded file should be the
+                    // pre-roll segment (constant 0.30). Last block
+                    // should be the live segment (constant 0.70).
+                    const auto* p = buf.getReadPointer (0);
+                    const int firstSection = (int) juce::jmin (
+                        (juce::int64) (0.4 * 48000.0), reader->lengthInSamples / 2);
+                    float preMax = 0.0f;
+                    for (int i = 0; i < firstSection; ++i)
+                        if (std::abs (p[i]) > preMax) preMax = std::abs (p[i]);
+                    float liveMax = 0.0f;
+                    const int liveStart = (int) reader->lengthInSamples - 1024;
+                    for (int i = juce::jmax (0, liveStart); i < (int) reader->lengthInSamples; ++i)
+                        if (std::abs (p[i]) > liveMax) liveMax = std::abs (p[i]);
+
+                    // Pre-roll section is the lower amplitude (~0.30),
+                    // live tail is the higher (~0.70).
+                    expect (preMax  > 0.20f && preMax  < 0.40f);
+                    expect (liveMax > 0.60f && liveMax < 0.80f);
+                }
+
+                sessionDir.deleteRecursively();
+            }
+
+            beginTest ("Pre-roll = 0 means no history is dumped");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                juce::int64 framesWritten = 0;
+                {
+                    CallbackFixture f (1, 1, 2);
+                    auto& rec = f.engine.getRecorder();
+                    rec.getTrack (0).armed.store (true);
+                    rec.setPreRollSeconds (0);   // baseline -- no history
+
+                    // Same pattern: fill before record, then record.
+                    f.writeInput (0, 0.5f, 256);
+                    for (int b = 0; b < 96; ++b) f.process (256);
+                    expect (f.engine.startRecording (sessionDir));
+                    for (int b = 0; b < 56; ++b) f.process (256);
+                    f.engine.stopRecording();
+                    framesWritten = 56 * 256;
+                }
+
+                const auto wav = sessionDir.getChildFile ("Audio Files")
+                                            .getChildFile ("Track_01.wav");
+                expect (wav.existsAsFile());
+                juce::WavAudioFormat fmt;
+                std::unique_ptr<juce::FileInputStream> in (wav.createInputStream());
+                std::unique_ptr<juce::AudioFormatReader> reader (
+                    fmt.createReaderFor (in.release(), true));
+                if (reader != nullptr)
+                {
+                    // Should only contain ~the live segment, not the
+                    // pre-record fill. ~0.3 s, NOT ~0.8 s.
+                    expect (reader->lengthInSamples < (juce::int64) (0.5 * 48000.0));
+                }
+                sessionDir.deleteRecursively();
+            }
+
+            // ─── BWF metadata round-trip ─────────────────────────────
+            beginTest ("Recorded WAV carries BWF bext metadata");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    CallbackFixture f (1, 1, 2);
+                    f.engine.getRecorder().getTrack (0).armed.store (true);
+                    f.engine.getRecorder().setCaptureFormat (CaptureFormat::Wav24);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.3f, 256);
+                    for (int b = 0; b < 32; ++b) f.process (256);
+                    f.engine.stopRecording();
+                }
+                const auto wav = sessionDir.getChildFile ("Audio Files")
+                                            .getChildFile ("Track_01.wav");
+                expect (wav.existsAsFile());
+                juce::WavAudioFormat fmt;
+                std::unique_ptr<juce::FileInputStream> in (wav.createInputStream());
+                std::unique_ptr<juce::AudioFormatReader> reader (
+                    fmt.createReaderFor (in.release(), true));
+                expect (reader != nullptr);
+                if (reader != nullptr)
+                {
+                    const auto& meta = reader->metadataValues;
+                    // Originator must say Zynforge Recording -- this is
+                    // what mix engineers see when they import the file
+                    // into Pro Tools / Logic / Reaper to identify it.
+                    expectEquals (meta[juce::WavAudioFormat::bwavOriginator],
+                                  juce::String ("Zynforge Recording"));
+                    expect (meta[juce::WavAudioFormat::bwavOriginationDate].isNotEmpty());
+                    expect (meta[juce::WavAudioFormat::bwavOriginationTime].isNotEmpty());
+                    expect (meta[juce::WavAudioFormat::bwavDescription].isNotEmpty());
+                }
+                sessionDir.deleteRecursively();
+            }
+
             beginTest ("Stereo pair (L hard-left + R hard-right) splits to L+R outs");
             {
                 CallbackFixture f (2, 2, 2);
