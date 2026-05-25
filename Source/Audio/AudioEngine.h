@@ -238,6 +238,15 @@ namespace zynforge
         // the flag; R partner is implicit at trackIndex + 1.
         void setTrackStereo (int channelIndex, bool isStereoPair);
 
+        // Stereo topology: collapse the physical track grid (where a
+        // stereo pair occupies two adjacent tracks) into the logical
+        // strip ordinals every view shares, and back. Lives on the engine
+        // because it's a pure function of the recorder's per-track stereo
+        // flags -- not UI state -- so MIXER / EDIT / PATCH can all agree
+        // without routing through MainComponent.
+        int physicalFromLogical (int logical);
+        int logicalFromPhysical (int physical);
+
         // Swap two physical tracks completely: state fields (name,
         // colour, gain, pan, routing, mute/solo/mon/arm, stereo flag),
         // persisted overrides, and the underlying Track_NN.wav files in

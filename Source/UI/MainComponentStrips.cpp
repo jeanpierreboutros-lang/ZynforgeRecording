@@ -193,28 +193,11 @@ void MainComponent::colourSelectedStrips()
     showStatus ("Picking colour for " + juce::String ((int) selectedLogical.size()) + " strip(s)...");
 }
 
-int MainComponent::physicalFromLogicalIdx (int logical)
-{
-    int phys = 0;
-    auto& rec = engine.getRecorder();
-    for (int k = 0; k < logical && phys < rec.getNumTracks(); ++k)
-        phys += rec.getTrack (phys).isStereo.load (std::memory_order_relaxed) ? 2 : 1;
-    return phys;
-}
-
-// Inverse of physicalFromLogicalIdx: collapse a physical track index to
-// the logical strip ordinal that contains it (stereo pairs count once).
-int MainComponent::logicalFromPhysicalIdx (int physical)
-{
-    auto& rec = engine.getRecorder();
-    int logical = 0, p = 0;
-    while (p < physical && p < rec.getNumTracks())
-    {
-        p += rec.getTrack (p).isStereo.load (std::memory_order_relaxed) ? 2 : 1;
-        ++logical;
-    }
-    return logical;
-}
+// Stereo logical<->physical mapping now lives on AudioEngine (it's a pure
+// function of the recorder's per-track stereo flags). These thin forwarders
+// keep the existing UI call sites working.
+int MainComponent::physicalFromLogicalIdx (int logical)  { return engine.physicalFromLogical (logical); }
+int MainComponent::logicalFromPhysicalIdx (int physical) { return engine.logicalFromPhysical (physical); }
 
 void MainComponent::moveSelectedStrips (int delta)
 {

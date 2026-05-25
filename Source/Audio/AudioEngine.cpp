@@ -710,6 +710,25 @@ namespace zynforge
         return trackClips[(size_t) track];
     }
 
+    int AudioEngine::physicalFromLogical (int logical)
+    {
+        int phys = 0;
+        for (int k = 0; k < logical && phys < recorder.getNumTracks(); ++k)
+            phys += recorder.getTrack (phys).isStereo.load (std::memory_order_relaxed) ? 2 : 1;
+        return phys;
+    }
+
+    int AudioEngine::logicalFromPhysical (int physical)
+    {
+        int logical = 0, p = 0;
+        while (p < physical && p < recorder.getNumTracks())
+        {
+            p += recorder.getTrack (p).isStereo.load (std::memory_order_relaxed) ? 2 : 1;
+            ++logical;
+        }
+        return logical;
+    }
+
     bool AudioEngine::isTrackPunchArmed (int channel) const noexcept
     {
         if (channel < 0 || channel >= (int) punchArmed.size()) return false;
