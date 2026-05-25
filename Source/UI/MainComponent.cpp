@@ -24,6 +24,11 @@ using namespace zynforge;
 MainComponent::MainComponent()
 {
     setLookAndFeel (&laf);
+    // Also make it the GLOBAL default so top-level AlertWindows / quit
+    // prompts use our grey chrome too -- without this they fall back to
+    // JUCE's default (blue-tinted) look. Reset in the destructor before
+    // 'laf' is torn down.
+    juce::LookAndFeel::setDefaultLookAndFeel (&laf);
 
     // Title text removed from the header -- the macOS window title +
     // app icon already identify the product, no need to repeat it.
@@ -646,6 +651,7 @@ MainComponent::~MainComponent()
     juce::MenuBarModel::setMacMainMenu (nullptr);
    #endif
     removeKeyListener (this);
+    juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
     setLookAndFeel (nullptr);
 }
 
