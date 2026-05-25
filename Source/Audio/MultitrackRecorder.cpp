@@ -637,8 +637,27 @@ namespace zynforge
         if (! recording.exchange (false, std::memory_order_acq_rel))
             return;
 
-        // Drain remaining samples before closing.
-        for (int i = 0; i < 8; ++i) drainOnce();
+        // Quiesce the writer threads BEFORE the final flush + close.
+        // Each shard runs on its own TimeSliceThread draining the
+        // single-consumer FIFOs and writing to the AudioFormatWriters.
+        // If we flushed (drainOnce) and closed (writers.clear()) here
+        // while those threads were still ticking, we got two consumers
+        // on one FIFO and writers.clear() freeing an AudioFormatWriter
+        // mid-writeFromFloatArrays -- which truncated files at random
+        // per-channel lengths while their WAV headers kept the full
+        // intended sample count (header says 24 s, data is 8 s).
+        // removeTimeSliceClient blocks until any in-flight drain on the
+        // shard returns and guarantees no further calls, so after this
+        // loop the message thread is the sole owner of the FIFOs and
+        // writers. (We are always on the message thread here, never on
+        // a writer thread, so this can't deadlock.)
+        for (auto& sh : shards)
+            for (auto& th : writerThreads)
+                th->removeTimeSliceClient (sh.get());
+
+        // Final flush of whatever is still buffered, now single-threaded.
+        for (auto& sh : shards)
+            drainShard (*sh);
 
         const auto stoppedAt        = juce::Time::getCurrentTime();
         const auto totalSamples     = samplesSinceStart.load (std::memory_order_relaxed);
@@ -685,6 +704,11 @@ namespace zynforge
 
         closeWriters();
         backupActive.store (false, std::memory_order_relaxed);
+
+        // Re-attach the shard clients to their writer threads so the next
+        // take drains again (we detached them above to flush + close
+        // single-threaded).
+        rebuildShards();
 
         // Post-show JSON report -- one file per session that captures every
         // datum a mix engineer / producer needs after the gig: total time,
