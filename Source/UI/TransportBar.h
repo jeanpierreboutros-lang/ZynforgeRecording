@@ -48,6 +48,11 @@ namespace zynforge
         bool lastRecording { false };
         bool lastPlaying   { false };
         bool lastLooping   { false };
+        bool lastArmed     { false };
+
+        // Arm-blink driver (1 Hz off the 10 Hz refresh timer).
+        bool blinkPhase    { false };
+        int  blinkCounter  { 0 };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (TransportBar)
     };

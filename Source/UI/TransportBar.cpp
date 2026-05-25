@@ -15,15 +15,31 @@ namespace zynforge
         void setActive (bool a) { active = a; repaint(); }
         void setBaseColour (juce::Colour c) { baseColour = c; repaint(); }
 
+        // Record-button-only states. recording == rolling (stable solid
+        // red); armed == primed but not yet rolling (blinks on the
+        // blinkPhase the transport bar drives). Idle is neither.
+        void setRecording (bool v) { if (recording  != v) { recording  = v; repaint(); } }
+        void setArmed     (bool v) { if (armed      != v) { armed      = v; repaint(); } }
+        void setBlinkPhase (bool v) { if (blinkPhase != v) { blinkPhase = v; if (armed && ! recording) repaint(); } }
+
         void paintButton (juce::Graphics& g, bool over, bool down) override
         {
             // Square button body -- gradient fill, 1px border. Matches the
             // ZynForge Live transport button finish.
             auto r = getLocalBounds().toFloat().reduced (2.0f);
 
-            const auto base = (down ? brand::controlBgDown
-                                    : over ? brand::controlBgHover
-                                           : brand::controlBg);
+            const bool isRec   = (icon == Icon::Record);
+            // Solid red while rolling; a lit red frame on the "on" half
+            // of the arm blink. Idle (and the blink "off" half) read as
+            // the normal dark control body so the eye catches the flash.
+            const bool recOn   = isRec && recording;
+            const bool blinkOn = isRec && armed && ! recording && blinkPhase;
+
+            auto base = (down ? brand::controlBgDown
+                              : over ? brand::controlBgHover
+                                     : brand::controlBg);
+            if      (recOn)   base = brand::accentRecord;               // ON AIR -- stable
+            else if (blinkOn) base = brand::accentRecord.darker (0.30f); // armed -- blink lit
             g.setGradientFill (brand::verticalGradient (base, r, 0.10f, 0.18f));
             g.fillRoundedRectangle (r, brand::radius::md);
 
@@ -32,10 +48,12 @@ namespace zynforge
             // under stage glare cannot tell circle / triangle / square
             // apart by colour alone. The persistent stroke makes the
             // call-to-action shape-distinct from PLAY (green) and STOP
-            // (amber) regardless of light conditions.
-            if (icon == Icon::Record)
+            // (amber) regardless of light conditions. The stroke goes
+            // fully opaque while rolling or on a blink-lit frame.
+            if (isRec)
             {
-                g.setColour (brand::accentRecord.withAlpha (brand::alpha::prominent));
+                const float a = (recOn || blinkOn) ? 1.0f : brand::alpha::prominent;
+                g.setColour (brand::accentRecord.withAlpha (a));
                 g.drawRoundedRectangle (r.reduced (1.0f), brand::radius::md, 2.0f);
             }
             else
@@ -49,7 +67,10 @@ namespace zynforge
             const float cx = ic.getCentreX();
             const float cy = ic.getCentreY();
 
-            g.setColour (active ? baseColour.brighter (0.3f) : baseColour);
+            // On a red body (rolling / blink-lit) the glyph needs a
+            // legible foreground; otherwise the per-button accent.
+            g.setColour ((recOn || blinkOn) ? brand::onSignal (brand::accentRecord)
+                                            : (active ? baseColour.brighter (0.3f) : baseColour));
 
             switch (icon)
             {
@@ -132,6 +153,9 @@ namespace zynforge
     private:
         Icon         icon;
         bool         active     { false };
+        bool         recording  { false };
+        bool         armed      { false };
+        bool         blinkPhase { false };
         juce::Colour baseColour { brand::textPrimary };
     };
 
@@ -252,8 +276,36 @@ namespace zynforge
         const bool pl   = engine.isPlaying();
         const bool lp   = engine.getPlayer().hasLoopRegion();
 
-        if (rec != lastRecording) { record->setActive (rec); lastRecording = rec; }
-        if (pl  != lastPlaying)   { play  ->setActive (pl);  lastPlaying   = pl;  }
-        if (lp  != lastLooping)   { loop  ->setActive (lp);  lastLooping   = lp;  }
+        // "Record armed" == at least one track armed, transport primed
+        // but not yet rolling. Mirrors the BigClock's armed-ready signal
+        // so both call-to-action surfaces tell the same story.
+        bool anyArmed = false;
+        auto& recr = engine.getRecorder();
+        for (int i = 0, n = recr.getNumTracks(); i < n; ++i)
+            if (recr.getTrack (i).armed.load (std::memory_order_relaxed)) { anyArmed = true; break; }
+        const bool recordArmed = anyArmed && ! rec && ! pl;
+
+        if (rec         != lastRecording) { record->setRecording (rec);  lastRecording = rec; }
+        if (recordArmed != lastArmed)     { record->setArmed (recordArmed); lastArmed = recordArmed; }
+        if (pl          != lastPlaying)   { play  ->setActive (pl);       lastPlaying   = pl;  }
+        if (lp          != lastLooping)   { loop  ->setActive (lp);       lastLooping   = lp;  }
+
+        // Drive the arm blink at ~1 Hz (brand::motion::pulseHz) off the
+        // 10 Hz timer: flip the phase every 5 ticks → 0.5 s on / 0.5 s off.
+        if (recordArmed)
+        {
+            if (++blinkCounter >= 5)
+            {
+                blinkCounter = 0;
+                blinkPhase   = ! blinkPhase;
+                record->setBlinkPhase (blinkPhase);
+            }
+        }
+        else if (blinkPhase || blinkCounter != 0)
+        {
+            blinkCounter = 0;
+            blinkPhase   = false;
+            record->setBlinkPhase (false);
+        }
     }
 }
