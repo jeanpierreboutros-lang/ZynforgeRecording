@@ -339,6 +339,7 @@ private:
 
     std::vector<std::unique_ptr<zynforge::ChannelStrip>> strips;
     int  lastTrackCount { -1 };
+    bool rebuildingStrips { false };   // re-entrancy guard for the resized() stale-strip rebuild
 
     // Timer-tick counter for cheap "every N frames" gates (e.g. the
     // free-space pre-flight refresh, which queries the volume only

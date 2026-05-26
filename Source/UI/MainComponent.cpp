@@ -723,6 +723,7 @@ void MainComponent::switchView (View v)
 
 void MainComponent::rebuildStrips()
 {
+    const juce::ScopedValueSetter<bool> guard (rebuildingStrips, true);
     auto& recorder = engine.getRecorder();
     const int n = recorder.getNumTracks();
 

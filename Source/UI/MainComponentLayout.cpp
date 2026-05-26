@@ -38,6 +38,21 @@ void MainComponent::paint (juce::Graphics& g)
 
 void MainComponent::resized()
 {
+    // Guard against laying out stale strips: a ChannelStrip holds a
+    // TrackState& that is destroyed when its track is removed
+    // (setStripCount shrink). rebuildStrips normally runs on the next
+    // timer tick, but a resized() in that window (e.g. a view switch)
+    // would dereference a dangling reference and crash in
+    // ChannelStrip::resized. Rebuild synchronously first. The
+    // rebuildingStrips guard prevents recursion (rebuildStrips() ends
+    // by calling resized()).
+    if (! rebuildingStrips
+        && engine.getRecorder().getNumTracks() != lastTrackCount)
+    {
+        rebuildStrips();
+        return;   // rebuildStrips() re-invokes resized() with fresh strips
+    }
+
     auto r = getLocalBounds();
 
     // Toast anchored to bottom-right of the window -- independent of
