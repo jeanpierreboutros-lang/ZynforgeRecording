@@ -34,6 +34,9 @@ namespace zynforge
                 addAndMakeVisible (*strip);
                 strips[(size_t) i] = std::move (strip);
             }
+            setTitle ("VCA groups");
+            setDescription ("VCA bus faders");
+            setFocusContainerType (juce::Component::FocusContainerType::focusContainer);
             startTimerHz (20);
         }
 
@@ -111,8 +114,20 @@ namespace zynforge
                 nameLabel.onTextChange = [this]
                 {
                     engine.setVcaName (index, nameLabel.getText());
+                    setTitle (nameLabel.getText());   // keep accessible name in sync
                 };
                 addAndMakeVisible (nameLabel);
+
+                // Accessibility: M / S glyphs are unreadable, so name every
+                // control per-bus and group the strip under its VCA name.
+                const auto tag = "VCA " + juce::String (index + 1) + " ";
+                setTitle (engine.getVca (index).name);
+                setDescription ("VCA group " + juce::String (index + 1));
+                setFocusContainerType (juce::Component::FocusContainerType::focusContainer);
+                fader    .setTitle (tag + "gain");
+                mute     .setTitle (tag + "mute");
+                solo     .setTitle (tag + "solo");
+                nameLabel.setTitle (tag + "name");
             }
 
             void mouseEnter (const juce::MouseEvent&) override
