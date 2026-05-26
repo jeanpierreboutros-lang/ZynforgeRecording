@@ -365,6 +365,74 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
+            // The audible contract for cue automation: a recalled cue loads
+            // its volume lane, and DURING PLAYBACK that lane must attenuate the
+            // routed output. Drives the full AudioEngine callback (not just
+            // SessionPlayer) so it exercises the gain path automation rides on.
+            beginTest ("Volume automation attenuates the routed output during playback");
+            {
+                auto dir = recordSession (numCh, numBlocks, block);
+                AudioEngine::setTestModeSkipAudioInit (true);
+                AudioEngine eng;
+                eng.setSnapMode (AudioEngine::SnapMode::Off);
+                expect (eng.loadSession (dir) > 0, "session failed to load");
+                eng.setStripCount (numCh);   // loadSession fills the PLAYER; size the recorder strips too
+                eng.prepareForTests (48000.0, block);
+
+                // Isolate output 0 = ONLY track 0's routed signal. Send the
+                // master monitor sum (which mixes every track) to outs 2/3 and
+                // route the other track to master-only, so the master sum can't
+                // leak un-automated audio onto output 0.
+                eng.setMasterOutputs (2, 3);
+                eng.setTrackOutputRouting (0, 0);                 // track 0 -> hardware out 0
+                eng.setTrackGainDb (0, 0.0f);
+                eng.getRecorder().getTrack (0).muted.store (false);
+                for (int i = 1; i < numCh; ++i)
+                    eng.setTrackOutputRouting (i, -1);            // others -> master-only (outs 2/3)
+                eng.getMasterState().muted.store (false);
+                eng.getMasterState().gainDb.store (0.0f);
+                eng.startPlayback();
+
+                const juce::int64 probe = total / 2;
+                const int numOut = 4;
+                std::vector<std::vector<float>> ob ((size_t) numOut, std::vector<float> ((size_t) block, 0.0f));
+                std::vector<float*> op ((size_t) numOut);
+                for (int ch = 0; ch < numOut; ++ch) op[(size_t) ch] = ob[(size_t) ch].data();
+
+                auto renderPeak = [&] (juce::int64 pos, int tries) -> float
+                {
+                    float pk = 0.0f;
+                    for (int t = 0; t < tries; ++t)
+                    {
+                        for (auto& v : ob) std::fill (v.begin(), v.end(), 0.0f);
+                        eng.getPlayer().setPositionSamples (pos);
+                        const float* inPtrs[1] = { nullptr };
+                        eng.audioDeviceIOCallbackWithContext (inPtrs, 0, op.data(), numOut, block, {});
+                        pk = 0.0f;
+                        for (int i = 0; i < block; ++i) pk = juce::jmax (pk, std::abs (ob[0][(size_t) i]));
+                        if (pk > 0.05f) break;          // wait for the buffering reader to warm
+                        juce::Thread::sleep (5);
+                    }
+                    return pk;
+                };
+
+                const float base = renderPeak (probe, 120);
+                expect (base > 0.05f, "playback produced no output on the routed channel");
+
+                // Single -60 dB volume point at 0 -> held forward to probe -> silence.
+                eng.addAutomationPoint (0, AudioEngine::AutomationParam::Volume, 0, -60.0f);
+                const float dipped = renderPeak (probe, 10);
+                expect (dipped < base * 0.1f, "volume automation did not attenuate playback");
+
+                // Lift the lane back to 0 dB -> audible again (proves recall both ways).
+                eng.clearAutomation (AudioEngine::AutomationParam::Volume);
+                const float restored = renderPeak (probe, 120);
+                expect (restored > 0.05f, "clearing automation did not restore playback level");
+
+                eng.stopPlayback();
+                dir.deleteRecursively();
+            }
+
             beginTest ("Duplicate plays the copied audio in a new region");
             {
                 auto dir = recordSession (numCh, numBlocks, block);
