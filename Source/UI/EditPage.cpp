@@ -10,6 +10,18 @@
 
 namespace zynforge
 {
+    // Waveform thumbnail resolution: samples averaged per drawn min/max
+    // point. Lower = finer detail (and a bigger cache). 256 stays crisp
+    // even at 16x horizontal zoom (~3 points/px on a 6-min take). The
+    // WaveCache.wfm on disk bakes thumbnails AT this resolution, so any
+    // change here must invalidate older caches -- hence kWaveCacheVersion,
+    // which is written as a header and re-checked on load. Bump the version
+    // whenever the resolution (or anything else affecting the baked data)
+    // changes, so stale coarse caches are discarded and re-scanned.
+    static constexpr int kThumbResolution = 128;
+    static constexpr int kWaveCacheMagic   = 0x5A574332; // 'ZWC2'
+    static constexpr int kWaveCacheVersion = (kThumbResolution << 8) | 1;
+
     // Single home for the timeline<->pixel mapping that the EDIT lanes do
     // ~a dozen times. Build one per paint/event from the lane's inner
     // rect + the session length, then map. toX rounds (the form most
@@ -130,8 +142,8 @@ namespace zynforge
                   juce::AudioFormatManager& formats,
                   juce::AudioThumbnailCache& cache)
             : index (trackIdx), stereo (isStereoPair), engine (eng),
-              thumbnailL (256, formats, cache),
-              thumbnailR (256, formats, cache),
+              thumbnailL (kThumbResolution, formats, cache),
+              thumbnailR (kThumbResolution, formats, cache),
               meter (engine.getRecorder().getTrack (index))
         {
             if (stereo)
@@ -3131,14 +3143,30 @@ namespace zynforge
         const auto cacheFile = sessionDir.getChildFile ("WaveCache.wfm");
         if (! cacheFile.existsAsFile() || cacheFile.getSize() < 16) return;
 
-        juce::FileInputStream in (cacheFile);
-        if (! in.openedOk()) return;
-        // Best-effort: the cache reader returns true on success, false
-        // if the file is empty / corrupt / from a different JUCE
-        // version. In all failure modes the thumbnails fall back to
-        // re-scanning the Track_NN.wav files, so the worst case is
-        // 'slow first paint', never wrong audio.
-        thumbnailCache.readFromStream (in);
+        // Versioned header: magic + (resolution<<8|rev). A cache baked at a
+        // different thumbnail resolution would re-paint as coarse stair-step
+        // blocks (its min/max points are too sparse for the new draw), so a
+        // mismatch -- including pre-header caches whose first int isn't our
+        // magic -- means delete the stale file and let the thumbnails
+        // re-scan the Track_NN.wav files at the current resolution. The
+        // stream is scoped so its file handle is released before we delete.
+        bool stale = false;
+        {
+            juce::FileInputStream in (cacheFile);
+            if (! in.openedOk()) return;
+
+            const int magic = in.readInt();
+            const int ver   = in.readInt();
+            if (magic != kWaveCacheMagic || ver != kWaveCacheVersion)
+                stale = true;
+            else
+                // Best-effort: readFromStream returns false on a corrupt /
+                // wrong-JUCE-version body, in which case the thumbnails just
+                // re-scan -- worst case 'slow first paint', never wrong audio.
+                thumbnailCache.readFromStream (in);
+        }
+        if (stale)
+            cacheFile.deleteFile();
     }
 
     void EditPage::saveCacheToSession (const juce::File& sessionDir)
@@ -3151,6 +3179,8 @@ namespace zynforge
         {
             juce::FileOutputStream out (tmpFile);
             if (! out.openedOk()) return;
+            out.writeInt (kWaveCacheMagic);     // header: tag the resolution
+            out.writeInt (kWaveCacheVersion);   // so a later res change drops it
             thumbnailCache.writeToStream (out);
             out.flush();
         }
