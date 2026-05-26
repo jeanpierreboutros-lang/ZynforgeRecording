@@ -48,6 +48,11 @@ namespace zynforge
                 buttons.push_back (std::move (b));
             }
             applySelection();
+
+            // Group the icon tools under a labelled focus container.
+            setTitle ("Edit tools");
+            setDescription ("Clip edit tool selector");
+            setFocusContainerType (juce::Component::FocusContainerType::focusContainer);
         }
 
         Tool getTool() const noexcept { return tool; }
@@ -90,7 +95,15 @@ namespace zynforge
                                   public juce::SettableTooltipClient
         {
         public:
-            ToolButton (Tool t, juce::String n) : tool (t), name (std::move (n)) {}
+            ToolButton (Tool t, juce::String n) : tool (t), name (std::move (n))
+            {
+                // Icon-only + a raw Component (not juce::Button), so it has
+                // no built-in accessibility: give it a spoken name, make it
+                // keyboard-reachable, and expose a press action below.
+                setTitle (name);
+                setDescription ("Edit tool");
+                setWantsKeyboardFocus (true);
+            }
 
             bool active { false };
             std::function<void()> onClick;
@@ -98,6 +111,24 @@ namespace zynforge
             void mouseUp (const juce::MouseEvent& e) override
             {
                 if (e.mouseWasClicked() && onClick) onClick();
+            }
+
+            bool keyPressed (const juce::KeyPress& k) override
+            {
+                if ((k == juce::KeyPress::returnKey || k == juce::KeyPress::spaceKey) && onClick)
+                {
+                    onClick();
+                    return true;
+                }
+                return false;
+            }
+
+            std::unique_ptr<juce::AccessibilityHandler> createAccessibilityHandler() override
+            {
+                return std::make_unique<juce::AccessibilityHandler> (
+                    *this, juce::AccessibilityRole::button,
+                    juce::AccessibilityActions().addAction (
+                        juce::AccessibilityActionType::press, [this] { if (onClick) onClick(); }));
             }
 
             void mouseEnter (const juce::MouseEvent&) override { hover = true;  repaint(); }
