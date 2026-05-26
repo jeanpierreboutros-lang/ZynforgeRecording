@@ -46,6 +46,8 @@ The goal of this document is to keep the codebase consistent enough that any con
 - Compute a strip's effective gain (own gain + VCA-bus gain) **once** per audio block and share it; don't re-derive it per consumer inside the callback.
 - Resolve stereo logical ↔ physical strip mapping through `AudioEngine::physicalFromLogical` / `logicalFromPhysical` — it's model topology, not UI state. Don't re-implement the stereo-collapse walk in a view.
 - When a consumer needs only a slice of the engine, depend on a segregated interface (`ITransport`, with more facets to follow) rather than the whole `AudioEngine&`. New facets keep the same shape: pure-virtual contract, `AudioEngine` implements it.
+- Use `PlaceholderView` for any loading / empty / error surface — don't hand-roll an empty `juce::Label`. Overlay it on the content area in `resized()`, drive it with `showLoading` / `showEmpty` / `showError` / `clear`, and transition **only on a state change** (compare `getState()` or a small `lastKind`) so VoiceOver isn't re-announced each tick. An empty state with a remedy should pass a CTA label + callback (e.g. MIXER's "Add tracks", PATCH's "Audio settings…").
+- Give every interactive or informational component an accessible identity: `setTitle` / `setDescription` (and `setHelpText` where useful), make actionable controls real focusable buttons, and `postAnnouncement` on a meaningful state change. The app shipped with **zero** accessibility; `PlaceholderView` is the reference implementation. New UI should not regress this — building "for millions" includes VoiceOver users.
 
 ### Never
 
