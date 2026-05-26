@@ -1018,6 +1018,7 @@ void MainComponent::rebuildStrips()
         i += step;
     }
     lastTrackCount = n;
+    lastTrackGen   = recorder.getTrackGeneration();
     resized();
     updateMixerPlaceholder();
 }

@@ -852,7 +852,7 @@ namespace zynforge
         recorder.setAudioWorkgroup ({});   // empty workgroup -- no scheduler hint in tests
         click.prepare (sr);
         click.setTempoBpm (currentTempoBpm.load (std::memory_order_relaxed));
-        recorder.prepare (sr, blockSize, getStripCount());
+        recorder.prepare (sr, blockSize, recorder.getNumTracks());   // start empty; preserve count across device restarts
         player  .prepare (sr, blockSize);
         stereoMixScratch.setSize (2, blockSize, false, true, true);
         monitorAccum    .setSize (2, blockSize, false, true, true);
@@ -979,9 +979,10 @@ namespace zynforge
         click.prepare (sr);
         click.setTempoBpm (currentTempoBpm.load (std::memory_order_relaxed));
 
-        // Strip count is user-controlled (persisted; defaults to 1) --
-        // it's no longer tied to the device's input channel count.
-        recorder.prepare (sr, blockSize, getStripCount());
+        // Strip count is user-controlled: the app opens with NO channels
+        // (engineer adds them via +CH), and the count is preserved across
+        // device restarts -- it is NOT restored from a previous session.
+        recorder.prepare (sr, blockSize, recorder.getNumTracks());   // start empty; preserve count across device restarts
         player  .prepare (sr, blockSize);
 
         // Pre-allocate the stereo mix scratch buffer at the device block

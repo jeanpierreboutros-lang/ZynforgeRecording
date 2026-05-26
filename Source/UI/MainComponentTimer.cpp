@@ -17,7 +17,11 @@ static juce::String samplesToTimecode (juce::int64 samples, double sr)
 void MainComponent::timerCallback()
 {
     const int n = engine.getRecorder().getNumTracks();
-    if (n != lastTrackCount)
+    // Rebuild when the track COUNT changes OR the track SET was replaced
+    // (device restart recreates TrackStates at the same count) -- either
+    // way the cached TrackState& in each strip would otherwise dangle.
+    if (n != lastTrackCount
+        || engine.getRecorder().getTrackGeneration() != lastTrackGen)
         rebuildStrips();
 
     // MIDI clock status pill -- visible reassurance that the engineer's

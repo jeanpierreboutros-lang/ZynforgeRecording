@@ -72,6 +72,12 @@ namespace zynforge
         void setTrackCount (int n);
 
         int          getNumTracks() const noexcept { return (int) tracks.size(); }
+        // Bumped whenever the track SET changes (added / removed / cleared
+        // + recreated on a device restart). UI watches this to rebuild
+        // strips even when the COUNT is unchanged but the underlying
+        // TrackState objects were replaced -- otherwise a cached
+        // TrackState& dangles and crashes on the next paint/timer.
+        int          getTrackGeneration() const noexcept { return trackGen.load (std::memory_order_relaxed); }
         TrackState&  getTrack (int i) noexcept     { return *tracks[(std::size_t) i]; }
 
         // Health + position counters -- all RT-safe to read.
@@ -341,6 +347,7 @@ namespace zynforge
         int    blockSize  { 512 };
 
         std::vector<std::unique_ptr<TrackState>>     tracks;
+        std::atomic<int>                             trackGen { 0 };   // bumped on any track-set change
         std::vector<std::unique_ptr<ChannelFifo>>    fifos;
         std::vector<WriterChannel>                   writers;
         std::vector<std::unique_ptr<PreRollBuffer>>  preRoll;

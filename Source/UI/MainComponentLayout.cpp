@@ -47,7 +47,8 @@ void MainComponent::resized()
     // rebuildingStrips guard prevents recursion (rebuildStrips() ends
     // by calling resized()).
     if (! rebuildingStrips
-        && engine.getRecorder().getNumTracks() != lastTrackCount)
+        && (engine.getRecorder().getNumTracks()       != lastTrackCount
+         || engine.getRecorder().getTrackGeneration() != lastTrackGen))
     {
         rebuildStrips();
         return;   // rebuildStrips() re-invokes resized() with fresh strips

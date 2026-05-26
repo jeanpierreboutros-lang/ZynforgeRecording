@@ -1014,26 +1014,13 @@ namespace zynforge
                 g.setColour (brand::edge);
                 g.drawHorizontalLine (inner.getY() + laneH, (float) inner.getX(),
                                        (float) inner.getRight());
-
-                if (thumbnailL.getTotalLength() <= 0.0 && thumbnailR.getTotalLength() <= 0.0)
-                {
-                    g.setColour (brand::textTertiary);
-                    g.setFont (brand::type::caption());
-                    g.drawText ("(no recording yet -- start a session and record to see waveforms)",
-                                wavePane, juce::Justification::centred, false);
-                }
+                // Empty lanes are left blank -- the EDIT view's PlaceholderView
+                // owns the "no session" message, so no per-row hint here.
             }
             else if (thumbnailL.getTotalLength() > 0.0)
             {
                 g.setColour (waveColour);
                 thumbnailL.drawChannels (g, inner, 0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
-            }
-            else
-            {
-                g.setColour (brand::textTertiary);
-                g.setFont (brand::type::caption());
-                g.drawText ("(no recording yet -- start a session and record to see waveforms)",
-                            wavePane, juce::Justification::centred, false);
             }
 
             // ─── Clip boundary overlay (waveform mode only) ─────────
@@ -3264,20 +3251,22 @@ namespace zynforge
 
         list->setWaveformsFromSession (sessionDir);
 
-        // Empty state: when no session is loaded there are no waveforms to
-        // show, so surface the reusable placeholder. Transition only on a
-        // change of loaded-ness so we don't re-announce to VoiceOver every
-        // refresh.
-        const bool loaded = engine.getPlayer().isLoaded();
-        const auto want = loaded ? PlaceholderView::State::Hidden
-                                 : PlaceholderView::State::Empty;
-        if (placeholder.getState() != want)
-        {
-            if (loaded) placeholder.clear();
-            else        placeholder.showEmpty ("No session loaded",
-                            "Load or record a session to see waveforms here.");
-        }
-        lastLoaded = loaded;
+        updatePlaceholder();
+        lastLoaded = engine.getPlayer().isLoaded();
+    }
+
+    void EditPage::updatePlaceholder()
+    {
+        // Show the empty-state placeholder only when there are NO channels.
+        // Once channels exist (recorded or not) the rows own the view, so the
+        // overlay never sits on top of them. getState() guard = no re-announce.
+        const bool hasChannels = engine.getRecorder().getNumTracks() > 0;
+        const auto want = hasChannels ? PlaceholderView::State::Hidden
+                                      : PlaceholderView::State::Empty;
+        if (placeholder.getState() == want) return;
+        if (hasChannels) placeholder.clear();
+        else             placeholder.showEmpty ("No session loaded",
+                             "Add channels (+CH), or open / record a session.");
     }
 
     void EditPage::timerCallback()

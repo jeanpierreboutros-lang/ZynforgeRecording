@@ -122,6 +122,7 @@ namespace zynforge
 
                 preRoll.push_back (std::make_unique<PreRollBuffer>());
             }
+            trackGen.fetch_add (1, std::memory_order_relaxed);   // TrackState set replaced
         }
         else
         {
@@ -192,6 +193,7 @@ namespace zynforge
 
         preRoll.push_back (std::make_unique<PreRollBuffer>());
         allocatePreRollBuffers();
+        trackGen.fetch_add (1, std::memory_order_relaxed);
         rebuildShards();
     }
 
@@ -201,6 +203,7 @@ namespace zynforge
         tracks.pop_back();
         fifos.pop_back();
         preRoll.pop_back();
+        trackGen.fetch_add (1, std::memory_order_relaxed);
         rebuildShards();
     }
 
@@ -211,6 +214,7 @@ namespace zynforge
         tracks.erase (tracks.begin() + index);
         fifos.erase  (fifos.begin()  + index);
         preRoll.erase(preRoll.begin()+ index);
+        trackGen.fetch_add (1, std::memory_order_relaxed);
         rebuildShards();
     }
 
