@@ -264,22 +264,27 @@ namespace zynforge
 
     void ChannelStrip::mouseDown (const juce::MouseEvent& e)
     {
-        // Ignore clicks that originated on an actual interactive
-        // child (the fader cap, a button, a combo). The bubble-up
-        // through addMouseListener(this, true) means we see those
-        // events on the strip too; without this guard, dragging a
-        // button or fader would also select the strip. originalComponent
-        // is the leaf that received the click; if it isn't 'this',
-        // the leaf is handling it.
-        if (e.eventComponent != this && e.originalComponent != this)
-            return;
-
-        // Right-click → context menu.
+        // Right-click → context menu, from ANYWHERE on the strip including
+        // over its child controls (name, combos, knobs, meter, buttons).
+        // Checked BEFORE the child-origin guard below: the children cover
+        // almost the whole strip, so requiring a bare-background hit made
+        // the menu feel broken -- most right-clicks landed on a child and
+        // did nothing. The controls don't use the right button themselves,
+        // so there's no conflict.
         if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
         {
             showContextMenu();
             return;
         }
+
+        // For LEFT clicks, ignore those that originated on an actual
+        // interactive child (the fader cap, a button, a combo). The
+        // bubble-up through addMouseListener(this, true) means we see those
+        // events on the strip too; without this guard, dragging a button or
+        // fader would also select the strip. originalComponent is the leaf
+        // that received the click; if it isn't 'this', the leaf handles it.
+        if (e.eventComponent != this && e.originalComponent != this)
+            return;
 
         // Shift / Cmd click anywhere on the strip toggles its
         // multi-selection state. Additive (shift/cmd) keeps existing
@@ -848,14 +853,23 @@ namespace zynforge
         const int vca = state.vcaGroup.load (std::memory_order_relaxed);
         if (vca >= 0 && vca < 8)
         {
-            const juce::String label = "V" + juce::String (vca + 1);
-            auto badge = juce::Rectangle<float> (r.getRight() - 26.0f, r.getY() + 4.0f, 22.0f, 12.0f);
-            g.setColour (brand::featureEngaged.darker (0.30f));
+            const juce::String label = "VCA " + juce::String (vca + 1);
+            // Prominent VCA indicator: a filled bright-teal pill with bold
+            // text PLUS a teal underline along the top edge, so a grouped
+            // strip reads unmistakably at a glance. The old chip used a
+            // dimmed fill + caption font and was easy to miss.
+            const float topY = r.getY() + 1.0f;
+            g.setColour (brand::featureEngaged.withAlpha (brand::alpha::bold));
+            g.fillRoundedRectangle (r.getX() + 4.0f, topY, r.getWidth() - 8.0f, 3.0f,
+                                    brand::radius::sm);
+
+            auto badge = juce::Rectangle<float> (r.getRight() - 42.0f, topY + 4.0f, 38.0f, 15.0f);
+            g.setColour (brand::featureEngaged);
             g.fillRoundedRectangle (badge, brand::radius::sm);
-            g.setColour (brand::featureEngaged.brighter (0.40f));
-            g.drawRoundedRectangle (badge, brand::radius::sm, 0.75f);
-            g.setColour (brand::onSignal (brand::featureEngaged.darker (0.30f)));
-            g.setFont (brand::type::caption());
+            g.setColour (brand::featureEngaged.brighter (0.60f));
+            g.drawRoundedRectangle (badge, brand::radius::sm, 1.0f);
+            g.setColour (brand::onSignal (brand::featureEngaged));
+            g.setFont (brand::type::ui (10.5f, true));
             g.drawText (label, badge.toNearestInt(), juce::Justification::centred, false);
         }
 
@@ -868,9 +882,9 @@ namespace zynforge
         if (eg >= 0 && eg < 8)
         {
             const juce::String label = "EG" + juce::String (eg + 1);
-            // Stack underneath the VCA chip when both are present;
-            // share the slot otherwise.
-            const float yOffset = (vca >= 0 && vca < 8) ? 18.0f : 4.0f;
+            // Stack underneath the (now taller) VCA pill when both are
+            // present; share the top slot otherwise.
+            const float yOffset = (vca >= 0 && vca < 8) ? 23.0f : 4.0f;
             auto badge = juce::Rectangle<float> (r.getRight() - 26.0f,
                                                   r.getY() + yOffset, 22.0f, 12.0f);
             g.setColour (brand::accentVS.darker (0.30f));
