@@ -121,11 +121,23 @@ namespace zynforge::dialog
     // layout, gets swallowed, and the engineer still has to click.
     // Pass the AlertWindow and the editor's id (as passed to
     // addTextEditor). No-op if the editor isn't found.
-    inline void primeNameEditor (juce::AlertWindow& aw, const juce::String& id) noexcept
+    // okResultCode is the modal result the dialog's primary button returns
+    // (every prompt in this app uses 1 for OK / Apply / Save / Rename, so it
+    // defaults to 1). Pressing Return in the field exits the dialog with that
+    // code -- a single-line TextEditor swallows Return, so without this the
+    // dialog's return-key button never fires and Enter "does nothing".
+    inline void primeNameEditor (juce::AlertWindow& aw, const juce::String& id,
+                                 int okResultCode = 1) noexcept
     {
         if (auto* ed = aw.getTextEditor (id))
         {
             ed->setSelectAllWhenFocused (true);
+            // Enter in the field = hit the primary button.
+            ed->onReturnKey = [safeAw = juce::Component::SafePointer<juce::AlertWindow> (&aw),
+                               okResultCode]
+            {
+                if (safeAw != nullptr) safeAw->exitModalState (okResultCode);
+            };
             juce::MessageManager::callAsync (
                 [safe = juce::Component::SafePointer<juce::TextEditor> (ed)]
                 {

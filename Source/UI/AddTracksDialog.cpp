@@ -155,6 +155,20 @@ namespace zynforge
             bool isBus()  const { return typeCombo.getSelectedItemIndex() == 1; }
             juce::String baseName() const { return nameEditor.getText().trim(); }
 
+            // Enter in either field fires the dialog's primary action (Create).
+            void setSubmitAction (std::function<void()> fn)
+            {
+                nameEditor .onReturnKey = fn;
+                countEditor.onReturnKey = fn;
+            }
+            // Focus the name field with its text selected so typing renames it.
+            void focusName()
+            {
+                nameEditor.setSelectAllWhenFocused (true);
+                nameEditor.grabKeyboardFocus();
+                nameEditor.selectAll();
+            }
+
         private:
             juce::Label      createLabel;
             juce::TextEditor countEditor;
@@ -244,10 +258,19 @@ namespace zynforge
                             return;
                         }
                 };
+                r->setSubmitAction ([this] { commit(); });   // Enter in a field = Create
                 addAndMakeVisible (*r);
                 rowComponents.push_back (r.release());
                 resizeFor (rowComponents.size());
             }
+
+        public:
+            // Focus the first row's name field once the dialog is on screen.
+            void focusFirstField()
+            {
+                if (! rowComponents.empty()) rowComponents.front()->focusName();
+            }
+        private:
 
             void resizeFor (size_t numRows)
             {
@@ -292,6 +315,7 @@ namespace zynforge
     void AddTracksDialog::launch (ResultCallback cb)
     {
         auto content = std::make_unique<DialogContent> (std::move (cb));
+        auto* contentPtr = content.get();
 
         juce::DialogWindow::LaunchOptions opts;
         opts.dialogTitle                  = "New Tracks";
@@ -301,5 +325,13 @@ namespace zynforge
         opts.useNativeTitleBar            = true;
         opts.resizable                    = false;
         opts.launchAsync();
+
+        // After the window is on screen, focus the name field (select-all) so
+        // the engineer can type a name immediately.
+        juce::MessageManager::callAsync (
+            [safe = juce::Component::SafePointer<DialogContent> (contentPtr)]
+            {
+                if (safe != nullptr) safe->focusFirstField();
+            });
     }
 }

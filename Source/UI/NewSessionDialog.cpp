@@ -53,6 +53,7 @@ namespace zynforge
                 nameEditor.setText ("Untitled-1", juce::dontSendNotification);
                 nameEditor.setSelectAllWhenFocused (true);
                 nameEditor.grabKeyboardFocus();
+                nameEditor.onReturnKey = [this] { dismiss (true); };   // Enter = Create
 
                 // ─── Storage radios ───
                 addAndMakeVisible (localRadio);

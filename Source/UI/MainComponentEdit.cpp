@@ -459,19 +459,9 @@ void MainComponent::dropMarkerAndPromptName()
                                       this);
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
     aw->addTextEditor ("markerName", defaultName, {});
-    if (auto* ed = aw->getTextEditor ("markerName"))
-    {
-        ed->setSelectAllWhenFocused (true);
-        // Defer focus grab until after AlertWindow finishes its own
-        // layout pass -- otherwise the focus call is swallowed and
-        // the engineer still has to click the field before typing.
-        juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<juce::TextEditor> (ed)]
-        {
-            if (safe != nullptr) safe->grabKeyboardFocus();
-        });
-    }
     aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    dialog::primeNameEditor (*aw, "markerName");   // focus + select-all + Enter = OK
 
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true,

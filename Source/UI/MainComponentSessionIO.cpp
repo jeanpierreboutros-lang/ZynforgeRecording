@@ -567,6 +567,7 @@ void MainComponent::promptSaveSessionTemplate()
     aw->addTextEditor ("name", "", {});
     aw->addButton ("Save",   1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    dialog::primeNameEditor (*aw, "name");   // focus + select-all + Enter = Save
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
         [aw, self] (int r)

@@ -294,6 +294,7 @@ void MainComponent::showBatchColourDialog()
     aw->addTextEditor ("last",  juce::String (total), "Last channel:");
     aw->addButton ("Pick colour...", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel",       0, juce::KeyPress (juce::KeyPress::escapeKey));
+    dialog::primeNameEditor (*aw, "first");   // focus first field; Enter advances to Pick colour
 
     aw->enterModalState (true,
         juce::ModalCallbackFunction::create ([this, aw, total] (int result)
