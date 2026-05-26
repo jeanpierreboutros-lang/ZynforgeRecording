@@ -453,7 +453,13 @@ namespace zynforge
         };
 
         const auto& v0 = (*lane)[0];
-        if (samplePos <= v0.samplePos) return withTrim (v0.value);
+        // Before the FIRST point the value stays at the channel's fader
+        // level (the fallback) -- so automation "starts" at the first point
+        // the engineer placed instead of holding that value backward across
+        // the whole intro. AT the first point and onward we follow the curve;
+        // after the LAST point we hold its value so the final move sticks.
+        if (samplePos <  v0.samplePos) return withTrim (fallback);
+        if (samplePos == v0.samplePos) return withTrim (v0.value);
         const auto& vN = lane->back();
         if (samplePos >= vN.samplePos) return withTrim (vN.value);
 

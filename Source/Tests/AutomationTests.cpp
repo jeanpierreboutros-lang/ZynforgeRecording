@@ -76,6 +76,22 @@ namespace zynforge
                 expect (midEaseOut > 6.0f);
             }
 
+            beginTest ("before the first point holds the fader level, not the point value");
+            {
+                AudioEngine eng;
+                eng.setStripCount (1);
+                using P = AudioEngine::AutomationParam;
+                // Single point at 1,000,000 with -12 dB. The fader (fallback)
+                // is 0 dB. Anything BEFORE the point must read the fader level
+                // (0), not -12 -- so the move starts at the point, not before.
+                eng.addAutomationPoint (0, P::Volume, 1000000, -12.0f);
+                expectWithinAbsoluteError (eng.automationValueAt (0, P::Volume, 0,       0.0f), 0.0f,   0.01f);
+                expectWithinAbsoluteError (eng.automationValueAt (0, P::Volume, 500000,  0.0f), 0.0f,   0.01f);
+                expectWithinAbsoluteError (eng.automationValueAt (0, P::Volume, 1000000, 0.0f), -12.0f, 0.01f);
+                // After the last point the value sticks (holds -12).
+                expectWithinAbsoluteError (eng.automationValueAt (0, P::Volume, 2000000, 0.0f), -12.0f, 0.01f);
+            }
+
             beginTest ("Safe lock blocks every write path");
             {
                 AudioEngine eng;
