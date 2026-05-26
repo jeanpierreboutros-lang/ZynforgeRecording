@@ -178,6 +178,9 @@ namespace zynforge
                 eng.setTrackVcaGroup (0, 2);
                 eng.setTrackVcaGroup (1, 2);
                 eng.setTrackEditGroup (3, 1);
+                eng.setSessionTempoBpm (142.0f);
+                eng.setTimeSignature (6, 8);
+                eng.setTempoMap ({ { 0, 120.0f }, { 480000, 140.0f } });
                 eng.saveSessionMixTo (tmp);
 
                 // Trash the live state as if a different session had loaded.
@@ -186,6 +189,9 @@ namespace zynforge
                 eng.setTrackPan    (1, 0.0f);
                 eng.getRecorder().getTrack (2).muted.store (false);
                 eng.setTrackVcaGroup (2, 5);
+                eng.setSessionTempoBpm (90.0f);
+                eng.setTimeSignature (4, 4);
+                eng.setTempoMap ({});
 
                 eng.loadSessionMixFrom (tmp);
                 expectEquals (eng.getRecorder().getTrack (0).name, juce::String ("KICK"));
@@ -197,6 +203,11 @@ namespace zynforge
                 expectEquals (eng.getTrackEditGroup (3), 1);
                 // Strip 2 was ungrouped in the file -> the leaked VCA 5 is overwritten.
                 expectEquals (eng.getRecorder().getTrack (2).vcaGroup.load(), -1);
+                // Tempo state round-trips per session.
+                expectWithinAbsoluteError (eng.getSessionTempoBpm(), 142.0f, 0.01f);
+                expectEquals (eng.getTimeSignatureNumerator(),   6);
+                expectEquals (eng.getTimeSignatureDenominator(), 8);
+                expectEquals ((int) eng.getTempoMap().size(), 2);
 
                 tmp.deleteRecursively();
             }

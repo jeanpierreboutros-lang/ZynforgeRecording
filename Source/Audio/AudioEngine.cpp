@@ -359,6 +359,22 @@ namespace zynforge
         juce::DynamicObject::Ptr root (new juce::DynamicObject());
         root->setProperty ("trackCount", recorder.getNumTracks());
         root->setProperty ("strips", arr);
+
+        // Session-level tempo state (BPM, time signature, and the multi-point
+        // tempo map) -- per session, not global appProps.
+        root->setProperty ("tempoBpm",   (double) currentTempoBpm.load (std::memory_order_relaxed));
+        root->setProperty ("timeSigNum",   timeSigNumerator  .load (std::memory_order_relaxed));
+        root->setProperty ("timeSigDenom", timeSigDenominator.load (std::memory_order_relaxed));
+        juce::Array<juce::var> tmap;
+        for (const auto& tc : tempoMap)
+        {
+            juce::DynamicObject::Ptr o (new juce::DynamicObject());
+            o->setProperty ("pos", (juce::int64) tc.samplePos);
+            o->setProperty ("bpm", (double) tc.bpm);
+            tmap.add (juce::var (o.get()));
+        }
+        root->setProperty ("tempoMap", tmap);
+
         sessionDir.getChildFile ("session_mix.json")
                   .replaceWithText (juce::JSON::toString (juce::var (root.get()), true));
     }
@@ -379,6 +395,24 @@ namespace zynforge
         const int want = (int) root->getProperty ("trackCount");
         if (want > recorder.getNumTracks())
             setStripCount (want);
+
+        // Session tempo state. Guarded so an older session (no keys) keeps
+        // whatever's current rather than snapping to 0 BPM / 4-4.
+        if (root->hasProperty ("tempoBpm"))
+            setSessionTempoBpm ((float) (double) root->getProperty ("tempoBpm"));
+        if (root->hasProperty ("timeSigNum") && root->hasProperty ("timeSigDenom"))
+            setTimeSignature ((int) root->getProperty ("timeSigNum"),
+                              (int) root->getProperty ("timeSigDenom"));
+        if (auto* tm = root->getProperty ("tempoMap").getArray())
+        {
+            std::vector<TempoChange> map;
+            map.reserve ((size_t) tm->size());
+            for (auto& v : *tm)
+                if (auto* o = v.getDynamicObject())
+                    map.push_back ({ (juce::int64) o->getProperty ("pos"),
+                                     (float) (double) o->getProperty ("bpm") });
+            setTempoMap (std::move (map));
+        }
 
         if (auto* arr = root->getProperty ("strips").getArray())
             for (auto& v : *arr)
