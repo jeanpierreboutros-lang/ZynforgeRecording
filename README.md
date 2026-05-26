@@ -96,7 +96,7 @@ Source/
 └── Network/           — CompanionServer, NDIBridge, OscRemote
 ```
 
-Sessions land in `~/Music/Zynforge Sessions/<SessionName>/` with Pro Tools-style subfolders (`Audio Files/`, `Bounced Files/`, `Session File Backups/`, `Clip Groups/`, `Video Files/`). See [`architecture.md`](architecture.md) §6 for the full data flow.
+Sessions land in `~/Music/Zynforge Sessions/<SessionName>/` with subfolders (`Audio Files/`, `Export Files/`, `Session File Backups/`, `Clip Groups/`). The `.zfproj` document carries the ZynForge icon in Finder. See [`architecture.md`](architecture.md) §6 for the full data flow.
 
 ## Sibling project
 

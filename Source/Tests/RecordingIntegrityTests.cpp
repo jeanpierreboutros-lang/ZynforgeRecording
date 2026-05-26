@@ -55,6 +55,15 @@ namespace zynforge
 
                 expect (rec.startRecording (dir), "startRecording failed");
 
+                // Session folder layout: Export Files/ exists, the old
+                // Bounced Files/ and the unused Video Files/ do not.
+                expect (dir.getChildFile ("Export Files").isDirectory(),
+                        "Export Files/ should be created");
+                expect (! dir.getChildFile ("Video Files").exists(),
+                        "Video Files/ should NOT be created");
+                expect (! dir.getChildFile ("Bounced Files").exists(),
+                        "Bounced Files/ should be replaced by Export Files/");
+
                 std::vector<std::vector<float>> buf ((size_t) numCh,
                                                      std::vector<float> ((size_t) block));
                 std::vector<const float*> ptrs ((size_t) numCh);

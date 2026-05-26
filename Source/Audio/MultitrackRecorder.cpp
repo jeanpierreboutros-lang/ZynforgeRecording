@@ -386,16 +386,15 @@ namespace zynforge
         sessionDir.createDirectory();
         activeSessionDir = sessionDir;
 
-        // Pro Tools-style folder layout: tracks live under "Audio Files/",
-        // mixdowns under "Bounced Files/", backups under
+        // Folder layout: tracks live under "Audio Files/", mixdowns /
+        // stem exports under "Export Files/", backups under
         // "Session File Backups/". Session-level metadata (recording.session,
         // session.report.json, the .zfproj document) stays at the root.
         const auto audioFilesDir = sessionDir.getChildFile ("Audio Files");
         audioFilesDir.createDirectory();
-        sessionDir.getChildFile ("Bounced Files")       .createDirectory();
+        sessionDir.getChildFile ("Export Files")        .createDirectory();
         sessionDir.getChildFile ("Clip Groups")         .createDirectory();
         sessionDir.getChildFile ("Session File Backups").createDirectory();
-        sessionDir.getChildFile ("Video Files")         .createDirectory();
 
         writers.clear();
         writers.reserve (tracks.size());

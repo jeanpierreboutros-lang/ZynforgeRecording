@@ -198,7 +198,7 @@ void MainComponent::onImportAudioFiles()
         // Also seed the rest of the Pro Tools-style layout so loose
         // imports look like a real session if the engineer hadn't
         // already created one via File ▸ New Session....
-        sessionDir.getChildFile ("Bounced Files")       .createDirectory();
+        sessionDir.getChildFile ("Export Files")       .createDirectory();
         sessionDir.getChildFile ("Session File Backups").createDirectory();
         engine.setActiveSessionDir (sessionDir);
 
@@ -350,7 +350,7 @@ void MainComponent::onSaveSessionAs()
 
         // Seed the Pro Tools-style subfolder layout in the new spot.
         dest.getChildFile ("Audio Files")         .createDirectory();
-        dest.getChildFile ("Bounced Files")       .createDirectory();
+        dest.getChildFile ("Export Files")       .createDirectory();
         dest.getChildFile ("Session File Backups").createDirectory();
 
         if (source.isDirectory() && source != dest)
@@ -383,12 +383,12 @@ void MainComponent::onExportAllTracks()
         const auto chosenOpts = *opts;
 
         const auto activeSession = engine.getActiveSessionDir();
-        const auto bouncedDir    = activeSession.isDirectory()
-                                       ? activeSession.getChildFile ("Bounced Files")
+        const auto exportDir    = activeSession.isDirectory()
+                                       ? activeSession.getChildFile ("Export Files")
                                        : getSessionsRoot();
-        bouncedDir.createDirectory();
+        exportDir.createDirectory();
         chooser = std::make_unique<juce::FileChooser> (
-            "Export all tracks to...", bouncedDir, "");
+            "Export all tracks to...", exportDir, "");
 
         const auto flags = juce::FileBrowserComponent::saveMode
                          | juce::FileBrowserComponent::canSelectDirectories;
@@ -422,12 +422,12 @@ void MainComponent::onExportIndividualTrack (int channelIndex)
         const auto chosenOpts = *opts;
 
         const auto activeSession = engine.getActiveSessionDir();
-        const auto bouncedDir    = activeSession.isDirectory()
-                                       ? activeSession.getChildFile ("Bounced Files")
+        const auto exportDir    = activeSession.isDirectory()
+                                       ? activeSession.getChildFile ("Export Files")
                                        : getSessionsRoot();
-        bouncedDir.createDirectory();
+        exportDir.createDirectory();
         chooser = std::make_unique<juce::FileChooser> (
-            "Export track to...", bouncedDir, "");
+            "Export track to...", exportDir, "");
 
         const auto flags = juce::FileBrowserComponent::saveMode
                          | juce::FileBrowserComponent::canSelectDirectories;
@@ -762,7 +762,7 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
     // read or wrote, so they're dropped to avoid confusing the
     // engineer with empty folders.
     sessionFolder.getChildFile ("Audio Files")         .createDirectory();
-    sessionFolder.getChildFile ("Bounced Files")       .createDirectory();
+    sessionFolder.getChildFile ("Export Files")       .createDirectory();
     sessionFolder.getChildFile ("Session File Backups").createDirectory();
 
     // Session document -- a small JSON file that ties the folder together.

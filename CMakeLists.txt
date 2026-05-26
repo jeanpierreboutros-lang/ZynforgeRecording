@@ -28,6 +28,10 @@ juce_add_gui_app(ZynforgeRecording
     COMPANY_NAME                  "ZynForge"
     BUNDLE_ID                     "com.zynforge.recording"
     ICON_BIG                      "${CMAKE_CURRENT_SOURCE_DIR}/Source/Theme/AppIcon.png"
+    # Register .zfproj as our session document so Finder shows the ZynForge
+    # icon (JUCE points the document type's CFBundleTypeIconFile at the app
+    # Icon) and double-clicking one opens the app, instead of a blank page.
+    DOCUMENT_EXTENSIONS           "zfproj"
     VERSION                       0.1.0
     HARDENED_RUNTIME_ENABLED      TRUE
     HARDENED_RUNTIME_OPTIONS      "com.apple.security.device.audio-input"

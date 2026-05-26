@@ -430,7 +430,7 @@ void MainComponent::launchNewSessionDialog()
         //   <Local Storage>/<Name>/
         //       <Name>.zfproj
         //       Audio Files/
-        //       Bounced Files/
+        //       Export Files/
         //       Session File Backups/
         //       WaveCache.wfm
         // Subsequent record / save / export operations all live inside
