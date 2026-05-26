@@ -1086,6 +1086,15 @@ namespace zynforge
                     const auto inner2 = wavePane.reduced (brand::space::xs, brand::space::sm);
                     auto sampleToX = [&] (juce::int64 sp) -> int
                     { return TimelineMapper::forLane (inner2, totalSamples).toXFloor (sp); };
+                    // The little green fade grab-squares were drawn on EVERY
+                    // clip edge even with no fade, which clutters the view. Show
+                    // the empty grab-target only when the Fade tool is active;
+                    // a clip that already HAS a fade always shows its handle so
+                    // it stays adjustable in any tool.
+                    const auto fadeTool = (toolsBar != nullptr)
+                                            ? toolsBar->getTool()
+                                            : EditToolsBar::Tool::None;
+                    const bool showFadeGrips = (fadeTool == EditToolsBar::Tool::Fade);
                     for (const auto& c : *clips)
                     {
                         const int xL_ = sampleToX (c.timelineStartSamples);
@@ -1132,15 +1141,17 @@ namespace zynforge
                                 p.lineTo ((float) xF, (float) inner2.getY());
                                 g.strokePath (p, juce::PathStrokeType (1.4f));
                             }
-                            // Drag handle at the apex (top of the
-                            // diagonal). Visible even when fadeIn == 0
-                            // so the engineer has a grab-target to
-                            // introduce a fade from zero.
-                            const juce::Rectangle<float> handle (
-                                (float) xF - 3.5f, (float) inner2.getY(),
-                                7.0f, 7.0f);
-                            g.setColour (brand::accentStatus);
-                            g.fillRect (handle);
+                            // Drag handle at the apex (top of the diagonal).
+                            // Shown when a fade exists, or when the Fade tool
+                            // is active (grab-target to introduce one).
+                            if (c.fadeInSamples > 0 || showFadeGrips)
+                            {
+                                const juce::Rectangle<float> handle (
+                                    (float) xF - 3.5f, (float) inner2.getY(),
+                                    7.0f, 7.0f);
+                                g.setColour (brand::accentStatus);
+                                g.fillRect (handle);
+                            }
                         }
                         {
                             const int xR = sampleToX (c.timelineStartSamples + c.fileLengthSamples);
@@ -1153,11 +1164,14 @@ namespace zynforge
                                 p.lineTo ((float) xR, (float) inner2.getBottom());
                                 g.strokePath (p, juce::PathStrokeType (1.4f));
                             }
-                            const juce::Rectangle<float> handle (
-                                (float) xF - 3.5f, (float) inner2.getY(),
-                                7.0f, 7.0f);
-                            g.setColour (brand::accentStatus);
-                            g.fillRect (handle);
+                            if (c.fadeOutSamples > 0 || showFadeGrips)
+                            {
+                                const juce::Rectangle<float> handle (
+                                    (float) xF - 3.5f, (float) inner2.getY(),
+                                    7.0f, 7.0f);
+                                g.setColour (brand::accentStatus);
+                                g.fillRect (handle);
+                            }
                         }
                     }
 
