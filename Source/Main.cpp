@@ -6,6 +6,90 @@
 #include "Audio/StripNames.h"
 #include "Audio/StripGains.h"
 
+// Branded launch splash: a borderless rounded card shown on top for a few
+// seconds before the main window opens. Paints the brand (forge-Z over a
+// red scope wave, matching the app icon) + product name + author.
+class SplashWindow final : public juce::Component
+{
+public:
+    SplashWindow (juce::String titleText, juce::String subtitleText)
+        : title (std::move (titleText)), subtitle (std::move (subtitleText))
+    {
+        setOpaque (false);
+        setSize (580, 340);
+        setAlwaysOnTop (true);
+        addToDesktop (juce::ComponentPeer::windowIsTemporary
+                      | juce::ComponentPeer::windowHasDropShadow);
+        if (auto* disp = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+            setBounds (getLocalBounds().withCentre (disp->userArea.getCentre()));
+        setVisible (true);
+        toFront (true);
+    }
+
+    void paint (juce::Graphics& g) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (1.0f);
+        const float rad = 20.0f;
+
+        g.setGradientFill (juce::ColourGradient (
+            zynforge::brand::bgPanel.brighter (0.10f), r.getCentreX(), r.getY(),
+            zynforge::brand::bgDeep,                   r.getCentreX(), r.getBottom(), false));
+        g.fillRoundedRectangle (r, rad);
+        g.setColour (zynforge::brand::gloss (0.12f));
+        g.drawRoundedRectangle (r, rad, 1.0f);
+
+        // 'Z' mark with a faint red scope wave behind it (icon motif).
+        auto zArea = juce::Rectangle<float> (0, 0, 92.0f, 92.0f)
+                         .withCentre ({ r.getCentreX(), r.getY() + 96.0f });
+        juce::Path wave;
+        const float wx0 = r.getX() + 70.0f, wx1 = r.getRight() - 70.0f, wamp = 20.0f;
+        const float wy  = zArea.getCentreY();
+        for (int i = 0; i <= 160; ++i)
+        {
+            const float fx  = (float) i / 160.0f;
+            const float x   = wx0 + (wx1 - wx0) * fx;
+            const float env = std::sin (fx * juce::MathConstants<float>::pi);
+            const float y   = wy - std::sin (fx * juce::MathConstants<float>::pi * 5.0f) * wamp * env;
+            if (i == 0) wave.startNewSubPath (x, y); else wave.lineTo (x, y);
+        }
+        g.setColour (zynforge::brand::accentRecord.withAlpha (zynforge::brand::alpha::muted));
+        g.strokePath (wave, juce::PathStrokeType (2.5f, juce::PathStrokeType::curved,
+                                                  juce::PathStrokeType::rounded));
+        drawZ (g, zArea);
+
+        g.setColour (zynforge::brand::brandOrange);
+        g.setFont (zynforge::brand::type::ui (30.0f, true));
+        g.drawText (title, r.withTrimmedTop (160.0f).removeFromTop (40.0f),
+                    juce::Justification::centred, false);
+
+        g.setColour (zynforge::brand::textMuted);
+        g.setFont (zynforge::brand::type::ui (16.0f, false));
+        g.drawText (subtitle, r.withTrimmedTop (206.0f).removeFromTop (28.0f),
+                    juce::Justification::centred, false);
+    }
+
+    static void drawZ (juce::Graphics& g, juce::Rectangle<float> b)
+    {
+        const float t = b.getWidth() * 0.22f;
+        juce::Path p;
+        p.addRectangle (b.getX(), b.getY(), b.getWidth(), t);
+        p.addRectangle (b.getX(), b.getBottom() - t, b.getWidth(), t);
+        juce::Path diag;
+        diag.startNewSubPath (b.getRight() - t, b.getY() + t);
+        diag.lineTo (b.getRight(),     b.getY() + t);
+        diag.lineTo (b.getX() + t,     b.getBottom() - t);
+        diag.lineTo (b.getX(),         b.getBottom() - t);
+        diag.closeSubPath();
+        p.addPath (diag);
+        g.setColour (zynforge::brand::brandOrange);
+        g.fillPath (p);
+    }
+
+private:
+    juce::String title, subtitle;
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SplashWindow)
+};
+
 class ZynforgeRecordingApp final : public juce::JUCEApplication
 {
 public:
@@ -73,7 +157,14 @@ public:
             quit();
             return;
         }
-        mainWindow = std::make_unique<MainWindow> (getApplicationName());
+        // Branded launch splash for 7 s, then the main window opens.
+        splash = std::make_unique<SplashWindow> (getApplicationName().toUpperCase(),
+                                                 "created by Jean-Pierre Boutros");
+        juce::Timer::callAfterDelay (7000, [this]
+        {
+            splash.reset();
+            mainWindow = std::make_unique<MainWindow> (getApplicationName());
+        });
     }
 
     void shutdown() override
@@ -126,6 +217,7 @@ private:
     };
 
     std::unique_ptr<MainWindow> mainWindow;
+    std::unique_ptr<SplashWindow> splash;
 };
 
 START_JUCE_APPLICATION (ZynforgeRecordingApp)
