@@ -222,6 +222,21 @@ namespace zynforge
         record   ->setTooltip ("Toggle recording.");
         loop     ->setTooltip ("Toggle loop between Loop In / Out markers.");
 
+        // Accessibility: icon-only buttons need an explicit spoken name --
+        // VoiceOver has no glyph to read. Title = the action; help text
+        // reuses the tooltip. The bar itself is a labelled focus-container
+        // group so the six buttons are navigable as "Transport".
+        setTitle ("Transport");
+        setDescription ("Playback and recording transport");
+        setFocusContainerType (juce::Component::FocusContainerType::focusContainer);
+        for (IconButton* b : { gotoStart.get(), gotoEnd.get(), play.get(),
+                               stop.get(), record.get(), loop.get() })
+        {
+            b->setTitle (b->getName());        // "Go to start", "Play", ...
+            b->setHelpText (b->getTooltip());
+            b->setWantsKeyboardFocus (true);   // reachable via Tab / VO
+        }
+
         gotoStart->onClick = [this] { engine.getPlayer().setPositionSamples (0); };
         gotoEnd  ->onClick = [this]
         {
