@@ -523,10 +523,44 @@ namespace zynforge
         }
     }
 
+    void AudioEngine::clearStripOverridesRange (int firstIndex, int lastIndexExclusive)
+    {
+        for (int i = firstIndex; i < lastIndexExclusive; ++i)
+        {
+            stripGains  .clearGain   (i);
+            stripGains  .clearPan    (i);
+            stripColours.clearColour (i);
+            stripNames  .clearName   (i);
+            stripRouting.clearInput  (i);
+            stripRouting.clearOutput (i);
+
+            if (appProps != nullptr)
+            {
+                const auto suffix = juce::String (i);
+                appProps->removeValue ("strip_stereo_"    + suffix);
+                appProps->removeValue ("strip_uid_"       + suffix);
+                appProps->removeValue ("strip_vca_"       + suffix);
+                appProps->removeValue ("strip_editgroup_" + suffix);
+                appProps->removeValue ("strip_outmute_"   + suffix);
+                appProps->removeValue ("strip_isbus_"     + suffix);
+                for (int s = 0; s < TrackState::kNumSends; ++s)
+                {
+                    const auto key = "strip_send_" + suffix + "_" + juce::String (s);
+                    appProps->removeValue (key + "_bus");
+                    appProps->removeValue (key + "_dB");
+                    appProps->removeValue (key + "_post");
+                }
+            }
+        }
+        if (appProps != nullptr) appProps->saveIfNeeded();
+    }
+
     void AudioEngine::setStripCount (int n)
     {
         if (recorder.isRecording()) return;
         n = juce::jlimit (0, 256, n);
+
+        const int oldCount = recorder.getNumTracks();
 
         if (appProps != nullptr)
         {
@@ -536,6 +570,17 @@ namespace zynforge
 
         deviceManager.removeAudioCallback (this);
         recorder.setTrackCount (n);
+        // Freshly-added strips must NOT inherit a previous session's per-index
+        // metadata that lingers in appProps -- names, colours, and especially
+        // edit-group / VCA assignments. Edit groups + VCAs are stored globally
+        // by array position (not in the .zfproj), so without this, adding a
+        // channel (or a fresh session re-adding strips after the empty-on-open
+        // start) silently revived last gig's edit-group links -- strips showed
+        // an unexpected "EG" badge and moved together. Wipe the new slots
+        // before applyPersistedStripState re-reads them; callers that import a
+        // real session set names/routing explicitly afterwards.
+        if (n > oldCount)
+            clearStripOverridesRange (oldCount, n);
         applyPersistedStripState();
         deviceManager.addAudioCallback (this);
     }

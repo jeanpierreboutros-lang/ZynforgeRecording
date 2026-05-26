@@ -87,6 +87,23 @@ namespace zynforge
                 expectWithinAbsoluteError (eng.getRecorder().getTrack (0).pan.load(), 0.0f, 0.001f);
             }
 
+            beginTest ("freshly-grown strips don't inherit a previous layout's edit group / VCA");
+            {
+                AudioEngine eng;
+                eng.setStripCount (2);
+                eng.setTrackEditGroup (0, 1);   // persists strip_editgroup_0
+                eng.setTrackVcaGroup  (1, 3);   // persists strip_vca_1
+                expectEquals (eng.getTrackEditGroup (0), 1);
+
+                // Empty out (as on an empty-on-open relaunch) then add strips
+                // back. The new strips must come up CLEAN -- the old edit
+                // group / VCA assignments must not revive by array position.
+                eng.setStripCount (0);
+                eng.setStripCount (2);
+                expectEquals (eng.getTrackEditGroup (0), -1);
+                expectEquals (eng.getRecorder().getTrack (1).vcaGroup.load(), -1);
+            }
+
             beginTest ("snapSampleToGrid -- Off mode is identity");
             {
                 AudioEngine eng;

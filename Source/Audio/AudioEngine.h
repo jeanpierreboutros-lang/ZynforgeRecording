@@ -892,6 +892,13 @@ namespace zynforge
 
         void applyPersistedStripState();
 
+        // Wipe every persisted per-strip override (name, colour, gain, pan,
+        // routing, stereo, edit group, VCA, sends, bus flag, UUID) for the
+        // half-open index range [firstIndex, lastIndexExclusive). Used to
+        // give freshly-added strips a clean slate so they don't inherit a
+        // previous session's layout by array position.
+        void clearStripOverridesRange (int firstIndex, int lastIndexExclusive);
+
         // Audio-thread scratch for routed VSC playback: track i fills
         // channel i, then engine copies into the real device output that
         // strip i is routed to.
