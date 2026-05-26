@@ -3338,14 +3338,13 @@ namespace zynforge
 
     void EditPage::timerCallback()
     {
-        // EDIT view runs at 24 Hz to drive the playhead + waveform
-        // re-scan. When the engineer is in MIX view, EditPage is
-        // hidden and none of that work needs to happen. Bail early.
-        // Exception: a recording in progress -- the playhead doesn't
-        // matter when hidden, but we DO want to keep waveform thumbs
-        // refreshing so flipping back to EDIT shows current peaks.
-        if (! isVisible() && ! engine.isRecording()) return;
-
+        // Session-change detection + waveform attach run REGARDLESS of EDIT
+        // visibility, so the AudioThumbnail background scan (and WaveCache.wfm
+        // build) kick off the moment audio is imported / recorded -- not when
+        // the engineer first switches to EDIT. Rows built while hidden are
+        // just invisible components; the actual file read happens on the
+        // thumbnail cache's background thread. Only the per-tick visual work
+        // further down is gated on visibility.
         const int n = engine.getRecorder().getNumTracks();
         if (n != lastTrackCount)
             refresh();
@@ -3370,6 +3369,12 @@ namespace zynforge
         // cached mid-capture) so the waveform paints at full resolution.
         if (recJustStopped && list != nullptr)
             list->forceRefreshWaveforms();
+
+        // Everything below is purely visual (playhead + repaints) and only
+        // matters when EDIT is on screen. While recording we keep going even
+        // when hidden so peaks stay current for the flip back to EDIT.
+        if (! isVisible() && ! rec)
+            return;
 
         // Playhead
         const auto& player = engine.getPlayer();
