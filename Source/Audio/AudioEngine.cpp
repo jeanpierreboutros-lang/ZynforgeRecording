@@ -1558,11 +1558,27 @@ namespace zynforge
         // Strip's effective dB = its own gain + its VCA bus gain. Defined
         // once here so every consumer below (aux sends, per-channel mix,
         // stream bus) shares one definition instead of re-deriving it.
-        const auto effectiveGainDb = [this] (int i) noexcept -> float
+        // Volume automation overrides the fader during playback. This is
+        // applied HERE (inside effectiveGainDb) so it reaches the per-track
+        // routed hardware outputs, aux sends, and the stream bus -- not just
+        // the stereo monitor mix. Previously only the monitor mix honoured
+        // automation, so a session routed straight to outputs (Out 1-2 etc.)
+        // played at the static fader level and a drawn curve did nothing.
+        const juce::int64 autoPlayPos = player.isPlaying() ? player.getPositionSamples()
+                                                           : (juce::int64) -1;
+        const auto effectiveGainDb = [this, autoPlayPos] (int i) noexcept -> float
         {
             auto& t = recorder.getTrack (i);
-            const float dB = t.gainDb.load (std::memory_order_relaxed);
-            const int   g  = t.vcaGroup.load (std::memory_order_relaxed);
+            float dB = t.gainDb.load (std::memory_order_relaxed);
+            if (autoPlayPos >= 0)
+            {
+                // Stereo pairs store automation on the LEFT track, so the
+                // right partner reads its left neighbour's volume lane.
+                const int autoCh = (i > 0 && recorder.getTrack (i - 1).isStereo.load (std::memory_order_relaxed))
+                                     ? i - 1 : i;
+                dB = automationValueAt (autoCh, AutomationParam::Volume, autoPlayPos, dB);
+            }
+            const int g = t.vcaGroup.load (std::memory_order_relaxed);
             return (g >= 0 && g < kNumVcas)
                  ? dB + vcas[(size_t) g].gainDb.load (std::memory_order_relaxed) : dB;
         };
