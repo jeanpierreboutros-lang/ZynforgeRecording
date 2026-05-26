@@ -178,17 +178,23 @@ namespace zynforge
     {
         auto r = getLocalBounds().reduced (brand::space::md, brand::space::xs);
 
-        titleLabel  .setBounds (r.removeFromLeft (52));
+        // Lay the title on the left, then anchor the buttons from the RIGHT
+        // so each gets its full width and its label never truncates (the old
+        // left-to-right flow overflowed the bar and squeezed CLICK down to
+        // "C..."). The BPM value label absorbs any leftover middle space.
+        titleLabel.setBounds (r.removeFromLeft (52));
         r.removeFromLeft (brand::space::xs);
-        valueLabel  .setBounds (r.removeFromLeft (104).reduced (0, 2));
-        r.removeFromLeft (brand::space::xs);
-        minusButton .setBounds (r.removeFromLeft (24).reduced (0, 2));
-        r.removeFromLeft (2);
-        plusButton  .setBounds (r.removeFromLeft (24).reduced (0, 2));
-        r.removeFromLeft (brand::space::sm);
-        tapButton   .setBounds (r.removeFromLeft (52).reduced (0, 2));
-        r.removeFromLeft (brand::space::xs);
-        clickButton .setBounds (r.removeFromLeft (56).reduced (0, 2));
+
+        clickButton.setBounds (r.removeFromRight (74).reduced (0, 2));
+        r.removeFromRight (brand::space::xs);
+        tapButton  .setBounds (r.removeFromRight (52).reduced (0, 2));
+        r.removeFromRight (brand::space::sm);
+        plusButton .setBounds (r.removeFromRight (24).reduced (0, 2));
+        r.removeFromRight (2);
+        minusButton.setBounds (r.removeFromRight (24).reduced (0, 2));
+        r.removeFromRight (brand::space::xs);
+
+        valueLabel.setBounds (r.reduced (0, 2));   // remaining middle
         // The right-edge LED is painted in paint(); leave breathing room.
     }
 }

@@ -132,7 +132,7 @@ void MainComponent::resized()
     bigClock.setBounds (clockRow);
 
     auto bar = r.removeFromTop (36).reduced (12, 2);
-    tempoBar  .setBounds (bar.removeFromRight (320));
+    tempoBar  .setBounds (bar.removeFromRight (348));   // room for TAP + full CLICK label
     bar.removeFromRight (brand::space::md);
     nextCueLabel.setBounds (bar.removeFromRight (200).reduced (brand::space::xs, brand::space::xs));
     bar.removeFromRight (brand::space::sm);
