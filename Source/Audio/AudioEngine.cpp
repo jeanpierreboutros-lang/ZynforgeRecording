@@ -1838,9 +1838,17 @@ namespace zynforge
             bool  muteAuto = false;
             if (playPos >= 0)
             {
-                dBVal    = automationValueAt (ch, AutomationParam::Volume, playPos, dBVal);
-                panVal   = automationValueAt (ch, AutomationParam::Pan,    playPos, panVal);
-                const float muteV = automationValueAt (ch, AutomationParam::Mute,
+                // A stereo pair stores its automation on the LEFT track only.
+                // The RIGHT partner (the channel after an isStereo=true track)
+                // has no lane, so it reads the left track's volume + mute lanes
+                // -- otherwise the right side ignores the curve entirely and a
+                // volume move barely changes the (still full-level) stereo sum.
+                // Pan stays per-channel so the stereo image isn't collapsed.
+                const int autoCh = (ch > 0 && recorder.getTrack (ch - 1).isStereo.load (std::memory_order_relaxed))
+                                     ? ch - 1 : ch;
+                dBVal    = automationValueAt (autoCh, AutomationParam::Volume, playPos, dBVal);
+                panVal   = automationValueAt (ch,     AutomationParam::Pan,    playPos, panVal);
+                const float muteV = automationValueAt (autoCh, AutomationParam::Mute,
                                                        playPos, t.muted.load() ? 1.0f : 0.0f);
                 muteAuto = muteV > 0.5f;
             }

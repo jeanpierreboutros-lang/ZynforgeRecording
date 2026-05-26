@@ -623,11 +623,23 @@ namespace zynforge
                 float yProp = 0.5f;  // 0 = top, 1 = bottom
                 juce::String label;
 
+                // During playback the readout + value indicator follow the
+                // automation curve at the playhead (i.e. what you actually
+                // hear); when stopped they show the live fader value. Without
+                // this the readout sat on the static fader value and looked
+                // dead even while automation was driving the gain.
+                const auto& plyr = engine.getPlayer();
+                const juce::int64 autoPos = plyr.isPlaying() ? plyr.getPositionSamples()
+                                                             : (juce::int64) -1;
+                using AP = AudioEngine::AutomationParam;
+
                 switch (laneMode)
                 {
                     case LaneMode::Volume:
                     {
-                        const float dB = t.gainDb.load (std::memory_order_relaxed);
+                        float dB = t.gainDb.load (std::memory_order_relaxed);
+                        if (autoPos >= 0)
+                            dB = engine.automationValueAt (index, AP::Volume, autoPos, dB);
                         // -60..+12 dB mapped to 1..0 (loud → top)
                         yProp = 1.0f - juce::jlimit (0.0f, 1.0f,
                                                      (dB + 60.0f) / 72.0f);
@@ -637,7 +649,9 @@ namespace zynforge
                     }
                     case LaneMode::Pan:
                     {
-                        const float pan = t.pan.load (std::memory_order_relaxed);
+                        float pan = t.pan.load (std::memory_order_relaxed);
+                        if (autoPos >= 0)
+                            pan = engine.automationValueAt (index, AP::Pan, autoPos, pan);
                         // -1..+1 mapped to 1..0 (left = top, right = bottom)
                         yProp = (1.0f - pan) * 0.5f;
                         lineCol = brand::accentSolo;
@@ -649,7 +663,10 @@ namespace zynforge
                     }
                     case LaneMode::Mute:
                     {
-                        const bool muted = t.muted.load (std::memory_order_relaxed);
+                        bool muted = t.muted.load (std::memory_order_relaxed);
+                        if (autoPos >= 0)
+                            muted = engine.automationValueAt (index, AP::Mute, autoPos,
+                                                              muted ? 1.0f : 0.0f) > 0.5f;
                         yProp = muted ? 0.05f : 0.95f;
                         lineCol = muted ? brand::brandOrange : brand::textMuted;
                         label   = muted ? "MUTED" : "open";
