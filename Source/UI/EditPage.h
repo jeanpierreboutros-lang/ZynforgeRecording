@@ -187,8 +187,11 @@ namespace zynforge
         // (amplitude) +/- pair stacked at the right edge, and a horizontal
         // (timeline) +/- pair at the bottom-right. Wired to setVerticalZoom
         // / setZoom.
-        juce::TextButton zoomVIn  { "+" }, zoomVOut { "-" };
-        juce::TextButton zoomHIn  { "+" }, zoomHOut { "-" };
+        // Labelled by axis so it's obvious which is amplitude (V) vs
+        // timeline (H): the engineer asked for the zoom to "define what it
+        // does". V↑/V↓ change waveform height; H+/H− change time scale.
+        juce::TextButton zoomVIn  { "V+" }, zoomVOut { "V-" };
+        juce::TextButton zoomHIn  { "H+" }, zoomHOut { "H-" };
         bool clickPresent { false };
         int  clickTrackIdx { -1 };
 

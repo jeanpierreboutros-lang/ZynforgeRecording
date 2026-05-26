@@ -544,31 +544,31 @@ namespace zynforge
             }
 
             // -------- Detected transient ticks (Tab-to-Transient hint) --------
-            // Drawn on top of the waveform as faint vertical marks so
-            // the engineer can SEE where Tab will land. Uses the
-            // engine's per-track cache (built lazily; empty until the
-            // first Tab press or a manual call to nextTransientSample).
+            // Only drawn on the ACTIVE row (the one being Tab-navigated) and
+            // thinned so dense material doesn't turn the lane top into a
+            // solid amber bar. Drawing every onset on every lane made the
+            // whole EDIT view look "noisy".
             {
+                bool isActiveRow = false;
+                if (auto* page = findParentComponentOfClass<EditPage>())
+                    isActiveRow = (page->getActiveRowTrackIndex() == index);
+
                 const auto& player = engine.getPlayer();
                 const auto totalSamples = player.isLoaded()
                     ? player.getTotalLengthSamples() : 0;
-                // The recorder numbers tracks 1-based on disk
-                // (Track_NN.wav); `index` here is 0-based, so +1.
-                const auto& onsets = engine.getTransientsForTrack (index + 1);
-                if (totalSamples > 0 && ! onsets.empty())
+                const auto& onsets = engine.getTransientsForTrack (index + 1);   // disk is 1-based
+                if (isActiveRow && totalSamples > 0 && ! onsets.empty())
                 {
-                    const float alpha = 0.45f;
-                    g.setColour (brand::engagedAmber.withAlpha (alpha));
+                    g.setColour (brand::engagedAmber.withAlpha (0.55f));
+                    int lastX = -1000;
                     for (auto pos : onsets)
                     {
                         if (pos <= 0 || pos >= totalSamples) continue;
                         const double prop = (double) pos / (double) totalSamples;
                         const int x = inner.getX() + (int) (prop * inner.getWidth());
-                        // Short tick at the top of the wave pane so
-                        // it doesn't clutter the waveform itself.
-                        g.drawVerticalLine (x,
-                                            (float) inner.getY(),
-                                            (float) (inner.getY() + 6));
+                        if (x - lastX < 5) continue;          // thin: min 5 px apart
+                        lastX = x;
+                        g.drawVerticalLine (x, (float) inner.getY(), (float) (inner.getY() + 6));
                     }
                 }
             }
