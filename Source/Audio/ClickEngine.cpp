@@ -87,6 +87,7 @@ namespace zynforge
         const double samplesPerClick1 = (f1 > 0.0) ? (samplesPerQuarter / f1) : 0.0;
         const double samplesPerClick2 = (f2 > 0.0) ? (samplesPerQuarter / f2) : 0.0;
 
+        const int bpb = juce::jmax (1, beatsPerBar.load (std::memory_order_relaxed));
         const auto v1 = (Voice) voice1.load (std::memory_order_relaxed);
         const auto v2 = (Voice) voice2.load (std::memory_order_relaxed);
         const float lin1 = juce::Decibels::decibelsToGain (vol1Db.load (std::memory_order_relaxed));
@@ -102,7 +103,7 @@ namespace zynforge
                 if (samplesUntilNextBeat1 <= 0.0)
                 {
                     samplesUntilNextBeat1 += samplesPerClick1;
-                    if ((beat1Counter % 4) == 0)
+                    if ((beat1Counter % bpb) == 0)
                         triggerBurst (voice1Burst, v1, lin1);
                     ++beat1Counter;
                 }
@@ -117,7 +118,7 @@ namespace zynforge
                 {
                     samplesUntilNextBeat2 += samplesPerClick2;
                     const bool isDownbeatAligned =
-                        (sub2Now == Subdivision::Quarter) && (beat2Counter % 4) == 0;
+                        (sub2Now == Subdivision::Quarter) && (beat2Counter % bpb) == 0;
                     if (! isDownbeatAligned)
                         triggerBurst (voice2Burst, v2, lin2);
                     ++beat2Counter;

@@ -35,6 +35,10 @@ namespace zynforge
         void setVoice2     (Voice v) noexcept       { voice2      .store ((int) v, std::memory_order_relaxed); }
         void setSub1       (Subdivision s) noexcept { sub1        .store ((int) s, std::memory_order_relaxed); }
         void setSub2       (Subdivision s) noexcept { sub2        .store ((int) s, std::memory_order_relaxed); }
+        // Beats per bar = the time-signature numerator. The accent (CLICK 1)
+        // lands on beat 1 of each bar, so this must match the session's meter
+        // (3 for 3/4, 6 for 6/8, ...) or the downbeat drifts. Default 4.
+        void setBeatsPerBar (int n) noexcept         { beatsPerBar .store (juce::jlimit (1, 32, n), std::memory_order_relaxed); }
 
         bool  isEnabled()  const noexcept           { return enabled  .load (std::memory_order_relaxed); }
         float getTempoBpm() const noexcept          { return tempoBpm .load (std::memory_order_relaxed); }
@@ -44,6 +48,7 @@ namespace zynforge
         float getVol2Db()  const noexcept           { return vol2Db  .load (std::memory_order_relaxed); }
         Subdivision getSub1() const noexcept        { return (Subdivision) sub1.load (std::memory_order_relaxed); }
         Subdivision getSub2() const noexcept        { return (Subdivision) sub2.load (std::memory_order_relaxed); }
+        int   getBeatsPerBar() const noexcept       { return beatsPerBar.load (std::memory_order_relaxed); }
 
         // Public so offline render can use the same beat-schedule math
         // and per-voice tone presets as the real-time path.
@@ -60,6 +65,7 @@ namespace zynforge
         std::atomic<int>   voice2   { (int) Voice::Click };
         std::atomic<int>   sub1     { (int) Subdivision::Quarter };
         std::atomic<int>   sub2     { (int) Subdivision::Quarter };
+        std::atomic<int>   beatsPerBar { 4 };   // time-signature numerator
 
         // Audio-thread state.
         double sampleRate { 48000.0 };

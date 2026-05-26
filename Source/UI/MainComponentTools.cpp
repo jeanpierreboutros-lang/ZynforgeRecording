@@ -116,6 +116,8 @@ void MainComponent::generateOrRefreshClickTrack()
         double samplesPerQuarter   = 60.0 * sr / juce::jmax (20.0f, cachedBpm);
         double samplesPerClick1    = (f1 > 0.0) ? (samplesPerQuarter / f1) : 0.0;
         double samplesPerClick2    = (f2 > 0.0) ? (samplesPerQuarter / f2) : 0.0;
+        // Downbeat accent every N beats, N = time-signature numerator (was 4).
+        const int beatsPerBar      = juce::jmax (1, engine.getTimeSignatureNumerator());
 
         juce::int64 written = 0;
         while (written < totalSamples)
@@ -149,7 +151,7 @@ void MainComponent::generateOrRefreshClickTrack()
                     if (samplesUntil1 <= 0.0)
                     {
                         samplesUntil1 += samplesPerClick1;
-                        if ((beat1Counter % 4) == 0)
+                        if ((beat1Counter % beatsPerBar) == 0)
                         {
                             v1Burst = { 0.0, 0.0, preset1.freq, preset1.decay, lin1, true };
                         }
@@ -163,7 +165,7 @@ void MainComponent::generateOrRefreshClickTrack()
                     {
                         samplesUntil2 += samplesPerClick2;
                         const bool downAligned =
-                            (sub2 == ClickEngine::Subdivision::Quarter) && (beat2Counter % 4) == 0;
+                            (sub2 == ClickEngine::Subdivision::Quarter) && (beat2Counter % beatsPerBar) == 0;
                         if (! downAligned)
                             v2Burst = { 0.0, 0.0, preset2.freq, preset2.decay, lin2, true };
                         ++beat2Counter;

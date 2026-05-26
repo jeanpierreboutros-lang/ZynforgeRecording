@@ -161,6 +161,19 @@ namespace zynforge
                 expectEquals (eng.getRecorder().getTrack (0).vcaGroup.load(), -1);
             }
 
+            beginTest ("Time signature drives the metronome bar length (downbeat accent)");
+            {
+                AudioEngine eng;
+                // The metronome's bar length must track the meter's numerator.
+                eng.setTimeSignature (4, 4);
+                expectEquals (eng.getClickEngine().getBeatsPerBar(), 4);
+                eng.setTimeSignature (3, 4);
+                expectEquals (eng.getClickEngine().getBeatsPerBar(), 3);
+                eng.setTimeSignature (6, 8);
+                expectEquals (eng.getClickEngine().getBeatsPerBar(), 6);
+                eng.setTimeSignature (4, 4);   // restore default (don't pollute appProps)
+            }
+
             beginTest ("Full strip mix state round-trips through the session file (per-session, not global)");
             {
                 auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory)

@@ -1060,6 +1060,8 @@ namespace zynforge
                                   std::memory_order_relaxed);
         timeSigDenominator.store (appProps->getIntValue ("timeSigDenominator", 4),
                                   std::memory_order_relaxed);
+        // Sync the metronome bar length to the restored meter.
+        click.setBeatsPerBar (timeSigNumerator.load (std::memory_order_relaxed));
 
         // Restore the active session folder (set by New Session... / Open
         // Session...) so Save / Save As stay enabled across app restarts.
@@ -1199,6 +1201,9 @@ namespace zynforge
         if (denominator > 32) denominator = 32;
         timeSigNumerator  .store (numerator,   std::memory_order_relaxed);
         timeSigDenominator.store (denominator, std::memory_order_relaxed);
+        // Keep the metronome's bar length in sync so the accent (downbeat)
+        // lands on beat 1 of the actual meter, not a fixed 4.
+        click.setBeatsPerBar (numerator);
         if (appProps != nullptr)
         {
             appProps->setValue ("timeSigNumerator",   numerator);

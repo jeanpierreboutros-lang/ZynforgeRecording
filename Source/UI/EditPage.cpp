@@ -710,7 +710,8 @@ namespace zynforge
                                 const double prop = s / (double) totalSamples;
                                 const int x = inner.getX()
                                             + (int) (prop * inner.getWidth());
-                                const bool downbeat = (beat % 4) == 0;
+                                const int beatsPerBar = juce::jmax (1, engine.getTimeSignatureNumerator());
+                                const bool downbeat = (beat % beatsPerBar) == 0;
                                 g.setColour (downbeat ? brand::brandOrange
                                                        : brand::accentStatus.withAlpha (brand::alpha::muted));
                                 g.drawVerticalLine (x,
