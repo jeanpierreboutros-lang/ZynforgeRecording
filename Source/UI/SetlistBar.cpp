@@ -51,6 +51,17 @@ namespace zynforge
         updateButton.onClick = [this] { if (onUpdateCue) onUpdateCue(); };
         addAndMakeVisible (updateButton);
 
+        // Explicit RECALL -- re-applies the selected cue's mix / automation /
+        // tempo on demand (the dropdown + arrows also recall, but a clear
+        // button makes the action obvious during a show). Distinct teal so it
+        // reads apart from the green '+ Cue' and grey 'Update'.
+        recallButton.setButtonText ("Recall");
+        recallButton.setColour (juce::TextButton::buttonColourId,  brand::featureEngaged);
+        recallButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::featureEngaged));
+        recallButton.setTooltip ("Recall the selected cue -- apply its mix, automation and tempo now.");
+        recallButton.onClick = [this] { if (onRecallCue) onRecallCue(); };
+        addAndMakeVisible (recallButton);
+
         // Accessibility: the prev/next arrows are path-drawn (no glyph to
         // read), so give every control a spoken name + help text (reused
         // from tooltips), and make the bar a labelled focus-container group.
@@ -62,6 +73,7 @@ namespace zynforge
         cueCombo    .setTitle ("Setlist cue");  cueCombo    .setHelpText (cueCombo    .getTooltip());
         addCueButton.setTitle ("Add cue");      addCueButton.setHelpText (addCueButton.getTooltip());
         updateButton.setTitle ("Update cue");   updateButton.setHelpText (updateButton.getTooltip());
+        recallButton.setTitle ("Recall cue");   recallButton.setHelpText (recallButton.getTooltip());
 
         // Listen for mouse events bubbling up from every child so a
         // right-click anywhere on the bar -- combo, arrow, button --
@@ -139,5 +151,7 @@ namespace zynforge
         addCueButton.setBounds (r.removeFromLeft (64).reduced (0, 2));
         r.removeFromLeft (brand::space::xs);
         updateButton.setBounds (r.removeFromLeft (74).reduced (0, 2));
+        r.removeFromLeft (brand::space::xs);
+        recallButton.setBounds (r.removeFromLeft (72).reduced (0, 2));
     }
 }

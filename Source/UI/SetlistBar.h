@@ -92,6 +92,7 @@ namespace zynforge
         std::function<void()>     onNext;
         std::function<void()>     onAddCue;
         std::function<void()>     onUpdateCue;
+        std::function<void()>     onRecallCue;   // 'Recall' -- re-apply the selected cue
         // Triggered by the right-click menu on the bar or combo. The
         // engineer picks the cue first (combo selection or step), then
         // right-clicks for Rename / Delete.
@@ -154,6 +155,7 @@ namespace zynforge
         ArrowButton        nextButton  { "Next cue",     true };
         juce::TextButton   addCueButton;
         juce::TextButton   updateButton;
+        juce::TextButton   recallButton;
 
         bool suppressComboCallback { false };
 

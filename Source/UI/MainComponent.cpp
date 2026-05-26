@@ -329,6 +329,11 @@ MainComponent::MainComponent()
                                                               currentCueIndex + 1)); };
     setlistBar.onAddCue     = [this] { addCueAtTransport(); };
     setlistBar.onUpdateCue  = [this] { updateCueAtTransport(); };
+    setlistBar.onRecallCue  = [this]
+    {
+        if (currentCueIndex >= 0) jumpToCue (currentCueIndex);
+        else                      showStatus ("Pick a cue first, then Recall");
+    };
     setlistBar.onRenameCue  = [this] { renameCurrentCue(); };
     setlistBar.onMoveCue    = [this] (int dir)
     {
