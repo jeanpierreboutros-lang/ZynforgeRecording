@@ -54,9 +54,16 @@ bool MainComponent::saveSessionStateTo (const juce::File& dir)
     const auto json = juce::JSON::toString (juce::var (root.get()), true);
     const bool wroteSettings = dir.getChildFile ("session_settings.json").replaceWithText (json);
 
-    // Persist per-strip VCA + edit-group assignments WITH the session so they
-    // travel per-show instead of leaking between sessions via global appProps.
-    engine.saveSessionGroupsTo (dir);
+    // Persist the FULL per-strip mixer state WITH the session (name, colour,
+    // gain, pan, mute, solo, monitor, arm, routing, stereo, VCA + edit group)
+    // so it travels per-show instead of leaking between sessions via global
+    // appProps.
+    engine.saveSessionMixTo (dir);
+
+    // Persist cues + comp playlists (Takes) + automation lanes into the
+    // .zfproj. These were only auto-saved on cue edits before, so drawing
+    // automation and hitting Save (without touching a cue) used to lose it.
+    saveSetlistToActiveSession();
 
     // Also persist the UI layout into the session's .zfproj so reopening
     // the show brings back the engineer's view choice, strip width,
@@ -363,10 +370,12 @@ void MainComponent::onSaveSessionAs()
             }
         }
 
-        // Refresh the per-session state JSON in the new location and
-        // pin it as the new active session so the next Save lands here.
-        saveSessionStateTo (dest);
+        // Pin the new folder as the active session FIRST so the parts of the
+        // save that target getActiveSessionDir() (setlist / playlists /
+        // automation / UI layout) land in the new location, then write
+        // everything (settings + full mix state + .zfproj).
         engine.setActiveSessionDir (dest);
+        saveSessionStateTo (dest);
         showStatus ("Saved As → " + dest.getFileName());
     });
 }
@@ -488,10 +497,11 @@ void MainComponent::onLoadSessionClicked()
         loadSetlistFromActiveSession();
         loadUILayoutFromActiveSession();
         const int n = engine.loadSession (dir);
-        // Restore this session's own VCA + edit-group assignments (and size
-        // the mixer to match) AFTER the audio loads. Forces a strip rebuild
-        // on the next tick so the restored groups + badges show immediately.
-        engine.loadSessionGroupsFrom (dir);
+        // Restore this session's own full mixer state (names, colours, gains,
+        // pans, mutes/solos/arm/monitor, routing, stereo, VCA + edit groups)
+        // and size the mixer to match, AFTER the audio loads. Forces a strip
+        // rebuild on the next tick so the restored state + badges show.
+        engine.loadSessionMixFrom (dir);
         lastTrackCount = -1;
         if (n > 0)
         {

@@ -330,7 +330,7 @@ namespace zynforge
         return n;
     }
 
-    void AudioEngine::saveSessionGroupsTo (const juce::File& sessionDir)
+    void AudioEngine::saveSessionMixTo (const juce::File& sessionDir)
     {
         if (! sessionDir.isDirectory()) return;
 
@@ -338,46 +338,47 @@ namespace zynforge
         for (int i = 0; i < recorder.getNumTracks(); ++i)
         {
             auto& t = recorder.getTrack (i);
-            const int vca = t.vcaGroup .load (std::memory_order_relaxed);
-            const int eg  = t.editGroup.load (std::memory_order_relaxed);
-            if (vca < 0 && eg < 0) continue;   // skip ungrouped strips -- keeps the file small
             juce::DynamicObject::Ptr o (new juce::DynamicObject());
             o->setProperty ("index",     i);
-            o->setProperty ("vcaGroup",  vca);
-            o->setProperty ("editGroup", eg);
+            o->setProperty ("name",      t.name);
+            o->setProperty ("colour",    (juce::int64) t.colourARGB.load (std::memory_order_relaxed));
+            o->setProperty ("gainDb",    (double) t.gainDb.load (std::memory_order_relaxed));
+            o->setProperty ("pan",       (double) t.pan.load    (std::memory_order_relaxed));
+            o->setProperty ("muted",     t.muted  .load (std::memory_order_relaxed));
+            o->setProperty ("soloed",    t.soloed .load (std::memory_order_relaxed));
+            o->setProperty ("monitor",   t.monitor.load (std::memory_order_relaxed));
+            o->setProperty ("armed",     t.armed  .load (std::memory_order_relaxed));
+            o->setProperty ("inRoute",   t.inputRouting .load (std::memory_order_relaxed));
+            o->setProperty ("outRoute",  t.outputRouting.load (std::memory_order_relaxed));
+            o->setProperty ("stereo",    t.isStereo .load (std::memory_order_relaxed));
+            o->setProperty ("vcaGroup",  t.vcaGroup .load (std::memory_order_relaxed));
+            o->setProperty ("editGroup", t.editGroup.load (std::memory_order_relaxed));
             arr.add (juce::var (o.get()));
         }
 
         juce::DynamicObject::Ptr root (new juce::DynamicObject());
         root->setProperty ("trackCount", recorder.getNumTracks());
         root->setProperty ("strips", arr);
-        sessionDir.getChildFile ("session_groups.json")
+        sessionDir.getChildFile ("session_mix.json")
                   .replaceWithText (juce::JSON::toString (juce::var (root.get()), true));
     }
 
-    void AudioEngine::loadSessionGroupsFrom (const juce::File& sessionDir)
+    void AudioEngine::loadSessionMixFrom (const juce::File& sessionDir)
     {
-        const auto f = sessionDir.getChildFile ("session_groups.json");
+        const auto f = sessionDir.getChildFile ("session_mix.json");
         if (! f.existsAsFile()) return;   // older session -- leave current state alone
 
         const auto parsed = juce::JSON::parse (f);
         auto* root = parsed.getDynamicObject();
         if (root == nullptr) return;
 
-        // Grow the recorder to the saved strip count if the file expects more
-        // than currently exist, so the assignments have strips to land on.
+        // Grow the recorder to the saved strip count so every saved strip has
+        // a track to land on (the file lists ALL strips, so applying each one
+        // makes the session fully authoritative for its mixer state -- no need
+        // to pre-clear; every field is written below).
         const int want = (int) root->getProperty ("trackCount");
         if (want > recorder.getNumTracks())
             setStripCount (want);
-
-        // Clear every strip to ungrouped FIRST so a strip the file omits
-        // (it only lists grouped ones) doesn't keep a stale assignment that
-        // leaked in from a previously-opened session's global appProps.
-        for (int i = 0; i < recorder.getNumTracks(); ++i)
-        {
-            setTrackVcaGroup  (i, -1);
-            setTrackEditGroup (i, -1);
-        }
 
         if (auto* arr = root->getProperty ("strips").getArray())
             for (auto& v : *arr)
@@ -385,10 +386,24 @@ namespace zynforge
                 {
                     const int idx = (int) o->getProperty ("index");
                     if (idx < 0 || idx >= recorder.getNumTracks()) continue;
-                    if (o->hasProperty ("vcaGroup"))
-                        setTrackVcaGroup  (idx, (int) o->getProperty ("vcaGroup"));
-                    if (o->hasProperty ("editGroup"))
-                        setTrackEditGroup (idx, (int) o->getProperty ("editGroup"));
+                    auto& t = recorder.getTrack (idx);
+
+                    if (o->hasProperty ("name"))     setTrackName          (idx, o->getProperty ("name").toString());
+                    if (o->hasProperty ("colour"))   setTrackColour        (idx, juce::Colour ((juce::uint32) (juce::int64) o->getProperty ("colour")));
+                    if (o->hasProperty ("gainDb"))   setTrackGainDb        (idx, (float) (double) o->getProperty ("gainDb"));
+                    if (o->hasProperty ("pan"))      setTrackPan           (idx, (float) (double) o->getProperty ("pan"));
+                    if (o->hasProperty ("inRoute"))  setTrackInputRouting  (idx, (int) o->getProperty ("inRoute"));
+                    if (o->hasProperty ("outRoute")) setTrackOutputRouting (idx, (int) o->getProperty ("outRoute"));
+                    if (o->hasProperty ("stereo"))   setTrackStereo        (idx, (bool) o->getProperty ("stereo"));
+                    setTrackVcaGroup  (idx, o->hasProperty ("vcaGroup")  ? (int) o->getProperty ("vcaGroup")  : -1);
+                    setTrackEditGroup (idx, o->hasProperty ("editGroup") ? (int) o->getProperty ("editGroup") : -1);
+
+                    // mute / solo / monitor / arm have no dedicated engine
+                    // setter -- the UI flips the atomics directly, so do the same.
+                    t.muted  .store (o->hasProperty ("muted")   && (bool) o->getProperty ("muted"),   std::memory_order_relaxed);
+                    t.soloed .store (o->hasProperty ("soloed")  && (bool) o->getProperty ("soloed"),  std::memory_order_relaxed);
+                    t.monitor.store (o->hasProperty ("monitor") && (bool) o->getProperty ("monitor"), std::memory_order_relaxed);
+                    t.armed  .store (o->hasProperty ("armed")   && (bool) o->getProperty ("armed"),   std::memory_order_relaxed);
                 }
     }
 

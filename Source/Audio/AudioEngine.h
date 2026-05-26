@@ -105,15 +105,16 @@ namespace zynforge
 
         int  loadSession (const juce::File& sessionDir);
 
-        // Per-SESSION VCA + edit-group assignments. These otherwise live in
-        // global appProps keyed by strip index, so they'd leak between
-        // different sessions opened at the same positions. saveSessionGroupsTo
-        // writes them into session_groups.json in the session folder;
-        // loadSessionGroupsFrom sizes the recorder to the saved count, clears
-        // every strip to ungrouped, then applies the file -- making the
-        // session authoritative. No file (older sessions) = no change.
-        void saveSessionGroupsTo   (const juce::File& sessionDir);
-        void loadSessionGroupsFrom (const juce::File& sessionDir);
+        // Per-SESSION strip mix state: name, colour, gain, pan, mute, solo,
+        // monitor, arm, input/output routing, stereo flag, VCA + edit group.
+        // These otherwise live only in global appProps keyed by strip index,
+        // so they'd leak between different sessions opened at the same
+        // positions. saveSessionMixTo writes them all into session_mix.json
+        // in the session folder; loadSessionMixFrom sizes the recorder to the
+        // saved count and applies the file, making the session authoritative
+        // for its own mixer state. No file (older sessions) = no change.
+        void saveSessionMixTo   (const juce::File& sessionDir);
+        void loadSessionMixFrom (const juce::File& sessionDir);
         void startPlayback()
         {
             const bool wasPlaying = player.isPlaying();

@@ -161,29 +161,41 @@ namespace zynforge
                 expectEquals (eng.getRecorder().getTrack (0).vcaGroup.load(), -1);
             }
 
-            beginTest ("VCA + edit groups round-trip through the session file (per-session, not global)");
+            beginTest ("Full strip mix state round-trips through the session file (per-session, not global)");
             {
                 auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                               .getChildFile ("zynforge_groups_roundtrip");
+                               .getChildFile ("zynforge_mix_roundtrip");
                 tmp.deleteRecursively();
                 tmp.createDirectory();
 
                 AudioEngine eng;
                 eng.setStripCount (4);
-                eng.setTrackVcaGroup  (0, 2);
-                eng.setTrackVcaGroup  (1, 2);
+                eng.setTrackName     (0, "KICK");
+                eng.setTrackGainDb   (0, -6.0f);
+                eng.setTrackPan      (1, -0.5f);
+                eng.getRecorder().getTrack (2).muted.store (true);
+                eng.getRecorder().getTrack (3).soloed.store (true);
+                eng.setTrackVcaGroup (0, 2);
+                eng.setTrackVcaGroup (1, 2);
                 eng.setTrackEditGroup (3, 1);
-                eng.saveSessionGroupsTo (tmp);
+                eng.saveSessionMixTo (tmp);
 
-                // Simulate a different session leaving stale global state on a
-                // strip this session never grouped.
+                // Trash the live state as if a different session had loaded.
+                eng.setTrackName   (0, "WRONG");
+                eng.setTrackGainDb (0, 0.0f);
+                eng.setTrackPan    (1, 0.0f);
+                eng.getRecorder().getTrack (2).muted.store (false);
                 eng.setTrackVcaGroup (2, 5);
 
-                eng.loadSessionGroupsFrom (tmp);
+                eng.loadSessionMixFrom (tmp);
+                expectEquals (eng.getRecorder().getTrack (0).name, juce::String ("KICK"));
+                expectWithinAbsoluteError (eng.getRecorder().getTrack (0).gainDb.load(), -6.0f, 0.01f);
+                expectWithinAbsoluteError (eng.getRecorder().getTrack (1).pan.load(), -0.5f, 0.01f);
+                expect (eng.getRecorder().getTrack (2).muted.load());
+                expect (eng.getRecorder().getTrack (3).soloed.load());
                 expectEquals (eng.getRecorder().getTrack (0).vcaGroup.load(), 2);
-                expectEquals (eng.getRecorder().getTrack (1).vcaGroup.load(), 2);
                 expectEquals (eng.getTrackEditGroup (3), 1);
-                // Strip 2 was not in the file -> cleared, not left at the leaked 5.
+                // Strip 2 was ungrouped in the file -> the leaked VCA 5 is overwritten.
                 expectEquals (eng.getRecorder().getTrack (2).vcaGroup.load(), -1);
 
                 tmp.deleteRecursively();
