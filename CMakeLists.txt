@@ -27,6 +27,7 @@ juce_add_gui_app(ZynforgeRecording
     PRODUCT_NAME                  "Zynforge Recording"
     COMPANY_NAME                  "ZynForge"
     BUNDLE_ID                     "com.zynforge.recording"
+    ICON_BIG                      "${CMAKE_CURRENT_SOURCE_DIR}/Source/Theme/AppIcon.png"
     VERSION                       0.1.0
     HARDENED_RUNTIME_ENABLED      TRUE
     HARDENED_RUNTIME_OPTIONS      "com.apple.security.device.audio-input"
