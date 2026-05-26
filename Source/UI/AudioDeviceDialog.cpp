@@ -159,17 +159,16 @@ namespace zynforge
                 addAndMakeVisible (inputBox);
                 addAndMakeVisible (rateBox);
                 addAndMakeVisible (bufferBox);
+                // One stereo-pair picker for the monitor bus (e.g. "Out 1-2")
+                // instead of separate L / R combos -- the monitor is always a
+                // stereo pair, so picking the pair is clearer. monitorOutRBox /
+                // monitorRLabel are left unused (not shown).
                 addAndMakeVisible (monitorOutLBox);
-                addAndMakeVisible (monitorOutRBox);
 
-                monitorLLabel.setText ("Monitor L", juce::dontSendNotification);
-                monitorRLabel.setText ("Monitor R", juce::dontSendNotification);
-                for (auto* l : { &monitorLLabel, &monitorRLabel })
-                {
-                    l->setFont (brand::type::caption());
-                    l->setColour (juce::Label::textColourId, brand::textTertiary);
-                    addAndMakeVisible (*l);
-                }
+                monitorLLabel.setText ("Monitor Output (stereo pair)", juce::dontSendNotification);
+                monitorLLabel.setFont (brand::type::caption());
+                monitorLLabel.setColour (juce::Label::textColourId, brand::textTertiary);
+                addAndMakeVisible (monitorLLabel);
 
                 outChanLabel.setText ("Active outputs:", juce::dontSendNotification);
                 inChanLabel .setText ("Active inputs:",  juce::dontSendNotification);
@@ -297,21 +296,13 @@ namespace zynforge
                 auto bufBody = bufferCard.bodyArea().translated (bufferCard.getX(), bufferCard.getY());
                 bufferBox.setBounds (bufBody.removeFromTop (brand::space::ctrlH));
 
-                // Monitor card -- 2 columns of label + combo. The L / R
-                // pickers drive engine.setMasterOutputs, which all the
-                // monitor-bound feeds (master sum, click, NDI, companion
-                // stream) follow.
+                // Monitor card -- a single full-width stereo-pair picker that
+                // drives engine.setMasterOutputs (master sum, click, NDI,
+                // companion stream all follow it).
                 auto monBody = monitorCard.bodyArea().translated (monitorCard.getX(),
                                                                   monitorCard.getY());
-                const int halfMon = (monBody.getWidth() - brand::space::md) / 2;
-                auto leftCol  = monBody.removeFromLeft (halfMon);
-                monBody.removeFromLeft (brand::space::md);
-                auto rightCol = monBody;
-
-                monitorLLabel  .setBounds (leftCol .removeFromTop (brand::space::xl).withWidth (halfMon));
-                monitorOutLBox .setBounds (leftCol .removeFromTop (brand::space::ctrlH));
-                monitorRLabel  .setBounds (rightCol.removeFromTop (brand::space::xl).withWidth (halfMon));
-                monitorOutRBox .setBounds (rightCol.removeFromTop (brand::space::ctrlH));
+                monitorLLabel  .setBounds (monBody.removeFromTop (brand::space::xl));
+                monitorOutLBox .setBounds (monBody.removeFromTop (brand::space::ctrlH));
 
                 applyButton .setBounds (footer.removeFromRight (110).reduced (0, brand::space::xs));
                 footer.removeFromRight (brand::space::sm);
@@ -386,29 +377,23 @@ namespace zynforge
                     inChanValue .setText (channelsToString (dev->getActiveInputChannels()),
                                           juce::dontSendNotification);
 
-                    // Monitor L / R combos. Listed item per active
-                    // hardware output (1-based to match console
-                    // numbering, e.g. "Out 1", "Out 2"). The current
-                    // engine.masterOutL / masterOutR get selected.
+                    // Single stereo-pair picker: list output pairs (Out 1-2,
+                    // Out 3-4, ...). The item id is the LEFT channel (1-based);
+                    // the right channel is always left+1. Select the pair that
+                    // holds the current monitor left output.
                     monitorOutLBox.clear (juce::dontSendNotification);
-                    monitorOutRBox.clear (juce::dontSendNotification);
                     const auto active = dev->getActiveOutputChannels();
                     const int numOut  = dev->getOutputChannelNames().size();
-                    for (int i = 0; i < numOut; ++i)
+                    for (int i = 0; i + 1 < numOut; i += 2)
                     {
-                        const auto label = "Out " + juce::String (i + 1)
-                                         + (active[i] ? juce::String() : juce::String (" (off)"));
-                        monitorOutLBox.addItem (label, i + 1);
-                        monitorOutRBox.addItem (label, i + 1);
+                        const bool live = active[i] || active[i + 1];
+                        const auto label = "Out " + juce::String (i + 1) + "-" + juce::String (i + 2)
+                                         + (live ? juce::String() : juce::String (" (off)"));
+                        monitorOutLBox.addItem (label, i + 1);   // id = left ch (1-based)
                     }
-                    monitorOutLBox.setSelectedId (
-                        juce::jlimit (1, juce::jmax (1, numOut),
-                                      engine.getMasterOutputL() + 1),
-                        juce::dontSendNotification);
-                    monitorOutRBox.setSelectedId (
-                        juce::jlimit (1, juce::jmax (1, numOut),
-                                      engine.getMasterOutputR() + 1),
-                        juce::dontSendNotification);
+                    const int pairLeft = (engine.getMasterOutputL() / 2) * 2;   // even left of the pair
+                    monitorOutLBox.setSelectedId (juce::jmax (1, pairLeft + 1),
+                                                  juce::dontSendNotification);
                 }
                 else
                 {
@@ -423,11 +408,11 @@ namespace zynforge
             {
                 if (refreshing) return;
                 const int l = juce::jmax (0, monitorOutLBox.getSelectedId() - 1);
-                const int r = juce::jmax (0, monitorOutRBox.getSelectedId() - 1);
+                const int r = l + 1;   // stereo pair: right is always left + 1
                 engine.setMasterOutputs (l, r);
                 statusLabel.setText (
                     "Monitor bus -> Out " + juce::String (l + 1)
-                    + " / Out " + juce::String (r + 1),
+                    + "-" + juce::String (r + 1),
                     juce::dontSendNotification);
             }
 
