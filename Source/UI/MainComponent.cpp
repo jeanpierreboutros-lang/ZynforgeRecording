@@ -690,11 +690,14 @@ void MainComponent::switchView (View v)
     currentView = v;
     const bool mix = (v == View::Mix);
 
+    const double t0 = juce::Time::getMillisecondCounterHiRes();
+    double tAfterRefresh = t0;
     stripsViewport.setVisible (mix);
     if (editPage != nullptr)
     {
         editPage->setVisible (! mix);
         if (! mix) editPage->refresh();   // rescan session dir on entry
+        tAfterRefresh = juce::Time::getMillisecondCounterHiRes();
     }
     saveUILayoutToActiveSession();
 
@@ -719,6 +722,13 @@ void MainComponent::switchView (View v)
     colour (editViewButton, ! mix);
 
     resized();
+
+    if (! mix)
+    {
+        const double tEnd = juce::Time::getMillisecondCounterHiRes();
+        showStatus ("EDIT switch: refresh " + juce::String (tAfterRefresh - t0, 1)
+                    + " ms, layout " + juce::String (tEnd - tAfterRefresh, 1) + " ms");
+    }
 }
 
 void MainComponent::rebuildStrips()
