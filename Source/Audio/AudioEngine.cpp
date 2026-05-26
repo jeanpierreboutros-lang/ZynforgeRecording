@@ -330,6 +330,68 @@ namespace zynforge
         return n;
     }
 
+    void AudioEngine::saveSessionGroupsTo (const juce::File& sessionDir)
+    {
+        if (! sessionDir.isDirectory()) return;
+
+        juce::Array<juce::var> arr;
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+        {
+            auto& t = recorder.getTrack (i);
+            const int vca = t.vcaGroup .load (std::memory_order_relaxed);
+            const int eg  = t.editGroup.load (std::memory_order_relaxed);
+            if (vca < 0 && eg < 0) continue;   // skip ungrouped strips -- keeps the file small
+            juce::DynamicObject::Ptr o (new juce::DynamicObject());
+            o->setProperty ("index",     i);
+            o->setProperty ("vcaGroup",  vca);
+            o->setProperty ("editGroup", eg);
+            arr.add (juce::var (o.get()));
+        }
+
+        juce::DynamicObject::Ptr root (new juce::DynamicObject());
+        root->setProperty ("trackCount", recorder.getNumTracks());
+        root->setProperty ("strips", arr);
+        sessionDir.getChildFile ("session_groups.json")
+                  .replaceWithText (juce::JSON::toString (juce::var (root.get()), true));
+    }
+
+    void AudioEngine::loadSessionGroupsFrom (const juce::File& sessionDir)
+    {
+        const auto f = sessionDir.getChildFile ("session_groups.json");
+        if (! f.existsAsFile()) return;   // older session -- leave current state alone
+
+        const auto parsed = juce::JSON::parse (f);
+        auto* root = parsed.getDynamicObject();
+        if (root == nullptr) return;
+
+        // Grow the recorder to the saved strip count if the file expects more
+        // than currently exist, so the assignments have strips to land on.
+        const int want = (int) root->getProperty ("trackCount");
+        if (want > recorder.getNumTracks())
+            setStripCount (want);
+
+        // Clear every strip to ungrouped FIRST so a strip the file omits
+        // (it only lists grouped ones) doesn't keep a stale assignment that
+        // leaked in from a previously-opened session's global appProps.
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+        {
+            setTrackVcaGroup  (i, -1);
+            setTrackEditGroup (i, -1);
+        }
+
+        if (auto* arr = root->getProperty ("strips").getArray())
+            for (auto& v : *arr)
+                if (auto* o = v.getDynamicObject())
+                {
+                    const int idx = (int) o->getProperty ("index");
+                    if (idx < 0 || idx >= recorder.getNumTracks()) continue;
+                    if (o->hasProperty ("vcaGroup"))
+                        setTrackVcaGroup  (idx, (int) o->getProperty ("vcaGroup"));
+                    if (o->hasProperty ("editGroup"))
+                        setTrackEditGroup (idx, (int) o->getProperty ("editGroup"));
+                }
+    }
+
     void AudioEngine::setPhasePair (int leftCh1Based, int rightCh1Based) noexcept
     {
         phaseLeft .store (juce::jmax (0, leftCh1Based  - 1), std::memory_order_relaxed);

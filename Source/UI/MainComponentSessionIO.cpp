@@ -54,6 +54,10 @@ bool MainComponent::saveSessionStateTo (const juce::File& dir)
     const auto json = juce::JSON::toString (juce::var (root.get()), true);
     const bool wroteSettings = dir.getChildFile ("session_settings.json").replaceWithText (json);
 
+    // Persist per-strip VCA + edit-group assignments WITH the session so they
+    // travel per-show instead of leaking between sessions via global appProps.
+    engine.saveSessionGroupsTo (dir);
+
     // Also persist the UI layout into the session's .zfproj so reopening
     // the show brings back the engineer's view choice, strip width,
     // VCA-panel visibility, and EDIT zoom.
@@ -484,6 +488,11 @@ void MainComponent::onLoadSessionClicked()
         loadSetlistFromActiveSession();
         loadUILayoutFromActiveSession();
         const int n = engine.loadSession (dir);
+        // Restore this session's own VCA + edit-group assignments (and size
+        // the mixer to match) AFTER the audio loads. Forces a strip rebuild
+        // on the next tick so the restored groups + badges show immediately.
+        engine.loadSessionGroupsFrom (dir);
+        lastTrackCount = -1;
         if (n > 0)
         {
             statusLabel.setText ("Loaded " + juce::String (n) + " tracks", juce::dontSendNotification);

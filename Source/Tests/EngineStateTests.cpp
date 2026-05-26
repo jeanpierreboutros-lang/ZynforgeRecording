@@ -160,6 +160,34 @@ namespace zynforge
                 eng.setTrackVcaGroup (0, -1);
                 expectEquals (eng.getRecorder().getTrack (0).vcaGroup.load(), -1);
             }
+
+            beginTest ("VCA + edit groups round-trip through the session file (per-session, not global)");
+            {
+                auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                               .getChildFile ("zynforge_groups_roundtrip");
+                tmp.deleteRecursively();
+                tmp.createDirectory();
+
+                AudioEngine eng;
+                eng.setStripCount (4);
+                eng.setTrackVcaGroup  (0, 2);
+                eng.setTrackVcaGroup  (1, 2);
+                eng.setTrackEditGroup (3, 1);
+                eng.saveSessionGroupsTo (tmp);
+
+                // Simulate a different session leaving stale global state on a
+                // strip this session never grouped.
+                eng.setTrackVcaGroup (2, 5);
+
+                eng.loadSessionGroupsFrom (tmp);
+                expectEquals (eng.getRecorder().getTrack (0).vcaGroup.load(), 2);
+                expectEquals (eng.getRecorder().getTrack (1).vcaGroup.load(), 2);
+                expectEquals (eng.getTrackEditGroup (3), 1);
+                // Strip 2 was not in the file -> cleared, not left at the leaked 5.
+                expectEquals (eng.getRecorder().getTrack (2).vcaGroup.load(), -1);
+
+                tmp.deleteRecursively();
+            }
         }
     };
 
