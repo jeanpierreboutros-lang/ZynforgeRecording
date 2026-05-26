@@ -51,6 +51,18 @@ namespace zynforge
         updateButton.onClick = [this] { if (onUpdateCue) onUpdateCue(); };
         addAndMakeVisible (updateButton);
 
+        // Accessibility: the prev/next arrows are path-drawn (no glyph to
+        // read), so give every control a spoken name + help text (reused
+        // from tooltips), and make the bar a labelled focus-container group.
+        setTitle ("Setlist");
+        setDescription ("Cue list and navigation");
+        setFocusContainerType (juce::Component::FocusContainerType::focusContainer);
+        prevButton  .setTitle ("Previous cue"); prevButton  .setHelpText (prevButton  .getTooltip());
+        nextButton  .setTitle ("Next cue");     nextButton  .setHelpText (nextButton  .getTooltip());
+        cueCombo    .setTitle ("Setlist cue");  cueCombo    .setHelpText (cueCombo    .getTooltip());
+        addCueButton.setTitle ("Add cue");      addCueButton.setHelpText (addCueButton.getTooltip());
+        updateButton.setTitle ("Update cue");   updateButton.setHelpText (updateButton.getTooltip());
+
         // Listen for mouse events bubbling up from every child so a
         // right-click anywhere on the bar -- combo, arrow, button --
         // opens the same context menu.
