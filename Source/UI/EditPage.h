@@ -39,6 +39,11 @@ namespace zynforge
         // to bias the hit-test.
         EditToolsBar* getEditToolsBar() noexcept { return toolsBar.get(); }
 
+        // Owned automation toolbar (mirrors getEditToolsBar). EditPage
+        // creates it; the host re-parents it for layout and wires its
+        // callbacks. Lives here so the EDIT view owns its own chrome.
+        AutomationToolbar* getAutomationToolbar() noexcept { return autoToolbar.get(); }
+
         // Horizontal zoom -- content widens past the viewport so the
         // engineer can navigate a 90-min show. 1.0 = fit, 16.0 = 16×.
         void  setZoom (float z);
@@ -174,6 +179,7 @@ namespace zynforge
         int        focusedPointIdx     { -1 };
         AutomationToolbar*             toolbar  { nullptr };
         std::unique_ptr<EditToolsBar>  toolsBar;
+        std::unique_ptr<AutomationToolbar> autoToolbar;   // owned; host re-parents for layout
         std::unique_ptr<EditTimeRuler> ruler;
 
         // DAW-style edge zoom clusters overlaid on the view: a vertical

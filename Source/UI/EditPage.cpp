@@ -3078,6 +3078,9 @@ namespace zynforge
         // toolbar -- the host re-parents it via getEditToolsBar() +
         // addAndMakeVisible().
         toolsBar = std::make_unique<EditToolsBar>();
+        // Likewise owned here, re-parented by the host via
+        // getAutomationToolbar() + addAndMakeVisible().
+        autoToolbar = std::make_unique<AutomationToolbar>();
 
         list = std::make_unique<TrackList> (engine, formatManager, thumbnailCache);
         list->sharedToolsBar = toolsBar.get();
@@ -3114,6 +3117,10 @@ namespace zynforge
         // It manages its own visibility -- shown when no session is loaded,
         // cleared once waveforms are present (see refresh()).
         addChildComponent (placeholder);
+
+        // Now that the rows exist, point the EDIT view at its own
+        // automation toolbar (wires list->sharedToolbar + row lanes).
+        setAutomationToolbar (autoToolbar.get());
 
         refresh();
         startTimerHz (24);

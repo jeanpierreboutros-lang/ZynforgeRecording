@@ -32,32 +32,8 @@ void MainComponent::paint (juce::Graphics& g)
     g.drawHorizontalLine ((int) header.getBottom() - 1,
                           header.getX(), header.getRight());
 
-    // Empty-state guidance -- when there are no strips and the mixer
-    // is visible, draw a centred hint over the strips area so the
-    // engineer knows their first move is "+CH". Drawn in MainComponent
-    // (not the strips container) so it doesn't have to subclass.
-    if (currentView == View::Mix && strips.empty())
-    {
-        const auto area = stripsViewport.getBounds().toFloat();
-        if (area.getHeight() > 80.0f)
-        {
-            g.setColour (brand::textTertiary);
-            g.setFont (brand::type::headline());
-            g.drawText ("No channels yet",
-                        area.withTrimmedBottom (area.getHeight() * 0.55f).toNearestInt(),
-                        juce::Justification::centredBottom, false);
-            g.setColour (brand::textSecondary);
-            g.setFont (brand::type::uiBody());
-            g.drawText ("Click +CH (top-right) to add your first channel.",
-                        area.withSizeKeepingCentre (area.getWidth(), 24.0f).toNearestInt(),
-                        juce::Justification::centred, false);
-            g.setColour (brand::textTertiary);
-            g.setFont (brand::type::caption());
-            g.drawText ("Then arm R, press the red record button, and play back with the green triangle.",
-                        area.withTrimmedTop (area.getHeight() * 0.55f).toNearestInt(),
-                        juce::Justification::centredTop, false);
-        }
-    }
+    // (The MIXER empty state is now the reusable mixerPlaceholder overlay,
+    // shown/hidden by updateMixerPlaceholder() -- no painted hint here.)
 }
 
 void MainComponent::resized()
@@ -198,7 +174,7 @@ void MainComponent::resized()
     }
 
     auto* editToolsBar = (editPage != nullptr) ? editPage->getEditToolsBar() : nullptr;
-    if (automationToolbar.isVisible())
+    if (automationToolbar->isVisible())
     {
         auto topRow = viewportArea.removeFromTop (44).reduced (2, 0);
         if (editToolsBar != nullptr && editToolsBar->isVisible())
@@ -211,12 +187,12 @@ void MainComponent::resized()
         {
             editToolsBar->setBounds ({});
         }
-        automationToolbar.setBounds (topRow);
+        automationToolbar->setBounds (topRow);
         viewportArea.removeFromTop (brand::space::xs);
     }
     else
     {
-        automationToolbar.setBounds ({});
+        automationToolbar->setBounds ({});
         if (editToolsBar != nullptr) editToolsBar->setBounds ({});
     }
 

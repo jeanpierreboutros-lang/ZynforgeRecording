@@ -201,9 +201,9 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         && dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) == nullptr)
     {
         const int track = editPage->getActiveRowTrackIndex();
-        const auto p = automationToolbar.getParam() == AutomationToolbar::Param::Pan
+        const auto p = automationToolbar->getParam() == AutomationToolbar::Param::Pan
                           ? AudioEngine::AutomationParam::Pan
-                          : automationToolbar.getParam() == AutomationToolbar::Param::Mute
+                          : automationToolbar->getParam() == AutomationToolbar::Param::Mute
                                 ? AudioEngine::AutomationParam::Mute
                                 : AudioEngine::AutomationParam::Volume;
         const auto& lane = engine.getAutomation (track, p);

@@ -285,7 +285,7 @@ private:
     // can compare against the pre-drag state.
     juce::var pendingAutomationBefore;
     bool      automationTransactionOpen { false };
-    zynforge::AutomationToolbar automationToolbar;
+    zynforge::AutomationToolbar* automationToolbar { nullptr };   // owned by editPage
 
     // Per-session cue list -- populated from <SessionName>.zfproj on
     // every session swap, persisted on every add / pick / update.

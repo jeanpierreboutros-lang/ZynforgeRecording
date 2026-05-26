@@ -353,14 +353,23 @@ MainComponent::MainComponent()
     };
     addAndMakeVisible (setlistBar);
 
+    // EDIT page owns the automation toolbar (mirrors getEditToolsBar).
+    // Create the page here so the toolbar exists before we wire its
+    // callbacks, then re-parent the toolbar onto MainComponent for the
+    // top-row layout. The page's other wiring stays below.
+    editPage = std::make_unique<zynforge::EditPage> (engine);
+    addChildComponent (*editPage);          // hidden by default; switchView toggles
+    automationToolbar = editPage->getAutomationToolbar();
+    addAndMakeVisible (*automationToolbar);
+
     // Automation toolbar -- visible only when the EDIT view is active.
     // Tool / parameter changes are exposed to the EDIT rows via the
     // engine + a simple poll (TrackRow::resized + paint pick the
     // current laneMode from the toolbar's param choice).
-    automationToolbar.setVisible (false);
-    automationToolbar.onToolChanged  = [this] (zynforge::AutomationToolbar::Tool)
+    automationToolbar->setVisible (false);
+    automationToolbar->onToolChanged  = [this] (zynforge::AutomationToolbar::Tool)
         { if (editPage != nullptr) editPage->repaint(); };
-    automationToolbar.onParamChanged = [this] (zynforge::AutomationToolbar::Param)
+    automationToolbar->onParamChanged = [this] (zynforge::AutomationToolbar::Param)
     {
         if (editPage != nullptr)
         {
@@ -370,19 +379,18 @@ MainComponent::MainComponent()
             editPage->repaint();
         }
     };
-    automationToolbar.onClearAll = [this]
+    automationToolbar->onClearAll = [this]
     {
         showStatus ("Automation clear is recognised -- point storage lands in the next pass");
     };
-    addAndMakeVisible (automationToolbar);
 
     // editPage doesn't exist yet here -- the real wiring happens below
     // after `editPage = std::make_unique<EditPage>(...)`.
 
     // onClearAll wipes the active parameter across every track.
-    automationToolbar.onClearAll = [this]
+    automationToolbar->onClearAll = [this]
     {
-        const auto p = automationToolbar.getParam();
+        const auto p = automationToolbar->getParam();
         const auto engineParam =
             p == zynforge::AutomationToolbar::Param::Volume ? zynforge::AudioEngine::AutomationParam::Volume
           : p == zynforge::AutomationToolbar::Param::Pan    ? zynforge::AudioEngine::AutomationParam::Pan
@@ -400,7 +408,7 @@ MainComponent::MainComponent()
     // rolling, every fader / pan / mute move drops a new automation
     // point at the current playhead (thinned to ~50 ms resolution by
     // writeAutomationPointThinned in writeAutoIfPlaying below).
-    automationToolbar.onWriteModeChanged = [this] (zynforge::AutomationToolbar::WriteMode wm)
+    automationToolbar->onWriteModeChanged = [this] (zynforge::AutomationToolbar::WriteMode wm)
     {
         using EM = zynforge::AudioEngine::AutomationWriteMode;
         engine.setAutomationWriteMode ((EM) (int) wm);
@@ -415,7 +423,7 @@ MainComponent::MainComponent()
         showStatus (juce::String ("Automation WRITE: ") + label);
     };
 
-    automationToolbar.onTrimModeChanged = [this] (bool trimOn)
+    automationToolbar->onTrimModeChanged = [this] (bool trimOn)
     {
         engine.setAutomationTrimMode (trimOn);
         showStatus (trimOn ? "Automation TRIM armed (fader moves nudge the per-track trim, not the lane shape)"
@@ -424,7 +432,7 @@ MainComponent::MainComponent()
 
     // SUSPEND -- engine ignores every lane at read time. Useful for
     // auditioning a raw fader pass without overwriting automation.
-    automationToolbar.onSuspendChanged = [this] (bool on)
+    automationToolbar->onSuspendChanged = [this] (bool on)
     {
         engine.setAutomationReadSuspended (on);
         showStatus (on ? "Automation SUSPEND on -- playback ignores every lane (raw faders only)"
@@ -434,7 +442,7 @@ MainComponent::MainComponent()
     // PUNCH -- writes only fire inside the engine's punch range
     // (the EDIT page's selection on the time ruler, when one
     // exists). Outside the range, writes are no-ops.
-    automationToolbar.onPunchChanged = [this] (bool on)
+    automationToolbar->onPunchChanged = [this] (bool on)
     {
         engine.setAutomationPunchEnabled (on);
         if (on)
@@ -518,11 +526,8 @@ MainComponent::MainComponent()
     addAndMakeVisible (stripsViewport);
     addChildComponent (mixerPlaceholder);   // empty-state overlay (manages own visibility)
 
-    editPage = std::make_unique<zynforge::EditPage> (engine);
-    addChildComponent (*editPage);   // hidden by default; switchView toggles
-    // Wire the toolbar AFTER the page exists. The handlers above
-    // captured 'this' so they will still see editPage when they fire.
-    editPage->setAutomationToolbar (&automationToolbar);
+    // editPage was created above (it owns the automation toolbar). The
+    // rest of its wiring lives here.
     // Forward the undo wrapper so EditPage TrackRows can push
     // per-point Add / Delete edits through the same undo stack the
     // Clear All button uses. Goes through setAutomationEditWrapper
@@ -694,7 +699,7 @@ void MainComponent::switchView (View v)
     saveUILayoutToActiveSession();
 
     // Automation toolbar is part of the EDIT-view chrome.
-    automationToolbar.setVisible (! mix);
+    automationToolbar->setVisible (! mix);
     if (editPage != nullptr)
         if (auto* tb = editPage->getEditToolsBar())
             tb->setVisible (! mix);
