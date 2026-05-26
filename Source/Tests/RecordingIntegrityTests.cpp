@@ -373,6 +373,9 @@ namespace zynforge
             {
                 auto dir = recordSession (numCh, numBlocks, block);
                 AudioEngine::setTestModeSkipAudioInit (true);
+                {   // scope the engine so its player + background reader threads
+                    // are torn down BEFORE we delete the files (else the reader
+                    // races a use-after-free on the deleted WAVs).
                 AudioEngine eng;
                 eng.setSnapMode (AudioEngine::SnapMode::Off);
                 expect (eng.loadSession (dir) > 0, "session failed to load");
@@ -430,6 +433,7 @@ namespace zynforge
                 expect (restored > 0.05f, "clearing automation did not restore playback level");
 
                 eng.stopPlayback();
+                }   // engine + reader threads destroyed here
                 dir.deleteRecursively();
             }
 

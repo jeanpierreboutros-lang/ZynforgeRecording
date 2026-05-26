@@ -278,10 +278,17 @@ void MainComponent::jumpToCue (int index)
     // own volume / pan / mute moves. Applied for BOTH Snap and Fade recalls
     // (before the Fade early-return below). An empty array clears the lanes;
     // a void var (older cues) leaves the current lanes untouched.
+    int autoPts = 0;
     if (cue.automation.isArray())
     {
         engine.loadAutomationFromJson (cue.automation);
-        if (editPage != nullptr) editPage->refresh();   // redraw lanes in EDIT
+        if (auto* arr = cue.automation.getArray())
+            for (const auto& trk : *arr)
+                if (auto* o = trk.getDynamicObject())
+                    for (const char* lane : { "volume", "pan", "mute" })
+                        if (auto* la = o->getProperty (lane).getArray())
+                            autoPts += la->size();
+        if (editPage != nullptr) editPage->repaintLanes();   // redraw the curves now
     }
 
     // Fade transition? -- start a ramp instead of instant restore.
@@ -342,8 +349,9 @@ void MainComponent::jumpToCue (int index)
     lastTrackCount = -1;   // force strip refresh so combos + buttons redraw
 
     updateTransportLabels();
-    showStatus ("Cue " + juce::String (index + 1) + " -- " + cue.name
-                + (n > 0 ? " (mix recalled)" : ""));
+    showStatus ("Cue " + juce::String (index + 1) + " '" + cue.name + "' recalled -- "
+                + juce::String (n) + " strips, " + juce::String (autoPts) + " automation pts"
+                + (autoPts > 0 ? " (plays during transport)" : ""));
 }
 
 void MainComponent::promptCueName (const juce::String& title,

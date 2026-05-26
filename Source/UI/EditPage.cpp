@@ -3354,6 +3354,12 @@ namespace zynforge
         lastLoaded = engine.getPlayer().isLoaded();
     }
 
+    void EditPage::repaintLanes()
+    {
+        if (list != nullptr) list->repaint();   // rows read engine automation in paint()
+        repaint();
+    }
+
     void EditPage::updatePlaceholder()
     {
         // Show the empty-state placeholder only when there are NO channels.

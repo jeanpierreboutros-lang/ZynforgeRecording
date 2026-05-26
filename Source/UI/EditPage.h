@@ -151,6 +151,7 @@ namespace zynforge
         // Re-scan the session dir, rebuild row list, and re-issue
         // thumbnail-load requests for each track. Safe to call repeatedly.
         void refresh();
+        void repaintLanes();        // force every track row to repaint (e.g. after a cue recall changes automation)
         void updatePlaceholder();   // show/hide the empty-state overlay by channel count
 
         void paint (juce::Graphics&) override;
