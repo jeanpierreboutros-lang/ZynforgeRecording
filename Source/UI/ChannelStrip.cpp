@@ -168,6 +168,7 @@ namespace zynforge
         if (nameLabel.getText() != state.name)
         {
             nameLabel.setText (state.name, juce::dontSendNotification);
+            setTitle (state.name);   // keep the strip's accessible name in sync
             dirty = true;
         }
 
@@ -524,6 +525,7 @@ namespace zynforge
             state.name = newName.isEmpty() ? juce::String (stripIndex + 1)
                                             : newName;
             nameLabel.setText (state.name, juce::dontSendNotification);
+            setTitle (state.name);   // keep the strip's accessible name in sync
             if (renameCb) renameCb (newName);
         };
         addAndMakeVisible (nameLabel);
@@ -629,6 +631,26 @@ namespace zynforge
         meter      .setTooltip ("Peak + RMS LED meter -- click to clear the clip indicator.");
         if (swatch != nullptr)
             swatch->setTooltip ("Click for a colour palette. Right-click the strip for more options.");
+
+        // ── Accessibility ──────────────────────────────────────────────
+        // The single-letter glyphs (R / I / M / S) are meaningless to a
+        // screen reader, so give every control a spoken name + help text,
+        // and make the strip a labelled focus-container group named after
+        // the channel. Help text reuses the tooltips set just above.
+        setFocusContainerType (juce::Component::FocusContainerType::focusContainer);
+        setTitle (state.name);
+        setDescription ("Channel strip");
+
+        armButton .setTitle ("Record arm");    armButton .setHelpText (armButton .getTooltip());
+        monButton .setTitle ("Input monitor"); monButton .setHelpText (monButton .getTooltip());
+        muteButton.setTitle ("Mute");          muteButton.setHelpText (muteButton.getTooltip());
+        soloButton.setTitle ("Solo");          soloButton.setHelpText (soloButton.getTooltip());
+        inputCombo .setTitle ("Input routing");  inputCombo .setHelpText (inputCombo .getTooltip());
+        outputCombo.setTitle ("Output routing"); outputCombo.setHelpText (outputCombo.getTooltip());
+        nameLabel  .setTitle ("Channel name");
+        gainFader  .setTitle ("Gain");
+        panSlider  .setTitle (pairState != nullptr ? "Pan left" : "Pan");
+        panSliderR .setTitle ("Pan right");
 
         // Reference-screenshot pan readouts:
         //   mono   → "pan  ◂  N  ▸"
