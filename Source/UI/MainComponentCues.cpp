@@ -281,6 +281,15 @@ void MainComponent::jumpToCue (int index)
     int autoPts = 0;
     if (cue.automation.isArray())
     {
+        // Clear EVERY lane first, then load the cue's snapshot. A cue only
+        // stores automation for tracks that had any WHEN IT WAS CAPTURED, so
+        // loadAutomationFromJson alone would leave a track that another cue
+        // automated still showing that other cue's curve. Clearing first makes
+        // recall fully authoritative -- the view + playback show exactly this
+        // song's moves and nothing leaks across cues.
+        engine.clearAutomation (AudioEngine::AutomationParam::Volume);
+        engine.clearAutomation (AudioEngine::AutomationParam::Pan);
+        engine.clearAutomation (AudioEngine::AutomationParam::Mute);
         engine.loadAutomationFromJson (cue.automation);
         if (auto* arr = cue.automation.getArray())
             for (const auto& trk : *arr)

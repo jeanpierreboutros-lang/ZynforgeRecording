@@ -222,6 +222,42 @@ namespace zynforge
                 expectWithinAbsoluteError (eng.getAutomation (1, P::Pan)[0].value, -0.8f, 0.01f);
             }
 
+            beginTest ("Cue recall clears lanes a later cue automated (partial snapshot)");
+            {
+                using P = AudioEngine::AutomationParam;
+                AudioEngine eng;
+                eng.setStripCount (3);
+
+                // Cue A captured when ONLY track 0 has automation -> its
+                // snapshot contains no track-2 entry (mirrors the real bug:
+                // AH LAW had nothing yet when 'cue 1' was taken).
+                eng.addAutomationPoint (0, P::Volume, 1000, -6.0f);
+                const auto cueA = eng.automationToJson();
+
+                // Later, track 2 gets automation; cue B captured with both.
+                eng.addAutomationPoint (2, P::Volume, 2000, -9.0f);
+                const auto cueB = eng.automationToJson();
+
+                // Recall = clear every lane, then apply the snapshot (what
+                // jumpToCue now does). Without the clear, recalling A would
+                // leave track 2 showing B's curve.
+                auto recall = [&] (const juce::var& a)
+                {
+                    eng.clearAutomation (P::Volume);
+                    eng.clearAutomation (P::Pan);
+                    eng.clearAutomation (P::Mute);
+                    eng.loadAutomationFromJson (a);
+                };
+
+                recall (cueB);
+                expectEquals ((int) eng.getAutomation (2, P::Volume).size(), 1);
+
+                recall (cueA);
+                expectEquals ((int) eng.getAutomation (0, P::Volume).size(), 1);
+                expect (eng.getAutomation (2, P::Volume).empty(),
+                        "track 2 kept the other cue's automation -- recall not authoritative");
+            }
+
             beginTest ("Legacy ExpUp/ExpDown migrates to Linear+tension");
             {
                 AudioEngine eng;
