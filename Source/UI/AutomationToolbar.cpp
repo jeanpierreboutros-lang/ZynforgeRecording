@@ -141,6 +141,22 @@ namespace zynforge
             if (onPunchChanged) onPunchChanged (punchButton.getToggleState());
         };
         addAndMakeVisible (punchButton);
+
+        // Accessibility: the text buttons read fine from their labels, but
+        // give them help text + name the two combos, and group the whole
+        // toolbar so VoiceOver announces it as one labelled region.
+        setTitle ("Automation");
+        setDescription ("Automation tools and write modes");
+        setFocusContainerType (juce::Component::FocusContainerType::focusContainer);
+        selectButton .setHelpText (selectButton .getTooltip());
+        addButton    .setTitle ("Add point"); addButton.setHelpText (addButton.getTooltip());
+        deleteButton .setHelpText (deleteButton .getTooltip());
+        clearButton  .setHelpText (clearButton  .getTooltip());
+        trimButton   .setHelpText (trimButton   .getTooltip());
+        suspendButton.setHelpText (suspendButton.getTooltip());
+        punchButton  .setHelpText (punchButton  .getTooltip());
+        paramCombo   .setTitle ("Automation lane"); paramCombo.setHelpText ("Which parameter's automation lane to edit");
+        writeCombo   .setTitle ("Write mode");       writeCombo.setHelpText (writeCombo.getTooltip());
     }
 
     void AutomationToolbar::styleToolButton (juce::TextButton& b, juce::Colour activeColour)
