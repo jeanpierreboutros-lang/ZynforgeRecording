@@ -338,6 +338,36 @@ namespace zynforge
                 expectEquals (f.peakOut (1, 256), 0.0f);
             }
 
+            beginTest ("VCA gain attenuates the monitor sum (not just routed outputs)");
+            {
+                // Regression: VCA fader moves were applied only on the routed
+                // per-strip output path (effectiveGainDb); the monitor sum
+                // used the strip's own gainDb directly, so pulling the VCA
+                // master down left the monitored audio at full level.
+                CallbackFixture f (2, 2, 2);
+                for (int i = 0; i < 2; ++i)
+                {
+                    auto& t = f.engine.getRecorder().getTrack (i);
+                    t.armed.store (true); t.monitor.store (true);
+                    f.engine.setTrackVcaGroup (i, 0);
+                }
+                f.engine.setMasterOutputs (0, 1);
+
+                // VCA at unity -> the monitored input is audible.
+                f.engine.getVca (0).gainDb.store (0.0f);
+                f.writeInput (0, 0.5f, 256);
+                f.writeInput (1, 0.5f, 256);
+                f.process (256);
+                expect (f.peakOut (0, 256) > 0.1f);
+
+                // Pull the VCA master fully down -> monitor sum drops to ~silence.
+                f.engine.getVca (0).gainDb.store (-60.0f);
+                f.writeInput (0, 0.5f, 256);
+                f.writeInput (1, 0.5f, 256);
+                f.process (256);
+                expect (f.peakOut (0, 256) < 0.02f);
+            }
+
             beginTest ("VCA solo silences ungrouped strips");
             {
                 CallbackFixture f (3, 3, 2);

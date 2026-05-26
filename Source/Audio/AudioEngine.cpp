@@ -1915,6 +1915,14 @@ namespace zynforge
             }
             if (muteAuto) continue;
 
+            // VCA group gain. The monitor sum was applying ONLY the strip's
+            // own fader, so pulling a VCA master down did nothing here even
+            // though it worked on the routed outputs (which go through
+            // effectiveGainDb). Fold the VCA gain in so the monitor matches.
+            const int vgrp = t.vcaGroup.load (std::memory_order_relaxed);
+            if (vgrp >= 0 && vgrp < kNumVcas)
+                dBVal += vcas[(size_t) vgrp].gainDb.load (std::memory_order_relaxed);
+
             const double dB   = (double) dBVal;
             const double gain = juce::Decibels::decibelsToGain (dB, -60.0);
             const double pan  = juce::jlimit (-1.0, 1.0, (double) panVal);
