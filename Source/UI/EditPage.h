@@ -172,6 +172,7 @@ namespace zynforge
         int        lastTrackCount  { -1 };
         bool       lastLoaded      { false };
         bool       lastRecording   { false };
+        bool       waveCacheSaved  { false };   // WaveCache.wfm written for this session yet?
         juce::File lastSessionDir;
         float      zoom            { 1.0f };
         float      vZoom           { 1.0f };

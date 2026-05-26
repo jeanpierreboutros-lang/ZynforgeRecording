@@ -2204,6 +2204,14 @@ namespace zynforge
         int  getTrackIndex()  const noexcept { return index; }
         bool isStereoPair()   const noexcept { return stereo; }
 
+        // True once the background thumbnail scan has finished for this row's
+        // file(s) (an empty/no-source thumbnail counts as loaded). Lets the
+        // page persist WaveCache.wfm the moment the whole session is scanned.
+        bool waveformsLoaded() const noexcept
+        {
+            return thumbnailL.isFullyLoaded() && (! stereo || thumbnailR.isFullyLoaded());
+        }
+
         Size getRowSize() const noexcept { return rowSize; }
         void setRowSize (Size s) noexcept { rowSize = s; }
         int  getCustomHeight() const noexcept { return customH; }
@@ -3079,6 +3087,15 @@ namespace zynforge
 
         int rowCount() const { return (int) rows.size(); }
 
+        // True when every row's thumbnail has finished its background scan.
+        bool allWaveformsLoaded() const
+        {
+            for (auto& r : rows)
+                if (r != nullptr && ! r->waveformsLoaded())
+                    return false;
+            return true;
+        }
+
         // Used by EditPage::setLogicalRowsVisible for Memory-Location
         // recall. visibleRows is a list of logical row indices to
         // show; empty list = show all.
@@ -3356,9 +3373,26 @@ namespace zynforge
         const bool recJustStopped = (! rec && lastRecording);
         if (loaded != lastLoaded || rec != lastRecording || engine.getActiveSessionDir() != lastSessionDir)
         {
+            if (engine.getActiveSessionDir() != lastSessionDir)
+                waveCacheSaved = false;   // new session -> its cache needs (re)writing
             lastSessionDir = engine.getActiveSessionDir();
             lastRecording  = rec;
             refresh();
+        }
+
+        // Persist WaveCache.wfm as soon as the background scan finishes for the
+        // whole session -- even while EDIT is hidden -- so reopening the show
+        // (or relaunching) paints waveforms instantly instead of re-scanning
+        // every WAV. Without this the cache was only flushed on app quit, so a
+        // freshly-imported session that wasn't quit cleanly re-scanned on the
+        // next open. Done once per session; skipped while recording (files
+        // still growing).
+        if (! waveCacheSaved && ! rec && list != nullptr && list->rowCount() > 0
+            && engine.getActiveSessionDir().isDirectory()
+            && list->allWaveformsLoaded())
+        {
+            saveCacheToSession (engine.getActiveSessionDir());
+            waveCacheSaved = true;
         }
 
         // Waveforms are NOT re-scanned from disk while recording: 48 channels
