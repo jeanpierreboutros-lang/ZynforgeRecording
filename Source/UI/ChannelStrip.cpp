@@ -231,6 +231,18 @@ namespace zynforge
             dirty = true;
         }
 
+        // If a VCA / edit-group / bus badge just appeared or disappeared,
+        // re-lay-out so the name label reclaims or yields the badge's space.
+        const int badgeNow = (state.vcaGroup .load (std::memory_order_relaxed) >= 0
+                           || state.editGroup.load (std::memory_order_relaxed) >= 0
+                           || state.isBus    .load (std::memory_order_relaxed)) ? 1 : 0;
+        if (badgeNow != lastBadgeShown)
+        {
+            lastBadgeShown = badgeNow;
+            resized();
+            dirty = true;
+        }
+
         if (dirty)
             repaint();
     }
@@ -961,6 +973,13 @@ namespace zynforge
         auto nameRow = r.removeFromTop (18);
         if (swatch != nullptr)
             swatch->setBounds (nameRow.removeFromLeft (brand::space::xl).reduced (1, 2));
+        // Reserve room on the right for the VCA / edit-group / bus badge so a
+        // long channel name doesn't run underneath it.
+        const bool hasBadge = state.vcaGroup .load (std::memory_order_relaxed) >= 0
+                           || state.editGroup.load (std::memory_order_relaxed) >= 0
+                           || state.isBus    .load (std::memory_order_relaxed);
+        if (hasBadge && nameRow.getWidth() > 50)
+            nameRow.removeFromRight (44);
         nameLabel.setBounds (nameRow);
         r.removeFromTop (brand::space::xs);
 

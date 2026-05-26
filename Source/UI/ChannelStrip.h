@@ -125,6 +125,10 @@ namespace zynforge
 
     private:
         bool hovered { false };
+        // Tracks whether a VCA / edit-group / bus badge is currently shown so
+        // the slow poll can re-lay-out the name label (which reserves room for
+        // the badge) the moment an assignment changes. -1 = uninitialised.
+        int  lastBadgeShown { -1 };
 
         class Swatch;
 
