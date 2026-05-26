@@ -99,6 +99,11 @@ void MainComponent::loadSetlistFromActiveSession()
                                 }
                             }
                         }
+                        // Per-cue automation lanes (optional). Kept as the
+                        // raw array; jumpToCue feeds it to loadAutomationFromJson.
+                        const auto av = c->getProperty ("automation");
+                        if (av.isArray()) cue.automation = av;
+
                         cues.push_back (std::move (cue));
                     }
                 }
@@ -184,6 +189,13 @@ void MainComponent::saveSetlistToActiveSession() const
             }
             entry->setProperty ("tempoCurve", juce::var (curveArr));
         }
+
+        // Per-cue automation snapshot (volume/pan/mute lanes). Stored as the
+        // same array automationToJson() produces, so the recall path can feed
+        // it straight back into loadAutomationFromJson.
+        if (c.automation.isArray())
+            entry->setProperty ("automation", c.automation);
+
         arr.add (juce::var (entry.get()));
     }
     obj->setProperty ("setlist",   juce::var (arr));
@@ -260,6 +272,16 @@ void MainComponent::jumpToCue (int index)
         for (const auto& p : cue.tempoCurve)
             map.push_back ({ cue.samplePos + p.offsetSamples, p.bpm });
         engine.setTempoMap (std::move (map));
+    }
+
+    // Reinstall this cue's automation lanes so the song plays back with its
+    // own volume / pan / mute moves. Applied for BOTH Snap and Fade recalls
+    // (before the Fade early-return below). An empty array clears the lanes;
+    // a void var (older cues) leaves the current lanes untouched.
+    if (cue.automation.isArray())
+    {
+        engine.loadAutomationFromJson (cue.automation);
+        if (editPage != nullptr) editPage->refresh();   // redraw lanes in EDIT
     }
 
     // Fade transition? -- start a ramp instead of instant restore.
@@ -377,6 +399,10 @@ void MainComponent::addCueAtTransport()
         for (int i = 0; i < total; ++i)
             c.strips.push_back (snapshotStrip (rec.getTrack (i)));
 
+        // Snapshot the automation lanes too, so this song recalls its own
+        // volume / pan / mute moves -- not whatever was last edited globally.
+        c.automation = engine.automationToJson();
+
         cues.push_back (std::move (c));
         currentCueIndex = (int) cues.size() - 1;
         setlistBar.setCues (cues, currentCueIndex);
@@ -429,6 +455,10 @@ void MainComponent::updateCueAtTransport()
     cue.strips.reserve ((size_t) total);
     for (int i = 0; i < total; ++i)
         cue.strips.push_back (snapshotStrip (rec.getTrack (i)));
+
+    // Re-capture the automation lanes too -- Update means 'this is the
+    // mix AND automation this song should recall to'.
+    cue.automation = engine.automationToJson();
 
     setlistBar.setCues (cues, currentCueIndex);
     saveSetlistToActiveSession();
