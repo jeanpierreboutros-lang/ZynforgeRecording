@@ -21,6 +21,7 @@
 #include "TempoBar.h"
 #include "TimelineStrip.h"
 #include "Toast.h"
+#include "PlaceholderView.h"
 #include "VcaPanel.h"
 #include "TransportBar.h"
 
@@ -51,6 +52,7 @@ public:
 
 private:
     void rebuildStrips();
+    void updateMixerPlaceholder();   // show/hide the MIXER empty-state overlay
     void onRecordClicked();
     void onDeviceClicked();
     void onLoadSessionClicked();
@@ -326,6 +328,7 @@ private:
 
     juce::Viewport  stripsViewport;
     juce::Component stripsContainer;
+    zynforge::PlaceholderView mixerPlaceholder;   // MIXER empty-state overlay
     std::unique_ptr<zynforge::EditPage>     editPage;
     std::unique_ptr<zynforge::MasterStrip>  masterStrip;
     std::unique_ptr<zynforge::VcaPanel>     vcaPanel;

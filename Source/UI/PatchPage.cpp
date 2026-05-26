@@ -1,4 +1,6 @@
 #include "PatchPage.h"
+#include "PlaceholderView.h"
+#include "AudioDeviceDialog.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
@@ -24,6 +26,7 @@ namespace zynforge
                 hscroll.setAutoHide (false);
                 hscroll.addListener (this);
                 addAndMakeVisible (hscroll);
+                addChildComponent (placeholder);   // empty-state overlay
                 startTimerHz (10);
             }
             ~PatchMatrix() override { stopTimer(); }
@@ -58,6 +61,7 @@ namespace zynforge
                 {
                     lastHash = h;
                     updateScrollRange();   // HW count / track count may have changed
+                    syncPlaceholder();
                     repaint();
                 }
             }
@@ -266,7 +270,35 @@ namespace zynforge
             {
                 vscroll.setBounds (getWidth()  - kScrollW, 0, kScrollW, getHeight() - kScrollW);
                 hscroll.setBounds (0, getHeight() - kScrollW, getWidth() - kScrollW, kScrollW);
+                placeholder.setBounds (getLocalBounds().withTrimmedRight (kScrollW)
+                                                       .withTrimmedBottom (kScrollW));
                 updateScrollRange();
+                syncPlaceholder();
+            }
+
+            // Show an empty-state overlay when there's nothing to patch:
+            // no audio device (no hardware rows) or no channel strips
+            // (no columns). The no-device case offers a jump to audio
+            // settings. Guarded by lastPlaceholderKind so VoiceOver isn't
+            // re-announced on every tick.
+            void syncPlaceholder()
+            {
+                const int kind = (numRows() == 0)        ? 1     // no device
+                               : (numStripsCount() == 0) ? 2     // no strips
+                                                         : 0;    // patchable
+                if (kind == lastPlaceholderKind) return;
+                lastPlaceholderKind = kind;
+
+                if (kind == 1)
+                    placeholder.showEmpty ("No audio device",
+                        "Select an input/output device to patch hardware channels.",
+                        "Audio settings…",
+                        [this] { AudioDeviceDialog::launch (engine); });
+                else if (kind == 2)
+                    placeholder.showEmpty ("No channels to patch",
+                        "Add tracks or open a session first.");
+                else
+                    placeholder.clear();
             }
 
             void mouseWheelMove (const juce::MouseEvent&,
@@ -463,6 +495,9 @@ namespace zynforge
             int  dragStartCol = 0;
             int  dragStartRow = 0;
             int  dragLastDr   = 0;
+
+            PlaceholderView placeholder;
+            int             lastPlaceholderKind { -1 };   // -1 forces first sync
         };
 
         class PatchPageContent final : public juce::Component

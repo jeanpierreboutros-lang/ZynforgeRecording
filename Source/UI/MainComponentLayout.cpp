@@ -229,6 +229,7 @@ void MainComponent::resized()
     }
 
     stripsViewport.setBounds (viewportArea);
+    mixerPlaceholder.setBounds (viewportArea);   // overlay the MIXER strip area
     if (editPage != nullptr)
         editPage->setBounds (viewportArea);
 

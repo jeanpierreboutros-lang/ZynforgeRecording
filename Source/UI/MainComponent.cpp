@@ -516,6 +516,7 @@ MainComponent::MainComponent()
     stripsViewport.setViewedComponent (&stripsContainer, false);
     stripsViewport.setScrollBarsShown (false, true);     // h-scroll only
     addAndMakeVisible (stripsViewport);
+    addChildComponent (mixerPlaceholder);   // empty-state overlay (manages own visibility)
 
     editPage = std::make_unique<zynforge::EditPage> (engine);
     addChildComponent (*editPage);   // hidden by default; switchView toggles
@@ -698,6 +699,7 @@ void MainComponent::switchView (View v)
         if (auto* tb = editPage->getEditToolsBar())
             tb->setVisible (! mix);
     resized();   // re-flow the layout for the new state
+    updateMixerPlaceholder();   // only shows in MIX view + when empty
 
     // Reflect active state in the button tinting.
     auto colour = [] (juce::TextButton& b, bool engaged)
@@ -1011,6 +1013,26 @@ void MainComponent::rebuildStrips()
     }
     lastTrackCount = n;
     resized();
+    updateMixerPlaceholder();
+}
+
+void MainComponent::updateMixerPlaceholder()
+{
+    // Only in MIX view (stripsViewport is the view's visibility proxy) and
+    // only when there are no channels. The CTA reuses the Add-tracks flow.
+    const bool inMix = stripsViewport.isVisible();
+    const bool empty = engine.getRecorder().getNumTracks() == 0;
+    const auto want = (inMix && empty) ? PlaceholderView::State::Empty
+                                       : PlaceholderView::State::Hidden;
+    if (mixerPlaceholder.getState() == want) return;
+
+    if (want == PlaceholderView::State::Empty)
+        mixerPlaceholder.showEmpty ("No channels yet",
+            "Add tracks or open a session to start mixing.",
+            "Add tracks",
+            [this] { if (addChannelButton.onClick) addChannelButton.onClick(); });
+    else
+        mixerPlaceholder.clear();
 }
 
 void MainComponent::onRecordClicked()
