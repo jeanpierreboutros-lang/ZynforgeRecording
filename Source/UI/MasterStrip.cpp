@@ -95,6 +95,16 @@ namespace zynforge
         addAndMakeVisible (meter);
         cachedStereo = engine.getMasterStereo();
 
+        // Accessibility: name the master controls for VoiceOver (the "ST"
+        // toggle glyph in particular is unreadable) and group the strip.
+        setTitle ("Master");
+        setDescription ("Master output bus");
+        setFocusContainerType (juce::Component::FocusContainerType::focusContainer);
+        fader      .setTitle ("Master gain");
+        muteButton .setTitle ("Master mute");
+        modeButton .setTitle ("Mono / stereo"); modeButton .setHelpText (modeButton .getTooltip());
+        outputCombo.setTitle ("Master output");  outputCombo.setHelpText (outputCombo.getTooltip());
+
         refreshOutputs();
         startTimerHz (10);
     }
