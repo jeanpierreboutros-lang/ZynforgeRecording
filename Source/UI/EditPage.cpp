@@ -130,8 +130,8 @@ namespace zynforge
                   juce::AudioFormatManager& formats,
                   juce::AudioThumbnailCache& cache)
             : index (trackIdx), stereo (isStereoPair), engine (eng),
-              thumbnailL (1024, formats, cache),
-              thumbnailR (1024, formats, cache),
+              thumbnailL (256, formats, cache),
+              thumbnailR (256, formats, cache),
               meter (engine.getRecorder().getTrack (index))
         {
             if (stereo)
@@ -490,21 +490,23 @@ namespace zynforge
             const auto waveColour = getStripColour().brighter (0.25f);
             const auto inner = wavePane.reduced (brand::space::xs, brand::space::sm);
 
-            // Waveform vertical scale = auto-fit-to-peak (so even a quiet
-            // -40 dBFS take is visible, like a DAW's peaks view) multiplied
-            // by the user's vertical-zoom control. The auto-fit floors at 1x
-            // (true level) and caps high so a near-silent track gets boosted
-            // into view without the noise floor going full-height. vZoom (the
-            // V +/- buttons / Cmd+Shift+wheel) scales on top of that.
+            // Waveform vertical scale = a GENTLE auto-gain (so a quiet but
+            // real take is still readable) multiplied by the user's vertical
+            // zoom. The auto-gain caps at 4x -- the old 64x cap turned every
+            // idle/unused input on a big session into a solid bar of amplified
+            // hiss. Anything below ~-48 dBFS is treated as silent and left at
+            // true level, so unused channels read as a clean flat line, not
+            // noise. vZoom (V+/V- / Shift+wheel) then scales on top, so those
+            // controls always have a visible, consistent effect.
             float vz = 1.0f;
             if (auto* page = findParentComponentOfClass<EditPage>())
                 vz = page->getVerticalZoom();
             auto waveZoom = [vz] (const juce::AudioThumbnail& tn) -> float
             {
-                if (tn.getTotalLength() <= 0.0) return 1.0f;
+                if (tn.getTotalLength() <= 0.0) return vz;
                 const float peak = tn.getApproximatePeak();
-                const float fit  = peak > 0.0005f
-                                     ? juce::jlimit (1.0f, 64.0f, 0.85f / peak)
+                const float fit  = peak > 0.004f
+                                     ? juce::jlimit (1.0f, 4.0f, 0.85f / peak)
                                      : 1.0f;
                 return fit * vz;
             };
