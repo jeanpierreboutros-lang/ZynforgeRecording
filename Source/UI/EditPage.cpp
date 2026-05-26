@@ -20,7 +20,11 @@ namespace zynforge
     // changes, so stale coarse caches are discarded and re-scanned.
     static constexpr int kThumbResolution = 128;
     static constexpr int kWaveCacheMagic   = 0x5A574332; // 'ZWC2'
-    static constexpr int kWaveCacheVersion = (kThumbResolution << 8) | 1;
+    // Low byte is a revision: bump it to discard previously-saved caches even
+    // when the resolution is unchanged. rev 2 drops caches written by the
+    // build that froze thumbnails at a fraction of a second (a partial read
+    // taken mid-capture got cached as 'complete'); those files are re-scanned.
+    static constexpr int kWaveCacheVersion = (kThumbResolution << 8) | 2;
 
     // Single home for the timeline<->pixel mapping that the EDIT lanes do
     // ~a dozen times. Build one per paint/event from the lane's inner
@@ -142,6 +146,7 @@ namespace zynforge
                   juce::AudioFormatManager& formats,
                   juce::AudioThumbnailCache& cache)
             : index (trackIdx), stereo (isStereoPair), engine (eng),
+              thumbCache (cache),
               thumbnailL (kThumbResolution, formats, cache),
               thumbnailR (kThumbResolution, formats, cache),
               meter (engine.getRecorder().getTrack (index))
@@ -418,10 +423,22 @@ namespace zynforge
         // gets re-scanned and the waveform grows on screen.
         void reloadCurrentWaveformFiles()
         {
+            // setSource consults the AudioThumbnailCache by file hash and, if
+            // it finds an entry that claims to be fully loaded, returns it
+            // WITHOUT re-reading the file. If the file has since grown (or was
+            // first read mid-capture as a fraction of a second), that stale
+            // partial would shadow the finished file forever. Drop the cached
+            // thumb first so the now-complete file is re-scanned at full length.
             if (currentFileL.existsAsFile())
+            {
+                thumbCache.removeThumb (currentFileL.hashCode());
                 thumbnailL.setSource (new juce::FileInputSource (currentFileL));
+            }
             if (currentFileR.existsAsFile())
+            {
+                thumbCache.removeThumb (currentFileR.hashCode());
                 thumbnailR.setSource (new juce::FileInputSource (currentFileR));
+            }
             repaint();
         }
 
@@ -2820,6 +2837,7 @@ namespace zynforge
 
         int                       index;
         AudioEngine&              engine;
+        juce::AudioThumbnailCache& thumbCache;   // shared; used to drop stale thumbs
         juce::AudioThumbnail      thumbnailL;
         juce::AudioThumbnail      thumbnailR;
         juce::File                currentFileL;
@@ -3319,6 +3337,7 @@ namespace zynforge
         // session loaded, session changed, ...
         const bool loaded = engine.getPlayer().isLoaded();
         const bool rec    = engine.isRecording();
+        const bool recJustStopped = (! rec && lastRecording);
         if (loaded != lastLoaded || rec != lastRecording || engine.getActiveSessionDir() != lastSessionDir)
         {
             lastSessionDir = engine.getActiveSessionDir();
@@ -3326,10 +3345,13 @@ namespace zynforge
             refresh();
         }
 
-        // While recording, the Track_NN files grow on disk but their
-        // path doesn't change -- push a fresh InputSource into each row
-        // every tick so the AudioThumbnail re-scans the new bytes.
-        if (rec && list != nullptr)
+        // Waveforms are NOT re-scanned from disk while recording: 48 channels
+        // re-read at 24 Hz would contend with the recorder's own capture
+        // writes and risk dropouts (capture integrity wins). The meters show
+        // live signal during the take. The moment recording stops, the files
+        // are final -- do one clean full re-scan (which drops any partial
+        // cached mid-capture) so the waveform paints at full resolution.
+        if (recJustStopped && list != nullptr)
             list->forceRefreshWaveforms();
 
         // Playhead
