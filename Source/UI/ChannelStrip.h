@@ -90,6 +90,17 @@ namespace zynforge
         // playback rolling; safeOn = per-track Safe lock.
         void setAutomationLed (bool writeArmed, bool safeOn);
 
+        // Read-mode automation display. When set, the slow poll asks these
+        // for the gain / pan to SHOW (passing the stored manual value as
+        // fallback). MainComponent wires them to engine.automationValueAt so
+        // that while playback rolls the MIXER fader + pan track the EDIT
+        // automation curve at the playhead -- keeping the two views linked --
+        // and snap back to the manual value when stopped. Null = always show
+        // the manual value.
+        std::function<float (float /*manualDb*/)>  displayGainDb;
+        std::function<float (float /*manualPan*/)> displayPanL;
+        std::function<float (float /*manualPan*/)> displayPanR;
+
         // Fired when the engineer toggles 'Automation Safe' in the
         // strip context menu. Host wires this to
         // engine.setTrackAutomationSafe.

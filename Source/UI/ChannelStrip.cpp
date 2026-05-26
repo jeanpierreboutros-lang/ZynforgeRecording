@@ -182,9 +182,14 @@ namespace zynforge
         if (muteButton.getToggleState() != muted)  { muteButton.setToggleState (muted,  juce::dontSendNotification); dirty = true; }
         if (soloButton.getToggleState() != soloed) { soloButton.setToggleState (soloed, juce::dontSendNotification); dirty = true; }
 
-        // Fader + pan
-        const float gainDb = state.gainDb.load (std::memory_order_relaxed);
-        const float panL   = state.pan   .load (std::memory_order_relaxed);
+        // Fader + pan. During playback the display hooks return the
+        // AUTOMATED value at the playhead so the fader / pan track the EDIT
+        // curve (views stay linked); when stopped (or unhooked) they return
+        // the stored manual value.
+        float gainDb = state.gainDb.load (std::memory_order_relaxed);
+        if (displayGainDb) gainDb = displayGainDb (gainDb);
+        float panL = state.pan.load (std::memory_order_relaxed);
+        if (displayPanL) panL = displayPanL (panL);
         if (std::abs ((float) gainFader.getValue() - gainDb) > 0.05f)
         {
             gainFader.setValue (gainDb, juce::dontSendNotification);
@@ -197,7 +202,8 @@ namespace zynforge
         }
         if (pairState != nullptr)
         {
-            const float panR = pairState->pan.load (std::memory_order_relaxed);
+            float panR = pairState->pan.load (std::memory_order_relaxed);
+            if (displayPanR) panR = displayPanR (panR);
             if (std::abs ((float) panSliderR.getValue() - panR) > 0.01f)
             {
                 panSliderR.setValue (panR, juce::dontSendNotification);

@@ -878,6 +878,32 @@ void MainComponent::rebuildStrips()
                                                  (step == 2) ? std::move (panRCb)
                                                              : ChannelStrip::FloatCallback{});
 
+        // Read-mode display follow: while playback rolls, the MIXER fader /
+        // pan show the AUTOMATED value at the playhead so they track the EDIT
+        // automation curve (the views stay linked). Stopped -> manual value.
+        // Volume automation lives on the L track of a stereo pair, so the
+        // stereo strip fader reads track i; each pan knob reads its own
+        // channel's lane.
+        s->displayGainDb = [this, i] (float manualDb) -> float
+        {
+            if (! engine.isPlaying()) return manualDb;
+            return engine.automationValueAt (i, zynforge::AudioEngine::AutomationParam::Volume,
+                                             engine.getPlayer().getPositionSamples(), manualDb);
+        };
+        s->displayPanL = [this, i] (float manualPan) -> float
+        {
+            if (! engine.isPlaying()) return manualPan;
+            return engine.automationValueAt (i, zynforge::AudioEngine::AutomationParam::Pan,
+                                             engine.getPlayer().getPositionSamples(), manualPan);
+        };
+        if (step == 2)
+            s->displayPanR = [this, i] (float manualPan) -> float
+            {
+                if (! engine.isPlaying()) return manualPan;
+                return engine.automationValueAt (i + 1, zynforge::AudioEngine::AutomationParam::Pan,
+                                                 engine.getPlayer().getPositionSamples(), manualPan);
+            };
+
         // Right-click menu wiring.
         auto deleteCb     = [this, i, step]
         {
