@@ -57,16 +57,23 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Ap
 - **Keyboard automation-point navigation** in EDIT: `←` / `→` step the focused point through the active lane (seeks the playhead), `↑` / `↓` nudge its value, `Delete` removes it — all wrapped in undo
 
 ### Cues + setlist
-- Drop cues at any transport position; per-cue snapshot of every strip's state
+- Drop cues at any transport position; per-cue snapshot of every strip's state **and the full automation lanes** — switching to a cue swaps in that song's volume / pan / mute moves
+- Explicit **Recall** button alongside the dropdown / ◀ ▶ navigation (and the cue dropdown still recalls on pick)
+- Cue recall is authoritative: every automation lane is cleared first, then the cue's snapshot is applied, so a cue without entries on a track doesn't leave another cue's curve behind
 - Stable strip UUIDs — reorder the mixer without breaking cue recall
 - Per-cue tempo curves with accel / rit interpolation
 - Soft-takeover ramps on recall — click-free state transitions
 - LCD countdown to next cue, drag-reorder, Print setlist to PDF (via HTML)
 
-### VCA + aux sends (Pro Tools-style)
+### VCA + aux sends
 - 8 VCA groups with per-bus gain / mute / solo / colour / name
+- VCA gain + mute applied on **both** the routed per-strip outputs and the stereo monitor / master sum; stereo pairs read the left track's lane so both halves follow the curve
 - 4 aux sends per strip with pre/post-fader switch and bus targeting
-- Right-click any strip → Assign to VCA
+- Right-click any strip → Assign to VCA. VCA + edit-group assignments save **per session** (live in `session_mix.json`), no longer leak across sessions
+
+### Metronome (click track)
+- Real-time click engine + offline-rendered click WAV. **Downbeat accent follows the session time signature** (3/4 → every 3, 6/8 → every 6, …) — the bar length isn't hard-wired to 4
+- Voice + subdivision per accent vs. off-beat; click-track regen on tempo change
 
 ### Console integration (OSC)
 Five dialects with **full action parity** (transport, scene recall → marker, per-channel name / mute / arm / colour): Generic, DiGiCo, Allen & Heath (SQ / Avantis), SSL Live, Yamaha (DM7 / RIVAGE PM). 1-based channel indices to match console numbering.
@@ -78,6 +85,11 @@ HTTP server on `:9000` — browser / iPad opens `http://<this-mac>:9000/`. Polle
 - **LOCK** button disables every other control so a stray click can't kill a take
 - Redundant-write to a second drive in parallel
 - Recording always **pre-fader** — fader / pan / mute / solo are monitoring concerns only
+
+### Workflow polish
+- Every text / number prompt (rename track, marker name, cue name, clip gain, +CH, New Session, …) opens with its field focused + text selected; **Enter** confirms the primary action without reaching for the mouse
+- Cue switching repaints the EDIT automation lanes immediately so the curve visibly updates per song
+- Waveform cache builds in the background on import / record and is flushed to `WaveCache.wfm` as soon as the scan finishes, not only on app quit — reopening a session paints waveforms instantly
 
 ## Visual identity
 
@@ -96,7 +108,7 @@ Source/
 └── Network/           — CompanionServer, NDIBridge, OscRemote
 ```
 
-Sessions land in `~/Music/Zynforge Sessions/<SessionName>/` with subfolders (`Audio Files/`, `Export Files/`, `Session File Backups/`, `Clip Groups/`). The `.zfproj` document carries the ZynForge icon in Finder. See [`architecture.md`](architecture.md) §6 for the full data flow.
+Sessions land in `~/Music/Zynforge Sessions/<SessionName>/` with subfolders (`Audio Files/`, `Export Files/`, `Session File Backups/`, `Clip Groups/`) and per-session state files at the root: **`<Name>.zfproj`** (cues, playlists, automation, UI layout), **`session_mix.json`** (per-strip mix + session tempo), **`markers.json`** (markers), **`session.report.json`** (sha256 + counts on clean stop), and **`WaveCache.wfm`** (versioned thumbnail cache). The `.zfproj` document carries the ZynForge icon in Finder. See [`architecture.md`](architecture.md) §6 for the full data flow.
 
 ## Sibling project
 

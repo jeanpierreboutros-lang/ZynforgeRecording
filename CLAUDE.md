@@ -52,16 +52,46 @@ For ad-hoc architecture questions, the source of truth is the code itself — st
 ### Stereo + view linkage
 
 - A stereo pair is two adjacent physical tracks with `isStereo=true` on the L track. Every view (MIXER, EDIT, PATCH) must collapse the pair into one logical entry.
-- Mute / solo / arm / gain / pan / colour / name changes mirror across the pair automatically — never half-update.
+- Mute / solo / arm / gain / pan / colour / name / VCA / edit-group changes mirror across the pair automatically — never half-update.
+- VCA gain + mute on a stereo pair: the R partner reads the L track's lane (in the audio callback) so both halves follow the curve. Pan stays per-channel so the stereo image isn't collapsed.
 
 ### Persistence
 
-- Anything the user can edit (track names, colours, routing, gains, stereo pairs, takes, cues, time signature) must round-trip through `.zfproj` or `appProps`. RAM-only state is a data-loss bug.
+- Anything the user can edit (track names, colours, routing, gains, stereo pairs, takes, cues, time signature, automation, VCA + edit-group assignments, markers, tempo) must round-trip through one of the per-session files. RAM-only state is a data-loss bug.
+- Per-session files live under the session folder:
+  - **`session_mix.json`** — the engine writes the full per-strip mix state (name, colour, gain, pan, mute, solo, monitor, arm, routing, stereo, VCA + edit group) plus session-level tempo (`tempoBpm`, `timeSigNum`, `timeSigDenom`, `tempoMap`). Loaded on Open; size the recorder if `trackCount` > current.
+  - **`markers.json`** — markers auto-save on add / drop / rename / move; loaded via `markers.setContext(dir, sr)`.
+  - **`<Name>.zfproj`** — `setlist` (cues, incl. each cue's `automation` snapshot), `playlists` (comp Takes), `automation` (global lanes), `ui` (view / strip width / zoom).
+  - **`session_groups.json`** is the older name for VCA + edit groups; superseded by `session_mix.json`. Don't reintroduce it.
+- `Save` (and `Save As`) call `saveSessionStateTo`, which writes all of the above. Cues' own automation is captured by `addCueAtTransport` / `updateCueAtTransport`; recalling a cue **clears** every lane first, then loads the cue's snapshot (so a cue without a track-N entry doesn't leave another cue's curve on track N).
 - `.zfproj` carries a `formatVersion` field. Treat its absence as v1 and fall back gracefully.
+- Per-strip state used to live in **global** `appProps` keyed by index, which leaked between sessions. New sessions / freshly-grown strips now wipe the per-index `appProps` overrides (see `clearStripOverridesRange`); the session files are authoritative.
 
 ### Stable identity
 
 - Cue snapshots, automation references, anything that must survive a strip reorder uses `TrackState::stripId` (a `juce::Uuid`), never an array index.
+
+### Dialogs + prompts
+
+- Every prompt that has a text or number field calls `dialog::primeNameEditor(aw, "fieldId")` after the buttons are added: it grabs focus, selects all text, and wires Enter in the field to `exitModalState(1)`. Every AlertWindow prompt in this app uses result code **1** for OK / Apply / Save / Create — don't break that convention.
+- For custom `juce::Component` dialogs (`AddTracksDialog`, `NewSessionDialog`), do the equivalent by hand: `setSelectAllWhenFocused(true)` + `grabKeyboardFocus()` (deferred via `MessageManager::callAsync`) + `onReturnKey = [this]{ commit(); }`.
+
+### Session folder layout
+
+```
+~/Music/Zynforge Sessions/<Name>/
+├── Audio Files/                  Track_01.wav … (recordings)
+├── Export Files/                 stereo bounce + per-track exports (was 'Bounced Files/')
+├── Session File Backups/         timestamped .zfproj snapshots (auto-pruned, keep 10 newest)
+├── Clip Groups/                  reserved
+├── <Name>.zfproj                 cues, playlists, automation, UI layout
+├── session_mix.json              per-strip mix + session tempo
+├── markers.json                  per-session markers
+├── session.report.json           sha256 + counts (written on clean stop)
+└── WaveCache.wfm                 thumbnail cache (versioned header, auto-rebuilds on mismatch)
+```
+
+The `Video Files/` placeholder folder is **not** created. `.zfproj` is registered as the app's document type (`CFBundleDocumentTypes` → `CFBundleTypeIconFile=Icon`) so Finder shows the ZynForge icon.
 
 ## Build + smoke test recipe
 
