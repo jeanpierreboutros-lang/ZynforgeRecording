@@ -152,11 +152,11 @@ namespace zynforge
         // step up so the playhead + time bubble glide instead of jumping.
         void timerCallback() override
         {
-            const bool playing = engine.isPlaying();
-            if (playing != fastTimer)
+            const bool active = engine.isPlaying() || engine.isRecording();
+            if (active != fastTimer)
             {
-                fastTimer = playing;
-                startTimerHz (playing ? playHz : idleHz);
+                fastTimer = active;
+                startTimerHz (active ? playHz : idleHz);
             }
             repaint();
         }
@@ -206,11 +206,18 @@ namespace zynforge
             g.drawVerticalLine (headerW - 1, 0.0f, (float) totalH);
 
             // Time mapping: pixels per second across the (possibly
-            // zoomed) content width.
+            // zoomed) content width. While recording, the player isn't
+            // loaded yet, so drive the scale from the elapsed record time
+            // (grow-to-fit) -- the same timebase the EDIT lanes' live
+            // capture envelope uses, so the ruler lines up with it.
             const auto& player = engine.getPlayer();
+            const bool recording = engine.isRecording();
+            const juce::int64 recSamples = recording
+                ? engine.getRecorder().getSamplesSinceStart() : 0;
             const auto total = player.getTotalLengthSamples();
             const double sr  = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
-            const double totalSec = total > 0 ? (double) total / sr : 300.0;
+            const double totalSec = recording ? juce::jmax ((double) recSamples / sr, 1.0)
+                                              : (total > 0 ? (double) total / sr : 300.0);
             const int waveW = juce::jmax (1, contentW - headerW);
             const double pxPerSec = (double) waveW / juce::jmax (0.001, totalSec);
             const double rulerBottom = (double) (rulerTop + rulerH);
@@ -330,19 +337,25 @@ namespace zynforge
                 }
             }
 
-            // -------- Playhead + time bubble --------
-            // The bright transport line plus a readout chip so the engineer
-            // always knows the exact playhead time without doing tick math.
-            if (player.isLoaded())
+            // -------- Playhead / record head + time bubble --------
+            // A bright transport line plus a readout chip so the engineer
+            // always knows the exact time without doing tick math. While
+            // recording it turns red and tracks the elapsed-record head
+            // (pinned to the right edge as the take grows); otherwise it
+            // follows the playhead whenever a session is loaded.
+            const bool showHead = recording || player.isLoaded();
+            if (showHead)
             {
-                const auto pos = player.getPositionSamples();
-                const int px = secToX ((double) pos / sr);
+                const juce::int64 headSample = recording ? recSamples
+                                                         : player.getPositionSamples();
+                const juce::Colour headCol = recording ? brand::accentRecord : brand::accentPlay;
+                const int px = secToX ((double) headSample / sr);
                 if (px >= headerW && px <= getWidth())
                 {
-                    g.setColour (brand::accentPlay.withAlpha (brand::alpha::prominent));
+                    g.setColour (headCol.withAlpha (brand::alpha::prominent));
                     g.fillRect (juce::Rectangle<int> (px - 1, rulerTop, 2, rulerH));
 
-                    const auto label = formatTime ((double) pos / sr,
+                    const auto label = formatTime ((double) headSample / sr,
                                                    pxPerSec > 120.0 ? 1 : 0);
                     g.setFont (brand::type::mono (10.5f, true));
                     const int bw = juce::jmax (38, g.getCurrentFont().getStringWidth (label) + 10);
@@ -351,9 +364,9 @@ namespace zynforge
                     if (bx + bw > getWidth()) bx = px - bw - 2;   // flip to the left near the edge
                     bx = juce::jlimit (headerW, getWidth() - bw, bx);
                     auto bubble = juce::Rectangle<int> (bx, rulerTop + 1, bw, bh).toFloat();
-                    g.setColour (brand::accentPlay);
+                    g.setColour (headCol);
                     g.fillRoundedRectangle (bubble, brand::radius::sm);
-                    g.setColour (brand::onSignal (brand::accentPlay));
+                    g.setColour (brand::onSignal (headCol));
                     g.drawText (label, bubble, juce::Justification::centred, false);
                 }
             }

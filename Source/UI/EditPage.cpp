@@ -447,6 +447,34 @@ namespace zynforge
         // session loaded.
         void setPlayheadX (int px) { playheadX = px; repaint(); }
 
+        // Live capture envelope -----------------------------------------
+        // EditPage flips this when a take starts / stops. Starting clears
+        // the previous envelope so the new take draws from scratch.
+        void setLiveRecording (bool on)
+        {
+            if (on && ! liveRecording)
+            {
+                recPeakL.clear();
+                recPeakR.clear();
+            }
+            liveRecording = on;
+        }
+
+        // Append one column to the live envelope. Called once per UI tick
+        // while recording; values are 0..1 input peaks. Caps the history
+        // and max-pools down by 2 when it overflows so a long take can't
+        // grow the vector without bound (the lane only has ~1 px per entry
+        // to draw anyway).
+        void pushRecLevel (float l, float r)
+        {
+            if (! liveRecording) return;
+            constexpr size_t kMaxPoints = 8192;
+            if (recPeakL.size() >= kMaxPoints) decimateInPlace (recPeakL);
+            if (recPeakR.size() >= kMaxPoints) decimateInPlace (recPeakR);
+            recPeakL.push_back (juce::jlimit (0.0f, 1.0f, l));
+            if (stereo) recPeakR.push_back (juce::jlimit (0.0f, 1.0f, r));
+        }
+
         void mouseEnter (const juce::MouseEvent&) override
         {
             if (! hovered) { hovered = true; repaint(); }
@@ -1059,6 +1087,15 @@ namespace zynforge
                     g.setColour (waveColour);
                     thumbnailR.drawChannels (g, laneR, 0.0, thumbnailR.getTotalLength(), waveZoom (thumbnailR));
                 }
+                // Live capture envelope -- grows L→R during the take so the
+                // engineer sees recording is happening (the file thumbnail
+                // is empty until stop).
+                if (liveRecording)
+                {
+                    g.setColour (brand::accentRecord);
+                    drawRecEnvelope (g, laneL, recPeakL, vz);
+                    drawRecEnvelope (g, laneR, recPeakR, vz);
+                }
                 // Thin divider between lanes
                 g.setColour (brand::edge);
                 g.drawHorizontalLine (inner.getY() + laneH, (float) inner.getX(),
@@ -1070,6 +1107,11 @@ namespace zynforge
             {
                 g.setColour (waveColour);
                 thumbnailL.drawChannels (g, inner, 0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
+            }
+            else if (liveRecording)
+            {
+                g.setColour (brand::accentRecord);
+                drawRecEnvelope (g, inner, recPeakL, vz);
             }
 
             // ─── Clip boundary overlay (waveform mode only) ─────────
@@ -2865,6 +2907,47 @@ namespace zynforge
             return brand::stripColour (index);
         }
 
+        // Halve the resolution of an envelope in place, keeping the louder
+        // of each adjacent pair so the silhouette survives the downsample.
+        static void decimateInPlace (std::vector<float>& v)
+        {
+            const size_t half = v.size() / 2;
+            for (size_t i = 0; i < half; ++i)
+                v[i] = juce::jmax (v[2 * i], v[2 * i + 1]);
+            v.resize (half);
+        }
+
+        // Draw the live capture envelope across `area`: one mirrored
+        // min/max bar per pixel column, max-pooled from the peak history,
+        // in the record colour. `vz` is the same vertical zoom the file
+        // thumbnails use so the live take and the post-stop waveform sit
+        // at the same scale.
+        static void drawRecEnvelope (juce::Graphics& g,
+                                     juce::Rectangle<int> area,
+                                     const std::vector<float>& peaks,
+                                     float vz)
+        {
+            const int w = area.getWidth();
+            const int n = (int) peaks.size();
+            if (w <= 0 || n <= 0) return;
+            const float midY = area.getCentreY();
+            const float halfH = area.getHeight() * 0.5f;
+            for (int x = 0; x < w; ++x)
+            {
+                // Map this column to a span of the history and take the
+                // loudest peak in it (so the envelope never thins out when
+                // there are more samples than pixels).
+                const int a = (int) ((juce::int64) x       * n / w);
+                const int b = juce::jmax (a + 1, (int) ((juce::int64) (x + 1) * n / w));
+                float pk = 0.0f;
+                for (int i = a; i < b && i < n; ++i) pk = juce::jmax (pk, peaks[(size_t) i]);
+                const float h = juce::jlimit (0.0f, halfH, pk * vz * halfH);
+                if (h <= 0.0f) continue;
+                const float cx = (float) (area.getX() + x);
+                g.drawVerticalLine ((int) cx, midY - h, midY + h);
+            }
+        }
+
         // Pro Tools-style three-column header layout:
         //  - swatch (14 px)
         //  - meter pinned to its right (12 px)
@@ -2897,6 +2980,14 @@ namespace zynforge
         LedMeter                  meter;
 
         int                       playheadX             { -1 };
+        // Live capture envelope -- one peak per UI tick while THIS track
+        // records, so the lane draws a growing red waveform during the
+        // take instead of staying blank until stop. Fed from the live
+        // input meter (TrackState::peak), never the disk file, so it
+        // costs nothing against capture integrity. recPeakR carries the
+        // R partner on a stereo pair.
+        std::vector<float>        recPeakL, recPeakR;
+        bool                      liveRecording         { false };
         int                       lastInputDeviceCount  { -1 };
         int                       lastOutputDeviceCount { -1 };
         unsigned int              lastColourArgb        { 0 };
@@ -3088,6 +3179,31 @@ namespace zynforge
         void forceRefreshWaveforms()
         {
             for (auto& r : rows) r->reloadCurrentWaveformFiles();
+        }
+
+        // Live capture envelope: arm / disarm every row's live draw, and
+        // (each tick) feed every armed row its current input peak so the
+        // lane grows a red waveform during the take. Reads only the live
+        // meter atomics -- no disk I/O, so capture integrity is untouched.
+        void setLiveRecording (bool on)
+        {
+            for (auto& r : rows) r->setLiveRecording (on);
+        }
+        void pushRecLevels()
+        {
+            auto& rec = engine.getRecorder();
+            const int nTracks = rec.getNumTracks();
+            for (auto& r : rows)
+            {
+                const int idx = r->getTrackIndex();
+                if (idx < 0 || idx >= nTracks) continue;
+                if (! rec.getTrack (idx).armed.load (std::memory_order_relaxed)) continue;
+                const float l = rec.getTrack (idx).peak.load (std::memory_order_relaxed);
+                float rr = 0.0f;
+                if (r->isStereoPair() && idx + 1 < nTracks)
+                    rr = rec.getTrack (idx + 1).peak.load (std::memory_order_relaxed);
+                r->pushRecLevel (l, rr);
+            }
         }
 
         void setPlayheadX (int px)
@@ -3392,6 +3508,12 @@ namespace zynforge
         const bool loaded = engine.getPlayer().isLoaded();
         const bool rec    = engine.isRecording();
         const bool recJustStopped = (! rec && lastRecording);
+        const bool recJustStarted = (rec && ! lastRecording);
+
+        // Live capture envelope: clear + arm on take start, disarm on stop
+        // (before the post-stop disk re-scan swaps in the real waveform).
+        if (recJustStarted && list != nullptr) list->setLiveRecording (true);
+        if (recJustStopped && list != nullptr) list->setLiveRecording (false);
         if (loaded != lastLoaded || rec != lastRecording || engine.getActiveSessionDir() != lastSessionDir)
         {
             if (engine.getActiveSessionDir() != lastSessionDir)
@@ -3430,6 +3552,13 @@ namespace zynforge
         // when hidden so peaks stay current for the flip back to EDIT.
         if (! isVisible() && ! rec)
             return;
+
+        // Append this tick's input peaks to the live capture envelope so
+        // every armed lane grows a red waveform during the take. Kept
+        // running even while EDIT is hidden so flipping back mid-take
+        // shows the envelope already filled in.
+        if (rec && list != nullptr)
+            list->pushRecLevels();
 
         // Playhead
         const auto& player = engine.getPlayer();
