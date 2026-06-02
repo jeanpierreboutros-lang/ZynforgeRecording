@@ -240,10 +240,13 @@ namespace zynforge
             const int midTickH   = juce::jmax (7,  (int) (rulerH * 0.42f));
             const int minorTickH = juce::jmax (4,  (int) (rulerH * 0.24f));
 
-            const auto onMultiple = [] (double v, double step)
-            {
-                return std::fmod (v + step * 1.0e-4, step) < step * 2.0e-4;
-            };
+            // Walk ticks by an integer index, not a `tSec += minorSec`
+            // accumulator: repeated float addition drifts, so an integer-
+            // second tick could land at 1.9999998 and floor() to the
+            // wrong label (duplicate / skipped seconds). The index also
+            // classifies major/mid exactly via modulo.
+            const int minorPerMajor = juce::jmax (1, (int) std::lround (majorSec / minorSec));
+            const int minorPerMid   = juce::jmax (1, (int) std::lround (midSec   / minorSec));
 
             // -------- Loop-region shading (mirrors the wave-pane overlay) --------
             if (player.hasLoopRegion() && player.isLoaded())
@@ -285,14 +288,17 @@ namespace zynforge
             // -------- Graduated tick scale --------
             // Draw minors first (short, dim), then majors on top (tall +
             // labelled), with a mid tier so the spacing reads at a glance.
-            for (double tSec = 0.0; tSec <= totalSec + 0.5; tSec += minorSec)
+            const int lastTick = (int) std::floor (totalSec / minorSec) + 1;
+            g.setFont (brand::type::mono (10.5f, true));
+            for (int k = 0; k <= lastTick; ++k)
             {
+                const double tSec = (double) k * minorSec;
                 const int x = secToX (tSec);
                 if (x >= getWidth()) break;
                 if (x < headerW) continue;
 
-                const bool major = onMultiple (tSec, majorSec);
-                const bool mid   = ! major && onMultiple (tSec, midSec);
+                const bool major = (k % minorPerMajor) == 0;
+                const bool mid   = ! major && (k % minorPerMid) == 0;
                 const int  hPx   = major ? majorTickH : (mid ? midTickH : minorTickH);
                 g.setColour (major ? brand::textSecondary
                                    : (mid ? brand::textMuted
@@ -301,9 +307,11 @@ namespace zynforge
 
                 if (major)
                 {
+                    // Label from the exact major multiple (k / minorPerMajor)
+                    // so it never inherits the tick's float drift.
+                    const double labelSec = (double) (k / minorPerMajor) * majorSec;
                     g.setColour (brand::textSecondary);
-                    g.setFont (brand::type::mono (10.5f, true));
-                    g.drawText (formatTime (tSec, decimals),
+                    g.drawText (formatTime (labelSec, decimals),
                                 juce::Rectangle<int> (x + 3, rulerTop, 64,
                                                       rulerH - majorTickH - 1),
                                 juce::Justification::topLeft, false);
