@@ -1584,6 +1584,136 @@ namespace zynforge
                 }
                 dir.deleteRecursively();
             }
+
+            beginTest ("Stream bus sums streamSend strips into the configured outputs");
+            {
+                const auto dir = recordTestSession (1, 0.5f);
+                {
+                    CallbackFixture f (1, 1, 4);
+                    f.engine.getPlayer().loadSession (dir);
+                    f.engine.setStreamOutputs (2, 3);          // stream bus -> Out 2/3
+                    f.engine.setTrackOutputRouting (0, -1);    // master-only: no per-channel write to 2/3
+                    auto& t = f.engine.getRecorder().getTrack (0);
+                    t.streamSend.store (true);                 // flag strip into the stream bus
+                    t.pan.store (0.0f);                        // centre -> both L+R
+                    f.engine.startPlayback();
+                    expect (fillPlaybackBuffer (f) > 0.20f);   // buffer filled via master sum
+
+                    f.engine.getPlayer().setPositionSamples (0);
+                    f.process (256);
+                    // Centre pan -> 0.5 * cos(45deg) ~= 0.35 on each leg.
+                    expect (f.peakOut (2, 256) > 0.20f);
+                    expect (f.peakOut (3, 256) > 0.20f);
+
+                    // Clearing the flag drops the strip out of the stream bus.
+                    t.streamSend.store (false);
+                    f.engine.getPlayer().setPositionSamples (0);
+                    f.process (256);
+                    expect (f.peakOut (2, 256) < 0.02f);
+                    expect (f.peakOut (3, 256) < 0.02f);
+                }
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Loop region wraps playback from end back to start");
+            {
+                const auto dir = recordTestSession (1, 0.5f, 192);   // ~49152 samples
+                {
+                    CallbackFixture f (1, 1, 2);
+                    f.engine.getPlayer().loadSession (dir);
+                    constexpr juce::int64 loopStart = 10000, loopEnd = 20000;
+                    f.engine.getPlayer().setLoopRegion (loopStart, loopEnd);
+                    f.engine.startPlayback();
+                    expect (fillPlaybackBuffer (f) > 0.20f);
+
+                    // Start just inside the loop, then run well past one loop
+                    // length (10000 samples ~= 39 blocks). Without wrapping
+                    // the position would sail past loopEnd; with wrapping it
+                    // must stay in [loopStart, loopEnd] and keep playing.
+                    f.engine.getPlayer().setPositionSamples (loopStart);
+                    juce::int64 maxPos = 0, prevPos = loopStart;
+                    bool wrapped = false, everSilent = false;
+                    for (int b = 0; b < 80; ++b)
+                    {
+                        f.process (256);
+                        const auto pos = f.engine.getPlayer().getPositionSamples();
+                        maxPos = juce::jmax (maxPos, pos);
+                        if (pos < prevPos) wrapped = true;   // position jumped backward = a wrap
+                        prevPos = pos;
+                        if (juce::jmax (f.peakOut (0, 256), f.peakOut (1, 256)) < 0.05f)
+                            everSilent = true;
+                    }
+                    expect (f.engine.isPlaying());      // never ran off the end
+                    expect (wrapped);                   // it actually looped
+                    expect (maxPos <= loopEnd);         // never escaped the window
+                    expect (! everSilent);              // audible the whole time
+                }
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Punch mode records only the punch-armed tracks");
+            {
+                // The position-windowed entry / exit is driven by
+                // MainComponent::servicePunch on the UI timer (out of scope
+                // for the headless engine harness). What the engine owns --
+                // and what this asserts -- is the contract servicePunch
+                // relies on: applying the punch-arm map record-arms exactly
+                // the punch-armed tracks, so only those land on disk.
+                auto sessionDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                      .getChildFile ("zynforge-punch-" + juce::Uuid().toString());
+                sessionDir.createDirectory();
+                {
+                    CallbackFixture f (2, 2, 2);
+                    f.engine.setPunchModeOn (true);
+                    f.engine.setTrackPunchArmed (0, true);
+                    f.engine.setTrackPunchArmed (1, false);
+                    // servicePunch's arm map: armed <- isTrackPunchArmed.
+                    for (int i = 0; i < 2; ++i)
+                        f.engine.getRecorder().getTrack (i).armed.store (
+                            f.engine.isTrackPunchArmed (i), std::memory_order_relaxed);
+                    expect (f.engine.getRecorder().getTrack (0).armed.load());
+                    expect (! f.engine.getRecorder().getTrack (1).armed.load());
+
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.30f, 256);
+                    f.writeInput (1, 0.50f, 256);
+                    for (int b = 0; b < 96; ++b) f.process (256);
+                    f.engine.stopRecording();
+                }
+
+                const auto audioDir = sessionDir.getChildFile ("Audio Files");
+                const auto wav0 = audioDir.getChildFile ("Track_01.wav");
+                const auto wav1 = audioDir.getChildFile ("Track_02.wav");
+                expect (wav0.existsAsFile());
+
+                juce::WavAudioFormat fmt;
+                {
+                    std::unique_ptr<juce::FileInputStream> in (wav0.createInputStream());
+                    std::unique_ptr<juce::AudioFormatReader> reader (
+                        in != nullptr ? fmt.createReaderFor (in.release(), true) : nullptr);
+                    expect (reader != nullptr);
+                    if (reader != nullptr)
+                    {
+                        juce::AudioBuffer<float> buf (1, (int) reader->lengthInSamples);
+                        reader->read (&buf, 0, (int) reader->lengthInSamples, 0, true, false);
+                        expect (buf.getMagnitude (0, 0, buf.getNumSamples()) > 0.20f);
+                    }
+                }
+                // The punch-disarmed track must not capture content.
+                if (wav1.existsAsFile())
+                {
+                    std::unique_ptr<juce::FileInputStream> in (wav1.createInputStream());
+                    std::unique_ptr<juce::AudioFormatReader> reader (
+                        in != nullptr ? fmt.createReaderFor (in.release(), true) : nullptr);
+                    if (reader != nullptr && reader->lengthInSamples > 0)
+                    {
+                        juce::AudioBuffer<float> buf (1, (int) reader->lengthInSamples);
+                        reader->read (&buf, 0, (int) reader->lengthInSamples, 0, true, false);
+                        expect (buf.getMagnitude (0, 0, buf.getNumSamples()) < 0.01f);
+                    }
+                }
+                sessionDir.deleteRecursively();
+            }
         }
     };
 

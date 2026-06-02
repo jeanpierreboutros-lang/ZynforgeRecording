@@ -896,8 +896,18 @@ namespace zynforge
         if (channel < 0) return;
         if (channel >= (int) punchArmed.size())
         {
+            // Grow the vector PRESERVING existing flags. std::atomic isn't
+            // copy/move-constructible, so a plain resize won't do -- build a
+            // bigger vector and carry the old values across. The previous
+            // implementation replaced the whole vector, which silently
+            // wiped every already-armed lower track whenever a higher index
+            // triggered the grow (punch-arm track 1 -> track 0 lost its arm).
             const auto target = (size_t) channel + 1;
-            punchArmed = std::vector<std::atomic<bool>> (target);
+            std::vector<std::atomic<bool>> grown (target);
+            for (size_t i = 0; i < punchArmed.size(); ++i)
+                grown[i].store (punchArmed[i].load (std::memory_order_relaxed),
+                                std::memory_order_relaxed);
+            punchArmed = std::move (grown);
         }
         punchArmed[(size_t) channel].store (armed, std::memory_order_relaxed);
     }
