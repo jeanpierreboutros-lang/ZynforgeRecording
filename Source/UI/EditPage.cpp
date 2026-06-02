@@ -3110,10 +3110,15 @@ namespace zynforge
             engine.addOneStrip();
         }
 
+        // Dark gap left between adjacent rows so each track reads as its
+        // own block (rows = light bgStrip, gaps + empty area = dark bgDeep).
+        static constexpr int kRowGap = brand::space::sm;
+
         void resized() override
         {
             // Fit-to-window fallback distributes the viewport height across
-            // the rows that opted into Size::FitToWindow.
+            // the rows that opted into Size::FitToWindow -- minus the gaps
+            // between rows, so a fit-to-window row still lands flush in view.
             int fixedTotal = 0;
             int fitRows    = 0;
             for (auto& r : rows)
@@ -3121,21 +3126,31 @@ namespace zynforge
                 if (r->getRowSize() == TrackRow::Size::FitToWindow) ++fitRows;
                 else fixedTotal += TrackRow::pixelsFor (r->getRowSize());
             }
+            const int gapTotal = (int) rows.size() > 1 ? ((int) rows.size() - 1) * kRowGap : 0;
             const int fitFallback = fitRows > 0
-                ? juce::jmax (28, (viewportHeight - fixedTotal) / fitRows)
+                ? juce::jmax (28, (viewportHeight - fixedTotal - gapTotal) / fitRows)
                 : 80;
 
             auto bounds = getLocalBounds();
             int totalH = 0;
-            for (auto& r : rows)
+            for (size_t i = 0; i < rows.size(); ++i)
             {
-                const int h = r->getRowPixelHeight (fitFallback);
-                r->setBounds (bounds.removeFromTop (h));
+                const int h = rows[i]->getRowPixelHeight (fitFallback);
+                rows[i]->setBounds (bounds.removeFromTop (h));
                 totalH += h;
+                if (i + 1 < rows.size())
+                {
+                    bounds.removeFromTop (kRowGap);   // dark separator
+                    totalH += kRowGap;
+                }
             }
             // Resize ourselves so the viewport scrolls when content > view.
             setSize (getWidth(), juce::jmax (viewportHeight, totalH));
         }
+
+        // Paint the dark substrate so the gaps between rows (and the area
+        // below the last row) read as bgDeep, separating the light rows.
+        void paint (juce::Graphics& g) override { g.fillAll (brand::bgDeep); }
 
         void setWaveformsFromSession (const juce::File& sessionDir)
         {
