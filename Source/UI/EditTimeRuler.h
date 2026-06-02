@@ -9,23 +9,31 @@
 namespace zynforge
 {
     // Min:Secs time ruler for the EDIT view. Paints a Markers strip
-    // across the top and a Min:Secs scale underneath (0:00, 0:10, 0:30,
-    // 1:00 ...) scaled by the current zoom. The left header column
-    // matches the strip-header width so columns line up.
+    // across the top and a graduated Min:Secs scale underneath. The left
+    // header column matches the strip-header width so columns line up.
     //
     // No Bars|Beats: this is a live recorder, not a DAW. Engineers
     // navigate by wall-clock + markers, not by bars. Tempo math is
     // still alive for the click track + cue tempo ramps; the ruler
     // just doesn't visualise it.
     //
-    // Tick density auto-adapts: at high zoom we show 1s ticks; at low
-    // zoom we coalesce to 10s / 30s / 1m so labels never collide.
+    // The scale is built like a Reaper / Pro Tools time ruler:
+    //   - A 1-2-5 progression (0.1s -> 2h) picks a labelled "major"
+    //     interval whose labels never collide, subdivided into mid +
+    //     minor ticks of graduated height so the spacing reads at a
+    //     glance. Labels switch to tenths below 1s/major and to
+    //     H:MM:SS past an hour.
+    //   - The transport playhead draws a bright line + a time-readout
+    //     bubble; the edit cursor draws its own line; the loop region
+    //     and the automation punch range shade as bands. All share the
+    //     wave-pane's colours + sample->x mapping so the ruler lines up
+    //     with the lanes below.
     class EditTimeRuler final : public juce::Component, private juce::Timer
     {
     public:
         explicit EditTimeRuler (AudioEngine& eng) : engine (eng)
         {
-            startTimerHz (4);   // recheck the session length 4x per second
+            startTimerHz (idleHz);
         }
 
         // Width of the left header column (matches TrackRow's headerW).
@@ -140,7 +148,22 @@ namespace zynforge
                 false);
         }
 
-        void timerCallback() override { repaint(); }
+        // Idle: poll the session length a few times a second. Playing:
+        // step up so the playhead + time bubble glide instead of jumping.
+        void timerCallback() override
+        {
+            const bool playing = engine.isPlaying();
+            if (playing != fastTimer)
+            {
+                fastTimer = playing;
+                startTimerHz (playing ? playHz : idleHz);
+            }
+            repaint();
+        }
+
+        static constexpr int idleHz = 4;
+        static constexpr int playHz = 30;
+        bool fastTimer { false };
 
         // Paint splits vertically into TWO strips:
         //   top    : marker strip (kMarkerStripH px tall)
@@ -182,81 +205,148 @@ namespace zynforge
             g.setColour (brand::edge);
             g.drawVerticalLine (headerW - 1, 0.0f, (float) totalH);
 
-            // Decide tick spacing in seconds based on pixels-per-second.
+            // Time mapping: pixels per second across the (possibly
+            // zoomed) content width.
             const auto& player = engine.getPlayer();
             const auto total = player.getTotalLengthSamples();
             const double sr  = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
             const double totalSec = total > 0 ? (double) total / sr : 300.0;
             const int waveW = juce::jmax (1, contentW - headerW);
             const double pxPerSec = (double) waveW / juce::jmax (0.001, totalSec);
+            const double rulerBottom = (double) (rulerTop + rulerH);
+            const auto secToX = [&] (double s) { return headerW + (int) (s * pxPerSec); };
 
-            const double minPxBetweenLabels = 70.0;
-            const int candidates[] = { 1, 2, 5, 10, 30, 60, 120, 300, 600, 1800 };
-            int tickSec = 60;
-            for (int c : candidates)
-                if ((double) c * pxPerSec >= minPxBetweenLabels) { tickSec = c; break; }
-            const int subSec = juce::jmax (1, tickSec / 5);
+            // Pick a labelled "major" interval whose labels won't collide,
+            // then subdivide it into minor + mid ticks. A 1-2-5 progression
+            // (sub-second through hours) keeps the numbers readable, the way
+            // Reaper / Pro Tools rulers step. `decimals` switches the label
+            // to tenths once we're below a second per major.
+            const double minLabelPx = 64.0;
+            static const double steps[] = { 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30,
+                                            60, 120, 300, 600, 900, 1800, 3600, 7200 };
+            double majorSec = 3600.0;
+            for (double s : steps)
+                if (s * pxPerSec >= minLabelPx) { majorSec = s; break; }
+            // Minor = major / 5, but collapse to /2 (or off) if the ticks
+            // would crowd. Mid tick sits at the half-major when there are
+            // an even number of minors, giving the eye a coarse anchor.
+            double minorSec = majorSec / 5.0;
+            if (minorSec * pxPerSec < 5.0) minorSec = majorSec / 2.0;
+            if (minorSec * pxPerSec < 5.0) minorSec = majorSec;          // too dense -> majors only
+            const double midSec     = majorSec / 2.0;
+            const int    decimals   = majorSec < 1.0 ? 1 : 0;
 
-            const int majorTickH = juce::jmax (8, (int) (rulerH * 0.55f));
-            const int minorTickH = juce::jmax (4, (int) (rulerH * 0.30f));
+            const int majorTickH = juce::jmax (10, (int) (rulerH * 0.62f));
+            const int midTickH   = juce::jmax (7,  (int) (rulerH * 0.42f));
+            const int minorTickH = juce::jmax (4,  (int) (rulerH * 0.24f));
 
-            // -------- Time scale --------
-            g.setFont (brand::type::mono (10.5f, true));
-            for (double tSec = 0.0; tSec <= totalSec + 0.5; tSec += subSec)
+            const auto onMultiple = [] (double v, double step)
             {
-                const int x = headerW + (int) (tSec * pxPerSec);
-                if (x >= getWidth()) break;
-                const bool major = std::fmod (tSec + 0.0001, (double) tickSec) < 0.001;
-                const int hPx = major ? majorTickH : minorTickH;
-                g.setColour (major ? brand::textSecondary : brand::textMuted);
-                g.drawVerticalLine (x, (float) (rulerTop + rulerH - hPx),
-                                    (float) (rulerTop + rulerH));
+                return std::fmod (v + step * 1.0e-4, step) < step * 2.0e-4;
+            };
 
-                if (major)
+            // -------- Loop-region shading (mirrors the wave-pane overlay) --------
+            if (player.hasLoopRegion() && player.isLoaded())
+            {
+                const int xA = juce::jmax (headerW, secToX ((double) player.getLoopStart() / sr));
+                const int xB = juce::jmin (getWidth(), secToX ((double) player.getLoopEnd()   / sr));
+                if (xB > xA)
                 {
-                    const int m = (int) (tSec / 60.0);
-                    const int s = (int) (std::fmod (tSec, 60.0) + 0.0001);
-                    juce::String text = juce::String (m) + ":"
-                                      + (s < 10 ? "0" : "") + juce::String (s);
-                    g.setColour (brand::textSecondary);
-                    g.drawText (text,
-                                juce::Rectangle<int> (x + 3, rulerTop, 60,
-                                                      rulerH - majorTickH - 2),
-                                juce::Justification::topLeft, false);
+                    g.setColour (brand::accentEdit.withAlpha (brand::alpha::subtle));
+                    g.fillRect (juce::Rectangle<int> (xA, rulerTop, xB - xA, rulerH));
+                    g.setColour (brand::accentEdit.withAlpha (0.75f));
+                    g.drawVerticalLine (xA,     (float) rulerTop, (float) rulerBottom);
+                    g.drawVerticalLine (xB - 1, (float) rulerTop, (float) rulerBottom);
                 }
             }
 
             // -------- Punch range overlay --------
-            // Drawn on the time-scale strip as a translucent green
-            // band with two solid edges so the engineer can see the
-            // in / out points at a glance. Painted regardless of
-            // whether PUNCH is armed -- the band represents the
-            // engine's stored range, the toolbar arms it.
+            // Translucent band representing the engine's stored automation
+            // punch range; bright when PUNCH is armed (writes gated), dim
+            // when it's just remembered.
             const auto pIn  = engine.getAutomationPunchIn();
             const auto pOut = engine.getAutomationPunchOut();
             if (pIn >= 0 && pOut > pIn)
             {
-                const double inSec  = (double) pIn  / sr;
-                const double outSec = (double) pOut / sr;
-                const int xIn  = headerW + (int) (inSec  * pxPerSec);
-                const int xOut = headerW + (int) (outSec * pxPerSec);
-                const int clampedIn  = juce::jmax (headerW, xIn);
-                const int clampedOut = juce::jmin (getWidth(), xOut);
+                const int clampedIn  = juce::jmax (headerW,    secToX ((double) pIn  / sr));
+                const int clampedOut = juce::jmin (getWidth(), secToX ((double) pOut / sr));
                 if (clampedOut > clampedIn)
                 {
-                    // Dim the band when PUNCH isn't armed so the
-                    // engineer can tell at a glance whether the range
-                    // is live (writes gated) or just remembered.
                     const bool armed = engine.isAutomationPunchEnabled();
-                    auto band = juce::Rectangle<float> ((float) clampedIn,
-                                                        (float) rulerTop,
-                                                        (float) (clampedOut - clampedIn),
-                                                        (float) rulerH);
                     g.setColour (brand::accentStatus.withAlpha (armed ? 0.22f : 0.08f));
-                    g.fillRect (band);
+                    g.fillRect (juce::Rectangle<float> ((float) clampedIn, (float) rulerTop,
+                                                        (float) (clampedOut - clampedIn), (float) rulerH));
                     g.setColour (brand::accentStatus.withAlpha (armed ? 1.0f : 0.45f));
-                    g.drawVerticalLine (clampedIn,  (float) rulerTop, (float) (rulerTop + rulerH));
-                    g.drawVerticalLine (clampedOut - 1, (float) rulerTop, (float) (rulerTop + rulerH));
+                    g.drawVerticalLine (clampedIn,      (float) rulerTop, (float) rulerBottom);
+                    g.drawVerticalLine (clampedOut - 1, (float) rulerTop, (float) rulerBottom);
+                }
+            }
+
+            // -------- Graduated tick scale --------
+            // Draw minors first (short, dim), then majors on top (tall +
+            // labelled), with a mid tier so the spacing reads at a glance.
+            for (double tSec = 0.0; tSec <= totalSec + 0.5; tSec += minorSec)
+            {
+                const int x = secToX (tSec);
+                if (x >= getWidth()) break;
+                if (x < headerW) continue;
+
+                const bool major = onMultiple (tSec, majorSec);
+                const bool mid   = ! major && onMultiple (tSec, midSec);
+                const int  hPx   = major ? majorTickH : (mid ? midTickH : minorTickH);
+                g.setColour (major ? brand::textSecondary
+                                   : (mid ? brand::textMuted
+                                          : brand::edge.withAlpha (brand::alpha::prominent)));
+                g.drawVerticalLine (x, (float) (rulerBottom - hPx), (float) rulerBottom);
+
+                if (major)
+                {
+                    g.setColour (brand::textSecondary);
+                    g.setFont (brand::type::mono (10.5f, true));
+                    g.drawText (formatTime (tSec, decimals),
+                                juce::Rectangle<int> (x + 3, rulerTop, 64,
+                                                      rulerH - majorTickH - 1),
+                                juce::Justification::topLeft, false);
+                }
+            }
+
+            // -------- Edit cursor (Pro Tools insertion point) --------
+            const auto cursorSample = engine.getEditCursorSample();
+            if (cursorSample >= 0)
+            {
+                const int cx = secToX ((double) cursorSample / sr);
+                if (cx >= headerW && cx < getWidth())
+                {
+                    g.setColour (brand::textPrimary.withAlpha (brand::alpha::bold));
+                    g.drawVerticalLine (cx, (float) rulerTop, (float) rulerBottom);
+                }
+            }
+
+            // -------- Playhead + time bubble --------
+            // The bright transport line plus a readout chip so the engineer
+            // always knows the exact playhead time without doing tick math.
+            if (player.isLoaded())
+            {
+                const auto pos = player.getPositionSamples();
+                const int px = secToX ((double) pos / sr);
+                if (px >= headerW && px <= getWidth())
+                {
+                    g.setColour (brand::accentPlay.withAlpha (brand::alpha::prominent));
+                    g.fillRect (juce::Rectangle<int> (px - 1, rulerTop, 2, rulerH));
+
+                    const auto label = formatTime ((double) pos / sr,
+                                                   pxPerSec > 120.0 ? 1 : 0);
+                    g.setFont (brand::type::mono (10.5f, true));
+                    const int bw = juce::jmax (38, g.getCurrentFont().getStringWidth (label) + 10);
+                    const int bh = juce::jmin (14, rulerH - 2);
+                    int bx = px + 2;
+                    if (bx + bw > getWidth()) bx = px - bw - 2;   // flip to the left near the edge
+                    bx = juce::jlimit (headerW, getWidth() - bw, bx);
+                    auto bubble = juce::Rectangle<int> (bx, rulerTop + 1, bw, bh).toFloat();
+                    g.setColour (brand::accentPlay);
+                    g.fillRoundedRectangle (bubble, brand::radius::sm);
+                    g.setColour (brand::onSignal (brand::accentPlay));
+                    g.drawText (label, bubble, juce::Justification::centred, false);
                 }
             }
 
@@ -296,6 +386,27 @@ namespace zynforge
                                 juce::Justification::centredLeft, false);
                 }
             }
+        }
+
+        // Wall-clock label. Below an hour: M:SS; an hour or more:
+        // H:MM:SS. `decimals` appends fractional seconds (tenths) so the
+        // scale stays readable when zoomed past one major-tick / second.
+        static juce::String formatTime (double sec, int decimals)
+        {
+            if (sec < 0.0) sec = 0.0;
+            const int whole = (int) std::floor (sec);
+            const int h = whole / 3600;
+            const int m = (whole % 3600) / 60;
+            const int s =  whole % 60;
+            const auto two = [] (int v) { return (v < 10 ? "0" : "") + juce::String (v); };
+            juce::String out = h > 0 ? juce::String (h) + ":" + two (m) + ":" + two (s)
+                                     : juce::String (m) + ":" + two (s);
+            if (decimals > 0)
+            {
+                const double frac = sec - whole;
+                out << "." << juce::String ((int) (frac * 10.0 + 0.5));
+            }
+            return out;
         }
 
         // Maps a pixel x on the time-scale strip back to a session
