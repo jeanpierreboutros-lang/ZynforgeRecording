@@ -113,6 +113,54 @@ namespace zynforge
             juce::AudioBuffer<float> inBuf;
             juce::AudioBuffer<float> outBuf;
         };
+
+        // ── Playback-feed helpers ─────────────────────────────────────
+        // The VCA-gain / automation / aux-send paths all read from
+        // `playerScratch`, which is empty unless a real session is
+        // loaded. These helpers record a known signal to disk via the
+        // real capture path, then let a fixture play it back so the
+        // callback has actual audio to attenuate / route.
+
+        // Records `numTracks` channels of constant DC `amp` to a fresh
+        // temp session (~`blocks` * 256 samples long) using the real
+        // recording path, then returns the session dir. Caller deletes.
+        inline juce::File recordTestSession (int numTracks, float amp, int blocks = 192)
+        {
+            auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                          .getChildFile ("zynforge-pb-" + juce::Uuid().toString());
+            dir.createDirectory();
+
+            CallbackFixture f (numTracks, numTracks, 2);
+            for (int i = 0; i < numTracks; ++i)
+                f.engine.getRecorder().getTrack (i).armed.store (true);
+            f.engine.getRecorder().setCaptureFormat (CaptureFormat::Wav24);
+            f.engine.startRecording (dir);
+            for (int i = 0; i < numTracks; ++i)
+                f.writeInput (i, amp, 256);
+            for (int b = 0; b < blocks; ++b)
+                f.process (256);
+            f.engine.stopRecording();
+            return dir;
+        }
+
+        // After loadSession + startPlayback, the BufferingAudioReader
+        // fills its buffer on a background thread; the first callbacks
+        // read silence until it is ready. Rewind + run blocks (sleeping
+        // between) until the player's output reaches the monitor master,
+        // or give up after ~1.2 s. Returns the loudest master peak seen.
+        inline float fillPlaybackBuffer (CallbackFixture& f)
+        {
+            float pk = 0.0f;
+            for (int attempt = 0; attempt < 80; ++attempt)
+            {
+                f.engine.getPlayer().setPositionSamples (0);
+                f.process (256);
+                pk = juce::jmax (f.peakOut (0, 256), f.peakOut (1, 256));
+                if (pk > 0.05f) return pk;
+                juce::Thread::sleep (15);
+            }
+            return pk;
+        }
     }
 
     class AudioCallbackTests final : public juce::UnitTest
@@ -1402,6 +1450,139 @@ namespace zynforge
                 // L input lands on monitor L, R input on monitor R.
                 expect (f.peakOut (0, 256) > 0.20f);
                 expect (f.peakOut (1, 256) > 0.20f);
+            }
+
+            // ─── Playback feed: VCA gain / automation / aux send ─────
+            // These exercise the paths that were impossible to test
+            // without a loaded playerScratch feed (see the round-4 gap
+            // list in tasks.md). Each records a real WAV, plays it back,
+            // and asserts on the rendered output.
+
+            beginTest ("Loaded session plays back into the monitor sum");
+            {
+                const auto dir = recordTestSession (1, 0.5f);
+                {
+                    // Input silent + strip not armed/monitored -> only the
+                    // player can reach the master. Strip is master-only
+                    // (fixture default), so it sums into the monitor bus.
+                    CallbackFixture f (1, 1, 2);
+                    expect (f.engine.getPlayer().loadSession (dir) == 1);
+                    f.engine.startPlayback();
+                    expect (f.engine.isPlaying());
+                    expect (fillPlaybackBuffer (f) > 0.20f);   // the 0.5 DC reaches master
+                }
+                dir.deleteRecursively();
+            }
+
+            beginTest ("VCA gain attenuates playback end-to-end on the monitor sum");
+            {
+                const auto dir = recordTestSession (1, 0.5f);
+                {
+                    CallbackFixture f (1, 1, 2);
+                    f.engine.getPlayer().loadSession (dir);
+                    f.engine.setTrackVcaGroup (0, 2);          // strip 0 -> VCA 2
+                    f.engine.getVca (2).gainDb.store (0.0f);
+                    f.engine.startPlayback();
+                    const float unity = fillPlaybackBuffer (f);
+                    expect (unity > 0.20f);
+
+                    // Pull the VCA master down 40 dB -> playback ~silenced.
+                    f.engine.getVca (2).gainDb.store (-40.0f);
+                    f.engine.getPlayer().setPositionSamples (0);
+                    f.process (256);
+                    const float pulled = juce::jmax (f.peakOut (0, 256), f.peakOut (1, 256));
+                    expect (pulled < unity * 0.1f);
+                }
+                dir.deleteRecursively();
+            }
+
+            beginTest ("VCA gain attenuates a routed hardware output during playback");
+            {
+                const auto dir = recordTestSession (1, 0.5f);
+                {
+                    CallbackFixture f (1, 1, 4);               // 4 outs -> route to Out 2
+                    f.engine.getPlayer().loadSession (dir);
+                    f.engine.setTrackOutputRouting (0, 2);     // strip 0 -> Out 2
+                    f.engine.setTrackVcaGroup (0, 1);
+                    f.engine.getVca (1).gainDb.store (0.0f);
+                    f.engine.startPlayback();
+                    // Buffer fills via the monitor sum -- the strip still
+                    // sums there even when routed to a hardware output.
+                    expect (fillPlaybackBuffer (f) > 0.20f);
+
+                    f.engine.getPlayer().setPositionSamples (0);
+                    f.process (256);
+                    const float unityOut = f.peakOut (2, 256);
+                    expect (unityOut > 0.20f);
+
+                    f.engine.getVca (1).gainDb.store (-40.0f);
+                    f.engine.getPlayer().setPositionSamples (0);
+                    f.process (256);
+                    expect (f.peakOut (2, 256) < unityOut * 0.1f);
+                }
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Volume automation attenuates the playback output by position");
+            {
+                const auto dir = recordTestSession (1, 0.5f, 192);   // ~1.02 s
+                {
+                    CallbackFixture f (1, 1, 2);
+                    f.engine.getPlayer().loadSession (dir);
+                    using P = AudioEngine::AutomationParam;
+                    // Full level at the head, -40 dB by ~0.83 s.
+                    f.engine.addAutomationPoint (0, P::Volume, 0,      0.0f);
+                    f.engine.addAutomationPoint (0, P::Volume, 40000, -40.0f);
+                    f.engine.startPlayback();
+                    expect (fillPlaybackBuffer (f) > 0.20f);   // head is full level
+
+                    // Tail: curve fully down.
+                    f.engine.getPlayer().setPositionSamples (40000);
+                    f.process (256);
+                    const float low = juce::jmax (f.peakOut (0, 256), f.peakOut (1, 256));
+
+                    // Head: curve at unity.
+                    f.engine.getPlayer().setPositionSamples (0);
+                    f.process (256);
+                    const float high = juce::jmax (f.peakOut (0, 256), f.peakOut (1, 256));
+
+                    expect (high > 0.20f);
+                    expect (low  < high * 0.1f);
+                }
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Aux send routes playback through a bus track to its output");
+            {
+                const auto dir = recordTestSession (1, 0.5f);   // only Track_01.wav
+                {
+                    CallbackFixture f (3, 1, 4);   // strip 0 source, strip 2 bus
+                    // Wipe any sends the prefs file might inject before we
+                    // configure the single send under test.
+                    for (int i = 0; i < 3; ++i)
+                        for (int s = 0; s < TrackState::kNumSends; ++s)
+                            f.engine.setTrackSend (i, s, -1, 0.0f, false);
+
+                    f.engine.getPlayer().loadSession (dir);    // 1 reader -> row 0
+                    f.engine.setTrackIsBus (2, true);          // strip 2 = bus
+                    f.engine.setTrackOutputRouting (2, 3);     // bus -> Out 3
+                    f.engine.setTrackOutputRouting (0, -1);    // source master-only
+                    // Source pre-fader send at unity into the bus.
+                    f.engine.setTrackSend (0, 0, /*bus*/ 2, /*levelDb*/ 0.0f, /*post*/ false);
+                    f.engine.startPlayback();
+                    expect (fillPlaybackBuffer (f) > 0.20f);
+
+                    f.engine.getPlayer().setPositionSamples (0);
+                    f.process (256);
+                    expect (f.peakOut (3, 256) > 0.20f);   // the send reaches the bus output
+
+                    // Kill the send -> the bus output goes silent.
+                    f.engine.setTrackSend (0, 0, -1, 0.0f, false);
+                    f.engine.getPlayer().setPositionSamples (0);
+                    f.process (256);
+                    expect (f.peakOut (3, 256) < 0.02f);
+                }
+                dir.deleteRecursively();
             }
         }
     };
