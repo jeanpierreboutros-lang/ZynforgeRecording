@@ -48,6 +48,19 @@ namespace zynforge
         if (changed) repaint();
     }
 
+    void BigClockPanel::setLoudness (float integ, float momentary, float tp)
+    {
+        // 0.1-unit change detection so meter jitter doesn't force repaints.
+        auto q = [] (float v) { return std::round (v * 10.0f) / 10.0f; };
+        const bool changed = q (integ)     != q (lufsIntegrated)
+                          || q (momentary) != q (lufsMomentary)
+                          || q (tp)        != q (truePeakDb);
+        lufsIntegrated = integ;
+        lufsMomentary  = momentary;
+        truePeakDb     = tp;
+        if (changed) repaint();
+    }
+
     void BigClockPanel::setArmedReady (bool ready)
     {
         if (armedReady != ready) { armedReady = ready; syncPulseTimer(); repaint(); }
@@ -191,6 +204,20 @@ namespace zynforge
                      missed > 0 ? brand::accentRecord : brand::textSecondary);
             drawRow (right.removeFromTop (14.0f), "MARKERS",
                      juce::String (markerCount));
+
+            // Master loudness (BS.1770). Integrated program loudness +
+            // true-peak; true-peak turns red as it approaches 0 dBTP.
+            auto lufsStr = [] (float v)
+            { return v <= -119.0f ? juce::String ("--") : juce::String (v, 1) + " LUFS"; };
+            drawRow (right.removeFromTop (14.0f), "LOUDNESS (I)", lufsStr (lufsIntegrated));
+            drawRow (right.removeFromTop (14.0f), "MOMENTARY",    lufsStr (lufsMomentary),
+                     brand::textTertiary, brand::textSecondary);
+            const bool tpHot = truePeakDb > -1.0f;
+            drawRow (right.removeFromTop (14.0f), "TRUE PEAK",
+                     truePeakDb <= -119.0f ? juce::String ("--")
+                                           : juce::String (truePeakDb, 1) + " dBTP",
+                     tpHot ? brand::accentRecord : brand::textTertiary,
+                     tpHot ? brand::accentRecord : brand::textSecondary);
         }
 
         // Centre: huge timer

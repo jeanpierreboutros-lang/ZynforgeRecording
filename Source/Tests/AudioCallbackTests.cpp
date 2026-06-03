@@ -18,6 +18,7 @@
 
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MultitrackRecorder.h"
+#include "../Audio/LoudnessMeter.h"
 
 namespace zynforge
 {
@@ -714,6 +715,36 @@ namespace zynforge
                     }
                 }
                 sessionDir.deleteRecursively();
+            }
+
+            beginTest ("LoudnessMeter: K-weighted LUFS + true-peak track level");
+            {
+                const int N = 256;
+                const double dph = 2.0 * juce::MathConstants<double>::pi * 1000.0 / 48000.0;
+                std::vector<double> L (N), R (N);
+
+                auto measure = [&] (double amp) -> std::pair<float, float>
+                {
+                    LoudnessMeter m;
+                    m.prepare (48000.0);
+                    double ph = 0.0;
+                    for (int blk = 0; blk < (int) (1.5 * 48000 / N); ++blk)
+                    {
+                        for (int i = 0; i < N; ++i)
+                        { const double s = amp * std::sin (ph); L[(size_t) i] = s; R[(size_t) i] = s; ph += dph; }
+                        m.processMasterDouble (L.data(), R.data(), 1.0, N);
+                    }
+                    return { m.getMomentaryLufs(), m.getTruePeakDb() };
+                };
+
+                // 0.5 sine on both channels ~ -6.7 LUFS, true-peak ~ -6 dBTP.
+                const auto loud = measure (0.5);
+                expect (loud.first  > -10.0f && loud.first  < -3.0f);
+                expect (loud.second > -8.0f  && loud.second < -4.0f);
+
+                // A 20 dB quieter signal reads ~20 LU lower.
+                const auto quiet = measure (0.05);
+                expect (quiet.first < loud.first - 15.0f);
             }
 
             beginTest ("Unarmed strip produces no audio data (file is silent or absent)");

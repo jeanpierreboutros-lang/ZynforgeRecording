@@ -14,6 +14,7 @@
 #include "ClipModel.h"
 #include "MultitrackRecorder.h"
 #include "SessionPlayer.h"
+#include "LoudnessMeter.h"
 #include "StripColours.h"
 #include "StripGains.h"
 #include "StripNames.h"
@@ -75,6 +76,16 @@ namespace zynforge
         // the master.
         TrackState& getMasterState()  noexcept { return masterState; }
         TrackState& getMasterStateR() noexcept { return masterStateR; }
+
+        // ── Master loudness (ITU-R BS.1770-style) ─────────────────────
+        // Measured on the post-fader stereo master. Momentary/short-term
+        // are live; integrated is gated program loudness since the last
+        // resetLoudness(). True-peak is a 4x-oversampled estimate (dBTP).
+        float getMomentaryLufs()  const noexcept { return loudness.getMomentaryLufs(); }
+        float getShortTermLufs()  const noexcept { return loudness.getShortTermLufs(); }
+        float getIntegratedLufs() const noexcept { return loudness.getIntegratedLufs(); }
+        float getTruePeakDb()     const noexcept { return loudness.getTruePeakDb(); }
+        void  resetLoudness()           noexcept { loudness.reset(); }
         float getMasterGainDb() const noexcept { return masterState.gainDb.load(); }
         bool  getMasterMuted()  const noexcept { return masterState.muted.load(); }
         void  setMasterGainDb (float dB);
@@ -764,6 +775,7 @@ namespace zynforge
         // routing is engineer-configurable and persists in appProps.
         TrackState        masterState;
         TrackState        masterStateR;
+        LoudnessMeter     loudness;   // BS.1770 master loudness + true-peak
         std::atomic<int>  masterOutL    { 0 };
         std::atomic<int>  masterOutR    { 1 };
         std::atomic<bool> masterStereo  { true };

@@ -1018,6 +1018,7 @@ namespace zynforge
         recorder.setAudioWorkgroup ({});   // empty workgroup -- no scheduler hint in tests
         click.prepare (sr);
         click.setTempoBpm (currentTempoBpm.load (std::memory_order_relaxed));
+        loudness.prepare (sr);
         recorder.prepare (sr, blockSize, recorder.getNumTracks());   // start empty; preserve count across device restarts
         player  .prepare (sr, blockSize);
         stereoMixScratch.setSize (2, blockSize, false, true, true);
@@ -1146,6 +1147,7 @@ namespace zynforge
 
         click.prepare (sr);
         click.setTempoBpm (currentTempoBpm.load (std::memory_order_relaxed));
+        loudness.prepare (sr);
 
         // Strip count is user-controlled: the app opens with NO channels
         // (engineer adds them via +CH), and the count is preserved across
@@ -2137,6 +2139,11 @@ namespace zynforge
             if (pkL >= 0.999f) masterState .clipped.store (true, std::memory_order_relaxed);
             if (pkR >= 0.999f) masterStateR.clipped.store (true, std::memory_order_relaxed);
         }
+
+        // Feed the BS.1770 loudness + true-peak meter from the post-fader
+        // master (mGain applied inside). RT-safe -- the meter keeps only
+        // fixed-size filter / histogram state.
+        loudness.processMasterDouble (accL, accR, mGain, blk);
 
         const int outL = juce::jlimit (0, numOutputs - 1, masterOutL.load (std::memory_order_relaxed));
         if (outL < numOutputs)

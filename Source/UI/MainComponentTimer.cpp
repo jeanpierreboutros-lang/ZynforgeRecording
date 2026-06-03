@@ -196,6 +196,9 @@ void MainComponent::timerCallback()
                           recorder.getLastWriteMs(),
                           recorder.getMissedSamples(),
                           remainingSec);
+    bigClock.setLoudness (engine.getIntegratedLufs(),
+                          engine.getMomentaryLufs(),
+                          engine.getTruePeakDb());
 
     perfDashboard.setMetrics (engine.getAudioLoadPct(),
                               engine.getDiskMBPerSec(),

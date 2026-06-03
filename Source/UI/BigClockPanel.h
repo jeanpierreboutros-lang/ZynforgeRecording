@@ -21,6 +21,8 @@ namespace zynforge
         void setMarkers   (int count);
         void setDiskInfo  (double freeGB, int lastWriteMs, juce::int64 missedSamples,
                            double remainingSeconds);
+        // BS.1770 master loudness: integrated + momentary LUFS, true-peak dBTP.
+        void setLoudness  (float integratedLufs, float momentaryLufs, float truePeakDb);
 
         // True when any strip is record-armed but the transport is
         // still idle. Paints a brand-orange ready border so the
@@ -38,6 +40,9 @@ namespace zynforge
         juce::int64 missed      { 0 };
         double remainingSeconds { 0.0 };
         bool   armedReady       { false };
+        float  lufsIntegrated   { -120.0f };
+        float  lufsMomentary    { -120.0f };
+        float  truePeakDb       { -120.0f };
 
         // Pulse animation. timerCallback (30 Hz) advances pulsePhase
         // when either Recording is active OR armedReady is on; paint
