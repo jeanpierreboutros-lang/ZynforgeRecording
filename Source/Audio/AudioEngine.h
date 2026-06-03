@@ -624,10 +624,12 @@ namespace zynforge
         // at `timelineStart` (used by clip paste). Returns the inserted
         // clip index, or -1. Same-track only -- clips index into the
         // track's own Track_NN.wav via the per-track reader.
+        // `audioFile` empty = same-track paste (reads the track's own file);
+        // set to another track's file for a cross-track paste.
         int  pasteClip (int track, juce::int64 timelineStart,
                         juce::int64 fileStart, juce::int64 fileLength,
                         juce::int64 fadeIn, juce::int64 fadeOut, float gainDb,
-                        const juce::String& name);
+                        const juce::String& name, const juce::File& audioFile = {});
 
         // Mutate one clip's bounds and republish to the player. Three
         // edit modes the EDIT row's drag handles drive:

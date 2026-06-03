@@ -45,6 +45,7 @@ namespace zynforge
             const juce::ScopedLock sl (clipsLock);
             activeClips.clear();
             clipsAuthoritative.clear();
+            extraReaders.clear();   // cross-track clip readers belong to the old session
         }
 
         if (! sessionDir.isDirectory()) return 0;
@@ -101,6 +102,10 @@ namespace zynforge
         playing.store (false, std::memory_order_release);
         juce::Thread::sleep (kStopSettleMs);
 
+        {
+            const juce::ScopedLock sl (clipsLock);
+            extraReaders.clear();
+        }
         tracks.clear();
         readerCount.store (0, std::memory_order_release);
         loaded     .store (false, std::memory_order_release);
@@ -155,7 +160,31 @@ namespace zynforge
     void SessionPlayer::setTrackClips (int trackIdx, std::vector<Clip> clips)
     {
         if (trackIdx < 0) return;
+
+        // Build readers for any clip that references a file other than its
+        // track's own -- OUTSIDE the lock, since opening a file is slow.
+        std::vector<std::pair<juce::String, std::unique_ptr<juce::BufferingAudioReader>>> built;
+        for (const auto& c : clips)
+        {
+            if (c.audioFile == juce::File()) continue;
+            const auto key = c.audioFile.getFullPathName();
+            {
+                const juce::ScopedLock sl (clipsLock);
+                if (extraReaders.find (key) != extraReaders.end()) continue;
+            }
+            if (auto* raw = formatManager.createReaderFor (c.audioFile))
+            {
+                const auto bufSamples = (int) (raw->sampleRate * kReaderBufferSeconds);
+                auto br = std::make_unique<juce::BufferingAudioReader> (raw, readerThread, bufSamples);
+                br->setReadTimeout (0);
+                built.emplace_back (key, std::move (br));
+            }
+        }
+
         const juce::ScopedLock sl (clipsLock);
+        for (auto& b : built)
+            if (extraReaders.find (b.first) == extraReaders.end())
+                extraReaders.emplace (b.first, std::move (b.second));
         if (trackIdx >= (int) activeClips.size())        activeClips.resize ((size_t) trackIdx + 1);
         if (trackIdx >= (int) clipsAuthoritative.size()) clipsAuthoritative.resize ((size_t) trackIdx + 1, 0);
         activeClips[(size_t) trackIdx]        = std::move (clips);
@@ -254,7 +283,18 @@ namespace zynforge
                     if (scratch.getNumSamples() < spanLen)
                         scratch.setSize (1, spanLen, false, false, true);
                     scratch.clear (0, 0, spanLen);
-                    t.reader->read (&scratch, 0, spanLen, fileReadStart, true, true);
+                    // Cross-track clips read from their own file's reader
+                    // (resolved under the clipsLock we already hold); clips
+                    // with no audioFile use the track's default reader.
+                    juce::AudioFormatReader* rd = t.reader.get();
+                    if (c.audioFile != juce::File())
+                    {
+                        auto it = extraReaders.find (c.audioFile.getFullPathName());
+                        if (it != extraReaders.end() && it->second != nullptr)
+                            rd = it->second.get();
+                    }
+                    if (rd != nullptr)
+                        rd->read (&scratch, 0, spanLen, fileReadStart, true, true);
 
                     // Apply linear fade envelopes (if any). The clip-relative
                     // offset of this span's first sample is (ovStartTL -

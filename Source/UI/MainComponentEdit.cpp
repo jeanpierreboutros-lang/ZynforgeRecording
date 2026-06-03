@@ -741,23 +741,39 @@ void MainComponent::editClipboardPaste()
         if (auto* obj = clipClipboard.getDynamicObject())
             if (obj->hasProperty ("fileLength"))
             {
-                const int  track  = (int) obj->getProperty ("track");
+                const int sourceTrack = (int) obj->getProperty ("track");
+                // Paste onto the active EDIT row when one is set; else the
+                // clip's own track. Cross-track paste references the source
+                // track's file so the destination plays the copied audio.
+                int target = sourceTrack;
+                if (editPage != nullptr && editPage->getActiveRowTrackIndex() >= 0)
+                    target = editPage->getActiveRowTrackIndex();
+
+                juce::File audioFile;   // empty = same-track
+                if (target != sourceTrack)
+                {
+                    auto dir = engine.getActiveSessionDir().getChildFile ("Audio Files");
+                    audioFile = dir.getChildFile (
+                        juce::String::formatted ("Track_%02d.wav", sourceTrack + 1));
+                }
+
                 const auto pos    = currentPlayheadSamples (engine);
                 const auto before = engine.playlistsToJson();
                 const int newIdx  = engine.pasteClip (
-                    track, pos,
+                    target, pos,
                     (juce::int64) obj->getProperty ("fileStart"),
                     (juce::int64) obj->getProperty ("fileLength"),
                     (juce::int64) obj->getProperty ("fadeIn"),
                     (juce::int64) obj->getProperty ("fadeOut"),
                     (float) (double) obj->getProperty ("gainDb"),
-                    obj->getProperty ("name").toString());
+                    obj->getProperty ("name").toString(), audioFile);
                 if (newIdx >= 0)
                 {
                     pushClipUndo ("Paste clip", before);
-                    if (editPage != nullptr) editPage->setSelectedClip (track, newIdx);
+                    if (editPage != nullptr) editPage->setSelectedClip (target, newIdx);
                     if (editPage != nullptr) editPage->repaint();
-                    showStatus ("Pasted clip at the playhead");
+                    showStatus (target == sourceTrack ? juce::String ("Pasted clip at the playhead")
+                                                      : "Pasted clip onto track " + juce::String (target + 1));
                 }
                 else showStatus ("Paste failed -- no audio on the source track");
                 return;

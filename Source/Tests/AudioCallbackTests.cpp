@@ -818,6 +818,56 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            beginTest ("Cross-track clip paste plays the source track's audio");
+            {
+                // Record track 0 loud, track 1 silent into a session.
+                auto sessionDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                      .getChildFile ("zynforge-xtrk-" + juce::Uuid().toString());
+                sessionDir.createDirectory();
+                {
+                    CallbackFixture rec (2, 2, 2);
+                    rec.engine.getRecorder().getTrack (0).armed.store (true);
+                    rec.engine.getRecorder().getTrack (1).armed.store (true);
+                    expect (rec.engine.startRecording (sessionDir));
+                    rec.writeInput (0, 0.50f, 256);
+                    rec.writeInput (1, 0.00f, 256);   // silent
+                    for (int b = 0; b < 192; ++b) rec.process (256);
+                    rec.engine.stopRecording();
+                }
+                {
+                    CallbackFixture f (2, 2, 4);
+                    expect (f.engine.loadSession (sessionDir) > 0);   // seeds clips + active session
+                    const auto srcFile = sessionDir.getChildFile ("Audio Files")
+                                                   .getChildFile ("Track_01.wav");
+                    const auto total = f.engine.getPlayer().getTrackLengthSamples (0);
+                    expect (total > 0);
+
+                    // Paste track 0's clip onto track 1, referencing track 0's file.
+                    const int idx = f.engine.pasteClip (1, 0, 0, total, 0, 0, 0.0f, "x", srcFile);
+                    expect (idx >= 0);
+
+                    // Route track 1 -> Out 2 (isolated), track 0 -> Out 3.
+                    f.engine.setTrackOutputRouting (0, 3);
+                    f.engine.setTrackOutputRouting (1, 2);
+                    f.engine.startPlayback();
+                    fillPlaybackBuffer (f);            // let both readers buffer
+
+                    f.engine.getPlayer().setPositionSamples (0);
+                    // Spin a few blocks so the cross-track reader is filled.
+                    float pk = 0.0f;
+                    for (int a = 0; a < 60 && pk < 0.20f; ++a)
+                    {
+                        f.engine.getPlayer().setPositionSamples (0);
+                        f.process (256);
+                        pk = f.peakOut (2, 256);
+                        if (pk < 0.20f) juce::Thread::sleep (15);
+                    }
+                    // Track 1 now carries track 0's recorded 0.5 DC.
+                    expect (pk > 0.20f);
+                }
+                sessionDir.deleteRecursively();
+            }
+
             beginTest ("Unarmed strip produces no audio data (file is silent or absent)");
             {
                 const auto sessionDir = makeTempSessionDir();

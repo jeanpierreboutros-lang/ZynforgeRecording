@@ -7,6 +7,7 @@
 #include "ClipModel.h"
 
 #include <atomic>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -95,6 +96,14 @@ namespace zynforge
         // (authoritative) from "no list = play whole file" (never set).
         std::vector<char>              clipsAuthoritative;
         mutable juce::CriticalSection  clipsLock;
+
+        // Per-clip readers for clips that reference a file OTHER than their
+        // track's own Track_NN.wav (cross-track paste). Keyed by absolute
+        // path. Built on the message thread in setTrackClips (file open is
+        // slow); the audio thread only looks them up, under clipsLock. A
+        // clip with an empty audioFile uses its track's default reader, so
+        // existing sessions are completely unaffected.
+        std::map<juce::String, std::unique_ptr<juce::BufferingAudioReader>> extraReaders;
 
         std::atomic<bool>        loaded      { false };
         std::atomic<bool>        playing     { false };

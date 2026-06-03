@@ -12,6 +12,8 @@
 
 #include "AudioEngine.h"
 
+#include <map>
+
 namespace zynforge
 {
     void AudioEngine::seedDefaultClips()
@@ -219,6 +221,10 @@ namespace zynforge
                     cObj->setProperty ("fadeIn",      (juce::int64) c.fadeInSamples);
                     cObj->setProperty ("fadeOut",     (juce::int64) c.fadeOutSamples);
                     cObj->setProperty ("fadeCurve",   c.fadeCurve);
+                    // Cross-track clips reference another track's file --
+                    // store the NAME only so the session stays portable.
+                    if (c.audioFile != juce::File())
+                        cObj->setProperty ("audioFile", c.audioFile.getFileName());
                     cObj->setProperty ("gainDb",      (double) c.gainDb);
                     cObj->setProperty ("muted",       c.muted);
                     cObj->setProperty ("locked",      c.locked);
@@ -275,6 +281,10 @@ namespace zynforge
                         c.fadeInSamples        = (juce::int64) (double) cObj->getProperty ("fadeIn");
                         c.fadeOutSamples       = (juce::int64) (double) cObj->getProperty ("fadeOut");
                         c.fadeCurve            = (int) cObj->getProperty ("fadeCurve");   // 0 if absent
+                        const auto afName = cObj->getProperty ("audioFile").toString();
+                        if (afName.isNotEmpty())
+                            c.audioFile = getActiveSessionDir().getChildFile ("Audio Files")
+                                                               .getChildFile (afName);
                         c.gainDb               = (float)        (double) cObj->getProperty ("gainDb");
                         c.muted                = (bool)         cObj->getProperty ("muted");
                         c.locked               = (bool)         cObj->getProperty ("locked");
@@ -401,6 +411,10 @@ namespace zynforge
             clips.push_back (c);
         }
 
+        // Cross-track clips read from their own file -- cache one reader
+        // per distinct path so the bounce matches what playback renders.
+        std::map<juce::String, std::unique_ptr<juce::AudioFormatReader>> extra;
+
         juce::AudioBuffer<float> tmp (1, 0);
         auto* dst = out.getWritePointer (0);
         for (const auto& c : clips)
@@ -413,9 +427,21 @@ namespace zynforge
             const int span = (int) (writeEnd - writeBeg);
             const juce::int64 fileReadStart = c.fileStartSamples + (writeBeg - tlStart);
 
+            juce::AudioFormatReader* rd = reader.get();
+            if (c.audioFile != juce::File() && c.audioFile != src)
+            {
+                const auto key = c.audioFile.getFullPathName();
+                auto it = extra.find (key);
+                if (it == extra.end())
+                    it = extra.emplace (key, std::unique_ptr<juce::AudioFormatReader> (
+                                                 fm.createReaderFor (c.audioFile))).first;
+                if (it->second != nullptr) rd = it->second.get();
+            }
+            if (rd == nullptr) continue;
+
             tmp.setSize (1, span, false, false, true);
             tmp.clear();
-            reader->read (&tmp, 0, span, fileReadStart, true, true);
+            rd->read (&tmp, 0, span, fileReadStart, true, true);
 
             const float clipGain = juce::Decibels::decibelsToGain (c.gainDb, -60.0f);
             const bool  eq        = (c.fadeCurve == 1);
@@ -623,7 +649,7 @@ namespace zynforge
     int AudioEngine::pasteClip (int track, juce::int64 timelineStart,
                                 juce::int64 fileStart, juce::int64 fileLength,
                                 juce::int64 fadeIn, juce::int64 fadeOut, float gainDb,
-                                const juce::String& name)
+                                const juce::String& name, const juce::File& audioFile)
     {
         const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
         if (track < 0 || track >= maxTracks) return -1;
@@ -632,6 +658,7 @@ namespace zynforge
         auto& list = clipsFor (track);
 
         Clip c;
+        c.audioFile            = audioFile;   // empty = same-track (track reader)
         c.name                 = name.isNotEmpty() ? name : juce::String ("paste");
         c.timelineStartSamples = juce::jmax ((juce::int64) 0, timelineStart);
         c.fileStartSamples     = fileStart;
