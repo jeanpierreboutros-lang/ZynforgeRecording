@@ -4,7 +4,7 @@
 
 ZynForge Recording is a live-stage tool. The cost of a regression discovered in front of an audience is qualitatively higher than the cost of a regression in a typical desktop app. The testing strategy reflects that: **catch crashes and data loss before the audience does, even at the cost of some manual effort.**
 
-The strategy is **build + unit + smoke + field**. The unit-test harness is in place (128 test groups and counting; see *How to Run Tests*) and covers the audio callback, recorder, player, automation, markers, and accessibility paths headlessly. Smoke-test and field rehearsal still backstop it for anything the headless harness can't see (paint, real CoreAudio, live VoiceOver).
+The strategy is **build + unit + smoke + field**. The unit-test harness is in place (139 test groups and counting; see *How to Run Tests*) and covers the audio callback, recorder, player, automation, markers, clip-edit persistence, and accessibility paths headlessly. Smoke-test and field rehearsal still backstop it for anything the headless harness can't see (paint, real CoreAudio, live VoiceOver, **macOS menu enablement**, the session reopen-on-launch flow).
 
 ## Testing Pyramid / Approach
 
@@ -19,6 +19,8 @@ The strategy is **build + unit + smoke + field**. The unit-test harness is in pl
 - **Unit tests** — `juce::UnitTest` groups in `Source/Tests/`, run via `--run-tests` (or `ZYNFORGE_RUN_TESTS=1`). Headless, no CoreAudio device, no message thread. Add a test with every bug fix and every new audio-thread / persistence path.
 - **Smoke-test** — Launch the built app, exercise the changed surface, verify RSS / CPU / no new crash report. Documented in `CLAUDE.md` under *Build + smoke test recipe*.
 - **Field rehearsal** — User-driven. Anything touching the audio callback, the recorder, or the player must be exercised in a real (or simulated) session before being declared shippable. The user is the only authority for this stage.
+
+**Menu / session-load smoke checks (can't be unit-tested — native menu + message thread).** macOS caches the menu's greyed states until `menuItemsChanged()` fires, so after any change near menu enablement, manually verify: launch reopens the last session with its channels; with a session loaded the Edit/Track/Export items light up; after a clip edit, Undo lights up; selecting a strip lights up Track ▸ Cut/Copy/Solo. Export reads from `Audio Files/` — verify Export Individual Track actually writes a file.
 
 ## Frameworks and Tools in Use
 

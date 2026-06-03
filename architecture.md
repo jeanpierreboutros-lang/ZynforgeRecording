@@ -117,6 +117,10 @@ Message-thread only. `MainComponent` runs a 24 Hz `juce::Timer` that pulls atomi
 
 `MainComponent.cpp` was split (2026-05-24) along functional lines: `MainComponentTimer.cpp` (refresh tick), `MainComponentKeys.cpp` (keyboard shortcuts), `MainComponentLayout.cpp` (paint + resized), `MainComponentCues.cpp` (cue + setlist + soft-takeover ramp), `MainComponentEdit.cpp` (undo / redo / cut / paste / split / range / marker / automation transaction), `MainComponentSessionIO.cpp` (save / load / export / import / template ops), `MainComponentMenu.cpp` (macOS menu surface). Same pass split `AudioEngine.cpp` into `AudioEngineAutomation.cpp` (lanes + JSON + Safe + thinning) and `AudioEngineClips.cpp` (clip edits + takes + playlists).
 
+**macOS menu refresh (2026-06-04).** `MainComponent` is the `MenuBarModel`; macOS caches each item's enabled state until `menuItemsChanged()` is called. `MainComponentMenu.cpp::refreshMenuStateIfChanged()` polls a signature of every menu-gating condition from the 10 Hz timer and refreshes only on change — without it the menu froze in the empty launch state. The menu bar is `File · Edit · Track · Session · Help`: Edit = timeline/audio editing, the **Track** menu = channel/strip management (split 2026-06-04). All session opens (File ▸ Open, Welcome dialog, launch auto-reopen) funnel through `MainComponentSessionIO.cpp::openSessionFolder()`, which also auto-reopens the last session on launch and sizes the mixer from loaded audio when a session has no `session_mix.json`.
+
+**EDIT view (`EditPage.cpp`).** Each clip renders as a DAW region block: a bordered block with a name header + its own waveform drawn from the clip's file region (so move/slip-trim show the right audio; the continuous thumbnail is only the no-clips fallback). The per-row header column (swatch / name / R-I-S-M / VIEW / slim `LedMeter` / routing) is **pinned** — drawn last via `paintHeader(g, headerOriginX())` and hit-tested through `inWavePane/inSwatch/inNameZone`, with a `ScrollViewport` that re-pins on horizontal scroll. A faint 1-2-5 s timeline grid sits behind the clips; clip Move + trim drags snap through `engine.snapSampleToGrid`. Single-key tools `S/T/R/G/F/B`; `Cmd+E` separates.
+
 **Settings dialogs.** Four dialogs cover distinct concerns:
 - `SessionSettingsDialog` — editable: audio format / sample rate / bit depth. Menu label: "Session Format & Recording...".
 - `SessionPropertiesDialog` — name / notes + read-only audio config summary. Menu label: "Session Info & Notes...".
@@ -162,8 +166,8 @@ sequenceDiagram
 4. Strip identity is resolved by `stripId` (UUID), not array index — survives a reorder.
 
 ### Session persistence
-- Per-session: `.zfproj` JSON at the session root carries setlist, cues (with strip UUIDs), playlists (Takes), tempo curve, and `formatVersion`.
-- Cross-session: `appProps` (`~/Library/Application Support/Zynforge Recording/`) carries colour / name / gain / routing overrides per strip, stereo-pair flags, MIDI clock source, LTC source strip, cloud-upload command.
+- Per-session (authoritative): `session_mix.json` carries the full per-strip mixer state — name, colour, gain, pan, mute/solo/monitor/arm, routing, stereo, VCA + edit group, and **aux sends** (4 slots of `{bus, dB, post}`, moved here from global appProps on 2026-06-04 to stop cross-session leaks) — plus session tempo + tempo map. `.zfproj` carries setlist, cues (with strip UUIDs), playlists (Takes), automation, UI layout, and `formatVersion`. `markers.json` carries markers.
+- Cross-session: `appProps` (`~/Library/Application Support/ZYNFORGE Recording/`) carries app-global prefs (sessions root, MIDI clock source, LTC source strip, default template, active-session dir for relaunch) and a small set of **latent-leak** per-strip keys still pending migration to `session_mix.json` — `strip_isbus_*` and automation `safe`/`vTrim`/`pTrim` (tracked in `tasks.md`). New sessions wipe the per-index appProps overrides; the session files are authoritative.
 
 ## 7. Technical Decisions and Constraints
 

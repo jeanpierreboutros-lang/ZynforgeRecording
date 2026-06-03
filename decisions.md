@@ -150,6 +150,59 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## macOS menu enablement refreshed via a polled state signature — 2026-06-04
+
+**Status:** Accepted
+**Context:** `MainComponent` is the `juce::MenuBarModel` driving the macOS system menu bar. macOS caches each item's enabled/greyed state and only re-queries `getMenuForIndex` after `menuItemsChanged()` is called — which the app never did. Result: every menu froze in the **empty launch state** (no session, no undo history, no selection), so Undo/Redo, all of Edit, Track, and Export stayed greyed even once a session was loaded, edits made, or strips selected. This presented to the user as "nothing works." Tell-tale: the transport clock read a real duration (player loaded) while the player-gated Edit items were still grey.
+**Decision:** Build a cheap string signature of every condition that gates a menu item (`player.isLoaded`, `canUndo/canRedo`, track count, selection count, recording, loop region, active-session, punch, snap, cues-empty, clipboard) in `refreshMenuStateIfChanged()`, called from the existing 10 Hz UI timer; call `menuItemsChanged()` only when the signature changes.
+**Rationale:** A `juce::ApplicationCommandManager` would be the "proper" command-driven alternative but would mean migrating ~50 ad-hoc `menuItemSelected` IDs to command IDs — large and risky. Polling a signature at 10 Hz is O(1), allocates one short string, and refreshes within ~100 ms of any state change. Diffing the signature avoids rebuilding the native menu every tick.
+**Consequences:** Menu items light up the moment they're usable. New menu-gating conditions must be added to the signature or they won't trigger a refresh. (Documented in `coding-standards.md`.)
+**Alternatives Considered:** ApplicationCommandManager migration (rejected for now — scope/risk); calling `menuItemsChanged()` at every mutation site (rejected — dozens of call sites, easy to miss one); unconditional `menuItemsChanged()` every tick (rejected — needless native-menu rebuilds).
+**Related Documents:** `Source/UI/MainComponentMenu.cpp` (`refreshMenuStateIfChanged`), `Source/UI/MainComponentTimer.cpp`.
+
+---
+
+## Reopen the last session on launch; never start in an empty all-grey window — 2026-06-04
+
+**Status:** Accepted
+**Context:** On launch the engine restored the active-session *folder* (so Save stayed enabled) but never loaded its *content*. The app came up with 0 channels and a Welcome dialog; combined with the menu-cache bug above, the whole UI read as dead. A session recorded but never explicitly **Saved** has no `session_mix.json`, so even when opened the mixer wasn't sized → "No channels yet".
+**Decision:** `showStartupWelcome` auto-reopens the last session if it's still on disk (skipping the dialog). All open paths (File ▸ Open, Welcome `onOpen`, auto-reopen) go through one `openSessionFolder()` that pins the active dir, restores setlist + UI layout + full mixer state, loads the audio, and — when there's no `session_mix.json` — **sizes the mixer from the loaded audio track count** as a recovery fallback.
+**Rationale:** Matches DAW expectation (come back to your work). Consolidating the three open paths fixed a real divergence (Welcome `onOpen` previously called only `loadSession`, leaving the mixer + Export grey). The recorder-from-audio fallback recovers recorded-but-unsaved sessions instead of showing an empty mixer.
+**Consequences:** Relaunch lands straight in the last session. A fresh first run (no prior session) still shows Welcome. A session with neither `session_mix.json` nor `Audio Files/` is treated as "not a real session" and skipped.
+**Related Documents:** `Source/UI/MainComponentSessionIO.cpp` (`openSessionFolder`), `Source/UI/MainComponentHelp.cpp` (`showStartupWelcome`).
+
+---
+
+## Aux sends are per-session in `session_mix.json`, not global appProps — 2026-06-04
+
+**Status:** Accepted (extends *Persistence first*, 2026-05-23)
+**Context:** Aux send routing was stored in global `appProps` keyed by strip index (`strip_send_<i>_<slot>_*`). Because appProps is app-global, opening a different session inherited the previous session's sends, and the routing never round-tripped through the authoritative `session_mix.json` — the same leak the per-index appProps mechanism was already deprecated for.
+**Decision:** `saveSessionMixTo` / `loadSessionMixFrom` serialize each strip's 4 send slots (`{bus, dB, post}`). `setTrackSend` no longer writes appProps; `applyPersistedStripState` no longer reads sends from appProps (which would clobber the per-session values).
+**Consequences:** Sends round-trip per-session and no longer leak. Old sessions open with no sends until re-saved. **`strip_isbus_*` and automation `safe`/`vTrim`/`pTrim` still live in global appProps and have the same latent leak** — tracked in `tasks.md` as the persistence-consolidation follow-up.
+**Related Documents:** `Source/Audio/AudioEngine.cpp` (`saveSessionMixTo`, `loadSessionMixFrom`, `setTrackSend`, `applyPersistedStripState`).
+
+---
+
+## EDIT clips render as per-clip region blocks; channels default to grey — 2026-06-04
+
+**Status:** Accepted
+**Context:** The EDIT lane drew one continuous full-width thumbnail with yellow "cut-flag" markers at clip starts — so a moved/slip-trimmed clip's block showed the *wrong* audio, and it didn't read like a DAW. Separately, new channels defaulted to the per-index `personality` wash; the user asked for a neutral default they colour themselves.
+**Decision:** Each clip is drawn as a discrete block (name-header bar + border) with **its own waveform** mapped to the clip's file region (`fileStart..fileStart+fileLen`), the proven comp-lane pattern; the continuous thumbnail is kept only as the no-clips fallback. The yellow cut-flag is gone (block borders mark boundaries). `brand::stripColour` now returns `stripDefaultGrey` for all indices; recolour via the hue×shade `StripColourPicker` gradient. (This overrides the per-index personality default for the **Recording** app; ZynForge **Live** is unchanged.)
+**Consequences:** Edits read correctly and look like Pro Tools/Logic regions. The `personality` palette stays in `BrandColors.h` for reference but is no longer auto-assigned. A timeline grid (1-2-5 s) and trim/move snap-to-grid were added alongside.
+**Related Documents:** `Source/UI/EditPage.cpp`, `Source/Theme/BrandColors.h`, `Source/UI/StripColourPicker.{h,cpp}`.
+
+---
+
+## Edit vs Track menu split — 2026-06-04
+
+**Status:** Accepted
+**Context:** A single Edit menu mixed timeline/audio editing (Separate, Crop, Range, Punch) with mixer-channel management (cut/copy/paste/delete strips, batch rename/colour, selection) — not how a DAW separates the two, and confusing.
+**Decision:** Edit holds only timeline/audio editing + Undo/Redo. A new top-level **Track** menu holds channel management. Menu bar: `File · Edit · Track · Session · Help`. Item IDs and keyboard shortcuts are unchanged; only the `topLevelIndex` dispatch renumbered (Session 2→3, Help 3→4).
+**Consequences:** Clearer separation. Any future menu-index-based logic must account for the inserted Track menu at index 2.
+**Related Documents:** `Source/UI/MainComponentMenu.cpp` (`getMenuBarNames`, `getMenuForIndex`).
+
+---
+
 ## Template
 
 ```

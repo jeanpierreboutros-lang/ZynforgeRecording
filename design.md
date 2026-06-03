@@ -269,6 +269,13 @@ personality rotation** for per-strip identity.
   strip's index. The wash is dark enough that `text-primary` stays
   readable. A subtle top-light → bottom-dark gradient lives inside the
   wash. The defining trait of the ZynForge family.
+  - **Recording app override (2026-06-04):** at the user's request, new
+    channels in **ZynForge Recording** default to a neutral grey
+    (`stripDefaultGrey`), not the per-index personality wash — engineers
+    colour the channels that matter from the `StripColourPicker` (a hue×shade
+    gradient with the strip's current colour pinned + an OK button). The
+    `personality[]` palette stays defined for reference and for ZynForge
+    **Live**, which is unchanged. See `decisions.md`.
 
 The complete implementation palette has many more derived tokens; the
 front matter exposes the semantic anchors that everything else derives
