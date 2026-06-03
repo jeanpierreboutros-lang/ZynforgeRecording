@@ -141,6 +141,17 @@ namespace zynforge
             selectedClipIndex = clipIdx;
             repaint();
         }
+        // Select several clips at once (used by edit-group expansion: one
+        // click on a grouped clip selects the matching clip on every group
+        // peer). `primary` is the Copy/Nudge anchor.
+        void setSelectedClips (const std::vector<ClipRef>& refs, ClipRef primary) noexcept
+        {
+            selClips.clear();
+            for (auto& r : refs) selClips.insert (r);
+            selectedClipTrack = primary.first;
+            selectedClipIndex = primary.second;
+            repaint();
+        }
         // Toggle a clip in/out of the selection (Shift+click).
         void toggleSelectedClip (int track, int clipIdx) noexcept
         {

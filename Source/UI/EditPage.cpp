@@ -2104,7 +2104,8 @@ namespace zynforge
                             const juce::int64 newIn = juce::jlimit<juce::int64> (
                                 0, c.fileLengthSamples - dragStartFadeOut,
                                 dragStartFadeIn + wantSamples);
-                            engine.setClipFades (index, draggingClipIdx, newIn, dragStartFadeOut);
+                            for (int peer : editGroupPeers())
+                                engine.setClipFades (peer, draggingClipIdx, newIn, dragStartFadeOut);
                         }
                         else
                         {
@@ -2112,7 +2113,8 @@ namespace zynforge
                             const juce::int64 newOut = juce::jlimit<juce::int64> (
                                 0, c.fileLengthSamples - dragStartFadeIn,
                                 dragStartFadeOut - wantSamples);
-                            engine.setClipFades (index, draggingClipIdx, dragStartFadeIn, newOut);
+                            for (int peer : editGroupPeers())
+                                engine.setClipFades (peer, draggingClipIdx, dragStartFadeIn, newOut);
                         }
                         repaint();
                         return;
@@ -2126,7 +2128,8 @@ namespace zynforge
                         const auto mode = draggingClipModeInt == 0 ? AudioEngine::ClipEdit::TrimLeft
                                        : draggingClipModeInt == 1 ? AudioEngine::ClipEdit::TrimRight
                                                                   : AudioEngine::ClipEdit::Move;
-                        engine.editClip (index, draggingClipIdx, mode, stepSamples);
+                        for (int peer : editGroupPeers())
+                            engine.editClip (peer, draggingClipIdx, mode, stepSamples);
                         repaint();
                     }
                 }
@@ -2247,8 +2250,17 @@ namespace zynforge
                 {
                     if (clickedClipIdx >= 0)
                     {
-                        if (e.mods.isShiftDown()) page->toggleSelectedClip (index, clickedClipIdx);
-                        else                      page->setSelectedClip   (index, clickedClipIdx);
+                        if (e.mods.isShiftDown())
+                            page->toggleSelectedClip (index, clickedClipIdx);
+                        else
+                        {
+                            // Plain click selects this clip + the matching
+                            // clip on every EDIT-group peer.
+                            std::vector<EditPage::ClipRef> refs;
+                            for (int peer : editGroupPeers())
+                                refs.push_back ({ peer, clickedClipIdx });
+                            page->setSelectedClips (refs, { index, clickedClipIdx });
+                        }
                     }
                     else if (! e.mods.isShiftDown())
                         page->clearSelectedClip();
@@ -2273,6 +2285,19 @@ namespace zynforge
         int  getHeaderWidth() const noexcept { return headerW; }
         int  getTrackIndex()  const noexcept { return index; }
         bool isStereoPair()   const noexcept { return stereo; }
+
+        // Physical tracks this row's clip edits propagate to: itself plus
+        // every member of its EDIT group (so split / trim / move / fade /
+        // selection stay phase-coherent across grouped tracks). Ungrouped
+        // tracks return just themselves.
+        std::vector<int> editGroupPeers() const
+        {
+            const int g = engine.getTrackEditGroup (index);
+            if (g < 0) return { index };
+            auto v = engine.getStripsInEditGroup (g);
+            if (v.empty()) v.push_back (index);
+            return v;
+        }
 
         // True once the background thumbnail scan has finished for this row's
         // file(s) (an empty/no-source thumbnail counts as loaded). Lets the

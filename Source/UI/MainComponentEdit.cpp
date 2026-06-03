@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <vector>
+#include <set>
 
 using namespace zynforge;
 
@@ -531,25 +532,30 @@ void MainComponent::endAutomationTransaction (const juce::String& label)
 // explicitly selected, so a bare edit gesture just works.
 std::vector<int> MainComponent::tracksToEditPhysical()
 {
-    std::vector<int> out;
     auto& rec = engine.getRecorder();
+    std::set<int> picked;   // dedupe across stereo partners + edit groups
     if (! selectedLogical.empty())
     {
         for (int logical : selectedLogical)
         {
             const int phys = physicalFromLogical (engine, logical);
             if (phys < 0 || phys >= rec.getNumTracks()) continue;
-            out.push_back (phys);
+            picked.insert (phys);
             if (phys + 1 < rec.getNumTracks()
                 && rec.getTrack (phys).isStereo.load (std::memory_order_relaxed))
-                out.push_back (phys + 1);   // stereo pair edits together
+                picked.insert (phys + 1);   // stereo pair edits together
+            // EDIT-group peers edit together (phase-coherent multitrack).
+            const int g = engine.getTrackEditGroup (phys);
+            if (g >= 0)
+                for (int p : engine.getStripsInEditGroup (g))
+                    if (p >= 0 && p < rec.getNumTracks()) picked.insert (p);
         }
     }
     else
     {
-        for (int i = 0; i < rec.getNumTracks(); ++i) out.push_back (i);
+        for (int i = 0; i < rec.getNumTracks(); ++i) picked.insert (i);
     }
-    return out;
+    return { picked.begin(), picked.end() };
 }
 
 void MainComponent::editSplitAtPlayhead()
