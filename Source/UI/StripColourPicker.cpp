@@ -7,30 +7,77 @@
 namespace zynforge
 {
     StripColourPicker::StripColourPicker (juce::Colour currentColour, Callback cb)
-        : current (currentColour), callback (std::move (cb))
+        : original (currentColour), pending (currentColour), callback (std::move (cb))
     {
-        // Eight ZynForge personality colours + two neutrals.
-        presets = {
-            brand::personality[0], brand::personality[1], brand::personality[2], brand::personality[3], brand::personality[4],
-            brand::personality[5], brand::personality[6], brand::personality[7],
-            brand::swatchSlate,
-            brand::swatchGraphite,
+        buildGradient();
+
+        auto styleButton = [] (juce::TextButton& b, juce::Colour bg)
+        {
+            b.setColour (juce::TextButton::buttonColourId, bg);
+            b.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
         };
 
-        customButton.onClick = [this] { openCustomSelector(); };
-        addAndMakeVisible (customButton);
+        // OK -- confirm the live-previewed selection and close. The colour is
+        // already applied (each swatch click previews it on the strip), so OK
+        // simply re-applies the pending colour and dismisses the call-out.
+        styleButton (okButton, brand::featureEngaged.withAlpha (brand::alpha::muted));
+        okButton.onClick = [this]
+        {
+            if (callback) callback (pending);
+            if (auto* box = findParentComponentOfClass<juce::CallOutBox>())
+                box->dismiss();
+        };
+        addAndMakeVisible (okButton);
 
+        // Default -- revert to the per-index personality colour (alpha 0).
+        styleButton (resetButton, brand::bgElevated);
         resetButton.onClick = [this]
         {
-            if (callback) callback (juce::Colour ((juce::uint32) 0));   // alpha = 0 → revert
+            if (callback) callback (juce::Colour ((juce::uint32) 0));
             if (auto* box = findParentComponentOfClass<juce::CallOutBox>())
                 box->dismiss();
         };
         addAndMakeVisible (resetButton);
 
+        // Custom... -- full HSV/RGB selector with its own OK.
+        styleButton (customButton, brand::bgElevated);
+        customButton.onClick = [this] { openCustomSelector(); };
+        addAndMakeVisible (customButton);
+
         const int width  = kMargin * 2 + kCols * kSize + (kCols - 1) * kGap;
-        const int height = kMargin * 2 + kRows * kSize + (kRows - 1) * kGap + 36;
+        const int gridH  = kRows * kSize + (kRows - 1) * kGap;
+        const int height = kMargin * 2 + gridH + kGap + kBtnH;
         setSize (width, height);
+    }
+
+    void StripColourPicker::buildGradient()
+    {
+        // [0] = the strip's current / original colour, so the engineer always
+        // has the default-of-the-original one click away. The rest form a 2-D
+        // gradient: hue sweeps left→right across the columns, and each row
+        // steps lighter→darker so warm/cool tints at several shades are all
+        // reachable without opening the custom selector.
+        presets.assign ((std::size_t) (kCols * kRows), juce::Colour());
+        presets[0] = original.withAlpha (1.0f);
+        for (int i = 1; i < kCols * kRows; ++i)
+        {
+            const int   col   = i % kCols;
+            const int   row   = i / kCols;
+            const float hue   = (float) col / (float) (kCols - 1);
+            const float shade = (kRows > 1) ? (float) row / (float) (kRows - 1) : 0.0f;
+            const float sat   = juce::jlimit (0.0f, 1.0f, 0.52f + 0.40f * shade);
+            const float bri   = juce::jlimit (0.0f, 1.0f, 0.98f - 0.52f * shade);
+            presets[(std::size_t) i] = juce::Colour::fromHSV (hue, sat, bri, 1.0f);
+        }
+    }
+
+    juce::Rectangle<int> StripColourPicker::swatchBounds (int i) const
+    {
+        const int col = i % kCols;
+        const int row = i / kCols;
+        return { kMargin + col * (kSize + kGap),
+                 kMargin + row * (kSize + kGap),
+                 kSize, kSize };
     }
 
     void StripColourPicker::resized()
@@ -38,10 +85,13 @@ namespace zynforge
         auto r = getLocalBounds().reduced (kMargin);
         r.removeFromTop (kRows * kSize + (kRows - 1) * kGap);
         r.removeFromTop (kGap);
-        const int w = (r.getWidth() - kGap) / 2;
-        resetButton .setBounds (r.removeFromLeft (w));
-        r.removeFromLeft (kGap);
-        customButton.setBounds (r);
+        auto btnRow = r.removeFromTop (kBtnH);
+        const int w = (btnRow.getWidth() - 2 * kGap) / 3;
+        resetButton .setBounds (btnRow.removeFromLeft (w));
+        btnRow.removeFromLeft (kGap);
+        customButton.setBounds (btnRow.removeFromLeft (w));
+        btnRow.removeFromLeft (kGap);
+        okButton    .setBounds (btnRow);
     }
 
     void StripColourPicker::paint (juce::Graphics& g)
@@ -54,19 +104,23 @@ namespace zynforge
 
         for (int i = 0; i < (int) presets.size(); ++i)
         {
-            const int col = i % kCols;
-            const int row = i / kCols;
-            const int x = kMargin + col * (kSize + kGap);
-            const int y = kMargin + row * (kSize + kGap);
-            juce::Rectangle<float> r ((float) x, (float) y, (float) kSize, (float) kSize);
-
+            auto r = swatchBounds (i).toFloat();
             g.setColour (presets[(std::size_t) i]);
             g.fillRoundedRectangle (r, brand::radius::md);
 
-            const bool isCurrent = (presets[(std::size_t) i].withAlpha (1.0f).getARGB()
-                                    == current.withAlpha (1.0f).getARGB());
-            g.setColour (isCurrent ? brand::accentStatus : brand::edge);
-            g.drawRoundedRectangle (r, brand::radius::md, isCurrent ? 2.0f : 1.0f);
+            // The currently-pending (live-previewed) swatch gets the accent
+            // selection ring; swatch 0 (the original) carries a thin inner
+            // marker so it reads as "the original colour" even when another
+            // swatch is selected.
+            const bool isPending = (presets[(std::size_t) i].withAlpha (1.0f).getARGB()
+                                    == pending.withAlpha (1.0f).getARGB());
+            if (i == 0 && ! isPending)
+            {
+                g.setColour (brand::gloss (brand::alpha::muted));
+                g.drawRoundedRectangle (r.reduced (3.0f), brand::radius::sm, 1.0f);
+            }
+            g.setColour (isPending ? brand::accentStatus : brand::edge);
+            g.drawRoundedRectangle (r, brand::radius::md, isPending ? 2.5f : 1.0f);
         }
     }
 
@@ -74,17 +128,11 @@ namespace zynforge
     {
         for (int i = 0; i < (int) presets.size(); ++i)
         {
-            const int col = i % kCols;
-            const int row = i / kCols;
-            const int x = kMargin + col * (kSize + kGap);
-            const int y = kMargin + row * (kSize + kGap);
-            juce::Rectangle<int> r (x, y, kSize, kSize);
-
-            if (r.contains (e.getPosition()))
+            if (swatchBounds (i).contains (e.getPosition()))
             {
-                if (callback) callback (presets[(std::size_t) i]);
-                if (auto* box = findParentComponentOfClass<juce::CallOutBox>())
-                    box->dismiss();
+                pending = presets[(std::size_t) i];
+                if (callback) callback (pending);   // live preview on the strip
+                repaint();
                 return;
             }
         }
@@ -96,7 +144,7 @@ namespace zynforge
             juce::ColourSelector::showColourspace | juce::ColourSelector::showSliders,
             4, 0);
         selector->setSize (300, 280);
-        selector->setCurrentColour (current);
+        selector->setCurrentColour (pending);
 
         class Listener final : public juce::ChangeListener
         {
@@ -113,25 +161,43 @@ namespace zynforge
         auto listener = std::make_shared<Listener> (*selector, callback);
         selector->addChangeListener (listener.get());
 
-        // Keep listener + selector alive for the lifetime of the CallOutBox.
+        // Holder keeps the selector + listener alive and adds an OK button
+        // under the colour space that confirms the live selection and closes.
         struct Holder final : public juce::Component
         {
             std::unique_ptr<juce::ColourSelector> sel;
             std::shared_ptr<Listener>             lst;
+            juce::TextButton                      ok { "OK" };
+
             Holder (std::unique_ptr<juce::ColourSelector> s, std::shared_ptr<Listener> l)
                 : sel (std::move (s)), lst (std::move (l))
             {
                 addAndMakeVisible (*sel);
-                setSize (sel->getWidth(), sel->getHeight());
+                ok.setColour (juce::TextButton::buttonColourId,
+                              brand::featureEngaged.withAlpha (brand::alpha::muted));
+                ok.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
+                ok.onClick = [this]
+                {
+                    if (lst != nullptr && lst->callback)
+                        lst->callback (sel->getCurrentColour());
+                    if (auto* box = findParentComponentOfClass<juce::CallOutBox>())
+                        box->dismiss();
+                };
+                addAndMakeVisible (ok);
+                setSize (sel->getWidth(), sel->getHeight() + 38);
             }
-            void resized() override { sel->setBounds (getLocalBounds()); }
+            void resized() override
+            {
+                auto b = getLocalBounds();
+                ok.setBounds (b.removeFromBottom (32).reduced (4, 2));
+                sel->setBounds (b);
+            }
         };
 
         auto holder = std::make_unique<Holder> (std::move (selector), std::move (listener));
 
         auto screenBounds = getScreenBounds();
-        juce::CallOutBox::launchAsynchronously (std::move (holder), screenBounds,
-                                                nullptr);
+        juce::CallOutBox::launchAsynchronously (std::move (holder), screenBounds, nullptr);
 
         if (auto* box = findParentComponentOfClass<juce::CallOutBox>())
             box->dismiss();

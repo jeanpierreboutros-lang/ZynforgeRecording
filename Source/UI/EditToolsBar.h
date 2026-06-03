@@ -33,25 +33,25 @@ namespace zynforge
             struct Item { Tool t; const char* name; const char* caption; const char* tip; };
             const std::array<Item, 6> items {{
                 { Tool::Smart,    "Smart",    "Smart",
-                  "Smart tool (default) -- the all-in-one. Near a clip edge it trims; the clip's "
+                  "Smart tool (S) -- the all-in-one. Near a clip edge it trims; the clip's "
                   "top edge grabs a fade handle; the body moves the clip. Pick this when unsure." },
                 { Tool::Selector, "Selector", "Range",
-                  "Range select -- click to place the playhead; drag across the waveform to select "
-                  "a time range. Then B separates it into its own clip, Delete clears it, and it "
-                  "also feeds Crop-to-range, loop playback and the punch window." },
+                  "Range select (R) -- click to place the playhead; drag across the waveform to "
+                  "select a time range. Then Cmd+E separates it into its own clip, Delete clears "
+                  "it, and it also feeds Crop-to-range, loop playback and the punch window." },
                 { Tool::Trim,     "Trim",     "Trim",
-                  "Trim -- drag inside a clip to shorten or extend it from the nearer edge, hiding "
-                  "or revealing audio without moving where the clip sits on the timeline." },
+                  "Trim (T) -- drag inside a clip to shorten or extend it from the nearer edge, "
+                  "hiding or revealing audio without moving where the clip sits on the timeline." },
                 { Tool::Grabber,  "Grabber",  "Move",
-                  "Move -- drag a clip along the timeline to slide it. Click a clip to select it "
-                  "(Shift+click adds more); then Delete removes it, Shift+Delete ripple-deletes "
+                  "Move (G) -- drag a clip along the timeline to slide it. Click a clip to select "
+                  "it (Shift+click adds more); then Delete removes it, Shift+Delete ripple-deletes "
                   "(closes the gap), D duplicates, Cmd+C / Cmd+V copy & paste at the playhead, "
                   "Alt+Left/Right or numpad +/- nudge by the N-step." },
                 { Tool::Fade,     "Fade",     "Fade",
-                  "Fade -- click a clip to open its fade menu (fade-in / fade-out / crossfade "
+                  "Fade (F) -- click a clip to open its fade menu (fade-in / fade-out / crossfade "
                   "shapes and lengths)." },
                 { Tool::Scrubber, "Scrubber", "Scrub",
-                  "Scrub -- drag across the waveform to move the playhead sample-by-sample and "
+                  "Scrub (B) -- drag across the waveform to move the playhead sample-by-sample and "
                   "audition exactly where an edit should land." }
             }};
 

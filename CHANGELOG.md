@@ -17,6 +17,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Changed (latest)
+- **EDIT tools get Pro Tools-style single-key shortcuts** — `S` Smart · `T` Trim · `R` Range/Selector · `G` Grabber/Move · `F` Fade · `B` Scrub, active in the EDIT view (skipped while renaming). "Separate clip" moved off the bare `S`/`B` keys onto **Cmd+E** (separates at the selected range if one is set, else splits at the playhead) — matching Pro Tools — and the Edit-menu item now reads "Separate Clip … ⌘E".
+- **EDIT header meter slimmed + cleaned** — the per-row level meter dropped its cramped dB-label gutter for a clean narrow bar (80 px → 22 px). Reads clearer at a glance while editing; full labelled metering still lives on the MIXER strip.
+- **Strip colour picker is now a gradient palette with OK** — the swatch popup shows a 2-D gradient (hue across the columns × light→dark down the rows) with the strip's current/original colour pinned as the first swatch, plus an explicit **OK** button (clicking a swatch live-previews; OK confirms + closes). The Custom… colour selector also gained its own OK button.
+
+### Fixed (latest)
+- **EDIT playhead + edit cursor no longer show as two confusing bars** — Pro Tools-style: while the transport is stopped the green playhead and white insertion point are the same line (a click moves both); the separate white edit cursor only appears while playing, where it marks the edit point as the playhead rolls away.
+- **Delete now reliably clears a selected range in EDIT** — switching views (and entering EDIT) pulls keyboard focus back to the app, so Delete / the tool keys are no longer swallowed when focus was left on a now-hidden MIX control. Selecting a range with the Range tool and pressing Delete clears the audio inside it across the target tracks (Shift+Delete ripple-deletes).
+
 ### Added (latest)
 - **Edits now render to the deliverable (P0 -- bounce + mixdown)** — the EDIT view was audition-only: export copied the raw `Track_NN.wav` and ignored every clip edit. Now **File ▸ Export ▸ Bounce Edited Tracks (Stems)** renders each track's clip arrangement (positions, fades incl. equal-power, clip gain, mutes, active take) to flat 24-bit WAVs, and **Bounce Stereo Mix** sums the whole edited arrangement through gain/pan/mute/solo + volume/pan/mute automation + VCA + master to a 24-bit stereo WAV. Offline on a worker thread (no real-time risk). Engine `renderTrackArrangement` + `renderStereoMix`, both unit-tested.
 - **Cross-track clip paste (P2-7)** — copy a clip and paste it onto a *different* track; it plays the copied audio there. `SessionPlayer` gained a file-keyed reader cache, strictly additive (clips with no `audioFile` are byte-identical to before); the paste references the source track's file, round-trips in the `.zfproj`, and the bounce honours it.

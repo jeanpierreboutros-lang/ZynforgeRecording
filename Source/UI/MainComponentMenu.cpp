@@ -132,7 +132,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addSeparator();
         menu.addItem (309, "Toggle Snap\t4", true, snapToMarkers);
         menu.addSeparator();
-        menu.addItem (310, "Split / Separate at Playhead\tS",
+        menu.addItem (310, "Separate Clip (split at selection / playhead)\tCmd+E",
                       playerLoaded);
         menu.addSeparator();
         menu.addItem (311, "Start Range at Playhead\t,",  playerLoaded);
@@ -593,7 +593,8 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 307)  editSoloSelection();
     else if (id == 308)  editSetRangeToLoopRange();
     else if (id == 309)  editToggleSnap();
-    else if (id == 310)  editSplitAtPlayhead();
+    else if (id == 310)  { if (engine.getPlayer().hasLoopRegion()) editSeparateAtSelection();
+                           else                                    editSplitAtPlayhead(); }
     else if (id == 311)  editStartRange();
     else if (id == 312)  editFinishRange();
     else if (id == 313)  removeLastCapture();

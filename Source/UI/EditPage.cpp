@@ -316,11 +316,12 @@ namespace zynforge
             rebuildRoutingCombos();
             refreshRoutingSelection();
 
-            // Live signal meter in the middle column of the header.
-            // 80 px wide now, so the dB-label gutter has room to draw
-            // every tick -- the engineer can read absolute levels from
-            // arm's length without flipping back to MIX view.
-            meter.setShowDbLabels (true);
+            // Live signal meter in the middle column of the header. Kept
+            // deliberately narrow + label-free here: the EDIT view's job is
+            // editing, not metering, so a clean slim bar reads clearer at a
+            // glance than the cramped dB-tick gutter did. Full labelled
+            // metering still lives on the MIXER strip.
+            meter.setShowDbLabels (false);
             addAndMakeVisible (meter);
             meter.setTooltip ("Live signal level -- click to clear clip.");
 
@@ -1373,11 +1374,19 @@ namespace zynforge
             // empty session before any recording happens.
             {
                 const auto cursorSample = engine.getEditCursorSample();
-                if (cursorSample >= 0)
+                const auto& player2 = engine.getPlayer();
+                const juce::int64 loadedSamples2 = player2.isLoaded()
+                    ? player2.getTotalLengthSamples() : 0;
+                // Pro Tools-style: when STOPPED the playhead already sits on
+                // the insertion point (mouseDown merges them), so drawing a
+                // second white bar would just double the green one. Only show
+                // the separate white edit cursor while playing -- when the
+                // green playhead has rolled away from the edit point -- or on
+                // a fresh session with nothing loaded yet (no green playhead
+                // exists, so the white cursor is the only insertion marker).
+                const bool showEditCursor = player2.isPlaying() || loadedSamples2 <= 0;
+                if (cursorSample >= 0 && showEditCursor)
                 {
-                    const auto& player2 = engine.getPlayer();
-                    const juce::int64 loadedSamples2 = player2.isLoaded()
-                        ? player2.getTotalLengthSamples() : 0;
                     const double sr2 = player2.getSampleRate() > 0.0
                                     ? player2.getSampleRate() : 48000.0;
                     const juce::int64 totalSamples2 = loadedSamples2 > 0
@@ -1465,12 +1474,13 @@ namespace zynforge
                 viewButton.setBounds ({});
 
             // -------------- MIDDLE (meter) --------------
-            // Wide LedMeter -- 80 px column with full dB labels so the
-            // engineer can read levels at a glance from the EDIT view
-            // without flipping to MIX.
-            constexpr int meterBlockW = 80;
+            // Slim LedMeter -- a clean ~22 px bar (no dB-label gutter). Small
+            // and clear: enough to see signal / clip at a glance while
+            // editing, without eating the header the way the old 80 px
+            // labelled meter did. The freed width goes to the routing block.
+            constexpr int meterBlockW = 22;
             meter.setBounds (header.removeFromLeft (meterBlockW).reduced (3, 4));
-            header.removeFromLeft (4);
+            header.removeFromLeft (6);
 
             // -------------- RIGHT (routing + vol/pan readout) --------------
             auto rightBlock = header.removeFromLeft (header.getWidth() - 8).reduced (2, 4);
@@ -1619,6 +1629,15 @@ namespace zynforge
                         / (double) juce::jmax (1, inner.getWidth()));
                 const juce::int64 sx = (juce::int64) (prop * (double) totalSamples);
                 engine.setEditCursorSample (sx);
+
+                // Pro Tools-style merge: while the transport is STOPPED the
+                // edit insertion point and the playhead are the same thing,
+                // so move the playhead to the click too -- the engineer sees
+                // one line, not a separate green playhead + white cursor.
+                // While playing we leave the playhead alone so it keeps
+                // rolling and the white cursor marks where the next edit lands.
+                if (! player.isPlaying() && loadedSamples > 0)
+                    engine.getPlayer().setPositionSamples (sx);
             }
 
             // Right-click on a clip in the waveform lane → fade menu.

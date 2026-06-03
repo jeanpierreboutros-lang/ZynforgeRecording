@@ -707,6 +707,18 @@ void MainComponent::switchView (View v)
     }
     saveUILayoutToActiveSession();
 
+    // Pull keyboard focus back to MainComponent (the app's KeyListener) on
+    // every view change. Without this, focus can sit on whatever button or
+    // combo the engineer last touched, and EDIT-view keys -- Delete to clear
+    // a range, the S/T/R/G/F/B tool keys, etc. -- silently never arrive.
+    // Deferred so it runs after the visibility / layout pass settles.
+    juce::Component::SafePointer<MainComponent> self (this);
+    juce::MessageManager::callAsync ([self]
+    {
+        if (self != nullptr && self->isShowing())
+            self->grabKeyboardFocus();
+    });
+
     // Automation toolbar is part of the EDIT-view chrome.
     automationToolbar->setVisible (! mix);
     if (editPage != nullptr)

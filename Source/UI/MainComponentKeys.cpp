@@ -3,6 +3,7 @@
 // is editable as a single unit.
 
 #include "MainComponent.h"
+#include "EditToolsBar.h"
 
 using namespace zynforge;
 
@@ -371,9 +372,32 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         }
     }
 
+    // ── Single-letter edit-tool selection (EDIT view only). Picks the tool
+    // on the Pro Tools-style EditToolsBar so the engineer never has to reach
+    // for the mouse:  S Smart · T Trim · R Range · G Grabber/Move · F Fade ·
+    // B Scrub. Gated on the EDIT view so MIX-view typing isn't hijacked, and
+    // on 'no modifier' so it never shadows the Cmd+ shortcuts below; the
+    // text-editor focus guard earlier in this method keeps renames safe.
+    if (currentView == View::Edit && editPage != nullptr
+        && ! key.getModifiers().isAnyModifierKeyDown())
+    {
+        if (auto* tb = editPage->getEditToolsBar())
+        {
+            using Tool = EditToolsBar::Tool;
+            switch (c)
+            {
+                case 's': tb->setTool (Tool::Smart);    return true;
+                case 't': tb->setTool (Tool::Trim);     return true;
+                case 'r': tb->setTool (Tool::Selector); return true;
+                case 'g': tb->setTool (Tool::Grabber);  return true;
+                case 'f': tb->setTool (Tool::Fade);     return true;
+                case 'b': tb->setTool (Tool::Scrubber); return true;
+                default:  break;   // fall through to the editing commands
+            }
+        }
+    }
+
     if (c == 'a') { editSoloSelection();    return true; }
-    if (c == 's') { editSplitAtPlayhead();  return true; }
-    if (c == 'b') { editSeparateAtSelection(); return true; }   // Pro Tools 'Separate'
     if (c == 'd' && ! key.getModifiers().isCommandDown())
         { editDuplicateSelectedClip(); return true; }          // duplicate clicked clip
     if (c == 'n' && ! key.getModifiers().isCommandDown())
@@ -381,7 +405,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
     if (c == ',') { editStartRange();       return true; }
     if (c == '.') { editFinishRange();      return true; }
     if (c == '4') { editToggleSnap();       return true; }
-    // Cmd+Z / Cmd+R / Cmd+X / Cmd+C / Cmd+V keyboard shortcuts.
+    // Cmd+Z / Cmd+R / Cmd+X / Cmd+C / Cmd+V / Cmd+E keyboard shortcuts.
     if (key.getModifiers().isCommandDown())
     {
         if (c == 'z') { editUndo();          return true; }
@@ -389,6 +413,15 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         if (c == 'x') { editClipboardCut (true);  return true; }
         if (c == 'c') { editClipboardCut (false); return true; }
         if (c == 'v') { editClipboardPaste(); return true; }
+        // Pro Tools 'Separate Clip' (Cmd+E): separate at the selected range
+        // if one is set, else split at the playhead. Relocated off the bare
+        // 's' / 'b' keys, which now pick the Selector / Scrubber tools.
+        if (c == 'e')
+        {
+            if (engine.getPlayer().hasLoopRegion()) editSeparateAtSelection();
+            else                                    editSplitAtPlayhead();
+            return true;
+        }
     }
     return false;
 }
