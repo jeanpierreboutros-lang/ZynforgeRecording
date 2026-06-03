@@ -2349,15 +2349,28 @@ namespace zynforge
                     }
 
                     // Trim / Move: incremental.
-                    const juce::int64 stepSamples = wantSamples - lastDragSamples;
+                    juce::int64 stepSamples = wantSamples - lastDragSamples;
                     lastDragSamples = wantSamples;
                     if (std::abs (stepSamples) >= 1)
                     {
                         const auto mode = draggingClipModeInt == 0 ? AudioEngine::ClipEdit::TrimLeft
                                        : draggingClipModeInt == 1 ? AudioEngine::ClipEdit::TrimRight
                                                                   : AudioEngine::ClipEdit::Move;
-                        for (int peer : editGroupPeers())
-                            engine.editClip (peer, draggingClipIdx, mode, stepSamples);
+                        // Honour the snap grid on a Move (snapSampleToGrid is
+                        // an identity when snap is Off, and snaps the clip
+                        // start to the nearest marker when snap is on -- so the
+                        // toolbar's Snap toggle finally affects dragging, not
+                        // just split-at-playhead).
+                        if (mode == AudioEngine::ClipEdit::Move)
+                            if (const auto* cl = engine.tryClipsFor (index))
+                                if (draggingClipIdx < (int) cl->size())
+                                {
+                                    const auto cur = (*cl)[(size_t) draggingClipIdx].timelineStartSamples;
+                                    stepSamples = engine.snapSampleToGrid (cur + stepSamples) - cur;
+                                }
+                        if (stepSamples != 0)
+                            for (int peer : editGroupPeers())
+                                engine.editClip (peer, draggingClipIdx, mode, stepSamples);
                         repaint();
                     }
                 }

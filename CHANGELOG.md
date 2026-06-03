@@ -27,6 +27,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - **EDIT clips now render as DAW-style region blocks** — each clip/take is framed as a discrete block with a name-header bar and a coloured border (instead of one continuous waveform). The yellow clip-start "cut-flag" is gone — a clip's border now shows where it begins. Lane area not covered by a clip is masked to the lane background, so trimmed/split clips read as separate blocks. (`EditPage.cpp`.)
 
 ### Fixed (latest)
+- **EDIT audit pass — three "looks done but wasn't" bugs:**
+  - **Markers lane now shows real markers** — it used to paint 6 fake evenly-spaced ticks + the literal word "markers", ignoring the session marker list. Now maps each real marker to its true timeline position with its name.
+  - **Clip waveforms follow the clip** — the lane drew one continuous full-width thumbnail, so after a clip Move or slip-trim the block moved but the waveform under it stayed (wrong audio). Each clip block now draws its own waveform, mapped to the clip's file region.
+  - **Snap now affects dragging** — the "Toggle Snap" toggle only snapped split-at-playhead; dragging a clip ignored it. A Move drag now snaps the clip start to the grid/nearest marker.
 - **EDIT playhead + edit cursor no longer show as two confusing bars** — Pro Tools-style: while the transport is stopped the green playhead and white insertion point are the same line (a click moves both); the separate white edit cursor only appears while playing, where it marks the edit point as the playhead rolls away.
 - **Delete now reliably clears a selected range in EDIT** — switching views (and entering EDIT) pulls keyboard focus back to the app, so Delete / the tool keys are no longer swallowed when focus was left on a now-hidden MIX control. Selecting a range with the Range tool and pressing Delete clears the audio inside it across the target tracks (Shift+Delete ripple-deletes).
 
