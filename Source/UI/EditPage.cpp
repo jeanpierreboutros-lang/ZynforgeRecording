@@ -2332,6 +2332,7 @@ namespace zynforge
             const bool muted  = clip.muted;
             const bool locked = clip.locked;
             const float gainDb = clip.gainDb;
+            const int  curveNow = clip.fadeCurve;
 
             const double sr = engine.getPlayer().getSampleRate() > 0.0
                                  ? engine.getPlayer().getSampleRate()
@@ -2377,12 +2378,13 @@ namespace zynforge
             menu.addSubMenu ("Clip gain",  gain);
             menu.addSubMenu ("Fade in",    fadeIn,  ! locked);
             menu.addSubMenu ("Fade out",   fadeOut, ! locked);
+            menu.addItem (320, "Equal-power fades", ! locked, curveNow == 1);
             menu.addItem (300, "Clear both fades", ! locked);
 
             juce::Component::SafePointer<TrackRow> self (this);
             menu.showMenuAsync (juce::PopupMenu::Options()
                                   .withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 }),
-                [self, clipIdx, fIn, fOut, muted, locked, gainDb, msToSamples] (int chosen)
+                [self, clipIdx, fIn, fOut, muted, locked, gainDb, curveNow, msToSamples] (int chosen)
             {
                 if (self == nullptr) return;
                 self->menuOpen = false;
@@ -2414,6 +2416,7 @@ namespace zynforge
                     case 504: withUndo ("Clip gain", [&]{ self->engine.setClipGainDb (self->index, clipIdx,   0.0f); });        return;
                     case 505: withUndo ("Clip gain", [&]{ self->engine.setClipGainDb (self->index, clipIdx,   3.0f); });        return;
                     case 506: withUndo ("Clip gain", [&]{ self->engine.setClipGainDb (self->index, clipIdx,   6.0f); });        return;
+                    case 320: withUndo ("Fade curve", [&]{ self->engine.setClipFadeCurve (self->index, clipIdx, curveNow == 1 ? 0 : 1); }); return;
                     case 510:
                     {
                         auto* aw = new juce::AlertWindow ("Clip gain",
@@ -3326,6 +3329,14 @@ namespace zynforge
         viewport.setScrollBarsShown (true, true);
         addAndMakeVisible (viewport);
 
+        // Overview navigator -- hidden until zoomed in (resized() shows it).
+        addChildComponent (minimap);
+        minimap.onScrollToContentX = [this] (int x)
+        {
+            const int maxX = juce::jmax (0, list->getWidth() - viewport.getViewWidth());
+            viewport.setViewPosition (juce::jlimit (0, maxX, x), viewport.getViewPositionY());
+        };
+
         // DAW-style edge zoom clusters, overlaid on top of the viewport.
         // V (amplitude) stacked at the right edge; H (timeline) at the
         // bottom-right. Step a fixed ratio per click.
@@ -3630,6 +3641,11 @@ namespace zynforge
         }
         list->setPlayheadX (playheadX);
         list->pollMixerState();
+
+        // Keep the overview navigator in sync with the live scroll/zoom.
+        if (minimap.isVisible())
+            minimap.setView (list->getWidth(), 380,
+                             viewport.getViewPositionX(), viewport.getViewWidth());
     }
 
     void EditPage::paint (juce::Graphics& g)
@@ -3648,6 +3664,22 @@ namespace zynforge
         const int rulerH = 46;
         if (ruler != nullptr)
             ruler->setBounds (bounds.removeFromTop (rulerH));
+
+        // Overview navigator strip along the bottom -- only when zoomed in
+        // (content wider than the view), leaving room for the H/V zoom
+        // clusters at the bottom-right.
+        const bool showMinimap = (zoom > 1.001f);
+        if (showMinimap)
+        {
+            auto mmRow = bounds.removeFromBottom (18);
+            mmRow.removeFromRight (70);   // clear the zoom clusters
+            minimap.setBounds (mmRow.reduced (4, 1));
+            minimap.setVisible (true);
+        }
+        else
+        {
+            minimap.setVisible (false);
+        }
 
         viewport.setBounds (bounds);
         placeholder.setBounds (bounds);   // overlays the wave area when shown

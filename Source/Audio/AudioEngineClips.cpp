@@ -218,6 +218,7 @@ namespace zynforge
                     cObj->setProperty ("fileLen",     (juce::int64) c.fileLengthSamples);
                     cObj->setProperty ("fadeIn",      (juce::int64) c.fadeInSamples);
                     cObj->setProperty ("fadeOut",     (juce::int64) c.fadeOutSamples);
+                    cObj->setProperty ("fadeCurve",   c.fadeCurve);
                     cObj->setProperty ("gainDb",      (double) c.gainDb);
                     cObj->setProperty ("muted",       c.muted);
                     cObj->setProperty ("locked",      c.locked);
@@ -273,6 +274,7 @@ namespace zynforge
                         c.fileLengthSamples    = (juce::int64) (double) cObj->getProperty ("fileLen");
                         c.fadeInSamples        = (juce::int64) (double) cObj->getProperty ("fadeIn");
                         c.fadeOutSamples       = (juce::int64) (double) cObj->getProperty ("fadeOut");
+                        c.fadeCurve            = (int) cObj->getProperty ("fadeCurve");   // 0 if absent
                         c.gainDb               = (float)        (double) cObj->getProperty ("gainDb");
                         c.muted                = (bool)         cObj->getProperty ("muted");
                         c.locked               = (bool)         cObj->getProperty ("locked");
@@ -545,6 +547,19 @@ namespace zynforge
 
         c.fadeInSamples  = fadeInSamples;
         c.fadeOutSamples = fadeOutSamples;
+        player.setTrackClips (track, list);
+        syncActiveTake (track);
+        return true;
+    }
+
+    bool AudioEngine::setClipFadeCurve (int track, int clipIndex, int curve)
+    {
+        if (track < 0 || track >= (int) trackClips.size()) return false;
+        auto& list = trackClips[(size_t) track];
+        if (clipIndex < 0 || clipIndex >= (int) list.size()) return false;
+        auto& c = list[(size_t) clipIndex];
+        if (c.locked) return false;
+        c.fadeCurve = juce::jlimit (0, 1, curve);   // 0 linear, 1 equal-power
         player.setTrackClips (track, list);
         syncActiveTake (track);
         return true;

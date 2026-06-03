@@ -280,14 +280,21 @@ namespace zynforge
                     }
                     else
                     {
+                        const bool equalPower = (c.fadeCurve == 1);
                         for (int i = 0; i < spanLen; ++i)
                         {
                             const juce::int64 clipPos = spanOffsetInClip + i;
                             float gain = clipGain;
                             if (fIn > 0 && clipPos < fIn)
-                                gain *= (float) clipPos / (float) fIn;
+                            {
+                                const float t = (float) clipPos / (float) fIn;
+                                gain *= equalPower ? std::sin (t * 1.57079633f) : t;
+                            }
                             else if (fOut > 0 && clipPos >= fOutStart)
-                                gain *= (float) (c.fileLengthSamples - clipPos) / (float) fOut;
+                            {
+                                const float t = (float) (c.fileLengthSamples - clipPos) / (float) fOut;
+                                gain *= equalPower ? std::sin (t * 1.57079633f) : t;
+                            }
                             dst[i] = src[i] * gain;
                         }
                     }

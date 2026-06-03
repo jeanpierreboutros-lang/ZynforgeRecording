@@ -23,6 +23,9 @@ namespace zynforge
         // Per-clip fades + gain -- non-destructive on the audio file.
         juce::int64  fadeInSamples        { 0 };
         juce::int64  fadeOutSamples       { 0 };
+        // Fade shape: 0 = linear, 1 = equal-power (constant-power, for
+        // butt-spliced crossfades that don't dip in the middle).
+        int          fadeCurve            { 0 };
         float        gainDb               { 0.0f };
         // Editing flags.
         //   muted  → clip outputs silence (still claims its timeline range)

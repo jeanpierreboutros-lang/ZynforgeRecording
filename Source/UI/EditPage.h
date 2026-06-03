@@ -6,6 +6,7 @@
 
 #include "../Audio/AudioEngine.h"
 #include "PlaceholderView.h"
+#include "TimelineMinimap.h"
 
 #include <memory>
 #include <functional>
@@ -226,6 +227,7 @@ namespace zynforge
         juce::Viewport                     viewport;
         std::unique_ptr<TrackList>         list;
         PlaceholderView                    placeholder;
+        TimelineMinimap                    minimap;   // overview navigator (zoomed)
 
         int        lastTrackCount  { -1 };
         bool       lastLoaded      { false };

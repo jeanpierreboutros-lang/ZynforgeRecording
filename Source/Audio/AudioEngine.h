@@ -645,6 +645,9 @@ namespace zynforge
         // the clip index is bad.
         bool setClipFades (int track, int clipIndex,
                            juce::int64 fadeInSamples, juce::int64 fadeOutSamples);
+        // Fade shape for a clip: 0 = linear, 1 = equal-power (constant-
+        // power crossfade). Persisted in the .zfproj playlists.
+        bool setClipFadeCurve (int track, int clipIndex, int curve);
 
         // The rest of the clip toolkit. Every call republishes the
         // updated clip list to the player so audio honours the change
