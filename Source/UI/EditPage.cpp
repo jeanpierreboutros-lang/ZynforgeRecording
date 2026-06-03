@@ -524,6 +524,39 @@ namespace zynforge
             const auto waveColour = getStripColour().brighter (0.25f);
             const auto inner = wavePane.reduced (brand::space::xs, brand::space::sm);
 
+            // ─── Timeline grid ─────────────────────────────────────────
+            // Faint vertical grid behind the clips, aligned to the ruler's
+            // 1-2-5 second steps (minor + major), so the time scale reads
+            // across every lane and snap targets have a visible context.
+            {
+                const auto& gp = engine.getPlayer();
+                const juce::int64 gTotal = gp.isLoaded() ? gp.getTotalLengthSamples() : 0;
+                const double gsr = gp.getSampleRate() > 0.0 ? gp.getSampleRate() : 48000.0;
+                if (gTotal > 0 && inner.getWidth() > 16)
+                {
+                    const double totalSec = (double) gTotal / gsr;
+                    const double pxPerSec = (double) inner.getWidth() / juce::jmax (0.001, totalSec);
+                    static const double steps[] = { 0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30,
+                                                    60, 120, 300, 600, 900, 1800, 3600, 7200 };
+                    double majorSec = 3600.0;
+                    for (double s : steps) if (s * pxPerSec >= 64.0) { majorSec = s; break; }
+                    double minorSec = majorSec / 5.0;
+                    if (minorSec * pxPerSec < 6.0) minorSec = majorSec / 2.0;
+                    if (minorSec * pxPerSec < 6.0) minorSec = majorSec;
+                    const auto secToX = [&] (double s)
+                    { return inner.getX() + (int) (s / totalSec * inner.getWidth()); };
+                    // Minor ticks (very faint), then majors (a touch stronger).
+                    g.setColour (brand::edge.withAlpha (brand::alpha::ghost));
+                    for (int i = 1; i * minorSec < totalSec; ++i)
+                        g.drawVerticalLine (secToX (i * minorSec),
+                                            (float) inner.getY(), (float) inner.getBottom());
+                    g.setColour (brand::edge.brighter (0.18f).withAlpha (brand::alpha::muted));
+                    for (int i = 1; i * majorSec < totalSec; ++i)
+                        g.drawVerticalLine (secToX (i * majorSec),
+                                            (float) inner.getY(), (float) inner.getBottom());
+                }
+            }
+
             // Waveform vertical scale = a GENTLE auto-gain (so a quiet but
             // real take is still readable) multiplied by the user's vertical
             // zoom. The auto-gain caps at 4x -- the old 64x cap turned every
@@ -1213,8 +1246,6 @@ namespace zynforge
                         // not whatever a continuous full-lane thumbnail would.
                         {
                             auto waveArea = block.withTrimmedTop (headH).reduced (1, 1);
-                            g.setColour (headerBg);
-                            g.fillRect (waveArea);
                             if (waveArea.getHeight() > 2 && thumbnailL.getTotalLength() > 0.0)
                             {
                                 juce::Graphics::ScopedSaveState ss (g);
@@ -2356,18 +2387,22 @@ namespace zynforge
                         const auto mode = draggingClipModeInt == 0 ? AudioEngine::ClipEdit::TrimLeft
                                        : draggingClipModeInt == 1 ? AudioEngine::ClipEdit::TrimRight
                                                                   : AudioEngine::ClipEdit::Move;
-                        // Honour the snap grid on a Move (snapSampleToGrid is
-                        // an identity when snap is Off, and snaps the clip
-                        // start to the nearest marker when snap is on -- so the
-                        // toolbar's Snap toggle finally affects dragging, not
-                        // just split-at-playhead).
-                        if (mode == AudioEngine::ClipEdit::Move)
-                            if (const auto* cl = engine.tryClipsFor (index))
-                                if (draggingClipIdx < (int) cl->size())
-                                {
-                                    const auto cur = (*cl)[(size_t) draggingClipIdx].timelineStartSamples;
-                                    stepSamples = engine.snapSampleToGrid (cur + stepSamples) - cur;
-                                }
+                        // Honour the snap grid (snapSampleToGrid is an identity
+                        // when snap is Off, and snaps to the nearest marker when
+                        // on). We snap the *edge the engineer is dragging*: the
+                        // clip start for Move / TrimLeft, the clip end for
+                        // TrimRight -- so the Snap toggle affects dragging, not
+                        // just split-at-playhead.
+                        if (const auto* cl = engine.tryClipsFor (index))
+                            if (draggingClipIdx < (int) cl->size())
+                            {
+                                const auto& cc = (*cl)[(size_t) draggingClipIdx];
+                                const juce::int64 edge =
+                                    (mode == AudioEngine::ClipEdit::TrimRight)
+                                        ? cc.timelineStartSamples + cc.fileLengthSamples
+                                        : cc.timelineStartSamples;
+                                stepSamples = engine.snapSampleToGrid (edge + stepSamples) - edge;
+                            }
                         if (stepSamples != 0)
                             for (int peer : editGroupPeers())
                                 engine.editClip (peer, draggingClipIdx, mode, stepSamples);

@@ -21,7 +21,7 @@ using namespace zynforge;
 
 juce::StringArray MainComponent::getMenuBarNames()
 {
-    return { "File", "Edit", "Session", "Help" };
+    return { "File", "Edit", "Track", "Session", "Help" };
 }
 
 juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::String&)
@@ -107,49 +107,50 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addSeparator();
         menu.addItem (99, "Quit Zynforge Recording...");
     }
-    else if (topLevelIndex == 1)  // Edit
+    else if (topLevelIndex == 1)  // Edit -- clip / audio / timeline editing
     {
-        // Edit menu. Shortcut hints appear after a tab character -- macOS
-        // pulls those out and right-aligns them in the native menu.
-        const bool hasContext = engine.getPlayer().isLoaded() || engine.isRecording();
-
-        const bool hasSelection  = ! selectedLogical.empty();
-        const bool hasClipboard  = stripClipboard.isObject();
+        // The Edit menu is now strictly about editing the *audio on the
+        // timeline*. Channel / mixer-strip management moved to its own
+        // "Track" menu (below), the way a real DAW separates the two.
         const bool playerLoaded  = engine.getPlayer().isLoaded();
 
         menu.addItem (300, "Undo\tCmd+Z",       undoManager.canUndo());
         menu.addItem (301, "Redo\tCmd+R",       undoManager.canRedo());
         menu.addSeparator();
+        menu.addItem (310, "Separate Clip (split at selection / playhead)\tCmd+E",
+                      playerLoaded);
+        menu.addItem (306, "Crop to Loop Range\tCtrl+Cmd+C",
+                      playerLoaded && engine.getPlayer().hasLoopRegion());
+        menu.addSeparator();
+        menu.addItem (311, "Start Range at Playhead\t,",  playerLoaded);
+        menu.addItem (312, "Finish Range at Playhead\t.", playerLoaded);
+        menu.addItem (308, "Set Range to Loop Range", playerLoaded);
+        menu.addSeparator();
+        menu.addItem (309, "Toggle Snap\t4", true, snapToMarkers);
+        menu.addItem (314, "Punch In/Out Mode",
+                      playerLoaded, engine.isPunchModeOn());
+        menu.addSeparator();
+        menu.addItem (313, "Remove Last Capture", ! engine.isRecording());
+    }
+    else if (topLevelIndex == 2)  // Track -- channel / mixer-strip management
+    {
+        const bool hasSelection  = ! selectedLogical.empty();
+        const bool hasClipboard  = stripClipboard.isObject();
+        const int  selCount      = (int) selectedLogical.size();
+        const int  stripCount    = (int) strips.size();
+
         menu.addItem (302, "Cut Selected Strip(s)\tCmd+X",  hasSelection);
         menu.addItem (303, "Copy Selected Strip(s)\tCmd+C", hasSelection);
         menu.addItem (304, "Paste Strip Settings\tCmd+V",   hasClipboard && hasSelection);
         menu.addItem (305, "Delete Selected Strips",        hasSelection);
-        menu.addItem (306, "Crop to Loop Range\tCtrl+Cmd+C",
-                      playerLoaded && engine.getPlayer().hasLoopRegion());
+        menu.addSeparator();
         menu.addItem (307, "Solo Selection\tA",   hasSelection);
         menu.addSeparator();
-        menu.addItem (308, "Set Range to Loop Range", playerLoaded);
-        menu.addSeparator();
-        menu.addItem (309, "Toggle Snap\t4", true, snapToMarkers);
-        menu.addSeparator();
-        menu.addItem (310, "Separate Clip (split at selection / playhead)\tCmd+E",
-                      playerLoaded);
-        menu.addSeparator();
-        menu.addItem (311, "Start Range at Playhead\t,",  playerLoaded);
-        menu.addItem (312, "Finish Range at Playhead\t.", playerLoaded);
-        menu.addSeparator();
-        menu.addItem (313, "Remove Last Capture", ! engine.isRecording());
-        menu.addSeparator();
-        menu.addItem (314, "Punch In/Out Mode",
-                      playerLoaded, engine.isPunchModeOn());
-        menu.addSeparator();
-        // Batch ops -- let the engineer sweep a range of channels in one
-        // dialog instead of renaming/recolouring 24 strips by hand.
+        // Batch ops -- sweep a range of channels in one dialog instead of
+        // renaming / recolouring 24 strips by hand.
         menu.addItem (320, "Batch Rename Channels...",  engine.getRecorder().getNumTracks() > 0);
         menu.addItem (321, "Batch Colour Channels...",  engine.getRecorder().getNumTracks() > 0);
         menu.addSeparator();
-        const int selCount = (int) selectedLogical.size();
-        const int stripCount = (int) strips.size();
         juce::PopupMenu sel;
         sel.addItem (335, "Select all strips\tCmd+A",  stripCount > 0);
         sel.addItem (334, "Clear selection\tEsc",      selCount > 0);
@@ -161,7 +162,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         sel.addItem (333, "Delete selected",          selCount > 0);
         menu.addSubMenu ("Selection (" + juce::String (selCount) + ")", sel, true);
     }
-    else if (topLevelIndex == 2)  // Session
+    else if (topLevelIndex == 3)  // Session
     {
         menu.addItem (54, "Show pre-flight checklist...");
         menu.addSeparator();
@@ -234,7 +235,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                               ? "Stop mirroring " + sessionMirror.getPrimary()
                               : juce::String ("Mirror primary host..."));
     }
-    else if (topLevelIndex == 3)  // Help
+    else if (topLevelIndex == 4)  // Help
     {
         menu.addItem (900, "Keyboard Shortcuts...");
         menu.addItem (903, "User Guide (panel tips)...");

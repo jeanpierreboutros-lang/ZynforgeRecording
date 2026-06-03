@@ -24,6 +24,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - **Channels default to neutral grey; gradient colour picker** — a newly-added channel is grey until you colour it. The swatch popup is a 2-D gradient (hue across the columns × light→dark down the rows) with the strip's current colour pinned as the first swatch and an explicit **OK** button (clicking a swatch live-previews; OK confirms + closes); **Default** reverts to grey. The free-form "Custom…" selector was removed.
 
 ### Changed (latest)
+- **Menu split: "Edit" vs new "Track" menu** — the Edit menu now holds only timeline/audio editing (Separate, Crop, Range, Snap, Punch, Remove Last Capture, Undo/Redo). Channel/mixer-strip management (Cut/Copy/Paste/Delete strips, Solo Selection, Batch Rename/Colour, the Selection submenu) moved to a dedicated **Track** menu — the way a real DAW separates clip editing from track management. All shortcuts unchanged.
+- **EDIT timeline grid** — faint vertical grid lines now sit behind the clips, aligned to the ruler's 1-2-5 second steps (minor + major), so the time scale reads across every lane and snap has visible context.
+- **EDIT snap extended to trim** — trim-left/right drags now snap their dragged edge to the grid/nearest marker too (previously only Move snapped).
 - **EDIT clips now render as DAW-style region blocks** — each clip/take is framed as a discrete block with a name-header bar and a coloured border (instead of one continuous waveform). The yellow clip-start "cut-flag" is gone — a clip's border now shows where it begins. Lane area not covered by a clip is masked to the lane background, so trimmed/split clips read as separate blocks. (`EditPage.cpp`.)
 
 ### Fixed (latest)
