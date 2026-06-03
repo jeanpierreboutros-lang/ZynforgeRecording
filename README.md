@@ -6,7 +6,7 @@ A focused recording surface for engineers running front-of-house or monitors: ca
 
 ## Status
 
-Active development, pre-1.0. Ships **multitrack recording**, **virtual-soundcheck playback**, and **live OSC console integration** as a single coherent surface.
+Active development, pre-1.0. Ships **multitrack recording**, **virtual-soundcheck playback**, a non-destructive **clip/region editor with take comping**, **bounce to stems + stereo mix**, and **live OSC console integration** as a single coherent surface.
 
 ## Build
 
@@ -43,7 +43,8 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Ap
 
 ### Playback / virtual soundcheck
 - Each `Track_NN.wav` plays through the matching hardware output during soundcheck
-- Clip-aware playback: per-clip mute / lock / gain / fade, all applied on the audio thread
+- Clip-aware playback: per-clip mute / lock / gain / fade (linear **or equal-power**), all applied on the audio thread
+- Cross-track clips read from a file-keyed reader cache, so a clip pasted onto another track plays the copied audio
 - Loop region between markers; Spacebar global play/pause
 
 ### Mixer / EDIT / PATCH (linked views)
@@ -51,10 +52,24 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Ap
 - Per-strip fader (−60..+12 dB), constant-power pan, REC / MON / MUTE / SOLO toggles
 - Adaptive LED meter (smooth gradient at small heights, 20-segment LEDs at full size)
 - Stereo pairs collapse into one logical strip / row / column in **all three views**
-- Pro Tools-style EDIT view: per-row size menu, custom heights, Smart / Selector / Trim / Grabber / Fade / Scrubber tools
+- Pro Tools-style EDIT view: per-row size menu, custom heights, captioned **Smart / Range / Trim / Move / Fade / Scrub** tools, a graduated DAW time ruler (playhead time bubble, edit cursor, loop shading) and a draggable timeline minimap when zoomed
+- **Live capture waveform** — each armed lane draws a red envelope growing in real time during a take (built from the input meter, no disk reads), replaced by the full-resolution file waveform on stop
+- **Region editing** — Separate (`B`), Clear / ripple Clear (`Delete` / `Shift+Delete`), Split-all (`S`), multi-clip selection (Shift+click), Delete / Duplicate (`D`) / Nudge (`Alt+←/→`, numpad, configurable step via `N`), and a clip clipboard (`Cmd+X/C/V`) that pastes at the playhead — including **cross-track**. All clip edits are non-destructive and Cmd+Z-undoable
+- **Edit groups** keep clip edits phase-coherent — split / trim / move / fade and selection propagate across grouped tracks
+- **Take comping** — capture takes, then either menu-comp (*Comp selection from ▸ Take N*) or the visual **swipe-comp lanes** (a sub-lane per take; drag across a take to pull that section into the active comp)
 - **Per-track automation lanes** (Volume / Pan / Mute) with curve-aware rendering (Hold / Linear+continuous tension / S-Curve), draggable per-segment tension handles, copy / paste / clear range, undo-aware drag coalesce, persisted in `.zfproj`
 - **WRITE-mode automation**: Touch / Latch / Write dropdown + SUSPEND (read bypass) + PUNCH (shift-drag range on the time ruler gates writes) + per-track Automation Safe lock with a header LED
 - **Keyboard automation-point navigation** in EDIT: `←` / `→` step the focused point through the active lane (seeks the playhead), `↑` / `↓` nudge its value, `Delete` removes it — all wrapped in undo
+
+### Export / deliver
+- **Bounce edited tracks (stems)** — renders each track's clip arrangement (positions, fades, clip gain, mutes, active take) to flat 24-bit WAVs, so the edits actually reach the deliverable
+- **Bounce stereo mix** — sums the whole edited arrangement through gain / pan / mute / solo + volume/pan/mute automation + VCA + master to a 24-bit stereo WAV
+- Both render offline on a worker thread (no real-time risk); cross-track clips render from their own source file
+- Per-track / per-format export (WAV / AIFF / FLAC) with sample-rate conversion
+
+### Metering
+- Adaptive LED meters per strip + master; sticky clip latch
+- **Master loudness (ITU-R BS.1770)** — momentary / short-term / integrated (gated) LUFS + a 4×-oversampled true-peak (dBTP) on the post-fader master, shown on the big clock panel (true-peak goes red within 1 dB of full scale)
 
 ### Cues + setlist
 - Drop cues at any transport position; per-cue snapshot of every strip's state **and the full automation lanes** — switching to a cue swaps in that song's volume / pan / mute moves

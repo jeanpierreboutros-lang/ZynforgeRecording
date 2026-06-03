@@ -28,7 +28,7 @@ Read the relevant file(s) before starting implementation work when the topic mat
 - **`testing.md`** — Build / smoke-test / field validation procedure. What to verify per change type.
 - **`CHANGELOG.md`** — User-visible history. Add an entry on any shipped change.
 
-For ad-hoc architecture questions, the source of truth is the code itself — start from `Source/Audio/AudioEngine.{h,cpp}` and `Source/UI/MainComponent.{h,cpp}`.
+For ad-hoc architecture questions, the source of truth is the code itself — start from `Source/Audio/AudioEngine.{h,cpp}` and `Source/UI/MainComponent.{h,cpp}`. Clip/take/comp + offline-render logic lives in `Source/Audio/AudioEngineClips.cpp` (`renderTrackArrangement` / `renderStereoMix` bounce the *edited* arrangement; `compRangeFromTake` does take comping; `pasteClip` carries a per-clip `audioFile` for cross-track paste). BS.1770 loudness is `Source/Audio/LoudnessMeter.h`; the EDIT overview navigator is `Source/UI/TimelineMinimap.h`.
 
 ## Critical universal rules
 
@@ -61,7 +61,7 @@ For ad-hoc architecture questions, the source of truth is the code itself — st
 - Per-session files live under the session folder:
   - **`session_mix.json`** — the engine writes the full per-strip mix state (name, colour, gain, pan, mute, solo, monitor, arm, routing, stereo, VCA + edit group) plus session-level tempo (`tempoBpm`, `timeSigNum`, `timeSigDenom`, `tempoMap`). Loaded on Open; size the recorder if `trackCount` > current.
   - **`markers.json`** — markers auto-save on add / drop / rename / move; loaded via `markers.setContext(dir, sr)`.
-  - **`<Name>.zfproj`** — `setlist` (cues, incl. each cue's `automation` snapshot), `playlists` (comp Takes), `automation` (global lanes), `ui` (view / strip width / zoom).
+  - **`<Name>.zfproj`** — `setlist` (cues, incl. each cue's `automation` snapshot), `playlists` (comp Takes; each clip carries `fadeCurve` and, for cross-track paste, an `audioFile` filename resolved against `Audio Files/` on load), `automation` (global lanes), `ui` (view / strip width / zoom).
   - **`session_groups.json`** is the older name for VCA + edit groups; superseded by `session_mix.json`. Don't reintroduce it.
 - `Save` (and `Save As`) call `saveSessionStateTo`, which writes all of the above. Cues' own automation is captured by `addCueAtTransport` / `updateCueAtTransport`; recalling a cue **clears** every lane first, then loads the cue's snapshot (so a cue without a track-N entry doesn't leave another cue's curve on track N).
 - `.zfproj` carries a `formatVersion` field. Treat its absence as v1 and fall back gracefully.
