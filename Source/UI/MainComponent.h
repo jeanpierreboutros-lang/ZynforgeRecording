@@ -149,6 +149,9 @@ private:
     void editSplitAtPlayhead();
     void editSeparateAtSelection();   // B -- isolate the range as its own clip
     void editClearRange();            // Delete -- clear audio inside the range
+    void editDeleteSelectedClip();    // Delete -- remove the clicked clip
+    void editDuplicateSelectedClip(); // D -- copy the clicked clip after itself
+    void editNudgeSelectedClip (int dir);   // Alt+Left/Right -- slide 100 ms
     std::vector<int> tracksToEditPhysical();   // selected strips, else all
     void editStartRange();
     void editFinishRange();

@@ -1113,10 +1113,30 @@ namespace zynforge
                                             ? toolsBar->getTool()
                                             : EditToolsBar::Tool::None;
                     const bool showFadeGrips = (fadeTool == EditToolsBar::Tool::Fade);
+                    // Which clip on THIS track is the current selection?
+                    int selClipIdx = -1;
+                    if (auto* pg = findParentComponentOfClass<EditPage>())
+                        if (pg->getSelectedClipTrack() == index)
+                            selClipIdx = pg->getSelectedClipIndex();
+                    int clipIdx_ = -1;
                     for (const auto& c : *clips)
                     {
+                        ++clipIdx_;
                         const int xL_ = sampleToX (c.timelineStartSamples);
                         const int xR_ = sampleToX (c.timelineStartSamples + c.fileLengthSamples);
+                        // Selected-clip highlight: a bright wash + border so
+                        // the engineer sees exactly what Delete / Duplicate /
+                        // Nudge will act on.
+                        if (clipIdx_ == selClipIdx)
+                        {
+                            const juce::Rectangle<int> sel (xL_, inner2.getY(),
+                                                            juce::jmax (1, xR_ - xL_),
+                                                            inner2.getHeight());
+                            g.setColour (brand::toolActive().withAlpha (brand::alpha::subtle));
+                            g.fillRect (sel);
+                            g.setColour (brand::toolActive().withAlpha (brand::alpha::bold));
+                            g.drawRect (sel, 2);
+                        }
                         if (c.muted)
                         {
                             // Wash the muted clip's lane span with a soft
@@ -2166,7 +2186,7 @@ namespace zynforge
             }
         }
 
-        void mouseUp (const juce::MouseEvent&) override
+        void mouseUp (const juce::MouseEvent& e) override
         {
             // Close the automation drag transaction (if one is open).
             // mouseDown on the Select tool opened it when a point was
@@ -2176,6 +2196,11 @@ namespace zynforge
             const bool wasDraggingPoint   = (draggingPointIdx >= 0);
             const bool wasDraggingTension = (draggingTensionSegIdx >= 0);
             const bool wasDraggingClip    = (draggingClipIdx >= 0 || draggingXfadeAIdx >= 0);
+            // A click that armed a clip-body grab but never dragged = a
+            // selection click. Capture the clip + whether the mouse moved
+            // before the resets below wipe draggingClipIdx.
+            const int  clickedClipIdx = draggingClipIdx;
+            const bool wasClick       = (e.getDistanceFromDragStart() < 5);
             dragging         = false;
             draggingPointIdx = -1;
             draggingTensionSegIdx = -1;
@@ -2215,6 +2240,18 @@ namespace zynforge
             }
             reorderArmed  = false;
             reorderActive = false;
+
+            // Click (no drag) on a clip body selects it so Delete /
+            // Duplicate / Nudge can act on it. A click on empty lane area
+            // clears the selection.
+            if (wasClick && laneMode == LaneMode::Waveform && e.x >= headerW)
+                if (auto* page = findParentComponentOfClass<EditPage>())
+                {
+                    if (clickedClipIdx >= 0)
+                        page->setSelectedClip (index, clickedClipIdx);
+                    else
+                        page->clearSelectedClip();
+                }
         }
 
         void openColourPicker()

@@ -265,16 +265,33 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         }
     }
 
-    // Delete / Backspace in the EDIT view with a range selected = clear the
-    // selection's audio across the target tracks. Reached only when no
+    // Delete / Backspace in the EDIT view: remove the selected clip if one
+    // is clicked, else clear the selected range. Reached only when no
     // automation point was focused above; skipped while a text editor has
     // focus so rename dialogs still get their Delete key.
     if ((key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey)
         && currentView == View::Edit
-        && engine.getPlayer().hasLoopRegion()
         && dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) == nullptr)
     {
-        editClearRange();
+        if (editPage != nullptr && editPage->getSelectedClipTrack() >= 0)
+        {
+            editDeleteSelectedClip();
+            return true;
+        }
+        if (engine.getPlayer().hasLoopRegion())
+        {
+            editClearRange();
+            return true;
+        }
+    }
+
+    // Alt + Left/Right nudges the selected clip by 100 ms (bare Left/Right
+    // stay reserved for automation-point navigation).
+    if (currentView == View::Edit && key.getModifiers().isAltDown()
+        && (key == juce::KeyPress::leftKey || key == juce::KeyPress::rightKey)
+        && editPage != nullptr && editPage->getSelectedClipTrack() >= 0)
+    {
+        editNudgeSelectedClip (key == juce::KeyPress::rightKey ? +1 : -1);
         return true;
     }
 
@@ -329,6 +346,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
     if (c == 'a') { editSoloSelection();    return true; }
     if (c == 's') { editSplitAtPlayhead();  return true; }
     if (c == 'b') { editSeparateAtSelection(); return true; }   // Pro Tools 'Separate'
+    if (c == 'd' && ! key.getModifiers().isCommandDown())
+        { editDuplicateSelectedClip(); return true; }          // duplicate clicked clip
     if (c == ',') { editStartRange();       return true; }
     if (c == '.') { editFinishRange();      return true; }
     if (c == '4') { editToggleSnap();       return true; }

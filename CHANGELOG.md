@@ -18,6 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ## [Unreleased]
 
 ### Added (latest)
+- **Clip selection + Delete / Duplicate / Nudge in the EDIT view** — click a clip (with the Smart or Move tool) to select it; it highlights with a teal wash + border so you see exactly what an edit will hit. Then **Delete** removes it, **D** duplicates it after itself, and **Alt+Left/Right** nudge it 100 ms earlier/later. All clip-aware-undoable. Clicking empty lane space clears the selection; structural edits (split / separate / clear) clear it too so the highlight never goes stale.
 - **EDIT tools are now a real DAW edit workflow (Separate / Clear), not just a tool picker** — the six edit tools (Smart / Range / Trim / Move / Fade / Scrub) looked like Pro Tools but the Range selection led nowhere. Now:
   - Each tool shows a **readable caption under its icon** and a plain-language tooltip explaining exactly what it does on a click/drag (no more guessing from a cryptic glyph).
   - **Split (`S`) acts on every track by default** instead of doing nothing unless you'd first selected strips.

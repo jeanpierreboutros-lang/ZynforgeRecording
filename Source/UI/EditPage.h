@@ -120,6 +120,26 @@ namespace zynforge
         int  getFocusedPointIdx() const noexcept { return focusedPointIdx; }
         void setFocusedPointIdx (int idx) noexcept { focusedPointIdx = idx; repaint(); }
 
+        // Selected clip (clicked with the Smart / Move tool). Delete /
+        // Duplicate / Nudge in the EDIT view act on it. -1 = none. The
+        // index is into the track's active clip list, so structural edits
+        // (split / clear / reload) clear the selection to stay valid.
+        int  getSelectedClipTrack() const noexcept { return selectedClipTrack; }
+        int  getSelectedClipIndex() const noexcept { return selectedClipIndex; }
+        void setSelectedClip (int track, int clipIdx) noexcept
+        {
+            selectedClipTrack = track;
+            selectedClipIndex = clipIdx;
+            repaint();
+        }
+        void clearSelectedClip() noexcept
+        {
+            if (selectedClipTrack < 0 && selectedClipIndex < 0) return;
+            selectedClipTrack = -1;
+            selectedClipIndex = -1;
+            repaint();
+        }
+
         // Optional hook into MainComponent's UndoManager. When set,
         // every automation-point add / remove / drag goes through
         // this wrapper so Cmd+Z reverts the lane to its prior state.
@@ -179,6 +199,8 @@ namespace zynforge
         float      vZoom           { 1.0f };
         juce::var  clipUndoBefore;   // playlist snapshot taken at clip-drag start
         int        activeRowTrackIndex { -1 };
+        int        selectedClipTrack   { -1 };
+        int        selectedClipIndex   { -1 };
         int        focusedPointIdx     { -1 };
         AutomationToolbar*             toolbar  { nullptr };
         std::unique_ptr<EditToolsBar>  toolsBar;

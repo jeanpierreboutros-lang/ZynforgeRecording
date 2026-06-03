@@ -562,7 +562,7 @@ void MainComponent::editSplitAtPlayhead()
     if (splits > 0)
         pushClipUndo ("Split clips at playhead", before);
 
-    if (editPage != nullptr) editPage->repaint();
+    if (editPage != nullptr) { editPage->clearSelectedClip(); editPage->repaint(); }
     showStatus ((splits > 0
                     ? "Split " + juce::String (splits) + " track(s) and dropped marker"
                     : juce::String ("Split marker dropped"))
@@ -593,7 +593,7 @@ void MainComponent::editSeparateAtSelection()
         if (did) ++n;
     }
     if (n > 0) pushClipUndo ("Separate selection", before);
-    if (editPage != nullptr) editPage->repaint();
+    if (editPage != nullptr) { editPage->clearSelectedClip(); editPage->repaint(); }
     showStatus (n > 0 ? "Separated selection on " + juce::String (n) + " track(s)"
                       : juce::String ("Nothing to separate in the selection"));
 }
@@ -616,9 +616,61 @@ void MainComponent::editClearRange()
     for (int phys : tracksToEditPhysical())
         if (engine.clearTrackRange (phys, a, b)) ++n;
     if (n > 0) pushClipUndo ("Clear selection", before);
-    if (editPage != nullptr) editPage->repaint();
+    if (editPage != nullptr) { editPage->clearSelectedClip(); editPage->repaint(); }
     showStatus (n > 0 ? "Cleared selection on " + juce::String (n) + " track(s)"
                       : juce::String ("Nothing inside the selection to clear"));
+}
+
+// ─── Operations on the clicked (selected) clip ───────────────────────
+void MainComponent::editDeleteSelectedClip()
+{
+    if (editPage == nullptr) return;
+    const int track = editPage->getSelectedClipTrack();
+    const int idx   = editPage->getSelectedClipIndex();
+    if (track < 0 || idx < 0) { showStatus ("No clip selected -- click a clip first"); return; }
+    const auto before = engine.playlistsToJson();
+    if (engine.deleteClip (track, idx))
+    {
+        pushClipUndo ("Delete clip", before);
+        editPage->clearSelectedClip();
+        editPage->repaint();
+        showStatus ("Deleted clip");
+    }
+    else showStatus ("Clip is locked -- unlock it before deleting");
+}
+
+void MainComponent::editDuplicateSelectedClip()
+{
+    if (editPage == nullptr) return;
+    const int track = editPage->getSelectedClipTrack();
+    const int idx   = editPage->getSelectedClipIndex();
+    if (track < 0 || idx < 0) { showStatus ("No clip selected -- click a clip first"); return; }
+    const auto before = engine.playlistsToJson();
+    if (engine.duplicateClip (track, idx))
+    {
+        pushClipUndo ("Duplicate clip", before);
+        editPage->setSelectedClip (track, idx + 1);   // follow the new copy
+        editPage->repaint();
+        showStatus ("Duplicated clip");
+    }
+    else showStatus ("Clip is locked -- unlock it before duplicating");
+}
+
+void MainComponent::editNudgeSelectedClip (int dir)
+{
+    if (editPage == nullptr) return;
+    const int track = editPage->getSelectedClipTrack();
+    const int idx   = editPage->getSelectedClipIndex();
+    if (track < 0 || idx < 0) { showStatus ("No clip selected -- click a clip first"); return; }
+    const double sr   = juce::jmax (1.0, engine.getPlayer().getSampleRate());
+    const juce::int64 step = (juce::int64) (sr * 0.1);   // 100 ms nudge
+    const auto before = engine.playlistsToJson();
+    if (engine.editClip (track, idx, AudioEngine::ClipEdit::Move, dir > 0 ? step : -step))
+    {
+        pushClipUndo ("Nudge clip", before);
+        editPage->repaint();
+        showStatus (juce::String ("Nudged clip ") + (dir > 0 ? "right" : "left") + " 100 ms");
+    }
 }
 
 void MainComponent::editStartRange()
