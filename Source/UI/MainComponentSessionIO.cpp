@@ -155,7 +155,12 @@ int MainComponent::exportTracksTo (const juce::File& destDir,
 
     destDir.createDirectory();
 
-    auto allFiles = sourceDir.findChildFiles (juce::File::findFiles, false, "Track_*");
+    // Recordings live under "Audio Files/" (legacy sessions kept them at the
+    // session root). Search the subfolder first, fall back to the root --
+    // otherwise the export found no Track_*.wav and reported "Export failed".
+    const auto audioDir = sourceDir.getChildFile ("Audio Files");
+    const auto srcBase  = audioDir.isDirectory() ? audioDir : sourceDir;
+    auto allFiles = srcBase.findChildFiles (juce::File::findFiles, false, "Track_*");
 
     auto matchesIndex = [] (const juce::File& f, int index1Based) -> bool
     {
