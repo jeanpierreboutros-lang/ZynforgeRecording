@@ -1103,6 +1103,17 @@ namespace zynforge
                 }
             }
 
+            // When the track has a clip list, the per-clip block renderer
+            // below draws each clip's waveform inside its own block (mapped to
+            // the clip's file region) so a moved / slip-trimmed clip shows the
+            // RIGHT audio. The continuous full-lane thumbnail here is only the
+            // fallback for a track with no clips yet (fresh record / live).
+            const auto* clipsForWave = engine.tryClipsFor (index);
+            const bool haveClipBlocks = (clipsForWave != nullptr && ! clipsForWave->empty()
+                                         && engine.getPlayer().isLoaded()
+                                         && engine.getPlayer().getTotalLengthSamples() > 0);
+            if (! haveClipBlocks)
+            {
             if (stereo)
             {
                 // L on top, R on bottom -- Pro-Tools-style stereo lanes.
@@ -1146,8 +1157,9 @@ namespace zynforge
                 g.setColour (brand::accentRecord);
                 drawRecEnvelope (g, inner, recPeakL, vz);
             }
+            }   // end "! haveClipBlocks" continuous-waveform fallback
 
-            // ─── Clip boundary overlay (waveform mode only) ─────────
+            // ─── Clip region blocks (waveform mode) ─────────────────
             // After Edit ▸ Split / Separate, the track grows a clip list.
             // Paint each clip boundary as a 1 px vertical cut + a small
             // ⌐ marker at the top of the lane so the engineer can see
@@ -1171,33 +1183,8 @@ namespace zynforge
                                             ? toolsBar->getTool()
                                             : EditToolsBar::Tool::None;
                     const bool showFadeGrips = (fadeTool == EditToolsBar::Tool::Fade);
-
-                    // Mask any lane area NOT covered by a clip with the lane
-                    // background, so a trimmed / split clip reads as a discrete
-                    // block instead of leaving stray waveform in the gap. The
-                    // continuous thumbnail was already painted across the whole
-                    // lane above; this erases the parts outside the clips.
-                    {
-                        int prevR = inner2.getX();
-                        for (const auto& c : *clips)
-                        {
-                            const int cxL = sampleToX (c.timelineStartSamples);
-                            const int cxR = sampleToX (c.timelineStartSamples + c.fileLengthSamples);
-                            if (cxL > prevR)
-                            {
-                                g.setColour (headerBg);
-                                g.fillRect (juce::Rectangle<int> (prevR, inner2.getY(),
-                                                                  cxL - prevR, inner2.getHeight()));
-                            }
-                            prevR = juce::jmax (prevR, cxR);
-                        }
-                        if (prevR < inner2.getRight())
-                        {
-                            g.setColour (headerBg);
-                            g.fillRect (juce::Rectangle<int> (prevR, inner2.getY(),
-                                                              inner2.getRight() - prevR, inner2.getHeight()));
-                        }
-                    }
+                    const double srW = player.getSampleRate() > 0.0
+                                         ? player.getSampleRate() : 48000.0;
 
                     // Multi-selection: which clips on THIS track are picked.
                     EditPage* selPage = findParentComponentOfClass<EditPage>();
@@ -1219,6 +1206,37 @@ namespace zynforge
                             juce::jmax (1, xR_ - xL_), inner2.getHeight());
                         const auto clipTint = getStripColour();
                         const int  headH = juce::jmin (12, juce::jmax (0, block.getHeight() - 6));
+
+                        // Per-clip waveform inside the block (below the header),
+                        // mapped to the clip's file region -- so a moved / slip-
+                        // trimmed clip shows the audio it actually references,
+                        // not whatever a continuous full-lane thumbnail would.
+                        {
+                            auto waveArea = block.withTrimmedTop (headH).reduced (1, 1);
+                            g.setColour (headerBg);
+                            g.fillRect (waveArea);
+                            if (waveArea.getHeight() > 2 && thumbnailL.getTotalLength() > 0.0)
+                            {
+                                juce::Graphics::ScopedSaveState ss (g);
+                                g.reduceClipRegion (waveArea);
+                                const double t0 = (double) c.fileStartSamples / srW;
+                                const double t1 = (double) (c.fileStartSamples + c.fileLengthSamples) / srW;
+                                g.setColour (c.muted
+                                    ? clipTint.brighter (0.20f).withAlpha (brand::alpha::muted)
+                                    : clipTint.brighter (0.45f));
+                                if (stereo && thumbnailR.getTotalLength() > 0.0)
+                                {
+                                    const int half = waveArea.getHeight() / 2;
+                                    thumbnailL.drawChannels (g, waveArea.withHeight (half), t0, t1, waveZoom (thumbnailL));
+                                    thumbnailR.drawChannels (g, waveArea.withTrimmedTop (half), t0, t1, waveZoom (thumbnailR));
+                                }
+                                else
+                                {
+                                    thumbnailL.drawChannels (g, waveArea, t0, t1, waveZoom (thumbnailL));
+                                }
+                            }
+                        }
+
                         if (headH > 0)
                         {
                             auto headRect = block.withHeight (headH);
