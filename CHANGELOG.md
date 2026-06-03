@@ -18,6 +18,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ## [Unreleased]
 
 ### Added (latest)
+- **Edits now render to the deliverable (P0 -- bounce + mixdown)** — the EDIT view was audition-only: export copied the raw `Track_NN.wav` and ignored every clip edit. Now **File ▸ Export ▸ Bounce Edited Tracks (Stems)** renders each track's clip arrangement (positions, fades incl. equal-power, clip gain, mutes, active take) to flat 24-bit WAVs, and **Bounce Stereo Mix** sums the whole edited arrangement through gain/pan/mute/solo + volume/pan/mute automation + VCA + master to a 24-bit stereo WAV. Offline on a worker thread (no real-time risk). Engine `renderTrackArrangement` + `renderStereoMix`, both unit-tested.
+- **Cross-track clip paste (P2-7)** — copy a clip and paste it onto a *different* track; it plays the copied audio there. `SessionPlayer` gained a file-keyed reader cache, strictly additive (clips with no `audioFile` are byte-identical to before); the paste references the source track's file, round-trips in the `.zfproj`, and the bounce honours it.
+- **Take comping (P1-5)** — build one keeper from the best section of each take: select a range, then the take menu's **Comp selection from ▸ Take N** splices that take's audio for the range into the active comp. Engine `compRangeFromTake`, clip-undoable.
+- **Edit groups propagate clip edits (P1-3)** — Separate/Clear/Ripple/Split and drag move/trim/fade stay phase-coherent across an EDIT group; clicking a grouped clip selects its peers.
+- **Master loudness: BS.1770 LUFS + true-peak (P2-6)** — momentary/short-term/integrated (gated) LUFS + 4x-oversampled true-peak on the post-fader master, shown on the BigClock panel.
+- **Equal-power crossfades + timeline minimap (P2-8)** — per-clip fade curve (linear/equal-power) and a draggable overview navigator strip when zoomed.
 - **EDIT view round 2: multi-clip selection, ripple delete, audio clip clipboard, configurable nudge** — building the region editor toward a full DAW:
   - **Multi-clip selection** — Shift+click adds clips to the selection (across tracks); Delete / Nudge act on the whole set at once. Each selected clip shows the teal highlight.
   - **Ripple delete (Shift+Delete)** — deletes the selected clip or range **and closes the gap** (later audio slides earlier), vs plain Delete which leaves a gap. New engine `rippleDeleteRange`.
