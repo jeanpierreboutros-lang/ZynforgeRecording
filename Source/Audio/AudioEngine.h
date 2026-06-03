@@ -597,6 +597,13 @@ namespace zynforge
         int   newTakeFromCurrent (int track, const juce::String& name);
         void  deleteTake      (int track, int takeIdx);
         void  renameTake      (int track, int takeIdx, const juce::String& name);
+        // Comp: splice `sourceTakeIdx`'s audio for the timeline range
+        // [start, end) into the ACTIVE take, replacing whatever was there.
+        // This is the swipe-comp primitive -- build one keeper by pulling
+        // the best section from each take. Undoable / persisted via the
+        // active take. Returns true if the comp changed anything.
+        bool  compRangeFromTake (int track, int sourceTakeIdx,
+                                 juce::int64 start, juce::int64 end);
         // Serialise / deserialise the full playlist (every track's
         // takes + their clip lists) for .zfproj persistence. Without
         // this, Takes are RAM-only and lost on app quit.

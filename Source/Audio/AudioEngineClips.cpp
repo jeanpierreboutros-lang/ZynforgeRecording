@@ -12,6 +12,7 @@
 
 #include "AudioEngine.h"
 
+#include <algorithm>
 #include <map>
 
 namespace zynforge
@@ -644,6 +645,56 @@ namespace zynforge
             syncActiveTake (track);
         }
         return changed;
+    }
+
+    bool AudioEngine::compRangeFromTake (int track, int sourceTakeIdx,
+                                         juce::int64 start, juce::int64 end)
+    {
+        if (end <= start) return false;
+        if (track < 0 || track >= (int) trackPlaylists.size()) return false;
+        auto& p = trackPlaylists[(size_t) track];
+        if (sourceTakeIdx < 0 || sourceTakeIdx >= (int) p.takes.size()) return false;
+        // Keep the active take == trackClips before we splice.
+        syncActiveTake (track);
+        if (track >= (int) trackClips.size()) return false;
+        auto& dst = trackClips[(size_t) track];
+
+        // 1. Clear [start, end) in the active comp.
+        splitListAtTimeline (dst, start);
+        splitListAtTimeline (dst, end);
+        for (int i = (int) dst.size() - 1; i >= 0; --i)
+        {
+            const auto cs = dst[(size_t) i].timelineStartSamples;
+            const auto ce = cs + dst[(size_t) i].fileLengthSamples;
+            if (cs >= start && ce <= end && ! dst[(size_t) i].locked)
+                dst.erase (dst.begin() + i);
+        }
+
+        // 2. Splice in the source take's clips intersected with [start, end).
+        const auto srcClips = p.takes[(size_t) sourceTakeIdx].clips;
+        for (const auto& c : srcClips)
+        {
+            const auto cs = c.timelineStartSamples;
+            const auto ce = cs + c.fileLengthSamples;
+            const auto is = juce::jmax (cs, start);
+            const auto ie = juce::jmin (ce, end);
+            if (ie <= is) continue;
+            Clip nc = c;
+            const auto lead = is - cs;
+            nc.fileStartSamples     = c.fileStartSamples + lead;
+            nc.fileLengthSamples    = ie - is;
+            nc.timelineStartSamples = is;
+            nc.fadeInSamples  = juce::jmin (nc.fadeInSamples,  nc.fileLengthSamples);
+            nc.fadeOutSamples = juce::jmin (nc.fadeOutSamples, nc.fileLengthSamples);
+            dst.push_back (nc);
+        }
+
+        std::sort (dst.begin(), dst.end(),
+                   [] (const Clip& a, const Clip& b)
+                   { return a.timelineStartSamples < b.timelineStartSamples; });
+        player.setTrackClips (track, dst);
+        syncActiveTake (track);
+        return true;
     }
 
     int AudioEngine::pasteClip (int track, juce::int64 timelineStart,

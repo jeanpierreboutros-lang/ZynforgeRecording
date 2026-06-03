@@ -2861,6 +2861,19 @@ namespace zynforge
             takesMenu.addItem (850, "New take from current");
             takesMenu.addItem (851, "Rename active take...", takes > 0);
             takesMenu.addItem (852, "Delete active take",  takes > 1);
+            // Comp: pull the selected range from another take into the
+            // active comp (swipe-comp via the Range selection). IDs 870+i.
+            const bool haveRange = engine.getPlayer().hasLoopRegion();
+            if (takes > 1)
+            {
+                takesMenu.addSeparator();
+                juce::PopupMenu compMenu;
+                for (int i = 0; i < takes && i < 30; ++i)
+                    compMenu.addItem (870 + i, engine.getTakeName (index, i), haveRange && i != active);
+                takesMenu.addSubMenu (haveRange ? "Comp selection from"
+                                                : "Comp selection from (select a range first)",
+                                      compMenu, haveRange);
+            }
             menu.addSubMenu ("Take", takesMenu);
 
             // Use a screen-area target (1x1 at the click point) so the menu's
@@ -2892,6 +2905,19 @@ namespace zynforge
                 if (chosen >= 800 && chosen < 830)
                 {
                     row->engine.setActiveTake (row->index, chosen - 800);
+                    row->repaint();
+                    return;
+                }
+                // Comp selection from take -- 870..899.
+                if (chosen >= 870 && chosen < 900)
+                {
+                    auto& player = row->engine.getPlayer();
+                    if (! player.hasLoopRegion()) return;
+                    auto* page = row->findParentComponentOfClass<EditPage>();
+                    if (page != nullptr) page->beginClipEdit();
+                    row->engine.compRangeFromTake (row->index, chosen - 870,
+                                                   player.getLoopStart(), player.getLoopEnd());
+                    if (page != nullptr) page->commitClipEdit ("Comp selection from take");
                     row->repaint();
                     return;
                 }

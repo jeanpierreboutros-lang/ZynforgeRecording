@@ -868,6 +868,41 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            beginTest ("compRangeFromTake splices a take's audio into the active comp");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    CallbackFixture f (1, 1, 2);
+                    f.engine.getRecorder().getTrack (0).armed.store (true);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.50f, 256);
+                    for (int b = 0; b < 192; ++b) f.process (256);
+                    f.engine.stopRecording();
+                    const auto total = f.engine.getPlayer().getTotalLengthSamples();
+                    expect (total > 0);
+
+                    // Take 1 = whole file. Make Take 2 = the file with its
+                    // middle half cleared (a "dropout" take).
+                    const int take2 = f.engine.newTakeFromCurrent (0, "alt");
+                    expect (take2 == 1);
+                    expect (f.engine.clearTrackRange (0, total / 4, total * 3 / 4));
+                    // Active take (Take 2) now has a hole in the middle.
+                    auto holeMag = [&] () -> float
+                    {
+                        juce::AudioBuffer<float> b;
+                        f.engine.renderTrackArrangement (0, b, total);
+                        const int q = b.getNumSamples() / 2;
+                        return b.getMagnitude (0, q - 64, 128);   // middle
+                    };
+                    expect (holeMag() < 0.01f);   // Take 2 is silent in the middle
+
+                    // Comp the middle range back in from Take 1 (the full take).
+                    expect (f.engine.compRangeFromTake (0, 0, total / 4, total * 3 / 4));
+                    expect (holeMag() > 0.30f);   // the hole is now filled from Take 1
+                }
+                sessionDir.deleteRecursively();
+            }
+
             beginTest ("Unarmed strip produces no audio data (file is silent or absent)");
             {
                 const auto sessionDir = makeTempSessionDir();
