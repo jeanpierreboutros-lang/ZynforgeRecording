@@ -22,6 +22,27 @@
 
 using namespace zynforge;
 
+namespace
+{
+    // Write a mono/stereo float buffer to a 24-bit WAV. Used by the
+    // edit-aware bounce path.
+    bool writeBufferToWav24 (const juce::File& f, const juce::AudioBuffer<float>& buf, double sr)
+    {
+        f.deleteFile();
+        juce::WavAudioFormat wav;
+        std::unique_ptr<juce::FileOutputStream> out (f.createOutputStream());
+        if (out == nullptr) return false;
+        juce::StringPairArray meta;
+        std::unique_ptr<juce::AudioFormatWriter> writer (
+            wav.createWriterFor (out.get(), sr, (unsigned int) juce::jmax (1, buf.getNumChannels()),
+                                 24, meta, 0));
+        if (writer == nullptr) return false;
+        out.release();
+        writer->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
+        return true;
+    }
+}
+
 bool MainComponent::saveSessionStateTo (const juce::File& dir)
 {
     if (! dir.isDirectory()) return false;
@@ -146,6 +167,57 @@ int MainComponent::exportTracksTo (const juce::File& destDir,
         showStatus ("Export failed: " + firstError);
 
     return succeeded;
+}
+
+void MainComponent::onBounceStems()
+{
+    const auto sessionDir = engine.getActiveSessionDir();
+    if (! sessionDir.isDirectory()) { showStatus ("No active session to bounce"); return; }
+
+    const auto exportDir = sessionDir.getChildFile ("Export Files");
+    exportDir.createDirectory();
+    chooser = std::make_unique<juce::FileChooser> ("Bounce edited stems to...", exportDir, "");
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode
+                          | juce::FileBrowserComponent::canSelectDirectories,
+        [this] (const juce::FileChooser& fc)
+    {
+        auto dest = fc.getResult();
+        if (dest.getFullPathName().isEmpty()) return;
+        dest.createDirectory();
+
+        const int    nTracks = engine.getRecorder().getNumTracks();
+        const auto   arrLen  = engine.getArrangementLengthSamples();
+        const double sr      = engine.getPlayer().getSampleRate() > 0.0
+                                 ? engine.getPlayer().getSampleRate() : 48000.0;
+        if (arrLen <= 0) { showStatus ("Nothing to bounce -- record or load a session first"); return; }
+
+        showStatus ("Bouncing " + juce::String (nTracks) + " edited stems...");
+        // Offline render on a background thread. The engineer shouldn't be
+        // editing clips mid-bounce (a deliberate, one-shot action), so the
+        // read of the clip lists here is safe in practice.
+        juce::Component::SafePointer<MainComponent> self (this);
+        juce::Thread::launch ([self, dest, nTracks, arrLen, sr]
+        {
+            int written = 0;
+            for (int t = 0; t < nTracks; ++t)
+            {
+                if (self == nullptr) return;
+                juce::AudioBuffer<float> buf;
+                if (! self->engine.renderTrackArrangement (t, buf, arrLen)) continue;
+                const auto& ts = self->engine.getRecorder().getTrack (t);
+                const auto safe = ts.name.replaceCharacter ('/', '_').replaceCharacter ('\\', '_');
+                const auto outFile = dest.getChildFile (
+                    juce::String::formatted ("Track_%02d - ", t + 1) + safe + ".wav");
+                if (writeBufferToWav24 (outFile, buf, sr)) ++written;
+            }
+            juce::MessageManager::callAsync ([self, written, dest]
+            {
+                if (self != nullptr)
+                    self->showStatus ("Bounced " + juce::String (written)
+                                      + " edited stem(s) -> " + dest.getFileName());
+            });
+        });
+    });
 }
 
 void MainComponent::onSaveSessionState()

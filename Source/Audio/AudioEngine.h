@@ -567,6 +567,18 @@ namespace zynforge
         // least a full-range clip. Returns false if no audio backs it.
         bool ensureClipList (int track);
 
+        // ── Offline render (consolidate / bounce) ─────────────────────
+        // Length of the edited arrangement = the furthest clip end across
+        // all tracks (falls back to the loaded file length).
+        juce::int64 getArrangementLengthSamples();
+        // Render one track's active-take clip arrangement -- fades
+        // (linear / equal-power), clip gain, mute, clip positions -- to a
+        // flat mono buffer of `totalSamples`. Reads the track's source
+        // file offline (NOT real-time-safe; call from a background thread).
+        // Returns false if there's no source audio for the track.
+        bool renderTrackArrangement (int track, juce::AudioBuffer<float>& out,
+                                     juce::int64 totalSamples);
+
         // ── Comp playlists (Take swap) ─────────────────────────────
         // Each track gets a Playlist (vector<Take>). The active Take's
         // clips are what the player renders. Engineer captures the

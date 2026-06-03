@@ -62,6 +62,7 @@ private:
     void onSaveSessionState();
     void onSaveSessionAs();
     void onExportAllTracks();
+    void onBounceStems();   // render the edited clip arrangement to flat stems
     void onExportIndividualTrack (int channelIndex);
     void onImportAudioFiles();
     void onLockToggled();

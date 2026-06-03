@@ -350,6 +350,93 @@ namespace zynforge
         return true;
     }
 
+    juce::int64 AudioEngine::getArrangementLengthSamples()
+    {
+        juce::int64 maxEnd = 0;
+        for (const auto& list : trackClips)
+            for (const auto& c : list)
+                maxEnd = juce::jmax (maxEnd, c.timelineStartSamples + c.fileLengthSamples);
+        if (maxEnd <= 0) maxEnd = player.getTotalLengthSamples();
+        return maxEnd;
+    }
+
+    bool AudioEngine::renderTrackArrangement (int track, juce::AudioBuffer<float>& out,
+                                              juce::int64 totalSamples)
+    {
+        const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
+        if (track < 0 || track >= maxTracks) return false;
+        if (totalSamples <= 0) return false;
+
+        auto sessionDir = getActiveSessionDir();
+        if (! sessionDir.isDirectory()) return false;
+        const auto audioDir = sessionDir.getChildFile ("Audio Files");
+        juce::File src;
+        for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
+        {
+            auto f = audioDir.getChildFile (juce::String::formatted ("Track_%02d", track + 1) + ext);
+            if (f.existsAsFile()) { src = f; break; }
+        }
+        if (! src.existsAsFile()) return false;
+
+        juce::AudioFormatManager fm;
+        fm.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (src));
+        if (reader == nullptr) return false;
+
+        out.setSize (1, (int) juce::jmin<juce::int64> (totalSamples, 0x7fffffff),
+                     false, true, true);
+        out.clear();
+        const int outLen = out.getNumSamples();
+
+        // Active-take clips for this track; bootstrap a whole-file clip if
+        // the track was never edited so it still renders.
+        std::vector<Clip> clips = (track < (int) trackClips.size())
+                                    ? trackClips[(size_t) track] : std::vector<Clip>{};
+        if (clips.empty())
+        {
+            Clip c;
+            c.timelineStartSamples = 0;
+            c.fileStartSamples     = 0;
+            c.fileLengthSamples    = reader->lengthInSamples;
+            clips.push_back (c);
+        }
+
+        juce::AudioBuffer<float> tmp (1, 0);
+        auto* dst = out.getWritePointer (0);
+        for (const auto& c : clips)
+        {
+            if (c.muted || c.fileLengthSamples <= 0) continue;
+            const juce::int64 tlStart  = c.timelineStartSamples;
+            const juce::int64 writeBeg = juce::jmax<juce::int64> (0, tlStart);
+            const juce::int64 writeEnd = juce::jmin<juce::int64> (outLen, tlStart + c.fileLengthSamples);
+            if (writeEnd <= writeBeg) continue;
+            const int span = (int) (writeEnd - writeBeg);
+            const juce::int64 fileReadStart = c.fileStartSamples + (writeBeg - tlStart);
+
+            tmp.setSize (1, span, false, false, true);
+            tmp.clear();
+            reader->read (&tmp, 0, span, fileReadStart, true, true);
+
+            const float clipGain = juce::Decibels::decibelsToGain (c.gainDb, -60.0f);
+            const bool  eq        = (c.fadeCurve == 1);
+            const juce::int64 fIn = c.fadeInSamples, fOut = c.fadeOutSamples;
+            const juce::int64 fOutStart = c.fileLengthSamples - fOut;
+            const juce::int64 spanOffsetInClip = writeBeg - tlStart;
+            const auto* s = tmp.getReadPointer (0);
+            for (int i = 0; i < span; ++i)
+            {
+                const juce::int64 clipPos = spanOffsetInClip + i;
+                float g = clipGain;
+                if (fIn > 0 && clipPos < fIn)
+                { const float t = (float) clipPos / (float) fIn; g *= eq ? std::sin (t * 1.57079633f) : t; }
+                else if (fOut > 0 && clipPos >= fOutStart)
+                { const float t = (float) (c.fileLengthSamples - clipPos) / (float) fOut; g *= eq ? std::sin (t * 1.57079633f) : t; }
+                dst[(int) writeBeg + i] += s[i] * g;
+            }
+        }
+        return true;
+    }
+
     bool AudioEngine::splitTrackAtPlayhead (int track)
     {
         auto pos = player.isLoaded() ? player.getPositionSamples() : juce::int64 (0);

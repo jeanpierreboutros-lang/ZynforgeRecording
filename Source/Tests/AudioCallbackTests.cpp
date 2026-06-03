@@ -747,6 +747,37 @@ namespace zynforge
                 expect (quiet.first < loud.first - 15.0f);
             }
 
+            beginTest ("renderTrackArrangement bounces the edited clip arrangement");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    CallbackFixture f (1, 1, 2);
+                    f.engine.getRecorder().getTrack (0).armed.store (true);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.50f, 256);
+                    for (int b = 0; b < 192; ++b) f.process (256);
+                    f.engine.stopRecording();
+                    const auto total = f.engine.getPlayer().getTotalLengthSamples();
+                    expect (total > 0);
+
+                    // Split at the midpoint, delete the first half -> the
+                    // bounced arrangement must be silent there, audible after.
+                    expect (f.engine.splitTrackAtSample (0, total / 2));
+                    expect (f.engine.deleteClip (0, 0));
+
+                    juce::AudioBuffer<float> buf;
+                    const auto arrLen = f.engine.getArrangementLengthSamples();
+                    expect (f.engine.renderTrackArrangement (0, buf, arrLen));
+                    expect (buf.getNumSamples() > 1000);
+                    const int q = buf.getNumSamples() / 4;
+                    const float firstMag = buf.getMagnitude (0, 0, q);                       // deleted region
+                    const float lastMag  = buf.getMagnitude (0, buf.getNumSamples() - q, q); // kept region
+                    expect (firstMag < 0.01f);
+                    expect (lastMag  > 0.30f);
+                }
+                sessionDir.deleteRecursively();
+            }
+
             beginTest ("Unarmed strip produces no audio data (file is silent or absent)");
             {
                 const auto sessionDir = makeTempSessionDir();
