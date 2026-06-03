@@ -778,6 +778,46 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            beginTest ("renderStereoMix sums the edited mix with gain / pan / mute");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    CallbackFixture f (1, 1, 2);
+                    f.engine.getRecorder().getTrack (0).armed.store (true);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.50f, 256);
+                    for (int b = 0; b < 192; ++b) f.process (256);
+                    f.engine.stopRecording();
+                    const auto arrLen = f.engine.getArrangementLengthSamples();
+                    expect (arrLen > 0);
+
+                    auto& t0 = f.engine.getRecorder().getTrack (0);
+                    t0.gainDb.store (0.0f); t0.pan.store (0.0f); t0.muted.store (false);
+                    f.engine.getMasterState().muted.store (false);
+                    f.engine.getMasterState().gainDb.store (0.0f);
+
+                    // Centre pan -> both legs carry audio.
+                    juce::AudioBuffer<float> mix;
+                    expect (f.engine.renderStereoMix (mix, arrLen));
+                    expect (mix.getNumChannels() == 2);
+                    expect (mix.getMagnitude (0, 0, mix.getNumSamples()) > 0.20f);
+                    expect (mix.getMagnitude (1, 0, mix.getNumSamples()) > 0.20f);
+
+                    // Hard-left pan -> right leg silent.
+                    t0.pan.store (-1.0f);
+                    expect (f.engine.renderStereoMix (mix, arrLen));
+                    expect (mix.getMagnitude (0, 0, mix.getNumSamples()) > 0.20f);
+                    expect (mix.getMagnitude (1, 0, mix.getNumSamples()) < 0.02f);
+
+                    // Muted -> silent mix.
+                    t0.pan.store (0.0f);
+                    t0.muted.store (true);
+                    expect (f.engine.renderStereoMix (mix, arrLen));
+                    expect (mix.getMagnitude (0, 0, mix.getNumSamples()) < 0.02f);
+                }
+                sessionDir.deleteRecursively();
+            }
+
             beginTest ("Unarmed strip produces no audio data (file is silent or absent)");
             {
                 const auto sessionDir = makeTempSessionDir();

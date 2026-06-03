@@ -578,6 +578,12 @@ namespace zynforge
         // Returns false if there's no source audio for the track.
         bool renderTrackArrangement (int track, juce::AudioBuffer<float>& out,
                                      juce::int64 totalSamples);
+        // Render the whole edited arrangement summed to a stereo mix --
+        // each track's clip render (above) through its gain / pan / mute /
+        // solo + volume/pan/mute automation + VCA, then master gain. One
+        // track buffer is held at a time so memory stays O(length), not
+        // O(length x tracks). Offline; call from a background thread.
+        bool renderStereoMix (juce::AudioBuffer<float>& outStereo, juce::int64 totalSamples);
 
         // ── Comp playlists (Take swap) ─────────────────────────────
         // Each track gets a Playlist (vector<Take>). The active Take's

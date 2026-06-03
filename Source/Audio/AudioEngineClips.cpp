@@ -437,6 +437,86 @@ namespace zynforge
         return true;
     }
 
+    bool AudioEngine::renderStereoMix (juce::AudioBuffer<float>& outStereo, juce::int64 totalSamples)
+    {
+        if (totalSamples <= 0) return false;
+        const int len = (int) juce::jmin<juce::int64> (totalSamples, 0x7fffffff);
+        outStereo.setSize (2, len, false, true, true);
+        outStereo.clear();
+        auto* oL = outStereo.getWritePointer (0);
+        auto* oR = outStereo.getWritePointer (1);
+
+        const int nTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
+
+        bool anySolo = false;
+        for (int i = 0; i < nTracks; ++i)
+            if (recorder.getTrack (i).soloed.load (std::memory_order_relaxed)) { anySolo = true; break; }
+        bool anyVcaSolo = false;
+        for (const auto& v : vcas)
+            if (v.soloed.load (std::memory_order_relaxed)) { anyVcaSolo = true; break; }
+
+        const double halfPi = juce::MathConstants<double>::halfPi;
+        const int step = 512;   // re-evaluate automation every ~10 ms
+        juce::AudioBuffer<float> mono;
+
+        for (int t = 0; t < nTracks; ++t)
+        {
+            auto& ts = recorder.getTrack (t);
+            const int grp = ts.vcaGroup.load (std::memory_order_relaxed);
+
+            bool audible;
+            if (grp >= 0 && grp < kNumVcas)
+            {
+                if (vcas[(size_t) grp].muted.load (std::memory_order_relaxed)) audible = false;
+                else if (anyVcaSolo && ! vcas[(size_t) grp].soloed.load (std::memory_order_relaxed)) audible = false;
+                else if (anySolo) audible = ts.soloed.load (std::memory_order_relaxed);
+                else audible = ! ts.muted.load (std::memory_order_relaxed);
+            }
+            else if (anyVcaSolo) audible = false;
+            else if (anySolo)    audible = ts.soloed.load (std::memory_order_relaxed);
+            else                 audible = ! ts.muted.load (std::memory_order_relaxed);
+            if (! audible) continue;
+
+            if (! renderTrackArrangement (t, mono, totalSamples)) continue;
+            const auto* s = mono.getReadPointer (0);
+            const float baseDb  = ts.gainDb.load (std::memory_order_relaxed);
+            const float basePan = ts.pan.load (std::memory_order_relaxed);
+            const float vcaDb   = (grp >= 0 && grp < kNumVcas)
+                                    ? vcas[(size_t) grp].gainDb.load (std::memory_order_relaxed) : 0.0f;
+            // Stereo pair reads its left partner's volume + mute lanes.
+            const int autoCh = (t > 0 && recorder.getTrack (t - 1).isStereo.load (std::memory_order_relaxed))
+                                 ? t - 1 : t;
+
+            for (int i = 0; i < len; i += step)
+            {
+                const int n = juce::jmin (step, len - i);
+                const float volDb = automationValueAt (autoCh, AutomationParam::Volume, i, baseDb);
+                const float panV  = automationValueAt (t,      AutomationParam::Pan,    i, basePan);
+                const float muteV = automationValueAt (autoCh, AutomationParam::Mute,   i,
+                                                       ts.muted.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
+                if (muteV > 0.5f) continue;
+
+                const double gain = juce::Decibels::decibelsToGain ((double) (volDb + vcaDb), -60.0);
+                const double pn   = ((double) juce::jlimit (-1.0f, 1.0f, panV) + 1.0) * 0.5;
+                const double gL   = gain * std::cos (pn * halfPi);
+                const double gR   = gain * std::sin (pn * halfPi);
+                for (int k = 0; k < n; ++k)
+                {
+                    const float v = s[i + k];
+                    oL[i + k] += (float) (v * gL);
+                    oR[i + k] += (float) (v * gR);
+                }
+            }
+        }
+
+        const bool   mMute = masterState.muted.load (std::memory_order_relaxed);
+        const double mGain = mMute ? 0.0
+                                   : juce::Decibels::decibelsToGain (
+                                         (double) masterState.gainDb.load (std::memory_order_relaxed), -60.0);
+        if (std::abs (mGain - 1.0) > 1.0e-6) outStereo.applyGain ((float) mGain);
+        return true;
+    }
+
     bool AudioEngine::splitTrackAtPlayhead (int track)
     {
         auto pos = player.isLoaded() ? player.getPositionSamples() : juce::int64 (0);

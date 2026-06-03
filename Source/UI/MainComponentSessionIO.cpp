@@ -220,6 +220,47 @@ void MainComponent::onBounceStems()
     });
 }
 
+void MainComponent::onBounceStereoMix()
+{
+    const auto sessionDir = engine.getActiveSessionDir();
+    if (! sessionDir.isDirectory()) { showStatus ("No active session to bounce"); return; }
+
+    const auto exportDir = sessionDir.getChildFile ("Export Files");
+    exportDir.createDirectory();
+    const auto suggested = exportDir.getChildFile (sessionDir.getFileName() + " - Mix.wav");
+    chooser = std::make_unique<juce::FileChooser> ("Bounce stereo mix to...", suggested, "*.wav");
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode
+                          | juce::FileBrowserComponent::canSelectFiles
+                          | juce::FileBrowserComponent::warnAboutOverwriting,
+        [this] (const juce::FileChooser& fc)
+    {
+        auto dest = fc.getResult();
+        if (dest.getFullPathName().isEmpty()) return;
+        if (! dest.hasFileExtension ("wav")) dest = dest.withFileExtension ("wav");
+
+        const auto   arrLen = engine.getArrangementLengthSamples();
+        const double sr     = engine.getPlayer().getSampleRate() > 0.0
+                                 ? engine.getPlayer().getSampleRate() : 48000.0;
+        if (arrLen <= 0) { showStatus ("Nothing to bounce -- record or load a session first"); return; }
+
+        showStatus ("Bouncing stereo mix...");
+        juce::Component::SafePointer<MainComponent> self (this);
+        juce::Thread::launch ([self, dest, arrLen, sr]
+        {
+            if (self == nullptr) return;
+            juce::AudioBuffer<float> mix;
+            const bool ok = self->engine.renderStereoMix (mix, arrLen)
+                            && writeBufferToWav24 (dest, mix, sr);
+            juce::MessageManager::callAsync ([self, ok, dest]
+            {
+                if (self != nullptr)
+                    self->showStatus (ok ? "Bounced stereo mix -> " + dest.getFileName()
+                                         : juce::String ("Stereo mix bounce failed"));
+            });
+        });
+    });
+}
+
 void MainComponent::onSaveSessionState()
 {
     const auto dir = engine.getActiveSessionDir();

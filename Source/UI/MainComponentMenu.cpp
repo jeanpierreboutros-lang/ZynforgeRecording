@@ -58,6 +58,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         exportMenu.addSubMenu ("Export Individual Track", indiv, hasActive && n > 0);
         exportMenu.addSeparator();
         exportMenu.addItem (12, "Bounce Edited Tracks (Stems)...", hasActive && n > 0);
+        exportMenu.addItem (13, "Bounce Stereo Mix...",            hasActive && n > 0);
         menu.addSubMenu ("Export", exportMenu);
         menu.addSeparator();
 
@@ -256,6 +257,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 5)    launchNewSessionDialog();
     else if (id == 10)   onExportAllTracks();
     else if (id == 12)   onBounceStems();
+    else if (id == 13)   onBounceStereoMix();
     else if (id == 70)   promptSaveSessionTemplate();
     else if (id == 71)   printSetlist();
     else if (id >= 200 && id < 250)
