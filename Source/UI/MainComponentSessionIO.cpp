@@ -43,6 +43,32 @@ namespace
     }
 }
 
+int MainComponent::openSessionFolder (const juce::File& dir)
+{
+    if (! dir.isDirectory()) return 0;
+
+    engine.stopPlayback();
+    engine.setActiveSessionDir (dir);        // pin so Save / Save As / Export stay lit
+    loadSetlistFromActiveSession();
+    loadUILayoutFromActiveSession();
+    const int n = engine.loadSession (dir);  // audio -> player + clips
+    engine.loadSessionMixFrom (dir);         // names/colours/gains/routing/sends + size mixer
+    // Recovery fallback: a session recorded but never explicitly Saved has no
+    // session_mix.json, so loadSessionMixFrom can't size the mixer and the app
+    // would show "No channels yet" with every Edit / Track / Export menu grey.
+    // Size one strip per loaded audio track so the channels (and the menus)
+    // come back.
+    if (n > 0 && engine.getRecorder().getNumTracks() < n)
+        engine.setStripCount (n);
+    lastTrackCount = -1;                      // force a strip rebuild on the next tick
+    if (n > 0)
+    {
+        statusLabel.setText ("Loaded " + juce::String (n) + " tracks", juce::dontSendNotification);
+        warnIfSampleRateMismatch();
+    }
+    return n;
+}
+
 bool MainComponent::saveSessionStateTo (const juce::File& dir)
 {
     if (! dir.isDirectory()) return false;
@@ -605,26 +631,11 @@ void MainComponent::onLoadSessionClicked()
         const auto dir = fc.getResult();
         if (! dir.isDirectory()) return;
 
-        engine.stopPlayback();
-        engine.setActiveSessionDir (dir);   // pin so Save / Save As stay lit
-        loadSetlistFromActiveSession();
-        loadUILayoutFromActiveSession();
-        const int n = engine.loadSession (dir);
-        // Restore this session's own full mixer state (names, colours, gains,
-        // pans, mutes/solos/arm/monitor, routing, stereo, VCA + edit groups)
-        // and size the mixer to match, AFTER the audio loads. Forces a strip
-        // rebuild on the next tick so the restored state + badges show.
-        engine.loadSessionMixFrom (dir);
-        lastTrackCount = -1;
-        if (n > 0)
-        {
-            statusLabel.setText ("Loaded " + juce::String (n) + " tracks", juce::dontSendNotification);
-            warnIfSampleRateMismatch();
-        }
-        else
-        {
+        // Canonical full open (pins the active dir, restores setlist/UI/mixer,
+        // loads audio, sizes the mixer incl. the no-session_mix.json fallback).
+        const int n = openSessionFolder (dir);
+        if (n <= 0)
             statusLabel.setText ("No Track_*.wav found in folder", juce::dontSendNotification);
-        }
         playButton.setButtonText ("PLAY");
         updateTransportLabels();
     });

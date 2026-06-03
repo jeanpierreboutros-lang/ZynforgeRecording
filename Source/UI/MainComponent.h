@@ -78,6 +78,11 @@ private:
     void showUserGuide();
     void launchNewSessionDialog();
     juce::File createSessionFolderStructure (const zynforge::NewSessionDialog::Result&);
+    // Canonical "open this session folder" sequence: pin the active dir,
+    // restore setlist + UI layout, load the audio, restore the full mixer
+    // state, force a strip rebuild. Returns the track count loaded. Used by
+    // File > Open, the Welcome dialog, and the launch auto-reopen.
+    int  openSessionFolder (const juce::File& dir);
     bool saveSessionStateTo (const juce::File& dir);
     int  exportTracksTo (const juce::File& dir,
                          const std::vector<int>& channelIndices,

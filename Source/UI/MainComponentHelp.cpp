@@ -350,6 +350,23 @@ void MainComponent::showAboutDialog()
 
 void MainComponent::showStartupWelcome()
 {
+    // Auto-reopen the last session instead of greeting an empty app. The
+    // active-session folder is restored from appProps on launch (for Save),
+    // but the *content* wasn't loaded -- so the engineer came back to a blank
+    // window with every Edit / Track / Export menu greyed out. If that folder
+    // is still a real session on disk, load it fully and skip the dialog.
+    {
+        const auto last = engine.getActiveSessionDir();
+        const bool isRealSession = last.isDirectory()
+            && (last.getChildFile ("session_mix.json").existsAsFile()
+                || last.getChildFile ("Audio Files").isDirectory());
+        if (isRealSession && ! engine.isRecording())
+        {
+            if (openSessionFolder (last) > 0)
+                return;   // reopened -- no welcome dialog
+        }
+    }
+
     // Pro Tools-style two-pane welcome: side rail with New / Open,
     // right pane with the matching form. ZynForge palette throughout
     // -- no native OS chrome inside the dialog body.
@@ -402,11 +419,13 @@ void MainComponent::showStartupWelcome()
     auto onOpen = [self] (const juce::File& sessionDir)
     {
         if (self == nullptr) return;
-        const int n = self->engine.loadSession (sessionDir);
+        // Full open (mixer state + active-dir pin + strip rebuild), not just
+        // loadSession -- otherwise the menus (Export / Edit) stayed grey and
+        // gains/colours/routing didn't restore.
+        const int n = self->openSessionFolder (sessionDir);
         self->showStatus (n > 0
                           ? "Loaded: " + sessionDir.getFileName()
                           : "Failed to load " + sessionDir.getFileName());
-        if (n > 0) self->warnIfSampleRateMismatch();
     };
 
     zynforge::WelcomeDialog::launch (defaultRoot, curSr, curFormat,
