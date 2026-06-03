@@ -141,6 +141,17 @@ namespace zynforge
         return p.takes[(size_t) takeIdx].name;
     }
 
+    std::vector<Clip> AudioEngine::getTakeClips (int track, int takeIdx) const
+    {
+        if (track < 0 || track >= (int) trackPlaylists.size()) return {};
+        const auto& p = trackPlaylists[(size_t) track];
+        if (takeIdx < 0 || takeIdx >= (int) p.takes.size()) return {};
+        // The active take's authoritative clips are the live trackClips.
+        if (takeIdx == p.activeTake && track < (int) trackClips.size())
+            return trackClips[(size_t) track];
+        return p.takes[(size_t) takeIdx].clips;
+    }
+
     void AudioEngine::setActiveTake (int track, int takeIdx)
     {
         if (track < 0 || track >= (int) trackPlaylists.size()) return;

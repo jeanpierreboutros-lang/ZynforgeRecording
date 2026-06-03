@@ -593,6 +593,9 @@ namespace zynforge
         int   getTakeCount     (int track) const;
         int   getActiveTakeIdx (int track) const;
         juce::String getTakeName (int track, int takeIdx) const;
+        // Copy of a take's clip list -- used by the comp-lanes view to draw
+        // each take's arrangement. The active take mirrors the live clips.
+        std::vector<Clip> getTakeClips (int track, int takeIdx) const;
         void  setActiveTake   (int track, int takeIdx);
         int   newTakeFromCurrent (int track, const juce::String& name);
         void  deleteTake      (int track, int takeIdx);
