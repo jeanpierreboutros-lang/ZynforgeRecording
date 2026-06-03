@@ -781,21 +781,42 @@ namespace zynforge
                     }
                     case LaneMode::Markers:
                     {
-                        // Markers are session-wide; draw vertical ticks
-                        // (without per-marker time mapping for now -- the
-                        // timeline component is authoritative on positions).
-                        g.setColour (brand::accentStatus);
-                        for (int i = 0; i < 6; ++i)
+                        // Real session markers, drawn at their actual sample
+                        // positions (mapped through the same timeline as the
+                        // waveform) with the marker name. Previously this lane
+                        // drew 6 fake evenly-spaced ticks + the literal word
+                        // "markers" -- it ignored the real marker list.
+                        const auto& player = engine.getPlayer();
+                        const juce::int64 totalSamples = player.isLoaded()
+                            ? player.getTotalLengthSamples()
+                            : (juce::int64) (player.getSampleRate() > 0.0
+                                             ? player.getSampleRate() * 300.0 : 48000.0 * 300.0);
+                        const auto mapper = TimelineMapper::forLane (inner, totalSamples);
+                        const auto& all = engine.getMarkers().getAll();
+                        if (all.empty())
                         {
-                            const float x = inner.getX() + (i + 1) * inner.getWidth() * 0.1f;
-                            g.drawVerticalLine ((int) x,
-                                                (float) inner.getY(),
-                                                (float) inner.getBottom());
+                            g.setColour (brand::textTertiary);
+                            g.setFont (brand::type::caption());
+                            g.drawText ("No markers -- press M to drop one",
+                                        inner.reduced (4, 2), juce::Justification::topLeft, false);
                         }
-                        g.setColour (brand::textTertiary);
-                        g.setFont (brand::type::caption());
-                        g.drawText ("markers", inner.reduced (4, 2),
-                                    juce::Justification::topLeft, false);
+                        for (const auto& mk : all)
+                        {
+                            const int x = mapper.toX (mk.sampleOffset);
+                            if (x < inner.getX() || x > inner.getRight()) continue;
+                            g.setColour (brand::accentStatus);
+                            g.drawVerticalLine (x, (float) inner.getY(), (float) inner.getBottom());
+                            // Flag + name at the top.
+                            g.fillRect (juce::Rectangle<int> (x, inner.getY(), 6, 4));
+                            if (mk.name.isNotEmpty())
+                            {
+                                g.setColour (brand::onSignal (brand::accentStatus));
+                                g.setFont (brand::type::caption().withHeight (9.5f));
+                                g.drawText (mk.name,
+                                            juce::Rectangle<int> (x + 4, inner.getY() + 1, 90, 11),
+                                            juce::Justification::topLeft, false);
+                            }
+                        }
                         // Playhead overlay still applies below.
                         if (playheadX >= 0 && playheadX < wavePane.getWidth())
                         {
