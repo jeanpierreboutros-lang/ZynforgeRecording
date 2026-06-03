@@ -212,9 +212,15 @@ namespace zynforge::brand
         juce::Colour::fromRGB (0x7a, 0x6a, 0x38),  // INS 8 -- mustard
     };
 
-    inline juce::Colour stripColour (int index) noexcept
+    // Default strip colour. Channels are a neutral grey when first added --
+    // the engineer colours the ones that matter from the swatch picker. (The
+    // per-index `personality` palette above is kept for reference / future
+    // use; the default no longer auto-assigns it.)
+    inline const auto stripDefaultGrey = juce::Colour::fromRGB (0x53, 0x55, 0x5b);
+
+    inline juce::Colour stripColour (int /*index*/) noexcept
     {
-        return personality[(std::size_t) (index % (int) personality.size())];
+        return stripDefaultGrey;
     }
 
     // ── Gradient helpers -- every painted surface should use these ─────────

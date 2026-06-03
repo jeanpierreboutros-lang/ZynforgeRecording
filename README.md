@@ -48,11 +48,11 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Ap
 - Loop region between markers; Spacebar global play/pause
 
 ### Mixer / EDIT / PATCH (linked views)
-- 12 strips per page (adaptive width 56–160 px), 8 personality colours rotating by index
+- 12 strips per page (adaptive width 56–160 px); channels default to neutral grey and are recoloured from a hue×shade **gradient** swatch picker (with an OK button)
 - Per-strip fader (−60..+12 dB), constant-power pan, REC / MON / MUTE / SOLO toggles
 - Adaptive LED meter (smooth gradient at small heights, 20-segment LEDs at full size)
 - Stereo pairs collapse into one logical strip / row / column in **all three views**
-- Pro Tools-style EDIT view: per-row size menu, custom heights, captioned **Smart / Range / Trim / Move / Fade / Scrub** tools, a graduated DAW time ruler (playhead time bubble, edit cursor, loop shading) and a draggable timeline minimap when zoomed
+- Pro Tools-style EDIT view: per-row size menu, custom heights, captioned **Smart / Range / Trim / Move / Fade / Scrub** tools with single-key shortcuts (**S / R / T / G / F / B**, Cmd+E to separate), a row header that stays pinned to the left when you scroll the timeline, a graduated DAW time ruler (playhead time bubble, edit cursor that merges with the playhead when stopped, loop shading) and a draggable timeline minimap when zoomed
 - **Live capture waveform** — each armed lane draws a red envelope growing in real time during a take (built from the input meter, no disk reads), replaced by the full-resolution file waveform on stop
 - **Region editing** — Separate (`B`), Clear / ripple Clear (`Delete` / `Shift+Delete`), Split-all (`S`), multi-clip selection (Shift+click), Delete / Duplicate (`D`) / Nudge (`Alt+←/→`, numpad, configurable step via `N`), and a clip clipboard (`Cmd+X/C/V`) that pastes at the playhead — including **cross-track**. All clip edits are non-destructive and Cmd+Z-undoable
 - **Edit groups** keep clip edits phase-coherent — split / trim / move / fade and selection propagate across grouped tracks
@@ -108,7 +108,7 @@ HTTP server on `:9000` — browser / iPad opens `http://<this-mac>:9000/`. Polle
 
 ## Visual identity
 
-Part of the ZynForge family — shares palette + fader/meter style with ZynForge Live (sibling project). Near-black canvas, eight personality wash colours rotating by strip index, LED-segment meters, brand-orange for armed-but-not-rolling.
+Part of the ZynForge family — shares palette + fader/meter style with ZynForge Live (sibling project). Near-black canvas, neutral-grey strips by default (recoloured per channel from a gradient picker), LED-segment meters, brand-orange for armed-but-not-rolling.
 
 `Inter` (UI) + `JetBrains Mono` (tabular numerals) bundled as BinaryData. Seven-step type scale. Three-step elevation tokens. All chrome routes through `Source/Theme/BrandColors.h` + `BrandTokens.h` + `DialogChrome.h` — never raw hex literals. Full rationale in [`design.md`](design.md).
 

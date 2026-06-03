@@ -11,10 +11,9 @@ namespace zynforge
     // (hue sweep across the columns × a light→dark shade gradient down the
     // rows) of selectable swatches, with the strip's current / original
     // colour pinned as the first swatch ("1 default colour of the original").
-    // Buttons: Default (revert to the per-index colour), Custom... (full
-    // juce::ColourSelector with its own OK), and OK to confirm + close.
-    // Clicking a swatch live-previews the colour on the strip; OK closes the
-    // box. An empty / transparent colour means "revert to default".
+    // Buttons: Default (revert to the neutral-grey default) and OK to confirm
+    // + close. Clicking a swatch live-previews the colour on the strip; OK
+    // closes the box. An empty / transparent colour means "revert to default".
     class StripColourPicker final : public juce::Component
     {
     public:
@@ -27,7 +26,6 @@ namespace zynforge
         void resized() override;
 
     private:
-        void openCustomSelector();
         void buildGradient();
         juce::Rectangle<int> swatchBounds (int i) const;
 
@@ -44,7 +42,6 @@ namespace zynforge
         Callback         callback;
         juce::TextButton okButton     { "OK" };
         juce::TextButton resetButton  { "Default" };
-        juce::TextButton customButton { "Custom..." };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (StripColourPicker)
     };

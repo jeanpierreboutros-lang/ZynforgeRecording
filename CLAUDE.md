@@ -30,6 +30,8 @@ Read the relevant file(s) before starting implementation work when the topic mat
 
 For ad-hoc architecture questions, the source of truth is the code itself — start from `Source/Audio/AudioEngine.{h,cpp}` and `Source/UI/MainComponent.{h,cpp}`. Clip/take/comp + offline-render logic lives in `Source/Audio/AudioEngineClips.cpp` (`renderTrackArrangement` / `renderStereoMix` bounce the *edited* arrangement; `compRangeFromTake` does take comping; `pasteClip` carries a per-clip `audioFile` for cross-track paste). BS.1770 loudness is `Source/Audio/LoudnessMeter.h`; the EDIT overview navigator is `Source/UI/TimelineMinimap.h`.
 
+EDIT-view specifics in `Source/UI/EditPage.cpp`: the `TrackRow` header (swatch / name / R-I-S-M / VIEW / slim `LedMeter` / routing) is **pinned** — drawn last via `paintHeader(g, headerOriginX())` and laid out + hit-tested at the horizontal scroll offset so it never scrolls off (the `ScrollViewport` subclass fires `relayoutHeaders()` on scroll; mouse gates go through `inWavePane/inSwatch/inNameZone`). EDIT tool keys (`S/T/R/G/F/B`) live in `MainComponentKeys.cpp`; `switchView` grabs keyboard focus so they + Delete actually arrive. The strip colour picker is `Source/UI/StripColourPicker.{h,cpp}` — a hue×shade gradient palette (no free-form selector); the per-strip default is now **neutral grey** (`brand::stripColour` → `stripDefaultGrey`, no longer the per-index `personality`).
+
 ## Critical universal rules
 
 ### Real-time discipline (audio thread)

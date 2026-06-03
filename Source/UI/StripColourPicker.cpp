@@ -29,7 +29,7 @@ namespace zynforge
         };
         addAndMakeVisible (okButton);
 
-        // Default -- revert to the per-index personality colour (alpha 0).
+        // Default -- revert to the neutral-grey default colour (alpha 0).
         styleButton (resetButton, brand::bgElevated);
         resetButton.onClick = [this]
         {
@@ -38,11 +38,6 @@ namespace zynforge
                 box->dismiss();
         };
         addAndMakeVisible (resetButton);
-
-        // Custom... -- full HSV/RGB selector with its own OK.
-        styleButton (customButton, brand::bgElevated);
-        customButton.onClick = [this] { openCustomSelector(); };
-        addAndMakeVisible (customButton);
 
         const int width  = kMargin * 2 + kCols * kSize + (kCols - 1) * kGap;
         const int gridH  = kRows * kSize + (kRows - 1) * kGap;
@@ -86,12 +81,10 @@ namespace zynforge
         r.removeFromTop (kRows * kSize + (kRows - 1) * kGap);
         r.removeFromTop (kGap);
         auto btnRow = r.removeFromTop (kBtnH);
-        const int w = (btnRow.getWidth() - 2 * kGap) / 3;
-        resetButton .setBounds (btnRow.removeFromLeft (w));
+        const int w = (btnRow.getWidth() - kGap) / 2;
+        resetButton.setBounds (btnRow.removeFromLeft (w));
         btnRow.removeFromLeft (kGap);
-        customButton.setBounds (btnRow.removeFromLeft (w));
-        btnRow.removeFromLeft (kGap);
-        okButton    .setBounds (btnRow);
+        okButton   .setBounds (btnRow);
     }
 
     void StripColourPicker::paint (juce::Graphics& g)
@@ -136,70 +129,5 @@ namespace zynforge
                 return;
             }
         }
-    }
-
-    void StripColourPicker::openCustomSelector()
-    {
-        auto selector = std::make_unique<juce::ColourSelector> (
-            juce::ColourSelector::showColourspace | juce::ColourSelector::showSliders,
-            4, 0);
-        selector->setSize (300, 280);
-        selector->setCurrentColour (pending);
-
-        class Listener final : public juce::ChangeListener
-        {
-        public:
-            Listener (juce::ColourSelector& sel, Callback cb) : selector (sel), callback (std::move (cb)) {}
-            void changeListenerCallback (juce::ChangeBroadcaster*) override
-            {
-                if (callback) callback (selector.getCurrentColour());
-            }
-            juce::ColourSelector& selector;
-            Callback callback;
-        };
-
-        auto listener = std::make_shared<Listener> (*selector, callback);
-        selector->addChangeListener (listener.get());
-
-        // Holder keeps the selector + listener alive and adds an OK button
-        // under the colour space that confirms the live selection and closes.
-        struct Holder final : public juce::Component
-        {
-            std::unique_ptr<juce::ColourSelector> sel;
-            std::shared_ptr<Listener>             lst;
-            juce::TextButton                      ok { "OK" };
-
-            Holder (std::unique_ptr<juce::ColourSelector> s, std::shared_ptr<Listener> l)
-                : sel (std::move (s)), lst (std::move (l))
-            {
-                addAndMakeVisible (*sel);
-                ok.setColour (juce::TextButton::buttonColourId,
-                              brand::featureEngaged.withAlpha (brand::alpha::muted));
-                ok.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
-                ok.onClick = [this]
-                {
-                    if (lst != nullptr && lst->callback)
-                        lst->callback (sel->getCurrentColour());
-                    if (auto* box = findParentComponentOfClass<juce::CallOutBox>())
-                        box->dismiss();
-                };
-                addAndMakeVisible (ok);
-                setSize (sel->getWidth(), sel->getHeight() + 38);
-            }
-            void resized() override
-            {
-                auto b = getLocalBounds();
-                ok.setBounds (b.removeFromBottom (32).reduced (4, 2));
-                sel->setBounds (b);
-            }
-        };
-
-        auto holder = std::make_unique<Holder> (std::move (selector), std::move (listener));
-
-        auto screenBounds = getScreenBounds();
-        juce::CallOutBox::launchAsynchronously (std::move (holder), screenBounds, nullptr);
-
-        if (auto* box = findParentComponentOfClass<juce::CallOutBox>())
-            box->dismiss();
     }
 }

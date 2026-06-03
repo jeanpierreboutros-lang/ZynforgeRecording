@@ -221,10 +221,22 @@ namespace zynforge
 
         void timerCallback() override;
 
+        // Viewport that reports scroll changes so the EDIT rows can re-pin
+        // their header column to the left edge when the timeline scrolls
+        // horizontally (otherwise the header + meter scroll off-screen).
+        struct ScrollViewport final : public juce::Viewport
+        {
+            std::function<void()> onScroll;
+            void visibleAreaChanged (const juce::Rectangle<int>&) override
+            {
+                if (onScroll) onScroll();
+            }
+        };
+
         AudioEngine&                       engine;
         juce::AudioFormatManager           formatManager;
         juce::AudioThumbnailCache          thumbnailCache { 256 };
-        juce::Viewport                     viewport;
+        ScrollViewport                     viewport;
         std::unique_ptr<TrackList>         list;
         PlaceholderView                    placeholder;
         TimelineMinimap                    minimap;   // overview navigator (zoomed)

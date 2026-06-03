@@ -506,37 +506,13 @@ namespace zynforge
                                            : brand::bgStrip;
             if (hovered) fillColour = fillColour.brighter (0.06f);
 
-            // ─── Colour swatch column (click to change track colour)
-            auto header = getLocalBounds().withWidth (headerW);
-            auto swatchArea = header.removeFromLeft (swatchW);
-            g.setGradientFill (brand::verticalGradient (fillColour, swatchArea.toFloat(), 0.18f, 0.28f));
-            g.fillRect (swatchArea);
-            g.setColour (fillColour.darker (0.40f));
-            g.drawVerticalLine (swatchArea.getRight() - 1, 0.0f, (float) getHeight());
-
-            // ─── Header background (panel)
-            g.setColour (headerBg);
-            g.fillRect (header);
+            // Row bottom divider (full content width). The swatch column,
+            // header panel, vertical divider, selection highlight and TAKE
+            // chip are NOT drawn here -- paintHeader() draws them LAST (and
+            // offset by the horizontal scroll) so the header stays pinned to
+            // the left edge and on top when the timeline is scrolled right.
             g.setColour (brand::edge);
             g.drawHorizontalLine (getHeight() - 1, 0.0f, (float) getWidth());
-            g.drawVerticalLine (headerW - 1, 0.0f, (float) getHeight());
-
-            // ─── Selection highlight (shared with the MIXER) -- a faint
-            // brand-orange wash + left stripe on rows the engineer has
-            // selected, so Option+R bulk arm has a visible target.
-            if (auto* page = findParentComponentOfClass<EditPage>())
-                if (page->isTrackSelected && page->isTrackSelected (index))
-                {
-                    g.setColour (brand::brandOrange.withAlpha (brand::alpha::subtle));
-                    g.fillRect (header);
-                    g.setColour (brand::brandOrange);
-                    g.fillRect (juce::Rectangle<int> (swatchW, 0, 3, getHeight()));
-                }
-
-            // The bottom-right 'vol X.X / pan C' readout pill was
-            // removed per user request -- the fader + pan values are
-            // already visible on the MIXER strip and the EDIT view's
-            // role is editing, not metering numbers.
 
             // ─── Waveform pane
             auto wavePane = getLocalBounds().withTrimmedLeft (headerW);
@@ -1345,26 +1321,8 @@ namespace zynforge
                 }
             }
 
-            // ─── Take indicator -- small "TAKE N / M" chip in the row
-            // header so the engineer sees the active comp take without
-            // opening the right-click menu.
-            {
-                const int takeCount  = engine.getTakeCount (index);
-                const int activeTake = engine.getActiveTakeIdx (index);
-                if (takeCount > 1)
-                {
-                    const auto label = "TAKE " + juce::String (activeTake + 1)
-                                     + " / " + juce::String (takeCount);
-                    auto chip = juce::Rectangle<int> (headerW - 78, 4, 70, 13);
-                    g.setColour (brand::featureEngaged.darker (0.30f));
-                    g.fillRoundedRectangle (chip.toFloat(), brand::radius::sm);
-                    g.setColour (brand::featureEngaged.brighter (0.40f));
-                    g.drawRoundedRectangle (chip.toFloat(), brand::radius::sm, 0.75f);
-                    g.setColour (brand::onSignal (brand::featureEngaged.darker (0.30f)));
-                    g.setFont (brand::type::caption());
-                    g.drawText (label, chip, juce::Justification::centred, false);
-                }
-            }
+            // (The TAKE chip + swatch/header panel are drawn by paintHeader()
+            // at the end, pinned to the scrolled-left edge.)
 
             // ─── Edit cursor overlay (Pro Tools-style insertion point)
             // Painted BEHIND the playhead so the engineer can see both
@@ -1405,6 +1363,79 @@ namespace zynforge
                 g.setColour (brand::accentPlay.withAlpha (brand::alpha::prominent));
                 g.fillRect (juce::Rectangle<int> (headerW + playheadX, 0, 2, getHeight()));
             }
+
+            // ─── Pinned header, drawn LAST so it floats over the waveform at
+            // the scrolled-left edge instead of scrolling off with the row.
+            paintHeader (g, headerOriginX(), headerBg, fillColour);
+        }
+
+        // Horizontal scroll offset of the enclosing viewport. The header is
+        // drawn + laid out + hit-tested at this x so it stays pinned to the
+        // left edge of the view while the waveform scrolls underneath.
+        int headerOriginX() const noexcept
+        {
+            if (auto* vp = findParentComponentOfClass<juce::Viewport>())
+                return juce::jmax (0, vp->getViewPositionX());
+            return 0;
+        }
+
+        // Hit-test helpers that follow the pinned header. While scrolled the
+        // header occupies row-local x [hx, hx+headerW]; the wave pane is
+        // everything to its right. NOTE: the *sample* mapping still uses the
+        // un-shifted inner rect ([headerW, contentWidth]) because the waveform
+        // itself is drawn there -- only the click classification shifts.
+        int  waveLeftX()         const noexcept { return headerOriginX() + headerW; }
+        bool inWavePane (int ex) const noexcept { return ex >= waveLeftX(); }
+        bool inSwatch   (int ex) const noexcept
+        { const int hx = headerOriginX(); return ex >= hx && ex < hx + swatchW; }
+        bool inNameZone (int ex) const noexcept
+        { const int hx = headerOriginX(); return ex >= hx + swatchW && ex < hx + headerW; }
+
+        // Draws the swatch column, header panel, divider, selection highlight
+        // and TAKE chip at x = hx (the horizontal scroll offset). Called at
+        // the very end of paint() so it sits on top of the waveform; the
+        // header's child components (meter / combos / buttons) paint over this
+        // because children are painted after their parent.
+        void paintHeader (juce::Graphics& g, int hx,
+                          juce::Colour headerBg, juce::Colour fillColour)
+        {
+            auto header = getLocalBounds().withWidth (headerW).withX (hx);
+            auto swatchArea = header.removeFromLeft (swatchW);
+            g.setGradientFill (brand::verticalGradient (fillColour, swatchArea.toFloat(), 0.18f, 0.28f));
+            g.fillRect (swatchArea);
+            g.setColour (fillColour.darker (0.40f));
+            g.drawVerticalLine (swatchArea.getRight() - 1, 0.0f, (float) getHeight());
+
+            g.setColour (headerBg);
+            g.fillRect (header);
+            g.setColour (brand::edge);
+            g.drawVerticalLine (hx + headerW - 1, 0.0f, (float) getHeight());
+
+            if (auto* page = findParentComponentOfClass<EditPage>())
+                if (page->isTrackSelected && page->isTrackSelected (index))
+                {
+                    g.setColour (brand::brandOrange.withAlpha (brand::alpha::subtle));
+                    g.fillRect (header);
+                    g.setColour (brand::brandOrange);
+                    g.fillRect (juce::Rectangle<int> (hx + swatchW, 0, 3, getHeight()));
+                }
+
+            // TAKE N / M chip at the header's right edge.
+            const int takeCount  = engine.getTakeCount (index);
+            const int activeTake = engine.getActiveTakeIdx (index);
+            if (takeCount > 1)
+            {
+                const auto label = "TAKE " + juce::String (activeTake + 1)
+                                 + " / " + juce::String (takeCount);
+                auto chip = juce::Rectangle<int> (hx + headerW - 78, 4, 70, 13);
+                g.setColour (brand::featureEngaged.darker (0.30f));
+                g.fillRoundedRectangle (chip.toFloat(), brand::radius::sm);
+                g.setColour (brand::featureEngaged.brighter (0.40f));
+                g.drawRoundedRectangle (chip.toFloat(), brand::radius::sm, 0.75f);
+                g.setColour (brand::onSignal (brand::featureEngaged.darker (0.30f)));
+                g.setFont (brand::type::caption());
+                g.drawText (label, chip, juce::Justification::centred, false);
+            }
         }
 
         void resized() override
@@ -1426,7 +1457,10 @@ namespace zynforge
             //              R/I/S/M       LedMeter   + vol/pan
             //              + view btn    with dB    readout
             //                            labels
-            auto header = getLocalBounds().withWidth (headerW);
+            // Offset by the horizontal scroll (headerOriginX) so the header
+            // child components stay pinned to the left edge with the painted
+            // header panel. EditPage re-runs this on every scroll tick.
+            auto header = getLocalBounds().withWidth (headerW).withX (headerOriginX());
             header.removeFromLeft (swatchW);
             header.removeFromLeft (4);
 
@@ -1564,7 +1598,7 @@ namespace zynforge
             // Comp-lanes swipe: a drag on a take lane pulls that section
             // into the active comp on mouseUp. Intercepts before the normal
             // clip-edit hit-test, but only in comp mode.
-            if (showCompLanes && ! e.mods.isPopupMenu() && e.x >= headerW
+            if (showCompLanes && ! e.mods.isPopupMenu() && inWavePane (e.x)
                 && engine.getTakeCount (index) > 1)
             {
                 auto innerC = getLocalBounds().withTrimmedLeft (headerW)
@@ -1598,7 +1632,7 @@ namespace zynforge
                 // selection. Shift/Cmd extends; a plain click selects only
                 // this one. Drives Option+R bulk arm from the EDIT view.
                 if (! (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
-                    && e.x >= swatchW && e.x < headerW
+                    && inNameZone (e.x)
                     && page->onRowSelect)
                 {
                     page->onRowSelect (index, e.mods.isShiftDown()
@@ -1613,7 +1647,7 @@ namespace zynforge
             // EditTimeRuler) so a fresh session lets the engineer place
             // the cursor anywhere and drop markers before recording.
             if (! (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
-                && e.x >= headerW)
+                && inWavePane (e.x))
             {
                 const auto& player = engine.getPlayer();
                 const juce::int64 loadedSamples = player.isLoaded()
@@ -1644,7 +1678,7 @@ namespace zynforge
             // Anywhere else on the row → row-size menu.
             if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
             {
-                if (laneMode == LaneMode::Waveform && e.x >= headerW)
+                if (laneMode == LaneMode::Waveform && inWavePane (e.x))
                 {
                     if (auto* clips = engine.tryClipsFor (index))
                     {
@@ -1675,7 +1709,7 @@ namespace zynforge
                 //   2. with a loop region set      -> range copy / paste / clear
                 //   3. otherwise                   -> row-size menu
                 if (laneMode != LaneMode::Waveform && laneMode != LaneMode::Markers
-                    && e.x >= headerW)
+                    && inWavePane (e.x))
                 {
                     const int hitPoint = hitTestAutomationPoint (e.getPosition());
                     if (hitPoint >= 0)
@@ -1703,7 +1737,7 @@ namespace zynforge
             // reorder-drag. If the engineer doesn't move past the
             // 8 px threshold, mouseUp falls through to the colour
             // picker (preserves the legacy 'click swatch = colour').
-            if (e.x < swatchW)
+            if (inSwatch (e.x))
             {
                 reorderArmed  = true;
                 reorderActive = false;
@@ -1719,7 +1753,7 @@ namespace zynforge
                                       ? toolsBar->getTool()
                                       : EditToolsBar::Tool::None;
 
-            if (laneMode == LaneMode::Waveform && e.x >= headerW
+            if (laneMode == LaneMode::Waveform && inWavePane (e.x)
                 && (activeTool == EditToolsBar::Tool::Scrubber
                  || activeTool == EditToolsBar::Tool::Selector
                  || activeTool == EditToolsBar::Tool::Fade))
@@ -1777,7 +1811,7 @@ namespace zynforge
             // Snapshot clip state for Cmd+Z before any clip-edit drag
             // (crossfade / trim / move / fade) can arm below. The commit
             // in mouseUp no-ops when nothing actually moved.
-            if (laneMode == LaneMode::Waveform && e.x >= headerW)
+            if (laneMode == LaneMode::Waveform && inWavePane (e.x))
                 if (auto* page = findParentComponentOfClass<EditPage>())
                     page->beginClipEdit();
 
@@ -1785,7 +1819,7 @@ namespace zynforge
             // the handle sits inside the overlap band so the engineer
             // expects clicking it to grab the crossfade balance
             // rather than starting a clip move on the underlying clip.
-            if (laneMode == LaneMode::Waveform && e.x >= headerW)
+            if (laneMode == LaneMode::Waveform && inWavePane (e.x))
             {
                 const int xfadeA = hitTestCrossfadeHandle (e.getPosition());
                 if (xfadeA >= 0)
@@ -1798,7 +1832,7 @@ namespace zynforge
             // Clip drag-edit. Only when we're on the waveform lane (so
             // automation lanes still own their own drag semantics) and
             // the track actually has clips to grab.
-            if (laneMode == LaneMode::Waveform && e.x >= headerW)
+            if (laneMode == LaneMode::Waveform && inWavePane (e.x))
             {
                 if (auto* clips = engine.tryClipsFor (index))
                 {
@@ -1921,7 +1955,7 @@ namespace zynforge
 
             // Lane-area interaction -- only when the toolbar is wired and
             // this row isn't the Click track itself.
-            if (toolbar != nullptr && index != clickRowIdx && e.x >= headerW)
+            if (toolbar != nullptr && index != clickRowIdx && inWavePane (e.x))
             {
                 const auto coord = laneCoordAt (e.getPosition());
                 const auto p     = toEngineParam (toolbar->getParam());
@@ -2374,7 +2408,7 @@ namespace zynforge
             // Duplicate / Nudge can act on it. Shift+click toggles the clip
             // in/out of a multi-selection. A plain click on empty lane area
             // clears the selection.
-            if (wasClick && laneMode == LaneMode::Waveform && e.x >= headerW)
+            if (wasClick && laneMode == LaneMode::Waveform && inWavePane (e.x))
                 if (auto* page = findParentComponentOfClass<EditPage>())
                 {
                     if (clickedClipIdx >= 0)
@@ -2407,7 +2441,10 @@ namespace zynforge
                 current,
                 [this] (juce::Colour chosen) { engine.setTrackColour (index, chosen); repaint(); });
 
-            const auto screenArea = getScreenBounds().withWidth (swatchW);
+            // Anchor the call-out on the swatch's *pinned* on-screen position
+            // (header floats at headerOriginX while the timeline is scrolled).
+            const auto screenArea = localAreaToGlobal (
+                juce::Rectangle<int> (headerOriginX(), 0, swatchW, getHeight()));
             juce::CallOutBox::launchAsynchronously (std::move (picker), screenArea, nullptr);
         }
 
@@ -3441,6 +3478,15 @@ namespace zynforge
             for (auto& r : rows) r->updatePollState();
         }
 
+        // Re-pin every row's header column to the (new) horizontal scroll
+        // position: re-lay the header child components and repaint so the
+        // painted header panel follows. Called from the viewport's scroll
+        // callback whenever the timeline scrolls horizontally.
+        void relayoutHeaders()
+        {
+            for (auto& r : rows) { r->resized(); r->repaint(); }
+        }
+
         int rowCount() const { return (int) rows.size(); }
 
         // True when every row's thumbnail has finished its background scan.
@@ -3496,6 +3542,9 @@ namespace zynforge
         viewport.setViewedComponent (list.get(), false);
         // Both scrollbars -- horizontal lights up as soon as zoom > 1.
         viewport.setScrollBarsShown (true, true);
+        // Re-pin every row's header column to the left edge on horizontal
+        // scroll so the meter / routing / R-I-S-M controls never slide away.
+        viewport.onScroll = [this] { if (list != nullptr) list->relayoutHeaders(); };
         addAndMakeVisible (viewport);
 
         // Overview navigator -- hidden until zoomed in (resized() shows it).
