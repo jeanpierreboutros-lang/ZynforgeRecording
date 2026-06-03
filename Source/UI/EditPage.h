@@ -10,6 +10,8 @@
 #include <memory>
 #include <functional>
 #include <vector>
+#include <set>
+#include <utility>
 
 namespace zynforge
 {
@@ -120,21 +122,45 @@ namespace zynforge
         int  getFocusedPointIdx() const noexcept { return focusedPointIdx; }
         void setFocusedPointIdx (int idx) noexcept { focusedPointIdx = idx; repaint(); }
 
-        // Selected clip (clicked with the Smart / Move tool). Delete /
-        // Duplicate / Nudge in the EDIT view act on it. -1 = none. The
-        // index is into the track's active clip list, so structural edits
-        // (split / clear / reload) clear the selection to stay valid.
+        // Selected clip(s) (clicked with the Smart / Move tool). Delete /
+        // Nudge act on the whole set; Duplicate / Copy / Paste act on the
+        // primary (most-recently-clicked). Indices are into each track's
+        // active clip list, so structural edits clear the selection.
+        using ClipRef = std::pair<int, int>;   // (track, clipIndex)
+        const std::set<ClipRef>& getSelectedClips() const noexcept { return selClips; }
+        bool isClipSelected (int track, int clipIdx) const noexcept
+        { return selClips.count ({ track, clipIdx }) > 0; }
         int  getSelectedClipTrack() const noexcept { return selectedClipTrack; }
         int  getSelectedClipIndex() const noexcept { return selectedClipIndex; }
+        // Replace the selection with this one clip (plain click).
         void setSelectedClip (int track, int clipIdx) noexcept
         {
+            selClips.clear();
+            selClips.insert ({ track, clipIdx });
             selectedClipTrack = track;
             selectedClipIndex = clipIdx;
             repaint();
         }
+        // Toggle a clip in/out of the selection (Shift+click).
+        void toggleSelectedClip (int track, int clipIdx) noexcept
+        {
+            const ClipRef r { track, clipIdx };
+            if (selClips.erase (r) == 0)
+            {
+                selClips.insert (r);
+                selectedClipTrack = track;     // becomes the new primary
+                selectedClipIndex = clipIdx;
+            }
+            else if (selClips.empty())
+            {
+                selectedClipTrack = selectedClipIndex = -1;
+            }
+            repaint();
+        }
         void clearSelectedClip() noexcept
         {
-            if (selectedClipTrack < 0 && selectedClipIndex < 0) return;
+            if (selClips.empty() && selectedClipTrack < 0) return;
+            selClips.clear();
             selectedClipTrack = -1;
             selectedClipIndex = -1;
             repaint();
@@ -199,8 +225,9 @@ namespace zynforge
         float      vZoom           { 1.0f };
         juce::var  clipUndoBefore;   // playlist snapshot taken at clip-drag start
         int        activeRowTrackIndex { -1 };
-        int        selectedClipTrack   { -1 };
+        int        selectedClipTrack   { -1 };   // primary clip (Copy / Nudge anchor)
         int        selectedClipIndex   { -1 };
+        std::set<std::pair<int, int>> selClips;  // multi-selection (track, clipIdx)
         int        focusedPointIdx     { -1 };
         AutomationToolbar*             toolbar  { nullptr };
         std::unique_ptr<EditToolsBar>  toolsBar;

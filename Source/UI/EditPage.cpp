@@ -1113,11 +1113,8 @@ namespace zynforge
                                             ? toolsBar->getTool()
                                             : EditToolsBar::Tool::None;
                     const bool showFadeGrips = (fadeTool == EditToolsBar::Tool::Fade);
-                    // Which clip on THIS track is the current selection?
-                    int selClipIdx = -1;
-                    if (auto* pg = findParentComponentOfClass<EditPage>())
-                        if (pg->getSelectedClipTrack() == index)
-                            selClipIdx = pg->getSelectedClipIndex();
+                    // Multi-selection: which clips on THIS track are picked.
+                    EditPage* selPage = findParentComponentOfClass<EditPage>();
                     int clipIdx_ = -1;
                     for (const auto& c : *clips)
                     {
@@ -1127,7 +1124,7 @@ namespace zynforge
                         // Selected-clip highlight: a bright wash + border so
                         // the engineer sees exactly what Delete / Duplicate /
                         // Nudge will act on.
-                        if (clipIdx_ == selClipIdx)
+                        if (selPage != nullptr && selPage->isClipSelected (index, clipIdx_))
                         {
                             const juce::Rectangle<int> sel (xL_, inner2.getY(),
                                                             juce::jmax (1, xR_ - xL_),
@@ -2242,14 +2239,18 @@ namespace zynforge
             reorderActive = false;
 
             // Click (no drag) on a clip body selects it so Delete /
-            // Duplicate / Nudge can act on it. A click on empty lane area
+            // Duplicate / Nudge can act on it. Shift+click toggles the clip
+            // in/out of a multi-selection. A plain click on empty lane area
             // clears the selection.
             if (wasClick && laneMode == LaneMode::Waveform && e.x >= headerW)
                 if (auto* page = findParentComponentOfClass<EditPage>())
                 {
                     if (clickedClipIdx >= 0)
-                        page->setSelectedClip (index, clickedClipIdx);
-                    else
+                    {
+                        if (e.mods.isShiftDown()) page->toggleSelectedClip (index, clickedClipIdx);
+                        else                      page->setSelectedClip   (index, clickedClipIdx);
+                    }
+                    else if (! e.mods.isShiftDown())
                         page->clearSelectedClip();
                 }
         }

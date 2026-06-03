@@ -265,34 +265,62 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         }
     }
 
-    // Delete / Backspace in the EDIT view: remove the selected clip if one
-    // is clicked, else clear the selected range. Reached only when no
-    // automation point was focused above; skipped while a text editor has
-    // focus so rename dialogs still get their Delete key.
-    if ((key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey)
-        && currentView == View::Edit
-        && dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) == nullptr)
+    // Delete / Backspace in the EDIT view: Shift = ripple (close the gap),
+    // plain = leave a gap. Acts on the selected clip if one is clicked,
+    // else the selected range. Reached only when no automation point was
+    // focused above; skipped while a text editor has focus. Uses keycode
+    // so the Shift modifier doesn't defeat the match.
     {
-        if (editPage != nullptr && editPage->getSelectedClipTrack() >= 0)
+        const int kc = key.getKeyCode();
+        if ((kc == juce::KeyPress::deleteKey || kc == juce::KeyPress::backspaceKey)
+            && currentView == View::Edit
+            && dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) == nullptr)
         {
-            editDeleteSelectedClip();
-            return true;
-        }
-        if (engine.getPlayer().hasLoopRegion())
-        {
-            editClearRange();
-            return true;
+            const bool haveClip  = (editPage != nullptr && editPage->getSelectedClipTrack() >= 0);
+            const bool haveRange = engine.getPlayer().hasLoopRegion();
+            if (key.getModifiers().isShiftDown())
+            {
+                if (haveClip || haveRange) { editRippleDelete(); return true; }
+            }
+            else
+            {
+                if (haveClip)  { editDeleteSelectedClip(); return true; }
+                if (haveRange) { editClearRange();         return true; }
+            }
         }
     }
 
-    // Alt + Left/Right nudges the selected clip by 100 ms (bare Left/Right
-    // stay reserved for automation-point navigation).
+    // Alt+Left/Right (and numpad +/-) nudge the selected clip by the
+    // current nudge step (bare Left/Right stay reserved for automation-
+    // point navigation). Numpad +/- with no clip selected nudges the
+    // playhead instead, so it's always useful.
     if (currentView == View::Edit && key.getModifiers().isAltDown()
         && (key == juce::KeyPress::leftKey || key == juce::KeyPress::rightKey)
         && editPage != nullptr && editPage->getSelectedClipTrack() >= 0)
     {
         editNudgeSelectedClip (key == juce::KeyPress::rightKey ? +1 : -1);
         return true;
+    }
+    {
+        const int kc = key.getKeyCode();
+        if (currentView == View::Edit
+            && (kc == juce::KeyPress::numberPadAdd || kc == juce::KeyPress::numberPadSubtract))
+        {
+            const int dir = (kc == juce::KeyPress::numberPadAdd) ? +1 : -1;
+            if (editPage != nullptr && editPage->getSelectedClipTrack() >= 0)
+                editNudgeSelectedClip (dir);
+            else
+            {
+                // No clip selected -> nudge the playhead by the nudge value.
+                auto& player = engine.getPlayer();
+                const double sr = juce::jmax (1.0, player.getSampleRate());
+                const auto step = (juce::int64) (sr * (double) nudgeMs / 1000.0);
+                player.setPositionSamples (juce::jmax ((juce::int64) 0,
+                                            player.getPositionSamples() + dir * step));
+                if (editPage != nullptr) editPage->repaint();
+            }
+            return true;
+        }
     }
 
     // Bare 1..9 is reserved for cue jumps (handled above). Markers
@@ -348,6 +376,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
     if (c == 'b') { editSeparateAtSelection(); return true; }   // Pro Tools 'Separate'
     if (c == 'd' && ! key.getModifiers().isCommandDown())
         { editDuplicateSelectedClip(); return true; }          // duplicate clicked clip
+    if (c == 'n' && ! key.getModifiers().isCommandDown())
+        { editCycleNudgeValue(); return true; }                // cycle the nudge step
     if (c == ',') { editStartRange();       return true; }
     if (c == '.') { editFinishRange();      return true; }
     if (c == '4') { editToggleSnap();       return true; }
@@ -356,9 +386,9 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
     {
         if (c == 'z') { editUndo();          return true; }
         if (c == 'r') { editRedo();          return true; }
-        if (c == 'x') { editCutSelected (true);  return true; }
-        if (c == 'c') { editCutSelected (false); return true; }
-        if (c == 'v') { editPasteSelected(); return true; }
+        if (c == 'x') { editClipboardCut (true);  return true; }
+        if (c == 'c') { editClipboardCut (false); return true; }
+        if (c == 'v') { editClipboardPaste(); return true; }
     }
     return false;
 }

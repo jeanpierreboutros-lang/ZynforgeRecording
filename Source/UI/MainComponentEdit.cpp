@@ -14,6 +14,9 @@
 #include "../Theme/DialogChrome.h"
 #include "MarkerListDialog.h"
 
+#include <algorithm>
+#include <vector>
+
 using namespace zynforge;
 
 namespace
@@ -621,22 +624,26 @@ void MainComponent::editClearRange()
                       : juce::String ("Nothing inside the selection to clear"));
 }
 
-// ─── Operations on the clicked (selected) clip ───────────────────────
+// ─── Operations on the clicked (selected) clip(s) ────────────────────
 void MainComponent::editDeleteSelectedClip()
 {
     if (editPage == nullptr) return;
-    const int track = editPage->getSelectedClipTrack();
-    const int idx   = editPage->getSelectedClipIndex();
-    if (track < 0 || idx < 0) { showStatus ("No clip selected -- click a clip first"); return; }
+    std::vector<std::pair<int, int>> sel (editPage->getSelectedClips().begin(),
+                                          editPage->getSelectedClips().end());
+    if (sel.empty()) { showStatus ("No clip selected -- click a clip first"); return; }
+    // Delete higher clip indices first so lower ones stay valid (per track,
+    // and harmless across tracks since their lists are independent).
+    std::sort (sel.begin(), sel.end(),
+               [] (auto& a, auto& b) { return a.second > b.second; });
     const auto before = engine.playlistsToJson();
-    if (engine.deleteClip (track, idx))
-    {
-        pushClipUndo ("Delete clip", before);
-        editPage->clearSelectedClip();
-        editPage->repaint();
-        showStatus ("Deleted clip");
-    }
-    else showStatus ("Clip is locked -- unlock it before deleting");
+    int deleted = 0;
+    for (auto& [track, idx] : sel)
+        if (engine.deleteClip (track, idx)) ++deleted;
+    if (deleted > 0) pushClipUndo ("Delete clip(s)", before);
+    editPage->clearSelectedClip();
+    editPage->repaint();
+    showStatus (deleted > 0 ? "Deleted " + juce::String (deleted) + " clip(s)"
+                            : juce::String ("Clip is locked -- unlock before deleting"));
 }
 
 void MainComponent::editDuplicateSelectedClip()
@@ -659,18 +666,135 @@ void MainComponent::editDuplicateSelectedClip()
 void MainComponent::editNudgeSelectedClip (int dir)
 {
     if (editPage == nullptr) return;
-    const int track = editPage->getSelectedClipTrack();
-    const int idx   = editPage->getSelectedClipIndex();
-    if (track < 0 || idx < 0) { showStatus ("No clip selected -- click a clip first"); return; }
+    const auto& sel = editPage->getSelectedClips();
+    if (sel.empty()) { showStatus ("No clip selected -- click a clip first"); return; }
     const double sr   = juce::jmax (1.0, engine.getPlayer().getSampleRate());
-    const juce::int64 step = (juce::int64) (sr * 0.1);   // 100 ms nudge
+    const juce::int64 step = (juce::int64) (sr * (double) nudgeMs / 1000.0) * (dir > 0 ? 1 : -1);
     const auto before = engine.playlistsToJson();
-    if (engine.editClip (track, idx, AudioEngine::ClipEdit::Move, dir > 0 ? step : -step))
+    int n = 0;
+    // Move doesn't reindex clips, so iterating the selection set is safe.
+    for (auto& [track, idx] : sel)
+        if (engine.editClip (track, idx, AudioEngine::ClipEdit::Move, step)) ++n;
+    if (n > 0)
     {
-        pushClipUndo ("Nudge clip", before);
+        pushClipUndo ("Nudge clip(s)", before);
         editPage->repaint();
-        showStatus (juce::String ("Nudged clip ") + (dir > 0 ? "right" : "left") + " 100 ms");
+        showStatus ("Nudged " + juce::String (n) + " clip(s) " + (dir > 0 ? "right" : "left")
+                    + " " + juce::String (nudgeMs) + " ms");
     }
+}
+
+void MainComponent::editCycleNudgeValue()
+{
+    static const int steps[] = { 10, 25, 50, 100, 250, 500, 1000 };
+    int idx = 0;
+    for (int i = 0; i < (int) (sizeof (steps) / sizeof (int)); ++i)
+        if (steps[i] == nudgeMs) { idx = i; break; }
+    nudgeMs = steps[(idx + 1) % (int) (sizeof (steps) / sizeof (int))];
+    if (auto* props = engine.getAppProps()) props->setValue ("editNudgeMs", nudgeMs);
+    showStatus ("Nudge value: " + juce::String (nudgeMs) + " ms"
+                + "  (Alt+Left/Right or numpad +/- to nudge the selected clip)");
+}
+
+// Cmd+X / Cmd+C -- cut/copy the selected AUDIO clip when one is picked in
+// the EDIT view, else the strip-settings clipboard (legacy behaviour).
+void MainComponent::editClipboardCut (bool cut)
+{
+    if (currentView == View::Edit && editPage != nullptr
+        && editPage->getSelectedClipTrack() >= 0)
+    {
+        const int track   = editPage->getSelectedClipTrack();
+        const int idx     = editPage->getSelectedClipIndex();
+        const auto* clips = engine.tryClipsFor (track);
+        if (clips != nullptr && idx >= 0 && idx < (int) clips->size())
+        {
+            const auto& c = (*clips)[(size_t) idx];
+            auto* obj = new juce::DynamicObject();
+            obj->setProperty ("track",      track);
+            obj->setProperty ("fileStart",  (juce::int64) c.fileStartSamples);
+            obj->setProperty ("fileLength", (juce::int64) c.fileLengthSamples);
+            obj->setProperty ("fadeIn",     (juce::int64) c.fadeInSamples);
+            obj->setProperty ("fadeOut",    (juce::int64) c.fadeOutSamples);
+            obj->setProperty ("gainDb",     (double) c.gainDb);
+            obj->setProperty ("name",       c.name);
+            clipClipboard = juce::var (obj);
+            showStatus (juce::String (cut ? "Cut" : "Copied") + " clip -- Cmd+V pastes it at the playhead");
+            if (cut) editDeleteSelectedClip();
+            return;
+        }
+    }
+    editCutSelected (cut);   // strip-settings fallback
+}
+
+// Cmd+V -- paste the copied audio clip at the playhead on its source
+// track, else paste strip settings.
+void MainComponent::editClipboardPaste()
+{
+    if (currentView == View::Edit && clipClipboard.isObject())
+    {
+        if (auto* obj = clipClipboard.getDynamicObject())
+            if (obj->hasProperty ("fileLength"))
+            {
+                const int  track  = (int) obj->getProperty ("track");
+                const auto pos    = currentPlayheadSamples (engine);
+                const auto before = engine.playlistsToJson();
+                const int newIdx  = engine.pasteClip (
+                    track, pos,
+                    (juce::int64) obj->getProperty ("fileStart"),
+                    (juce::int64) obj->getProperty ("fileLength"),
+                    (juce::int64) obj->getProperty ("fadeIn"),
+                    (juce::int64) obj->getProperty ("fadeOut"),
+                    (float) (double) obj->getProperty ("gainDb"),
+                    obj->getProperty ("name").toString());
+                if (newIdx >= 0)
+                {
+                    pushClipUndo ("Paste clip", before);
+                    if (editPage != nullptr) editPage->setSelectedClip (track, newIdx);
+                    if (editPage != nullptr) editPage->repaint();
+                    showStatus ("Pasted clip at the playhead");
+                }
+                else showStatus ("Paste failed -- no audio on the source track");
+                return;
+            }
+    }
+    editPasteSelected();   // strip-settings fallback
+}
+
+// Shift+Delete: ripple-delete the selected clip (or range), closing the
+// gap so later audio slides earlier.
+void MainComponent::editRippleDelete()
+{
+    if (editPage != nullptr && editPage->getSelectedClipTrack() >= 0)
+    {
+        const int track   = editPage->getSelectedClipTrack();
+        const int idx     = editPage->getSelectedClipIndex();
+        const auto* clips = engine.tryClipsFor (track);
+        if (clips == nullptr || idx < 0 || idx >= (int) clips->size())
+        { showStatus ("No clip selected"); return; }
+        const auto a = (*clips)[(size_t) idx].timelineStartSamples;
+        const auto b = a + (*clips)[(size_t) idx].fileLengthSamples;
+        const auto before = engine.playlistsToJson();
+        if (engine.rippleDeleteRange (track, a, b))
+        {
+            pushClipUndo ("Ripple delete clip", before);
+            editPage->clearSelectedClip();
+            editPage->repaint();
+            showStatus ("Ripple-deleted clip -- gap closed");
+        }
+        return;
+    }
+    auto& player = engine.getPlayer();
+    if (! player.hasLoopRegion()) { showStatus ("Select a clip or a range first"); return; }
+    const auto a = player.getLoopStart();
+    const auto b = player.getLoopEnd();
+    const auto before = engine.playlistsToJson();
+    int n = 0;
+    for (int phys : tracksToEditPhysical())
+        if (engine.rippleDeleteRange (phys, a, b)) ++n;
+    if (n > 0) pushClipUndo ("Ripple delete selection", before);
+    if (editPage != nullptr) { editPage->clearSelectedClip(); editPage->repaint(); }
+    showStatus (n > 0 ? "Ripple-deleted selection on " + juce::String (n) + " track(s) -- gap closed"
+                      : juce::String ("Nothing to ripple-delete"));
 }
 
 void MainComponent::editStartRange()

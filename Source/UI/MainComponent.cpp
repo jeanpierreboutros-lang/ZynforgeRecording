@@ -25,6 +25,10 @@ MainComponent::MainComponent()
 {
     setLookAndFeel (&laf);
 
+    // Restore the persisted clip-nudge step (cycled with N).
+    if (auto* props = engine.getAppProps())
+        nudgeMs = juce::jlimit (1, 5000, props->getIntValue ("editNudgeMs", nudgeMs));
+
     // Title text removed from the header -- the macOS window title +
     // app icon already identify the product, no need to repeat it.
     titleLabel.setFont (brand::type::headline());

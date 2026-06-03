@@ -131,6 +131,8 @@ private:
     // Edit-menu plumbing.
     juce::UndoManager undoManager;
     juce::var         stripClipboard;   // JSON of cut/copied strip settings
+    juce::var         clipClipboard;    // JSON of cut/copied audio clip(s)
+    int               nudgeMs { 100 };  // clip-nudge step; cycled with N, persisted
     void recordUndoSnapshot (const juce::String& label);
     // Clip/playlist undo: capture engine.playlistsToJson() before the edit,
     // pass it here after; records an undoable step only if clips changed.
@@ -149,9 +151,13 @@ private:
     void editSplitAtPlayhead();
     void editSeparateAtSelection();   // B -- isolate the range as its own clip
     void editClearRange();            // Delete -- clear audio inside the range
-    void editDeleteSelectedClip();    // Delete -- remove the clicked clip
+    void editDeleteSelectedClip();    // Delete -- remove the clicked clip(s)
     void editDuplicateSelectedClip(); // D -- copy the clicked clip after itself
-    void editNudgeSelectedClip (int dir);   // Alt+Left/Right -- slide 100 ms
+    void editNudgeSelectedClip (int dir);   // Alt+Left/Right / numpad -- slide
+    void editRippleDelete();          // Shift+Delete -- delete + close the gap
+    void editCycleNudgeValue();       // N -- cycle the nudge step, persisted
+    void editClipboardCut (bool cut); // Cmd+X / Cmd+C -- clip or strip settings
+    void editClipboardPaste();        // Cmd+V -- clip at playhead or strip settings
     std::vector<int> tracksToEditPhysical();   // selected strips, else all
     void editStartRange();
     void editFinishRange();

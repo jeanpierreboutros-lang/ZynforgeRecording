@@ -674,6 +674,48 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            beginTest ("rippleDeleteRange closes the gap; pasteClip inserts a clip");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    CallbackFixture f (1, 1, 2);
+                    f.engine.getRecorder().getTrack (0).armed.store (true);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.40f, 256);
+                    for (int b = 0; b < 192; ++b) f.process (256);
+                    f.engine.stopRecording();
+                    const auto total = f.engine.getPlayer().getTotalLengthSamples();
+                    expect (total > 0);
+
+                    // Ripple-delete the middle half -> tail slides left, so the
+                    // furthest clip end shrinks by exactly (b - a).
+                    const auto a = total / 4, b = total * 3 / 4;
+                    expect (f.engine.rippleDeleteRange (0, a, b));
+                    const auto* clips = f.engine.tryClipsFor (0);
+                    expect (clips != nullptr && ! clips->empty());
+                    juce::int64 maxEnd = 0;
+                    if (clips != nullptr)
+                        for (const auto& c : *clips)
+                            maxEnd = juce::jmax (maxEnd, c.timelineStartSamples + c.fileLengthSamples);
+                    expectWithinAbsoluteError ((double) maxEnd, (double) (total - (b - a)), 4.0);
+
+                    // Paste a clip at timeline 0 -> count grows, a clip starts at 0.
+                    const int beforeN = (clips != nullptr) ? (int) clips->size() : 0;
+                    const int idx = f.engine.pasteClip (0, 0, 0, total / 8, 0, 0, 0.0f, "p");
+                    expect (idx >= 0);
+                    clips = f.engine.tryClipsFor (0);
+                    expect (clips != nullptr);
+                    if (clips != nullptr)
+                    {
+                        expectEquals ((int) clips->size(), beforeN + 1);
+                        bool atZero = false;
+                        for (const auto& c : *clips) if (c.timelineStartSamples == 0) atZero = true;
+                        expect (atZero);
+                    }
+                }
+                sessionDir.deleteRecursively();
+            }
+
             beginTest ("Unarmed strip produces no audio data (file is silent or absent)");
             {
                 const auto sessionDir = makeTempSessionDir();

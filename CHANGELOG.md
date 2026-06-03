@@ -18,6 +18,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ## [Unreleased]
 
 ### Added (latest)
+- **EDIT view round 2: multi-clip selection, ripple delete, audio clip clipboard, configurable nudge** — building the region editor toward a full DAW:
+  - **Multi-clip selection** — Shift+click adds clips to the selection (across tracks); Delete / Nudge act on the whole set at once. Each selected clip shows the teal highlight.
+  - **Ripple delete (Shift+Delete)** — deletes the selected clip or range **and closes the gap** (later audio slides earlier), vs plain Delete which leaves a gap. New engine `rippleDeleteRange`.
+  - **Audio clip clipboard (Cmd+X / Cmd+C / Cmd+V)** — cut/copy the selected clip and paste a copy **at the playhead** on its track; new engine `pasteClip`. (Same-track for now — clips index into their track's file; cross-track paste needs per-clip readers, a later refactor.) When no clip is selected, Cmd+X/C/V keep their old strip-settings behaviour.
+  - **Configurable nudge** — **N** cycles the nudge step (10 / 25 / 50 / 100 / 250 / 500 / 1000 ms, persisted); **Alt+Left/Right** or **numpad +/-** nudge the selected clip(s) by it. With nothing selected, numpad +/- nudges the playhead.
+  - All clip-aware-undoable. Regression test (`rippleDeleteRange` closes the gap, `pasteClip` inserts a clip), 134 test groups.
 - **Clip selection + Delete / Duplicate / Nudge in the EDIT view** — click a clip (with the Smart or Move tool) to select it; it highlights with a teal wash + border so you see exactly what an edit will hit. Then **Delete** removes it, **D** duplicates it after itself, and **Alt+Left/Right** nudge it 100 ms earlier/later. All clip-aware-undoable. Clicking empty lane space clears the selection; structural edits (split / separate / clear) clear it too so the highlight never goes stale.
 - **EDIT tools are now a real DAW edit workflow (Separate / Clear), not just a tool picker** — the six edit tools (Smart / Range / Trim / Move / Fade / Scrub) looked like Pro Tools but the Range selection led nowhere. Now:
   - Each tool shows a **readable caption under its icon** and a plain-language tooltip explaining exactly what it does on a click/drag (no more guessing from a cryptic glyph).

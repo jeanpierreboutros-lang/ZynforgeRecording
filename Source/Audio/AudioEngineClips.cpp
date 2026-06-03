@@ -411,6 +411,76 @@ namespace zynforge
         return changed;
     }
 
+    bool AudioEngine::rippleDeleteRange (int track, juce::int64 start, juce::int64 end)
+    {
+        if (end <= start) return false;
+        const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
+        if (track < 0 || track >= maxTracks) return false;
+        if (! ensureClipList (track)) return false;
+
+        auto& list = clipsFor (track);
+        splitListAtTimeline (list, start);
+        splitListAtTimeline (list, end);
+
+        const juce::int64 shift = end - start;
+        std::vector<Clip> out;
+        out.reserve (list.size());
+        bool changed = false;
+        for (auto& c : list)
+        {
+            const auto cs = c.timelineStartSamples;
+            const auto ce = cs + c.fileLengthSamples;
+            if (cs >= start && ce <= end && ! c.locked)   // inside the gap -> drop
+            {
+                changed = true;
+                continue;
+            }
+            if (cs >= end)                                // after the gap -> slide left
+            {
+                c.timelineStartSamples -= shift;
+                changed = true;
+            }
+            out.push_back (c);
+        }
+        if (changed)
+        {
+            list = std::move (out);
+            player.setTrackClips (track, list);
+            syncActiveTake (track);
+        }
+        return changed;
+    }
+
+    int AudioEngine::pasteClip (int track, juce::int64 timelineStart,
+                                juce::int64 fileStart, juce::int64 fileLength,
+                                juce::int64 fadeIn, juce::int64 fadeOut, float gainDb,
+                                const juce::String& name)
+    {
+        const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
+        if (track < 0 || track >= maxTracks) return -1;
+        if (fileLength <= 0) return -1;
+        ensureClipList (track);
+        auto& list = clipsFor (track);
+
+        Clip c;
+        c.name                 = name.isNotEmpty() ? name : juce::String ("paste");
+        c.timelineStartSamples = juce::jmax ((juce::int64) 0, timelineStart);
+        c.fileStartSamples     = fileStart;
+        c.fileLengthSamples    = fileLength;
+        c.fadeInSamples        = juce::jlimit ((juce::int64) 0, fileLength, fadeIn);
+        c.fadeOutSamples       = juce::jlimit ((juce::int64) 0, fileLength, fadeOut);
+        c.gainDb               = gainDb;
+
+        // Insert sorted by timeline position so the list stays ordered.
+        int insertAt = (int) list.size();
+        for (int i = 0; i < (int) list.size(); ++i)
+            if (list[(size_t) i].timelineStartSamples > c.timelineStartSamples) { insertAt = i; break; }
+        list.insert (list.begin() + insertAt, std::move (c));
+        player.setTrackClips (track, list);
+        syncActiveTake (track);
+        return insertAt;
+    }
+
     bool AudioEngine::editClip (int track, int clipIndex, ClipEdit mode, juce::int64 deltaSamples)
     {
         if (track < 0 || track >= (int) trackClips.size()) return false;

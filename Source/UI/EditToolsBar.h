@@ -43,9 +43,10 @@ namespace zynforge
                   "Trim -- drag inside a clip to shorten or extend it from the nearer edge, hiding "
                   "or revealing audio without moving where the clip sits on the timeline." },
                 { Tool::Grabber,  "Grabber",  "Move",
-                  "Move -- drag a clip anywhere along the timeline to slide it earlier or later. "
-                  "Click a clip (no drag) to select it: then Delete removes it, D duplicates it, "
-                  "and Alt+Left/Right nudge it 100 ms." },
+                  "Move -- drag a clip along the timeline to slide it. Click a clip to select it "
+                  "(Shift+click adds more); then Delete removes it, Shift+Delete ripple-deletes "
+                  "(closes the gap), D duplicates, Cmd+C / Cmd+V copy & paste at the playhead, "
+                  "Alt+Left/Right or numpad +/- nudge by the N-step." },
                 { Tool::Fade,     "Fade",     "Fade",
                   "Fade -- click a clip to open its fade menu (fade-in / fade-out / crossfade "
                   "shapes and lengths)." },

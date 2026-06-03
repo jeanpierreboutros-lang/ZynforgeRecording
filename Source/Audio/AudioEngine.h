@@ -587,6 +587,18 @@ namespace zynforge
         // Track_NN.wav file is untouched, so it round-trips + undoes.
         // Returns true if anything was removed.
         bool clearTrackRange (int track, juce::int64 start, juce::int64 end);
+        // Like clearTrackRange but RIPPLE: after dropping the clips inside
+        // [start, end), every later clip slides left by (end - start) so
+        // the gap closes. Returns true if anything changed.
+        bool rippleDeleteRange (int track, juce::int64 start, juce::int64 end);
+        // Insert a clip referencing this track's file region into `track`
+        // at `timelineStart` (used by clip paste). Returns the inserted
+        // clip index, or -1. Same-track only -- clips index into the
+        // track's own Track_NN.wav via the per-track reader.
+        int  pasteClip (int track, juce::int64 timelineStart,
+                        juce::int64 fileStart, juce::int64 fileLength,
+                        juce::int64 fadeIn, juce::int64 fadeOut, float gainDb,
+                        const juce::String& name);
 
         // Mutate one clip's bounds and republish to the player. Three
         // edit modes the EDIT row's drag handles drive:
