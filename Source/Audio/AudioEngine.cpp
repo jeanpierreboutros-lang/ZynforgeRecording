@@ -353,6 +353,18 @@ namespace zynforge
             o->setProperty ("stereo",    t.isStereo .load (std::memory_order_relaxed));
             o->setProperty ("vcaGroup",  t.vcaGroup .load (std::memory_order_relaxed));
             o->setProperty ("editGroup", t.editGroup.load (std::memory_order_relaxed));
+            // Aux sends -- per session now (was global appProps, which leaked
+            // routing across sessions). 4 slots: target bus, level, post-fader.
+            juce::Array<juce::var> sendsArr;
+            for (int s = 0; s < TrackState::kNumSends; ++s)
+            {
+                juce::DynamicObject::Ptr so (new juce::DynamicObject());
+                so->setProperty ("bus",  t.sends[(size_t) s].targetBus.load (std::memory_order_relaxed));
+                so->setProperty ("dB",   (double) t.sends[(size_t) s].levelDb.load (std::memory_order_relaxed));
+                so->setProperty ("post", t.sends[(size_t) s].postFader.load (std::memory_order_relaxed));
+                sendsArr.add (juce::var (so.get()));
+            }
+            o->setProperty ("sends", sendsArr);
             arr.add (juce::var (o.get()));
         }
 
@@ -438,6 +450,23 @@ namespace zynforge
                     t.soloed .store (o->hasProperty ("soloed")  && (bool) o->getProperty ("soloed"),  std::memory_order_relaxed);
                     t.monitor.store (o->hasProperty ("monitor") && (bool) o->getProperty ("monitor"), std::memory_order_relaxed);
                     t.armed  .store (o->hasProperty ("armed")   && (bool) o->getProperty ("armed"),   std::memory_order_relaxed);
+
+                    // Aux sends (per-session, authoritative). Absent on an
+                    // older session_mix.json -> leave the slots at their
+                    // default "no send" so nothing routes unexpectedly.
+                    if (auto* sa = o->getProperty ("sends").getArray())
+                        for (int s = 0; s < juce::jmin ((int) sa->size(), TrackState::kNumSends); ++s)
+                            if (auto* so = (*sa)[s].getDynamicObject())
+                            {
+                                t.sends[(size_t) s].targetBus.store (
+                                    so->hasProperty ("bus") ? (int) so->getProperty ("bus") : -1,
+                                    std::memory_order_relaxed);
+                                t.sends[(size_t) s].levelDb.store (
+                                    (float) (double) so->getProperty ("dB"), std::memory_order_relaxed);
+                                t.sends[(size_t) s].postFader.store (
+                                    ! so->hasProperty ("post") || (bool) so->getProperty ("post"),
+                                    std::memory_order_relaxed);
+                            }
                 }
     }
 
@@ -801,22 +830,13 @@ namespace zynforge
                 : -1;
             t.editGroup.store (egroup, std::memory_order_relaxed);
 
-            // Bus flag + 4 aux sends.
+            // Bus flag (still appProps for now). Aux sends are NO LONGER read
+            // here -- they live in session_mix.json (loadSessionMixFrom), so
+            // reading them from global appProps would clobber the per-session
+            // routing and leak it across sessions.
             if (appProps != nullptr)
-            {
                 t.isBus.store (appProps->getBoolValue ("strip_isbus_" + juce::String (i), false),
                                 std::memory_order_relaxed);
-                for (int s = 0; s < TrackState::kNumSends; ++s)
-                {
-                    const auto key = "strip_send_" + juce::String (i) + "_" + juce::String (s);
-                    t.sends[(size_t) s].targetBus.store (
-                        appProps->getIntValue (key + "_bus", -1), std::memory_order_relaxed);
-                    t.sends[(size_t) s].levelDb.store (
-                        (float) appProps->getDoubleValue (key + "_dB", 0.0), std::memory_order_relaxed);
-                    t.sends[(size_t) s].postFader.store (
-                        appProps->getBoolValue (key + "_post", true), std::memory_order_relaxed);
-                }
-            }
 
             // Default to channel i, but clamp to the device's active
             // input count so a 4-strip session on a 1-input device still
@@ -1497,15 +1517,9 @@ namespace zynforge
         s.targetBus.store (targetBus,  std::memory_order_relaxed);
         s.levelDb  .store (levelDb,    std::memory_order_relaxed);
         s.postFader.store (postFader,  std::memory_order_relaxed);
-
-        if (appProps != nullptr)
-        {
-            const auto key = "strip_send_" + juce::String (channelIndex) + "_" + juce::String (slot);
-            appProps->setValue (key + "_bus",   targetBus);
-            appProps->setValue (key + "_dB",    (double) levelDb);
-            appProps->setValue (key + "_post",  postFader);
-            appProps->saveIfNeeded();
-        }
+        // Sends persist per-session via session_mix.json (saveSessionMixTo),
+        // NOT global appProps -- writing them to appProps keyed by index made
+        // routing leak from one session into the next.
     }
 
     void AudioEngine::setTrackVcaGroup (int channelIndex, int vcaIdx)

@@ -30,6 +30,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - **EDIT clips now render as DAW-style region blocks** — each clip/take is framed as a discrete block with a name-header bar and a coloured border (instead of one continuous waveform). The yellow clip-start "cut-flag" is gone — a clip's border now shows where it begins. Lane area not covered by a clip is masked to the lane background, so trimmed/split clips read as separate blocks. (`EditPage.cpp`.)
 
 ### Fixed (latest)
+- **Aux send routing no longer leaks between sessions** — sends were stored in *global* app properties keyed by strip index, so opening a different session inherited the previous session's send routing (and they never round-tripped through the authoritative `session_mix.json`). Sends are now saved/loaded per-session in `session_mix.json`; `setTrackSend` no longer writes global appProps and the loader no longer reads them. (Old sessions just start with no sends until re-saved.)
 - **EDIT audit pass — three "looks done but wasn't" bugs:**
   - **Markers lane now shows real markers** — it used to paint 6 fake evenly-spaced ticks + the literal word "markers", ignoring the session marker list. Now maps each real marker to its true timeline position with its name.
   - **Clip waveforms follow the clip** — the lane drew one continuous full-width thumbnail, so after a clip Move or slip-trim the block moved but the waveform under it stayed (wrong audio). Each clip block now draws its own waveform, mapped to the clip's file region.
