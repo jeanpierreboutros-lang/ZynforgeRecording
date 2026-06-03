@@ -1150,6 +1150,34 @@ namespace zynforge
                                             ? toolsBar->getTool()
                                             : EditToolsBar::Tool::None;
                     const bool showFadeGrips = (fadeTool == EditToolsBar::Tool::Fade);
+
+                    // Mask any lane area NOT covered by a clip with the lane
+                    // background, so a trimmed / split clip reads as a discrete
+                    // block instead of leaving stray waveform in the gap. The
+                    // continuous thumbnail was already painted across the whole
+                    // lane above; this erases the parts outside the clips.
+                    {
+                        int prevR = inner2.getX();
+                        for (const auto& c : *clips)
+                        {
+                            const int cxL = sampleToX (c.timelineStartSamples);
+                            const int cxR = sampleToX (c.timelineStartSamples + c.fileLengthSamples);
+                            if (cxL > prevR)
+                            {
+                                g.setColour (headerBg);
+                                g.fillRect (juce::Rectangle<int> (prevR, inner2.getY(),
+                                                                  cxL - prevR, inner2.getHeight()));
+                            }
+                            prevR = juce::jmax (prevR, cxR);
+                        }
+                        if (prevR < inner2.getRight())
+                        {
+                            g.setColour (headerBg);
+                            g.fillRect (juce::Rectangle<int> (prevR, inner2.getY(),
+                                                              inner2.getRight() - prevR, inner2.getHeight()));
+                        }
+                    }
+
                     // Multi-selection: which clips on THIS track are picked.
                     EditPage* selPage = findParentComponentOfClass<EditPage>();
                     int clipIdx_ = -1;
@@ -1158,6 +1186,37 @@ namespace zynforge
                         ++clipIdx_;
                         const int xL_ = sampleToX (c.timelineStartSamples);
                         const int xR_ = sampleToX (c.timelineStartSamples + c.fileLengthSamples);
+
+                        // ─── DAW-style region block ───────────────────────
+                        // Frame each clip as a discrete block: a name header
+                        // bar across the top + a 1 px border in the strip
+                        // colour. This is what makes a recorded take read as a
+                        // "clip" the way Pro Tools / Logic show them, instead
+                        // of one continuous waveform with cut-flags.
+                        const juce::Rectangle<int> block (
+                            xL_, inner2.getY(),
+                            juce::jmax (1, xR_ - xL_), inner2.getHeight());
+                        const auto clipTint = getStripColour();
+                        const int  headH = juce::jmin (12, juce::jmax (0, block.getHeight() - 6));
+                        if (headH > 0)
+                        {
+                            auto headRect = block.withHeight (headH);
+                            g.setColour (clipTint.withAlpha (c.muted ? 0.30f : 0.68f));
+                            g.fillRect (headRect);
+                            if (block.getWidth() > 26)
+                            {
+                                const auto clipName = c.name.isNotEmpty()
+                                    ? c.name
+                                    : engine.getTakeName (index, engine.getActiveTakeIdx (index));
+                                g.setColour (brand::onSignal (clipTint));
+                                g.setFont (brand::type::caption().withHeight (9.5f));
+                                g.drawText (clipName, headRect.reduced (5, 0),
+                                            juce::Justification::centredLeft, false);
+                            }
+                        }
+                        g.setColour (clipTint.brighter (0.30f).withAlpha (brand::alpha::prominent));
+                        g.drawRect (block, 1);
+
                         // Selected-clip highlight: a bright wash + border so
                         // the engineer sees exactly what Delete / Duplicate /
                         // Nudge will act on.
@@ -1190,16 +1249,10 @@ namespace zynforge
                             g.fillRect (juce::Rectangle<int> (lx,     ly + 2, 6, 4));
                             g.drawRect (juce::Rectangle<int> (lx + 1, ly,     4, 4), 1);
                         }
-                        if (c.timelineStartSamples > 0)
-                        {
-                            const int x = sampleToX (c.timelineStartSamples);
-                            g.setColour (brand::accentSolo.withAlpha (brand::alpha::prominent));
-                            g.drawVerticalLine (x, (float) inner2.getY(),
-                                                (float) inner2.getBottom());
-                            // Tiny corner flag at the top so the cut is
-                            // visible against busy audio.
-                            g.fillRect (juce::Rectangle<int> (x, inner2.getY(), 6, 3));
-                        }
+                        // (The old yellow clip-start cut-flag was removed --
+                        // the region block's border now shows where each clip
+                        // begins, the way a real DAW does.)
+
                         // Fade-in diagonal -- from the bottom-left corner
                         // of the clip up to the top of (start + fadeIn).
                         {
