@@ -18,6 +18,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ## [Unreleased]
 
 ### Added (latest)
+- **EDIT tools are now a real DAW edit workflow (Separate / Clear), not just a tool picker** — the six edit tools (Smart / Range / Trim / Move / Fade / Scrub) looked like Pro Tools but the Range selection led nowhere. Now:
+  - Each tool shows a **readable caption under its icon** and a plain-language tooltip explaining exactly what it does on a click/drag (no more guessing from a cryptic glyph).
+  - **Split (`S`) acts on every track by default** instead of doing nothing unless you'd first selected strips.
+  - **Separate (`B`)** isolates the selected range as its own clip across every track (or just the selected strips) — the core Pro Tools "B" gesture, built on a new `splitTrackAtSample`.
+  - **Clear (`Delete`)** removes the audio inside the selected range across tracks, leaving a gap — non-destructive (the WAV files are untouched) and Cmd+Z restores it. Built on a new `clearTrackRange`.
+  - All of these are clip-aware-undoable and round-trip through the `.zfproj` playlists. New regression test (`splitTrackAtSample + clearTrackRange`, 133 test groups).
 - **Live capture waveform while recording** — the EDIT lanes used to stay blank during a take (the file thumbnails are only re-scanned from disk after STOP, to protect capture integrity), so there was no on-screen confirmation a track was actually recording until you stopped. Each armed lane now draws a **red capture envelope that grows left→right in real time**, built from the live input meter (`TrackState::peak`) — no disk reads, so capture integrity is untouched. The EDIT time ruler turns its playhead red and shows the elapsed-record time, growing to fit the take. On STOP the real full-resolution file waveform replaces the live envelope as before. Confirmation at a glance that signal is hitting each channel during the take.
 
 ### Fixed (latest)

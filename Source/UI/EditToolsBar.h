@@ -27,19 +27,35 @@ namespace zynforge
 
         EditToolsBar()
         {
-            const std::array<std::pair<Tool, const char*>, 6> items {{
-                { Tool::Smart,    "Smart"    },
-                { Tool::Selector, "Selector" },
-                { Tool::Trim,     "Trim"     },
-                { Tool::Grabber,  "Grabber"  },
-                { Tool::Fade,     "Fade"     },
-                { Tool::Scrubber, "Scrubber" }
+            // Each tool carries a short on-button caption (so you can read
+            // what it is without hovering) and a plain-language tooltip
+            // (what it actually does on a click/drag in the lane).
+            struct Item { Tool t; const char* name; const char* caption; const char* tip; };
+            const std::array<Item, 6> items {{
+                { Tool::Smart,    "Smart",    "Smart",
+                  "Smart tool (default) -- the all-in-one. Near a clip edge it trims; the clip's "
+                  "top edge grabs a fade handle; the body moves the clip. Pick this when unsure." },
+                { Tool::Selector, "Selector", "Range",
+                  "Range select -- click to place the playhead; drag across the waveform to select "
+                  "a time range. Then B separates it into its own clip, Delete clears it, and it "
+                  "also feeds Crop-to-range, loop playback and the punch window." },
+                { Tool::Trim,     "Trim",     "Trim",
+                  "Trim -- drag inside a clip to shorten or extend it from the nearer edge, hiding "
+                  "or revealing audio without moving where the clip sits on the timeline." },
+                { Tool::Grabber,  "Grabber",  "Move",
+                  "Move -- drag a clip anywhere along the timeline to slide it earlier or later." },
+                { Tool::Fade,     "Fade",     "Fade",
+                  "Fade -- click a clip to open its fade menu (fade-in / fade-out / crossfade "
+                  "shapes and lengths)." },
+                { Tool::Scrubber, "Scrubber", "Scrub",
+                  "Scrub -- drag across the waveform to move the playhead sample-by-sample and "
+                  "audition exactly where an edit should land." }
             }};
 
-            for (auto& [t, name] : items)
+            for (auto& it : items)
             {
-                auto b = std::make_unique<ToolButton> (t, name);
-                b->onClick = [this, tool = t]()
+                auto b = std::make_unique<ToolButton> (it.t, it.name, it.caption, it.tip);
+                b->onClick = [this, tool = it.t]()
                 {
                     // Toggle: click the active tool again to deselect.
                     setTool (this->tool == tool ? Tool::None : tool);
@@ -81,7 +97,7 @@ namespace zynforge
         void resized() override
         {
             auto r = getLocalBounds().reduced (brand::space::sm, brand::space::xs);
-            const int btnW = 48;
+            const int btnW = 58;   // wide enough for the under-glyph caption
             const int gap  = 6;
             for (auto& b : buttons)
             {
@@ -95,13 +111,15 @@ namespace zynforge
                                   public juce::SettableTooltipClient
         {
         public:
-            ToolButton (Tool t, juce::String n) : tool (t), name (std::move (n))
+            ToolButton (Tool t, juce::String n, juce::String cap, juce::String tip)
+                : tool (t), name (std::move (n)), caption (std::move (cap)), richTip (std::move (tip))
             {
                 // Icon-only + a raw Component (not juce::Button), so it has
                 // no built-in accessibility: give it a spoken name, make it
                 // keyboard-reachable, and expose a press action below.
                 setTitle (name);
-                setDescription ("Edit tool");
+                setDescription (richTip);
+                setTooltip (richTip);
                 setWantsKeyboardFocus (true);
             }
 
@@ -160,8 +178,14 @@ namespace zynforge
                     g.drawRoundedRectangle (rect.reduced (0.5f), brand::radius::md, 1.0f);
                 }
 
+                // Glyph in the upper area, short caption underneath, so the
+                // tool is readable at a glance without hovering.
+                auto capArea   = rect.removeFromBottom (12.0f);
                 g.setColour (active ? brand::onSignal (accent) : brand::textSecondary);
                 paintGlyph (g, rect, tool);
+                g.setFont (brand::type::caption().withHeight (10.0f));
+                g.setColour (active ? brand::onSignal (accent) : brand::textMuted);
+                g.drawText (caption, capArea, juce::Justification::centred, false);
             }
 
             void paintGlyph (juce::Graphics& g, juce::Rectangle<float> r, Tool t)
@@ -240,6 +264,8 @@ namespace zynforge
 
             Tool tool;
             juce::String name;
+            juce::String caption;
+            juce::String richTip;
             bool hover { false };
         };
 
@@ -251,7 +277,7 @@ namespace zynforge
             {
                 const bool on = (b->tool == tool);
                 b->active = on;
-                b->setTooltip (b->name + (on ? juce::String (" (active)") : juce::String()));
+                b->setTooltip (b->richTip + (on ? juce::String ("  --  ACTIVE") : juce::String()));
                 b->repaint();
             }
         }

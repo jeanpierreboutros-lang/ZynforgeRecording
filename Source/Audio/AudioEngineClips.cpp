@@ -299,22 +299,34 @@ namespace zynforge
         return v.empty() ? nullptr : &v;
     }
 
-    bool AudioEngine::splitTrackAtPlayhead (int track)
+    namespace
     {
-        // Bound against whichever subsystem currently knows about tracks:
-        // the recorder (just-captured, not yet reloaded) OR the player (a
-        // loaded / reopened session). Guarding only on the recorder broke
-        // Split after opening an audio folder -- the player had the tracks
-        // but the recorder's count was still 0. The trackFile.existsAsFile
-        // check below is the real gate on whether there's audio to split.
-        const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
-        if (track < 0 || track >= maxTracks) return false;
-        auto pos = player.isLoaded() ? player.getPositionSamples() : juce::int64 (0);
-        // Honour the active snap grid. Bars mode lands the split on
-        // the nearest bar boundary so music edits sit cleanly; Markers
-        // snaps to the nearest user marker.
-        pos = snapSampleToGrid (pos);
-        if (pos <= 0) return false;
+        // Split whichever clip in `list` straddles `timelineSample`.
+        // Returns true if a cut landed (sample strictly inside a clip).
+        bool splitListAtTimeline (std::vector<Clip>& list, juce::int64 timelineSample)
+        {
+            for (int i = 0; i < (int) list.size(); ++i)
+            {
+                const auto& c = list[(size_t) i];
+                const auto tEnd = c.timelineStartSamples + c.fileLengthSamples;
+                if (timelineSample > c.timelineStartSamples && timelineSample < tEnd)
+                {
+                    const auto fileOffset = c.fileStartSamples
+                                          + (timelineSample - c.timelineStartSamples);
+                    return splitClipAt (list, i, fileOffset);
+                }
+            }
+            return false;
+        }
+    }
+
+    // Lazy bootstrap: ensure `track` has a clip list (one full-range clip
+    // spanning the whole file) so edits have something to act on. Returns
+    // false when there's no audio file backing the track.
+    bool AudioEngine::ensureClipList (int track)
+    {
+        auto& list = clipsFor (track);
+        if (! list.empty()) return true;
 
         auto sessionDir = getActiveSessionDir();
         const auto trackFile = sessionDir.isDirectory()
@@ -323,43 +335,80 @@ namespace zynforge
             : juce::File();
         if (! trackFile.existsAsFile()) return false;
 
-        // Lazy bootstrap: if the track has no clip list yet, create one
-        // full-range clip spanning the whole file.
-        auto& list = clipsFor (track);
-        if (list.empty())
-        {
-            Clip c;
-            c.name                 = juce::String::formatted ("Track_%02d", track + 1);
-            c.audioFile            = trackFile;
-            c.timelineStartSamples = 0;
-            c.fileStartSamples     = 0;
-            c.fileLengthSamples    = trackFile.getSize() > 0
-                ? (juce::int64) (trackFile.getSize() / 4)  // 24-bit WAV mono ≈ 3 B/sample, rough
-                : player.getTotalLengthSamples();
-            list.push_back (c);
-        }
+        Clip c;
+        c.name                 = juce::String::formatted ("Track_%02d", track + 1);
+        c.audioFile            = trackFile;
+        c.timelineStartSamples = 0;
+        c.fileStartSamples     = 0;
+        c.fileLengthSamples    = trackFile.getSize() > 0
+            ? (juce::int64) (trackFile.getSize() / 4)  // 24-bit WAV mono ≈ 3 B/sample, rough
+            : player.getTotalLengthSamples();
+        if (c.fileLengthSamples <= 0) return false;
+        list.push_back (c);
+        return true;
+    }
 
-        // Find the clip whose timeline range contains the playhead.
-        bool did = false;
-        for (int i = 0; i < (int) list.size(); ++i)
-        {
-            const auto& c = list[(size_t) i];
-            const auto tEnd = c.timelineStartSamples + c.fileLengthSamples;
-            if (pos > c.timelineStartSamples && pos < tEnd)
-            {
-                const auto fileOffset = c.fileStartSamples + (pos - c.timelineStartSamples);
-                did = splitClipAt (list, i, fileOffset);
-                break;
-            }
-        }
-        // Publish the updated list to the player so playback honours
-        // the cut on the next block.
+    bool AudioEngine::splitTrackAtPlayhead (int track)
+    {
+        auto pos = player.isLoaded() ? player.getPositionSamples() : juce::int64 (0);
+        // Honour the active snap grid (Markers snaps to the nearest user
+        // marker); the arbitrary-sample variant does NOT snap.
+        pos = snapSampleToGrid (pos);
+        return splitTrackAtSample (track, pos);
+    }
+
+    bool AudioEngine::splitTrackAtSample (int track, juce::int64 timelineSample)
+    {
+        // Bound against whichever subsystem currently knows about tracks:
+        // the recorder (just-captured, not yet reloaded) OR the player (a
+        // loaded / reopened session). The ensureClipList file check is the
+        // real gate on whether there's audio to split.
+        const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
+        if (track < 0 || track >= maxTracks) return false;
+        if (timelineSample <= 0) return false;
+        if (! ensureClipList (track)) return false;
+
+        auto& list = clipsFor (track);
+        const bool did = splitListAtTimeline (list, timelineSample);
         if (did)
         {
-            player.setTrackClips (track, list);
-            syncActiveTake (track);   // persist + make undoable
+            player.setTrackClips (track, list);   // playback honours the cut next block
+            syncActiveTake (track);               // persist + make undoable
         }
         return did;
+    }
+
+    bool AudioEngine::clearTrackRange (int track, juce::int64 start, juce::int64 end)
+    {
+        if (end <= start) return false;
+        const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
+        if (track < 0 || track >= maxTracks) return false;
+        if (! ensureClipList (track)) return false;
+
+        auto& list = clipsFor (track);
+        // Clean edges so clips inside the range have exact boundaries.
+        splitListAtTimeline (list, start);
+        splitListAtTimeline (list, end);
+
+        // Drop every clip fully inside [start, end). Locked clips survive.
+        bool changed = false;
+        for (int i = (int) list.size() - 1; i >= 0; --i)
+        {
+            const auto& c  = list[(size_t) i];
+            const auto  cs = c.timelineStartSamples;
+            const auto  ce = cs + c.fileLengthSamples;
+            if (cs >= start && ce <= end && ! c.locked)
+            {
+                list.erase (list.begin() + i);
+                changed = true;
+            }
+        }
+        if (changed)
+        {
+            player.setTrackClips (track, list);
+            syncActiveTake (track);
+        }
+        return changed;
     }
 
     bool AudioEngine::editClip (int track, int clipIndex, ClipEdit mode, juce::int64 deltaSamples)

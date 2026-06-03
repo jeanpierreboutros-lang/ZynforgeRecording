@@ -523,32 +523,102 @@ void MainComponent::endAutomationTransaction (const juce::String& label)
     if (editPage != nullptr) editPage->repaint();
 }
 
+// The physical tracks an edit acts on: the selected strips (incl. their
+// stereo partners), or -- Pro Tools-style -- EVERY track when nothing is
+// explicitly selected, so a bare edit gesture just works.
+std::vector<int> MainComponent::tracksToEditPhysical()
+{
+    std::vector<int> out;
+    auto& rec = engine.getRecorder();
+    if (! selectedLogical.empty())
+    {
+        for (int logical : selectedLogical)
+        {
+            const int phys = physicalFromLogical (engine, logical);
+            if (phys < 0 || phys >= rec.getNumTracks()) continue;
+            out.push_back (phys);
+            if (phys + 1 < rec.getNumTracks()
+                && rec.getTrack (phys).isStereo.load (std::memory_order_relaxed))
+                out.push_back (phys + 1);   // stereo pair edits together
+        }
+    }
+    else
+    {
+        for (int i = 0; i < rec.getNumTracks(); ++i) out.push_back (i);
+    }
+    return out;
+}
+
 void MainComponent::editSplitAtPlayhead()
 {
     const auto pos = currentPlayheadSamples (engine);
     engine.getMarkers().drop (pos, "Split");
 
-    // Real clip-level split -- only act on the selected strips. If
-    // nothing is selected, the action stays as 'just drop a marker' so
-    // it's safe to bind to the S hotkey by default.
+    // Clip-level split across the target tracks (selected, else all).
+    const auto before = engine.playlistsToJson();   // clip-aware undo
     int splits = 0;
-    if (! selectedLogical.empty())
-    {
-        const auto before = engine.playlistsToJson();   // clip-aware undo
-        for (int logical : selectedLogical)
-        {
-            const int phys = physicalFromLogicalIdx (logical);
-            if (engine.splitTrackAtPlayhead (phys)) ++splits;
-        }
+    for (int phys : tracksToEditPhysical())
+        if (engine.splitTrackAtPlayhead (phys)) ++splits;
+    if (splits > 0)
         pushClipUndo ("Split clips at playhead", before);
-    }
+
     if (editPage != nullptr) editPage->repaint();
     showStatus ((splits > 0
-                    ? "Split " + juce::String (splits) + " clip(s) and dropped marker"
+                    ? "Split " + juce::String (splits) + " track(s) and dropped marker"
                     : juce::String ("Split marker dropped"))
                 + " at "
                 + juce::String ((double) pos
                                 / juce::jmax (1.0, engine.getPlayer().getSampleRate()), 2) + " s");
+}
+
+// Pro Tools 'Separate' (B): isolate the selected range as its own clip on
+// every target track by cutting at both range edges. With no range, falls
+// back to a plain split at the playhead.
+void MainComponent::editSeparateAtSelection()
+{
+    auto& player = engine.getPlayer();
+    if (! player.hasLoopRegion())
+    {
+        editSplitAtPlayhead();
+        return;
+    }
+    const auto a = player.getLoopStart();
+    const auto b = player.getLoopEnd();
+    const auto before = engine.playlistsToJson();
+    int n = 0;
+    for (int phys : tracksToEditPhysical())
+    {
+        bool did  = engine.splitTrackAtSample (phys, a);
+        did       = engine.splitTrackAtSample (phys, b) || did;
+        if (did) ++n;
+    }
+    if (n > 0) pushClipUndo ("Separate selection", before);
+    if (editPage != nullptr) editPage->repaint();
+    showStatus (n > 0 ? "Separated selection on " + juce::String (n) + " track(s)"
+                      : juce::String ("Nothing to separate in the selection"));
+}
+
+// Clear (Delete): remove the audio inside the selected range on every
+// target track, leaving a gap. Non-destructive -- the files are untouched
+// and Cmd+Z restores the clips.
+void MainComponent::editClearRange()
+{
+    auto& player = engine.getPlayer();
+    if (! player.hasLoopRegion())
+    {
+        showStatus ("Select a range first (Selector tool, or , and .) then Delete to clear");
+        return;
+    }
+    const auto a = player.getLoopStart();
+    const auto b = player.getLoopEnd();
+    const auto before = engine.playlistsToJson();
+    int n = 0;
+    for (int phys : tracksToEditPhysical())
+        if (engine.clearTrackRange (phys, a, b)) ++n;
+    if (n > 0) pushClipUndo ("Clear selection", before);
+    if (editPage != nullptr) editPage->repaint();
+    showStatus (n > 0 ? "Cleared selection on " + juce::String (n) + " track(s)"
+                      : juce::String ("Nothing inside the selection to clear"));
 }
 
 void MainComponent::editStartRange()

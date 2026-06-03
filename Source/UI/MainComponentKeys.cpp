@@ -265,6 +265,19 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         }
     }
 
+    // Delete / Backspace in the EDIT view with a range selected = clear the
+    // selection's audio across the target tracks. Reached only when no
+    // automation point was focused above; skipped while a text editor has
+    // focus so rename dialogs still get their Delete key.
+    if ((key == juce::KeyPress::deleteKey || key == juce::KeyPress::backspaceKey)
+        && currentView == View::Edit
+        && engine.getPlayer().hasLoopRegion()
+        && dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) == nullptr)
+    {
+        editClearRange();
+        return true;
+    }
+
     // Bare 1..9 is reserved for cue jumps (handled above). Markers
     // moved to Cmd+1..9 so the engineer always knows which list the
     // digit lands on; the old "bare digit jumps to cue OR marker
@@ -315,6 +328,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
 
     if (c == 'a') { editSoloSelection();    return true; }
     if (c == 's') { editSplitAtPlayhead();  return true; }
+    if (c == 'b') { editSeparateAtSelection(); return true; }   // Pro Tools 'Separate'
     if (c == ',') { editStartRange();       return true; }
     if (c == '.') { editFinishRange();      return true; }
     if (c == '4') { editToggleSnap();       return true; }

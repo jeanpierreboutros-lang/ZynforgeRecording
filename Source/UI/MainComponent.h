@@ -147,6 +147,9 @@ private:
     void editSetRangeToLoopRange();
     void editToggleSnap();
     void editSplitAtPlayhead();
+    void editSeparateAtSelection();   // B -- isolate the range as its own clip
+    void editClearRange();            // Delete -- clear audio inside the range
+    std::vector<int> tracksToEditPhysical();   // selected strips, else all
     void editStartRange();
     void editFinishRange();
 

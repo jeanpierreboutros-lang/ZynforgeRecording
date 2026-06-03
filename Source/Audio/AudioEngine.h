@@ -552,6 +552,9 @@ namespace zynforge
         // tools have something to grab. Called after loadSession() or
         // when stopRecording() auto-loads the just-captured files.
         void seedDefaultClips();
+        // Lazy single-track bootstrap of the above: ensure `track` has at
+        // least a full-range clip. Returns false if no audio backs it.
+        bool ensureClipList (int track);
 
         // ── Comp playlists (Take swap) ─────────────────────────────
         // Each track gets a Playlist (vector<Take>). The active Take's
@@ -573,6 +576,17 @@ namespace zynforge
         // Split the named track at the current playhead -- creates two
         // clips that reference the same audio file with adjacent regions.
         bool splitTrackAtPlayhead (int track);
+        // Split the named track at an arbitrary TIMELINE sample (no snap;
+        // the caller decides). Used for selection-edge separates so the
+        // range becomes its own clip. splitTrackAtPlayhead is a thin
+        // snap+playhead wrapper around this.
+        bool splitTrackAtSample (int track, juce::int64 timelineSample);
+        // Remove the audio inside [start, end) on one track: split at both
+        // edges, then drop every clip that falls fully inside the range
+        // (locked clips are spared). Leaves a gap -- non-destructive, the
+        // Track_NN.wav file is untouched, so it round-trips + undoes.
+        // Returns true if anything was removed.
+        bool clearTrackRange (int track, juce::int64 start, juce::int64 end);
 
         // Mutate one clip's bounds and republish to the player. Three
         // edit modes the EDIT row's drag handles drive:

@@ -633,6 +633,47 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            beginTest ("splitTrackAtSample + clearTrackRange edit clips non-destructively");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    CallbackFixture f (1, 1, 2);
+                    f.engine.getRecorder().getTrack (0).armed.store (true);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.40f, 256);
+                    for (int b = 0; b < 192; ++b) f.process (256);   // ~1 s
+                    f.engine.stopRecording();   // loads + seeds one full-range clip
+
+                    const auto* clips = f.engine.tryClipsFor (0);
+                    expect (clips != nullptr);
+                    if (clips != nullptr) expectEquals ((int) clips->size(), 1);
+                    const auto total = f.engine.getPlayer().getTotalLengthSamples();
+                    expect (total > 0);
+
+                    // Split at the midpoint -> two clips.
+                    expect (f.engine.splitTrackAtSample (0, total / 2));
+                    clips = f.engine.tryClipsFor (0);
+                    if (clips != nullptr) expectEquals ((int) clips->size(), 2);
+
+                    // Clear the middle half -> nothing remains inside [1/4, 3/4).
+                    const auto a = total / 4, b = total * 3 / 4;
+                    expect (f.engine.clearTrackRange (0, a, b));
+                    clips = f.engine.tryClipsFor (0);
+                    expect (clips != nullptr);
+                    if (clips != nullptr)
+                    {
+                        expect (! clips->empty());      // head + tail survive
+                        for (const auto& c : *clips)
+                        {
+                            const auto cs = c.timelineStartSamples;
+                            const auto ce = cs + c.fileLengthSamples;
+                            expect (! (cs >= a && ce <= b));   // no clip inside the cleared span
+                        }
+                    }
+                }
+                sessionDir.deleteRecursively();
+            }
+
             beginTest ("Unarmed strip produces no audio data (file is silent or absent)");
             {
                 const auto sessionDir = makeTempSessionDir();
