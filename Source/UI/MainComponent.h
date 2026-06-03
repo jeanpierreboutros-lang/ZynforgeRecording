@@ -359,6 +359,13 @@ private:
     std::vector<std::unique_ptr<zynforge::ChannelStrip>> strips;
     int  lastTrackCount { -1 };
     int  lastTrackGen   { -1 };        // recorder track-set generation last seen (rebuild on change)
+    // macOS keeps the native menu's enabled/greyed states cached until
+    // menuItemsChanged() is called. We poll a cheap signature of every bit of
+    // state that drives a menu item's enablement and refresh only when it
+    // changes -- otherwise Undo/Redo/Edit/Export stayed frozen in the empty
+    // launch state forever (everything greyed even after a session loaded).
+    juce::String lastMenuStateSig;
+    void refreshMenuStateIfChanged();
     bool rebuildingStrips { false };   // re-entrancy guard for the resized() stale-strip rebuild
 
     // Timer-tick counter for cheap "every N frames" gates (e.g. the

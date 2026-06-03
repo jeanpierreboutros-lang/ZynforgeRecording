@@ -247,6 +247,33 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
     return menu;
 }
 
+void MainComponent::refreshMenuStateIfChanged()
+{
+    // Build a cheap signature of every condition that gates a menu item's
+    // enabled state. When it changes, tell the OS to re-query the menu so the
+    // greyed/lit states actually update (macOS caches them otherwise).
+    auto& player = engine.getPlayer();
+    juce::String sig;
+    sig << (int) player.isLoaded()
+        << '|' << (int) undoManager.canUndo()
+        << '|' << (int) undoManager.canRedo()
+        << '|' << engine.getRecorder().getNumTracks()
+        << '|' << (int) selectedLogical.size()
+        << '|' << (int) engine.isRecording()
+        << '|' << (int) player.hasLoopRegion()
+        << '|' << (int) engine.getActiveSessionDir().isDirectory()
+        << '|' << (int) engine.isPunchModeOn()
+        << '|' << (int) snapToMarkers
+        << '|' << (int) cues.empty()
+        << '|' << (int) stripClipboard.isObject();
+
+    if (sig != lastMenuStateSig)
+    {
+        lastMenuStateSig = sig;
+        menuItemsChanged();   // re-queries getMenuForIndex -> fresh enabled states
+    }
+}
+
 void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
 {
     juce::Logger::writeToLog ("[ZF] menuItemSelected id=" + juce::String (id));

@@ -16,6 +16,11 @@ static juce::String samplesToTimecode (juce::int64 samples, double sr)
 
 void MainComponent::timerCallback()
 {
+    // Keep the macOS menu's greyed/enabled states in sync with reality
+    // (Undo/Redo, Edit, Track, Export) -- they're cached until we ask for a
+    // refresh, so without this they freeze in the empty launch state.
+    refreshMenuStateIfChanged();
+
     const int n = engine.getRecorder().getNumTracks();
     // Rebuild when the track COUNT changes OR the track SET was replaced
     // (device restart recreates TrackStates at the same count) -- either
