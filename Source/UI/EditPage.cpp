@@ -602,35 +602,10 @@ namespace zynforge
                 }
             }
 
-            // -------- Detected transient ticks (Tab-to-Transient hint) --------
-            // Only drawn on the ACTIVE row (the one being Tab-navigated) and
-            // thinned so dense material doesn't turn the lane top into a
-            // solid amber bar. Drawing every onset on every lane made the
-            // whole EDIT view look "noisy".
-            {
-                bool isActiveRow = false;
-                if (auto* page = findParentComponentOfClass<EditPage>())
-                    isActiveRow = (page->getActiveRowTrackIndex() == index);
-
-                const auto& player = engine.getPlayer();
-                const auto totalSamples = player.isLoaded()
-                    ? player.getTotalLengthSamples() : 0;
-                const auto& onsets = engine.getTransientsForTrack (index + 1);   // disk is 1-based
-                if (isActiveRow && totalSamples > 0 && ! onsets.empty())
-                {
-                    g.setColour (brand::engagedAmber.withAlpha (0.55f));
-                    int lastX = -1000;
-                    for (auto pos : onsets)
-                    {
-                        if (pos <= 0 || pos >= totalSamples) continue;
-                        const double prop = (double) pos / (double) totalSamples;
-                        const int x = inner.getX() + (int) (prop * inner.getWidth());
-                        if (x - lastX < 5) continue;          // thin: min 5 px apart
-                        lastX = x;
-                        g.drawVerticalLine (x, (float) inner.getY(), (float) (inner.getY() + 6));
-                    }
-                }
-            }
+            // (The amber Tab-to-Transient onset ticks that used to draw on
+            // the active row's lane top were removed -- they read as visual
+            // clutter. Tab / Shift+Tab still jump between transients; the
+            // hint markers just aren't painted.)
 
             // Automation lane modes -- flat horizontal line representing
             // the current value (overlaid on top of the dimmed waveform

@@ -427,11 +427,18 @@ namespace zynforge
             WriterChannel w;
             const auto trackName = juce::String::formatted ("Track_%02d", (int) i + 1);
 
-            // Bus tracks have no input -- no writer. Push an empty
-            // WriterChannel so the per-channel index stays aligned with
-            // tracks[i]; processBlock's arm-gate already skips bus
-            // tracks (they have armed=false).
-            if (tracks[i]->isBus.load (std::memory_order_relaxed))
+            // No writer for bus tracks (no input) OR unarmed tracks. Push
+            // an empty WriterChannel so the per-channel index stays aligned
+            // with tracks[i]; processBlock's arm-gate already skips both.
+            //
+            // CRITICAL: unarmed tracks must NOT open a writer, because
+            // openWriterAtPath truncates the target file (deleteFile). When
+            // a second take into the SAME session arms a different channel,
+            // opening writers for the still-unarmed earlier tracks would
+            // wipe their Track_NN.wav from the first take -- silent data
+            // loss. Skipping them here leaves those files intact.
+            if (tracks[i]->isBus .load (std::memory_order_relaxed)
+                || ! tracks[i]->armed.load (std::memory_order_relaxed))
             {
                 writers.push_back (std::move (w));
                 fifos[i]->fifo.reset();

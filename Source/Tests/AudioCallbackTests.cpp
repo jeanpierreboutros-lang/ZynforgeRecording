@@ -573,6 +573,66 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            beginTest ("Second take into the same session keeps the first take's unarmed tracks");
+            {
+                // Regression: a second take that armed a DIFFERENT channel
+                // used to wipe the first take's file, because startRecording
+                // opened (and truncated) a writer for every non-bus track,
+                // armed or not. Take 1 records track 0; take 2 records only
+                // track 1 into the SAME session -- track 0's file must
+                // survive intact.
+                const auto sessionDir = makeTempSessionDir();
+                const auto audioDir   = sessionDir.getChildFile ("Audio Files");
+                const auto wav0       = audioDir.getChildFile ("Track_01.wav");
+
+                auto magnitudeOf = [this] (const juce::File& f) -> float
+                {
+                    juce::WavAudioFormat fmt;
+                    std::unique_ptr<juce::FileInputStream> in (f.createInputStream());
+                    std::unique_ptr<juce::AudioFormatReader> reader (
+                        in != nullptr ? fmt.createReaderFor (in.release(), true) : nullptr);
+                    if (reader == nullptr || reader->lengthInSamples <= 0) return -1.0f;
+                    juce::AudioBuffer<float> buf (1, (int) reader->lengthInSamples);
+                    reader->read (&buf, 0, (int) reader->lengthInSamples, 0, true, false);
+                    return buf.getMagnitude (0, 0, buf.getNumSamples());
+                };
+
+                // ── Take 1: arm track 0 only.
+                {
+                    CallbackFixture f (2, 2, 2);
+                    f.engine.getRecorder().getTrack (0).armed.store (true);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.40f, 256);
+                    for (int b = 0; b < 96; ++b) f.process (256);
+                    f.engine.stopRecording();
+                }
+                expect (wav0.existsAsFile());
+                const float take1Mag    = magnitudeOf (wav0);
+                const auto  take1Length = wav0.getSize();
+                expect (take1Mag > 0.20f);   // take 1 captured track 0
+
+                // ── Take 2: arm track 1 only, SAME session dir.
+                {
+                    CallbackFixture f (2, 2, 2);
+                    f.engine.getRecorder().getTrack (0).armed.store (false);
+                    f.engine.getRecorder().getTrack (1).armed.store (true);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (1, 0.50f, 256);
+                    for (int b = 0; b < 96; ++b) f.process (256);
+                    f.engine.stopRecording();
+                }
+
+                // Track 0's first-take audio survived untouched...
+                expect (wav0.existsAsFile());
+                expectWithinAbsoluteError (magnitudeOf (wav0), take1Mag, 0.001f);
+                expectEquals (wav0.getSize(), take1Length);
+                // ...and track 1's second take landed.
+                expect (audioDir.getChildFile ("Track_02.wav").existsAsFile());
+                expect (magnitudeOf (audioDir.getChildFile ("Track_02.wav")) > 0.20f);
+
+                sessionDir.deleteRecursively();
+            }
+
             beginTest ("Unarmed strip produces no audio data (file is silent or absent)");
             {
                 const auto sessionDir = makeTempSessionDir();
