@@ -28,6 +28,25 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         return true;
     }
 
+    // Undo / Redo. Handled EARLY and matched on the physical key code (not the
+    // text character, which is unreliable under Cmd on macOS) so a focused
+    // combo / label can't shadow it. Cmd+Z = undo, Cmd+Shift+Z or Cmd+R = redo.
+    // Skipped while a text editor has focus -- it owns its own undo. (JUCE
+    // doesn't wire native menu accelerators for non-command items, so the
+    // menu's "Cmd+Z" hint is display-only; this is the real handler.)
+    if (key.getModifiers().isCommandDown()
+        && dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) == nullptr)
+    {
+        const int kc = key.getKeyCode();
+        if (kc == 'Z' || kc == 'z')
+        {
+            if (key.getModifiers().isShiftDown()) editRedo();
+            else                                  editUndo();
+            return true;
+        }
+        if (kc == 'R' || kc == 'r') { editRedo(); return true; }
+    }
+
     // Option(Alt)+R -- bulk record-arm toggle over the selected strips.
     // Select the channels, then Option+R arms them all at once; press
     // again (while all armed) to disarm. Uses the physical key code so
@@ -410,11 +429,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
     if (c == ',') { editStartRange();       return true; }
     if (c == '.') { editFinishRange();      return true; }
     if (c == '4') { editToggleSnap();       return true; }
-    // Cmd+Z / Cmd+R / Cmd+X / Cmd+C / Cmd+V / Cmd+E keyboard shortcuts.
+    // Cmd+X / Cmd+C / Cmd+V / Cmd+E keyboard shortcuts. (Cmd+Z / Cmd+R undo /
+    // redo are handled early, near the top of this method.)
     if (key.getModifiers().isCommandDown())
     {
-        if (c == 'z') { editUndo();          return true; }
-        if (c == 'r') { editRedo();          return true; }
         if (c == 'x') { editClipboardCut (true);  return true; }
         if (c == 'c') { editClipboardCut (false); return true; }
         if (c == 'v') { editClipboardPaste(); return true; }

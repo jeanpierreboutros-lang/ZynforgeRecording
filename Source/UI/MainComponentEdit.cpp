@@ -262,6 +262,26 @@ void MainComponent::confirmDeleteRecording (bool ripple, std::function<void()> o
 
 void MainComponent::editUndo()
 {
+    // Commit any in-flight mixer change NOW so Cmd+Z immediately after a fader
+    // / rename / colour move undoes that move -- the timer's ~300 ms settle
+    // wouldn't have recorded it as an undo step yet.
+    if (! engine.isRecording() && mixerUndoReady)
+    {
+        const auto cur    = captureMixerSnapshot();
+        const auto curSig = juce::JSON::toString (cur);
+        const auto* curArr = cur.getArray();
+        const auto* comArr = committedMixerState.getArray();
+        const bool structural = (curArr != nullptr && comArr != nullptr
+                                 && curArr->size() != comArr->size());
+        if (curSig != committedMixerSig && ! structural)
+        {
+            undoManager.beginNewTransaction ("Mixer change");
+            undoManager.perform (new MixerSnapshotAction (engine, committedMixerState));
+            committedMixerState = cur; committedMixerSig = curSig;
+            lastSeenMixerSig = curSig; mixerChangeStableTicks = 0;
+        }
+    }
+
     if (! undoManager.canUndo()) { showStatus ("Nothing to undo"); return; }
     undoManager.undo();
     lastTrackCount = -1;
