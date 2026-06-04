@@ -22,8 +22,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - **EDIT header meter slimmed + cleaned** — the per-row level meter dropped its cramped dB-label gutter for a clean narrow bar (80 px → 22 px). Reads clearer at a glance while editing; full labelled metering still lives on the MIXER strip.
 - **EDIT header column now stays pinned when scrolling horizontally** — at zoom > 1 the row header (colour swatch, name, R/I/S/M, VIEW, meter, routing) used to scroll off-screen to the left with the waveform. It now floats pinned to the left edge while the timeline scrolls underneath, so the controls + meter are always reachable.
 - **Channels default to neutral grey; gradient colour picker** — a newly-added channel is grey until you colour it. The swatch popup is a 2-D gradient (hue across the columns × light→dark down the rows) with the strip's current colour pinned as the first swatch and an explicit **OK** button (clicking a swatch live-previews; OK confirms + closes); **Default** reverts to grey. The free-form "Custom…" selector was removed.
-
-### Changed (latest)
 - **Menu split: "Edit" vs new "Track" menu** — the Edit menu now holds only timeline/audio editing (Separate, Crop, Range, Snap, Punch, Remove Last Capture, Undo/Redo). Channel/mixer-strip management (Cut/Copy/Paste/Delete strips, Solo Selection, Batch Rename/Colour, the Selection submenu) moved to a dedicated **Track** menu — the way a real DAW separates clip editing from track management. All shortcuts unchanged.
 - **EDIT timeline grid** — faint vertical grid lines now sit behind the clips, aligned to the ruler's 1-2-5 second steps (minor + major), so the time scale reads across every lane and snap has visible context.
 - **EDIT snap extended to trim** — trim-left/right drags now snap their dragged edge to the grid/nearest marker too (previously only Move snapped).
@@ -31,10 +29,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ### Added (latest)
 - **EDIT view — Pro Tools-parity edit pass:**
-  - **Strip Silence** (Edit menu) — separates each target track's take into clips around the silent gaps (-42 dB / 300 ms gap / 150 ms min clip) and drops the dead air. Non-destructive, undoable.
+  - **Strip Silence** (Edit menu) — separates each target track's take into clips around the silent gaps and drops the dead air. Opens a **settings box with draggable sliders** (Strip threshold dB, Min strip/silence ms, Min clip length ms, Clip start/end pad ms) before applying. Non-destructive, undoable.
   - **Heal Separation** (Cmd+H) — rejoins a clean split at the playhead, or every healable boundary in the selection (only merges clips genuinely contiguous in the same file).
   - **Consolidate** (Edit menu, and per-clip in the right-click menu) — flattens a range / clip into one new flat file (bakes in gains + fades + clip order).
-  - **Draggable clip-gain line** — ride a clip's level by dragging the gain line inside the clip block (Smart / Grabber tool); 0 dB centre, ±12 dB, with a dB readout.
+  - **Clip gain — Pro Tools-style corner fader** — every clip has a gain handle in its bottom-left corner (fader track + triangular thumb + a dB readout on a dark pill). Drag it to ride the level (relative, −60..+12 dB); **Alt/Option-click resets to 0 dB**. The drawn **waveform scales with the gain** (boost = taller, cut = shorter, live while dragging), and playback follows.
   - **Zoom to Selection** (E) — fit the selected range to the EDIT viewport.
   - **Numeric selection readout** — the ruler shows `Sel <start> ▸ <end> (<length>)` in M:SS.mmm when a range is selected.
   - **Clip right-click menu** gained **Rename clip…** and **Consolidate clip** (on top of the existing mute/lock/duplicate/delete/gain/fades).
@@ -42,6 +40,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - **Delete asks before removing a recording** — pressing Delete on a clip/range in EDIT now pops a confirmation ("Delete recording?"). The recorded file stays on disk; Delete only pulls the clip from the arrangement, and Cmd+Z restores it. Shift+Delete (ripple) confirms too.
 
 ### Fixed (latest)
+- **Keyboard shortcuts now fire reliably** — Cmd+Z (undo), Cmd+Shift+Z / Cmd+R (redo), Cmd+X/C/V (cut/copy/paste) and Cmd+E (separate) were matched on the *text character* under Cmd, which is unreliable on macOS — Cmd+Z silently did nothing while the Edit-menu Undo worked. They're now matched on the physical **key code**, undo/redo handled early so a focused combo can't shadow them, skipped while a text editor has focus. (JUCE doesn't wire native accelerators for non-command menu items, so the menu's "⌘Z" hint is display-only — the keyboard handler is the real path.)
+- **Delete-confirmation "Delete" button now actually deletes** — JUCE gives the first of two AlertWindow buttons command-id 1 (not 0), so the confirm callback was reading the wrong button and dropping the action. (Same latent inversion fixed in *Remove Last Capture*.)
 - **Export tracks no longer fails with "Export failed"** — both *Export All Tracks* and *Export Individual Track* searched the session **root** for `Track_*.wav`, but recordings live in the `Audio Files/` subfolder — so they found nothing and reported failure. Export now reads from `Audio Files/` (with a legacy root fallback).
 - **Menus no longer freeze greyed-out ("nothing works since day 1")** — the macOS menu bar caches each item's enabled/greyed state until the app asks for a refresh, and we never did. So Undo/Redo, the whole Edit menu, Track (cut/copy/paste/solo), and Export stayed frozen in the **empty launch state** (no session, no undo history, no selection) even after you loaded a session, made edits, or selected strips. The app now re-checks the menu-affecting state ~10×/s and refreshes the menu when it changes, so items light up the moment they're usable.
 - **Empty app on launch** — see "Fixed: empty-app-on-launch" — the app now reopens the last session and sizes the mixer from the recorded audio, so the menus that need tracks/a loaded player are actually reachable.

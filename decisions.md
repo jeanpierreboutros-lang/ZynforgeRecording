@@ -203,6 +203,26 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Coalesced mixer undo (poll + settle), recording never undoable — 2026-06-04
+
+**Status:** Accepted
+**Context:** Undo only covered clip + automation edits; the everyday mixer gestures (fader, pan, mute, solo, rename, recolour, routing) had no undo wiring, so Cmd+Z did nothing after them and the Undo menu stayed greyed. Wiring an undo step into every strip callback is a large surface, and continuous controls (fader/pan) would spam one step per pixel.
+**Decision:** A 10 Hz poll (`MainComponentEdit.cpp::pollMixerUndo`) snapshots the whole mixer and records ONE `MixerSnapshotAction` once a change has held steady ~300 ms — so a fader drag is a single undo step. `editUndo` flushes any pending change first (so an immediate Cmd+Z catches the latest move); the poll re-baselines after undo/redo and on session open, and **skips while recording** so a captured take is never undoable.
+**Rationale:** Uniformly covers every mixer mutation without per-callback wiring or per-pixel spam; the "recording isn't undoable" rule matches the engineer's mental model (you delete a take explicitly + confirmed, you don't Cmd+Z it away).
+**Consequences:** A snapshot is captured at 10 Hz (cheap for typical track counts; a bit wasteful at 256 tracks — optimise later if needed). Add/remove-channel is structural and re-baselines rather than recording a step (separate task).
+**Related Documents:** `Source/UI/MainComponentEdit.cpp` (`pollMixerUndo`, `MixerSnapshotAction`).
+
+---
+
+## Keyboard shortcuts match on key code, not text character — 2026-06-04
+
+**Status:** Accepted
+**Context:** Cmd+Z did nothing from the keyboard while the Edit-menu Undo worked. Shortcuts were matched via `KeyPress::getTextCharacter()` under the Cmd modifier, which is unreliable on macOS. JUCE only assigns native menu key-equivalents to `ApplicationCommandManager` commands; this app uses ad-hoc `menuItemSelected` IDs, so the menu's "⌘Z" is display-only and `keyPressed` is the real handler.
+**Decision:** Match Cmd-combos on the physical **key code** (`getKeyCode()`), handle undo/redo early so a focused combo/label can't shadow them, and skip while a `TextEditor` has focus. (A full migration to `ApplicationCommandManager` — which would also give native accelerators — was rejected for now as too large; ~50 IDs.)
+**Related Documents:** `Source/UI/MainComponentKeys.cpp`.
+
+---
+
 ## Template
 
 ```
