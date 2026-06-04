@@ -263,14 +263,24 @@ namespace zynforge
 
     void MultitrackRecorder::release()
     {
+        // Called from AudioEngine::audioDeviceStopped on every device
+        // stop / restart (device swap, sample-rate or buffer-size change).
+        // Detach the device- and thread-bound writer shards, but PRESERVE
+        // the per-track state (tracks / fifos / preRoll). Every
+        // ChannelStrip / LedMeter / MiniSpectrum / EditPage row caches a
+        // TrackState& grabbed at construction, and the CoreAudio IO
+        // callback reads getTrack(i) every block -- destroying TrackState
+        // here left all of them dangling and crashed the audio thread
+        // (use-after-free) on every device change. prepare() rebuilds the
+        // device-rate-dependent buffers on the following
+        // audioDeviceAboutToStart, so the strip set survives the device
+        // change unchanged -- which is what "preserve count across device
+        // restarts" in AudioEngine::audioDeviceAboutToStart relies on.
         stopRecording();
         for (auto& sh : shards)
             for (auto& th : writerThreads)
                 th->removeTimeSliceClient (sh.get());
         shards.clear();
-        tracks.clear();
-        fifos.clear();
-        preRoll.clear();
     }
 
     void MultitrackRecorder::processBlock (const float* const* inputs,

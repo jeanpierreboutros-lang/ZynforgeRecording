@@ -2159,8 +2159,13 @@ namespace zynforge
         // fixed-size filter / histogram state.
         loudness.processMasterDouble (accL, accR, mGain, blk);
 
-        const int outL = juce::jlimit (0, numOutputs - 1, masterOutL.load (std::memory_order_relaxed));
-        if (outL < numOutputs)
+        // Guard against a device with zero outputs (e.g. an input-only
+        // interface selected as the output device): numOutputs - 1 == -1
+        // would make jlimit return -1 and getWritePointer(-1) segfault.
+        const int outL = numOutputs > 0
+                       ? juce::jlimit (0, numOutputs - 1, masterOutL.load (std::memory_order_relaxed))
+                       : -1;
+        if (outL >= 0 && outL < numOutputs)
         {
             // Monitor sum lands in the 64-bit accumulator so the master
             // bus stays double-precision until the final downcast below.
@@ -2169,7 +2174,7 @@ namespace zynforge
                 dstL[i] += accL[i] * mGain;
         }
 
-        if (stereo)
+        if (stereo && numOutputs > 0)
         {
             const int outR = juce::jlimit (0, numOutputs - 1, masterOutR.load (std::memory_order_relaxed));
             if (outR < numOutputs && outR != outL)
@@ -2223,8 +2228,8 @@ namespace zynforge
                                             masterOutL.load (std::memory_order_relaxed));
             const int cOutR = juce::jlimit (0, numOutputs - 1,
                                             masterOutR.load (std::memory_order_relaxed));
-            float* L = (cOutL < numOutputs) ? outputs[cOutL] : nullptr;
-            float* R = (cOutR < numOutputs && cOutR != cOutL) ? outputs[cOutR] : nullptr;
+            float* L = (cOutL >= 0 && cOutL < numOutputs) ? outputs[cOutL] : nullptr;
+            float* R = (cOutR >= 0 && cOutR < numOutputs && cOutR != cOutL) ? outputs[cOutR] : nullptr;
             click.processBlock (L, R, numSamples);
         }
 
@@ -2234,8 +2239,8 @@ namespace zynforge
                                             masterOutL.load (std::memory_order_relaxed));
             const int sOutR = juce::jlimit (0, numOutputs - 1,
                                             masterOutR.load (std::memory_order_relaxed));
-            const float* L = (sOutL < numOutputs) ? outputs[sOutL] : nullptr;
-            const float* R = (sOutR < numOutputs) ? outputs[sOutR] : nullptr;
+            const float* L = (sOutL >= 0 && sOutL < numOutputs) ? outputs[sOutL] : nullptr;
+            const float* R = (sOutR >= 0 && sOutR < numOutputs) ? outputs[sOutR] : nullptr;
             companion->feedStreamSamples (L, R, numSamples);
         }
 
