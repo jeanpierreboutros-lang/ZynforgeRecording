@@ -21,6 +21,11 @@ void MainComponent::timerCallback()
     // refresh, so without this they freeze in the empty launch state.
     refreshMenuStateIfChanged();
 
+    // Coalesce any mixer change (fader / pan / mute / solo / rename / colour /
+    // routing) into a single undo step once it settles -- so Cmd+Z undoes the
+    // everyday operations, not just clip + automation edits. Skips recording.
+    pollMixerUndo();
+
     const int n = engine.getRecorder().getNumTracks();
     // Rebuild when the track COUNT changes OR the track SET was replaced
     // (device restart recreates TrackStates at the same count) -- either

@@ -147,6 +147,21 @@ private:
     void restoreUndoSnapshot (const juce::var& snapshot);
     void editUndo();
     void editRedo();
+
+    // Coalesced mixer undo. The everyday strip mutations (fader, pan, mute,
+    // solo, arm, monitor, rename, recolour, routing) have no dedicated undo
+    // wiring, so a timer poll snapshots the whole mixer and pushes ONE undo
+    // step once a change settles (~300 ms) -- so a fader drag is a single
+    // step, not one per pixel. Recording is deliberately NOT undoable: while
+    // armed/rolling the poll re-baselines instead of recording arm churn.
+    juce::var    captureMixerSnapshot();
+    void         pollMixerUndo();
+    void         rebaselineMixerUndo();
+    juce::var    committedMixerState;       // last state captured as an undo baseline
+    juce::String committedMixerSig;         // JSON of committedMixerState (fast compare)
+    juce::String lastSeenMixerSig;          // previous tick's state (settle detection)
+    int          mixerChangeStableTicks { 0 };
+    bool         mixerUndoReady { false };  // baseline established yet?
     void editCutSelected (bool cut);
     void editPasteSelected();
     void editSoloSelection();

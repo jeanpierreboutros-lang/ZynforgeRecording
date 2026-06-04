@@ -189,11 +189,65 @@ void MainComponent::recordUndoSnapshot (const juce::String& label)
     undoManager.perform (new MixerSnapshotAction (engine, juce::var (arr)));
 }
 
+juce::var MainComponent::captureMixerSnapshot()
+{
+    juce::Array<juce::var> arr;
+    for (int i = 0; i < engine.getRecorder().getNumTracks(); ++i)
+        arr.add (snapshotStrip (engine, i));
+    return juce::var (arr);
+}
+
+void MainComponent::rebaselineMixerUndo()
+{
+    committedMixerState  = captureMixerSnapshot();
+    committedMixerSig    = juce::JSON::toString (committedMixerState);
+    lastSeenMixerSig     = committedMixerSig;
+    mixerChangeStableTicks = 0;
+    mixerUndoReady = true;
+}
+
+void MainComponent::pollMixerUndo()
+{
+    // Never turn the act of recording into an undo step -- arm flags churn
+    // while rolling, and a captured take must not be undoable. Re-baseline so
+    // the post-record state becomes the next undo anchor.
+    if (engine.isRecording()) { rebaselineMixerUndo(); return; }
+
+    const auto cur    = captureMixerSnapshot();
+    const auto curSig = juce::JSON::toString (cur);
+
+    if (! mixerUndoReady) { committedMixerState = cur; committedMixerSig = curSig;
+                            lastSeenMixerSig = curSig; mixerUndoReady = true; return; }
+
+    // A strip count change is structural (add / remove channel) -- re-baseline
+    // rather than snapshot (MixerSnapshotAction restores per-existing-strip and
+    // can't grow/shrink the mixer). Add/remove-channel undo is a separate task.
+    const auto* curArr = cur.getArray();
+    const auto* comArr = committedMixerState.getArray();
+    if (curArr != nullptr && comArr != nullptr && curArr->size() != comArr->size())
+    { committedMixerState = cur; committedMixerSig = curSig; lastSeenMixerSig = curSig;
+      mixerChangeStableTicks = 0; return; }
+
+    if (curSig == committedMixerSig) { lastSeenMixerSig = curSig; mixerChangeStableTicks = 0; return; }
+
+    // Changed vs the committed baseline. Wait for it to stop moving (so a fader
+    // drag commits one step) by counting ticks where the state held steady.
+    if (curSig != lastSeenMixerSig) { lastSeenMixerSig = curSig; mixerChangeStableTicks = 0; return; }
+    if (++mixerChangeStableTicks < 3) return;   // ~300 ms settle at 10 Hz
+
+    undoManager.beginNewTransaction ("Mixer change");
+    undoManager.perform (new MixerSnapshotAction (engine, committedMixerState));
+    committedMixerState = cur;
+    committedMixerSig   = curSig;
+    mixerChangeStableTicks = 0;
+}
+
 void MainComponent::editUndo()
 {
     if (! undoManager.canUndo()) { showStatus ("Nothing to undo"); return; }
     undoManager.undo();
     lastTrackCount = -1;
+    rebaselineMixerUndo();   // the restored state is the new baseline, not a fresh change
     showStatus ("Undo: " + undoManager.getUndoDescription());
 }
 
@@ -202,6 +256,7 @@ void MainComponent::editRedo()
     if (! undoManager.canRedo()) { showStatus ("Nothing to redo"); return; }
     undoManager.redo();
     lastTrackCount = -1;
+    rebaselineMixerUndo();   // the restored state is the new baseline, not a fresh change
     showStatus ("Redo: " + undoManager.getRedoDescription());
 }
 

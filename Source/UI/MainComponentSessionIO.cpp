@@ -61,6 +61,8 @@ int MainComponent::openSessionFolder (const juce::File& dir)
     if (n > 0 && engine.getRecorder().getNumTracks() < n)
         engine.setStripCount (n);
     lastTrackCount = -1;                      // force a strip rebuild on the next tick
+    undoManager.clearUndoHistory();           // a fresh session starts with a clean undo stack
+    rebaselineMixerUndo();                    // don't record the load itself as a mixer undo step
     if (n > 0)
     {
         statusLabel.setText ("Loaded " + juce::String (n) + " tracks", juce::dontSendNotification);
