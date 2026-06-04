@@ -2081,6 +2081,17 @@ namespace zynforge
                                                            juce::jmax (1, xR - xL), inner.getHeight());
                                 if (clipGainHandleRect (gBlk, gHeadH).contains (e.getPosition()))
                                 {
+                                    // Alt/Option-click resets clip gain to 0 dB.
+                                    if (e.mods.isAltDown())
+                                    {
+                                        auto* page = findParentComponentOfClass<EditPage>();
+                                        if (page != nullptr) page->beginClipEdit();
+                                        for (int peer : editGroupPeers())
+                                            engine.setClipGainDb (peer, i, 0.0f);
+                                        if (page != nullptr) page->commitClipEdit ("Reset clip gain");
+                                        repaint();
+                                        return;
+                                    }
                                     draggingClipIdx     = i;
                                     draggingClipModeInt = 7;   // ClipGain
                                     dragStartGainDb     = c.gainDb;
