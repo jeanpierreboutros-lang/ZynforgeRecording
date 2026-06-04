@@ -627,7 +627,8 @@ namespace zynforge
     }
 
     int AudioEngine::stripSilence (int track, float thresholdDb,
-                                   juce::int64 minSilenceSamples, juce::int64 minClipSamples)
+                                   juce::int64 minSilenceSamples, juce::int64 minClipSamples,
+                                   juce::int64 padSamples)
     {
         const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
         if (track < 0 || track >= maxTracks) return -1;
@@ -684,13 +685,27 @@ namespace zynforge
             runs.emplace_back ((juce::int64) runStart, (juce::int64) i);
         }
 
+        // Apply the start/end pad (PT "Clip Start/End Pad"): extend each kept
+        // run outward by padSamples so transients aren't clipped, then merge
+        // any runs the padding made overlap.
+        std::vector<std::pair<juce::int64, juce::int64>> ranges;
+        for (auto& r : runs)
+        {
+            juce::int64 a = juce::jmax<juce::int64> (0,     r.first  * win - padSamples);
+            juce::int64 b = juce::jmin<juce::int64> (total, r.second * win + padSamples);
+            if (! ranges.empty() && a <= ranges.back().second)
+                ranges.back().second = juce::jmax (ranges.back().second, b);   // merge
+            else
+                ranges.emplace_back (a, b);
+        }
+
         std::vector<Clip> out;
         const juce::int64 fade = juce::jmin<juce::int64> ((juce::int64) (reader->sampleRate * 0.005),
                                                           (juce::int64) win);
-        for (auto& r : runs)
+        for (auto& r : ranges)
         {
-            const juce::int64 a = r.first  * win;
-            const juce::int64 b = juce::jmin (total, r.second * win);
+            const juce::int64 a = r.first;
+            const juce::int64 b = r.second;
             if (b - a < juce::jmax<juce::int64> (1, minClipSamples)) continue;
             Clip c;
             c.name                 = juce::String::formatted ("Track_%02d", track + 1);

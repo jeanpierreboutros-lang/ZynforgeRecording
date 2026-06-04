@@ -633,7 +633,8 @@ namespace zynforge
         // minClipSamples are discarded too. Non-destructive (clip-level only).
         // Returns the number of audible clips left, or -1 on failure.
         int  stripSilence (int track, float thresholdDb,
-                           juce::int64 minSilenceSamples, juce::int64 minClipSamples);
+                           juce::int64 minSilenceSamples, juce::int64 minClipSamples,
+                           juce::int64 padSamples = 0);
         // Consolidate [start, end) on one track into a single new flat file
         // (Audio Files/Track_NN_consolidated_K.wav) referenced by one clip,
         // baking in gains / fades / clip order. Returns true on success.

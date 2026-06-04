@@ -131,7 +131,8 @@ namespace zynforge
         juce::int64 lastDragSamples { 0 };
         juce::int64 dragStartFadeIn  { 0 };
         juce::int64 dragStartFadeOut { 0 };
-        float       dragStartGainDb  { 0.0f };   // clip-gain-line drag (mode 7)
+        float       dragStartGainDb  { 0.0f };   // clip-gain handle drag (mode 7)
+        int         dragStartGainY   { 0 };      // mouse y at gain-drag start (relative ride)
 
         // Strip reorder drag -- armed on swatch-column mouseDown,
         // activates once vertical movement exceeds 8 px. Each
@@ -1269,26 +1270,45 @@ namespace zynforge
                             }
                         }
 
-                        // ─── Clip-gain line (drag to ride the clip level) ───
-                        // 0 dB = centre of the block; ±12 dB maps to the inner
-                        // band. Grab the line (±5 px) to drag it; everywhere
-                        // else in the body still moves the clip.
+                        // ─── Clip gain: a faint level line across the clip +
+                        // a Pro Tools-style fader handle in the bottom-LEFT
+                        // corner (the grab target). 0 dB = centre; ±12 dB maps
+                        // to the inner band.
                         {
                             auto gArea = block.withTrimmedTop (headH).reduced (3, 4);
+                            const bool active = (draggingClipModeInt == 7 && draggingClipIdx == clipIdx_);
                             if (gArea.getHeight() > 6 && block.getWidth() > 8)
                             {
                                 const int gy = clipGainLineY (c.gainDb, gArea);
-                                const bool active = (draggingClipModeInt == 7 && draggingClipIdx == clipIdx_);
-                                g.setColour (brand::accentStatus.withAlpha (active ? 0.95f : 0.50f));
+                                g.setColour (brand::accentStatus.withAlpha (active ? 0.85f : 0.32f));
                                 g.drawHorizontalLine (gy, (float) gArea.getX(), (float) gArea.getRight());
-                                g.fillRect (juce::Rectangle<int> (gArea.getX(), gy - 1, 6, 3));
-                                if (active || std::abs (c.gainDb) > 0.05f)
+                            }
+                            // Corner handle: a short fader track + a triangular
+                            // thumb whose height tracks the gain, then the dB.
+                            auto hr = clipGainHandleRect (block, headH);
+                            if (block.getWidth() > 18 && hr.getHeight() >= 10)
+                            {
+                                const float g12 = juce::jlimit (-12.0f, 12.0f, c.gainDb);
+                                const auto col = active ? brand::accentStatus
+                                                        : brand::accentStatus.withAlpha (0.70f);
+                                const float cx = (float) hr.getX() + 4.0f;
+                                g.setColour (brand::bgDeep.withAlpha (brand::alpha::scrim));
+                                g.fillRect (juce::Rectangle<float> (cx - 3.5f, (float) hr.getY(), 7.0f, (float) hr.getHeight()));
+                                g.setColour (col.withAlpha (active ? 0.9f : 0.6f));
+                                g.drawVerticalLine ((int) cx, (float) hr.getY(), (float) hr.getBottom());
+                                // Triangle thumb -- points up for boost, down for cut.
+                                juce::Path tri;
+                                const float ty = (float) hr.getCentreY() - g12 / 12.0f * (hr.getHeight() * 0.5f);
+                                tri.addTriangle (cx - 4.0f, ty + 2.5f, cx + 4.0f, ty + 2.5f, cx, ty - 3.5f);
+                                g.setColour (col);
+                                g.fillPath (tri);
+                                if (block.getWidth() > 34)
                                 {
-                                    g.setColour (brand::accentStatus.brighter (0.2f));
+                                    g.setColour (col.brighter (0.25f));
                                     g.setFont (brand::type::caption().withHeight (9.0f));
                                     g.drawText (juce::String (c.gainDb, 1) + " dB",
-                                                juce::Rectangle<int> (gArea.getX() + 8, gy - 11, 64, 10),
-                                                juce::Justification::topLeft, false);
+                                                juce::Rectangle<int> (hr.getX() + 9, hr.getY(), hr.getWidth() - 9, hr.getHeight()),
+                                                juce::Justification::centredLeft, false);
                                 }
                             }
                         }
@@ -1554,6 +1574,15 @@ namespace zynforge
             const float denom = juce::jmax (1.0f, (float) gArea.getHeight() * 0.5f * 0.85f);
             return juce::jlimit (-12.0f, 12.0f,
                                  (float) (gArea.getCentreY() - y) / denom * 12.0f);
+        }
+        // Pro Tools-style clip-gain handle at the bottom-LEFT corner of the
+        // clip block (a small fader glyph + the dB readout). This is the grab
+        // target; dragging it vertically rides the clip gain.
+        static juce::Rectangle<int> clipGainHandleRect (juce::Rectangle<int> block, int headH) noexcept
+        {
+            auto body = block.withTrimmedTop (headH);
+            const int w = juce::jmin (46, juce::jmax (12, body.getWidth() - 2));
+            return { body.getX() + 1, body.getBottom() - 14, w, 13 };
         }
 
         // Draws the swatch column, header panel, divider, selection highlight
@@ -2027,10 +2056,10 @@ namespace zynforge
                                                             + c.fileLengthSamples
                                                             - c.fadeOutSamples);
 
-                            // Clip-gain-line grab (Smart / Grabber): when the
-                            // click lands on the gain line, ride the clip's
-                            // level instead of moving it. Takes priority over
-                            // body Move; edges + fade handles still win above.
+                            // Clip-gain handle grab (Smart / Grabber): the
+                            // bottom-left fader corner rides the clip's level.
+                            // Takes priority over body Move; edges + fade
+                            // handles still win above.
                             if (! c.locked
                                 && (activeTool == EditToolsBar::Tool::Smart
                                  || activeTool == EditToolsBar::Tool::Grabber
@@ -2039,13 +2068,12 @@ namespace zynforge
                                 const int gHeadH = juce::jmin (12, juce::jmax (0, inner.getHeight() - 6));
                                 juce::Rectangle<int> gBlk (xL, inner.getY(),
                                                            juce::jmax (1, xR - xL), inner.getHeight());
-                                auto gArea = gBlk.withTrimmedTop (gHeadH).reduced (3, 4);
-                                if (gArea.getHeight() > 6 && e.x > xL + hitZone && e.x < xR - hitZone
-                                    && std::abs (e.y - clipGainLineY (c.gainDb, gArea)) <= 5)
+                                if (clipGainHandleRect (gBlk, gHeadH).contains (e.getPosition()))
                                 {
                                     draggingClipIdx     = i;
                                     draggingClipModeInt = 7;   // ClipGain
                                     dragStartGainDb     = c.gainDb;
+                                    dragStartGainY      = e.y;
                                     if (auto* page = findParentComponentOfClass<EditPage>())
                                         page->beginClipEdit();
                                     return;
@@ -2411,21 +2439,15 @@ namespace zynforge
                     ? player.getTotalLengthSamples() : 0;
                 const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
 
-                // Clip-gain line drag (mode 7): vertical position -> dB.
-                if (draggingClipModeInt == 7 && totalSamples > 0)
+                // Clip-gain handle drag (mode 7): relative ride from the grab
+                // point -- drag up = louder. ~0.15 dB per pixel, full range.
+                if (draggingClipModeInt == 7)
                 {
                     const auto* clips = engine.tryClipsFor (index);
                     if (clips != nullptr && draggingClipIdx < (int) clips->size())
                     {
-                        const auto& c = (*clips)[(size_t) draggingClipIdx];
-                        const auto mapper = TimelineMapper::forLane (inner, totalSamples);
-                        const int xL = mapper.toX (c.timelineStartSamples);
-                        const int xR = mapper.toX (c.timelineStartSamples + c.fileLengthSamples);
-                        const int gHeadH = juce::jmin (12, juce::jmax (0, inner.getHeight() - 6));
-                        juce::Rectangle<int> gBlk (xL, inner.getY(),
-                                                   juce::jmax (1, xR - xL), inner.getHeight());
-                        auto gArea = gBlk.withTrimmedTop (gHeadH).reduced (3, 4);
-                        const float dB = clipGainFromY (e.y, gArea);
+                        const float dB = juce::jlimit (-60.0f, 12.0f,
+                            dragStartGainDb + (float) (dragStartGainY - e.y) * 0.15f);
                         for (int peer : editGroupPeers())
                             engine.setClipGainDb (peer, draggingClipIdx, dB);
                         repaint();

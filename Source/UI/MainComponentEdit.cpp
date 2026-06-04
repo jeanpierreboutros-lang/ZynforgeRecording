@@ -733,27 +733,47 @@ void MainComponent::editZoomToSelection()
     editPage->zoomToSamples (player.getLoopStart(), player.getLoopEnd());
 }
 
-// Strip Silence: separate each target track's take into clips around the
-// silent gaps (good defaults: -42 dB, 300 ms gap, 150 ms minimum clip).
+// Strip Silence: open a Pro Tools-style settings box (threshold / min strip /
+// min clip / pad), then separate each target track's take around the silence.
 void MainComponent::editStripSilence()
 {
     auto& player = engine.getPlayer();
     if (! player.isLoaded()) { showStatus ("Load or record a session first"); return; }
-    const double sr = juce::jmax (1.0, player.getSampleRate());
-    const auto before = engine.playlistsToJson();
-    int tracks = 0, clips = 0;
-    for (int phys : tracksToEditPhysical())
+
+    auto* aw = new juce::AlertWindow ("Strip Silence",
+        "Separate clips around silence on the selected track(s), then drop the gaps.",
+        juce::MessageBoxIconType::NoIcon);
+    aw->setLookAndFeel (&getLookAndFeel());
+    aw->addTextEditor ("thr",  "-42", "Strip threshold (dB)");
+    aw->addTextEditor ("sil",  "300", "Min strip / silence (ms)");
+    aw->addTextEditor ("clip", "150", "Min clip length (ms)");
+    aw->addTextEditor ("pad",  "20",  "Clip start/end pad (ms)");
+    aw->addButton ("Strip",  1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    zynforge::dialog::primeNameEditor (*aw, "thr");
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create ([self, aw] (int r)
     {
-        const int r = engine.stripSilence (phys, -42.0f,
-                                            (juce::int64) (sr * 0.30),
-                                            (juce::int64) (sr * 0.15));
-        if (r > 0) { ++tracks; clips += r; }
-    }
-    if (tracks > 0) pushClipUndo ("Strip silence", before);
-    if (editPage != nullptr) editPage->repaint();
-    showStatus (tracks > 0 ? "Strip silence: " + juce::String (clips) + " clip(s) on "
-                              + juce::String (tracks) + " track(s)  (-42 dB / 300 ms)"
-                           : juce::String ("Strip silence found nothing to separate"));
+        std::unique_ptr<juce::AlertWindow> own (aw);
+        if (r != 1 || self == nullptr) return;
+        const float thr = juce::jlimit (-90.0f, 0.0f, own->getTextEditorContents ("thr").getFloatValue());
+        const double sr = juce::jmax (1.0, self->engine.getPlayer().getSampleRate());
+        auto ms = [&] (const char* id)
+        { return (juce::int64) (sr * juce::jmax (0.0, own->getTextEditorContents (id).getDoubleValue()) / 1000.0); };
+        const auto before = self->engine.playlistsToJson();
+        int tracks = 0, clips = 0;
+        for (int phys : self->tracksToEditPhysical())
+        {
+            const int n = self->engine.stripSilence (phys, thr, ms ("sil"), ms ("clip"), ms ("pad"));
+            if (n > 0) { ++tracks; clips += n; }
+        }
+        if (tracks > 0) self->pushClipUndo ("Strip silence", before);
+        if (self->editPage != nullptr) self->editPage->repaint();
+        self->showStatus (tracks > 0 ? "Strip silence: " + juce::String (clips) + " clip(s) on "
+                                        + juce::String (tracks) + " track(s)"
+                                     : juce::String ("Strip silence found nothing to separate"));
+    }));
 }
 
 // Consolidate: flatten the selected range on each target track into one new
