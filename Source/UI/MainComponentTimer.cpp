@@ -214,6 +214,15 @@ void MainComponent::timerCallback()
                               engine.getDiskMBPerSec(),
                               engine.getRingFillPct(),
                               recorder.getMissedSamples());
+    perfDashboard.setDeviceInfo (engine.getDeviceSampleRate(),
+                                 engine.getDeviceBlockSize());
+    perfDashboard.setRecording (rec);
+    // Re-lay-out the header once when REC toggles so the dashboard resizes.
+    if (rec != dashWasRecording)
+    {
+        dashWasRecording = rec;
+        resized();
+    }
 
     // Live show-day warnings -- only while recording, refreshed at the
     // timer cadence. Both flags clear automatically when the condition

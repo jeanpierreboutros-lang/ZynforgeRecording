@@ -84,24 +84,37 @@ namespace zynforge
         {
             const float peakLin = strip.state.peak.load (std::memory_order_relaxed);
             const float dB      = juce::Decibels::gainToDecibels (peakLin, -80.0f);
-            strip.dbLabel.setText (dB <= -80.0f ? "-inf"
-                                                 : juce::String (dB, 1) + " dB",
-                                   juce::dontSendNotification);
+            // Only push text into the label when it actually changed -- an
+            // idle/silent strip otherwise re-lays-out its labels 10x/s for
+            // nothing (this runs on 32 strips at once).
+            const juce::String dbText = dB <= -80.0f ? juce::String ("-inf")
+                                                      : juce::String (dB, 1) + " dB";
+            if (dbText != lastDbText)
+            {
+                strip.dbLabel.setText (dbText, juce::dontSendNotification);
+                lastDbText = dbText;
+            }
 
             const int clips = strip.state.clipCount.load (std::memory_order_relaxed);
-            if (clips > 0)
+            if (clips != lastClips)
             {
-                strip.clipLabel.setText ("CLIP x" + juce::String (clips),
-                                         juce::dontSendNotification);
-                strip.clipLabel.setColour (juce::Label::textColourId, brand::accentRecord);
-            }
-            else
-            {
-                strip.clipLabel.setText ("", juce::dontSendNotification);
+                if (clips > 0)
+                {
+                    strip.clipLabel.setText ("CLIP x" + juce::String (clips),
+                                             juce::dontSendNotification);
+                    strip.clipLabel.setColour (juce::Label::textColourId, brand::accentRecord);
+                }
+                else
+                {
+                    strip.clipLabel.setText ("", juce::dontSendNotification);
+                }
+                lastClips = clips;
             }
         }
     private:
         ChannelStrip& strip;
+        juce::String  lastDbText;
+        int           lastClips { -1 };
     };
 
     ChannelStrip::~ChannelStrip() = default;

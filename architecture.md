@@ -153,6 +153,8 @@ sequenceDiagram
     AudioEngine->>MultitrackRecorder: close writers + write session.report.json
 ```
 
+`stopRecording()` writes `session.report.json` **synchronously** first (metadata only — counts, sample totals, missed samples, file lists — with `sha256Pending:true`), then a **background-QoS** thread hashes the recorded audio and rewrites the report with sha256 sums (`sha256Pending:false`). This guarantees a report exists the instant a take stops even for multi-GB sessions, and keeps the hash pass from starving the UI / next take.
+
 ### Virtual soundcheck playback
 1. `SessionPlayer::loadSession(dir)` scans `Track_NN.wav`, wraps each in a `BufferingAudioReader`.
 2. UI calls `engine.startPlayback()`.

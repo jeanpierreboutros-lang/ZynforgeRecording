@@ -13,7 +13,42 @@ namespace zynforge
 
     void MiniSpectrum::timerCallback()
     {
-        if (! state.fftBlockReady.load (std::memory_order_acquire)) return;
+        const bool blockReady = state.fftBlockReady.load (std::memory_order_acquire);
+
+        // Idle-CPU gate. The audio callback keeps producing FFT snapshots
+        // every block (even of silence) while the device runs, so without
+        // this every strip would run a 1024-pt FFT + repaint at 24 Hz
+        // forever -- the source of the high idle CPU. When the strip has no
+        // meaningful signal we skip the (expensive) FFT entirely: drain any
+        // ready block cheaply so the audio thread keeps cycling, decay the
+        // bars toward zero, and repaint only while something is still
+        // visible. Once the display reaches zero the component goes fully
+        // idle until signal returns. `peak` is driven by BOTH live input
+        // and playback, so this covers record and playback alike.
+        constexpr float kSilenceFloor = 3.0e-4f;   // ~ -70 dBFS
+        const float peak = state.peak.load (std::memory_order_relaxed);
+
+        if (peak <= kSilenceFloor)
+        {
+            if (blockReady)                          // drain without hashing the FFT
+                state.fftBlockReady.store (false, std::memory_order_release);
+
+            bool anyVisible = false;
+            for (auto& b : bins)
+            {
+                b *= 0.78f;
+                if (b > 1.0e-3f) anyVisible = true;
+                else             b = 0.0f;
+            }
+            if (displayActive)                       // keep painting the fade-out
+            {
+                displayActive = anyVisible;
+                repaint();
+            }
+            return;
+        }
+
+        if (! blockReady) return;
 
         // Copy snapshot into the front half, zero the back half.
         std::memcpy (fftData.data(), state.fftSnapshot.data(),
@@ -43,6 +78,7 @@ namespace zynforge
                                   (juce::Decibels::gainToDecibels (peak, -80.0f) + 80.0f) / 80.0f);
             bins[(std::size_t) b] = juce::jmax (dbNorm, bins[(std::size_t) b] * 0.78f);
         }
+        displayActive = true;
         repaint();
     }
 

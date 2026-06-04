@@ -856,6 +856,7 @@ namespace zynforge
         // ringFillPct), polled from the UI to drive the header dashboard.
         // 0-100 % units.
         std::atomic<double> deviceSampleRate { 0.0 };
+        std::atomic<int>    deviceBlockSize  { 0 };
         std::atomic<float>  audioLoadPct     { 0.0f };
 
         // Free-space pre-flight cache. Set at startRecording, refreshed
@@ -990,6 +991,12 @@ namespace zynforge
         float  getAudioLoadPct() const noexcept { return audioLoadPct.load (std::memory_order_relaxed); }
         float  getDiskMBPerSec() const noexcept { return recorder.getDiskBytesPerSec() / (1024.0f * 1024.0f); }
         float  getRingFillPct()  const noexcept { return recorder.getRingFillPct(); }
+        // Live device format -- the actual buffer (block) size in samples and
+        // sample rate negotiated with CoreAudio, captured in
+        // audioDeviceAboutToStart. The buffer size is the real glitch-headroom
+        // number (smaller = lower latency, less slack); 0 until the device starts.
+        int    getDeviceBlockSize()  const noexcept { return deviceBlockSize.load (std::memory_order_relaxed); }
+        double getDeviceSampleRate() const noexcept { return deviceSampleRate.load (std::memory_order_relaxed); }
     private:
 
         void applyPersistedStripState();

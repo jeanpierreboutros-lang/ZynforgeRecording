@@ -128,7 +128,10 @@ void MainComponent::resized()
     stopButton   .setBounds ({});
 
     auto clockRow = r.removeFromTop (96).reduced (brand::space::lg, brand::space::sm);
-    perfDashboard.setBounds (clockRow.removeFromRight (240).reduced (brand::space::xs, brand::space::xs));
+    // Give the performance dashboard more room while recording so audio
+    // load / buffer / disk are readable at a glance during a take.
+    const int dashW = engine.isRecording() ? 320 : 240;
+    perfDashboard.setBounds (clockRow.removeFromRight (dashW).reduced (brand::space::xs, brand::space::xs));
     bigClock.setBounds (clockRow);
 
     auto bar = r.removeFromTop (36).reduced (12, 2);

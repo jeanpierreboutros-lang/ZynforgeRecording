@@ -1157,6 +1157,7 @@ namespace zynforge
         const auto blockSize = device->getCurrentBufferSizeSamples();
 
         deviceSampleRate.store (sr, std::memory_order_relaxed);
+        deviceBlockSize .store (blockSize, std::memory_order_relaxed);
         audioLoadPct    .store (0.0f, std::memory_order_relaxed);
 
         // Hand the device's audio workgroup to the recorder so its

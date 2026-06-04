@@ -400,6 +400,10 @@ private:
     // every ~2 s rather than at the full timer rate).
     int  diskTick { 0 };
 
+    // Tracks the recording state the header was last laid out for, so the
+    // perf dashboard can grow/shrink (resized()) only when REC toggles.
+    bool dashWasRecording { false };
+
     // SMART status cache. Polled in a slow timer because `diskutil
     // info` is a 50-200 ms blocking subprocess call; we don't want it
     // running every 24 Hz frame. -1 = unset, 0 = Verified, 1 = Failing,

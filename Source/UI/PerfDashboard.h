@@ -24,6 +24,14 @@ namespace zynforge
                          float ringFillPct,
                          juce::int64 missedSamples);
 
+        // Live device format shown in the header line: sample rate (Hz) and
+        // the actual buffer/block size in samples. 0 = unknown (device down).
+        void setDeviceInfo (double sampleRate, int blockSizeSamples);
+
+        // When recording, the dashboard draws larger type + a red-emphasis
+        // border so the engineer can read load / buffer / disk at a glance.
+        void setRecording (bool isRecording);
+
         void paint (juce::Graphics&) override;
 
     private:
@@ -31,6 +39,9 @@ namespace zynforge
         float disk { 0.0f };
         float buf  { 0.0f };
         juce::int64 missed { 0 };
+        double sampleRate { 0.0 };
+        int    blockSize  { 0 };
+        bool   recording  { false };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PerfDashboard)
     };

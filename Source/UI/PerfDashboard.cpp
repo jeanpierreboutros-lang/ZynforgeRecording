@@ -34,6 +34,21 @@ namespace zynforge
         if (changed) repaint();
     }
 
+    void PerfDashboard::setDeviceInfo (double sr, int blockSizeSamples)
+    {
+        if (sr == sampleRate && blockSizeSamples == blockSize) return;
+        sampleRate = sr;
+        blockSize  = blockSizeSamples;
+        repaint();
+    }
+
+    void PerfDashboard::setRecording (bool isRecording)
+    {
+        if (isRecording == recording) return;
+        recording = isRecording;
+        repaint();
+    }
+
     static juce::Colour ledColour (float pct)
     {
         if (pct < 50.0f) return brand::accentPlay;
@@ -48,11 +63,30 @@ namespace zynforge
         // Panel background.
         g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.05f, 0.12f));
         g.fillRoundedRectangle (r, brand::radius::md);
-        g.setColour (brand::edge);
-        g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
+        // While recording, ring the panel in record-red so the load / buffer
+        // / disk read is unmistakable on a dark stage.
+        g.setColour (recording ? brand::accentRecord : brand::edge);
+        g.drawRoundedRectangle (r, brand::radius::md, recording ? 1.5f : 1.0f);
 
-        // Three rows: CPU, DISK, BUF. Each row = [label 32px] [bar fills] [value 60px].
         auto inner = r.reduced (8.0f, 6.0f);
+
+        // Header line: live device format -- sample rate + actual buffer
+        // (block) size in samples. The buffer is the real glitch-headroom
+        // number; smaller = tighter. "-- " until the device reports.
+        {
+            auto hdr = inner.removeFromTop (recording ? 15.0f : 13.0f);
+            g.setColour (brand::textSecondary);
+            g.setFont (brand::type::mono (recording ? 11.0f : 10.0f, true));
+            const juce::String fmt = (sampleRate > 0.0 && blockSize > 0)
+                ? juce::String (sampleRate / 1000.0, 1) + " kHz  ·  "
+                      + juce::String (blockSize) + " smp"
+                : juce::String ("-- kHz  ·  -- smp");
+            g.drawText (fmt, hdr, juce::Justification::centred, false);
+            inner.removeFromTop (2.0f);
+        }
+
+        // Three rows: AUDIO (callback load), DISK, BUF. Each row =
+        // [label 36px] [bar fills] [value 70px].
         const float rowH   = inner.getHeight() / 3.0f;
         const float labelW = 36.0f;
         const float valueW = 70.0f;
@@ -73,7 +107,7 @@ namespace zynforge
             // every frame as CPU load swings.
             const auto col = ledColour (pct);
             g.setColour (col);
-            g.setFont (brand::type::mono (11.0f, true));
+            g.setFont (brand::type::mono (recording ? 13.0f : 11.0f, true));
             g.drawText (valueText, row.removeFromRight (valueW),
                         juce::Justification::centredRight, false);
 
@@ -111,7 +145,9 @@ namespace zynforge
         auto row2 = inner.removeFromTop (rowH);
         auto row3 = inner;
 
-        drawRow (row1, "CPU",  cpu,  juce::String ((int) std::round (cpu)) + " %");
+        // "AUDIO" = the real CoreAudio callback load (getAudioLoadPct) -- the
+        // number that predicts dropouts -- NOT whole-app CPU.
+        drawRow (row1, "AUDIO", cpu, juce::String ((int) std::round (cpu)) + " %");
         drawRow (row2, "DISK", juce::jmin (100.0f, disk * 2.0f),
                               juce::String (disk, 1) + " MB/s");
         drawRow (row3, "BUF",  buf,  juce::String ((int) std::round (buf)) + " %");

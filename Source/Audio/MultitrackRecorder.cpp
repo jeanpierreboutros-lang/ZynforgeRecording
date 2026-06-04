@@ -3,6 +3,10 @@
 #include <juce_cryptography/juce_cryptography.h>
 #include <limits>
 
+#if JUCE_MAC
+ #include <pthread/qos.h>
+#endif
+
 namespace zynforge
 {
     static constexpr int kFifoSeconds     = 4;   // per-channel FIFO length
@@ -786,111 +790,144 @@ namespace zynforge
         const int        preRoll    = preRollSeconds;
         const bool       primFailed = primaryFailed.load (std::memory_order_relaxed);
 
+        // Build the report JSON. `withHashes == false` skips the (expensive,
+        // GB-scale) SHA-256 pass and marks the report "sha256Pending":true,
+        // so we can write a complete metadata report INSTANTLY on stop and
+        // fill the hashes in afterwards. Captures only scalars by value, so
+        // it's copyable into the background thread below.
+        auto buildReportJson =
+            [sessionDir, bDir, sr, fmt, preRoll, primFailed, stoppedAt,
+             totalSamples, totalSeconds, totalMissed, backupWasRunning,
+             backupHadFailure]
+            (const std::vector<TrackMeta>&   trackMetas,
+             const std::vector<WriterReport>& writerSnaps,
+             bool withHashes) -> juce::String
+        {
+            juce::DynamicObject::Ptr report (new juce::DynamicObject());
+            report->setProperty ("stoppedAt",      stoppedAt.toISO8601 (true));
+            report->setProperty ("sampleRate",     sr);
+            report->setProperty ("numTracks",      (int) trackMetas.size());
+            report->setProperty ("totalSamples",   (juce::int64) totalSamples);
+            report->setProperty ("totalSeconds",   totalSeconds);
+            report->setProperty ("missedSamples",  (juce::int64) totalMissed);
+            report->setProperty ("backupActive",   backupWasRunning);
+            report->setProperty ("backupFailed",   backupHadFailure);
+            report->setProperty ("primaryFailed",  primFailed);
+            report->setProperty ("captureFormat",  fmt);
+            report->setProperty ("preRollSeconds", preRoll);
+            report->setProperty ("sha256Pending",  ! withHashes);
+
+            const auto sha256File = [withHashes] (const juce::File& f) -> juce::String
+            {
+                if (! withHashes || ! f.existsAsFile()) return {};
+                juce::FileInputStream in (f);
+                if (! in.openedOk()) return {};
+                const juce::SHA256 digest (in);
+                return digest.toHexString();
+            };
+
+            juce::Array<juce::var> trackArray;
+            for (std::size_t i = 0; i < trackMetas.size(); ++i)
+            {
+                const auto& tm = trackMetas[i];
+                juce::DynamicObject::Ptr t (new juce::DynamicObject());
+                t->setProperty ("index",          tm.index);
+                t->setProperty ("name",           tm.name);
+                t->setProperty ("clipCount",      tm.clipCount);
+                t->setProperty ("lastClipSample", tm.lastClipSample);
+                t->setProperty ("inputRouting",   tm.inputRouting);
+                t->setProperty ("outputRouting",  tm.outputRouting);
+                t->setProperty ("isStereo",       tm.isStereo);
+
+                if (i < writerSnaps.size())
+                {
+                    const auto& ws = writerSnaps[i];
+                    t->setProperty ("totalSamplesPrimary", (juce::int64) ws.totalSamplesPrimary);
+
+                    const auto primaryAudioDir = sessionDir.getChildFile ("Audio Files");
+                    juce::Array<juce::var> files, shas;
+                    for (const auto& fn : ws.partFilesPrimary)
+                    {
+                        files.add (juce::var (fn));
+                        shas .add (juce::var (sha256File (primaryAudioDir.getChildFile (fn))));
+                    }
+                    t->setProperty ("files",  juce::var (files));
+                    t->setProperty ("sha256", juce::var (shas));
+
+                    if (backupWasRunning)
+                    {
+                        const auto backupAudioDir =
+                            bDir.getChildFile (sessionDir.getFileName())
+                                .getChildFile ("Audio Files");
+                        t->setProperty ("totalSamplesBackup", (juce::int64) ws.totalSamplesBackup);
+                        juce::Array<juce::var> backupFiles, backupShas;
+                        for (const auto& fn : ws.partFilesBackup)
+                        {
+                            backupFiles.add (juce::var (fn));
+                            backupShas .add (juce::var (sha256File (backupAudioDir.getChildFile (fn))));
+                        }
+                        t->setProperty ("backupFiles",  juce::var (backupFiles));
+                        t->setProperty ("backupSha256", juce::var (backupShas));
+                    }
+
+                    if (! ws.mirrors.empty())
+                    {
+                        juce::Array<juce::var> mirrorArr;
+                        for (const auto& mr : ws.mirrors)
+                        {
+                            juce::DynamicObject::Ptr mo (new juce::DynamicObject());
+                            mo->setProperty ("root",         mr.root.getFullPathName());
+                            mo->setProperty ("totalSamples", (juce::int64) mr.totalSamples);
+                            mo->setProperty ("failed",       mr.failed);
+                            juce::Array<juce::var> mFiles, mShas;
+                            const auto mDir = mr.root.getChildFile (sessionDir.getFileName())
+                                                      .getChildFile ("Audio Files");
+                            for (const auto& fn : mr.partFiles)
+                            {
+                                mFiles.add (juce::var (fn));
+                                mShas .add (juce::var (sha256File (mDir.getChildFile (fn))));
+                            }
+                            mo->setProperty ("files",  juce::var (mFiles));
+                            mo->setProperty ("sha256", juce::var (mShas));
+                            mirrorArr.add (juce::var (mo.get()));
+                        }
+                        t->setProperty ("mirrors", juce::var (mirrorArr));
+                    }
+                }
+                trackArray.add (juce::var (t.get()));
+            }
+            report->setProperty ("tracks", juce::var (trackArray));
+            return juce::JSON::toString (juce::var (report.get()), true);
+        };
+
         if (sessionDir.isDirectory())
         {
+            // 1) Write the metadata report SYNCHRONOUSLY, right now -- this
+            //    guarantees session.report.json exists the instant recording
+            //    stops, even for a huge take whose hashing runs for minutes
+            //    (or if the app is killed before hashing finishes).
+            sessionDir.getChildFile ("session.report.json")
+                      .replaceWithText (buildReportJson (trackMetas, writerSnapshots, false));
+
+            // 2) Compute SHA-256 over all recorded audio on a BACKGROUND-
+            //    priority thread and rewrite the report with the hashes. Low
+            //    priority so a multi-GB hash doesn't starve the UI or the
+            //    next take. If interrupted, the metadata report from step 1
+            //    still stands (sha256Pending stays true).
             juce::Thread::launch (
-                [sessionDir, bDir, sr, fmt, preRoll, primFailed, stoppedAt,
-                 totalSamples, totalSeconds, totalMissed, backupWasRunning,
-                 backupHadFailure,
+                [buildReportJson, sessionDir,
                  trackMetas  = std::move (trackMetas),
                  writerSnaps = std::move (writerSnapshots)]
                 {
-                    juce::DynamicObject::Ptr report (new juce::DynamicObject());
-                    report->setProperty ("stoppedAt",      stoppedAt.toISO8601 (true));
-                    report->setProperty ("sampleRate",     sr);
-                    report->setProperty ("numTracks",      (int) trackMetas.size());
-                    report->setProperty ("totalSamples",   (juce::int64) totalSamples);
-                    report->setProperty ("totalSeconds",   totalSeconds);
-                    report->setProperty ("missedSamples",  (juce::int64) totalMissed);
-                    report->setProperty ("backupActive",   backupWasRunning);
-                    report->setProperty ("backupFailed",   backupHadFailure);
-                    report->setProperty ("primaryFailed",  primFailed);
-                    report->setProperty ("captureFormat",  fmt);
-                    report->setProperty ("preRollSeconds", preRoll);
-
-                    const auto sha256File = [] (const juce::File& f) -> juce::String
-                    {
-                        if (! f.existsAsFile()) return {};
-                        juce::FileInputStream in (f);
-                        if (! in.openedOk()) return {};
-                        const juce::SHA256 digest (in);
-                        return digest.toHexString();
-                    };
-
-                    juce::Array<juce::var> trackArray;
-                    for (std::size_t i = 0; i < trackMetas.size(); ++i)
-                    {
-                        const auto& tm = trackMetas[i];
-                        juce::DynamicObject::Ptr t (new juce::DynamicObject());
-                        t->setProperty ("index",          tm.index);
-                        t->setProperty ("name",           tm.name);
-                        t->setProperty ("clipCount",      tm.clipCount);
-                        t->setProperty ("lastClipSample", tm.lastClipSample);
-                        t->setProperty ("inputRouting",   tm.inputRouting);
-                        t->setProperty ("outputRouting",  tm.outputRouting);
-                        t->setProperty ("isStereo",       tm.isStereo);
-
-                        if (i < writerSnaps.size())
-                        {
-                            const auto& ws = writerSnaps[i];
-                            t->setProperty ("totalSamplesPrimary", (juce::int64) ws.totalSamplesPrimary);
-
-                            const auto primaryAudioDir = sessionDir.getChildFile ("Audio Files");
-                            juce::Array<juce::var> files, shas;
-                            for (const auto& fn : ws.partFilesPrimary)
-                            {
-                                files.add (juce::var (fn));
-                                shas .add (juce::var (sha256File (primaryAudioDir.getChildFile (fn))));
-                            }
-                            t->setProperty ("files",  juce::var (files));
-                            t->setProperty ("sha256", juce::var (shas));
-
-                            if (backupWasRunning)
-                            {
-                                const auto backupAudioDir =
-                                    bDir.getChildFile (sessionDir.getFileName())
-                                        .getChildFile ("Audio Files");
-                                t->setProperty ("totalSamplesBackup", (juce::int64) ws.totalSamplesBackup);
-                                juce::Array<juce::var> backupFiles, backupShas;
-                                for (const auto& fn : ws.partFilesBackup)
-                                {
-                                    backupFiles.add (juce::var (fn));
-                                    backupShas .add (juce::var (sha256File (backupAudioDir.getChildFile (fn))));
-                                }
-                                t->setProperty ("backupFiles",  juce::var (backupFiles));
-                                t->setProperty ("backupSha256", juce::var (backupShas));
-                            }
-
-                            if (! ws.mirrors.empty())
-                            {
-                                juce::Array<juce::var> mirrorArr;
-                                for (const auto& mr : ws.mirrors)
-                                {
-                                    juce::DynamicObject::Ptr mo (new juce::DynamicObject());
-                                    mo->setProperty ("root",         mr.root.getFullPathName());
-                                    mo->setProperty ("totalSamples", (juce::int64) mr.totalSamples);
-                                    mo->setProperty ("failed",       mr.failed);
-                                    juce::Array<juce::var> mFiles, mShas;
-                                    const auto mDir = mr.root.getChildFile (sessionDir.getFileName())
-                                                              .getChildFile ("Audio Files");
-                                    for (const auto& fn : mr.partFiles)
-                                    {
-                                        mFiles.add (juce::var (fn));
-                                        mShas .add (juce::var (sha256File (mDir.getChildFile (fn))));
-                                    }
-                                    mo->setProperty ("files",  juce::var (mFiles));
-                                    mo->setProperty ("sha256", juce::var (mShas));
-                                    mirrorArr.add (juce::var (mo.get()));
-                                }
-                                t->setProperty ("mirrors", juce::var (mirrorArr));
-                            }
-                        }
-                        trackArray.add (juce::var (t.get()));
-                    }
-                    report->setProperty ("tracks", juce::var (trackArray));
-
+                   #if JUCE_MAC
+                    // Drop this hashing thread to background QoS so a multi-GB
+                    // SHA-256 pass doesn't starve the UI or the next take.
+                    // (Thread::launch gives no priority hook; Thread::setPriority
+                    // is protected, so we lower the OS scheduling class directly.)
+                    pthread_set_qos_class_self_np (QOS_CLASS_BACKGROUND, 0);
+                   #endif
                     sessionDir.getChildFile ("session.report.json")
-                              .replaceWithText (juce::JSON::toString (juce::var (report.get()), true));
+                              .replaceWithText (buildReportJson (trackMetas, writerSnaps, true));
                 });
         }
 

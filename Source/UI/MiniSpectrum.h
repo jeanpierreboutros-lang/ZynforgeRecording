@@ -35,5 +35,10 @@ namespace zynforge
         juce::dsp::WindowingFunction<float>       window { kFftSize, juce::dsp::WindowingFunction<float>::hann };
         std::array<float, kFftSize * 2>           fftData {};
         std::array<float, kVisibleBins>           bins   {};
+
+        // True while anything is still visible. Lets the component go fully
+        // idle (no FFT, no repaint) once the bars have decayed to zero on a
+        // silent strip -- this is the per-strip idle-CPU saver.
+        bool displayActive { false };
     };
 }
