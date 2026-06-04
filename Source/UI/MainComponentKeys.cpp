@@ -430,16 +430,21 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
     if (c == '.') { editFinishRange();      return true; }
     if (c == '4') { editToggleSnap();       return true; }
     // Cmd+X / Cmd+C / Cmd+V / Cmd+E keyboard shortcuts. (Cmd+Z / Cmd+R undo /
-    // redo are handled early, near the top of this method.)
-    if (key.getModifiers().isCommandDown())
+    // redo are handled early, near the top of this method.) Matched on the
+    // physical key code -- getTextCharacter() is unreliable under Cmd on macOS
+    // (the bug that silently broke Cmd+Z). Skipped while a text editor has
+    // focus so text cut/copy/paste in a rename/dialog field still works.
+    if (key.getModifiers().isCommandDown()
+        && dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) == nullptr)
     {
-        if (c == 'x') { editClipboardCut (true);  return true; }
-        if (c == 'c') { editClipboardCut (false); return true; }
-        if (c == 'v') { editClipboardPaste(); return true; }
+        const int kc = key.getKeyCode();
+        if (kc == 'X' || kc == 'x') { editClipboardCut (true);  return true; }
+        if (kc == 'C' || kc == 'c') { editClipboardCut (false); return true; }
+        if (kc == 'V' || kc == 'v') { editClipboardPaste();     return true; }
         // Pro Tools 'Separate Clip' (Cmd+E): separate at the selected range
         // if one is set, else split at the playhead. Relocated off the bare
         // 's' / 'b' keys, which now pick the Selector / Scrubber tools.
-        if (c == 'e')
+        if (kc == 'E' || kc == 'e')
         {
             if (engine.getPlayer().hasLoopRegion()) editSeparateAtSelection();
             else                                    editSplitAtPlayhead();
