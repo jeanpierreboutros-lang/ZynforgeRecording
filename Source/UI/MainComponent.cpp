@@ -322,9 +322,6 @@ MainComponent::MainComponent()
     addAndMakeVisible (perfDashboard);
     addAndMakeVisible (toast);
 
-    peakTally = std::make_unique<zynforge::PeakTally> (engine);
-    addAndMakeVisible (*peakTally);
-
     // Setlist + cue bar. Wires the three engineer actions back into
     // helpers that read/write the session's .zfproj.
     setlistBar.onPick       = [this] (int idx) { jumpToCue (idx); };

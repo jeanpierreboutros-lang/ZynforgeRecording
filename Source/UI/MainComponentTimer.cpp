@@ -217,6 +217,9 @@ void MainComponent::timerCallback()
     perfDashboard.setDeviceInfo (engine.getDeviceSampleRate(),
                                  engine.getDeviceBlockSize());
     perfDashboard.setRecording (rec);
+    // Drives per-strip meter/spectrum refresh: full rate while recording or
+    // playing, throttled to ~8 Hz when stopped (see TrackState.h).
+    gTransportActive.store (rec || playing, std::memory_order_relaxed);
     // Re-lay-out the header once when REC toggles so the dashboard resizes.
     if (rec != dashWasRecording)
     {

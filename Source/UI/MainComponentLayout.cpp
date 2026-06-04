@@ -215,14 +215,6 @@ void MainComponent::resized()
         if (editToolsBar != nullptr) editToolsBar->setBounds ({});
     }
 
-    {
-        const int tallyH = 4;
-        const auto tallyBounds = viewportArea.withHeight (tallyH);
-        viewportArea = viewportArea.withTrimmedTop (tallyH);
-        if (peakTally != nullptr)
-            peakTally->setBounds (tallyBounds);
-    }
-
     stripsViewport.setBounds (viewportArea);
     mixerPlaceholder.setBounds (viewportArea);   // overlay the MIXER strip area
     if (editPage != nullptr)

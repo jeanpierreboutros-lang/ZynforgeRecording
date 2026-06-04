@@ -13,6 +13,19 @@ namespace zynforge
 
     void MiniSpectrum::timerCallback()
     {
+        // Throttle to ~8 Hz when the transport is stopped and this strip
+        // isn't armed/monitored -- matches the LED meter so the per-strip
+        // refresh load drops while idle, snapping back to 24 Hz on
+        // record/play/arm. (When truly silent the gate below idles fully.)
+        {
+            const bool active = gTransportActive.load (std::memory_order_relaxed)
+                             || state.armed  .load (std::memory_order_relaxed)
+                             || state.monitor.load (std::memory_order_relaxed);
+            const int wantHz = active ? 24 : 8;
+            if (getTimerInterval() != 1000 / wantHz)
+                startTimerHz (wantHz);
+        }
+
         const bool blockReady = state.fftBlockReady.load (std::memory_order_acquire);
 
         // Idle-CPU gate. The audio callback keeps producing FFT snapshots

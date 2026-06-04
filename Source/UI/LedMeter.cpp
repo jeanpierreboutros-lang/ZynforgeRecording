@@ -22,6 +22,19 @@ namespace zynforge
 
     void LedMeter::timerCallback()
     {
+        // Throttle to ~8 Hz when the transport is stopped and this strip
+        // isn't being actively watched (armed / monitored) -- the meter still
+        // moves so signal-present is visible, but at a fraction of the idle
+        // cost across 32 strips. Snaps back to 30 Hz on record/play/arm.
+        {
+            const bool active = gTransportActive.load (std::memory_order_relaxed)
+                             || state.armed  .load (std::memory_order_relaxed)
+                             || state.monitor.load (std::memory_order_relaxed);
+            const int wantHz = active ? 30 : 8;
+            if (getTimerInterval() != 1000 / wantHz)
+                startTimerHz (wantHz);
+        }
+
         const float peak = state.peak.load (std::memory_order_relaxed);
         const float rms  = state.rms .load (std::memory_order_relaxed);
         const bool  clip = state.clipped.load (std::memory_order_relaxed);

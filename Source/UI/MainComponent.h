@@ -17,7 +17,6 @@
 #include "WelcomeDialog.h"
 #include "PerfDashboard.h"
 #include "SetlistBar.h"
-#include "PeakTally.h"
 #include "TempoBar.h"
 #include "TimelineStrip.h"
 #include "Toast.h"
@@ -321,7 +320,6 @@ private:
     zynforge::SetlistBar    setlistBar;
     zynforge::TempoBar      tempoBar;
     zynforge::Toast         toast;
-    std::unique_ptr<zynforge::PeakTally> peakTally;
 
     // STOP-while-recording two-tap guard. Tracks the message-counter
     // timestamp of the first arming tap; second tap within 2 s fires

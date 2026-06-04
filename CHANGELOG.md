@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Removed (latest)
+- **Global clip-tally bar** — the thin red bar that flashed across the top of the track area when any channel clipped (the "PeakTally") has been removed at the engineer's request. Clip indication still lives on each strip's meter (the clip pip / CLIP×n label); click a meter to clear its latch.
+
 ### Changed (latest)
 - **EDIT tools get Pro Tools-style single-key shortcuts** — `S` Smart · `T` Trim · `R` Range/Selector · `G` Grabber/Move · `F` Fade · `B` Scrub, active in the EDIT view (skipped while renaming). "Separate clip" moved off the bare `S`/`B` keys onto **Cmd+E** (separates at the selected range if one is set, else splits at the playhead) — matching Pro Tools — and the Edit-menu item now reads "Separate Clip … ⌘E".
 - **EDIT header meter slimmed + cleaned** — the per-row level meter dropped its cramped dB-label gutter for a clean narrow bar (80 px → 22 px). Reads clearer at a glance while editing; full labelled metering still lives on the MIXER strip.
@@ -42,7 +45,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ### Fixed (latest)
 - **`session.report.json` is now written instantly on stop, every time** — the integrity manifest used to be written *only* on a background thread after hashing every recorded file (GBs), so a large take could finish with no report at all. Now a complete metadata report (track counts, sample totals, missed samples, file lists) is written **synchronously the moment recording stops** with `"sha256Pending": true`; a **background-QoS** thread then hashes the audio and rewrites the report with the sha256 sums (flipping `sha256Pending` to false). The hash pass no longer pegs multiple cores at foreground priority after a big take, and if the app is killed mid-hash the metadata report still stands.
-- **Idle CPU drops to ~0 when inputs are silent** — every channel strip ran a 1024-pt FFT + repaint at 24 Hz forever (even on silence) for its mini-spectrum, which kept the app at tens of % CPU at rest. The spectrum now skips the FFT and goes fully idle once a strip's signal falls below ~−70 dBFS, fading the bars out first; it resumes instantly when signal returns. Per-strip dB/clip labels also stop re-laying-out 10×/s unless the value changed. (With many *live* inputs the meters/spectra still animate by design.)
+- **Idle CPU drops dramatically at rest** — every channel strip ran a 1024-pt FFT + repaint at 24 Hz forever (even on silence) for its mini-spectrum, which kept the app at tens of % CPU at rest. The spectrum now skips the FFT and goes fully idle once a strip's signal falls below ~−70 dBFS, fading the bars out first; it resumes instantly when signal returns. In addition, when the transport is **stopped** (not recording/playing) and a strip isn't armed/monitored, its LED meter + spectrum **throttle from 30/24 Hz to ~8 Hz** — the meters still move so you can see signal, at a fraction of the cost across 32 strips; they snap back to full rate on record/play/arm. Per-strip dB/clip labels also stop re-laying-out 10×/s unless the value changed. Net: silent idle ~45% → ~0.3%; 32 live inputs at rest ~50% → ~30%.
 
 ### Added (latest)
 - **Live recording readout — audio load · buffer · disk, prominent while recording** — the header performance dashboard now shows the device **sample rate + actual buffer size in samples** (the real glitch-headroom number), labels the load row **AUDIO** to make clear it's the true CoreAudio callback load (the dropout predictor, not whole-app CPU), and grows larger with a record-red border while a take is rolling so CPU/buffer/disk/DROP are readable at a glance on a dark stage.

@@ -6,6 +6,13 @@
 
 namespace zynforge
 {
+    // Set by the app's UI timer: true while recording OR playing. Per-strip
+    // LED meters + mini-spectra run at full refresh when this is true (or the
+    // strip itself is armed/monitored); when the transport is stopped and a
+    // strip isn't being watched, they throttle to ~8 Hz to save idle CPU --
+    // the meters still move (signal-present check), just less often.
+    inline std::atomic<bool> gTransportActive { false };
+
     struct TrackState
     {
         static constexpr int kFftSize = 1024;
