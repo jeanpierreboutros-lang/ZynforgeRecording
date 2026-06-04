@@ -2675,11 +2675,13 @@ namespace zynforge
             gain.addItem (510, "Set value...");
 
             juce::PopupMenu menu;
+            menu.addItem (412, "Rename clip...");
             menu.addItem (400, muted  ? "Unmute clip" : "Mute clip");
             menu.addItem (401, locked ? "Unlock clip" : "Lock clip");
             menu.addSeparator();
-            menu.addItem (410, "Duplicate clip", ! locked);
-            menu.addItem (411, "Delete clip",    ! locked);
+            menu.addItem (410, "Duplicate clip",    ! locked);
+            menu.addItem (411, "Delete clip",       ! locked);
+            menu.addItem (413, "Consolidate clip",  ! locked);
             menu.addSeparator();
             menu.addSubMenu ("Clip gain",  gain);
             menu.addSubMenu ("Fade in",    fadeIn,  ! locked);
@@ -2716,6 +2718,45 @@ namespace zynforge
                     case 401: withUndo (locked ? "Unlock clip" : "Lock clip",   [&]{ self->engine.setClipLocked (self->index, clipIdx, ! locked); }); return;
                     case 410: withUndo ("Duplicate clip", [&]{ self->engine.duplicateClip (self->index, clipIdx); });           return;
                     case 411: withUndo ("Delete clip",    [&]{ self->engine.deleteClip    (self->index, clipIdx); });           return;
+                    case 413: withUndo ("Consolidate clip", [&]
+                              {
+                                  if (auto* cl = self->engine.tryClipsFor (self->index))
+                                      if (clipIdx < (int) cl->size())
+                                      {
+                                          const auto& cc = (*cl)[(size_t) clipIdx];
+                                          self->engine.consolidateRange (self->index,
+                                              cc.timelineStartSamples,
+                                              cc.timelineStartSamples + cc.fileLengthSamples);
+                                      }
+                              }); return;
+                    case 412:
+                    {
+                        juce::String cur;
+                        if (auto* cl = self->engine.tryClipsFor (self->index))
+                            if (clipIdx < (int) cl->size()) cur = (*cl)[(size_t) clipIdx].name;
+                        auto* aw = new juce::AlertWindow ("Rename clip",
+                            "Clip name:", juce::MessageBoxIconType::NoIcon);
+                        aw->setLookAndFeel (&self->getLookAndFeel());
+                        aw->addTextEditor ("name", cur);
+                        dialog::primeNameEditor (*aw, "name");
+                        aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
+                        aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+                        juce::Component::SafePointer<TrackRow> rowSafe (self);
+                        aw->enterModalState (true, juce::ModalCallbackFunction::create (
+                            [aw, rowSafe, clipIdx] (int r)
+                        {
+                            std::unique_ptr<juce::AlertWindow> own (aw);
+                            if (r != 1 || rowSafe == nullptr) return;
+                            const auto nm = own->getTextEditorContents ("name").trim();
+                            if (nm.isEmpty()) return;
+                            auto* page = rowSafe->findParentComponentOfClass<EditPage>();
+                            if (page != nullptr) page->beginClipEdit();
+                            rowSafe->engine.setClipName (rowSafe->index, clipIdx, nm);
+                            if (page != nullptr) page->commitClipEdit ("Rename clip");
+                            rowSafe->repaint();
+                        }));
+                        return;
+                    }
                     case 501: withUndo ("Clip gain", [&]{ self->engine.setClipGainDb (self->index, clipIdx, -12.0f); });        return;
                     case 502: withUndo ("Clip gain", [&]{ self->engine.setClipGainDb (self->index, clipIdx,  -6.0f); });        return;
                     case 503: withUndo ("Clip gain", [&]{ self->engine.setClipGainDb (self->index, clipIdx,  -3.0f); });        return;

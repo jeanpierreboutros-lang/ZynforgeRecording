@@ -1054,6 +1054,16 @@ namespace zynforge
         return true;
     }
 
+    bool AudioEngine::setClipName (int track, int clipIndex, const juce::String& name)
+    {
+        auto* list = validClipList (trackClips, track, clipIndex);
+        if (list == nullptr) return false;
+        (*list)[(size_t) clipIndex].name = name;
+        player.setTrackClips (track, *list);
+        syncActiveTake (track);
+        return true;
+    }
+
     bool AudioEngine::setClipGainDb (int track, int clipIndex, float dB)
     {
         auto* list = validClipList (trackClips, track, clipIndex);

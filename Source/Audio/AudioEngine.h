@@ -702,6 +702,7 @@ namespace zynforge
         // on the next block.
         bool setClipMuted    (int track, int clipIndex, bool muted);
         bool setClipLocked   (int track, int clipIndex, bool locked);
+        bool setClipName     (int track, int clipIndex, const juce::String& name);
         bool setClipGainDb   (int track, int clipIndex, float dB);
         bool deleteClip      (int track, int clipIndex);
         // Duplicate the clip onto the same track, placed after the end
