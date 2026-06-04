@@ -59,6 +59,34 @@ namespace zynforge
                 expect (eng.getRecorder().getCaptureFormat() == CaptureFormat::Wav24);
                 expect (eng.getRecorder().getBackupCaptureFormat() == CaptureFormat::Flac16);
             }
+
+            beginTest ("Device restart (prepare/release/prepare) preserves the track set");
+            {
+                // Regression guard for the device-change crash: audioDeviceStopped
+                // -> recorder.release() must NOT destroy the TrackState objects.
+                // Every ChannelStrip / LedMeter / EditPage row caches a TrackState&
+                // and the audio callback reads getTrack(i); clearing the vector on a
+                // device stop left them dangling (use-after-free) on every switch.
+                AudioEngine eng;
+                auto& rec = eng.getRecorder();
+
+                rec.prepare (48000.0, 64, 8);
+                expectEquals (rec.getNumTracks(), 8);
+                rec.getTrack (0).name = "snare";
+                auto* before = &rec.getTrack (0);
+
+                rec.release();                                   // the device-stop path
+                expectEquals (rec.getNumTracks(), 8);            // tracks preserved
+                expect (&rec.getTrack (0) == before);            // same object, no dangling ref
+                expectEquals (rec.getTrack (0).name, juce::String ("snare"));
+
+                // Device switch to a different sample rate / block size, same channel
+                // count -> TrackState objects are reused so UI references stay valid.
+                rec.prepare (96000.0, 128, 8);
+                expectEquals (rec.getNumTracks(), 8);
+                expect (&rec.getTrack (0) == before);
+                expectEquals (rec.getTrack (0).name, juce::String ("snare"));
+            }
         }
     };
 

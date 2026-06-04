@@ -351,6 +351,7 @@ namespace zynforge
             o->setProperty ("inRoute",   t.inputRouting .load (std::memory_order_relaxed));
             o->setProperty ("outRoute",  t.outputRouting.load (std::memory_order_relaxed));
             o->setProperty ("stereo",    t.isStereo .load (std::memory_order_relaxed));
+            o->setProperty ("isBus",     t.isBus    .load (std::memory_order_relaxed));
             o->setProperty ("vcaGroup",  t.vcaGroup .load (std::memory_order_relaxed));
             o->setProperty ("editGroup", t.editGroup.load (std::memory_order_relaxed));
             // Aux sends -- per session now (was global appProps, which leaked
@@ -369,6 +370,11 @@ namespace zynforge
         }
 
         juce::DynamicObject::Ptr root (new juce::DynamicObject());
+        // Schema version for session_mix.json. v1 = first versioned schema
+        // (adds isBus to the per-strip record). Absence => pre-v1 (legacy):
+        // every field is still read with hasProperty guards, so old files
+        // load fine and missing fields fall back to safe defaults.
+        root->setProperty ("formatVersion", 1);
         root->setProperty ("trackCount", recorder.getNumTracks());
         root->setProperty ("strips", arr);
 
@@ -441,6 +447,10 @@ namespace zynforge
                     if (o->hasProperty ("inRoute"))  setTrackInputRouting  (idx, (int) o->getProperty ("inRoute"));
                     if (o->hasProperty ("outRoute")) setTrackOutputRouting (idx, (int) o->getProperty ("outRoute"));
                     if (o->hasProperty ("stereo"))   setTrackStereo        (idx, (bool) o->getProperty ("stereo"));
+                    // isBus is per-session authoritative (was global appProps,
+                    // which leaked the bus layout across sessions). Pre-v1
+                    // session_mix.json has no key -> default to a normal strip.
+                    setTrackIsBus     (idx, o->hasProperty ("isBus") && (bool) o->getProperty ("isBus"));
                     setTrackVcaGroup  (idx, o->hasProperty ("vcaGroup")  ? (int) o->getProperty ("vcaGroup")  : -1);
                     setTrackEditGroup (idx, o->hasProperty ("editGroup") ? (int) o->getProperty ("editGroup") : -1);
 
@@ -830,13 +840,13 @@ namespace zynforge
                 : -1;
             t.editGroup.store (egroup, std::memory_order_relaxed);
 
-            // Bus flag (still appProps for now). Aux sends are NO LONGER read
-            // here -- they live in session_mix.json (loadSessionMixFrom), so
-            // reading them from global appProps would clobber the per-session
-            // routing and leak it across sessions.
-            if (appProps != nullptr)
-                t.isBus.store (appProps->getBoolValue ("strip_isbus_" + juce::String (i), false),
-                                std::memory_order_relaxed);
+            // Bus flag + aux sends are NOT touched here -- both live in
+            // session_mix.json (loadSessionMixFrom) and are applied there.
+            // Reading/writing an index-keyed global copy would leak the bus
+            // layout across sessions AND clobber the loaded value on a device
+            // restart (which re-runs this function). loadSessionMixFrom sets
+            // isBus authoritatively for every strip on session open; new
+            // strips default to a normal channel via TrackState construction.
 
             // Default to channel i, but clamp to the device's active
             // input count so a 4-strip session on a 1-input device still
@@ -1500,11 +1510,10 @@ namespace zynforge
             t.armed.store (false, std::memory_order_relaxed);
             t.monitor.store (false, std::memory_order_relaxed);
         }
-        if (appProps != nullptr)
-        {
-            appProps->setValue ("strip_isbus_" + juce::String (channelIndex), isBus);
-            appProps->saveIfNeeded();
-        }
+        // isBus is authoritative in session_mix.json (saveSessionMixTo /
+        // loadSessionMixFrom). It is deliberately NOT written to global
+        // appProps -- a global, index-keyed copy leaked the bus layout into
+        // the next session opened (same bug class the aux sends had).
     }
 
     void AudioEngine::setTrackSend (int channelIndex, int slot,

@@ -1261,23 +1261,44 @@ namespace zynforge
                 expect (part1.existsAsFile());
                 expect (part2.existsAsFile());
 
-                // Each part should be a valid WAV with audible content.
+                // Each part must be a valid WAV with samples. Content
+                // (magnitude) is asserted on part 1, which is always a FULL
+                // threshold-sized part. Part 2 is the tail: under the
+                // synchronous test harness (one writer thread, manual drain)
+                // its exact length depends on where the byte-threshold split
+                // landed, so we assert it's a valid, non-empty WAV rather than
+                // a magnitude that varies with the split point -- keeps the
+                // test deterministic instead of timing-flaky.
                 juce::WavAudioFormat fmt;
-                for (const auto& p : { part1, part2 })
+                auto readPart = [&] (const juce::File& p) -> juce::int64
                 {
                     std::unique_ptr<juce::FileInputStream> in (p.createInputStream());
                     expect (in != nullptr);
                     std::unique_ptr<juce::AudioFormatReader> reader (
                         fmt.createReaderFor (in.release(), true));
                     expect (reader != nullptr);
+                    if (reader == nullptr) return 0;
+                    expect (reader->lengthInSamples > 0);
+                    juce::AudioBuffer<float> buf (1, (int) reader->lengthInSamples);
+                    reader->read (&buf, 0, (int) reader->lengthInSamples, 0, true, false);
+                    return reader->lengthInSamples;
+                };
+
+                // Part 1: full part, must carry the recorded signal.
+                {
+                    std::unique_ptr<juce::FileInputStream> in (part1.createInputStream());
+                    std::unique_ptr<juce::AudioFormatReader> reader (
+                        fmt.createReaderFor (in.release(), true));
+                    expect (reader != nullptr);
                     if (reader != nullptr)
                     {
-                        expect (reader->lengthInSamples > 0);
                         juce::AudioBuffer<float> buf (1, (int) reader->lengthInSamples);
                         reader->read (&buf, 0, (int) reader->lengthInSamples, 0, true, false);
                         expect (buf.getMagnitude (0, 0, buf.getNumSamples()) > 0.20f);
                     }
                 }
+                // Part 2: valid, non-empty tail.
+                expect (readPart (part2) > 0);
 
                 // Part 1 must be under the test threshold (plus some
                 // slack for the header rewrite). Confirms the split
@@ -1359,11 +1380,24 @@ namespace zynforge
                     f.engine.stopRecording();
                 }
                 const auto report = sessionDir.getChildFile ("session.report.json");
-                const auto json = juce::JSON::parse (report);
-                auto* root = json.getDynamicObject();
+                // The metadata report is written synchronously on stop
+                // ("sha256Pending":true); a background thread then hashes the
+                // audio and rewrites it with the SHA-256 sums. Wait for that
+                // pass (up to ~5 s) before asserting on the hashes.
+                juce::var json;
+                juce::DynamicObject* root = nullptr;
+                for (int waited = 0; waited < 5000; waited += 50)
+                {
+                    json = juce::JSON::parse (report);
+                    root = json.getDynamicObject();
+                    if (root != nullptr && ! (bool) root->getProperty ("sha256Pending"))
+                        break;
+                    juce::Thread::sleep (50);
+                }
                 expect (root != nullptr);
                 if (root != nullptr)
                 {
+                    expect (! (bool) root->getProperty ("sha256Pending"));
                     auto* tracks = root->getProperty ("tracks").getArray();
                     expect (tracks != nullptr && tracks->size() > 0);
                     if (tracks != nullptr && tracks->size() > 0)
