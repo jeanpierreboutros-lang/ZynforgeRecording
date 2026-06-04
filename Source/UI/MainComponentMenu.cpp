@@ -46,16 +46,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         const bool hasActive = engine.getActiveSessionDir().isDirectory();
         exportMenu.addItem (10, "Export All Tracks...", hasActive);
 
-        juce::PopupMenu indiv;
         const int n = engine.getRecorder().getNumTracks();
-        for (int i = 0; i < n; ++i)
-        {
-            const auto& t  = engine.getRecorder().getTrack (i);
-            const auto nm  = t.name.isNotEmpty() ? t.name
-                                                  : juce::String (i + 1);
-            indiv.addItem (100 + i, nm, hasActive);
-        }
-        exportMenu.addSubMenu ("Export Individual Track", indiv, hasActive && n > 0);
+        // Opens a tick-box picker of the session's tracks → format → folder.
+        exportMenu.addItem (11, "Export Individual Tracks...", hasActive && n > 0);
         exportMenu.addSeparator();
         exportMenu.addItem (12, "Bounce Edited Tracks (Stems)...", hasActive && n > 0);
         exportMenu.addItem (13, "Bounce Stereo Mix...",            hasActive && n > 0);
@@ -288,6 +281,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 4)    onImportAudioFiles();
     else if (id == 5)    launchNewSessionDialog();
     else if (id == 10)   onExportAllTracks();
+    else if (id == 11)   onExportIndividualTracks();
     else if (id == 12)   onBounceStems();
     else if (id == 13)   onBounceStereoMix();
     else if (id == 70)   promptSaveSessionTemplate();

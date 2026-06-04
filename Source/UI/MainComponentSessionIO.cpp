@@ -18,6 +18,7 @@
 #include "../Theme/DialogChrome.h"
 #include "NewSessionDialog.h"
 #include "ExportDialog.h"
+#include "TrackSelectDialog.h"
 #include "SessionProjPath.h"
 
 using namespace zynforge;
@@ -600,6 +601,67 @@ void MainComponent::onExportIndividualTrack (int channelIndex)
                         ? "Exported track " + juce::String (channelIndex + 1)
                            + " → " + dest.getFileName()
                         : "Export failed");
+        });
+    });
+}
+
+void MainComponent::onExportIndividualTracks()
+{
+    const auto source = engine.getActiveSessionDir();
+    if (! source.isDirectory()) { showStatus ("No active session"); return; }
+
+    const int n = engine.getRecorder().getNumTracks();
+    if (n <= 0) { showStatus ("No tracks to export"); return; }
+
+    // Step 1: tick-box picker of the session's tracks.
+    std::vector<juce::String> names;
+    names.reserve ((size_t) n);
+    for (int i = 0; i < n; ++i)
+    {
+        const auto& t = engine.getRecorder().getTrack (i);
+        const auto nm = t.name.isNotEmpty() ? t.name : juce::String (i + 1);
+        names.push_back (juce::String::formatted ("%02d  ", i + 1) + nm);
+    }
+
+    zynforge::TrackSelectDialog::launch ("Export individual tracks", names,
+        [this] (std::optional<std::vector<int>> picked)
+    {
+        if (! picked.has_value() || picked->empty()) return;
+        const auto chosenTracks = *picked;
+
+        // Step 2: format / sample-rate / bit-depth (or MP3 bitrate).
+        zynforge::ExportDialog::launch ("Export format",
+            [this, chosenTracks] (std::optional<zynforge::ExportOptions> opts)
+        {
+            if (! opts.has_value()) return;
+            const auto chosenOpts = *opts;
+
+            // Step 3: choose the destination folder, then export.
+            const auto activeSession = engine.getActiveSessionDir();
+            const auto exportDir = activeSession.isDirectory()
+                                       ? activeSession.getChildFile ("Export Files")
+                                       : getSessionsRoot();
+            exportDir.createDirectory();
+            chooser = std::make_unique<juce::FileChooser> (
+                "Export tracks to...", exportDir, "");
+
+            const auto flags = juce::FileBrowserComponent::saveMode
+                             | juce::FileBrowserComponent::canSelectDirectories;
+
+            chooser->launchAsync (flags,
+                [this, chosenTracks, chosenOpts] (const juce::FileChooser& fc)
+            {
+                auto dest = fc.getResult();
+                if (dest.getFullPathName().isEmpty()) return;
+                if (! dest.exists()) dest.createDirectory();
+
+                showStatus ("Exporting " + juce::String ((int) chosenTracks.size())
+                            + " track(s)...");
+                const int done = exportTracksTo (dest, chosenTracks, chosenOpts);
+                showStatus (done > 0
+                            ? "Exported " + juce::String (done) + " track(s) → " + dest.getFileName()
+                            : "Export failed");
+            });
         });
     });
 }
