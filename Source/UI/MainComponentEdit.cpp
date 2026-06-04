@@ -733,39 +733,83 @@ void MainComponent::editZoomToSelection()
     editPage->zoomToSamples (player.getLoopStart(), player.getLoopEnd());
 }
 
-// Strip Silence: open a Pro Tools-style settings box (threshold / min strip /
-// min clip / pad), then separate each target track's take around the silence.
+// Strip Silence: open a Pro Tools-style settings box with draggable SLIDERS
+// (threshold / min strip / min clip / pad), then separate each target track's
+// take around the silence.
 void MainComponent::editStripSilence()
 {
     auto& player = engine.getPlayer();
     if (! player.isLoaded()) { showStatus ("Load or record a session first"); return; }
 
+    // Four labelled horizontal sliders, themed with the app LookAndFeel.
+    struct SilencePanel final : public juce::Component
+    {
+        juce::Slider thr, sil, clip, pad;
+        juce::Label  thrL, silL, clipL, padL;
+        SilencePanel (juce::LookAndFeel& lf)
+        {
+            setLookAndFeel (&lf);
+            auto add = [this, &lf] (juce::Slider& s, juce::Label& l, const juce::String& name,
+                                    double lo, double hi, double step, double def, const juce::String& suffix)
+            {
+                l.setText (name, juce::dontSendNotification);
+                l.setColour (juce::Label::textColourId, juce::Colour::fromRGB (0xe8, 0xe8, 0xee));
+                l.setFont (juce::Font (juce::FontOptions (13.0f)));
+                addAndMakeVisible (l);
+                s.setLookAndFeel (&lf);
+                s.setSliderStyle (juce::Slider::LinearHorizontal);
+                s.setRange (lo, hi, step);
+                s.setValue (def, juce::dontSendNotification);
+                s.setTextBoxStyle (juce::Slider::TextBoxRight, false, 70, 22);
+                s.setTextValueSuffix (suffix);
+                addAndMakeVisible (s);
+            };
+            add (thr,  thrL,  "Strip threshold",     -90.0, 0.0,    1.0, -42.0, " dB");
+            add (sil,  silL,  "Min strip / silence",   0.0, 2000.0, 10.0, 300.0, " ms");
+            add (clip, clipL, "Min clip length",       0.0, 2000.0, 10.0, 150.0, " ms");
+            add (pad,  padL,  "Clip start/end pad",    0.0,  500.0,  5.0,  20.0, " ms");
+            setSize (460, 232);
+        }
+        ~SilencePanel() override
+        {
+            for (auto* s : { &thr, &sil, &clip, &pad }) s->setLookAndFeel (nullptr);
+            setLookAndFeel (nullptr);
+        }
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (2);
+            auto row = [&r] (juce::Label& l, juce::Slider& s)
+            {
+                auto rr = r.removeFromTop (56);
+                l.setBounds (rr.removeFromTop (20));
+                s.setBounds (rr.reduced (0, 2));
+            };
+            row (thrL, thr); row (silL, sil); row (clipL, clip); row (padL, pad);
+        }
+    };
+
+    auto panel = std::make_shared<SilencePanel> (getLookAndFeel());
     auto* aw = new juce::AlertWindow ("Strip Silence",
         "Separate clips around silence on the selected track(s), then drop the gaps.",
         juce::MessageBoxIconType::NoIcon);
     aw->setLookAndFeel (&getLookAndFeel());
-    aw->addTextEditor ("thr",  "-42", "Strip threshold (dB)");
-    aw->addTextEditor ("sil",  "300", "Min strip / silence (ms)");
-    aw->addTextEditor ("clip", "150", "Min clip length (ms)");
-    aw->addTextEditor ("pad",  "20",  "Clip start/end pad (ms)");
+    aw->addCustomComponent (panel.get());
     aw->addButton ("Strip",  1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-    zynforge::dialog::primeNameEditor (*aw, "thr");
 
     juce::Component::SafePointer<MainComponent> self (this);
-    aw->enterModalState (true, juce::ModalCallbackFunction::create ([self, aw] (int r)
+    aw->enterModalState (true, juce::ModalCallbackFunction::create ([self, aw, panel] (int r)
     {
         std::unique_ptr<juce::AlertWindow> own (aw);
         if (r != 1 || self == nullptr) return;
-        const float thr = juce::jlimit (-90.0f, 0.0f, own->getTextEditorContents ("thr").getFloatValue());
-        const double sr = juce::jmax (1.0, self->engine.getPlayer().getSampleRate());
-        auto ms = [&] (const char* id)
-        { return (juce::int64) (sr * juce::jmax (0.0, own->getTextEditorContents (id).getDoubleValue()) / 1000.0); };
+        const float  thr = (float) panel->thr.getValue();
+        const double sr  = juce::jmax (1.0, self->engine.getPlayer().getSampleRate());
+        auto ms = [sr] (juce::Slider& s) { return (juce::int64) (sr * s.getValue() / 1000.0); };
         const auto before = self->engine.playlistsToJson();
         int tracks = 0, clips = 0;
         for (int phys : self->tracksToEditPhysical())
         {
-            const int n = self->engine.stripSilence (phys, thr, ms ("sil"), ms ("clip"), ms ("pad"));
+            const int n = self->engine.stripSilence (phys, thr, ms (panel->sil), ms (panel->clip), ms (panel->pad));
             if (n > 0) { ++tracks; clips += n; }
         }
         if (tracks > 0) self->pushClipUndo ("Strip silence", before);

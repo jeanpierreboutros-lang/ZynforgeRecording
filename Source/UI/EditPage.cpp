@@ -1283,32 +1283,38 @@ namespace zynforge
                                 g.setColour (brand::accentStatus.withAlpha (active ? 0.85f : 0.32f));
                                 g.drawHorizontalLine (gy, (float) gArea.getX(), (float) gArea.getRight());
                             }
-                            // Corner handle: a short fader track + a triangular
-                            // thumb whose height tracks the gain, then the dB.
+                            // Corner handle: a fader track + a triangular thumb
+                            // whose height tracks the gain, then the dB readout
+                            // on a dark pill so it stays legible over audio.
                             auto hr = clipGainHandleRect (block, headH);
-                            if (block.getWidth() > 18 && hr.getHeight() >= 10)
+                            if (block.getWidth() > 22 && hr.getHeight() >= 12)
                             {
                                 const float g12 = juce::jlimit (-12.0f, 12.0f, c.gainDb);
                                 const auto col = active ? brand::accentStatus
-                                                        : brand::accentStatus.withAlpha (0.70f);
-                                const float cx = (float) hr.getX() + 4.0f;
+                                                        : brand::accentStatus.withAlpha (0.80f);
+                                const float cx = (float) hr.getX() + 6.0f;
+                                // Fader track.
                                 g.setColour (brand::bgDeep.withAlpha (brand::alpha::scrim));
-                                g.fillRect (juce::Rectangle<float> (cx - 3.5f, (float) hr.getY(), 7.0f, (float) hr.getHeight()));
-                                g.setColour (col.withAlpha (active ? 0.9f : 0.6f));
-                                g.drawVerticalLine ((int) cx, (float) hr.getY(), (float) hr.getBottom());
+                                g.fillRoundedRectangle (juce::Rectangle<float> (cx - 5.0f, (float) hr.getY(), 10.0f, (float) hr.getHeight()), 2.0f);
+                                g.setColour (col.withAlpha (active ? 0.95f : 0.65f));
+                                g.drawVerticalLine ((int) cx, (float) hr.getY() + 1.0f, (float) hr.getBottom() - 1.0f);
                                 // Triangle thumb -- points up for boost, down for cut.
                                 juce::Path tri;
-                                const float ty = (float) hr.getCentreY() - g12 / 12.0f * (hr.getHeight() * 0.5f);
-                                tri.addTriangle (cx - 4.0f, ty + 2.5f, cx + 4.0f, ty + 2.5f, cx, ty - 3.5f);
+                                const float ty = (float) hr.getCentreY() - g12 / 12.0f * ((float) hr.getHeight() * 0.5f - 2.0f);
+                                tri.addTriangle (cx - 6.0f, ty + 4.0f, cx + 6.0f, ty + 4.0f, cx, ty - 5.0f);
                                 g.setColour (col);
                                 g.fillPath (tri);
-                                if (block.getWidth() > 34)
+                                // dB readout on a dark pill, bigger + bold.
+                                if (block.getWidth() > 44 && (active || std::abs (c.gainDb) > 0.05f))
                                 {
-                                    g.setColour (col.brighter (0.25f));
-                                    g.setFont (brand::type::caption().withHeight (9.0f));
+                                    const juce::Rectangle<int> pill (hr.getX() + 13, hr.getCentreY() - 9,
+                                                                     juce::jmin (60, hr.getRight() - (hr.getX() + 13)), 18);
+                                    g.setColour (brand::bgDeep.withAlpha (brand::alpha::bold));
+                                    g.fillRoundedRectangle (pill.toFloat(), brand::radius::sm);
+                                    g.setColour (col.brighter (0.5f));
+                                    g.setFont (brand::type::caption().withHeight (13.0f).boldened());
                                     g.drawText (juce::String (c.gainDb, 1) + " dB",
-                                                juce::Rectangle<int> (hr.getX() + 9, hr.getY(), hr.getWidth() - 9, hr.getHeight()),
-                                                juce::Justification::centredLeft, false);
+                                                pill.reduced (4, 0), juce::Justification::centredLeft, false);
                                 }
                             }
                         }
@@ -1581,8 +1587,9 @@ namespace zynforge
         static juce::Rectangle<int> clipGainHandleRect (juce::Rectangle<int> block, int headH) noexcept
         {
             auto body = block.withTrimmedTop (headH);
-            const int w = juce::jmin (46, juce::jmax (12, body.getWidth() - 2));
-            return { body.getX() + 1, body.getBottom() - 14, w, 13 };
+            const int h = juce::jmin (24, juce::jmax (14, body.getHeight() - 2));
+            const int w = juce::jmin (84, juce::jmax (18, body.getWidth() - 2));
+            return { body.getX() + 2, body.getBottom() - h - 2, w, h };
         }
 
         // Draws the swatch column, header panel, divider, selection highlight
