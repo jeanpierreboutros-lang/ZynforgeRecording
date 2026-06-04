@@ -1484,7 +1484,7 @@ void MainComponent::removeLastCapture()
             .withButton ("Cancel"),
         [this, target] (int result)
     {
-        if (result != 0) return;
+        if (result != 1) return;   // first button ("Delete") = commandID 1
         if (target.deleteRecursively())
             showStatus ("Removed: " + target.getFileName());
         else

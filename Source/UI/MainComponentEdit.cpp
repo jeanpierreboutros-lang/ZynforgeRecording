@@ -255,7 +255,9 @@ void MainComponent::confirmDeleteRecording (bool ripple, std::function<void()> o
                   "from the arrangement, and Cmd+Z restores it.")
             .withButton ("Delete")
             .withButton ("Cancel"),
-        [onConfirm] (int result) { if (result == 0 && onConfirm) onConfirm(); });
+        // LookAndFeel_V2::createAlertWindow gives the FIRST of two buttons
+        // commandID 1 and the second 0 -- so "Delete" returns 1, not 0.
+        [onConfirm] (int result) { if (result == 1 && onConfirm) onConfirm(); });
 }
 
 void MainComponent::editUndo()
