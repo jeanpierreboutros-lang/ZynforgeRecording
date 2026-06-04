@@ -65,6 +65,7 @@ private:
     void onBounceStereoMix();  // render the edited arrangement summed to stereo
     void onExportIndividualTrack (int channelIndex);
     void onExportIndividualTracks();   // tick-box picker → format → destination → export
+    void closeSession();               // unload to the empty/Welcome state without quitting
     void onImportAudioFiles();
     void onLockToggled();
     void onBackupClicked();

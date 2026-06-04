@@ -585,8 +585,10 @@ namespace zynforge
             // Click / Tempo / Markers) is selected. The lane data is
             // drawn on top with a semi-transparent backdrop. Paint
             // the waveform here as the substrate; the lane branch
-            // below then overlays its content.
-            if (laneMode != LaneMode::Waveform)
+            // below then overlays its content. Skip the substrate when the
+            // arrangement was emptied (all clips deleted) so the deleted
+            // waveform doesn't linger behind the lane.
+            if (laneMode != LaneMode::Waveform && ! engine.isTrackArrangementEmpty (index))
             {
                 if (stereo)
                 {
@@ -1147,6 +1149,11 @@ namespace zynforge
             const bool haveClipBlocks = (clipsForWave != nullptr && ! clipsForWave->empty()
                                          && engine.getPlayer().isLoaded()
                                          && engine.getPlayer().getTotalLengthSamples() > 0);
+            // When the engineer deleted every clip, the arrangement is empty
+            // but the Track_NN.wav is still on disk, so the continuous-thumbnail
+            // fallback would redraw the deleted audio. Suppress it in that case
+            // (the live-capture envelope below still draws while recording).
+            const bool arrangementEmptied = engine.isTrackArrangementEmpty (index);
             if (! haveClipBlocks)
             {
             if (stereo)
@@ -1156,12 +1163,12 @@ namespace zynforge
                 auto laneL = inner.withHeight (laneH);
                 auto laneR = inner.withTrimmedTop (laneH);
 
-                if (thumbnailL.getTotalLength() > 0.0)
+                if (thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
                 {
                     g.setColour (waveColour);
                     thumbnailL.drawChannels (g, laneL, 0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
                 }
-                if (thumbnailR.getTotalLength() > 0.0)
+                if (thumbnailR.getTotalLength() > 0.0 && ! arrangementEmptied)
                 {
                     g.setColour (waveColour);
                     thumbnailR.drawChannels (g, laneR, 0.0, thumbnailR.getTotalLength(), waveZoom (thumbnailR));
@@ -1182,7 +1189,7 @@ namespace zynforge
                 // Empty lanes are left blank -- the EDIT view's PlaceholderView
                 // owns the "no session" message, so no per-row hint here.
             }
-            else if (thumbnailL.getTotalLength() > 0.0)
+            else if (thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
             {
                 g.setColour (waveColour);
                 thumbnailL.drawChannels (g, inner, 0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));

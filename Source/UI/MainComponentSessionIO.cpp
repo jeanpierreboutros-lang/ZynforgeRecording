@@ -72,6 +72,61 @@ int MainComponent::openSessionFolder (const juce::File& dir)
     return n;
 }
 
+void MainComponent::closeSession()
+{
+    if (engine.isRecording())
+    {
+        showStatus ("Stop recording before closing the session");
+        return;
+    }
+
+    // Closing loses any UNSAVED mixer / edit / cue / automation changes
+    // (recorded audio is always already on disk). Confirm first.
+    juce::Component::SafePointer<MainComponent> self (this);
+    juce::AlertWindow::showAsync (
+        juce::MessageBoxOptions()
+            .withIconType (juce::MessageBoxIconType::QuestionIcon)
+            .withTitle ("Close session?")
+            .withMessage ("Return to the Welcome screen without quitting the app.\n\n"
+                          "Recorded audio stays on disk. Any unsaved mixer / edit / cue / "
+                          "automation changes since the last Save will be lost — Save first "
+                          "if you want to keep them.")
+            .withButton ("Close")
+            .withButton ("Cancel"),
+        [self] (int result)
+        {
+            if (self == nullptr || result != 1) return;   // first button = id 1
+
+            auto& engine = self->engine;
+            engine.stopPlayback();
+
+            // Forget the session so showStartupWelcome won't auto-reopen it,
+            // and reset every session-scoped bit of state to the fresh-empty
+            // slate (mirrors a launch with no session).
+            engine.setActiveSessionDir ({});
+            engine.getPlayer().unload();
+            engine.getPlayer().clearAllClips();
+            engine.getPlayer().clearLoopRegion();
+            engine.getMarkers().clearContext();
+            engine.clearAutomation (AudioEngine::AutomationParam::Volume);
+            engine.clearAutomation (AudioEngine::AutomationParam::Pan);
+            engine.clearAutomation (AudioEngine::AutomationParam::Mute);
+            engine.clearAllStripOverrides();
+            engine.setStripCount (0);
+
+            self->cues.clear();
+            self->currentCueIndex = -1;
+            self->undoManager.clearUndoHistory();
+            self->lastTrackCount = -1;            // force a strip rebuild (now empty)
+            self->updateTransportLabels();
+            self->showStatus ("Session closed");
+
+            // activeSessionDir is empty now -> this shows the Welcome dialog
+            // (New / Open) instead of auto-reopening the last session.
+            self->showStartupWelcome();
+        });
+}
+
 bool MainComponent::saveSessionStateTo (const juce::File& dir)
 {
     if (! dir.isDirectory()) return false;

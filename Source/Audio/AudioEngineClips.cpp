@@ -323,6 +323,17 @@ namespace zynforge
         return v.empty() ? nullptr : &v;
     }
 
+    bool AudioEngine::isTrackArrangementEmpty (int track) const noexcept
+    {
+        // Present in trackClips (seedDefaultClips sized it / an edit created
+        // the entry) AND empty -> the arrangement was emptied by the engineer
+        // (or the track carries no audio). tryClipsFor can't express this: it
+        // collapses "empty" to nullptr, which the EDIT view can't tell apart
+        // from a never-edited fresh take that should still show its waveform.
+        return track >= 0 && track < (int) trackClips.size()
+            && trackClips[(size_t) track].empty();
+    }
+
     namespace
     {
         // Split whichever clip in `list` straddles `timelineSample`.

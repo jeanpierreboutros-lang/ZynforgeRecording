@@ -551,6 +551,13 @@ namespace zynforge
         // Track_NN.wav otherwise.
         std::vector<Clip>& clipsFor (int track);
         const std::vector<Clip>* tryClipsFor (int track) const;
+        // True when the track HAS a clip list but it is empty -- i.e. the
+        // engineer deleted every clip (or the track has no audio). Distinct
+        // from a fresh/live take that never had a clip list (track absent
+        // from trackClips). The EDIT view uses this to NOT fall back to the
+        // whole-file thumbnail after a delete -- otherwise the deleted
+        // waveform reappears because the Track_NN.wav is still on disk.
+        bool isTrackArrangementEmpty (int track) const noexcept;
         // Mirror the live trackClips[track] into the active take so the
         // documented "active take == trackClips" invariant holds after
         // every clip edit. Without this, split / trim / move / fade /

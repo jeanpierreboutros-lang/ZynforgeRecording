@@ -41,6 +41,11 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (2, "Save Session State");
         menu.addItem (3, "Save Session As...");
         menu.addSeparator();
+        // Close the session back to the Welcome screen WITHOUT quitting --
+        // so the engineer can start/open another session between sets.
+        menu.addItem (6, "Close Session", engine.getActiveSessionDir().isDirectory()
+                                          && ! engine.isRecording());
+        menu.addSeparator();
 
         juce::PopupMenu exportMenu;
         const bool hasActive = engine.getActiveSessionDir().isDirectory();
@@ -280,6 +285,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 3)    onSaveSessionAs();
     else if (id == 4)    onImportAudioFiles();
     else if (id == 5)    launchNewSessionDialog();
+    else if (id == 6)    closeSession();
     else if (id == 10)   onExportAllTracks();
     else if (id == 11)   onExportIndividualTracks();
     else if (id == 12)   onBounceStems();
