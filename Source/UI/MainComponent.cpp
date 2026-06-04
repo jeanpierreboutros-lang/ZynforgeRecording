@@ -579,6 +579,21 @@ MainComponent::MainComponent()
     {
         return selectedLogical.count (logicalFromPhysicalIdx (physTrack)) > 0;
     };
+    // Right-click ▸ Delete Channel from the EDIT row header. Select just
+    // this channel (so the highlight matches what's about to go), then run
+    // the shared confirm + delete path used by the Track menu + Delete key.
+    editPage->onRowDelete = [this] (int physTrack)
+    {
+        const int logical = logicalFromPhysicalIdx (physTrack);
+        if (logical < 0 || logical >= (int) strips.size()) return;
+        selectedLogical.clear();
+        selectedLogical.insert (logical);
+        for (int i = 0; i < (int) strips.size(); ++i)
+            if (strips[(size_t) i] != nullptr)
+                strips[(size_t) i]->setSelected (selectedLogical.count (i) > 0);
+        if (editPage != nullptr) editPage->repaint();
+        confirmDeleteChannels ([this] { deleteSelectedStrips(); });
+    };
     // Clip-edit undo bridge: a clip drag (trim / move / fade) snapshots
     // the playlist JSON at mouse-down and pushes a single Cmd+Z step at
     // mouse-up. pushClipUndo no-ops when nothing changed.

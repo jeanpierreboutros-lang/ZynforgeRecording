@@ -260,6 +260,26 @@ void MainComponent::confirmDeleteRecording (bool ripple, std::function<void()> o
         [onConfirm] (int result) { if (result == 1 && onConfirm) onConfirm(); });
 }
 
+void MainComponent::confirmDeleteChannels (std::function<void()> onConfirm)
+{
+    const int n = (int) selectedLogical.size();
+    if (n <= 0 || engine.isRecording()) return;
+
+    juce::AlertWindow::showAsync (
+        juce::MessageBoxOptions()
+            .withIconType (juce::MessageBoxIconType::WarningIcon)
+            .withTitle (n > 1 ? "Delete channels?" : "Delete channel?")
+            .withMessage (juce::String (n > 1
+                ? "Delete the " + juce::String (n) + " selected channels?"
+                : "Delete the selected channel?")
+                + "\n\nRecorded files stay on disk — this removes the "
+                  "channel(s) from the session.")
+            .withButton ("Delete")
+            .withButton ("Cancel"),
+        // First of two buttons gets commandID 1 -- "Delete" returns 1.
+        [onConfirm] (int result) { if (result == 1 && onConfirm) onConfirm(); });
+}
+
 void MainComponent::editUndo()
 {
     // Commit any in-flight mixer change NOW so Cmd+Z immediately after a fader

@@ -1883,6 +1883,31 @@ namespace zynforge
             // Anywhere else on the row → row-size menu.
             if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
             {
+                // Right-click on the row header (name zone, not the wave
+                // pane) → channel context menu. The DAW-standard place to
+                // remove a track; the host confirms before deleting.
+                if (inNameZone (e.x))
+                {
+                    if (auto* page = findParentComponentOfClass<EditPage>())
+                    {
+                        if (page->onRowDelete)
+                        {
+                            juce::Component::SafePointer<EditPage> safePage (page);
+                            const int idx = index;
+                            juce::PopupMenu m;
+                            m.addItem (1, "Delete Channel");
+                            m.showMenuAsync (
+                                juce::PopupMenu::Options().withTargetScreenArea (
+                                    { e.getScreenPosition().x, e.getScreenPosition().y, 1, 1 }),
+                                [safePage, idx] (int r)
+                                {
+                                    if (r == 1 && safePage != nullptr && safePage->onRowDelete)
+                                        safePage->onRowDelete (idx);
+                                });
+                            return;
+                        }
+                    }
+                }
                 if (laneMode == LaneMode::Waveform && inWavePane (e.x))
                 {
                     if (auto* clips = engine.tryClipsFor (index))

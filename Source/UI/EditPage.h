@@ -78,6 +78,12 @@ namespace zynforge
         std::function<void (int /*physTrack*/, bool /*additive*/)> onRowSelect;
         std::function<bool (int /*physTrack*/)>                    isTrackSelected;
 
+        // Channel removal from the EDIT view. A right-click on the row
+        // header (or Delete on a selected channel) calls onRowDelete with
+        // the physical track index; the host selects that strip, confirms,
+        // and removes it. Recorded files stay on disk.
+        std::function<void (int /*physTrack*/)>                    onRowDelete;
+
         // Clip-edit undo bridge. A TrackRow calls beginClipEdit() when a
         // clip drag (trim / move / fade) starts and commitClipEdit() when
         // it ends; the host turns the before/after clip state into a

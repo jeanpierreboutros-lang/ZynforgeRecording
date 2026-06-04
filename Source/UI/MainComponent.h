@@ -151,6 +151,11 @@ private:
     // recorded clip / range). Shows a warning; runs onConfirm only on "Delete".
     void confirmDeleteRecording (bool ripple, std::function<void()> onConfirm);
 
+    // Confirmation gate for deleting the selected channel(s) from the EDIT
+    // view (right-click ▸ Delete Channel, or Delete on a selected channel).
+    // Recorded files stay on disk; runs onConfirm only on "Delete".
+    void confirmDeleteChannels (std::function<void()> onConfirm);
+
     // Coalesced mixer undo. The everyday strip mutations (fader, pan, mute,
     // solo, arm, monitor, rename, recolour, routing) have no dedicated undo
     // wiring, so a timer poll snapshots the whole mixer and pushes ONE undo

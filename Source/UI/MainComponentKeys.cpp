@@ -312,6 +312,14 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
                 });
                 return true;
             }
+            // No clip / range targeted but a channel header is selected →
+            // remove that channel (the previously-dead case where Delete
+            // did nothing). Confirmed; recorded files stay on disk.
+            if (! selectedLogical.empty() && ! engine.isRecording())
+            {
+                confirmDeleteChannels ([this] { deleteSelectedStrips(); });
+                return true;
+            }
         }
     }
 
