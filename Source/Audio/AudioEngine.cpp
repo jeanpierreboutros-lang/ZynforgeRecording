@@ -827,26 +827,17 @@ namespace zynforge
                 t.stripId = uid;
             }
 
-            // VCA group -- persisted under strip_vca_<n>; -1 = unassigned.
-            const int vca = appProps != nullptr
-                ? appProps->getIntValue ("strip_vca_" + juce::String (i), -1)
-                : -1;
-            t.vcaGroup.store ((vca >= 0 && vca < kNumVcas) ? vca : -1,
-                              std::memory_order_relaxed);
-
-            // Edit group -- persisted under strip_editgroup_<n>; -1 = unlinked.
-            const int egroup = appProps != nullptr
-                ? appProps->getIntValue ("strip_editgroup_" + juce::String (i), -1)
-                : -1;
-            t.editGroup.store (egroup, std::memory_order_relaxed);
-
-            // Bus flag + aux sends are NOT touched here -- both live in
-            // session_mix.json (loadSessionMixFrom) and are applied there.
-            // Reading/writing an index-keyed global copy would leak the bus
-            // layout across sessions AND clobber the loaded value on a device
-            // restart (which re-runs this function). loadSessionMixFrom sets
-            // isBus authoritatively for every strip on session open; new
-            // strips default to a normal channel via TrackState construction.
+            // VCA group, edit group, bus flag + aux sends are NOT read here.
+            // All four live in session_mix.json (loadSessionMixFrom) and are
+            // applied there. Reading an index-keyed *global* appProps copy
+            // would (a) leak the previous session's grouping/bus layout into
+            // this one, and (b) clobber the freshly-loaded value on a device
+            // restart, which re-runs this function. (The appProps copies were
+            // also never swapped by swapTracks, so they went stale after any
+            // reorder anyway.) loadSessionMixFrom sets vca / editGroup / isBus
+            // authoritatively for every strip on session open; new strips
+            // default to "ungrouped / normal channel" via TrackState
+            // construction.
 
             // Default to channel i, but clamp to the device's active
             // input count so a 4-strip session on a 1-input device still
@@ -1537,11 +1528,9 @@ namespace zynforge
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
         const int clamped = (vcaIdx < 0 || vcaIdx >= kNumVcas) ? -1 : vcaIdx;
         recorder.getTrack (channelIndex).vcaGroup.store (clamped, std::memory_order_relaxed);
-        if (appProps != nullptr)
-        {
-            appProps->setValue ("strip_vca_" + juce::String (channelIndex), clamped);
-            appProps->saveIfNeeded();
-        }
+        // VCA group is authoritative in session_mix.json -- not written to
+        // global appProps (an index-keyed global copy leaked across sessions
+        // and went stale after a reorder).
     }
 
     juce::int64 AudioEngine::snapSampleToGrid (juce::int64 sample)
@@ -1566,11 +1555,8 @@ namespace zynforge
     {
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
         recorder.getTrack (channelIndex).editGroup.store (groupId, std::memory_order_relaxed);
-        if (appProps != nullptr)
-        {
-            appProps->setValue ("strip_editgroup_" + juce::String (channelIndex), groupId);
-            appProps->saveIfNeeded();
-        }
+        // Edit group is authoritative in session_mix.json -- not written to
+        // global appProps (same leak/stale-on-reorder class as VCA + isBus).
     }
 
     int AudioEngine::getTrackEditGroup (int channelIndex) noexcept

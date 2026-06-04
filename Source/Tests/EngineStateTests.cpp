@@ -238,6 +238,40 @@ namespace zynforge
 
                 tmp.deleteRecursively();
             }
+
+            beginTest ("Corrupt / malformed session_mix.json loads safely (no crash, no wipe)");
+            {
+                auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                               .getChildFile ("zynforge_mix_corrupt");
+                tmp.deleteRecursively();
+                tmp.createDirectory();
+                const auto mix = tmp.getChildFile ("session_mix.json");
+
+                AudioEngine eng;
+                eng.setStripCount (4);
+                eng.setTrackName (0, "kick");
+
+                // (a) Truncated / unparseable JSON -> ignored, state untouched.
+                mix.replaceWithText ("{ \"trackCount\": 4, \"strips\": [ { \"index\":");
+                eng.loadSessionMixFrom (tmp);
+                expectEquals (eng.getRecorder().getNumTracks(), 4);
+                expectEquals (eng.getRecorder().getTrack (0).name, juce::String ("kick"));
+
+                // (b) Valid JSON, absurd trackCount -> clamped (no runaway alloc).
+                mix.replaceWithText ("{ \"trackCount\": 999999999, \"strips\": [] }");
+                eng.loadSessionMixFrom (tmp);
+                expect (eng.getRecorder().getNumTracks() <= 256);
+
+                // (c) Out-of-range strip index -> skipped, not applied.
+                eng.setStripCount (4);
+                eng.setTrackName (0, "kick");
+                mix.replaceWithText ("{ \"trackCount\": 4, \"strips\": "
+                                     "[ { \"index\": 99, \"name\": \"GHOST\" } ] }");
+                eng.loadSessionMixFrom (tmp);
+                expectEquals (eng.getRecorder().getTrack (0).name, juce::String ("kick"));
+
+                tmp.deleteRecursively();
+            }
         }
     };
 
