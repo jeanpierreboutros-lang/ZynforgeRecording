@@ -268,6 +268,24 @@ namespace zynforge
                     g.drawVerticalLine (xA,     (float) rulerTop, (float) rulerBottom);
                     g.drawVerticalLine (xB - 1, (float) rulerTop, (float) rulerBottom);
                 }
+
+                // Numeric selection readout (Pro Tools-style): Start > End
+                // (Length) in M:SS.mmm, in the marker strip at the top.
+                auto fmt = [sr] (juce::int64 s)
+                {
+                    const double t = juce::jmax (0.0, (double) s / sr);
+                    const int    m = (int) (t / 60.0);
+                    return juce::String::formatted ("%d:%06.3f", m, t - 60.0 * m);
+                };
+                const auto label = "Sel " + fmt (player.getLoopStart())
+                                 + " \xe2\x96\xb8 " + fmt (player.getLoopEnd())
+                                 + "  (" + fmt (player.getLoopEnd() - player.getLoopStart()) + ")";
+                const int tw = 250;
+                const int tx = juce::jlimit (headerW + 4, juce::jmax (headerW + 4, getWidth() - tw - 4), xA + 3);
+                g.setColour (brand::accentEdit.brighter (0.35f));
+                g.setFont (brand::type::caption().withHeight (10.0f));
+                g.drawText (label, juce::Rectangle<int> (tx, rulerTop + 1, tw, 13),
+                            juce::Justification::centredLeft, false);
             }
 
             // -------- Punch range overlay --------
