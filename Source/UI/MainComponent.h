@@ -147,6 +147,9 @@ private:
     void restoreUndoSnapshot (const juce::var& snapshot);
     void editUndo();
     void editRedo();
+    // Confirmation gate for destructive Delete-key edits in EDIT (removing a
+    // recorded clip / range). Shows a warning; runs onConfirm only on "Delete".
+    void confirmDeleteRecording (bool ripple, std::function<void()> onConfirm);
 
     // Coalesced mixer undo. The everyday strip mutations (fader, pan, mute,
     // solo, arm, monitor, rename, recolour, routing) have no dedicated undo

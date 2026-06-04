@@ -279,14 +279,19 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         {
             const bool haveClip  = (editPage != nullptr && editPage->getSelectedClipTrack() >= 0);
             const bool haveRange = engine.getPlayer().hasLoopRegion();
-            if (key.getModifiers().isShiftDown())
+            const bool ripple    = key.getModifiers().isShiftDown();
+            if (haveClip || haveRange)
             {
-                if (haveClip || haveRange) { editRippleDelete(); return true; }
-            }
-            else
-            {
-                if (haveClip)  { editDeleteSelectedClip(); return true; }
-                if (haveRange) { editClearRange();         return true; }
+                // Deleting a recording is destructive enough to confirm first
+                // (the engineer asked for a warning). The file stays on disk;
+                // this only pulls the clip from the arrangement (undoable).
+                confirmDeleteRecording (ripple, [this, ripple, haveClip, haveRange]
+                {
+                    if (ripple)         editRippleDelete();
+                    else if (haveClip)  editDeleteSelectedClip();
+                    else if (haveRange) editClearRange();
+                });
+                return true;
             }
         }
     }

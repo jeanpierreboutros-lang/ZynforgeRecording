@@ -242,6 +242,22 @@ void MainComponent::pollMixerUndo()
     mixerChangeStableTicks = 0;
 }
 
+void MainComponent::confirmDeleteRecording (bool ripple, std::function<void()> onConfirm)
+{
+    juce::AlertWindow::showAsync (
+        juce::MessageBoxOptions()
+            .withIconType (juce::MessageBoxIconType::WarningIcon)
+            .withTitle ("Delete recording?")
+            .withMessage (juce::String (ripple
+                ? "Delete the selected audio and close the gap?"
+                : "Delete the selected audio?")
+                + "\n\nThe recorded file stays on disk — this only removes it "
+                  "from the arrangement, and Cmd+Z restores it.")
+            .withButton ("Delete")
+            .withButton ("Cancel"),
+        [onConfirm] (int result) { if (result == 0 && onConfirm) onConfirm(); });
+}
+
 void MainComponent::editUndo()
 {
     if (! undoManager.canUndo()) { showStatus ("Nothing to undo"); return; }
