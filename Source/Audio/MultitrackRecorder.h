@@ -305,6 +305,11 @@ namespace zynforge
 
         void drainOnce();
         void drainShard (ShardClient&);
+        // Rewrite the header of every open writer in [first, last) so a crash
+        // mid-take leaves a self-describing file (and promotes WAV to RF64
+        // once it crosses 4 GiB). Called periodically from drainShard.
+        void flushOpenWriters (std::size_t first, std::size_t last);
+        std::atomic<double> lastWriterFlushMs { 0.0 };
         void rebuildShards();
         void closeWriters();
         void allocatePreRollBuffers();
@@ -340,6 +345,11 @@ namespace zynforge
         // between blocks so the auto-split path doesn't roll one
         // gigantic accumulated write.
         void drainPendingForTests() { drainOnce(); }
+
+        // Test hook: rewrite every open writer's header right now (the same
+        // thing the periodic in-take flush does), so a test can verify that a
+        // crashed-but-flushed file is already readable before stopRecording.
+        void flushOpenWritersForTests() { flushOpenWriters (0, writers.size()); }
 
     private:
 

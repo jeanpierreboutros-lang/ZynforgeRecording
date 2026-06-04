@@ -399,6 +399,9 @@ namespace zynforge
 
         sessionDir.createDirectory();
         activeSessionDir = sessionDir;
+        // Space the first periodic header flush ~5 s into the take.
+        lastWriterFlushMs.store (juce::Time::getMillisecondCounterHiRes(),
+                                 std::memory_order_relaxed);
 
         // Folder layout: tracks live under "Audio Files/", mixdowns /
         // stem exports under "Export Files/", backups under
@@ -629,13 +632,23 @@ namespace zynforge
         const auto override_ = s_autoSplitThresholdOverride.load (std::memory_order_acquire);
         if (override_ > 0) return override_;
 
-        // Keep some headroom below the real format limits so the closing
-        // header rewrite + any in-flight flush don't tip us over.
-        // WAV/FLAC: 4 GiB chunk-size ceiling -> roll at 3.9 GiB.
+        // WAV is written as RF64 once it crosses 4 GiB: JUCE's WavAudioFormat
+        // reserves the ds64 chunk slot at file creation and rewrites the
+        // header to RF64 on flush / close (the periodic in-take flush keeps it
+        // current). So a WAV take is NEVER split into _partNN files -- it
+        // stays one continuous file (an ordinary RIFF/WAV while under 4 GiB,
+        // read by any DAW). Return "no ceiling" so the roll path never fires
+        // for WAV.
+        if (containerCode == 0)
+            return std::numeric_limits<juce::int64>::max();
+
+        // AIFF + FLAC have no RF64 equivalent here, so they still roll to a
+        // _partNN file at their chunk-size ceiling.
         // AIFF: 2 GiB signed-32-bit chunk-size ceiling -> roll at 1.9 GiB.
-        constexpr juce::int64 kWavFlacMax = (juce::int64) 3900LL * 1024 * 1024;
-        constexpr juce::int64 kAiffMax    = (juce::int64) 1900LL * 1024 * 1024;
-        return (containerCode == 1) ? kAiffMax : kWavFlacMax;
+        // FLAC: 4 GiB -> roll at 3.9 GiB.
+        constexpr juce::int64 kFlacMax = (juce::int64) 3900LL * 1024 * 1024;
+        constexpr juce::int64 kAiffMax = (juce::int64) 1900LL * 1024 * 1024;
+        return (containerCode == 1) ? kAiffMax : kFlacMax;
     }
 
     juce::AudioFormatWriter* MultitrackRecorder::openWriterAtPath (const juce::File& target,
@@ -1066,6 +1079,23 @@ namespace zynforge
         for (auto& sh : shards) drainShard (*sh);
     }
 
+    void MultitrackRecorder::flushOpenWriters (std::size_t first, std::size_t last)
+    {
+        // Rewrite each open writer's header in place. JUCE's flush() seeks
+        // back to the header, writes it (RIFF, or RF64 once bytesWritten
+        // crosses 4 GiB -- the ds64 slot was reserved at creation), then
+        // seeks back to the data end to keep appending. Runs on the writer
+        // thread, never the audio thread.
+        for (std::size_t i = first; i < last && i < writers.size(); ++i)
+        {
+            auto& w = writers[i];
+            if (w.writer       != nullptr) w.writer->flush();
+            if (w.backupWriter != nullptr) w.backupWriter->flush();
+            for (auto& m : w.mirrors)
+                if (m.writer != nullptr && ! m.failed) m.writer->flush();
+        }
+    }
+
     void MultitrackRecorder::drainShard (ShardClient& shard)
     {
         if (! writersReady.load (std::memory_order_acquire)) return;
@@ -1261,6 +1291,22 @@ namespace zynforge
                     m.totalSamples += scope.blockSize2;
                 }
                 totalWritten += scope.blockSize2;
+            }
+        }
+
+        // Periodic header flush (~every 5 s). Keeps each open file self-
+        // describing so a crash mid-take leaves a readable recording (header
+        // valid up to the last flush) instead of one with a stale/zero-length
+        // header -- and promotes a WAV past 4 GiB to RF64 on the way. Cheap: a
+        // seek + small header write per writer, on the writer thread.
+        {
+            const double nowMs = juce::Time::getMillisecondCounterHiRes();
+            const double lastF = lastWriterFlushMs.load (std::memory_order_relaxed);
+            if (nowMs - lastF >= 5000.0)
+            {
+                lastWriterFlushMs.store (nowMs, std::memory_order_relaxed);
+                flushOpenWriters ((std::size_t) juce::jmax (0, shard.firstChannel),
+                                  (std::size_t) juce::jmax (0, shard.lastChannel));
             }
         }
 

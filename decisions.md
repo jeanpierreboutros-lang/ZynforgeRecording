@@ -121,7 +121,7 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ## Auto-split on chunk-size ceiling, not RF64 promotion — 2026-05-25
 
-**Status:** Accepted
+**Status:** Superseded for WAV by *RF64 for WAV via JUCE + periodic header flush* (below). Still in force for AIFF/FLAC.
 **Context:** Standard RIFF WAV caps the data chunk's size field at 32-bit unsigned → 4 GiB. AIFF caps at 2 GiB (signed 32-bit). At 48 kHz / 24-bit / mono that's ~8.3 h per WAV, ~4.1 h per AIFF. A 24-hour install, an all-day festival capture, or a 96 kHz session can hit the wall mid-take and silently emit a malformed-header file. Two ways to handle this: (a) **RF64 promotion** — when the writer notices it's about to overflow, rewrite the header into the RF64 / WAV64 extended format that supports 64-bit sizes; (b) **Auto-split** — close the current file at the threshold and open `Track_NN_part02.<ext>`, continuing the recording across multiple files.
 **Decision:** Auto-split, not RF64.
 **Rationale:**
@@ -132,6 +132,21 @@ When making a non-trivial decision, add a new entry below using the template at 
 **Consequences:** Long sessions emit `Track_01.wav` + `Track_01_part02.wav` + ... numbered sequentially. Mix engineers consolidate by re-importing in order (Pro Tools' "Import Audio" + numerical sort, or any DAW's equivalent). The `session.report.json` does not currently list every part file individually — a future improvement would be to enumerate parts there. Backup writers roll independently to keep the mirror layout consistent.
 **Alternatives Considered:** RF64 promotion (per above), accepting the limit and documenting it (rejected — silent file corruption is a real show-day failure mode), capping recording duration in the UI (rejected — it's the engineer's call, not the app's).
 **Related Documents:** `Source/Audio/MultitrackRecorder.{h,cpp}` (`maxBytesForContainer`, `openWriterAtPath`, the drain-loop roll logic), `Source/Tests/AudioCallbackTests.cpp` (auto-split test).
+
+---
+
+## RF64 for WAV via JUCE + periodic header flush — 2026-06-05
+
+**Status:** Accepted (supersedes the WAV half of *Auto-split on chunk-size ceiling*)
+**Context:** The original auto-split ADR rejected RF64 mainly on the premise that *"JUCE's `WavAudioFormat` does not natively support RF64 writing."* That premise is **false**: JUCE's `WavAudioFormatWriter` reserves the `ds64` chunk slot at file creation and, on `flush()` / close, rewrites the header as **RF64** once `bytesWritten >= 4 GiB` (else a normal RIFF) — and `WavAudioFormat`'s reader handles RF64. The only reason takes were splitting is that `maxBytesForContainer` returned 3.9 GiB for WAV, so the recorder's own roll fired *before* JUCE ever reached RF64. Multi-part files are a real workflow wart (re-import + consolidate in order) and modern DAWs (Pro Tools, Logic, Reaper, Nuendo) all read RF64.
+**Decision:** For **WAV**, stop auto-splitting: `maxBytesForContainer(WAV)` returns "no ceiling", so a WAV take is one continuous file — ordinary RIFF under 4 GiB, RF64 above it. AIFF + FLAC keep auto-splitting (no RF64 path here). To keep a single huge file crash-safe, the writer thread now calls `flush()` on every open writer **every ~5 s** (`flushOpenWriters`), so a crash mid-take leaves a self-describing, readable file (header valid up to the last flush) instead of one continuous file with a stale/zero-length header. This flush also benefits AIFF/FLAC.
+**Rationale:**
+  1. JUCE already does RF64 correctly — no fork, no custom writer.
+  2. One continuous file is what engineers want for a long take; no consolidate step.
+  3. Periodic flush removes the *new* risk a single file introduces (whole-take loss on crash) and is a strict crash-safety improvement for all formats. Flush is on the writer thread (a seek + small header write), never the audio thread.
+  4. Files under 4 GiB stay plain RIFF/WAV (the `ds64` slot reads as a harmless `JUNK` chunk), so the common case is unchanged and universally compatible.
+**Consequences:** A >4 GiB WAV take is a single RF64 file; tools that reject RF64 (rare, older broadcast/hardware) won't read it — acceptable given the target DAWs all support it, and sub-4 GiB takes remain plain WAV. The `Track_NN_part02.wav` path still exists for AIFF/FLAC. Actual >4 GiB promotion is JUCE-tested and verified by field test (a unit test can't write 4 GiB); the unit suite verifies WAV never rolls + the flushed-header-is-crash-readable guarantee.
+**Related Documents:** `Source/Audio/MultitrackRecorder.{h,cpp}` (`maxBytesForContainer`, `flushOpenWriters`, drain-loop flush), `Source/Tests/AudioCallbackTests.cpp` (RF64 / crash-readable test), JUCE `juce_WavAudioFormat.cpp` (`isRF64`, `flush`, `writeHeader`).
 
 ---
 

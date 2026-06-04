@@ -1415,6 +1415,51 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            beginTest ("WAV take is one continuous file (RF64) + flushed header is crash-readable");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                juce::int64 readableMidTake = 0;
+                {
+                    CallbackFixture f (1, 1, 2);
+                    auto& rec = f.engine.getRecorder();
+                    rec.getTrack (0).armed.store (true);
+                    rec.setCaptureFormat (CaptureFormat::Wav24);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.3f, 256);
+                    constexpr int kBlocks = 64;     // ~0.34 s, all drained
+                    for (int b = 0; b < kBlocks; ++b)
+                    {
+                        f.process (256);
+                        rec.drainPendingForTests();
+                    }
+
+                    // Simulate a crash AFTER a header flush but BEFORE stop:
+                    // the writer is still open, so the only thing making the
+                    // file readable is the periodic flush having written a
+                    // valid header. Open a second reader on the live file.
+                    rec.flushOpenWritersForTests();
+                    const auto wav = sessionDir.getChildFile ("Audio Files")
+                                               .getChildFile ("Track_01.wav");
+                    expect (wav.existsAsFile());
+                    juce::WavAudioFormat fmt;
+                    std::unique_ptr<juce::FileInputStream> in (wav.createInputStream());
+                    std::unique_ptr<juce::AudioFormatReader> reader (
+                        in != nullptr ? fmt.createReaderFor (in.release(), true) : nullptr);
+                    expect (reader != nullptr);
+                    if (reader != nullptr) readableMidTake = reader->lengthInSamples;
+
+                    f.engine.stopRecording();
+                }
+
+                // The flushed header described (almost) all the audio written
+                // so far -- proof a crashed take is recoverable, not empty.
+                expect (readableMidTake >= (juce::int64) (256 * 60));
+                // WAV never rolls to a _partNN file (it's RF64 past 4 GiB).
+                expect (! sessionDir.getChildFile ("Audio Files")
+                                    .getChildFile ("Track_01_part02.wav").existsAsFile());
+                sessionDir.deleteRecursively();
+            }
+
             // ─── N-way mirror destinations ───────────────────────────
             beginTest ("3-way mirror writes Track_NN.wav to primary + backup + extra root");
             {
