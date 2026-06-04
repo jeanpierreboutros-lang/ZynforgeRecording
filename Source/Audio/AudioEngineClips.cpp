@@ -564,6 +564,206 @@ namespace zynforge
         return splitTrackAtSample (track, pos);
     }
 
+    namespace
+    {
+        // Two adjacent clips can be healed (rejoined) only if they're a clean
+        // split: same source file, butt-jointed in BOTH the file and the
+        // timeline, neither locked. (A moved / slip-trimmed clip fails these.)
+        bool clipsAreHealable (const Clip& a, const Clip& b)
+        {
+            return ! a.locked && ! b.locked
+                && a.audioFile == b.audioFile
+                && a.fileStartSamples + a.fileLengthSamples == b.fileStartSamples
+                && a.timelineStartSamples + a.fileLengthSamples == b.timelineStartSamples;
+        }
+
+        void mergeClipPair (std::vector<Clip>& list, int i)
+        {
+            auto& a = list[(size_t) i];
+            const auto& b = list[(size_t) (i + 1)];
+            a.fileLengthSamples += b.fileLengthSamples;
+            a.fadeOutSamples     = b.fadeOutSamples;   // the join had a hard cut; keep the tail fade
+            list.erase (list.begin() + i + 1);
+        }
+    }
+
+    bool AudioEngine::healSeparationAt (int track, juce::int64 timelineSample)
+    {
+        if (track < 0 || track >= (int) trackClips.size()) return false;
+        auto& list = clipsFor (track);
+        int    best = -1;
+        juce::int64 bestDist = std::numeric_limits<juce::int64>::max();
+        for (int i = 0; i + 1 < (int) list.size(); ++i)
+        {
+            if (! clipsAreHealable (list[(size_t) i], list[(size_t) (i + 1)])) continue;
+            const auto boundary = list[(size_t) i].timelineStartSamples
+                                + list[(size_t) i].fileLengthSamples;
+            const auto dist = std::abs (boundary - timelineSample);
+            if (dist < bestDist) { bestDist = dist; best = i; }
+        }
+        if (best < 0) return false;
+        mergeClipPair (list, best);
+        player.setTrackClips (track, list);
+        syncActiveTake (track);
+        return true;
+    }
+
+    int AudioEngine::healSeparationRange (int track, juce::int64 start, juce::int64 end)
+    {
+        if (track < 0 || track >= (int) trackClips.size()) return 0;
+        auto& list = clipsFor (track);
+        int healed = 0;
+        for (int i = 0; i + 1 < (int) list.size(); )
+        {
+            const auto boundary = list[(size_t) i].timelineStartSamples
+                                + list[(size_t) i].fileLengthSamples;
+            if (boundary > start && boundary < end
+                && clipsAreHealable (list[(size_t) i], list[(size_t) (i + 1)]))
+            { mergeClipPair (list, i); ++healed; }   // don't advance: heal a run in one pass
+            else ++i;
+        }
+        if (healed > 0) { player.setTrackClips (track, list); syncActiveTake (track); }
+        return healed;
+    }
+
+    int AudioEngine::stripSilence (int track, float thresholdDb,
+                                   juce::int64 minSilenceSamples, juce::int64 minClipSamples)
+    {
+        const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
+        if (track < 0 || track >= maxTracks) return -1;
+
+        auto sessionDir = getActiveSessionDir();
+        if (! sessionDir.isDirectory()) return -1;
+        const auto audioDir = sessionDir.getChildFile ("Audio Files");
+        juce::File src;
+        for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
+        {
+            auto f = audioDir.getChildFile (juce::String::formatted ("Track_%02d", track + 1) + ext);
+            if (f.existsAsFile()) { src = f; break; }
+        }
+        if (! src.existsAsFile()) return -1;
+
+        juce::AudioFormatManager fm; fm.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (src));
+        if (reader == nullptr || reader->lengthInSamples <= 0) return -1;
+
+        const juce::int64 total = reader->lengthInSamples;
+        const float thresh = juce::Decibels::decibelsToGain (thresholdDb, -120.0f);
+
+        // Scan a peak envelope in ~10 ms windows; a window is "silent" when its
+        // peak sits below the threshold.
+        const int win = juce::jmax (64, (int) (reader->sampleRate * 0.010));
+        juce::AudioBuffer<float> buf (1, win);
+        std::vector<char> loud;                         // 1 = audible window
+        loud.reserve ((size_t) (total / win + 1));
+        for (juce::int64 p = 0; p < total; p += win)
+        {
+            const int n = (int) juce::jmin<juce::int64> (win, total - p);
+            buf.clear();
+            reader->read (&buf, 0, n, p, true, true);
+            loud.push_back (buf.getMagnitude (0, 0, n) >= thresh ? 1 : 0);
+        }
+
+        // Build audible runs, requiring a silent gap of >= minSilenceSamples to
+        // break, and dropping audible runs shorter than minClipSamples.
+        const juce::int64 minSilWin  = juce::jmax<juce::int64> (1, minSilenceSamples / win);
+        std::vector<std::pair<juce::int64, juce::int64>> runs;   // [startWin, endWin)
+        int i = 0; const int nw = (int) loud.size();
+        while (i < nw)
+        {
+            while (i < nw && ! loud[(size_t) i]) ++i;            // skip leading silence
+            if (i >= nw) break;
+            int runStart = i;
+            while (i < nw)
+            {
+                if (loud[(size_t) i]) { ++i; continue; }
+                int sil = i; while (sil < nw && ! loud[(size_t) sil]) ++sil;   // measure gap
+                if ((juce::int64) (sil - i) >= minSilWin) break;               // real gap -> end run
+                i = sil;                                                        // short gap -> keep going
+            }
+            runs.emplace_back ((juce::int64) runStart, (juce::int64) i);
+        }
+
+        std::vector<Clip> out;
+        const juce::int64 fade = juce::jmin<juce::int64> ((juce::int64) (reader->sampleRate * 0.005),
+                                                          (juce::int64) win);
+        for (auto& r : runs)
+        {
+            const juce::int64 a = r.first  * win;
+            const juce::int64 b = juce::jmin (total, r.second * win);
+            if (b - a < juce::jmax<juce::int64> (1, minClipSamples)) continue;
+            Clip c;
+            c.name                 = juce::String::formatted ("Track_%02d", track + 1);
+            c.timelineStartSamples = a;
+            c.fileStartSamples     = a;
+            c.fileLengthSamples    = b - a;
+            c.fadeInSamples        = juce::jmin (fade, c.fileLengthSamples / 2);
+            c.fadeOutSamples       = juce::jmin (fade, c.fileLengthSamples / 2);
+            out.push_back (c);
+        }
+        if (out.empty()) return 0;
+
+        if (! ensureClipList (track)) { /* still proceed -- we're replacing */ }
+        clipsFor (track) = out;
+        player.setTrackClips (track, out);
+        syncActiveTake (track);
+        return (int) out.size();
+    }
+
+    bool AudioEngine::consolidateRange (int track, juce::int64 start, juce::int64 end)
+    {
+        if (end <= start) return false;
+        const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
+        if (track < 0 || track >= maxTracks) return false;
+
+        // Render the whole edited track, then slice out [start, end).
+        juce::AudioBuffer<float> full;
+        const juce::int64 arrLen = juce::jmax (end, getArrangementLengthSamples());
+        if (! renderTrackArrangement (track, full, arrLen)) return false;
+        const int a = (int) juce::jmin<juce::int64> (start, full.getNumSamples());
+        const int b = (int) juce::jmin<juce::int64> (end,   full.getNumSamples());
+        if (b <= a) return false;
+
+        auto sessionDir = getActiveSessionDir();
+        const auto audioDir = sessionDir.getChildFile ("Audio Files");
+        audioDir.createDirectory();
+        juce::File dst;
+        for (int k = 1; k < 1000; ++k)
+        {
+            dst = audioDir.getChildFile (juce::String::formatted ("Track_%02d_consolidated_%d.wav", track + 1, k));
+            if (! dst.existsAsFile()) break;
+        }
+
+        const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
+        {
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::FileOutputStream> os (dst.createOutputStream());
+            if (os == nullptr) return false;
+            std::unique_ptr<juce::AudioFormatWriter> w (
+                wav.createWriterFor (os.get(), sr, 1, 24, {}, 0));
+            if (w == nullptr) return false;
+            os.release();
+            juce::AudioBuffer<float> slice (full.getArrayOfWritePointers(), 1, a, b - a);
+            w->writeFromAudioSampleBuffer (slice, 0, b - a);
+        }
+
+        // Replace the clips in [start, end) with one clip referencing dst.
+        clearTrackRange (track, start, end);
+        auto& list = clipsFor (track);
+        Clip c;
+        c.name                 = dst.getFileNameWithoutExtension();
+        c.audioFile            = dst;
+        c.timelineStartSamples = start;
+        c.fileStartSamples     = 0;
+        c.fileLengthSamples    = b - a;
+        // Insert in timeline order.
+        int ins = 0; while (ins < (int) list.size() && list[(size_t) ins].timelineStartSamples < start) ++ins;
+        list.insert (list.begin() + ins, c);
+        player.setTrackClips (track, list);
+        syncActiveTake (track);
+        return true;
+    }
+
     bool AudioEngine::splitTrackAtSample (int track, juce::int64 timelineSample)
     {
         // Bound against whichever subsystem currently knows about tracks:

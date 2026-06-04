@@ -422,6 +422,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
     }
 
     if (c == 'a') { editSoloSelection();    return true; }
+    if (c == 'e' && ! key.getModifiers().isCommandDown())
+        { editZoomToSelection(); return true; }                 // E -- zoom to selection
     if (c == 'd' && ! key.getModifiers().isCommandDown())
         { editDuplicateSelectedClip(); return true; }          // duplicate clicked clip
     if (c == 'n' && ! key.getModifiers().isCommandDown())
@@ -441,6 +443,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         if (kc == 'X' || kc == 'x') { editClipboardCut (true);  return true; }
         if (kc == 'C' || kc == 'c') { editClipboardCut (false); return true; }
         if (kc == 'V' || kc == 'v') { editClipboardPaste();     return true; }
+        if (kc == 'H' || kc == 'h') { editHealSeparation();     return true; }   // Pro Tools Heal
         // Pro Tools 'Separate Clip' (Cmd+E): separate at the selected range
         // if one is set, else split at the playhead. Relocated off the bare
         // 's' / 'b' keys, which now pick the Selector / Scrubber tools.

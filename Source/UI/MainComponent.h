@@ -175,6 +175,10 @@ private:
     void editToggleSnap();
     void editSplitAtPlayhead();
     void editSeparateAtSelection();   // B -- isolate the range as its own clip
+    void editHealSeparation();        // Cmd+H -- rejoin a clean split
+    void editZoomToSelection();       // E -- zoom the EDIT view to the range
+    void editStripSilence();          // separate clips around silence
+    void editConsolidateSelection();  // flatten the range to one new file
     void editClearRange();            // Delete -- clear audio inside the range
     void editDeleteSelectedClip();    // Delete -- remove the clicked clip(s)
     void editDuplicateSelectedClip(); // D -- copy the clicked clip after itself

@@ -119,8 +119,12 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addSeparator();
         menu.addItem (310, "Separate Clip (split at selection / playhead)\tCmd+E",
                       playerLoaded);
+        menu.addItem (315, "Heal Separation\tCmd+H", playerLoaded);
         menu.addItem (306, "Crop to Loop Range\tCtrl+Cmd+C",
                       playerLoaded && engine.getPlayer().hasLoopRegion());
+        menu.addItem (317, "Consolidate Selection",
+                      playerLoaded && engine.getPlayer().hasLoopRegion());
+        menu.addItem (316, "Strip Silence", playerLoaded);
         menu.addSeparator();
         menu.addItem (311, "Start Range at Playhead\t,",  playerLoaded);
         menu.addItem (312, "Finish Range at Playhead\t.", playerLoaded);
@@ -627,6 +631,9 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 312)  editFinishRange();
     else if (id == 313)  removeLastCapture();
     else if (id == 314)  togglePunchMode();
+    else if (id == 315)  editHealSeparation();
+    else if (id == 316)  editStripSilence();
+    else if (id == 317)  editConsolidateSelection();
     else if (id == 320)  showBatchRenameDialog();
     else if (id == 321)  showBatchColourDialog();
     else if (id == 330)  moveSelectedStrips (-1);

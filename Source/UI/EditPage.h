@@ -100,6 +100,9 @@ namespace zynforge
         // ready yet.
         void  setLogicalRowsVisible (const std::vector<int>& rows);
         void  scrollToSample (juce::int64 sample);
+        // Zoom + scroll so the sample range [a, b) fills the viewport (Pro
+        // Tools "Zoom to Selection"). No-op until a session is loaded.
+        void  zoomToSamples (juce::int64 a, juce::int64 b);
 
         // Active row tracking for Tab-to-Transient. TrackRow's mouse-
         // down handler sets the row index that was last clicked; the

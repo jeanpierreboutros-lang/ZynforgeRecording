@@ -4090,6 +4090,19 @@ namespace zynforge
                                   viewport.getViewPositionY());
     }
 
+    void EditPage::zoomToSamples (juce::int64 a, juce::int64 b)
+    {
+        if (list == nullptr) return;
+        const auto& player = engine.getPlayer();
+        const auto total = player.isLoaded() ? player.getTotalLengthSamples() : 0;
+        if (total <= 0 || b <= a) return;
+        // Zoom so the selection ~fills the viewport (a little headroom), then
+        // centre on it. setZoom clamps to [1, 16].
+        const double frac = (double) (b - a) / (double) total;
+        if (frac > 0.0) setZoom ((float) juce::jlimit (1.0, 16.0, 0.9 / frac));
+        scrollToSample ((a + b) / 2);
+    }
+
     void EditPage::setZoom (float z)
     {
         z = juce::jlimit (1.0f, 16.0f, z);

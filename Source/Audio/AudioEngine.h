@@ -620,6 +620,24 @@ namespace zynforge
         // range becomes its own clip. splitTrackAtPlayhead is a thin
         // snap+playhead wrapper around this.
         bool splitTrackAtSample (int track, juce::int64 timelineSample);
+        // Heal Separation (Pro Tools Cmd+H): merge the two adjacent clips
+        // whose shared boundary is nearest `timelineSample`, but ONLY when
+        // they're genuinely contiguous in the same file (i.e. they were split
+        // from one clip and not moved/trimmed apart). Returns true if a join
+        // was healed. The range variant heals every such boundary in [a, b).
+        bool healSeparationAt    (int track, juce::int64 timelineSample);
+        int  healSeparationRange (int track, juce::int64 start, juce::int64 end);
+        // Strip Silence: scan the track's active-take audio and separate it
+        // into clips around stretches quieter than thresholdDb for at least
+        // minSilenceSamples, dropping those silent gaps. Clips shorter than
+        // minClipSamples are discarded too. Non-destructive (clip-level only).
+        // Returns the number of audible clips left, or -1 on failure.
+        int  stripSilence (int track, float thresholdDb,
+                           juce::int64 minSilenceSamples, juce::int64 minClipSamples);
+        // Consolidate [start, end) on one track into a single new flat file
+        // (Audio Files/Track_NN_consolidated_K.wav) referenced by one clip,
+        // baking in gains / fades / clip order. Returns true on success.
+        bool consolidateRange (int track, juce::int64 start, juce::int64 end);
         // Remove the audio inside [start, end) on one track: split at both
         // edges, then drop every clip that falls fully inside the range
         // (locked clips are spared). Leaves a gap -- non-destructive, the

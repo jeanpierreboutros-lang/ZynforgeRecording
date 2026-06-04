@@ -700,6 +700,78 @@ void MainComponent::editSeparateAtSelection()
                       : juce::String ("Nothing to separate in the selection"));
 }
 
+// Heal Separation (Cmd+H): rejoin a clean split at the playhead, or every
+// healable split inside the selected range, on the target tracks.
+void MainComponent::editHealSeparation()
+{
+    auto& player = engine.getPlayer();
+    const auto before = engine.playlistsToJson();
+    int n = 0;
+    if (player.hasLoopRegion())
+    {
+        const auto a = player.getLoopStart(), b = player.getLoopEnd();
+        for (int phys : tracksToEditPhysical()) n += engine.healSeparationRange (phys, a, b);
+    }
+    else
+    {
+        const auto pos = currentPlayheadSamples (engine);
+        for (int phys : tracksToEditPhysical()) if (engine.healSeparationAt (phys, pos)) ++n;
+    }
+    if (n > 0) pushClipUndo ("Heal separation", before);
+    if (editPage != nullptr) editPage->repaint();
+    showStatus (n > 0 ? "Healed " + juce::String (n) + " separation(s)"
+                      : juce::String ("No healable split here (clips were moved or trimmed apart)"));
+}
+
+// Zoom to Selection (E): fit the selected range to the EDIT viewport.
+void MainComponent::editZoomToSelection()
+{
+    auto& player = engine.getPlayer();
+    if (editPage == nullptr) return;
+    if (! player.hasLoopRegion())
+    { showStatus ("Select a range first (Range tool, or , and .), then E to zoom"); return; }
+    editPage->zoomToSamples (player.getLoopStart(), player.getLoopEnd());
+}
+
+// Strip Silence: separate each target track's take into clips around the
+// silent gaps (good defaults: -42 dB, 300 ms gap, 150 ms minimum clip).
+void MainComponent::editStripSilence()
+{
+    auto& player = engine.getPlayer();
+    if (! player.isLoaded()) { showStatus ("Load or record a session first"); return; }
+    const double sr = juce::jmax (1.0, player.getSampleRate());
+    const auto before = engine.playlistsToJson();
+    int tracks = 0, clips = 0;
+    for (int phys : tracksToEditPhysical())
+    {
+        const int r = engine.stripSilence (phys, -42.0f,
+                                            (juce::int64) (sr * 0.30),
+                                            (juce::int64) (sr * 0.15));
+        if (r > 0) { ++tracks; clips += r; }
+    }
+    if (tracks > 0) pushClipUndo ("Strip silence", before);
+    if (editPage != nullptr) editPage->repaint();
+    showStatus (tracks > 0 ? "Strip silence: " + juce::String (clips) + " clip(s) on "
+                              + juce::String (tracks) + " track(s)  (-42 dB / 300 ms)"
+                           : juce::String ("Strip silence found nothing to separate"));
+}
+
+// Consolidate: flatten the selected range on each target track into one new
+// file (bakes in gains / fades / clip order).
+void MainComponent::editConsolidateSelection()
+{
+    auto& player = engine.getPlayer();
+    if (! player.hasLoopRegion()) { showStatus ("Select a range first, then Consolidate"); return; }
+    const auto a = player.getLoopStart(), b = player.getLoopEnd();
+    const auto before = engine.playlistsToJson();
+    int n = 0;
+    for (int phys : tracksToEditPhysical()) if (engine.consolidateRange (phys, a, b)) ++n;
+    if (n > 0) pushClipUndo ("Consolidate", before);
+    if (editPage != nullptr) editPage->repaint();
+    showStatus (n > 0 ? "Consolidated " + juce::String (n) + " track(s)"
+                      : juce::String ("Nothing to consolidate in the selection"));
+}
+
 // Clear (Delete): remove the audio inside the selected range on every
 // target track, leaving a gap. Non-destructive -- the files are untouched
 // and Cmd+Z restores the clips.
