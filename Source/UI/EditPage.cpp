@@ -1254,18 +1254,22 @@ namespace zynforge
                                 g.reduceClipRegion (waveArea);
                                 const double t0 = (double) c.fileStartSamples / srW;
                                 const double t1 = (double) (c.fileStartSamples + c.fileLengthSamples) / srW;
+                                // Scale the drawn waveform by the clip's gain so
+                                // the shape visibly grows when boosted and
+                                // shrinks when cut -- matching what you'll hear.
+                                const float gz = juce::Decibels::decibelsToGain (c.gainDb, -60.0f);
                                 g.setColour (c.muted
                                     ? clipTint.brighter (0.20f).withAlpha (brand::alpha::muted)
                                     : clipTint.brighter (0.45f));
                                 if (stereo && thumbnailR.getTotalLength() > 0.0)
                                 {
                                     const int half = waveArea.getHeight() / 2;
-                                    thumbnailL.drawChannels (g, waveArea.withHeight (half), t0, t1, waveZoom (thumbnailL));
-                                    thumbnailR.drawChannels (g, waveArea.withTrimmedTop (half), t0, t1, waveZoom (thumbnailR));
+                                    thumbnailL.drawChannels (g, waveArea.withHeight (half), t0, t1, waveZoom (thumbnailL) * gz);
+                                    thumbnailR.drawChannels (g, waveArea.withTrimmedTop (half), t0, t1, waveZoom (thumbnailR) * gz);
                                 }
                                 else
                                 {
-                                    thumbnailL.drawChannels (g, waveArea, t0, t1, waveZoom (thumbnailL));
+                                    thumbnailL.drawChannels (g, waveArea, t0, t1, waveZoom (thumbnailL) * gz);
                                 }
                             }
                         }
