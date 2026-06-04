@@ -131,6 +131,7 @@ namespace zynforge
         juce::int64 lastDragSamples { 0 };
         juce::int64 dragStartFadeIn  { 0 };
         juce::int64 dragStartFadeOut { 0 };
+        float       dragStartGainDb  { 0.0f };   // clip-gain-line drag (mode 7)
 
         // Strip reorder drag -- armed on swatch-column mouseDown,
         // activates once vertical movement exceeds 8 px. Each
@@ -1268,6 +1269,30 @@ namespace zynforge
                             }
                         }
 
+                        // ─── Clip-gain line (drag to ride the clip level) ───
+                        // 0 dB = centre of the block; ±12 dB maps to the inner
+                        // band. Grab the line (±5 px) to drag it; everywhere
+                        // else in the body still moves the clip.
+                        {
+                            auto gArea = block.withTrimmedTop (headH).reduced (3, 4);
+                            if (gArea.getHeight() > 6 && block.getWidth() > 8)
+                            {
+                                const int gy = clipGainLineY (c.gainDb, gArea);
+                                const bool active = (draggingClipModeInt == 7 && draggingClipIdx == clipIdx_);
+                                g.setColour (brand::accentStatus.withAlpha (active ? 0.95f : 0.50f));
+                                g.drawHorizontalLine (gy, (float) gArea.getX(), (float) gArea.getRight());
+                                g.fillRect (juce::Rectangle<int> (gArea.getX(), gy - 1, 6, 3));
+                                if (active || std::abs (c.gainDb) > 0.05f)
+                                {
+                                    g.setColour (brand::accentStatus.brighter (0.2f));
+                                    g.setFont (brand::type::caption().withHeight (9.0f));
+                                    g.drawText (juce::String (c.gainDb, 1) + " dB",
+                                                juce::Rectangle<int> (gArea.getX() + 8, gy - 11, 64, 10),
+                                                juce::Justification::topLeft, false);
+                                }
+                            }
+                        }
+
                         if (headH > 0)
                         {
                             auto headRect = block.withHeight (headH);
@@ -1513,6 +1538,23 @@ namespace zynforge
         { const int hx = headerOriginX(); return ex >= hx && ex < hx + swatchW; }
         bool inNameZone (int ex) const noexcept
         { const int hx = headerOriginX(); return ex >= hx + swatchW && ex < hx + headerW; }
+
+        // Y of a clip's gain line within its inner band: 0 dB = centre,
+        // +12 dB near the top, -12 dB near the bottom. Shared by paint + the
+        // drag hit-test so they never disagree.
+        static int clipGainLineY (float gainDb, juce::Rectangle<int> gArea) noexcept
+        {
+            const float g12 = juce::jlimit (-12.0f, 12.0f, gainDb);
+            return gArea.getCentreY()
+                 - (int) (g12 / 12.0f * ((float) gArea.getHeight() * 0.5f * 0.85f));
+        }
+        // Inverse: a y within gArea -> the gain dB it represents (clamped).
+        static float clipGainFromY (int y, juce::Rectangle<int> gArea) noexcept
+        {
+            const float denom = juce::jmax (1.0f, (float) gArea.getHeight() * 0.5f * 0.85f);
+            return juce::jlimit (-12.0f, 12.0f,
+                                 (float) (gArea.getCentreY() - y) / denom * 12.0f);
+        }
 
         // Draws the swatch column, header panel, divider, selection highlight
         // and TAKE chip at x = hx (the horizontal scroll offset). Called at
@@ -1985,6 +2027,31 @@ namespace zynforge
                                                             + c.fileLengthSamples
                                                             - c.fadeOutSamples);
 
+                            // Clip-gain-line grab (Smart / Grabber): when the
+                            // click lands on the gain line, ride the clip's
+                            // level instead of moving it. Takes priority over
+                            // body Move; edges + fade handles still win above.
+                            if (! c.locked
+                                && (activeTool == EditToolsBar::Tool::Smart
+                                 || activeTool == EditToolsBar::Tool::Grabber
+                                 || activeTool == EditToolsBar::Tool::None))
+                            {
+                                const int gHeadH = juce::jmin (12, juce::jmax (0, inner.getHeight() - 6));
+                                juce::Rectangle<int> gBlk (xL, inner.getY(),
+                                                           juce::jmax (1, xR - xL), inner.getHeight());
+                                auto gArea = gBlk.withTrimmedTop (gHeadH).reduced (3, 4);
+                                if (gArea.getHeight() > 6 && e.x > xL + hitZone && e.x < xR - hitZone
+                                    && std::abs (e.y - clipGainLineY (c.gainDb, gArea)) <= 5)
+                                {
+                                    draggingClipIdx     = i;
+                                    draggingClipModeInt = 7;   // ClipGain
+                                    dragStartGainDb     = c.gainDb;
+                                    if (auto* page = findParentComponentOfClass<EditPage>())
+                                        page->beginClipEdit();
+                                    return;
+                                }
+                            }
+
                             // Fade-in handle -- top-edge band, near
                             // (start + fadeIn).
                             if (e.y - laneTop < fadeHandleZone
@@ -2343,6 +2410,29 @@ namespace zynforge
                 const juce::int64 totalSamples = player.isLoaded()
                     ? player.getTotalLengthSamples() : 0;
                 const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
+
+                // Clip-gain line drag (mode 7): vertical position -> dB.
+                if (draggingClipModeInt == 7 && totalSamples > 0)
+                {
+                    const auto* clips = engine.tryClipsFor (index);
+                    if (clips != nullptr && draggingClipIdx < (int) clips->size())
+                    {
+                        const auto& c = (*clips)[(size_t) draggingClipIdx];
+                        const auto mapper = TimelineMapper::forLane (inner, totalSamples);
+                        const int xL = mapper.toX (c.timelineStartSamples);
+                        const int xR = mapper.toX (c.timelineStartSamples + c.fileLengthSamples);
+                        const int gHeadH = juce::jmin (12, juce::jmax (0, inner.getHeight() - 6));
+                        juce::Rectangle<int> gBlk (xL, inner.getY(),
+                                                   juce::jmax (1, xR - xL), inner.getHeight());
+                        auto gArea = gBlk.withTrimmedTop (gHeadH).reduced (3, 4);
+                        const float dB = clipGainFromY (e.y, gArea);
+                        for (int peer : editGroupPeers())
+                            engine.setClipGainDb (peer, draggingClipIdx, dB);
+                        repaint();
+                    }
+                    return;
+                }
+
                 if (totalSamples > 0 && inner.getWidth() > 0)
                 {
                     const double samplesPerPx = (double) totalSamples / (double) inner.getWidth();
