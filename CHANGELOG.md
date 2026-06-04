@@ -30,6 +30,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - **EDIT clips now render as DAW-style region blocks** — each clip/take is framed as a discrete block with a name-header bar and a coloured border (instead of one continuous waveform). The yellow clip-start "cut-flag" is gone — a clip's border now shows where it begins. Lane area not covered by a clip is masked to the lane background, so trimmed/split clips read as separate blocks. (`EditPage.cpp`.)
 
 ### Added (latest)
+- **EDIT view — Pro Tools-parity edit pass:**
+  - **Strip Silence** (Edit menu) — separates each target track's take into clips around the silent gaps (-42 dB / 300 ms gap / 150 ms min clip) and drops the dead air. Non-destructive, undoable.
+  - **Heal Separation** (Cmd+H) — rejoins a clean split at the playhead, or every healable boundary in the selection (only merges clips genuinely contiguous in the same file).
+  - **Consolidate** (Edit menu, and per-clip in the right-click menu) — flattens a range / clip into one new flat file (bakes in gains + fades + clip order).
+  - **Draggable clip-gain line** — ride a clip's level by dragging the gain line inside the clip block (Smart / Grabber tool); 0 dB centre, ±12 dB, with a dB readout.
+  - **Zoom to Selection** (E) — fit the selected range to the EDIT viewport.
+  - **Numeric selection readout** — the ruler shows `Sel <start> ▸ <end> (<length>)` in M:SS.mmm when a range is selected.
+  - **Clip right-click menu** gained **Rename clip…** and **Consolidate clip** (on top of the existing mute/lock/duplicate/delete/gain/fades).
 - **Cmd+Z now undoes mixer moves too** — Undo previously only covered clip + automation edits, so the everyday operations (fader, pan, mute, solo, **rename, recolour**, routing) couldn't be undone and the Undo menu stayed greyed. A coalesced poll now snapshots the mixer and records a single undo step once a change settles (~300 ms — a fader drag is one step, not one per pixel). **Recording is deliberately not undoable** — a captured take can't be undone away.
 - **Delete asks before removing a recording** — pressing Delete on a clip/range in EDIT now pops a confirmation ("Delete recording?"). The recorded file stays on disk; Delete only pulls the clip from the arrangement, and Cmd+Z restores it. Shift+Delete (ripple) confirms too.
 
