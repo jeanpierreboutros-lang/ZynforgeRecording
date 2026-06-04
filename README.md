@@ -97,6 +97,14 @@ Five dialects with **full action parity** (transport, scene recall → marker, p
 ### Companion server
 HTTP server on `:9000` — browser / iPad opens `http://<this-mac>:9000/`. Polled state JSON, POST commands for mute / solo / arm / transport, continuous PCM stream for remote audition (`/stream.wav`).
 
+**Security & secure remote access.** The companion binds **loopback only (`127.0.0.1`)** and every request needs a 32-hex access token (regenerated each start) via `?t=<token>` or `Authorization: Bearer`. On the same machine that's secure — localhost traffic isn't sniffable. The transport is **plaintext HTTP**, so it is *not* exposed to the LAN by default, and you should **not** serve it raw over Wi-Fi (the token and the audio stream would be sniffable). To reach it from a phone/tablet or off-machine, put a **tunnel** in front of loopback — the tunnel terminates real, CA-backed TLS and adds its own identity, which is stronger than any self-signed cert this app could ship:
+
+- **Tailscale** (easiest, zero-config): `tailscale serve https / http://127.0.0.1:9000` → open the `https://<machine>.<tailnet>.ts.net/` URL on any device on your tailnet.
+- **Cloudflare Tunnel**: `cloudflared tunnel --url http://127.0.0.1:9000` → gives a one-off `https://…trycloudflare.com` URL.
+- **SSH port-forward** (LAN, no extra service): on the phone-side machine, `ssh -L 9000:127.0.0.1:9000 user@<mac>` then browse `http://127.0.0.1:9000/` locally.
+
+Why no built-in HTTPS: JUCE has no server-side TLS, so in-app HTTPS would mean bundling a TLS stack + a **self-signed** cert (scary browser warnings, more attack surface) — a worse security/UX trade than a tunnel that gives a trusted cert for free. See `decisions.md` *Companion server is loopback-only with a per-session access token*.
+
 ### Show-day reliability
 - **LOCK** button disables every other control so a stray click can't kill a take
 - Redundant-write to a second drive in parallel

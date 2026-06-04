@@ -375,9 +375,16 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
             // Show + copy the full URL (with access token) so the
             // engineer can paste it on their phone without typing
             // the 32-hex token. Companion is loopback-only by
-            // default; LAN exposure is a separate menu item.
+            // default; for phone / off-machine access put a tunnel in
+            // front of loopback (Tailscale / Cloudflare / SSH -L) -- it
+            // gives real TLS, unlike serving plaintext HTTP over Wi-Fi.
+            // See README "Companion server -- Security & secure remote access".
             juce::SystemClipboard::copyTextToClipboard (url);
-            showStatus ("Companion on (loopback-only) -- URL copied to clipboard");
+            if (engine.isCompanionExposedOnLan())
+                showStatus (juce::String::fromUTF8 (
+                    "⚠ Companion EXPOSED ON LAN (plaintext) -- use a tunnel for remote access, not raw Wi-Fi"));
+            else
+                showStatus ("Companion on (loopback-only) -- URL copied. For phone access, tunnel to 127.0.0.1:9000 (see README)");
         }
         else
         {
