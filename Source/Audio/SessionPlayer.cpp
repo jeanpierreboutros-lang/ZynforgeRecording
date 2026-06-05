@@ -210,7 +210,10 @@ namespace zynforge
 
         const juce::int64 lStart = loopStart.load (std::memory_order_relaxed);
         const juce::int64 lEnd   = loopEnd  .load (std::memory_order_relaxed);
-        const bool        looping = (lStart >= 0 && lEnd > lStart);
+        // Loop playback only when the ⟲ loop-play toggle is on AND a region is
+        // set -- so selecting a range for editing doesn't force play to loop.
+        const bool        looping = loopEnabled.load (std::memory_order_relaxed)
+                                 && lStart >= 0 && lEnd > lStart;
 
         if (looping && startPos >= lEnd)
         {

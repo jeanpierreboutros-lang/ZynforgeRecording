@@ -2032,6 +2032,7 @@ namespace zynforge
                     f.engine.getPlayer().loadSession (dir);
                     constexpr juce::int64 loopStart = 10000, loopEnd = 20000;
                     f.engine.getPlayer().setLoopRegion (loopStart, loopEnd);
+                    f.engine.getPlayer().setLoopEnabled (true);   // loop-PLAY on (region alone no longer wraps)
                     f.engine.startPlayback();
                     expect (fillPlaybackBuffer (f) > 0.20f);
 

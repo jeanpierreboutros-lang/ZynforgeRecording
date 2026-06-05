@@ -588,6 +588,13 @@ MainComponent::MainComponent()
         return selectedLogical.count (logicalFromPhysicalIdx (physTrack)) > 0;
     };
     editPage->isStripSelectionEmpty = [this] { return selectedLogical.empty(); };
+    // Option/Alt-drag with the Selector: clear the strip selection so the
+    // range is global -- it shades every track and range edits hit all tracks.
+    editPage->onRangeSelectAllTracks = [this]
+    {
+        clearStripSelection();
+        if (editPage != nullptr) editPage->repaint();
+    };
     // Right-click ▸ Delete Channel from the EDIT row header. Select just
     // this channel (so the highlight matches what's about to go), then run
     // the shared confirm + delete path used by the Track menu + Delete key.

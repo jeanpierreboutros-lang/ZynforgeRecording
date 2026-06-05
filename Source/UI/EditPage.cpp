@@ -2041,13 +2041,19 @@ namespace zynforge
                     {
                         player.clearLoopRegion();
                         // Tie the range to THIS track: select it (Shift to add
-                        // more tracks to the selection). The range shading then
-                        // only highlights the selected track(s), and range edits
-                        // (Delete / Crop) apply to them -- instead of every
-                        // track lighting up from the global loop region.
+                        // more tracks). Option/Alt-drag selects the range across
+                        // ALL tracks. The range shading then highlights the
+                        // selected track(s) -- or all of them -- and range edits
+                        // (Delete / Crop) apply to the same set.
                         if (auto* pg = findParentComponentOfClass<EditPage>())
-                            if (pg->onRowSelect)
+                        {
+                            if (e.mods.isAltDown())
+                            {
+                                if (pg->onRangeSelectAllTracks) pg->onRangeSelectAllTracks();
+                            }
+                            else if (pg->onRowSelect)
                                 pg->onRowSelect (index, e.mods.isShiftDown());
+                        }
                         dragStartX          = e.x;
                         lastDragSamples     = sx;     // store anchor sample
                         draggingClipIdx     = -1;

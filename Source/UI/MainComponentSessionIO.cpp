@@ -81,32 +81,41 @@ void MainComponent::closeSession()
     }
 
     // Closing loses any UNSAVED mixer / edit / cue / automation changes
-    // (recorded audio is always already on disk). Confirm first.
+    // (recorded audio is always already on disk). Offer Save & Close /
+    // Close Without Saving / Cancel -- the same choice as quitting, but it
+    // only unloads the session and returns to Welcome (the app stays open).
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::AlertWindow::showAsync (
-        juce::MessageBoxOptions()
-            .withIconType (juce::MessageBoxIconType::QuestionIcon)
-            .withTitle ("Close session?")
-            .withMessage ("Return to the Welcome screen without quitting the app.\n\n"
-                          "Recorded audio stays on disk. Any unsaved mixer / edit / cue / "
-                          "automation changes since the last Save will be lost — Save first "
-                          "if you want to keep them.")
-            .withButton ("Close")
-            .withButton ("Cancel"),
-        [self] (int result)
-        {
-            if (self == nullptr || result != 1) return;   // first button = id 1
+    const auto sessionDir = engine.getActiveSessionDir();
 
-            auto& engine = self->engine;
-            engine.stopPlayback();
+    auto* aw = new juce::AlertWindow (
+        "Close session?",
+        "Return to the Welcome screen without quitting the app.\n\n"
+        "Recorded audio is always on disk. Unsaved mixer / edit / cue / "
+        "automation changes since the last Save will be lost unless you save.",
+        juce::MessageBoxIconType::QuestionIcon);
+    aw->setLookAndFeel (&getLookAndFeel());
+    aw->addButton ("Save & Close",         1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Close Without Saving", 2);
+    aw->addButton ("Cancel",               0, juce::KeyPress (juce::KeyPress::escapeKey));
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+        [self, aw, sessionDir] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            if (self == nullptr || result == 0) return;          // Cancel
+
+            if (result == 1 && sessionDir.isDirectory())         // Save & Close
+                self->saveSessionStateTo (sessionDir);
 
             // Forget the session so showStartupWelcome won't auto-reopen it,
             // and reset every session-scoped bit of state to the fresh-empty
             // slate (mirrors a launch with no session).
+            auto& engine = self->engine;
+            engine.stopPlayback();
             engine.setActiveSessionDir ({});
             engine.getPlayer().unload();
             engine.getPlayer().clearAllClips();
             engine.getPlayer().clearLoopRegion();
+            engine.getPlayer().setLoopEnabled (false);
             engine.getMarkers().clearContext();
             engine.clearAutomation (AudioEngine::AutomationParam::Volume);
             engine.clearAutomation (AudioEngine::AutomationParam::Pan);
@@ -119,12 +128,12 @@ void MainComponent::closeSession()
             self->undoManager.clearUndoHistory();
             self->lastTrackCount = -1;            // force a strip rebuild (now empty)
             self->updateTransportLabels();
-            self->showStatus ("Session closed");
+            self->showStatus (result == 1 ? "Saved + closed session" : "Session closed");
 
             // activeSessionDir is empty now -> this shows the Welcome dialog
             // (New / Open) instead of auto-reopening the last session.
             self->showStartupWelcome();
-        });
+        }), false);
 }
 
 bool MainComponent::saveSessionStateTo (const juce::File& dir)

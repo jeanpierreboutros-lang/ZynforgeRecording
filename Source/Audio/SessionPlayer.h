@@ -61,6 +61,13 @@ namespace zynforge
         juce::int64 getLoopStart() const noexcept { return loopStart.load(std::memory_order_relaxed); }
         juce::int64 getLoopEnd()   const noexcept { return loopEnd  .load(std::memory_order_relaxed); }
 
+        // Loop-PLAY toggle, independent of the loop REGION. The region (set by
+        // the Selector / , / .) is also the edit selection, so merely having a
+        // region shouldn't force playback to loop. Playback wraps within the
+        // region only when loop-play is enabled (the transport ⟲ button).
+        void setLoopEnabled (bool on) noexcept { loopEnabled.store (on, std::memory_order_relaxed); }
+        bool isLoopEnabled() const noexcept    { return loopEnabled.load (std::memory_order_relaxed); }
+
         // RT-safe: fills outputs[i] with samples from track i, position advances.
         void processBlock (float* const* outputs, int numOutputs, int numSamples) noexcept;
 
@@ -112,6 +119,7 @@ namespace zynforge
         std::atomic<juce::int64> totalLength { 0 };
         std::atomic<juce::int64> loopStart   { -1 };
         std::atomic<juce::int64> loopEnd     { -1 };
+        std::atomic<bool>        loopEnabled { false };
 
         double deviceSampleRate { 48000.0 };
         double fileSampleRate   { 48000.0 };

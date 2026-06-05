@@ -220,7 +220,7 @@ namespace zynforge
         play     ->setTooltip ("Play / pause VSC playback.");
         stop     ->setTooltip ("Stop everything (recording + playback) and rewind.");
         record   ->setTooltip ("Toggle recording.");
-        loop     ->setTooltip ("Toggle loop between Loop In / Out markers.");
+        loop     ->setTooltip ("Loop play: repeat the selected range (or the whole take) while playing.");
 
         // Accessibility: icon-only buttons need an explicit spoken name --
         // VoiceOver has no glyph to read. Title = the action; help text
@@ -276,17 +276,19 @@ namespace zynforge
         };
         loop     ->onClick = [this]
         {
+            // Loop-PLAY toggle: when on, playback wraps within the selected
+            // range (the loop region) forever. Turning it on with no range
+            // selected loops the whole take. Does NOT clear the region (that's
+            // the edit selection) -- toggling off just stops the wrap.
             auto& p = engine.getPlayer();
-            if (p.hasLoopRegion())
+            const bool nowOn = ! p.isLoopEnabled();
+            if (nowOn && ! p.hasLoopRegion())
             {
-                p.clearLoopRegion();
-            }
-            else
-            {
-                // Default loop: 0 → total length.
                 const auto total = p.getTotalLengthSamples();
                 if (total > 0) p.setLoopRegion (0, total);
             }
+            p.setLoopEnabled (nowOn);
+            refreshStates();
         };
 
         refreshStates();
@@ -332,7 +334,7 @@ namespace zynforge
     {
         const bool rec  = engine.isRecording();
         const bool pl   = engine.isPlaying();
-        const bool lp   = engine.getPlayer().hasLoopRegion();
+        const bool lp   = engine.getPlayer().isLoopEnabled();   // ⟲ lit when loop-PLAY is on
 
         // A transport stop -- playback or recording just went from on to
         // off, whatever triggered it (space bar, button, stop-all). Flash

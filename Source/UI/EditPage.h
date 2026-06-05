@@ -81,6 +81,10 @@ namespace zynforge
         // global range (set via , / .) should shade every track, vs a
         // Selector range that only shades the selected track(s).
         std::function<bool ()>                                     isStripSelectionEmpty;
+        // Make the Selector range span every track (Option/Alt-drag). The host
+        // clears the strip selection so the range is global (all tracks shade,
+        // range edits apply to all).
+        std::function<void ()>                                     onRangeSelectAllTracks;
 
         // Channel removal from the EDIT view. A right-click on the row
         // header (or Delete on a selected channel) calls onRowDelete with
