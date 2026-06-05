@@ -57,6 +57,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - **Header tab panels toggle + light up** — DEVICE / PATCH / METERS are now **non-modal** floating panels: pressing the tab opens the panel and **pressing it again closes it**, and the button **glows (engaged amber) while its panel is open** (clearing when you close it via the tab or the panel's own close box). Previously these opened *modally* — they blocked the mixer and couldn't be clicked again to close. You can now keep working in the mixer/EDIT with the meterbridge (or patch/device) open on a second display.
 
 ### Fixed (ui)
+- **Range Selector now selects one track, not all** — dragging a range with the Selector tool used to shade the time range across *every* track (it set the global loop region, which each row drew), so it looked like all tracks were selected. The Selector now **selects the track you drag on** (Shift-drag to add more), the range shading **only highlights the selected track(s)**, and range edits (Delete / Crop) apply to them. A global loop set via `,` / `.` with nothing selected still spans all tracks (for loop playback).
 - **EDIT horizontal trackpad/wheel scroll restored** — removing the redundant horizontal scrollbar accidentally disabled horizontal scrolling; the viewport now scrolls left/right via trackpad/wheel again (the scrollbar stays hidden, the overview navigator remains).
 
 ### Added (session)

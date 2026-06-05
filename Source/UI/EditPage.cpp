@@ -1492,7 +1492,16 @@ namespace zynforge
                         };
                         const int xA = sampleToWavX (player.getLoopStart());
                         const int xB = sampleToWavX (player.getLoopEnd());
-                        if (xB > xA)
+                        // Only shade the range on the track(s) it applies to:
+                        // the selected strips, or EVERY track when nothing is
+                        // selected (a global loop set via , / .). The Selector
+                        // tool selects the track you drag on, so a single-track
+                        // range only highlights that track -- not all of them.
+                        bool drawHere = true;
+                        if (auto* pg = findParentComponentOfClass<EditPage>())
+                            drawHere = (pg->isStripSelectionEmpty && pg->isStripSelectionEmpty())
+                                    || (pg->isTrackSelected && pg->isTrackSelected (index));
+                        if (xB > xA && drawHere)
                         {
                             const juce::Rectangle<int> band (
                                 headerW + xA, 0, xB - xA, getHeight());
@@ -2031,6 +2040,14 @@ namespace zynforge
                     if (activeTool == EditToolsBar::Tool::Selector)
                     {
                         player.clearLoopRegion();
+                        // Tie the range to THIS track: select it (Shift to add
+                        // more tracks to the selection). The range shading then
+                        // only highlights the selected track(s), and range edits
+                        // (Delete / Crop) apply to them -- instead of every
+                        // track lighting up from the global loop region.
+                        if (auto* pg = findParentComponentOfClass<EditPage>())
+                            if (pg->onRowSelect)
+                                pg->onRowSelect (index, e.mods.isShiftDown());
                         dragStartX          = e.x;
                         lastDragSamples     = sx;     // store anchor sample
                         draggingClipIdx     = -1;

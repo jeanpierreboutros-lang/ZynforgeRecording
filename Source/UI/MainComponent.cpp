@@ -587,6 +587,7 @@ MainComponent::MainComponent()
     {
         return selectedLogical.count (logicalFromPhysicalIdx (physTrack)) > 0;
     };
+    editPage->isStripSelectionEmpty = [this] { return selectedLogical.empty(); };
     // Right-click ▸ Delete Channel from the EDIT row header. Select just
     // this channel (so the highlight matches what's about to go), then run
     // the shared confirm + delete path used by the Track menu + Delete key.

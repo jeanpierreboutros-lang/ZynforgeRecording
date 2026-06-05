@@ -77,6 +77,10 @@ namespace zynforge
         // selection highlight by asking the host whether it's selected.
         std::function<void (int /*physTrack*/, bool /*additive*/)> onRowSelect;
         std::function<bool (int /*physTrack*/)>                    isTrackSelected;
+        // True when NO strips are selected -- lets a row decide whether a
+        // global range (set via , / .) should shade every track, vs a
+        // Selector range that only shades the selected track(s).
+        std::function<bool ()>                                     isStripSelectionEmpty;
 
         // Channel removal from the EDIT view. A right-click on the row
         // header (or Delete on a selected channel) calls onRowDelete with
