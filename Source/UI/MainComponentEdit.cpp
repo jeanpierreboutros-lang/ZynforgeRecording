@@ -673,14 +673,23 @@ std::vector<int> MainComponent::tracksToEditPhysical()
 
 void MainComponent::editSplitAtPlayhead()
 {
-    const auto pos = currentPlayheadSamples (engine);
-    engine.getMarkers().drop (pos, "Split");
+    auto pos = engine.snapSampleToGrid (currentPlayheadSamples (engine));
 
     // Clip-level split across the target tracks (selected, else all).
+    const auto targets = tracksToEditPhysical();
+
+    // Zero-crossing snap (click-free cuts): nudge the cut to the nearest zero
+    // crossing within ±5 ms, using the first target track as the reference so
+    // every track is cut at the SAME sample (a coherent multitrack edit).
+    if (zeroCrossSnap && ! targets.empty())
+        pos = engine.nearestZeroCrossing (targets.front(), pos, 240);
+
+    engine.getMarkers().drop (pos, "Split");
+
     const auto before = engine.playlistsToJson();   // clip-aware undo
     int splits = 0;
-    for (int phys : tracksToEditPhysical())
-        if (engine.splitTrackAtPlayhead (phys)) ++splits;
+    for (int phys : targets)
+        if (engine.splitTrackAtSample (phys, pos)) ++splits;
     if (splits > 0)
         pushClipUndo ("Split clips at playhead", before);
 

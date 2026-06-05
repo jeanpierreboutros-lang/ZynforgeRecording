@@ -712,6 +712,16 @@ namespace zynforge
         bool setClipLocked   (int track, int clipIndex, bool locked);
         bool setClipName     (int track, int clipIndex, const juce::String& name);
         bool setClipGainDb   (int track, int clipIndex, float dB);
+        // Offline (read-only) normalize: scan the clip's audio for its peak and
+        // set the clip gain so that peak lands at targetDbFS. Non-destructive
+        // (the file is untouched); the clip-gain +12 dB ceiling caps the boost.
+        bool normalizeClip   (int track, int clipIndex, float targetDbFS = -0.3f);
+        // Offline (read-only) nearest-zero-crossing search around a timeline
+        // sample on a track, within ±windowSamples. Returns the adjusted
+        // timeline sample (or the original if no crossing / no audio). Used to
+        // make splits click-free.
+        juce::int64 nearestZeroCrossing (int track, juce::int64 timelineSample,
+                                         int windowSamples);
         bool deleteClip      (int track, int clipIndex);
         // Duplicate the clip onto the same track, placed after the end
         // of the source so the engineer doesn't have to nudge it.

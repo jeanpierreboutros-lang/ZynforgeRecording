@@ -404,6 +404,10 @@ private:
     // perf dashboard can grow/shrink (resized()) only when REC toggles.
     bool dashWasRecording { false };
 
+    // Snap Separate/split cuts to the nearest audio zero crossing (±5 ms) so
+    // hard cuts are click-free. Toggled from the Edit menu.
+    bool zeroCrossSnap { true };
+
     // SMART status cache. Polled in a slow timer because `diskutil
     // info` is a 50-200 ms blocking subprocess call; we don't want it
     // running every 24 Hz frame. -1 = unset, 0 = Verified, 1 = Failing,

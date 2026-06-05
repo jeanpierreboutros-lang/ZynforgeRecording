@@ -129,6 +129,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (308, "Set Range to Loop Range", playerLoaded);
         menu.addSeparator();
         menu.addItem (309, "Toggle Snap\t4", true, snapToMarkers);
+        menu.addItem (318, "Snap edits to zero-crossing (click-free)", true, zeroCrossSnap);
         menu.addItem (314, "Punch In/Out Mode",
                       playerLoaded, engine.isPunchModeOn());
         menu.addSeparator();
@@ -632,6 +633,9 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 307)  editSoloSelection();
     else if (id == 308)  editSetRangeToLoopRange();
     else if (id == 309)  editToggleSnap();
+    else if (id == 318)  { zeroCrossSnap = ! zeroCrossSnap;
+                           showStatus (zeroCrossSnap ? "Zero-crossing snap on (click-free cuts)"
+                                                     : "Zero-crossing snap off"); }
     else if (id == 310)  { if (engine.getPlayer().hasLoopRegion()) editSeparateAtSelection();
                            else                                    editSplitAtPlayhead(); }
     else if (id == 311)  editStartRange();

@@ -1100,6 +1100,106 @@ namespace zynforge
         return true;
     }
 
+    bool AudioEngine::normalizeClip (int track, int clipIndex, float targetDbFS)
+    {
+        auto* list = validClipList (trackClips, track, clipIndex);
+        if (list == nullptr) return false;
+        const auto& c = (*list)[(size_t) clipIndex];
+        if (c.locked) return false;
+
+        // The clip's source audio. Fall back to the track's Track_NN.wav when
+        // the clip doesn't carry an explicit file (seeded full-range clip).
+        auto file = c.audioFile;
+        if (! file.existsAsFile())
+            file = getActiveSessionDir().getChildFile ("Audio Files")
+                       .getChildFile (juce::String::formatted ("Track_%02d.wav", track + 1));
+        if (! file.existsAsFile()) return false;
+
+        juce::AudioFormatManager fm; fm.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (file));
+        if (reader == nullptr || reader->numChannels == 0) return false;
+
+        const juce::int64 start = juce::jmax ((juce::int64) 0, c.fileStartSamples);
+        const juce::int64 len   = juce::jmin (c.fileLengthSamples,
+                                              (juce::int64) reader->lengthInSamples - start);
+        if (len <= 0) return false;
+
+        // Read-only offline scan for the peak magnitude over the clip's region.
+        float peak = 0.0f;
+        const int block = 1 << 16;
+        juce::AudioBuffer<float> buf ((int) reader->numChannels, block);
+        for (juce::int64 p = 0; p < len; p += block)
+        {
+            const int n = (int) juce::jmin ((juce::int64) block, len - p);
+            if (! reader->read (&buf, 0, n, start + p, true, true)) break;
+            for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+                peak = juce::jmax (peak, buf.getMagnitude (ch, 0, n));
+        }
+        if (peak <= 0.0f) return false;   // silent -> nothing to normalize
+
+        // Non-destructive: set the clip gain so the peak hits the target.
+        // setClipGainDb clamps to +12 dB, so a very quiet clip boosts as far
+        // as the clip-gain range allows (the audio file is never altered).
+        const float gainDb = targetDbFS - juce::Decibels::gainToDecibels (peak);
+        return setClipGainDb (track, clipIndex, gainDb);
+    }
+
+    juce::int64 AudioEngine::nearestZeroCrossing (int track, juce::int64 timelineSample,
+                                                  int windowSamples)
+    {
+        const auto* list = tryClipsFor (track);
+        if (list == nullptr) return timelineSample;
+
+        // The clip under the cut.
+        const Clip* clip = nullptr;
+        for (const auto& c : *list)
+            if (timelineSample >= c.timelineStartSamples
+                && timelineSample <  c.timelineStartSamples + c.fileLengthSamples)
+            { clip = &c; break; }
+        if (clip == nullptr) return timelineSample;
+
+        auto file = clip->audioFile.existsAsFile()
+            ? clip->audioFile
+            : getActiveSessionDir().getChildFile ("Audio Files")
+                  .getChildFile (juce::String::formatted ("Track_%02d.wav", track + 1));
+        if (! file.existsAsFile()) return timelineSample;
+
+        juce::AudioFormatManager fm; fm.registerBasicFormats();
+        std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (file));
+        if (reader == nullptr || reader->numChannels == 0) return timelineSample;
+
+        const juce::int64 fileSample = clip->fileStartSamples
+                                     + (timelineSample - clip->timelineStartSamples);
+        const juce::int64 w = juce::jlimit ((juce::int64) 0, (juce::int64) 4800,
+                                            (juce::int64) windowSamples);
+        const juce::int64 readStart = juce::jmax ((juce::int64) 0, fileSample - w);
+        const juce::int64 readEnd   = juce::jmin ((juce::int64) reader->lengthInSamples,
+                                                  fileSample + w);
+        const int n = (int) (readEnd - readStart);
+        if (n <= 2) return timelineSample;
+
+        juce::AudioBuffer<float> buf ((int) reader->numChannels, n);
+        if (! reader->read (&buf, 0, n, readStart, true, true)) return timelineSample;
+
+        const int centre = (int) (fileSample - readStart);
+        const int chans  = buf.getNumChannels();
+        auto mono = [&] (int i) { float s = 0.0f; for (int ch = 0; ch < chans; ++ch) s += buf.getSample (ch, i); return s; };
+        auto crosses = [&] (int i) { return i > 0 && i < n
+            && ((mono (i - 1) <= 0.0f && mono (i) > 0.0f)
+             || (mono (i - 1) >= 0.0f && mono (i) < 0.0f)); };
+
+        int best = -1;
+        for (int d = 0; d < n && best < 0; ++d)
+        {
+            if (crosses (centre + d)) best = centre + d;
+            else if (crosses (centre - d)) best = centre - d;
+        }
+        if (best < 0) return timelineSample;   // no crossing in window -> leave the cut where it is
+
+        const juce::int64 adjustedFile = readStart + best;
+        return clip->timelineStartSamples + (adjustedFile - clip->fileStartSamples);
+    }
+
     bool AudioEngine::deleteClip (int track, int clipIndex)
     {
         auto* list = validClipList (trackClips, track, clipIndex);

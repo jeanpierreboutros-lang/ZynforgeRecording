@@ -2876,6 +2876,7 @@ namespace zynforge
             menu.addItem (410, "Duplicate clip",    ! locked);
             menu.addItem (411, "Delete clip",       ! locked);
             menu.addItem (413, "Consolidate clip",  ! locked);
+            menu.addItem (414, "Normalize clip",    ! locked);
             menu.addSeparator();
             menu.addSubMenu ("Clip gain",  gain);
             menu.addSubMenu ("Fade in",    fadeIn,  ! locked);
@@ -2912,6 +2913,7 @@ namespace zynforge
                     case 401: withUndo (locked ? "Unlock clip" : "Lock clip",   [&]{ self->engine.setClipLocked (self->index, clipIdx, ! locked); }); return;
                     case 410: withUndo ("Duplicate clip", [&]{ self->engine.duplicateClip (self->index, clipIdx); });           return;
                     case 411: withUndo ("Delete clip",    [&]{ self->engine.deleteClip    (self->index, clipIdx); });           return;
+                    case 414: withUndo ("Normalize clip", [&]{ self->engine.normalizeClip (self->index, clipIdx); });          return;
                     case 413: withUndo ("Consolidate clip", [&]
                               {
                                   if (auto* cl = self->engine.tryClipsFor (self->index))
@@ -4240,6 +4242,37 @@ namespace zynforge
         }
         list->setPlayheadX (playheadX);
         list->pollMixerState();
+
+        // ── Auto-scroll: keep the playhead on screen while playing ──────────
+        // On a long take zoomed in, the playhead would otherwise roll off the
+        // right edge and you'd lose it. Page-scroll (not continuous follow, so
+        // it doesn't jitter): when the playhead passes ~85% of the visible
+        // width, jump so it lands just right of the pinned header, showing the
+        // audio that's coming up. Only while playing and only when zoomed in
+        // (content wider than the view) -- so a stopped engineer can scroll
+        // freely.
+        if (player.isPlaying() && total > 0 && list != nullptr)
+        {
+            constexpr int kHeaderW = 380;
+            const int viewW = viewport.getViewWidth();
+            const int contentW = list->getWidth();
+            if (contentW > viewW + 1)   // zoomed in
+            {
+                const int contentWaveW = juce::jmax (1, contentW - kHeaderW);
+                const double frac = (double) pos / (double) total;
+                const int playheadContentX = kHeaderW + (int) (frac * contentWaveW);
+                const int viewX = viewport.getViewPositionX();
+                const int rightTrigger = viewX + (int) (viewW * 0.85);
+                if (playheadContentX > rightTrigger || playheadContentX < viewX + kHeaderW)
+                {
+                    const int maxX = juce::jmax (0, contentW - viewW);
+                    int newX = playheadContentX - kHeaderW - (int) (viewW * 0.10);
+                    newX = juce::jlimit (0, maxX, newX);
+                    if (newX != viewX)
+                        viewport.setViewPosition (newX, viewport.getViewPositionY());
+                }
+            }
+        }
 
         // Keep the overview navigator in sync with the live scroll/zoom.
         if (minimap.isVisible())
