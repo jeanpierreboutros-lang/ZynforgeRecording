@@ -3887,8 +3887,13 @@ namespace zynforge
         list = std::make_unique<TrackList> (engine, formatManager, thumbnailCache);
         list->sharedToolsBar = toolsBar.get();
         viewport.setViewedComponent (list.get(), false);
-        // Both scrollbars -- horizontal lights up as soon as zoom > 1.
-        viewport.setScrollBarsShown (true, true);
+        // Vertical scrollbar only. The HORIZONTAL scrollbar is intentionally
+        // off: the TimelineMinimap overview navigator (shown along the bottom
+        // when zoom > 1) already drives horizontal navigation -- and does more
+        // (it shows the whole take + your position + click/drag-to-jump), so a
+        // separate horizontal scrollbar was a redundant second blue bar.
+        // Horizontal scroll still works via trackpad/wheel and the minimap.
+        viewport.setScrollBarsShown (true, false);
         // Re-pin every row's header column to the left edge on horizontal
         // scroll so the meter / routing / R-I-S-M controls never slide away.
         viewport.onScroll = [this] { if (list != nullptr) list->relayoutHeaders(); };

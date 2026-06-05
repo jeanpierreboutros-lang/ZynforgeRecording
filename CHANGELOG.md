@@ -21,6 +21,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - **Companion server: secure remote access via tunnels, documented (no in-app TLS)** — the companion stays **loopback-only + token** (secure on the machine), and rather than shipping a self-signed-cert HTTPS stack (browser warnings, extra attack surface), secure phone/off-machine access is now done by fronting `127.0.0.1:9000` with a **tunnel** — Tailscale `serve`, Cloudflare Tunnel, or `ssh -L` — which provides real CA-backed TLS for free. README gained a "Companion server — Security & secure remote access" section with copy-paste recipes; the in-app start message points to it, and the host warns if the server is ever exposed on the LAN in plaintext. See `decisions.md`.
 
 ### Removed (latest)
+- **Redundant EDIT horizontal scrollbar** — when zoomed into the timeline, the EDIT view showed *two* near-identical blue bars at the bottom: a horizontal scrollbar and the overview-navigator (`TimelineMinimap`). The scrollbar is gone; the overview navigator stays — it does everything the scrollbar did and more (shows the whole take + your position, click/drag to jump). Horizontal scrolling still works via trackpad/wheel.
 - **Global clip-tally bar** — the thin red bar that flashed across the top of the track area when any channel clipped (the "PeakTally") has been removed at the engineer's request. Clip indication still lives on each strip's meter (the clip pip / CLIP×n label); click a meter to clear its latch.
 
 ### Changed (latest)
