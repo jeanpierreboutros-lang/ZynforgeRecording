@@ -45,6 +45,14 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
             return true;
         }
         if (kc == 'R' || kc == 'r') { editRedo(); return true; }
+        // Cmd+T -- toggle between the MIXER and EDIT views. Press once to
+        // open EDIT, press again to go back to the MIXER. (Bare 't' is the
+        // EDIT Trim tool, so the toggle uses the Command modifier.)
+        if (kc == 'T' || kc == 't')
+        {
+            switchView (currentView == View::Edit ? View::Mix : View::Edit);
+            return true;
+        }
     }
 
     // Option(Alt)+R -- bulk record-arm toggle over the selected strips.

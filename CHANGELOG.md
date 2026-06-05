@@ -52,6 +52,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ### Fixed (latest)
 - **Deleting a clip now clears its waveform** — after deleting the last clip on a track, the EDIT lane kept showing the waveform because the recorded `Track_NN.wav` is still on disk and the view fell back to drawing the whole-file thumbnail (the same fallback used for a fresh/live take). The view now distinguishes "fresh take, never edited" from "arrangement emptied by the engineer" and draws an empty lane in the latter case (both the waveform lane and the faint substrate behind automation lanes). The live-capture envelope still draws while recording.
 
+### Added (latest)
+- **Cmd+T toggles MIXER ⇄ EDIT** — press Cmd+T to jump into the EDIT view, press again to go back to the MIXER. (Bare `t` stays the EDIT Trim tool; the toggle uses the Command modifier, and is ignored while renaming a strip.)
+
 ### Added (session)
 - **File ▸ Close Session** — close the current session back to the Welcome screen **without quitting the app**, so you can start or open another session between sets instead of force-quitting and relaunching. Confirms first (recorded audio is always on disk; only unsaved mixer/edit/cue/automation changes are lost), then resets every session-scoped bit of state (audio, clips, markers, automation, cues, mixer strips, undo) to the clean slate and shows the New / Open welcome.
 
