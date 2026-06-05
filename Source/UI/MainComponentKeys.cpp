@@ -45,10 +45,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
             return true;
         }
         if (kc == 'R' || kc == 'r') { editRedo(); return true; }
-        // Cmd+T -- toggle between the MIXER and EDIT views. Press once to
-        // open EDIT, press again to go back to the MIXER. (Bare 't' is the
-        // EDIT Trim tool, so the toggle uses the Command modifier.)
-        if (kc == 'T' || kc == 't')
+        // Cmd++ -- toggle between the MIXER and EDIT views. Press once to
+        // open EDIT, press again to go back to the MIXER. Matches the +/=
+        // key (so Cmd+= and Cmd+Shift+= both work) and the numpad +.
+        if (kc == '=' || kc == '+' || kc == juce::KeyPress::numberPadAdd)
         {
             switchView (currentView == View::Edit ? View::Mix : View::Edit);
             return true;

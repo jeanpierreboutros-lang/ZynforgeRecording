@@ -3,6 +3,7 @@
 #include "AudioDeviceDialog.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
+#include "FloatingLaunch.h"
 
 namespace zynforge
 {
@@ -533,6 +534,6 @@ namespace zynforge
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar            = true;
         opts.resizable                    = true;
-        return opts.launchAsync();
+        return launchFloating (opts);   // non-modal so the PATCH tab can toggle it
     }
 }

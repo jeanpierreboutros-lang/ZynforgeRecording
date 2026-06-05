@@ -26,6 +26,23 @@ void MainComponent::timerCallback()
     // everyday operations, not just clip + automation edits. Skips recording.
     pollMixerUndo();
 
+    // Header "tab" buttons (DEVICE / PATCH / METERS) light up while their
+    // floating panel is open and clear when it closes. The non-modal panels
+    // only HIDE themselves on their close box, so reap any hidden one here
+    // (delete + forget) so the button state -- and memory -- stays correct
+    // whether the engineer closed it via the tab or the panel's own X.
+    auto syncTab = [] (juce::Component::SafePointer<juce::DialogWindow>& dlg,
+                       zynforge::IconButton& btn)
+    {
+        if (auto* w = dlg.getComponent())
+            if (! w->isVisible() && ! w->isMinimised())   // closed via its X (not just minimised)
+                { delete w; dlg = nullptr; }
+        btn.setToggleState (dlg.getComponent() != nullptr, juce::dontSendNotification);
+    };
+    syncTab (deviceDialog, deviceButton);
+    syncTab (patchDialog,  patchButton);
+    syncTab (metersDialog, metersButton);
+
     const int n = engine.getRecorder().getNumTracks();
     // Rebuild when the track COUNT changes OR the track SET was replaced
     // (device restart recreates TrackStates at the same count) -- either

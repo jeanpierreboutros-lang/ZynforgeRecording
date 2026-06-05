@@ -53,7 +53,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - **Deleting a clip now clears its waveform** — after deleting the last clip on a track, the EDIT lane kept showing the waveform because the recorded `Track_NN.wav` is still on disk and the view fell back to drawing the whole-file thumbnail (the same fallback used for a fresh/live take). The view now distinguishes "fresh take, never edited" from "arrangement emptied by the engineer" and draws an empty lane in the latter case (both the waveform lane and the faint substrate behind automation lanes). The live-capture envelope still draws while recording.
 
 ### Added (latest)
-- **Cmd+T toggles MIXER ⇄ EDIT** — press Cmd+T to jump into the EDIT view, press again to go back to the MIXER. (Bare `t` stays the EDIT Trim tool; the toggle uses the Command modifier, and is ignored while renaming a strip.)
+- **Cmd++ toggles MIXER ⇄ EDIT** — press Cmd and `+` (the `=`/`+` key, or numpad `+`) to jump into the EDIT view, press again to go back to the MIXER. Ignored while renaming a strip.
+- **Header tab panels toggle + light up** — DEVICE / PATCH / METERS are now **non-modal** floating panels: pressing the tab opens the panel and **pressing it again closes it**, and the button **glows (engaged amber) while its panel is open** (clearing when you close it via the tab or the panel's own close box). Previously these opened *modally* — they blocked the mixer and couldn't be clicked again to close. You can now keep working in the mixer/EDIT with the meterbridge (or patch/device) open on a second display.
+
+### Fixed (ui)
+- **EDIT horizontal trackpad/wheel scroll restored** — removing the redundant horizontal scrollbar accidentally disabled horizontal scrolling; the viewport now scrolls left/right via trackpad/wheel again (the scrollbar stays hidden, the overview navigator remains).
 
 ### Added (session)
 - **File ▸ Close Session** — close the current session back to the Welcome screen **without quitting the app**, so you can start or open another session between sets instead of force-quitting and relaunching. Confirms first (recorded audio is always on disk; only unsaved mixer/edit/cue/automation changes are lost), then resets every session-scoped bit of state (audio, clips, markers, automation, cues, mixer strips, undo) to the clean slate and shows the New / Open welcome.

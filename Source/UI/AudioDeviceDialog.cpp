@@ -2,6 +2,7 @@
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
+#include "FloatingLaunch.h"
 
 namespace zynforge
 {
@@ -549,6 +550,6 @@ namespace zynforge
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar            = true;
         opts.resizable                    = true;
-        return opts.launchAsync();
+        return launchFloating (opts);   // non-modal so the DEVICE tab can toggle it
     }
 }

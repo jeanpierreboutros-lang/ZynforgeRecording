@@ -3887,13 +3887,14 @@ namespace zynforge
         list = std::make_unique<TrackList> (engine, formatManager, thumbnailCache);
         list->sharedToolsBar = toolsBar.get();
         viewport.setViewedComponent (list.get(), false);
-        // Vertical scrollbar only. The HORIZONTAL scrollbar is intentionally
-        // off: the TimelineMinimap overview navigator (shown along the bottom
-        // when zoom > 1) already drives horizontal navigation -- and does more
-        // (it shows the whole take + your position + click/drag-to-jump), so a
-        // separate horizontal scrollbar was a redundant second blue bar.
-        // Horizontal scroll still works via trackpad/wheel and the minimap.
-        viewport.setScrollBarsShown (true, false);
+        // Vertical scrollbar visible; horizontal scrollbar hidden BUT
+        // horizontal scrolling still enabled (4th arg = allow horizontal
+        // scrolling without a scrollbar) so the trackpad / wheel still pan
+        // the timeline left-right. The redundant horizontal scrollbar (a
+        // second blue bar duplicating the TimelineMinimap overview navigator)
+        // is gone, but the scroll gesture is not.
+        viewport.setScrollBarsShown (true, false, /*allowVertWithoutBar*/ false,
+                                     /*allowHorizWithoutBar*/ true);
         // Re-pin every row's header column to the left edge on horizontal
         // scroll so the meter / routing / R-I-S-M controls never slide away.
         viewport.onScroll = [this] { if (list != nullptr) list->relayoutHeaders(); };

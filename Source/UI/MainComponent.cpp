@@ -118,7 +118,7 @@ MainComponent::MainComponent()
     {
         if (auto* w = patchDialog.getComponent())
         {
-            w->closeButtonPressed();   // second click closes the open dialog
+            delete w;                  // second click closes the non-modal window
             patchDialog = nullptr;
             return;
         }
@@ -259,7 +259,7 @@ MainComponent::MainComponent()
     {
         if (auto* w = metersDialog.getComponent())
         {
-            w->closeButtonPressed();
+            delete w;                 // second click closes the non-modal window
             metersDialog = nullptr;
             return;
         }
@@ -267,6 +267,17 @@ MainComponent::MainComponent()
     };
     metersButton.setTooltip ("Open the floating meterbridge -- drag onto a second display.");
     addAndMakeVisible (metersButton);
+
+    // Header "tab" buttons that open a floating panel light up while that
+    // panel is open (and clear when it's closed -- by the button OR by the
+    // panel's own close box; syncTabButtonStates() in the 10 Hz timer keeps
+    // them in sync). The active wash uses engagedAmber, the app's "this is
+    // engaged" accent. Pressing the button again closes the panel.
+    for (auto* b : { &deviceButton, &patchButton, &metersButton })
+    {
+        b->setColour (juce::TextButton::buttonOnColourId, brand::engagedAmber);
+        b->setColour (juce::TextButton::textColourOnId,   brand::onSignal (brand::engagedAmber));
+    }
 
     oscButton.onClick = [this]
     {
@@ -1731,7 +1742,7 @@ void MainComponent::onDeviceClicked()
 {
     if (auto* w = deviceDialog.getComponent())
     {
-        w->closeButtonPressed();
+        delete w;                      // second click closes the non-modal window
         deviceDialog = nullptr;
         return;
     }
