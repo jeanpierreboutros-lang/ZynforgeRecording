@@ -53,6 +53,12 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
             switchView (currentView == View::Edit ? View::Mix : View::Edit);
             return true;
         }
+        // Cmd+] zoom IN on the timeline, Cmd+[ zoom OUT (EDIT view only).
+        if (currentView == View::Edit && editPage != nullptr)
+        {
+            if (kc == ']') { editPage->setZoom (editPage->getZoom() * 1.41f); return true; }
+            if (kc == '[') { editPage->setZoom (editPage->getZoom() * 0.71f); return true; }
+        }
     }
 
     // Option(Alt)+R -- bulk record-arm toggle over the selected strips.

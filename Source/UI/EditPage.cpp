@@ -1309,22 +1309,27 @@ namespace zynforge
                                 g.fillRoundedRectangle (juce::Rectangle<float> (cx - 5.0f, (float) hr.getY(), 10.0f, (float) hr.getHeight()), 2.0f);
                                 g.setColour (col.withAlpha (active ? 0.95f : 0.65f));
                                 g.drawVerticalLine ((int) cx, (float) hr.getY() + 1.0f, (float) hr.getBottom() - 1.0f);
-                                // Triangle thumb -- points up for boost, down for cut.
-                                juce::Path tri;
+                                // Thumb -- a small fader grip at the gain line
+                                // (rides up for boost, down for cut). Replaces
+                                // the old triangular arrow; the value is now
+                                // spelled out in the GAIN readout beside it.
                                 const float ty = (float) hr.getCentreY() - g12 / 12.0f * ((float) hr.getHeight() * 0.5f - 2.0f);
-                                tri.addTriangle (cx - 6.0f, ty + 4.0f, cx + 6.0f, ty + 4.0f, cx, ty - 5.0f);
                                 g.setColour (col);
-                                g.fillPath (tri);
-                                // dB readout on a dark pill, bigger + bold.
-                                if (block.getWidth() > 44 && (active || std::abs (c.gainDb) > 0.05f))
+                                g.fillRoundedRectangle (juce::Rectangle<float> (cx - 5.0f, ty - 2.5f, 10.0f, 5.0f), 2.0f);
+                                // "GAIN ±X.X dB" readout on a dark pill -- always
+                                // shown (when there's room) so the control reads
+                                // as a labelled gain, not a mystery green arrow.
+                                if (block.getWidth() > 56)
                                 {
+                                    const juce::String sign = c.gainDb > 0.05f ? "+" : "";
+                                    const bool      touched = active || std::abs (c.gainDb) > 0.05f;
                                     const juce::Rectangle<int> pill (hr.getX() + 13, hr.getCentreY() - 9,
-                                                                     juce::jmin (60, hr.getRight() - (hr.getX() + 13)), 18);
+                                                                     juce::jmin (88, hr.getRight() - (hr.getX() + 13)), 18);
                                     g.setColour (brand::bgDeep.withAlpha (brand::alpha::bold));
                                     g.fillRoundedRectangle (pill.toFloat(), brand::radius::sm);
-                                    g.setColour (col.brighter (0.5f));
-                                    g.setFont (brand::type::caption().withHeight (13.0f).boldened());
-                                    g.drawText (juce::String (c.gainDb, 1) + " dB",
+                                    g.setColour (touched ? col.brighter (0.5f) : brand::textSecondary);
+                                    g.setFont (brand::type::caption().withHeight (12.0f).boldened());
+                                    g.drawText ("GAIN " + sign + juce::String (c.gainDb, 1) + " dB",
                                                 pill.reduced (4, 0), juce::Justification::centredLeft, false);
                                 }
                             }
