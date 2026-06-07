@@ -308,13 +308,14 @@ MainComponent::MainComponent()
             if (chosen <= 0) return;
             if (chosen == 10) { engine.stopOsc(); oscButton.setButtonText ("OSC"); showStatus ("OSC stopped"); return; }
             const int dialect = chosen - 1;
-            if (engine.startOsc (8000, dialect))
+            const int port = oscListenPort();
+            if (engine.startOsc (port, dialect))
             {
                 oscButton.setButtonText ("OSC *");
-                showStatus ("OSC listening on 8000 (" +
+                showStatus ("OSC listening on " + juce::String (port) + " (" +
                             juce::StringArray ({"Generic","DiGiCo","A&H","SSL","Yamaha"})[dialect] + ")");
             }
-            else showStatus ("OSC failed to bind port 8000");
+            else showStatus ("OSC failed to bind port " + juce::String (port));
         });
     };
     oscButton.setTooltip ("OSC remote: receive transport / scene / marker / channel-name messages from DiGiCo / A&H / SSL / Yamaha consoles or any OSC app.");

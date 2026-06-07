@@ -195,6 +195,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         oscMenu.addItem (113, "OSC SSL Live");
         oscMenu.addItem (114, "OSC Yamaha");
         oscMenu.addSeparator();
+        oscMenu.addItem (116, "Set OSC port (" + juce::String (oscListenPort()) + ")...");
         oscMenu.addItem (115, "Stop OSC", engine.isOscListening());
         menu.addSubMenu ("OSC", oscMenu);
 
@@ -353,13 +354,15 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id >= 110 && id <= 114)
     {
         const int dialect = id - 110;
-        if (engine.startOsc (8000, dialect))
-            showStatus ("OSC listening on 8000 (" +
+        const int port = oscListenPort();
+        if (engine.startOsc (port, dialect))
+            showStatus ("OSC listening on " + juce::String (port) + " (" +
                         juce::StringArray ({"Generic","DiGiCo","A&H","SSL","Yamaha"})[dialect] + ")");
         else
-            showStatus ("OSC failed to bind UDP 8000 -- port already in use?");
+            showStatus ("OSC failed to bind UDP " + juce::String (port) + " -- port already in use?");
     }
     else if (id == 115)  { engine.stopOsc(); showStatus ("OSC stopped"); }
+    else if (id == 116)  promptOscPort();
     else if (id == 400)
     {
         engine.getMidiClockOut().setEnabled (false);
@@ -776,3 +779,49 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
 }
 
 
+
+int MainComponent::oscListenPort() const
+{
+    if (auto* p = engine.getAppProps())
+        return juce::jlimit (1, 65535, p->getIntValue ("oscListenPort", 8000));
+    return 8000;
+}
+
+void MainComponent::promptOscPort()
+{
+    auto* aw = new juce::AlertWindow (
+        "OSC Port",
+        "UDP port this app listens on for OSC from your console / controller "
+        "(1-65535, default 8000). Point the desk's OSC target at this Mac's IP "
+        "address and this port.",
+        juce::MessageBoxIconType::NoIcon);
+    aw->setLookAndFeel (&laf);
+    aw->addTextEditor ("port", juce::String (oscListenPort()), "Port:");
+    aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    dialog::primeNameEditor (*aw, "port");
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+        [self, aw] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            if (self == nullptr || result != 1) return;
+
+            const int port = juce::jlimit (1, 65535,
+                                           aw->getTextEditorContents ("port").getIntValue());
+            if (auto* p = self->engine.getAppProps())
+            {
+                p->setValue ("oscListenPort", port);
+                p->saveIfNeeded();
+            }
+            // Rebind immediately if we were already listening.
+            if (self->engine.isOscListening())
+            {
+                const int dialect = self->engine.getOscDialect();
+                self->engine.stopOsc();
+                self->engine.startOsc (port, dialect);
+            }
+            self->showStatus ("OSC port set to " + juce::String (port));
+        }), false);
+}

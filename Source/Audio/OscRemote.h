@@ -40,6 +40,12 @@ namespace zynforge
         Dialect getDialect() const noexcept { return dialect; }
         void    setDialect (Dialect d);
 
+        // Test seam: route a message synchronously, exactly as the socket
+        // path would (parse + dialect dispatch + engine setters). Lets unit
+        // tests exercise the full OSC wiring without a UDP socket or the
+        // message loop.
+        void dispatchForTest (const juce::OSCMessage& m) { oscMessageReceived (m); }
+
     private:
         void oscMessageReceived (const juce::OSCMessage&) override;
 

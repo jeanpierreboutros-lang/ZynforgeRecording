@@ -121,6 +121,10 @@ private:
     // location, then re-pin everything from there. Stopped-only; the copy
     // runs on a background thread so a cross-volume move can't freeze the UI.
     void relocateActiveSession();
+    // OSC listen port (persisted in appProps, default 8000) + a prompt to
+    // change it; changing it while listening rebinds on the new port.
+    int  oscListenPort() const;
+    void promptOscPort();
     // Export a portable timeline sidecar (tracks + timecode-stamped markers
     // + cues) to a CSV an editor can use to rebuild the session elsewhere.
     void exportTimelineCsv();
