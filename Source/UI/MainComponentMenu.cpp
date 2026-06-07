@@ -224,7 +224,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // Session Info     = name / notes / read-only config summary.
         // The old "Settings" + "Properties" labels were too close;
         // engineers couldn't tell which dialog owned what.
-        menu.addItem (250, "Session Format & Recording...", ! engine.isRecording());
+        menu.addItem (255, "Session Format & Recording...", ! engine.isRecording());
         menu.addItem (251, "Session Info & Notes...",       engine.getActiveSessionDir().isDirectory());
         menu.addSeparator();
         menu.addItem (280, "Spectral auto-name strips",
@@ -476,7 +476,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 281) writeSoundcheckReport();
     else if (id == 282) runNoiseAnalysis();
     else if (id == 290) promptMirrorHost();
-    else if (id == 250)
+    else if (id == 255)
     {
         struct StubContent final : public juce::Component
         {
