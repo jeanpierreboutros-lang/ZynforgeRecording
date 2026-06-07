@@ -171,7 +171,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (54, "Show pre-flight checklist...");
         menu.addSeparator();
         menu.addItem (50, "Patch...");
-        menu.addItem (52, "Virtual Soundcheck -- repatch outputs ↔ inputs");
+        menu.addItem (52, "Virtual Soundcheck -- repatch outputs to match inputs");
         menu.addItem (51, "Meterbridge...");
         menu.addItem (56, "Add Marker...\tM",
                       engine.getActiveSessionDir().isDirectory());
