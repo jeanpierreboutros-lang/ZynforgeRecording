@@ -20,6 +20,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ### Added (latest)
 - **Sample-rate mismatch warning** — the app continuously compares the audio device's *live* rate (e.g. the incoming Dante / wordclock) against the session's rate (the loaded take's file rate, or the rate the session was created at) and warns on **any** divergence — 44.1 / 48 / 88.2 / 96 / 176.4 / 192 kHz. A persistent record-red banner sits in the header the whole time they disagree (so it can't scroll away), plus a one-shot dialog while stopped. Clears automatically once the clock matches again.
 
+### Fixed (latest, EDIT)
+- **Recording lanes show the red live envelope again, not blocky garbage** — regression: on record-start the EDIT view re-pointed each lane's thumbnail at the just-created, still-being-written `Track_NN.wav`, so it scanned a partial file and the mono paint path (an `else if`) drew that blocky partial *instead of* the red live-capture envelope. Now (1) the live red envelope takes priority in paint over any file thumbnail while a take is rolling (mono + stereo), and (2) `refresh()` keeps the lanes clear during recording instead of scanning the growing WAVs (also removes a 55-channel mid-capture disk read that contended with the recorder's writes). The real full-resolution waveform still swaps in cleanly the moment the take stops.
+
 ### Fixed (latest, session)
 - **Session Settings now shows + changes the *session* sample rate, not the device's** — it read and wrote the live audio-device rate, so a Dante clock-slave at 48 kHz made a 44.1 kHz session display "48 kHz", and Apply only nudged the device (which a slaved clock ignores) so nothing stuck. It now shows the session's real rate and Apply sets the session rate authoritatively (updates the record-guard + asks the hardware to follow; if the device clock won't move, the mismatch banner correctly stays lit). Rate list expanded to 44.1 / 48 / 88.2 / 96 / 176.4 / 192 kHz.
 

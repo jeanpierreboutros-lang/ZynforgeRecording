@@ -1195,12 +1195,12 @@ namespace zynforge
                 auto laneL = inner.withHeight (laneH);
                 auto laneR = inner.withTrimmedTop (laneH);
 
-                if (thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
+                if (! liveRecording && thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
                 {
                     g.setColour (waveColour);
                     thumbnailL.drawChannels (g, laneL, 0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
                 }
-                if (thumbnailR.getTotalLength() > 0.0 && ! arrangementEmptied)
+                if (! liveRecording && thumbnailR.getTotalLength() > 0.0 && ! arrangementEmptied)
                 {
                     g.setColour (waveColour);
                     thumbnailR.drawChannels (g, laneR, 0.0, thumbnailR.getTotalLength(), waveZoom (thumbnailR));
@@ -1221,15 +1221,18 @@ namespace zynforge
                 // Empty lanes are left blank -- the EDIT view's PlaceholderView
                 // owns the "no session" message, so no per-row hint here.
             }
+            else if (liveRecording)
+            {
+                // While the take is rolling the live red envelope OWNS the lane
+                // -- never the (possibly partial / cached) file thumbnail, or
+                // the lane shows blocky garbage instead of the growing capture.
+                g.setColour (brand::accentRecord);
+                drawRecEnvelope (g, inner, recPeakL, vz);
+            }
             else if (thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
             {
                 g.setColour (waveColour);
                 thumbnailL.drawChannels (g, inner, 0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
-            }
-            else if (liveRecording)
-            {
-                g.setColour (brand::accentRecord);
-                drawRecEnvelope (g, inner, recPeakL, vz);
             }
             }   // end "! haveClipBlocks" continuous-waveform fallback
 
@@ -4224,7 +4227,15 @@ namespace zynforge
         if (sessionDir != lastSessionDir && sessionDir.isDirectory())
             loadCacheFromSession (sessionDir);
 
-        list->setWaveformsFromSession (sessionDir);
+        // While recording, keep the lanes clear (the live red capture envelope
+        // owns them) and do NOT point thumbnails at the growing WAVs -- scanning
+        // a half-written file paints blocky garbage and the 55-channel disk read
+        // contends with the recorder's own writes. The real waveform is scanned
+        // once, cleanly, the moment the take stops (recJustStopped path).
+        if (engine.isRecording())
+            list->setWaveformsFromSession ({});
+        else
+            list->setWaveformsFromSession (sessionDir);
 
         updatePlaceholder();
         lastLoaded = engine.getPlayer().isLoaded();
