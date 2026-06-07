@@ -6,6 +6,17 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## AAF export built natively + de-risked with a round-trip oracle — 2026-06-08
+
+**Status:** Accepted (in progress — Phase 1 landed)
+**Context:** Real DAW interchange (a session opening as an editable timeline of clips → source WAVs) needs AAF: it's the one format Pro Tools — the dominant target in this market — imports. AES31/EDL are text and verifiable here, but Pro Tools doesn't ingest them, so they miss the #1 DAW. AAF, however, is a binary Microsoft-Compound-File container with a fragile object model, and neither a DAW nor the reference library (pyaaf2 / AAF SDK) is reachable from the build machine to validate output.
+**Decision:** Build AAF **natively in C++**, layered + phased, and **de-risk the binary with a write→read→assert oracle** (an independent reader in the test suite) rather than trusting the writer blind. Phases: (1) MS-CFB container writer + round-trip validator [done — `Source/Audio/Aaf/CompoundFile.h`, `Source/Tests/CompoundFileTests.cpp`]; (2) AAF object model — CompositionMob, one TimelineMobSlot per track, Sequences of SourceClips → MasterMob → SourceMob → WAVE descriptor with a **URL locator to the existing WAVs (external essence)**; (3) fades-as-effects + an embedded-essence option; (4) real-DAW import field-check. Target the conservative, widely-accepted AAF flavour.
+**Rationale:** The valuable format and the hard format are the same (AAF), so avoiding it would ship interchange that misses the main target. Re-deriving a fragile binary standard without the reference impl is risky, so we build our own oracle for everything verifiable here and treat "does Pro Tools specifically accept it" as a **documented field-check, exactly like the RF64 soak** — not a silent assumption. Phasing keeps each increment proven before the next; no new runtime dependency (the AAF SDK is heavyweight + unreachable offline).
+**Consequences:** Real-DAW import remains a one-time human verification step before the feature is trusted. The CFB writer is a reusable, fully-tested foundation. If field import ever needs the canonical SDK, the phased boundary makes swapping the lower layer tractable.
+**Related Documents:** `Source/Audio/Aaf/`, `Source/Tests/CompoundFileTests.cpp`, `tasks.md` (Full AAF/OMF interchange), this report's market analysis.
+
+---
+
 ## No plugin hosting — 2026-04-12
 
 **Status:** Accepted
