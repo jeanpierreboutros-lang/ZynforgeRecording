@@ -801,8 +801,8 @@ void MainComponent::editStripSilence()
                                     double lo, double hi, double step, double def, const juce::String& suffix)
             {
                 l.setText (name, juce::dontSendNotification);
-                l.setColour (juce::Label::textColourId, juce::Colour::fromRGB (0xe8, 0xe8, 0xee));
-                l.setFont (juce::Font (juce::FontOptions (13.0f)));
+                l.setColour (juce::Label::textColourId, brand::textPrimary);
+                l.setFont (brand::type::uiBody());
                 addAndMakeVisible (l);
                 s.setLookAndFeel (&lf);
                 s.setSliderStyle (juce::Slider::LinearHorizontal);

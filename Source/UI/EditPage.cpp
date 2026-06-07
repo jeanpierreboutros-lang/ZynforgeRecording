@@ -1337,7 +1337,7 @@ namespace zynforge
                             {
                                 const float g12 = juce::jlimit (-12.0f, 12.0f, c.gainDb);
                                 const auto col = active ? brand::accentStatus
-                                                        : brand::accentStatus.withAlpha (0.80f);
+                                                        : brand::accentStatus.withAlpha (brand::alpha::prominent);
                                 const float cx = (float) hr.getX() + 6.0f;
                                 // Fader track.
                                 g.setColour (brand::bgDeep.withAlpha (brand::alpha::scrim));
