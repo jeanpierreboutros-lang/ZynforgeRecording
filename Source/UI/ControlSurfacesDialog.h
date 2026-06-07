@@ -60,9 +60,7 @@ namespace zynforge
         {
             if (pi.osc)
                 return e.isOscListening() && e.getOscDialect() == pi.dialect;
-            if (auto* p = e.getAppProps())
-                return p->getBoolValue (juce::String ("cs_") + pi.key + "_enabled", false);
-            return false;
+            return e.getActiveSurfaceKey() == pi.key;   // MIDI surface is live
         }
 
         inline void setProtoEnabled (AudioEngine& e, const ProtoInfo& pi, bool on)
@@ -71,12 +69,18 @@ namespace zynforge
             {
                 if (on) e.startOsc (oscPort (e), pi.dialect);   // switches the single receiver
                 else    e.stopOsc();
+                return;
             }
-            else if (auto* p = e.getAppProps())
+            // MIDI surface: open it on the saved MIDI in/out (one surface at a time).
+            if (on)
             {
-                p->setValue (juce::String ("cs_") + pi.key + "_enabled", on);
-                p->saveIfNeeded();
+                auto* p = e.getAppProps();
+                const auto in  = p ? p->getValue (juce::String ("cs_") + pi.key + "_midiin")  : juce::String();
+                const auto out = p ? p->getValue (juce::String ("cs_") + pi.key + "_midiout") : juce::String();
+                e.enableControlSurface (pi.key, in, out);
             }
+            else
+                e.disableControlSurface();
         }
 
         // ── OSC-family settings ──────────────────────────────────────────
@@ -363,27 +367,21 @@ namespace zynforge
                 const auto& pi = protocols()[(size_t) row];
                 if (selected) { g.setColour (brand::brandOrange.withAlpha (0.18f)); g.fillRect (0, 0, w, h); }
 
-                // Only the OSC-family protocols actually drive the engine
-                // today; MIDI surfaces save config but don't yet do live
-                // control. Show that honestly instead of a tick that lies.
-                const bool wired = pi.osc;
-
                 const auto box = juce::Rectangle<float> (12.0f, h * 0.5f - 8.0f, 16.0f, 16.0f);
                 g.setColour (brand::edge); g.drawRoundedRectangle (box, 3.0f, 1.2f);
-                if (wired && protoEnabled (engine, pi))
+                if (protoEnabled (engine, pi))
                 {
                     g.setColour (brand::accentStatus);
                     g.fillRoundedRectangle (box.reduced (3.0f), 2.0f);
                 }
-
-                g.setColour (wired ? brand::textPrimary : brand::textMuted);
+                g.setColour (brand::textPrimary);
                 g.setFont (brand::type::ui (14.0f, false));
                 g.drawText (pi.name, 40, 0, w - 48, h, juce::Justification::centredLeft, true);
-                if (! wired)
+                if (! pi.osc)
                 {
                     g.setColour (brand::textMuted);
                     g.setFont (brand::type::caption());
-                    g.drawText ("settings only -- live control on roadmap", 40, 0, w - 56, h,
+                    g.drawText ("set MIDI in/out in settings", 40, 0, w - 56, h,
                                 juce::Justification::centredRight, true);
                 }
             }
@@ -392,7 +390,7 @@ namespace zynforge
             {
                 if (row < 0 || row >= getNumRows()) return;
                 const auto& pi = protocols()[(size_t) row];
-                if (e.x < 36 && pi.osc)   // checkbox column -> toggle (OSC only; MIDI is config-only)
+                if (e.x < 36)   // checkbox column -> toggle enable
                 {
                     setProtoEnabled (engine, pi, ! protoEnabled (engine, pi));
                     list.repaint();

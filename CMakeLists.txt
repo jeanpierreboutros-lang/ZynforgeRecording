@@ -75,6 +75,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/TimelineExportTests.cpp
     Source/Tests/OscRemoteTests.cpp
     Source/Tests/ChannelCsvTests.cpp
+    Source/Tests/McuProtocolTests.cpp
     Source/Tests/AudioCallbackTests.cpp
     Source/Tests/PlaceholderViewTests.cpp
     Source/Tests/ChannelStripAccessibilityTests.cpp
@@ -121,6 +122,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Audio/StripRouting.cpp
     Source/Audio/TrackExporter.cpp
     Source/Audio/OscRemote.cpp
+    Source/Audio/MidiControlSurface.cpp
     Source/Theme/ZynForgeLookAndFeel.cpp
 )
 

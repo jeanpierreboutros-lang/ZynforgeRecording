@@ -1,5 +1,6 @@
 #include "AudioEngine.h"
 #include "OscRemote.h"
+#include "MidiControlSurface.h"
 #include <juce_osc/juce_osc.h>
 #include "FastAccumulate.h"
 #include "TransientDetector.h"
@@ -356,6 +357,23 @@ namespace zynforge
         auto out = capturedConsoleNames;
         capturedConsoleNames.clear();
         return out;
+    }
+
+    bool AudioEngine::enableControlSurface (const juce::String& key,
+                                            const juce::String& inName, const juce::String& outName)
+    {
+        disableControlSurface();
+        surface = std::make_unique<MidiControlSurface> (*this);
+        const bool ok = surface->start (inName, outName);
+        if (ok) activeSurfaceKey = key;
+        else    { surface.reset(); activeSurfaceKey.clear(); }
+        return ok;
+    }
+
+    void AudioEngine::disableControlSurface()
+    {
+        if (surface != nullptr) { surface->stop(); surface.reset(); }
+        activeSurfaceKey.clear();
     }
 
     void AudioEngine::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m)

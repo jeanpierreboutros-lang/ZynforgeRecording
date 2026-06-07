@@ -27,6 +27,7 @@
 namespace zynforge
 {
     class OscRemote;
+    class MidiControlSurface;
     class CompanionServer;
 
     class AudioEngine final : public juce::AudioIODeviceCallback,
@@ -337,6 +338,13 @@ namespace zynforge
         void  onConsoleChannelName (int oneBasedIndex, const juce::String& name);
         // Take + clear the captured names (message thread).
         std::map<int, juce::String> takeCapturedConsoleNames();
+
+        // ── MIDI control surface (Mackie Control / FaderPort) ───────────
+        // Open a control surface on the given MIDI in/out device names. `key`
+        // identifies the active brand (one surface at a time). Returns success.
+        bool         enableControlSurface (const juce::String& key, const juce::String& inName, const juce::String& outName);
+        void         disableControlSurface();
+        juce::String getActiveSurfaceKey() const { return activeSurfaceKey; }
         int   getOscDialect() const;
 
         // Returns recording dir if recording, else loaded playback session,
@@ -864,6 +872,8 @@ namespace zynforge
         std::atomic<bool> keepRollingOnSyncLoss { false };
         std::atomic<bool> consoleCapture { false };   // capturing console channel names
         std::map<int, juce::String> capturedConsoleNames;   // message-thread only
+        std::unique_ptr<MidiControlSurface> surface;
+        juce::String activeSurfaceKey;
         std::unique_ptr<juce::MidiInput> mtcInput;
         juce::String                     mtcInputName;
 
