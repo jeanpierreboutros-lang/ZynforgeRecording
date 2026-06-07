@@ -657,9 +657,13 @@ MainComponent::MainComponent()
     setWantsKeyboardFocus (true);
     addKeyListener (this);
 
-    startTimerHz (10);  // poll for input-channel count + transport position
     rebuildStrips();
     updateTransportLabels();
+
+    if (s_testConstruct)   // headless test: skip timers, dialogs, menu-bar reg
+        return;
+
+    startTimerHz (10);  // poll for input-channel count + transport position
 
     // If the previous run had a session pinned, rehydrate its setlist
     // AND its UI layout (view, strip width, VCA panel, EDIT zoom).

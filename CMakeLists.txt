@@ -76,6 +76,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/OscRemoteTests.cpp
     Source/Tests/ChannelCsvTests.cpp
     Source/Tests/McuProtocolTests.cpp
+    Source/Tests/MenuDispatchTests.cpp
     Source/Tests/AudioCallbackTests.cpp
     Source/Tests/PlaceholderViewTests.cpp
     Source/Tests/ChannelStripAccessibilityTests.cpp

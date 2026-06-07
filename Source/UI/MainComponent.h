@@ -39,6 +39,12 @@ public:
     MainComponent();
     ~MainComponent() override;
 
+    // Test hook: when true, the ctor skips the startup timer, the deferred
+    // welcome / session-recovery dialogs, and macOS menu-bar registration --
+    // so a unit test can construct MainComponent headlessly (e.g. to audit
+    // every menu id for collisions). Set BEFORE constructing.
+    static inline bool s_testConstruct = false;
+
     void paint (juce::Graphics&) override;
     void resized() override;
 
