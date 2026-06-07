@@ -88,6 +88,11 @@ namespace zynforge
         // can recompute layout (and resolve "fit to window").
         std::function<void(TrackRow&, Size)> onSizeChosen;
 
+        // Apply one height to EVERY row at once (Option-drag a row's bottom
+        // edge, or "Set all tracks to ▸" in the size menu). customPx is used
+        // only when s == Size::Custom. Wired by TrackList.
+        std::function<void (Size /*s*/, int /*customPx*/)> onApplyToAllRows;
+
         // Tab / Shift+Tab in the name field: ask the TrackList to commit
         // and open the next / previous row's name editor (shiftDown =
         // previous). Wired by TrackList so it can resolve sibling rows.
@@ -2005,10 +2010,13 @@ namespace zynforge
                 return;
             }
             // Left-click in the bottom resize zone → start a drag-resize.
+            // Hold Option (Alt) to resize EVERY row to the same height at
+            // once (Pro Tools-style "apply to all tracks").
             if (isInResizeZone (e.getPosition()))
             {
                 dragStartHeight = getHeight();
                 dragging        = true;
+                resizeAllDrag   = e.mods.isAltDown();
                 return;
             }
             // Left-click on the coloured swatch column → starts a
@@ -2501,9 +2509,16 @@ namespace zynforge
             {
                 const int target = juce::jlimit (kMinRowH, kMaxRowH,
                                                  dragStartHeight + e.getDistanceFromDragStartY());
-                rowSize = Size::Custom;
-                customH = target;
-                if (onSizeChosen) onSizeChosen (*this, Size::Custom);
+                if (resizeAllDrag && onApplyToAllRows)
+                {
+                    onApplyToAllRows (Size::Custom, target);   // every row follows
+                }
+                else
+                {
+                    rowSize = Size::Custom;
+                    customH = target;
+                    if (onSizeChosen) onSizeChosen (*this, Size::Custom);
+                }
                 return;
             }
 
@@ -2726,6 +2741,7 @@ namespace zynforge
             const int  clickedClipIdx = draggingClipIdx;
             const bool wasClick       = (e.getDistanceFromDragStart() < 5);
             dragging         = false;
+            resizeAllDrag    = false;
             draggingPointIdx = -1;
             draggingTensionSegIdx = -1;
             draggingClipIdx  = -1;
@@ -2837,6 +2853,7 @@ namespace zynforge
         Size getRowSize() const noexcept { return rowSize; }
         void setRowSize (Size s) noexcept { rowSize = s; }
         int  getCustomHeight() const noexcept { return customH; }
+        void setCustomHeight (int px) noexcept { customH = juce::jlimit (kMinRowH, kMaxRowH, px); }
         int  getRowPixelHeight (int fitFallback) const noexcept
         {
             return pixelsFor (rowSize, fitFallback, customH);
@@ -3416,6 +3433,20 @@ namespace zynforge
             menu.addSeparator();
             add (8, "fit to window", Size::FitToWindow);
 
+            // Apply one preset to every track at once (same as Option-dragging
+            // a row edge). IDs 21..28 mirror the single-row sizes above.
+            juce::PopupMenu allMenu;
+            allMenu.addItem (21, "micro");
+            allMenu.addItem (22, "mini");
+            allMenu.addItem (23, "small");
+            allMenu.addItem (24, "medium");
+            allMenu.addItem (25, "large");
+            allMenu.addItem (26, "jumbo");
+            allMenu.addItem (27, "extreme");
+            allMenu.addSeparator();
+            allMenu.addItem (28, "fit to window");
+            menu.addSubMenu ("Set all tracks to", allMenu);
+
             // Takes (comp playlists) -- engineer captures the current
             // clip list as a named take, switches between takes for
             // comping. IDs 800..830 = pick a take; 850 = new take from
@@ -3461,14 +3492,21 @@ namespace zynforge
                 if (row == nullptr) return;
                 row->menuOpen = false;
 
-                if (chosen >= 1 && chosen <= 8)
-                {
-                    static const std::array<Size, 8> map { Size::Micro, Size::Mini, Size::Small,
+                static const std::array<Size, 8> sizeMap { Size::Micro, Size::Mini, Size::Small,
                                                            Size::Medium, Size::Large, Size::Jumbo,
                                                            Size::Extreme, Size::FitToWindow };
-                    const auto next = map[(std::size_t) (chosen - 1)];
+                if (chosen >= 1 && chosen <= 8)
+                {
+                    const auto next = sizeMap[(std::size_t) (chosen - 1)];
                     row->rowSize = next;
                     if (row->onSizeChosen) row->onSizeChosen (*row, next);
+                    return;
+                }
+                // "Set all tracks to ▸" -- 21..28 mirror the size list.
+                if (chosen >= 21 && chosen <= 28)
+                {
+                    const auto next = sizeMap[(std::size_t) (chosen - 21)];
+                    if (row->onApplyToAllRows) row->onApplyToAllRows (next, 0);
                     return;
                 }
 
@@ -3639,6 +3677,7 @@ namespace zynforge
         int                       customH               { 80 };
         int                       dragStartHeight       { 0 };
         bool                      dragging              { false };
+        bool                      resizeAllDrag         { false };   // Option-drag = resize every row
         bool                      menuOpen              { false };
         bool                      cursorIsResize        { false };
         // Comp-lanes view: when on (per row, opt-in via the take menu) the
@@ -3710,6 +3749,19 @@ namespace zynforge
             }
         }
 
+        // Apply one height preset (or a custom pixel height) to every row
+        // at once -- the destination of Option-drag + "Set all tracks to".
+        void applySizeToAll (TrackRow::Size s, int customPx)
+        {
+            for (auto& r : rows)
+            {
+                r->setRowSize (s);
+                if (s == TrackRow::Size::Custom && customPx > 0)
+                    r->setCustomHeight (customPx);
+            }
+            resized();
+        }
+
         // Tab / Shift+Tab from a row's name field hops to the next /
         // previous row (wrapping at the ends) and opens its editor.
         void tabRename (TrackRow& from, bool shift)
@@ -3751,6 +3803,7 @@ namespace zynforge
                 auto r = std::make_unique<TrackRow> (i, stereo, engine, formats, thumbCache);
                 r->onSizeChosen = [this] (TrackRow&, TrackRow::Size) { resized(); };
                 r->onTabRename  = [this] (TrackRow& from, bool shift) { tabRename (from, shift); };
+                r->onApplyToAllRows = [this] (TrackRow::Size s, int customPx) { applySizeToAll (s, customPx); };
                 r->toolbar                = sharedToolbar;
                 r->toolsBar               = sharedToolsBar;
                 r->clickRowIdx            = sharedClickRowIdx;
