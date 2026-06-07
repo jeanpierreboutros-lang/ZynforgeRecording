@@ -86,6 +86,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/MasterStripAccessibilityTests.cpp
     Source/Tests/VcaPanelAccessibilityTests.cpp
     Source/Tests/AutomationToolbarAccessibilityTests.cpp
+    Source/Tests/EditPageAccessibilityTests.cpp
     Source/UI/ChannelStrip.cpp
     Source/UI/LedMeter.cpp
     Source/UI/MiniSpectrum.cpp

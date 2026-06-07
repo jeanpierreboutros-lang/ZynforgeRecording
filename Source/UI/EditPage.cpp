@@ -4051,6 +4051,14 @@ namespace zynforge
         zoomVOut.setTooltip ("Shorter waveforms (vertical zoom out)");
         zoomHIn .setTooltip ("Zoom in on the timeline");
         zoomHOut.setTooltip ("Zoom out (1× = whole take)");
+        // Accessibility: the on-screen labels are "V+/V-/H+/H-", which a
+        // screen reader would read as glyphs. Give each a spoken name (and
+        // surface the tooltip as help text). They are TextButtons, so the
+        // button role + Return/Space activation already work.
+        zoomVIn .setTitle ("Vertical zoom in");    zoomVIn .setHelpText (zoomVIn .getTooltip());
+        zoomVOut.setTitle ("Vertical zoom out");   zoomVOut.setHelpText (zoomVOut.getTooltip());
+        zoomHIn .setTitle ("Horizontal zoom in");  zoomHIn .setHelpText (zoomHIn .getTooltip());
+        zoomHOut.setTitle ("Horizontal zoom out"); zoomHOut.setHelpText (zoomHOut.getTooltip());
         zoomVIn .onClick = [this] { setVerticalZoom (vZoom * 1.41f); };
         zoomVOut.onClick = [this] { setVerticalZoom (vZoom * 0.71f); };
         zoomHIn .onClick = [this] { setZoom (zoom * 1.41f); };
