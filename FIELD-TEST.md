@@ -116,3 +116,21 @@ For any 🟥 or 🟧 failure:
 4. The session folder if data-loss class.
 
 For 🟨 / ⬜: a list is fine; we'll batch them in the next session.
+
+## Throughput + RF64 — field soak (hardware-only, not unit-testable)
+
+Headless tests now cover write integrity at 64 channels (0 missed samples,
+full-length files) and the RF64 split policy. Two things still need a real
+rig + real time:
+
+1. **>4 GiB single take (RF64).** Record one mono WAV past 4 GiB:
+   - ≈ 8.3 h mono @ 24-bit/48k, or ~16 min × 32ch.
+   - Verify: (a) one continuous `Track_01.wav` (no `_part02`); (b) it opens
+     full-length in Pro Tools / Reaper / Logic; (c) `xxd -l 16 Track_01.wav`
+     shows `RF64` + a `ds64` chunk; (d) hard-kill mid-take (Activity Monitor →
+     Force Quit) leaves a file that still opens to ~the last 5 s flush.
+2. **High channel count at high rate, under real disk load.** 96–128 ch @
+   96k to a single drive (+ backup), full set length. Watch
+   `session.report.json` → `missedSamples: 0`, all files identical length,
+   and the live disk-health flag never trips. Use the external monitor
+   (`/tmp/zynforge_*.sh` pattern) to confirm overloads = 0, spread = 0.

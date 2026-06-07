@@ -555,6 +555,58 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            beginTest ("RF64 policy: WAV never auto-splits; AIFF/FLAC roll at their ceilings");
+            {
+                // Container codes: 0=WAV, 1=AIFF, 2=FLAC. WAV is written as
+                // RF64 past 4 GiB (one continuous file) so its ceiling is
+                // "no split"; AIFF (1.9 GiB) + FLAC (3.9 GiB) still roll.
+                using R = MultitrackRecorder;
+                expect (R::maxBytesForContainer (0) == std::numeric_limits<juce::int64>::max());
+                expectEquals (R::maxBytesForContainer (1), (juce::int64) 1900LL * 1024 * 1024);
+                expectEquals (R::maxBytesForContainer (2), (juce::int64) 3900LL * 1024 * 1024);
+                expect (R::maxBytesForContainer (0) > R::maxBytesForContainer (2));
+            }
+
+            beginTest ("High channel-count capture: 64 tracks, 0 missed samples, all files full length");
+            {
+                // Throughput integrity at scale -- the single writer thread
+                // must keep 64 channels in lockstep with no ring overflow.
+                constexpr int kTracks = 64;
+                constexpr int kBlocks = 192;          // ~1 s @ 48k/256
+                const auto sessionDir = makeTempSessionDir();
+                juce::int64 missed = -1;
+                {
+                    CallbackFixture f (kTracks, kTracks, 2);
+                    for (int i = 0; i < kTracks; ++i)
+                        f.engine.getRecorder().getTrack (i).armed.store (true);
+                    f.engine.getRecorder().setCaptureFormat (CaptureFormat::Wav24);
+                    expect (f.engine.startRecording (sessionDir));
+                    for (int i = 0; i < kTracks; ++i)
+                        f.writeInput (i, 0.2f, 256);
+                    for (int b = 0; b < kBlocks; ++b)
+                        f.process (256);
+                    f.engine.stopRecording();
+                    missed = f.engine.getRecorder().getMissedSamples();
+                }
+
+                expectEquals (missed, (juce::int64) 0);   // no ring overflow under load
+
+                // Every channel produced a full-length file.
+                juce::WavAudioFormat fmt;
+                int filesOk = 0;
+                for (int i = 1; i <= kTracks; ++i)
+                {
+                    const auto wav = sessionDir.getChildFile ("Audio Files")
+                                       .getChildFile ("Track_" + juce::String (i).paddedLeft ('0', 2) + ".wav");
+                    if (! wav.existsAsFile()) continue;
+                    std::unique_ptr<juce::AudioFormatReader> r (
+                        fmt.createReaderFor (wav.createInputStream().release(), true));
+                    if (r != nullptr && r->lengthInSamples >= 40000) ++filesOk;
+                }
+                expectEquals (filesOk, kTracks);
+                sessionDir.deleteRecursively();
+            }
+
             beginTest ("Two armed strips produce two separate WAV files");
             {
                 const auto sessionDir = makeTempSessionDir();
