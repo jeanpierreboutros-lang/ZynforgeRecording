@@ -385,9 +385,10 @@ void MainComponent::serviceTimecodeChase()
         if (std::llabs ((long long) (cur - target)) > slack)
             engine.getPlayer().setPositionSamples (target);
     }
-    else if (chaseWasLive && engine.isPlaying())
+    else if (chaseWasLive && engine.isPlaying() && ! engine.isKeepRollingOnSyncLoss())
     {
-        // Timecode master stopped -> park the transport.
+        // Timecode master stopped -> park the transport (unless the engineer
+        // chose to keep rolling through a sync dropout).
         engine.stopPlayback();
     }
     chaseWasLive = live;

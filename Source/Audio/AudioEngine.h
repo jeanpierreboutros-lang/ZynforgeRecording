@@ -70,6 +70,10 @@ namespace zynforge
         // currently points at, and a HH:MM:SS:FF string for display.
         juce::int64  getChaseTargetSamples() const;
         juce::String getChaseTimecodeString() const;
+        // When the timecode master parks/drops, keep playing (free-run) instead
+        // of stopping the transport. Off = stop when sync is lost.
+        void setKeepRollingOnSyncLoss (bool on) noexcept { keepRollingOnSyncLoss.store (on, std::memory_order_relaxed); }
+        bool isKeepRollingOnSyncLoss () const noexcept   { return keepRollingOnSyncLoss.load (std::memory_order_relaxed); }
 
         // juce::MidiInputCallback -- decodes incoming MTC on the MIDI thread.
         void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage&) override;
@@ -840,7 +844,8 @@ namespace zynforge
 
         TimecodeChase    timecodeChase;
         std::atomic<int> ltcSourceStrip { -1 };   // 0-based strip index, -1 = none
-        std::atomic<int> chaseMode      { 0 };    // 0=Off 1=LTC 2=MTC
+        std::atomic<int>  chaseMode      { 0 };    // 0=Off 1=LTC 2=MTC
+        std::atomic<bool> keepRollingOnSyncLoss { false };
         std::unique_ptr<juce::MidiInput> mtcInput;
         juce::String                     mtcInputName;
 

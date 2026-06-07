@@ -15,6 +15,7 @@
 #include "MarkerListDialog.h"
 #include "ClickSettingsDialog.h"
 #include "MirrorDrivesDialog.h"
+#include "TimecodeSyncDialog.h"
 
 using namespace zynforge;
 
@@ -232,28 +233,10 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (256, "Trim-Follow (console input gain -> soundcheck)",
                       true, engine.isTrimFollowEnabled());
 
-        // External timecode chase -- LTC off an audio input, or MTC over MIDI.
-        {
-            const auto mode = engine.getChaseMode();
-            juce::PopupMenu chaseMenu;
-            chaseMenu.addItem (610, "Off", true, mode == zynforge::AudioEngine::ChaseMode::Off);
-            chaseMenu.addSeparator();
-            juce::PopupMenu ltcMenu;
-            const int nt = engine.getRecorder().getNumTracks();
-            for (int i = 0; i < nt && i < 16; ++i)
-                ltcMenu.addItem (620 + i, "Input " + juce::String (i + 1), true,
-                                 mode == zynforge::AudioEngine::ChaseMode::Ltc
-                                 && engine.getLtcSourceStrip() == i + 1);
-            chaseMenu.addSubMenu ("LTC from audio input", ltcMenu, nt > 0);
-            juce::PopupMenu mtcMenu;
-            const auto midiIns = engine.getMidiInputNames();
-            for (int j = 0; j < midiIns.size() && j < 30; ++j)
-                mtcMenu.addItem (640 + j, midiIns[j], true,
-                                 mode == zynforge::AudioEngine::ChaseMode::Mtc
-                                 && engine.getMtcInputName() == midiIns[j]);
-            chaseMenu.addSubMenu ("MTC from MIDI input", mtcMenu, midiIns.size() > 0);
-            menu.addSubMenu ("Chase external timecode", chaseMenu);
-        }
+        // Transport Sync -- chase MTC / LTC with live status (full dialog).
+        menu.addItem (600, engine.getChaseMode() != zynforge::AudioEngine::ChaseMode::Off
+                              ? juce::String ("Transport Sync (chasing)...")
+                              : juce::String ("Transport Sync (MTC / LTC)..."));
         menu.addSeparator();
         menu.addItem (280, "Spectral auto-name strips",
                       engine.getRecorder().getNumTracks() > 0);
@@ -516,6 +499,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
         showStatus (on ? "Trim-Follow ON -- console input-gain moves now track the recorded soundcheck"
                        : "Trim-Follow OFF -- recorded tracks play at their printed level");
     }
+    else if (id == 600)  zynforge::TimecodeSyncDialog::launch (engine);
     else if (id == 610)
     {
         engine.setChaseMode (zynforge::AudioEngine::ChaseMode::Off);
