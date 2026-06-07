@@ -363,25 +363,37 @@ namespace zynforge
                 const auto& pi = protocols()[(size_t) row];
                 if (selected) { g.setColour (brand::brandOrange.withAlpha (0.18f)); g.fillRect (0, 0, w, h); }
 
-                // checkbox
+                // Only the OSC-family protocols actually drive the engine
+                // today; MIDI surfaces save config but don't yet do live
+                // control. Show that honestly instead of a tick that lies.
+                const bool wired = pi.osc;
+
                 const auto box = juce::Rectangle<float> (12.0f, h * 0.5f - 8.0f, 16.0f, 16.0f);
                 g.setColour (brand::edge); g.drawRoundedRectangle (box, 3.0f, 1.2f);
-                if (protoEnabled (engine, pi))
+                if (wired && protoEnabled (engine, pi))
                 {
                     g.setColour (brand::accentStatus);
                     g.fillRoundedRectangle (box.reduced (3.0f), 2.0f);
                 }
-                g.setColour (brand::textPrimary);
+
+                g.setColour (wired ? brand::textPrimary : brand::textMuted);
                 g.setFont (brand::type::ui (14.0f, false));
                 g.drawText (pi.name, 40, 0, w - 48, h, juce::Justification::centredLeft, true);
+                if (! wired)
+                {
+                    g.setColour (brand::textMuted);
+                    g.setFont (brand::type::caption());
+                    g.drawText ("settings only -- live control on roadmap", 40, 0, w - 56, h,
+                                juce::Justification::centredRight, true);
+                }
             }
 
             void listBoxItemClicked (int row, const juce::MouseEvent& e) override
             {
                 if (row < 0 || row >= getNumRows()) return;
-                if (e.x < 36)   // checkbox column -> toggle enable
+                const auto& pi = protocols()[(size_t) row];
+                if (e.x < 36 && pi.osc)   // checkbox column -> toggle (OSC only; MIDI is config-only)
                 {
-                    const auto& pi = protocols()[(size_t) row];
                     setProtoEnabled (engine, pi, ! protoEnabled (engine, pi));
                     list.repaint();
                 }
