@@ -131,6 +131,149 @@ namespace
         juce::Component content;
         std::vector<std::unique_ptr<Row>> rows;
     };
+
+    // Scrollable batch-colour table: one row per channel (number + name + a
+    // clickable colour swatch), plus a range bar at the top to colour a
+    // contiguous block at once. Colours apply LIVE through the engine, so the
+    // engineer can keep colouring as many channels / ranges as they like in
+    // one sitting (1-10 one colour, 11-20 another, then tweak individuals).
+    // Embedded in the Batch Colour AlertWindow; Cancel reverts to a snapshot.
+    class BatchColourTable final : public juce::Component
+    {
+    public:
+        BatchColourTable (AudioEngine& eng, std::function<void()> changed)
+            : engine (eng), onChanged (std::move (changed))
+        {
+            const int n = eng.getRecorder().getNumTracks();
+
+            addAndMakeVisible (rangeLabel);
+            rangeLabel.setText ("Colour channels", juce::dontSendNotification);
+            rangeLabel.setColour (juce::Label::textColourId, brand::textPrimary);
+            rangeLabel.setFont (brand::type::uiBody());
+
+            for (auto* e : { &fromEd, &toEd })
+            {
+                dialog::styleTextEditor (*e);
+                e->setInputRestrictions (4, "0123456789");
+                e->setJustification (juce::Justification::centred);
+                addAndMakeVisible (*e);
+            }
+            fromEd.setText ("1",                 juce::dontSendNotification);
+            toEd  .setText (juce::String (n),    juce::dontSendNotification);
+
+            addAndMakeVisible (dashLabel);
+            dashLabel.setText ("to", juce::dontSendNotification);
+            dashLabel.setJustificationType (juce::Justification::centred);
+            dashLabel.setColour (juce::Label::textColourId, brand::textSecondary);
+
+            rangeBtn.setButtonText ("Pick colour for range...");
+            dialog::stylePrimary (rangeBtn);
+            rangeBtn.onClick = [this] { pickForRange(); };
+            addAndMakeVisible (rangeBtn);
+
+            for (int i = 0; i < n; ++i)
+            {
+                auto r = std::make_unique<Row>();
+                r->index = i;
+                r->num.setText ("In " + juce::String (i + 1), juce::dontSendNotification);
+                r->num.setColour (juce::Label::textColourId, brand::textTertiary);
+                r->num.setFont (brand::type::uiLabel());
+                r->name.setText (eng.getRecorder().getTrack (i).name, juce::dontSendNotification);
+                r->name.setColour (juce::Label::textColourId, brand::textPrimary);
+                r->name.setFont (brand::type::uiBody());
+                applySwatchColour (*r);
+                r->swatch.onClick = [this, idx = i] { pickForOne (idx); };
+                content.addAndMakeVisible (r->num);
+                content.addAndMakeVisible (r->name);
+                content.addAndMakeVisible (r->swatch);
+                rows.push_back (std::move (r));
+            }
+            viewport.setViewedComponent (&content, false);
+            viewport.setScrollBarsShown (true, false);
+            addAndMakeVisible (viewport);
+        }
+
+        int preferredHeight() const { return juce::jlimit (220, 540, (int) rows.size() * 31 + 64); }
+
+        void resized() override
+        {
+            auto b = getLocalBounds();
+            auto top = b.removeFromTop (32);
+            rangeLabel.setBounds (top.removeFromLeft (108));
+            fromEd.setBounds (top.removeFromLeft (46).reduced (1, 2));
+            dashLabel.setBounds (top.removeFromLeft (22));
+            toEd.setBounds (top.removeFromLeft (46).reduced (1, 2));
+            top.removeFromLeft (8);
+            rangeBtn.setBounds (top.removeFromLeft (juce::jmin (200, top.getWidth())).reduced (0, 2));
+            b.removeFromTop (8);
+            viewport.setBounds (b);
+
+            const int rowH = 28, gap = 3, numW = 50, swW = 48, pad = 4;
+            const int w = juce::jmax (180, viewport.getWidth() - 14);
+            content.setSize (w, (int) rows.size() * (rowH + gap) + pad);
+            int y = pad;
+            for (auto& r : rows)
+            {
+                r->num   .setBounds (6, y, numW, rowH);
+                r->swatch.setBounds (w - swW - 6, y + 3, swW, rowH - 6);
+                r->name  .setBounds (6 + numW + 8, y, w - numW - swW - 28, rowH);
+                y += rowH + gap;
+            }
+        }
+
+    private:
+        struct Row { int index { 0 }; juce::Label num, name; juce::TextButton swatch; };
+
+        void applySwatchColour (Row& r)
+        {
+            const auto argb = engine.getRecorder().getTrack (r.index)
+                                 .colourARGB.load (std::memory_order_relaxed);
+            r.swatch.setColour (juce::TextButton::buttonColourId,
+                                argb != 0 ? juce::Colour (argb) : brand::stripDefaultGrey);
+        }
+
+        void setRowColour (int idx, juce::Colour c)
+        {
+            if (idx < 0 || idx >= (int) rows.size()) return;
+            engine.setTrackColour (idx, c);
+            rows[(size_t) idx]->swatch.setColour (juce::TextButton::buttonColourId, c);
+            rows[(size_t) idx]->swatch.repaint();
+            if (onChanged) onChanged();
+        }
+
+        void pickForOne (int idx)
+        {
+            const auto cur = juce::Colour (engine.getRecorder().getTrack (idx)
+                                              .colourARGB.load (std::memory_order_relaxed));
+            auto picker = std::make_unique<zynforge::StripColourPicker> (
+                cur, [this, idx] (juce::Colour c) { setRowColour (idx, c); });
+            juce::CallOutBox::launchAsynchronously (std::move (picker),
+                rows[(size_t) idx]->swatch.getScreenBounds(), nullptr);
+        }
+
+        void pickForRange()
+        {
+            const int n = (int) rows.size();
+            if (n == 0) return;
+            const int first = juce::jlimit (1, n, fromEd.getText().getIntValue());
+            const int last  = juce::jlimit (first, n, toEd.getText().getIntValue());
+            auto picker = std::make_unique<zynforge::StripColourPicker> (
+                brand::brandOrange,
+                [this, first, last] (juce::Colour c)
+                { for (int ch = first - 1; ch < last; ++ch) setRowColour (ch, c); });
+            juce::CallOutBox::launchAsynchronously (std::move (picker),
+                rangeBtn.getScreenBounds(), nullptr);
+        }
+
+        AudioEngine& engine;
+        std::function<void()> onChanged;
+        juce::Label      rangeLabel, dashLabel;
+        juce::TextEditor fromEd, toEd;
+        juce::TextButton rangeBtn;
+        juce::Viewport   viewport;
+        juce::Component  content;
+        std::vector<std::unique_ptr<Row>> rows;
+    };
 }
 
 void MainComponent::clearStripSelection()
@@ -330,48 +473,41 @@ void MainComponent::showBatchColourDialog()
     const int total = engine.getRecorder().getNumTracks();
     if (total <= 0) { showStatus ("No channels to colour"); return; }
 
-    // Two-step: range picker, then colour picker. Keeps the AlertWindow
-    // simple (numeric inputs only) and reuses StripColourPicker.
+    // Snapshot every colour so Cancel can revert (the table applies live).
+    std::vector<juce::uint32> snapshot;
+    snapshot.reserve ((size_t) total);
+    for (int i = 0; i < total; ++i)
+        snapshot.push_back (engine.getRecorder().getTrack (i)
+                               .colourARGB.load (std::memory_order_relaxed));
+
     auto* aw = new juce::AlertWindow ("Batch Colour Channels",
-                                      "Apply a colour to a contiguous range of channels.",
+                                      "Click a channel's swatch to recolour it, or colour a whole "
+                                      "range at once. Changes apply live -- keep going for as many "
+                                      "channels as you like, then Done (or Cancel to revert).",
                                       juce::MessageBoxIconType::NoIcon);
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome (not JUCE-default navy)
-    aw->addTextEditor ("first", "1",                  "First channel:");
-    aw->addTextEditor ("last",  juce::String (total), "Last channel:");
-    aw->addButton ("Pick colour...", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    aw->addButton ("Cancel",       0, juce::KeyPress (juce::KeyPress::escapeKey));
-    dialog::primeNameEditor (*aw, "first");   // focus first field; Enter advances to Pick colour
+
+    auto* table = new BatchColourTable (engine, [this] { lastTrackCount = -1; });
+    table->setSize (460, table->preferredHeight());
+    aw->addCustomComponent (table);
+    aw->addButton ("Done",   1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
     aw->enterModalState (true,
-        juce::ModalCallbackFunction::create ([this, aw, total] (int result)
+        juce::ModalCallbackFunction::create ([this, aw, table, snapshot, total] (int result)
         {
-            std::unique_ptr<juce::AlertWindow> dispose (aw);
-            if (result != 1) return;
-
-            const int firstCh = juce::jlimit (1, total,
-                                              aw->getTextEditorContents ("first").getIntValue());
-            const int lastCh  = juce::jlimit (firstCh, total,
-                                              aw->getTextEditorContents ("last").getIntValue());
-
-            // App's gradient StripColourPicker (same palette as per-strip +
-            // EDIT recolour + "Colour selected..."), not the OS selector.
-            auto picker = std::make_unique<zynforge::StripColourPicker> (
-                brand::brandOrange,
-                [this, firstCh, lastCh] (juce::Colour chosen)
-                {
-                    for (int ch = firstCh - 1; ch < lastCh; ++ch)
-                        engine.setTrackColour (ch, chosen);
-                    lastTrackCount = -1;
-                });
-
-            juce::CallOutBox::launchAsynchronously (
-                std::move (picker),
-                juce::Rectangle<int>{ getScreenBounds().getCentreX(),
-                                      getScreenBounds().getCentreY(), 1, 1 },
-                nullptr);
-
-            showStatus ("Colouring channels " + juce::String (firstCh)
-                        + "-" + juce::String (lastCh) + "...");
+            std::unique_ptr<juce::AlertWindow>     disposeAw (aw);
+            std::unique_ptr<BatchColourTable>      disposeTable (table);
+            if (result != 1)   // Cancel -> restore the snapshot
+            {
+                for (int i = 0; i < total && i < (int) snapshot.size(); ++i)
+                    engine.setTrackColour (i, juce::Colour (snapshot[(size_t) i]));
+                lastTrackCount = -1;
+                showStatus ("Batch colour cancelled");
+                return;
+            }
+            lastTrackCount = -1;
+            showStatus ("Channel colours updated");
         }),
         false);
 }
