@@ -16,7 +16,6 @@
 #include "ClickSettingsDialog.h"
 #include "../Audio/SpectralClassifier.h"
 #include "SessionPropertiesDialog.h"
-#include "SessionSettingsDialog.h"
 #include "SessionProjPath.h"
 
 using namespace zynforge;

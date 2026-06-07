@@ -104,7 +104,6 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Network/SessionMirror.cpp
     Source/UI/Meterbridge.cpp
     Source/UI/TransportBar.cpp
-    Source/UI/SessionSettingsDialog.cpp
     Source/UI/BigClockPanel.cpp
     Source/Audio/AudioEngine.cpp
     Source/Audio/AudioEngineAutomation.cpp

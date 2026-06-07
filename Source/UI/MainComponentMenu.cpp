@@ -14,7 +14,6 @@
 #include "Meterbridge.h"
 #include "MarkerListDialog.h"
 #include "ClickSettingsDialog.h"
-#include "SessionSettingsDialog.h"
 #include "MirrorDrivesDialog.h"
 
 using namespace zynforge;
@@ -544,9 +543,9 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 290) promptMirrorHost();
     else if (id == 255)
     {
-        struct StubContent final : public juce::Component
+        struct SessionFormatContent final : public juce::Component
         {
-            StubContent (AudioEngine& e, MainComponent& o) : eng (e), owner (o) { rebuild(); setSize (440, 320); }
+            SessionFormatContent (AudioEngine& e, MainComponent& o) : eng (e), owner (o) { rebuild(); setSize (440, 320); }
 
             void rebuild()
             {
@@ -716,7 +715,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
             juce::TextButton applyB, cancelB, changePathB;
         };
 
-        auto* content = new StubContent (engine, *this);
+        auto* content = new SessionFormatContent (engine, *this);
 
         juce::DialogWindow::LaunchOptions opts;
         opts.content.setOwned (content);
