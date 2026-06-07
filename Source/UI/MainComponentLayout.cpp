@@ -75,6 +75,8 @@ void MainComponent::resized()
     row1.removeFromLeft (brand::space::sm);
     danteLabel.setBounds (row1.removeFromLeft (180).reduced (0, 4));
     row1.removeFromLeft (brand::space::sm);
+    srWarnLabel.setBounds (row1.removeFromLeft (340).reduced (0, 4));
+    row1.removeFromLeft (brand::space::sm);
     recordButton .setBounds ({});
     deviceButton .setBounds (row1.removeFromRight (110).reduced (0, 2));
     row1.removeFromRight (brand::space::sm);

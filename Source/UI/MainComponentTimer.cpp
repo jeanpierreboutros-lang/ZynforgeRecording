@@ -299,32 +299,48 @@ void MainComponent::updateTransportLabels()
 // the dialog fires while stopped, which is when the engineer can fix it.
 void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
 {
-    if (deviceSampleRate <= 0.0) return;
+    if (deviceSampleRate <= 0.0) { srWarnLabel.setText ({}, juce::dontSendNotification); return; }
 
-    const bool mismatch = std::abs (deviceSampleRate - pendingSampleRate) > 1.0;
-    if (! mismatch)
+    // The session's authoritative rate: once a take is loaded that's the
+    // recorded files' rate; otherwise it's the rate the session was created
+    // at. Either way the comparison catches ANY divergence -- 44.1 / 48 /
+    // 88.2 / 96 / 176.4 / 192 -- since it's a numeric difference, not a
+    // fixed list.
+    const double sessionSR = (engine.getPlayer().isLoaded()
+                              && engine.getPlayer().getSampleRate() > 0.0)
+                                 ? engine.getPlayer().getSampleRate()
+                                 : pendingSampleRate;
+
+    const auto fmt = [] (double sr)
     {
-        srMismatchWarned = 0.0;   // back in sync -> re-arm the warning
+        const double k = sr / 1000.0;
+        return ((k == std::floor (k)) ? juce::String ((int) k) : juce::String (k, 1)) + " kHz";
+    };
+
+    if (std::abs (deviceSampleRate - sessionSR) <= 1.0)
+    {
+        srWarnLabel.setText ({}, juce::dontSendNotification);   // matched
+        srMismatchWarned = 0.0;                                 // re-arm the dialog
         return;
     }
 
-    const auto fmt = [] (double sr) { return juce::String (sr / 1000.0, 1) + " kHz"; };
-    showStatus ("\xE2\x9A\xA0 Sample-rate mismatch: device " + fmt (deviceSampleRate)
-                + " vs session " + fmt (pendingSampleRate)
-                + " -- fix the clock before recording");
+    // Persistent always-visible banner (record-red) while mismatched.
+    srWarnLabel.setText ("\xE2\x9A\xA0 SAMPLE-RATE MISMATCH  device " + fmt (deviceSampleRate)
+                         + "  \xE2\x89\xA0  session " + fmt (sessionSR),
+                         juce::dontSendNotification);
 
-    // Already warned about this exact device rate, or mid-take -> status only.
+    // One-shot modal, once per distinct device rate, and never mid-take.
     if (std::abs (deviceSampleRate - srMismatchWarned) < 1.0 || engine.isRecording())
         return;
     srMismatchWarned = deviceSampleRate;
 
     auto* aw = new juce::AlertWindow ("Sample-Rate Mismatch",
         "The audio device is running at " + fmt (deviceSampleRate)
-        + ", but this session was created at " + fmt (pendingSampleRate) + ".\n\n"
-        "Recording now would capture every track at the wrong speed and pitch. "
-        "Match the device clock (or the incoming Dante/wordclock) to "
-        + fmt (pendingSampleRate) + ", or create a new session at "
-        + fmt (deviceSampleRate) + " before you record.",
+        + ", but this session is at " + fmt (sessionSR) + ".\n\n"
+        "Recording or playing now would be at the wrong speed and pitch. "
+        "Match the device clock (or the incoming Dante / wordclock) to "
+        + fmt (sessionSR) + ", or start a new session at "
+        + fmt (deviceSampleRate) + ".",
         juce::MessageBoxIconType::WarningIcon);
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE-default navy
     aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));

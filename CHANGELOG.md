@@ -18,7 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ## [Unreleased]
 
 ### Added (latest)
-- **Sample-rate mismatch warning** — the app now continuously compares the audio device's *live* sample rate (e.g. the incoming Dante / wordclock) against the rate the session was created at. If they diverge it warns you — a status-bar message always, plus a one-shot dialog while stopped — so you can't silently record every track at the wrong speed/pitch. Clears automatically once the clock matches again.
+- **Sample-rate mismatch warning** — the app continuously compares the audio device's *live* rate (e.g. the incoming Dante / wordclock) against the session's rate (the loaded take's file rate, or the rate the session was created at) and warns on **any** divergence — 44.1 / 48 / 88.2 / 96 / 176.4 / 192 kHz. A persistent record-red banner sits in the header the whole time they disagree (so it can't scroll away), plus a one-shot dialog while stopped. Clears automatically once the clock matches again.
 
 ### Changed (latest, dialogs)
 - **Audio Device: Apply (and Cancel) now close the panel** — the buttons previously just showed "Applied." and left the window open (they called `exitModalState`, a no-op for this non-modal panel). They now hide the panel, which the header-tab reaper finishes. Cancel still restores the pre-edit device state.
