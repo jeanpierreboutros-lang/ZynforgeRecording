@@ -134,6 +134,9 @@ Single source of truth for visual identity. `ZynForgeLookAndFeel` overrides butt
 ### Network (`Source/Network/`)
 `CompanionServer` exposes `/`, `/state.json`, `/cmd`, and `/stream.wav` for a tablet client. `OscRemote` parses five console dialects with feature parity (Generic, DiGiCo, A&H SQ, SSL Live, Yamaha / RIVAGE).
 
+### MIDI control surfaces (`Source/Audio/McuProtocol.h` + `MidiControlSurface.{h,cpp}`)
+`McuProtocol.h` is a header-only, hardware-free set of Mackie Control Universal encode/decode helpers (fader law, button notes, V-pot relative encoders + ring, channel-pressure meters, scribble-strip SysEx, **master fader on MIDI ch 9, jog wheel on CC 0x3C, and the 10-digit time display**) — fully unit-tested in `Source/Tests/McuProtocolTests.cpp`. `MidiControlSurface` opens a paired MIDI in/out, runs a 15 Hz echo timer, and is bidirectional: inbound faders/V-pots/buttons/jog drive channel + transport state (channel writes are plain atomic stores off the MIDI thread; transport is marshalled to the message thread), and the timer pushes faders, LEDs, meters, names, the master fader and the playhead time display back to the surface. Banked 8 strips at a time. Wired from the Control Surfaces dialog (`enableControlSurface`/`disableControlSurface` on the engine).
+
 ## 6. Data Flow / Core Workflows
 
 ### Recording a take

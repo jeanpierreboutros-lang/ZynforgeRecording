@@ -140,4 +140,68 @@ namespace zynforge::mcu
         const int pos = juce::jlimit (1, 11, (int) std::lround (juce::jmap (pan, -1.0f, 1.0f, 1.0f, 11.0f)));
         return juce::MidiMessage::controllerEvent (1, 0x30 + (strip & 0x7), pos & 0x0F);
     }
+
+    // ── Master fader ────────────────────────────────────────────────────
+    // The 9th fader is the master / monitor level: pitch-bend on MIDI
+    // channel 9. dbToFader/faderToDb law is shared with the strips.
+    constexpr int kMasterChannel = 9;            // 1-based MIDI channel
+    inline bool isMasterFader (int midiChannel1Based) noexcept { return midiChannel1Based == kMasterChannel; }
+    inline juce::MidiMessage masterFader (float dB)
+    {
+        return juce::MidiMessage::pitchWheel (kMasterChannel, dbToFader (dB));
+    }
+
+    // ── Jog wheel ───────────────────────────────────────────────────────
+    // The big jog wheel is a relative encoder on CC 0x3C, same sign law as
+    // a V-pot (bit 6 = direction, bits 0..5 = ticks). Returns signed ticks.
+    constexpr int kJogCc = 0x3C;
+    inline bool isJogCc (int cc) noexcept { return cc == kJogCc; }
+    inline int  decodeJogDelta (int ccValue) noexcept { return decodeVpotDelta (ccValue); }
+
+    // ── Timecode / time display ─────────────────────────────────────────
+    // The 10-digit LED time display takes one CC per digit: controller
+    // 0x40 = rightmost digit, 0x49 = leftmost. The value's low 6 bits are
+    // the 7-seg character (ASCII '0'..'9' and ' ' map straight through);
+    // OR 0x40 lights that digit's decimal point. We render HH:MM:SS:FF and
+    // light the dots between the H/M/S/F groups.
+    inline juce::MidiMessage timeDigit (int position0Right, char c, bool dot) noexcept
+    {
+        const int chr = ((int) (juce::uint8) c) & 0x3F;
+        return juce::MidiMessage::controllerEvent (1, 0x40 + juce::jlimit (0, 9, position0Right),
+                                                   (chr | (dot ? 0x40 : 0)) & 0x7F);
+    }
+
+    // Format a transport position (seconds) as HH:MM:SS:FF for the display.
+    // Returns exactly 8 characters; dots sit after the HH, MM and SS groups.
+    inline juce::String timeString (double seconds, int fps) noexcept
+    {
+        const bool neg = seconds < 0.0;
+        double s = std::abs (seconds);
+        const int totalFrames = (int) std::floor (s * juce::jmax (1, fps) + 0.5);
+        const int ff = totalFrames % juce::jmax (1, fps);
+        const int totSec = totalFrames / juce::jmax (1, fps);
+        const int hh = (totSec / 3600) % 100;
+        const int mm = (totSec / 60) % 60;
+        const int ss = totSec % 60;
+        juce::ignoreUnused (neg);
+        return juce::String::formatted ("%02d%02d%02d%02d", hh, mm, ss, ff);
+    }
+
+    // Emit the 10 per-digit messages for an HH:MM:SS:FF readout into `out`
+    // (the leftmost two digits stay blank for an 8-char timecode). Dots are
+    // lit on the digits ending the HH, MM and SS groups.
+    inline void timeDisplayMessages (double seconds, int fps, std::vector<juce::MidiMessage>& out)
+    {
+        const auto tc = timeString (seconds, fps);       // 8 chars "HHMMSSFF"
+        // Right-justified across digits 0..7 (0 = rightmost). Digits 8,9 blank.
+        for (int d = 8; d < 10; ++d) out.push_back (timeDigit (d, ' ', false));
+        for (int i = 0; i < 8; ++i)
+        {
+            const int posFromRight = 7 - i;              // tc[0] is leftmost (HH tens)
+            // Group-ending digits carry the separator dot: after HH (i==1),
+            // after MM (i==3), after SS (i==5).
+            const bool dot = (i == 1 || i == 3 || i == 5);
+            out.push_back (timeDigit (posFromRight, (char) tc[i], dot));
+        }
+    }
 }

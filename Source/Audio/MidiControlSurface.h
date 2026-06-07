@@ -46,5 +46,7 @@ namespace zynforge
         juce::String lastName    [kStrips];
         bool         lastPlaying { false };
         bool         lastRecording { false };
+        float        lastMasterDb { -999.0f };   // 9th (master) motor fader echo
+        juce::String lastTimecode;               // 7-seg time display echo
     };
 }

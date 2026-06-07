@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Added (latest, control surfaces)
+- **MCU surface: master fader, jog-wheel scrub, and 7-segment time display** — the Mackie/FaderPort surface now drives more than the 8 channel strips. The **9th (master) motor fader** rides the master / monitor level (and the app echoes its position back); the big **jog wheel scrubs the transport** (relative encoder, ~1 frame per tick); and the surface's **LED time display shows the playhead** as `HH:MM:SS:FF` (30 fps), updated live. Master gain is stored atomically off the MIDI thread (no per-tick file I/O); jog uses the player's atomic, clamped position store. Pure protocol helpers (`mcu::masterFader` / `decodeJogDelta` / `timeString` / `timeDisplayMessages`) are headless-tested — 175 → 179 groups.
+
 ### Changed (latest, hardening)
 - **Removed the dead, buggy `SessionSettingsDialog` duplicate** — Session ▸ "Session Format & Recording…" was served by an inline panel, while a separate `SessionSettingsDialog.{h,cpp}` (216 lines) shipped *unused* and still carried the old bugs (read + wrote the device sample rate, not the session's). Deleted it so there's no buggy twin to confuse the next change; the live panel keeps the session-rate-aware behaviour and the relocate path. Renamed its `StubContent` struct to `SessionFormatContent` (no "stub" in shipping code).
 

@@ -86,6 +86,47 @@ namespace zynforge
                 expectEquals ((int) d[4], 0x12);
                 expectEquals ((int) d[5], 7);     // strip 1 -> offset 7
             }
+
+            beginTest ("Master fader is a pitch-wheel on channel 9");
+            {
+                expect (isMasterFader (9) && ! isMasterFader (1) && ! isMasterFader (8));
+                const auto m = masterFader (0.0f);
+                expect (m.isPitchWheel());
+                expectEquals (m.getChannel(), kMasterChannel);
+                // Shares the strip fader law, so 0 dB encodes identically.
+                expectEquals (m.getPitchWheelValue(), fader (0, 0.0f).getPitchWheelValue());
+            }
+
+            beginTest ("Jog wheel is a relative encoder on CC 0x3C");
+            {
+                expect (isJogCc (0x3C) && ! isJogCc (0x10) && ! isJogCc (0x3D));
+                expectEquals (decodeJogDelta (0x02), 2);     // forward 2 ticks
+                expectEquals (decodeJogDelta (0x42), -2);    // back 2 ticks
+            }
+
+            beginTest ("Time string formats HH:MM:SS:FF and rolls over");
+            {
+                expectEquals (timeString (0.0,  30), juce::String ("00000000"));
+                expectEquals (timeString (1.0,  30), juce::String ("00000100"));      // 1 s
+                expectEquals (timeString (61.0, 30), juce::String ("00010100"));      // 1 min 1 s
+                expectEquals (timeString (3661.0, 30), juce::String ("01010100"));    // 1 h 1 m 1 s
+                // Half a second at 30 fps = frame 15.
+                expectEquals (timeString (0.5,  30), juce::String ("00000015"));
+            }
+
+            beginTest ("Time display emits 10 per-digit CCs with group dots");
+            {
+                std::vector<juce::MidiMessage> digits;
+                timeDisplayMessages (3661.5, 30, digits);
+                expectEquals ((int) digits.size(), 10);
+                for (const auto& d : digits)
+                    expect (d.isController() && d.getControllerNumber() >= 0x40
+                                              && d.getControllerNumber() <= 0x49);
+                // A lone digit carries the separator dot only on the group ends.
+                const auto dig = timeDigit (0, '0', true);
+                expect ((dig.getControllerValue() & 0x40) != 0);   // dot bit set
+                expectEquals (timeDigit (0, '0', false).getControllerValue(), (int) '0' & 0x3F);
+            }
         }
     };
 

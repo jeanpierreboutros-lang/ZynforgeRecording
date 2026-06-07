@@ -114,6 +114,10 @@ namespace zynforge
         float getMasterGainDb() const noexcept { return masterState.gainDb.load(); }
         bool  getMasterMuted()  const noexcept { return masterState.muted.load(); }
         void  setMasterGainDb (float dB);
+        // Atomic-only master gain store for real-time / MIDI-thread callers
+        // (a motor-fader move): no persistence, no file I/O. The session save
+        // path still goes through setMasterGainDb.
+        void  setMasterGainDbFast (float dB) noexcept { masterState.gainDb.store (dB, std::memory_order_relaxed); }
         void  setMasterMuted  (bool m);
         int   getMasterOutputL() const noexcept { return masterOutL.load(); }
         int   getMasterOutputR() const noexcept { return masterOutR.load(); }

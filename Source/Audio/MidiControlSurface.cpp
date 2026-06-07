@@ -42,10 +42,26 @@ namespace zynforge
         // Motor fader move -> channel gain (atomic store; safe off this thread).
         if (m.isPitchWheel())
         {
+            // The 9th fader (MIDI channel 9) is the master / monitor level.
+            if (mcu::isMasterFader (m.getChannel()))
+            { engine.setMasterGainDbFast (mcu::faderToDb (m.getPitchWheelValue())); return; }
+
             const int ch = bank + (m.getChannel() - 1);   // MCU channel 1..8 -> strip + bank
             if (ch >= 0 && ch < rec.getNumTracks())
                 rec.getTrack (ch).gainDb.store (mcu::faderToDb (m.getPitchWheelValue()),
                                                 std::memory_order_relaxed);
+            return;
+        }
+
+        // Jog wheel -> scrub the transport position (relative encoder). One
+        // tick ~ 1/30 s; the player position store is atomic + clamped.
+        if (m.isController() && mcu::isJogCc (m.getControllerNumber()))
+        {
+            auto& player = engine.getPlayer();
+            const double sr = juce::jmax (1.0, player.getSampleRate());
+            const auto step = (juce::int64) std::lround (sr / 30.0)
+                              * (juce::int64) mcu::decodeJogDelta (m.getControllerValue());
+            player.setPositionSamples (player.getPositionSamples() + step);
             return;
         }
 
@@ -127,9 +143,12 @@ namespace zynforge
         const int bank = bankOffset.load (std::memory_order_relaxed);
 
         if (forceRefresh.exchange (false, std::memory_order_relaxed))
+        {
             for (int i = 0; i < kStrips; ++i)
             { lastFaderDb[i] = -999.0f; lastMute[i] = lastSolo[i] = lastArm[i] = false;
               lastMeter[i] = -1; lastPan[i] = -2.0f; lastName[i] = {}; }
+            lastMasterDb = -999.0f; lastTimecode = {};
+        }
 
         for (int i = 0; i < kStrips; ++i)
         {
@@ -159,6 +178,25 @@ namespace zynforge
             output->sendMessageNow (mcu::led (mcu::Action::Play, 0, playing));
             output->sendMessageNow (mcu::led (mcu::Action::Stop, 0, ! playing));
             lastPlaying = playing;
+        }
+
+        // Master / monitor motor fader (9th fader).
+        const float masterDb = engine.getMasterGainDb();
+        if (std::abs (masterDb - lastMasterDb) > 0.05f)
+        { output->sendMessageNow (mcu::masterFader (masterDb)); lastMasterDb = masterDb; }
+
+        // Time display: transport position as HH:MM:SS:FF (30 fps). Only the
+        // 8 changed digits are resent (timeString gives a stable 8-char key).
+        auto& player = engine.getPlayer();
+        const double posSeconds = (double) player.getPositionSamples()
+                                  / juce::jmax (1.0, player.getSampleRate());
+        const auto tc = mcu::timeString (posSeconds, 30);
+        if (tc != lastTimecode)
+        {
+            std::vector<juce::MidiMessage> digits;
+            mcu::timeDisplayMessages (posSeconds, 30, digits);
+            for (const auto& d : digits) output->sendMessageNow (d);
+            lastTimecode = tc;
         }
     }
 }

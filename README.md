@@ -94,6 +94,9 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Ap
 ### Console integration (OSC)
 Five dialects with **full action parity** (transport, scene recall → marker, per-channel name / mute / arm / colour): Generic, DiGiCo, Allen & Heath (SQ / Avantis), SSL Live, Yamaha (DM7 / RIVAGE PM). 1-based channel indices to match console numbering.
 
+### Control surfaces (MIDI)
+Bidirectional **Mackie Control / FaderPort (MCU)** surface: motor **faders ↔ channel gain**, **mute / solo / arm** with LED feedback, **V-pots → pan** with ring feedback, **scribble strips** show names, **bank / channel** buttons page through all tracks, and **meters** mirror to the surface. Plus a **master (9th) fader** for the monitor level, **jog-wheel transport scrub**, and the surface's **7-segment time display** showing the playhead as `HH:MM:SS:FF`. Channel state is applied straight off the MIDI thread (atomic); transport is marshalled to the message thread.
+
 ### Companion server
 HTTP server on `:9000` — browser / iPad opens `http://<this-mac>:9000/`. Polled state JSON, POST commands for mute / solo / arm / transport, continuous PCM stream for remote audition (`/stream.wav`).
 
