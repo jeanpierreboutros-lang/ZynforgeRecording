@@ -19,6 +19,27 @@ using namespace zynforge;
 
 namespace
 {
+    // A name field that treats Tab / Shift+Tab as "jump to the next /
+    // previous channel" instead of ordinary focus traversal, so the
+    // engineer can rename a whole input list keyboard-only: type, Tab,
+    // type, Tab... The callbacks are wired by the RenameTable owner.
+    class NameEditor final : public juce::TextEditor
+    {
+    public:
+        std::function<void()> onTab, onShiftTab;
+
+        bool keyPressed (const juce::KeyPress& key) override
+        {
+            if (key.getKeyCode() == juce::KeyPress::tabKey)
+            {
+                if (key.getModifiers().isShiftDown()) { if (onShiftTab) onShiftTab(); }
+                else                                  { if (onTab)      onTab();      }
+                return true;
+            }
+            return juce::TextEditor::keyPressed (key);
+        }
+    };
+
     // Scrollable per-channel rename table: a row per channel showing its
     // input number + an editable name field. applyTo() writes every name
     // back through the engine (MIXER / EDIT then pick them up via their
@@ -45,6 +66,15 @@ namespace
                 content.addAndMakeVisible (r->editor);
                 rows.push_back (std::move (r));
             }
+
+            // Wire Tab / Shift+Tab to walk the list (wrapping at the ends),
+            // scrolling the viewport so the focused field stays visible.
+            for (int i = 0; i < (int) rows.size(); ++i)
+            {
+                rows[(size_t) i]->editor.onTab      = [this, i] { focusRow (i + 1); };
+                rows[(size_t) i]->editor.onShiftTab = [this, i] { focusRow (i - 1); };
+            }
+
             viewport.setViewedComponent (&content, false);
             viewport.setScrollBarsShown (true, false);
             addAndMakeVisible (viewport);
@@ -76,8 +106,26 @@ namespace
             return juce::jlimit (140, 460, (int) rows.size() * 31 + 8);
         }
 
+        // Move keyboard focus to row `target` (wrapping past either end),
+        // scrolling it into view first so the field isn't off-screen.
+        void focusRow (int target)
+        {
+            const int n = (int) rows.size();
+            if (n == 0) return;
+            target = ((target % n) + n) % n;   // wrap both directions
+            auto& ed = rows[(size_t) target]->editor;
+            const int rowH = 28, gap = 3, pad = 4;
+            const int top    = pad + target * (rowH + gap);
+            const int bottom = top + rowH;
+            const int viewTop = viewport.getViewPositionY();
+            const int viewH   = viewport.getMaximumVisibleHeight();
+            if (top < viewTop)                 viewport.setViewPosition (0, top - pad);
+            else if (bottom > viewTop + viewH) viewport.setViewPosition (0, bottom - viewH + pad);
+            ed.grabKeyboardFocus();
+        }
+
     private:
-        struct Row { int index { 0 }; juce::Label num; juce::TextEditor editor; };
+        struct Row { int index { 0 }; juce::Label num; NameEditor editor; };
         juce::Viewport viewport;
         juce::Component content;
         std::vector<std::unique_ptr<Row>> rows;
@@ -277,6 +325,14 @@ void MainComponent::showBatchRenameDialog()
             showStatus ("Channel names updated");
         }),
         false);
+
+    // Land in the first name field so the engineer can type → Tab →
+    // type straight down the input list without reaching for the mouse.
+    juce::Component::SafePointer<RenameTable> safeTable (table);
+    juce::MessageManager::callAsync ([safeTable]
+    {
+        if (safeTable != nullptr) safeTable->focusRow (0);
+    });
 }
 
 void MainComponent::showBatchColourDialog()
