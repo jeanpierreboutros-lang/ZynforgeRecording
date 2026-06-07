@@ -106,19 +106,19 @@ namespace zynforge
                 portEd.setText (juce::String (oscPort (e)), juce::dontSendNotification);
                 addAndMakeVisible (portEd);
 
-                digico = (info.dialect == 1);
-                if (digico)   // DiGiCo: bidirectional console link
+                digico = (info.dialect >= 1);   // any real console (not the generic OSC schema)
+                if (digico)   // bidirectional console link
                 {
                     auto* ap = e.getAppProps();
                     lab (ipKey, "Console IP", brand::textSecondary);
                     dialog::styleTextEditor (ipEd);
-                    ipEd.setText (ap ? ap->getValue ("cs_digico_ip") : juce::String(), juce::dontSendNotification);
+                    ipEd.setText (ap ? ap->getValue (ipPropKey()) : juce::String(), juce::dontSendNotification);
                     addAndMakeVisible (ipEd);
 
                     lab (rxKey, "Console Receive Port", brand::textSecondary);
                     dialog::styleTextEditor (rxEd);
                     rxEd.setInputRestrictions (5, "0123456789");
-                    rxEd.setText (juce::String (ap ? ap->getIntValue ("cs_digico_port", 8001) : 8001), juce::dontSendNotification);
+                    rxEd.setText (juce::String (ap ? ap->getIntValue (portPropKey(), 8001) : 8001), juce::dontSendNotification);
                     addAndMakeVisible (rxEd);
 
                     reqB.setButtonText ("Request ALL channel names from console");
@@ -130,6 +130,8 @@ namespace zynforge
                     createB.onClick = [this]
                     {
                         persist();
+                        if (auto* p = engine.getAppProps())   // tell the host which console to pull from
+                        { p->setValue ("cs_console_dialect", info.dialect); p->setValue ("cs_console_key", info.key); p->saveIfNeeded(); }
                         if (onCreateFromConsole) onCreateFromConsole();
                         if (auto* d = findParentComponentOfClass<juce::DialogWindow>()) d->exitModalState (0);
                     };
@@ -174,6 +176,9 @@ namespace zynforge
             }
 
         private:
+            juce::String ipPropKey()   const { return juce::String ("cs_") + info.key + "_ip"; }
+            juce::String portPropKey() const { return juce::String ("cs_") + info.key + "_port"; }
+
             void persist()
             {
                 if (auto* p = engine.getAppProps())
@@ -181,8 +186,8 @@ namespace zynforge
                     p->setValue ("oscListenPort", juce::jlimit (1, 65535, portEd.getText().getIntValue()));
                     if (digico)
                     {
-                        p->setValue ("cs_digico_ip", ipEd.getText().trim());
-                        p->setValue ("cs_digico_port", juce::jlimit (1, 65535, rxEd.getText().getIntValue()));
+                        p->setValue (ipPropKey(),   ipEd.getText().trim());
+                        p->setValue (portPropKey(), juce::jlimit (1, 65535, rxEd.getText().getIntValue()));
                     }
                     p->saveIfNeeded();
                 }
@@ -198,11 +203,11 @@ namespace zynforge
             void requestNames()
             {
                 persist();
-                if (! engine.isOscListening() || engine.getOscDialect() != 1)
-                    engine.startOsc (juce::jlimit (1, 65535, portEd.getText().getIntValue()), 1);   // ensure we're listening for replies
+                if (! engine.isOscListening() || engine.getOscDialect() != info.dialect)
+                    engine.startOsc (juce::jlimit (1, 65535, portEd.getText().getIntValue()), info.dialect);   // listen for replies on this dialect
                 const auto ip = ipEd.getText().trim();
                 const int  rx = juce::jlimit (1, 65535, rxEd.getText().getIntValue());
-                const bool ok = engine.requestConsoleChannelNames (ip, rx);
+                const bool ok = engine.requestConsoleChannelNames (ip, rx, info.dialect);
                 statusL.setText (ok ? "Request sent to " + ip + ":" + juce::String (rx)
                                       + " -- channel names fill in as the console replies."
                                     : "Couldn't send -- check Console IP + Receive Port.",

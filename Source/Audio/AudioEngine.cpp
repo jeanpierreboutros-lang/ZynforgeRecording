@@ -320,19 +320,36 @@ namespace zynforge
         return false;
     }
 
-    bool AudioEngine::requestConsoleChannelNames (const juce::String& host, int port)
+    bool AudioEngine::requestConsoleChannelNames (const juce::String& host, int port, int dialect)
     {
         if (host.trim().isEmpty() || port <= 0 || port > 65535) return false;
         juce::OSCSender sender;
         if (! sender.connect (host.trim(), port)) return false;
 
-        // Best-effort DiGiCo "report your channels" nudge. DiGiCo's OSC differs
-        // by model, so we fire a few plausible refresh/subscribe forms; the
-        // console's channel-name replies come back on the normal receive path
-        // (the DiGiCo dialect already parses /Console/Channels/N/name).
-        sender.send (juce::OSCMessage ("/Console/Channels/?"));
-        sender.send (juce::OSCMessage ("/Console/Channels", (juce::int32) 1));
-        sender.send (juce::OSCMessage ("/info"));
+        // Best-effort "report your channels" nudge per console dialect -- their
+        // OSC implementations differ, so we fire a couple of plausible refresh /
+        // subscribe forms. The channel-name replies come back on the normal
+        // receive path (each dialect parser already handles channel/N/name).
+        switch (dialect)
+        {
+            case 2:   // Allen & Heath
+                sender.send (juce::OSCMessage ("/sq/channels/?"));
+                sender.send (juce::OSCMessage ("/sq/refresh"));
+                break;
+            case 3:   // SSL Live
+                sender.send (juce::OSCMessage ("/sslnet/channel/?"));
+                sender.send (juce::OSCMessage ("/sslnet/refresh"));
+                break;
+            case 4:   // Yamaha / RIVAGE
+                sender.send (juce::OSCMessage ("/Yamaha/Channels/?"));
+                sender.send (juce::OSCMessage ("/RIVAGE/Channels/?"));
+                break;
+            default:  // DiGiCo (1) / generic
+                sender.send (juce::OSCMessage ("/Console/Channels/?"));
+                sender.send (juce::OSCMessage ("/Console/Channels", (juce::int32) 1));
+                sender.send (juce::OSCMessage ("/info"));
+                break;
+        }
         sender.disconnect();
         return true;
     }

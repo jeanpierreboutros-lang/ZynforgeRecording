@@ -328,7 +328,7 @@ namespace zynforge
         // Ask the console (at host:port) to report all channel names. The
         // replies arrive on the normal OSC receive path. Returns false if the
         // sender couldn't connect.
-        bool  requestConsoleChannelNames (const juce::String& host, int port);
+        bool  requestConsoleChannelNames (const juce::String& host, int port, int dialect = 1);
         // Channel-name capture: while on, every console channel name we receive
         // is collected (1-based index -> name) AND applied to a matching track.
         // Used by "Create session from console". Enabling clears the buffer.

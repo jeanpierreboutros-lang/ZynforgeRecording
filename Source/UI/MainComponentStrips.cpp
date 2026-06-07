@@ -583,17 +583,19 @@ void MainComponent::createSessionFromConsole()
     if (engine.isRecording()) { showStatus ("Stop recording before creating a session"); return; }
 
     auto* p = engine.getAppProps();
-    const auto ip = p ? p->getValue ("cs_digico_ip").trim() : juce::String();
-    const int  rx = p ? p->getIntValue ("cs_digico_port", 8001) : 8001;
+    const int  dialect = p ? p->getIntValue ("cs_console_dialect", 1) : 1;
+    const auto key     = p ? p->getValue ("cs_console_key", "digico") : juce::String ("digico");
+    const auto ip = p ? p->getValue ("cs_" + key + "_ip").trim() : juce::String();
+    const int  rx = p ? p->getIntValue ("cs_" + key + "_port", 8001) : 8001;
     if (ip.isEmpty())
-    { showStatus ("Set the DiGiCo Console IP first (Control Surfaces -> DiGiCo)."); return; }
+    { showStatus ("Set the Console IP first (Control Surfaces -> console -> Console IP)."); return; }
 
-    // Listen on the DiGiCo dialect so replies are parsed, capture incoming
-    // names, then nudge the console to report them.
-    if (! engine.isOscListening() || engine.getOscDialect() != 1)
-        engine.startOsc (oscListenPort(), 1);
+    // Listen on the chosen console's dialect so replies are parsed, capture
+    // incoming names, then nudge the console to report them.
+    if (! engine.isOscListening() || engine.getOscDialect() != dialect)
+        engine.startOsc (oscListenPort(), dialect);
     engine.setConsoleNameCapture (true);
-    if (! engine.requestConsoleChannelNames (ip, rx))
+    if (! engine.requestConsoleChannelNames (ip, rx, dialect))
     {
         engine.setConsoleNameCapture (false);
         showStatus ("Couldn't reach console at " + ip + ":" + juce::String (rx));
