@@ -873,6 +873,7 @@ namespace zynforge
         // ringFillPct), polled from the UI to drive the header dashboard.
         // 0-100 % units.
         std::atomic<double> deviceSampleRate { 0.0 };
+        std::atomic<double> sessionSampleRate { 0.0 };   // 0 = unset (no record guard)
         std::atomic<int>    deviceBlockSize  { 0 };
         std::atomic<float>  audioLoadPct     { 0.0f };
 
@@ -1014,6 +1015,15 @@ namespace zynforge
         // number (smaller = lower latency, less slack); 0 until the device starts.
         int    getDeviceBlockSize()  const noexcept { return deviceBlockSize.load (std::memory_order_relaxed); }
         double getDeviceSampleRate() const noexcept { return deviceSampleRate.load (std::memory_order_relaxed); }
+
+        // The session's intended sample rate (set by the host when a session
+        // is created / opened). startRecording refuses to arm if the device
+        // clock disagrees with this -- the bypass-proof guard against a silent
+        // wrong-speed capture. 0 = unset (no guard).
+        void   setSessionSampleRate (double sr) noexcept { sessionSampleRate.store (sr, std::memory_order_relaxed); }
+        double getSessionSampleRate () const noexcept    { return sessionSampleRate.load (std::memory_order_relaxed); }
+        // True when a device is open and its rate diverges from the session rate.
+        bool   isSampleRateMismatched() const noexcept;
     private:
 
         void applyPersistedStripState();

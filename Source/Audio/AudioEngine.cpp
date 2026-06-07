@@ -80,8 +80,32 @@ namespace zynforge
         if (appProps != nullptr) appProps->saveIfNeeded();
     }
 
+    bool AudioEngine::isSampleRateMismatched() const noexcept
+    {
+        const double target = sessionSampleRate.load (std::memory_order_relaxed);
+        if (target <= 0.0) return false;   // no session rate set -> no guard
+        if (auto* device = deviceManager.getCurrentAudioDevice())
+        {
+            const double devSR = device->getCurrentSampleRate();
+            return devSR > 0.0 && std::abs (devSR - target) > 1.0;
+        }
+        return false;
+    }
+
     bool AudioEngine::startRecording (const juce::File& sessionDir)
     {
+        // Bypass-proof guard: refuse to capture if the device clock disagrees
+        // with the session rate (silent wrong-speed/pitch take). Covers every
+        // caller -- record button, transport bar, punch auto-record, companion.
+        if (isSampleRateMismatched())
+        {
+            DBG ("startRecording refused: sample-rate mismatch (device "
+                 << (deviceManager.getCurrentAudioDevice()
+                        ? deviceManager.getCurrentAudioDevice()->getCurrentSampleRate() : 0.0)
+                 << " vs session " << sessionSampleRate.load (std::memory_order_relaxed) << ")");
+            return false;
+        }
+
         if (! recorder.startRecording (sessionDir)) return false;
         rememberRecentSession (sessionDir);
         double sr = 48000.0;

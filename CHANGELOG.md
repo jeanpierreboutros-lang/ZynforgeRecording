@@ -20,6 +20,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ### Added (latest)
 - **Sample-rate mismatch warning** — the app continuously compares the audio device's *live* rate (e.g. the incoming Dante / wordclock) against the session's rate (the loaded take's file rate, or the rate the session was created at) and warns on **any** divergence — 44.1 / 48 / 88.2 / 96 / 176.4 / 192 kHz. A persistent record-red banner sits in the header the whole time they disagree (so it can't scroll away), plus a one-shot dialog while stopped. Clears automatically once the clock matches again.
 
+### Changed (latest, protection)
+- **Recording is hard-blocked on a sample-rate mismatch** — `AudioEngine::startRecording` now refuses to arm if the device clock disagrees with the session rate, so *no* path (record button, transport bar, punch auto-record, companion) can start a silent wrong-speed/pitch take. The record button shows why and re-pops the warning. Top-level data-integrity guard.
+- **Fixed mojibake in the mismatch banner** — the warning-triangle glyph rendered as `â` in the bundled Inter font; the banner is now plain ASCII (`! SAMPLE-RATE MISMATCH device 48 kHz vs session 44.1 kHz - recording blocked`), red carries the alarm.
+
 ### Changed (latest, dialogs)
 - **Audio Device: Apply (and Cancel) now close the panel** — the buttons previously just showed "Applied." and left the window open (they called `exitModalState`, a no-op for this non-modal panel). They now hide the panel, which the header-tab reaper finishes. Cancel still restores the pre-edit device state.
 - **Meterbridge closes on click-away** — clicking anywhere outside the floating METERS window now dismisses it (popup-style), in addition to the close box / METERS tab toggle. (Shared `DismissOnOutsideClick`.)

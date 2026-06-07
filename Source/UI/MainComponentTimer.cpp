@@ -311,6 +311,10 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
                                  ? engine.getPlayer().getSampleRate()
                                  : pendingSampleRate;
 
+    // Keep the engine's record-guard rate in lockstep with what we display,
+    // so AudioEngine::startRecording refuses a mismatched take from ANY caller.
+    engine.setSessionSampleRate (sessionSR);
+
     const auto fmt = [] (double sr)
     {
         const double k = sr / 1000.0;
@@ -325,8 +329,10 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
     }
 
     // Persistent always-visible banner (record-red) while mismatched.
-    srWarnLabel.setText ("\xE2\x9A\xA0 SAMPLE-RATE MISMATCH  device " + fmt (deviceSampleRate)
-                         + "  \xE2\x89\xA0  session " + fmt (sessionSR),
+    // ASCII only -- the bundled Inter font has no warning-triangle glyph
+    // (it rendered as mojibake); the red colour carries the alarm.
+    srWarnLabel.setText ("! SAMPLE-RATE MISMATCH  device " + fmt (deviceSampleRate)
+                         + "  vs  session " + fmt (sessionSR) + "  - recording blocked",
                          juce::dontSendNotification);
 
     // One-shot modal, once per distinct device rate, and never mid-take.

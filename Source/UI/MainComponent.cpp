@@ -1212,6 +1212,35 @@ void MainComponent::onRecordClicked()
         return;
     }
 
+    // HARD GUARD: never start a take while the device clock disagrees with
+    // the session rate. A silent mismatch captures every track at the wrong
+    // speed + pitch -- unrecoverable -- so we refuse to arm the writers and
+    // re-surface the warning dialog. This is the app's top data-integrity
+    // protection; it cannot be bypassed from the record button.
+    {
+        const double sessionSR = (engine.getPlayer().isLoaded()
+                                  && engine.getPlayer().getSampleRate() > 0.0)
+                                     ? engine.getPlayer().getSampleRate()
+                                     : pendingSampleRate;
+        const double devSR = device->getCurrentSampleRate();
+        if (devSR > 0.0 && std::abs (devSR - sessionSR) > 1.0)
+        {
+            const auto khz = [] (double sr)
+            {
+                const double k = sr / 1000.0;
+                return ((k == std::floor (k)) ? juce::String ((int) k)
+                                              : juce::String (k, 1)) + " kHz";
+            };
+            statusLabel.setText ("Recording blocked -- device " + khz (devSR)
+                                 + " != session " + khz (sessionSR)
+                                 + ". Match the clock first.",
+                                 juce::dontSendNotification);
+            srMismatchWarned = 0.0;          // re-arm so the dialog pops again
+            checkDeviceSampleRate (devSR);   // show the explanatory warning
+            return;                          // <-- do NOT start recording
+        }
+    }
+
     const auto dir = makeNewSessionDir();
 
     // Disk-space pre-flight -- abort if the drive can't hold at least
