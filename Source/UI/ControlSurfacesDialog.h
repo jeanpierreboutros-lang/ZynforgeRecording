@@ -83,6 +83,56 @@ namespace zynforge
                 e.disableControlSurface();
         }
 
+        // Live OSC traffic log -- so the engineer can verify the request /
+        // reply strings against their actual console.
+        class OscLogContent final : public juce::Component, private juce::Timer
+        {
+        public:
+            explicit OscLogContent (AudioEngine& e) : engine (e)
+            {
+                view.setMultiLine (true); view.setReadOnly (true); view.setCaretVisible (false);
+                view.setFont (brand::type::mono (12.0f));
+                view.setColour (juce::TextEditor::backgroundColourId, brand::bgDeep);
+                view.setColour (juce::TextEditor::textColourId, brand::textPrimary);
+                addAndMakeVisible (view);
+                clearB.setButtonText ("Clear"); dialog::styleSecondary (clearB);
+                clearB.onClick = [this] { engine.clearOscLog(); refresh(); };
+                closeB.setButtonText ("Close"); dialog::styleSecondary (closeB);
+                closeB.onClick = [this] { if (auto* d = findParentComponentOfClass<juce::DialogWindow>()) d->exitModalState (0); };
+                addAndMakeVisible (clearB); addAndMakeVisible (closeB);
+                setSize (660, 440); startTimerHz (5); refresh();
+            }
+            void paint (juce::Graphics& g) override { dialog::paintChrome (g, *this, "OSC TRAFFIC LOG"); }
+            void resized() override
+            {
+                auto b = getLocalBounds().reduced (16).withTrimmedTop (40);
+                auto bottom = b.removeFromBottom (40);
+                view.setBounds (b);
+                clearB.setBounds (bottom.removeFromLeft (90));
+                closeB.setBounds (bottom.removeFromRight (90));
+            }
+        private:
+            void timerCallback() override { refresh(); }
+            void refresh()
+            {
+                const auto txt = engine.getOscLog().joinIntoString ("\n");
+                if (txt != view.getText()) { view.setText (txt, false); view.moveCaretToEnd(); }
+            }
+            AudioEngine& engine;
+            juce::TextEditor view;
+            juce::TextButton clearB, closeB;
+        };
+
+        inline void launchOscLog (AudioEngine& e)
+        {
+            juce::DialogWindow::LaunchOptions o;
+            o.dialogTitle = "OSC Traffic Log";
+            o.content.setOwned (new OscLogContent (e));
+            o.dialogBackgroundColour = brand::bgPanel;
+            o.escapeKeyTriggersCloseButton = true; o.useNativeTitleBar = true; o.resizable = true;
+            o.launchAsync();
+        }
+
         // ── OSC-family settings ──────────────────────────────────────────
         class OscSettings final : public juce::Component
         {
@@ -137,6 +187,16 @@ namespace zynforge
                     };
                     addAndMakeVisible (reqB); addAndMakeVisible (createB);
 
+                    debugToggle.setButtonText ("Debug: log OSC traffic");
+                    debugToggle.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
+                    debugToggle.setColour (juce::ToggleButton::tickColourId, brand::accentStatus);
+                    debugToggle.setToggleState (engine.isOscDebug(), juce::dontSendNotification);
+                    debugToggle.onClick = [this] { engine.setOscDebug (debugToggle.getToggleState()); };
+                    logB.setButtonText ("View OSC Log...");
+                    dialog::styleSecondary (logB);
+                    logB.onClick = [this] { launchOscLog (engine); };
+                    addAndMakeVisible (debugToggle); addAndMakeVisible (logB);
+
                     statusL.setFont (brand::type::caption());
                     statusL.setColour (juce::Label::textColourId, brand::textMuted);
                     statusL.setJustificationType (juce::Justification::topLeft);
@@ -149,7 +209,7 @@ namespace zynforge
                 closeB.onClick = [this] { if (auto* d = findParentComponentOfClass<juce::DialogWindow>()) d->exitModalState (0); };
                 addAndMakeVisible (applyB); addAndMakeVisible (closeB);
 
-                setSize (520, digico ? 420 : 250);
+                setSize (520, digico ? 470 : 250);
             }
 
             void paint (juce::Graphics& g) override { dialog::paintChrome (g, *this, info.name.toUpperCase() + " -- OSC"); }
@@ -167,7 +227,13 @@ namespace zynforge
                     row (rxKey, rxEd, 30);
                     reqB.setBounds (b.removeFromTop (30)); b.removeFromTop (8);
                     createB.setBounds (b.removeFromTop (30)); b.removeFromTop (8);
-                    statusL.setBounds (b.removeFromTop (32));
+                    {
+                        auto dr = b.removeFromTop (28);
+                        debugToggle.setBounds (dr.removeFromLeft (220));
+                        logB.setBounds (dr.removeFromLeft (140));
+                    }
+                    b.removeFromTop (6);
+                    statusL.setBounds (b.removeFromTop (28));
                 }
                 row (addrKey, addrVal);
                 auto br = getLocalBounds().removeFromBottom (50).reduced (24, 10);
@@ -221,7 +287,8 @@ namespace zynforge
             bool digico { false };
             juce::Label connKey, connVal, portKey, addrKey, addrVal, ipKey, rxKey, statusL;
             juce::TextEditor portEd, ipEd, rxEd;
-            juce::TextButton applyB, closeB, reqB, createB;
+            juce::TextButton applyB, closeB, reqB, createB, logB;
+            juce::ToggleButton debugToggle;
         };
 
         // ── MIDI control-surface settings ────────────────────────────────

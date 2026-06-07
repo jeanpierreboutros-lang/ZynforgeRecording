@@ -34,6 +34,18 @@ namespace zynforge
 
     void OscRemote::oscMessageReceived (const juce::OSCMessage& m)
     {
+        if (engine.isOscDebug())
+        {
+            juce::String args;
+            for (const auto& a : m)
+            {
+                if (a.isInt32())        args << " " << a.getInt32();
+                else if (a.isFloat32()) args << " " << juce::String (a.getFloat32(), 2);
+                else if (a.isString())  args << " \"" << a.getString() << "\"";
+            }
+            engine.logOsc ("<- " + m.getAddressPattern().toString() + args);
+        }
+
         // Always try the matching dialect first, fall back to Generic.
         switch (dialect)
         {

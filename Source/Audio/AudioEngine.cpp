@@ -351,7 +351,27 @@ namespace zynforge
                 break;
         }
         sender.disconnect();
+        if (isOscDebug())
+            logOsc ("-> " + host.trim() + ":" + juce::String (port)
+                    + "  request channel names (dialect " + juce::String (dialect) + ")");
         return true;
+    }
+
+    void AudioEngine::logOsc (const juce::String& line)
+    {
+        const juce::ScopedLock sl (oscLogLock);
+        oscLog.add (juce::Time::getCurrentTime().formatted ("%H:%M:%S  ") + line);
+        while (oscLog.size() > 200) oscLog.remove (0);
+    }
+    juce::StringArray AudioEngine::getOscLog() const
+    {
+        const juce::ScopedLock sl (oscLogLock);
+        return oscLog;
+    }
+    void AudioEngine::clearOscLog()
+    {
+        const juce::ScopedLock sl (oscLogLock);
+        oscLog.clear();
     }
 
     void AudioEngine::setConsoleNameCapture (bool on)

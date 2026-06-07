@@ -329,6 +329,14 @@ namespace zynforge
         // replies arrive on the normal OSC receive path. Returns false if the
         // sender couldn't connect.
         bool  requestConsoleChannelNames (const juce::String& host, int port, int dialect = 1);
+
+        // OSC debug log -- so an engineer can verify the request/reply traffic
+        // against their actual console. When on, sent + received OSC is logged.
+        void  setOscDebug (bool on) noexcept { oscDebug.store (on, std::memory_order_relaxed); }
+        bool  isOscDebug () const noexcept   { return oscDebug.load (std::memory_order_relaxed); }
+        void  logOsc (const juce::String& line);   // thread-safe; keeps the last ~200 lines
+        juce::StringArray getOscLog() const;
+        void  clearOscLog();
         // Channel-name capture: while on, every console channel name we receive
         // is collected (1-based index -> name) AND applied to a matching track.
         // Used by "Create session from console". Enabling clears the buffer.
@@ -874,6 +882,9 @@ namespace zynforge
         std::map<int, juce::String> capturedConsoleNames;   // message-thread only
         std::unique_ptr<MidiControlSurface> surface;
         juce::String activeSurfaceKey;
+        std::atomic<bool> oscDebug { false };
+        juce::CriticalSection oscLogLock;
+        juce::StringArray oscLog;
         std::unique_ptr<juce::MidiInput> mtcInput;
         juce::String                     mtcInputName;
 
