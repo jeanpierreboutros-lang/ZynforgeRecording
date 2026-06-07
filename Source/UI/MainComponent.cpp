@@ -1089,6 +1089,31 @@ void MainComponent::rebuildStrips()
         };
         s->setSelected (selectedLogical.count (logicalIdx) > 0);
 
+        // Tab / Shift+Tab in a strip's name field hops to the next /
+        // previous strip (wrapping), scrolls it into view, and opens its
+        // editor -- so a whole input list renames keyboard-only.
+        s->onTabRename = [this] (int fromStripIndex, bool shift)
+        {
+            const int count = (int) strips.size();
+            if (count == 0) return;
+            int pos = -1;
+            for (int k = 0; k < count; ++k)
+                if (strips[(size_t) k] != nullptr
+                    && strips[(size_t) k]->getStripIndex() == fromStripIndex) { pos = k; break; }
+            if (pos < 0) return;
+            const int target = ((pos + (shift ? -1 : 1)) % count + count) % count;
+            if (auto* st = strips[(size_t) target].get())
+            {
+                const auto inView = stripsViewport.getLocalArea (&stripsContainer, st->getBounds());
+                if (inView.getX() < 0)
+                    stripsViewport.setViewPosition (st->getX(), 0);
+                else if (inView.getRight() > stripsViewport.getWidth())
+                    stripsViewport.setViewPosition (
+                        st->getRight() - stripsViewport.getMaximumVisibleWidth(), 0);
+                st->beginRename();
+            }
+        };
+
         s->setAvailableInputs  (numIns);
         s->setAvailableOutputs (numOuts);
         stripsContainer.addAndMakeVisible (*s);

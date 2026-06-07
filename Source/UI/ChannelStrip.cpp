@@ -564,6 +564,10 @@ namespace zynforge
             setTitle (state.name);   // keep the strip's accessible name in sync
             if (renameCb) renameCb (newName);
         };
+        nameLabel.onTabKey = [this] (bool shift)
+        {
+            if (onTabRename) onTabRename (stripIndex, shift);
+        };
         addAndMakeVisible (nameLabel);
 
         // Input + output routing combos.

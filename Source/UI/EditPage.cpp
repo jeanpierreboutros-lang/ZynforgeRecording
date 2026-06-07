@@ -7,6 +7,7 @@
 #include "../Theme/DialogChrome.h"
 #include "LedMeter.h"
 #include "StripColourPicker.h"
+#include "RenameLabel.h"
 
 namespace zynforge
 {
@@ -86,6 +87,28 @@ namespace zynforge
         // Callback fired by the right-click menu so the owning TrackList
         // can recompute layout (and resolve "fit to window").
         std::function<void(TrackRow&, Size)> onSizeChosen;
+
+        // Tab / Shift+Tab in the name field: ask the TrackList to commit
+        // and open the next / previous row's name editor (shiftDown =
+        // previous). Wired by TrackList so it can resolve sibling rows.
+        std::function<void (TrackRow& /*from*/, bool /*shiftDown*/)> onTabRename;
+
+        // Scroll this row into view (within the EDIT viewport) and open
+        // its name editor -- the destination of a Tab rename hop.
+        void beginRename()
+        {
+            if (auto* vp = findParentComponentOfClass<juce::Viewport>())
+            {
+                const int rowTop = getY(), rowBot = getBottom();
+                const int viewY  = vp->getViewPositionY();
+                const int visH   = vp->getMaximumVisibleHeight();
+                if (rowTop < viewY)            vp->setViewPosition (0, rowTop);
+                else if (rowBot > viewY + visH) vp->setViewPosition (0, rowBot - visH);
+            }
+            nameLabel.showEditor();
+        }
+
+        int trackIndex() const noexcept { return index; }
 
         // Toolbar / click-overlay context -- set by the host EditPage
         // after construction so all rows share the same global view.
@@ -172,6 +195,10 @@ namespace zynforge
                                             : newName;
                 nameLabel.setText (st.name, juce::dontSendNotification);
                 engine.setTrackName (index, st.name);
+            };
+            nameLabel.onTabKey = [this] (bool shift)
+            {
+                if (onTabRename) onTabRename (*this, shift);
             };
             addAndMakeVisible (nameLabel);
 
@@ -3583,7 +3610,7 @@ namespace zynforge
         juce::File                currentFileL;
         juce::File                currentFileR;
         bool                      stereo;
-        juce::Label               nameLabel;
+        RenameLabel               nameLabel;
         // Same single-letter glyphs as the mixer strips: R / I / M / S.
         // LookAndFeel::drawToggleButton paints the pill in the colour
         // pinned via ToggleButton::tickColourId when toggled on.
@@ -3683,6 +3710,20 @@ namespace zynforge
             }
         }
 
+        // Tab / Shift+Tab from a row's name field hops to the next /
+        // previous row (wrapping at the ends) and opens its editor.
+        void tabRename (TrackRow& from, bool shift)
+        {
+            const int n = (int) rows.size();
+            if (n == 0) return;
+            int pos = -1;
+            for (int i = 0; i < n; ++i)
+                if (rows[(size_t) i].get() == &from) { pos = i; break; }
+            if (pos < 0) return;
+            const int target = ((pos + (shift ? -1 : 1)) % n + n) % n;
+            rows[(size_t) target]->beginRename();
+        }
+
         void forceLaneMode (TrackRow::LaneMode lm)
         {
             for (auto& r : rows)
@@ -3709,6 +3750,7 @@ namespace zynforge
                 const bool stereo = tL.isStereo.load() && (i + 1 < numTracks);
                 auto r = std::make_unique<TrackRow> (i, stereo, engine, formats, thumbCache);
                 r->onSizeChosen = [this] (TrackRow&, TrackRow::Size) { resized(); };
+                r->onTabRename  = [this] (TrackRow& from, bool shift) { tabRename (from, shift); };
                 r->toolbar                = sharedToolbar;
                 r->toolsBar               = sharedToolsBar;
                 r->clickRowIdx            = sharedClickRowIdx;

@@ -5,6 +5,7 @@
 #include "../Audio/TrackState.h"
 #include "LedMeter.h"
 #include "MiniSpectrum.h"
+#include "RenameLabel.h"
 
 #include <functional>
 #include <memory>
@@ -64,6 +65,15 @@ namespace zynforge
         int  getStripIndex() const noexcept { return stripIndex; }
         bool isStereo()     const noexcept { return pairState != nullptr; }
         std::function<void (bool /*additive*/)> onToggleSelection;
+
+        // Tab / Shift+Tab in the name field: ask the host to commit and
+        // open the next / previous strip's name editor (shiftDown =
+        // previous). MainComponent wires this to walk the strip list.
+        std::function<void (int /*fromStripIndex*/, bool /*shiftDown*/)> onTabRename;
+
+        // Open this strip's inline name editor (scrolling it into view is
+        // the host's job). Used as the Tab-rename destination.
+        void beginRename() { openRenameDialog(); }
 
         // Fired when the engineer assigns this strip to a VCA bus via
         // the right-click menu. The host should persist by calling
@@ -155,7 +165,7 @@ namespace zynforge
         class DbRuler;
         std::unique_ptr<DbRuler> dbRuler;
 
-        juce::Label   nameLabel;
+        RenameLabel   nameLabel;
         juce::Label   outLabel;
         juce::ComboBox inputCombo;
         juce::ComboBox outputCombo;
