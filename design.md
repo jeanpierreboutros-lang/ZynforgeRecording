@@ -394,6 +394,83 @@ universal across ZynForge apps:
   ~15% red. Black gaps between segments make it read as physical
   hardware. Click clears clip.
 
+## Component Reference — states & variants
+
+The composite tokens above name *what* each component is. This section
+is the contract for *how each one behaves across its states* — the
+matrix a new contributor (or a re-skin) must preserve. Each component's
+visual states are produced in `ZynForgeLookAndFeel.cpp` (Button, Fader,
+ComboBox) or the component's own `paint()` (ChannelStrip, Toast, Meter).
+
+### Button  (`ZynForgeLookAndFeel::drawButtonBackground`, `IconButton.h`)
+| Variant | Fill (default) | Use when |
+|---------|----------------|----------|
+| Quiet (default) | `control-bg` gradient | Most actions — the app stays calm |
+| Record / danger | `accent-record` translucent | Arm, delete, destructive |
+| Transport-active | `accent-play` translucent | Play / rolling |
+| Virtual-soundcheck | `accent-vs` translucent | VSC macro engaged |
+| Feature-engaged | `feature-engaged` translucent | Stream / send / tool-on toggle |
+
+| State | Visual | Notes |
+|-------|--------|-------|
+| Default | `control-bg`, `text-secondary` label | — |
+| Hover | `control-bg-hover` | pointer-over lift |
+| Down / active | `control-bg-down`, or accent fill if engaged | press feedback |
+| Toggled-on | accent fill + `onSignal(bg)` label | the engaged variants above |
+| Disabled | `control-bg` @ `alpha::dimmed`, `text-muted` label | non-interactive |
+| Focus | `border-bright` 1 px ring | keyboard nav |
+
+### Toast  (`Toast.h`) — non-modal feedback pill
+| Variant (`Kind`) | Body | Accent stripe | Use when |
+|------------------|------|---------------|----------|
+| `Info` | `bg-elevated` | `feature-engaged` | Neutral feedback (cue added, exported) |
+| `Success` | `accent-play` darkened | `accent-play` | Completed cleanly (saved, bounced) |
+| `Warning` | `alert-amber` darkened | `alert-amber` | Recoverable / confirm-again |
+| `Error` | `accent-record` darkened | `accent-record` | **Hard failure** (disk full, device lost, write failed) |
+
+| State | Behavior | Timing |
+|-------|----------|--------|
+| In | slide + fade up from bottom-right | `motion::quickFadeMs` (200) |
+| Hold | static, queue waits | `motion::toastHoldMs` (2800) |
+| Out | fade | `motion::fadeOutMs` (320) |
+| Queued | back-to-back toasts display in order, never stomp | — |
+
+`showStatus()` routes by message severity: hard-fail keywords → `Error`,
+confirm/again keywords → `Warning`, else `Info`.
+
+### Channel strip  (`ChannelStrip.cpp`)
+| State | Visual |
+|-------|--------|
+| Default | neutral-grey wash (`strip-default-grey`), or user colour |
+| Selected | `border-bright` outline + lifted wash |
+| Armed | `signal-record` (red) R button + arm glow |
+| Monitoring | `signal-monitor` (green) input LED |
+| Muted | `signal-mute` (orange) M + clip dimmed by `alpha::dimmed` |
+| Soloed | `signal-solo` (yellow) S |
+| Stereo | L+R collapsed to ONE logical strip across MIXER/EDIT/PATCH |
+
+### Fader  (`ZynForgeLookAndFeel::drawLinearSlider`)
+| State | Visual |
+|-------|--------|
+| Default | grey thumb (`fader-thumb-*`), dB ticks at −∞/−60/−30/−10/0/+6 |
+| Hover / drag | `fader-thumb-edge` highlight |
+| At-unity | tick emphasis at 0 dB |
+| Disabled | thumb @ `alpha::dimmed` |
+
+### LED + Meter  (`LedMeter.cpp`)
+| State | Visual |
+|-------|--------|
+| Idle | `meter-idle` segments / `bg-elevated` LED |
+| Signal | green→amber→red segment ladder (20 discrete, black-gapped) |
+| Peak-hold | top-lit segment held `motion::clipLatchMs` (1000) |
+| Clip | red latch until click-to-clear |
+
+### Dialog  (`DialogChrome.h::dialog::paintChrome`)
+One variant, fully centralized — **all 23 modals** paint through it
+(`bg-elevated` body, `border-subtle` edge, `radius::xl`, `shadow::elev3`).
+Prompts prime their editor via `dialog::primeNameEditor` (focus + select-all
++ Enter→OK=result 1). Custom dialog `paint()` is a smell — there are none.
+
 ## Do's and Don'ts
 
 These should be mechanically enforced (pre-commit hook + CI). Six

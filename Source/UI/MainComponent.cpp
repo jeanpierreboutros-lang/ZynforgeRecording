@@ -1543,17 +1543,28 @@ void MainComponent::showStatus (const juce::String& msg)
 {
     statusLabel.setText (msg, juce::dontSendNotification);
     // Also surface the message as a non-modal toast so the engineer
-    // catches feedback even when their eyes are on the strips, not
-    // the footer. Pick the Kind from the message tone -- anything
-    // containing "Stop", "can't", "fail" reads as a warning;
-    // everything else as info.
+    // catches feedback even when their eyes are on the strips, not the
+    // footer. Pick the Kind from the message tone, by severity:
+    //   Error   (red)   -- hard failures the engineer MUST act on
+    //                      (disk full / out of space, device lost,
+    //                      could-not-write, generic "error").
+    //   Warning (amber) -- recoverable / confirm-again prompts.
+    //   Info    (grey)  -- neutral feedback.
     if (msg.isNotEmpty())
     {
-        const auto kind = (msg.containsIgnoreCase ("can't")
+        const bool hardFail = msg.containsIgnoreCase ("error")
+                           || msg.containsIgnoreCase ("disk full")
+                           || msg.containsIgnoreCase ("out of space")
+                           || msg.containsIgnoreCase ("device lost")
+                           || msg.containsIgnoreCase ("lost the audio")
+                           || msg.containsIgnoreCase ("could not")
+                           || msg.containsIgnoreCase ("unable to");
+        const bool warn     = msg.containsIgnoreCase ("can't")
                            || msg.containsIgnoreCase ("fail")
-                           || msg.containsIgnoreCase ("stop record"))
-                              ? Toast::Kind::Warning
-                              : Toast::Kind::Info;
+                           || msg.containsIgnoreCase ("stop record");
+        const auto kind = hardFail ? Toast::Kind::Error
+                        : warn     ? Toast::Kind::Warning
+                                   : Toast::Kind::Info;
         toast.show (msg, kind);
     }
 }

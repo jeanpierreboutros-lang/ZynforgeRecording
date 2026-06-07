@@ -20,7 +20,13 @@ namespace zynforge
     class Toast final : public juce::Component, private juce::Timer
     {
     public:
-        enum class Kind { Info, Success, Warning };
+        // Info  -- neutral feedback (cue added, exported).
+        // Success -- a thing completed cleanly (take saved, mix bounced).
+        // Warning -- recoverable / "are you sure" (tap STOP again).
+        // Error -- a hard failure the engineer must see (disk full, device
+        //          lost, primary writer failed). Red so it reads as danger
+        //          even at the edge of vision.
+        enum class Kind { Info, Success, Warning, Error };
 
         Toast()
         {
@@ -96,6 +102,7 @@ namespace zynforge
             {
                 case Kind::Success: return brand::accentPlay   .darker (0.30f);
                 case Kind::Warning: return brand::alertAmber   .darker (0.30f);
+                case Kind::Error:   return brand::accentRecord .darker (0.30f);
                 case Kind::Info:
                 default:            return brand::bgElevated;
             }
@@ -106,6 +113,7 @@ namespace zynforge
             {
                 case Kind::Success: return brand::accentPlay;
                 case Kind::Warning: return brand::alertAmber;
+                case Kind::Error:   return brand::accentRecord;
                 case Kind::Info:
                 default:            return brand::featureEngaged;
             }

@@ -17,6 +17,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Added (latest, design system)
+- **Error toasts for hard failures** — the non-modal toast pill gained a fourth, **red** `Error` variant (alongside Info / Success / Warning). Genuine failures the engineer must act on — disk full / out of space, audio device lost, a write that couldn't complete — now flash red instead of amber-or-grey, so they read as danger even at the edge of vision. `showStatus()` routes by message severity automatically.
+- **Documented the component system** — `design.md` now carries a *Component Reference* with the state × variant matrix for every interactive component (Button, Toast, Channel strip, Fader, LED/Meter, Dialog), so the system is documented as a system, not just enforced in code.
+
+### Changed (latest, design system)
+- **Closed the last token-bypass gaps** (full `/design-system` audit): the strip-silence dialog was the one place bypassing *both* the colour and font tokens (raw `Colour::fromRGB` + raw `juce::Font`) — now `brand::textPrimary` + `brand::type::uiBody()`. A stray inline `0.18f` → `alpha::subtle`, a raw `3.0f` corner → `radius::md`, an un-catalogued `0.80f` → `alpha::prominent`. The two unused type-scale rungs (`subhead`/`display`) are annotated as reserved continuous-scale steps. Result: **zero** raw colours/fonts/uncatalogued alphas outside the theme layer.
+
 ### Added (latest, control surfaces)
 - **MCU surface: master fader, jog-wheel scrub, and 7-segment time display** — the Mackie/FaderPort surface now drives more than the 8 channel strips. The **9th (master) motor fader** rides the master / monitor level (and the app echoes its position back); the big **jog wheel scrubs the transport** (relative encoder, ~1 frame per tick); and the surface's **LED time display shows the playhead** as `HH:MM:SS:FF` (30 fps), updated live. Master gain is stored atomically off the MIDI thread (no per-tick file I/O); jog uses the player's atomic, clamped position store. Pure protocol helpers (`mcu::masterFader` / `decodeJogDelta` / `timeString` / `timeDisplayMessages`) are headless-tested — 175 → 179 groups.
 
