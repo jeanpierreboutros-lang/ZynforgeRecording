@@ -134,3 +134,37 @@ rig + real time:
    `session.report.json` → `missedSamples: 0`, all files identical length,
    and the live disk-health flag never trips. Use the external monitor
    (`/tmp/zynforge_*.sh` pattern) to confirm overloads = 0, spread = 0.
+
+## Control Surfaces — bench verification (hardware-only)
+
+The protocol logic is unit-tested; these confirm it against real gear. Open
+**Session ▸ Control Surfaces** for all of it.
+
+### OSC console (DiGiCo / SSL Live / Yamaha / Allen & Heath)
+1. Tick the console -> it goes live (receiver on the listen port). Open its
+   settings; note the `osc.udp://<this-mac>:<port>/` connection string.
+2. On the **console**, point its OSC target at this Mac's IP + that port (UDP).
+3. Turn on **"Debug: log OSC traffic"**, open **"View OSC Log..."**.
+4. From the desk: move a channel mute / change a name / recall a scene / hit
+   transport. Confirm in the log you see `<- /Console/... ` (or `/sq/`,
+   `/sslnet/`, `/Yamaha/`) lines, and the app reacts (mute toggles, marker
+   drops, transport follows).
+5. **Bidirectional:** set the **Console IP + Receive Port**, hit **"Request ALL
+   channel names"**. Watch the log for the `-> request...` line, then for
+   incoming `<- .../name "..."` replies, and the channel names populating.
+   *If no replies arrive, the request address is wrong for this model* — note
+   what the desk DOES send (some push names on connect) and adjust the request
+   string in `AudioEngine::requestConsoleChannelNames`.
+6. **Create session from console** -> a session sized + named from the desk.
+
+### MIDI control surface (Mackie Control / FaderPort in MCU mode)
+1. In the surface's settings pick **MIDI In/Out**, then tick it on.
+2. Move a surface **fader** -> the matching channel gain moves; move the app
+   fader -> the motor fader tracks back.
+3. **Mute / Solo / Arm** buttons toggle the channel + light the surface LED.
+4. **V-pot** turn -> pan; the LED ring shows pan position.
+5. **Meters** on the surface follow the channel levels; **scribble strips**
+   show channel names.
+6. **Bank** / **Channel** buttons move the 8-fader window across all channels
+   (faders/names/meters re-populate for the new bank).
+7. **Transport** (Play/Stop) on the surface drives + reflects the app.
