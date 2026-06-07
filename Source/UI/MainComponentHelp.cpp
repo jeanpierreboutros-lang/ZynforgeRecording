@@ -399,6 +399,34 @@ void MainComponent::showStartupWelcome()
         self->engine.getRecorder().setCaptureFormat (r.captureFormat);
         self->engine.setActiveSessionDir (sessionFolder);
 
+        // Apply the chosen sample rate + input/output devices to the
+        // hardware immediately, so recording captures from the device
+        // the engineer picked and monitoring goes to the right output.
+        {
+            auto setup = self->engine.getDeviceManager().getAudioDeviceSetup();
+            bool changed = false;
+            if (! juce::approximatelyEqual (setup.sampleRate, r.sampleRate))
+            {
+                setup.sampleRate = r.sampleRate;
+                self->pendingSampleRate = r.sampleRate;
+                changed = true;
+            }
+            if (r.inputDeviceName.isNotEmpty() && r.inputDeviceName != setup.inputDeviceName)
+            {
+                setup.inputDeviceName     = r.inputDeviceName;
+                setup.useDefaultInputChannels = true;
+                changed = true;
+            }
+            if (r.outputDeviceName.isNotEmpty() && r.outputDeviceName != setup.outputDeviceName)
+            {
+                setup.outputDeviceName     = r.outputDeviceName;
+                setup.useDefaultOutputChannels = true;
+                changed = true;
+            }
+            if (changed)
+                self->engine.getDeviceManager().setAudioDeviceSetup (setup, true);
+        }
+
         // New session = clean slate. Wipe any per-strip persistence
         // from a previous show AND reset the strip count to zero so
         // the engineer dials in the channels they want via +CH /
@@ -428,7 +456,22 @@ void MainComponent::showStartupWelcome()
                           : "Failed to load " + sessionDir.getFileName());
     };
 
-    zynforge::WelcomeDialog::launch (defaultRoot, curSr, curFormat,
+    // Enumerate the available input / output devices so the New pane can
+    // offer them as a record-from / monitor picker.
+    zynforge::WelcomeDialog::DeviceChoices devices;
+    {
+        auto& dm = engine.getDeviceManager();
+        if (auto* type = dm.getCurrentDeviceTypeObject())
+        {
+            devices.inputs  = type->getDeviceNames (true);
+            devices.outputs = type->getDeviceNames (false);
+        }
+        const auto setup = dm.getAudioDeviceSetup();
+        devices.currentInput  = setup.inputDeviceName;
+        devices.currentOutput = setup.outputDeviceName;
+    }
+
+    zynforge::WelcomeDialog::launch (defaultRoot, curSr, curFormat, devices,
                                      std::move (onCreate),
                                      std::move (onOpen));
 }

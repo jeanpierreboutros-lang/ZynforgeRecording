@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Added (latest)
+- **Welcome ▸ New Session picks the record-from input + monitor output device** — the New-session pane of the boot Welcome dialog now has two extra dropdowns, **Input Device (record from)** and **Output Device (monitor)**, populated from the current audio device type and pre-selected to whatever the engine is using. Pick them when you create the session and the choice is applied to the hardware immediately (alongside the sample rate), so the very first take captures from the device you intended and monitoring goes to the right output — no detour through Audio Settings. Leaving them at the current device is a no-op.
+
 ### Changed (security)
 - **Companion server: secure remote access via tunnels, documented (no in-app TLS)** — the companion stays **loopback-only + token** (secure on the machine), and rather than shipping a self-signed-cert HTTPS stack (browser warnings, extra attack surface), secure phone/off-machine access is now done by fronting `127.0.0.1:9000` with a **tunnel** — Tailscale `serve`, Cloudflare Tunnel, or `ssh -L` — which provides real CA-backed TLS for free. README gained a "Companion server — Security & secure remote access" section with copy-paste recipes; the in-app start message points to it, and the host warns if the server is ever exposed on the LAN in plaintext. See `decisions.md`.
 

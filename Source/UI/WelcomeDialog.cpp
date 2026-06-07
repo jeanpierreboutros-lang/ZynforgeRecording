@@ -131,7 +131,8 @@ namespace zynforge
         public:
             NewPanel (const juce::File& defaultLocation,
                       double            lastSR,
-                      CaptureFormat     lastFmt)
+                      CaptureFormat     lastFmt,
+                      const WelcomeDialog::DeviceChoices& dev)
                 : storageDir (defaultLocation)
             {
                 addAndMakeVisible (nameLabel);
@@ -203,6 +204,32 @@ namespace zynforge
                 ioCombo.addItem ("Stereo Mix", 2);
                 ioCombo.setSelectedId (1, juce::dontSendNotification);
 
+                // Input / Output device pickers -- choose what to record from
+                // and monitor through, right here when creating the session.
+                addAndMakeVisible (inputDevLabel);
+                inputDevLabel.setText ("Input Device (record from)", juce::dontSendNotification);
+                styleFieldLabel (inputDevLabel);
+                addAndMakeVisible (inputDevCombo);
+                dialog::styleCombo (inputDevCombo);
+                for (int i = 0; i < dev.inputs.size(); ++i)
+                    inputDevCombo.addItem (dev.inputs[i], i + 1);
+                {
+                    const int idx = dev.inputs.indexOf (dev.currentInput);
+                    inputDevCombo.setSelectedId (juce::jmax (1, idx + 1), juce::dontSendNotification);
+                }
+
+                addAndMakeVisible (outputDevLabel);
+                outputDevLabel.setText ("Output Device (monitor)", juce::dontSendNotification);
+                styleFieldLabel (outputDevLabel);
+                addAndMakeVisible (outputDevCombo);
+                dialog::styleCombo (outputDevCombo);
+                for (int i = 0; i < dev.outputs.size(); ++i)
+                    outputDevCombo.addItem (dev.outputs[i], i + 1);
+                {
+                    const int idx = dev.outputs.indexOf (dev.currentOutput);
+                    outputDevCombo.setSelectedId (juce::jmax (1, idx + 1), juce::dontSendNotification);
+                }
+
                 addAndMakeVisible (interleaved);
                 interleaved.setButtonText ("Interleaved");
                 interleaved.setToggleState (true, juce::dontSendNotification);
@@ -234,6 +261,8 @@ namespace zynforge
             double        getSampleRate() const { return hzFromSampleRateId (sampleRateCombo.getSelectedId()); }
             bool          isInterleaved() const { return interleaved.getToggleState(); }
             juce::String  getIoSettings() const { return ioCombo.getText(); }
+            juce::String  getInputDevice()  const { return inputDevCombo.getNumItems()  > 0 ? inputDevCombo.getText()  : juce::String(); }
+            juce::String  getOutputDevice() const { return outputDevCombo.getNumItems() > 0 ? outputDevCombo.getText() : juce::String(); }
 
             void resized() override
             {
@@ -283,6 +312,22 @@ namespace zynforge
                     ioLabel.setBounds (right.removeFromTop (18));
                     right.removeFromTop (brand::space::xs);
                     ioCombo.setBounds (right.removeFromTop (32));
+                }
+                b.removeFromTop (18);
+
+                auto row3 = b.removeFromTop (60);
+                {
+                    auto left = row3.removeFromLeft (colW);
+                    inputDevLabel.setBounds (left.removeFromTop (18));
+                    left.removeFromTop (brand::space::xs);
+                    inputDevCombo.setBounds (left.removeFromTop (32));
+                }
+                row3.removeFromLeft (18);
+                {
+                    auto right = row3;
+                    outputDevLabel.setBounds (right.removeFromTop (18));
+                    right.removeFromTop (brand::space::xs);
+                    outputDevCombo.setBounds (right.removeFromTop (32));
                 }
                 b.removeFromTop (12);
 
@@ -336,6 +381,10 @@ namespace zynforge
             juce::ComboBox     bitDepthCombo;
             juce::Label        ioLabel;
             juce::ComboBox     ioCombo;
+            juce::Label        inputDevLabel;
+            juce::ComboBox     inputDevCombo;
+            juce::Label        outputDevLabel;
+            juce::ComboBox     outputDevCombo;
             juce::ToggleButton interleaved;
             juce::ToggleButton fromTemplate;
             juce::Label        templatesHeader;
@@ -423,11 +472,12 @@ namespace zynforge
             Content (const juce::File& defaultLocation,
                      double            lastSR,
                      CaptureFormat     lastFmt,
+                     const WelcomeDialog::DeviceChoices& dev,
                      WelcomeDialog::OnCreateNew    onCreate_,
                      WelcomeDialog::OnOpenExisting onOpen_)
                 : onCreate (std::move (onCreate_)),
                   onOpen   (std::move (onOpen_)),
-                  newPanel (std::make_unique<NewPanel> (defaultLocation, lastSR, lastFmt)),
+                  newPanel (std::make_unique<NewPanel> (defaultLocation, lastSR, lastFmt, dev)),
                   openPanel (std::make_unique<OpenPanel> (defaultLocation,
                       [this] (const juce::File& f)
                       {
@@ -473,7 +523,7 @@ namespace zynforge
                 dialog::styleSecondary (cancelButton);
                 cancelButton.onClick = [this] { dismiss(); };
 
-                setSize (920, 720);
+                setSize (920, 760);
             }
 
             void paint (juce::Graphics& g) override
@@ -550,6 +600,8 @@ namespace zynforge
                 r.sampleRate    = newPanel->getSampleRate();
                 r.interleaved   = newPanel->isInterleaved();
                 r.ioSettings    = newPanel->getIoSettings();
+                r.inputDeviceName  = newPanel->getInputDevice();
+                r.outputDeviceName = newPanel->getOutputDevice();
                 onCreate (r);
                 dismiss();
             }
@@ -596,13 +648,14 @@ namespace zynforge
         };
     } // anonymous namespace
 
-    void WelcomeDialog::launch (const juce::File& defaultLocation,
-                                double            lastSR,
-                                CaptureFormat     lastFmt,
-                                OnCreateNew       onCreate,
-                                OnOpenExisting    onOpen)
+    void WelcomeDialog::launch (const juce::File&    defaultLocation,
+                                double               lastSR,
+                                CaptureFormat        lastFmt,
+                                const DeviceChoices& devices,
+                                OnCreateNew          onCreate,
+                                OnOpenExisting       onOpen)
     {
-        auto content = std::make_unique<Content> (defaultLocation, lastSR, lastFmt,
+        auto content = std::make_unique<Content> (defaultLocation, lastSR, lastFmt, devices,
                                                   std::move (onCreate), std::move (onOpen));
         juce::DialogWindow::LaunchOptions opts;
         opts.dialogTitle                  = "Welcome";

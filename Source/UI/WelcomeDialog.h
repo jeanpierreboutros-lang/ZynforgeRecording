@@ -28,16 +28,28 @@ namespace zynforge
             double        sampleRate;
             bool          interleaved;
             juce::String  ioSettings;
+            juce::String  inputDeviceName;   // chosen record-from input device ("" = unchanged)
+            juce::String  outputDeviceName;  // chosen monitor output device  ("" = unchanged)
         };
 
         using OnCreateNew  = std::function<void (const NewResult&)>;
         using OnOpenExisting = std::function<void (const juce::File& /*sessionDir*/)>;
 
+        // Available audio devices to populate the New-session device pickers.
+        struct DeviceChoices
+        {
+            juce::StringArray inputs;        // input device names
+            juce::StringArray outputs;       // output device names
+            juce::String      currentInput;  // pre-selected input
+            juce::String      currentOutput; // pre-selected output
+        };
+
         // Modal-async. The dialog shows the New panel by default.
-        static void launch (const juce::File& defaultLocation,
-                            double            lastSampleRate,
-                            CaptureFormat     lastCaptureFormat,
-                            OnCreateNew       onCreate,
-                            OnOpenExisting    onOpen);
+        static void launch (const juce::File&    defaultLocation,
+                            double                lastSampleRate,
+                            CaptureFormat         lastCaptureFormat,
+                            const DeviceChoices&  devices,
+                            OnCreateNew           onCreate,
+                            OnOpenExisting        onOpen);
     };
 }
