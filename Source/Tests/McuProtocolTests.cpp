@@ -49,6 +49,33 @@ namespace zynforge
                 expectEquals (m.getChannel(), 3);   // strip 2 -> MIDI channel 3
             }
 
+            beginTest ("Bank / channel buttons decode");
+            {
+                expect (decodeButton (BankLeft).action  == Action::BankLeft);
+                expect (decodeButton (BankRight).action == Action::BankRight);
+                expect (decodeButton (ChanLeft).action  == Action::ChanLeft);
+                expect (decodeButton (ChanRight).action == Action::ChanRight);
+            }
+
+            beginTest ("Peak -> meter level (0..12, 0xF clip)");
+            {
+                expectEquals (peakToMeter (1.0f), 0xF);                 // clip
+                expectEquals (peakToMeter (0.00001f), 0);              // silence floor
+                expect (peakToMeter (1.0f) > peakToMeter (0.5f));      // monotonic
+                const auto m = meter (3, 7);
+                expect (m.isChannelPressure());
+            }
+
+            beginTest ("V-pot relative encoder decode + ring output");
+            {
+                expectEquals (decodeVpotDelta (0x03), 3);    // clockwise 3 ticks
+                expectEquals (decodeVpotDelta (0x43), -3);   // counter-clockwise 3
+                expect (isVpotCc (0x10) && isVpotCc (0x17) && ! isVpotCc (0x18));
+                expectEquals (vpotStrip (0x12), 2);
+                const auto r = vpotRing (0, 0.0f);           // centre pan
+                expect (r.isController() && r.getControllerNumber() == 0x30);
+            }
+
             beginTest ("Scribble strip is a 10-byte+ SysEx at the strip's offset");
             {
                 const auto m = scribble (1, "Kick");

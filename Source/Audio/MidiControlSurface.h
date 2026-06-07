@@ -35,10 +35,14 @@ namespace zynforge
         std::unique_ptr<juce::MidiOutput> output;
 
         static constexpr int kStrips = 8;
+        std::atomic<int>  bankOffset   { 0 };       // first engine channel on fader 0
+        std::atomic<bool> forceRefresh { false };   // full re-push after a bank move
         float        lastFaderDb [kStrips];
         bool         lastMute    [kStrips];
         bool         lastSolo    [kStrips];
         bool         lastArm     [kStrips];
+        int          lastMeter   [kStrips];
+        float        lastPan     [kStrips];
         juce::String lastName    [kStrips];
         bool         lastPlaying { false };
         bool         lastRecording { false };

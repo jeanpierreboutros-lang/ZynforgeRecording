@@ -35,6 +35,10 @@ namespace zynforge::mcu
         SoloBase   = 0x08,   // 8..15  solo
         MuteBase   = 0x10,   // 16..23 mute
         SelectBase = 0x18,   // 24..31 select
+        BankLeft   = 0x2E,   // fader bank -8
+        BankRight  = 0x2F,   // fader bank +8
+        ChanLeft   = 0x30,   // nudge bank -1
+        ChanRight  = 0x31,   // nudge bank +1
         Rewind     = 0x5B,
         Forward    = 0x5C,
         Stop       = 0x5D,
@@ -42,7 +46,8 @@ namespace zynforge::mcu
         Record     = 0x5F,
     };
 
-    enum class Action { None, Arm, Solo, Mute, Select, Rewind, Forward, Stop, Play, Record };
+    enum class Action { None, Arm, Solo, Mute, Select, Rewind, Forward, Stop, Play, Record,
+                        BankLeft, BankRight, ChanLeft, ChanRight };
 
     struct ButtonHit { Action action { Action::None }; int strip { -1 }; };
 
@@ -54,11 +59,15 @@ namespace zynforge::mcu
         if (note >= SelectBase && note < SelectBase + 8) return { Action::Select, note - SelectBase };
         switch (note)
         {
-            case Rewind:  return { Action::Rewind,  -1 };
-            case Forward: return { Action::Forward, -1 };
-            case Stop:    return { Action::Stop,    -1 };
-            case Play:    return { Action::Play,    -1 };
-            case Record:  return { Action::Record,  -1 };
+            case BankLeft:  return { Action::BankLeft,  -1 };
+            case BankRight: return { Action::BankRight, -1 };
+            case ChanLeft:  return { Action::ChanLeft,  -1 };
+            case ChanRight: return { Action::ChanRight, -1 };
+            case Rewind:    return { Action::Rewind,  -1 };
+            case Forward:   return { Action::Forward, -1 };
+            case Stop:      return { Action::Stop,    -1 };
+            case Play:      return { Action::Play,    -1 };
+            case Record:    return { Action::Record,  -1 };
         }
         return {};
     }
@@ -97,5 +106,38 @@ namespace zynforge::mcu
     inline juce::MidiMessage led (Action a, int strip, bool on)
     {
         return juce::MidiMessage::noteOn (1, buttonNote (a, strip), (juce::uint8) (on ? 127 : 0));
+    }
+
+    // ── Meters ──────────────────────────────────────────────────────────
+    // MCU meters are channel-pressure: data = (strip << 4) | level, level
+    // 0..12, 0xE = peak-hold, 0xF = clip/overload.
+    inline int peakToMeter (float peakLinear) noexcept
+    {
+        if (peakLinear >= 0.999f) return 0xF;                 // clip
+        const float dbFS = juce::Decibels::gainToDecibels (juce::jmax (1.0e-5f, peakLinear));
+        return juce::jlimit (0, 12, (int) std::lround (juce::jmap (dbFS, -54.0f, 0.0f, 0.0f, 12.0f)));
+    }
+    inline juce::MidiMessage meter (int strip, int level)
+    {
+        return juce::MidiMessage::channelPressureChange (1, ((strip & 0x7) << 4) | (level & 0xF));
+    }
+
+    // ── V-pots (pan) ────────────────────────────────────────────────────
+    // Input: a relative encoder CC (0x10..0x17). Value bit 6 = direction,
+    // bits 0..5 = tick count. Returns a signed delta (+cw / -ccw).
+    inline int decodeVpotDelta (int ccValue) noexcept
+    {
+        const int ticks = ccValue & 0x3F;
+        return (ccValue & 0x40) ? -ticks : ticks;
+    }
+    inline bool isVpotCc (int cc) noexcept { return cc >= 0x10 && cc <= 0x17; }
+    inline int  vpotStrip (int cc) noexcept { return cc - 0x10; }
+
+    // Output: the V-pot LED ring. CC 0x30..0x37, value = (mode<<4)|position.
+    // Single-dot mode (0), position 1..11 with 6 = centre. pan in [-1, 1].
+    inline juce::MidiMessage vpotRing (int strip, float pan)
+    {
+        const int pos = juce::jlimit (1, 11, (int) std::lround (juce::jmap (pan, -1.0f, 1.0f, 1.0f, 11.0f)));
+        return juce::MidiMessage::controllerEvent (1, 0x30 + (strip & 0x7), pos & 0x0F);
     }
 }
