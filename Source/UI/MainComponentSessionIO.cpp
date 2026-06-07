@@ -749,6 +749,43 @@ void MainComponent::warnIfSampleRateMismatch()
         "OK");
 }
 
+void MainComponent::applySessionSampleRate (double sr)
+{
+    if (sr <= 0.0) return;
+
+    // The session's intended rate -- what the record guard + banner compare
+    // the live device clock against. The 10 Hz timer keeps the engine copy
+    // in lockstep from this, so updating pendingSampleRate is authoritative.
+    pendingSampleRate = sr;
+    engine.setSessionSampleRate (sr);
+
+    // Ask the hardware to follow. A clock-slaved device (Dante / wordclock)
+    // may refuse and stay on its network rate -- in which case the mismatch
+    // banner will (correctly) light, telling the engineer to fix the clock.
+    auto setup = engine.getDeviceManager().getAudioDeviceSetup();
+    if (! juce::approximatelyEqual (setup.sampleRate, sr))
+    {
+        setup.sampleRate = sr;
+        engine.getDeviceManager().setAudioDeviceSetup (setup, true);
+    }
+
+    refreshFormatButton();
+
+    const double dev = engine.getDeviceManager().getCurrentAudioDevice() != nullptr
+                         ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
+                         : 0.0;
+    const auto khz = [] (double s)
+    {
+        const double k = s / 1000.0;
+        return ((k == std::floor (k)) ? juce::String ((int) k) : juce::String (k, 1)) + " kHz";
+    };
+    if (dev > 0.0 && std::abs (dev - sr) > 1.0)
+        showStatus ("Session set to " + khz (sr) + " -- but the device is locked at "
+                    + khz (dev) + ". Match the clock to record.");
+    else
+        showStatus ("Session sample rate set to " + khz (sr));
+}
+
 void MainComponent::relocateActiveSession()
 {
     if (engine.isRecording())

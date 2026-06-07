@@ -121,6 +121,9 @@ private:
     // location, then re-pin everything from there. Stopped-only; the copy
     // runs on a background thread so a cross-volume move can't freeze the UI.
     void relocateActiveSession();
+    // Set the session's intended sample rate (the rate the mismatch guard
+    // compares against) and try to bring the hardware along with it.
+    void applySessionSampleRate (double sr);
     void runSpectralAutoName();
     void writeSoundcheckReport();
     void runNoiseAnalysis();

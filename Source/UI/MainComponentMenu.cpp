@@ -486,7 +486,12 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
             {
                 using F = zynforge::CaptureFormat;
                 const auto cur = eng.getRecorder().getCaptureFormat();
-                const double sr = eng.getDeviceManager().getAudioDeviceSetup().sampleRate;
+                // Show the SESSION's intended rate (what the session was
+                // created/opened at), NOT the live device rate -- a Dante
+                // clock-slave often runs a different rate than the session.
+                const double sr = eng.getSessionSampleRate() > 0.0
+                                    ? eng.getSessionSampleRate()
+                                    : eng.getDeviceManager().getAudioDeviceSetup().sampleRate;
 
                 fmtL.setText ("Audio Format", juce::dontSendNotification);
                 rateL.setText ("Sample Rate", juce::dontSendNotification);
@@ -503,14 +508,13 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
                 fmtBox.onChange = [this] { refreshBits(); };
                 addAndMakeVisible (fmtBox);
 
-                rateBox.addItem ("44.1 kHz", 1);
-                rateBox.addItem ("48 kHz",   2);
-                rateBox.addItem ("96 kHz",   3);
-                rateBox.addItem ("192 kHz",  4);
-                rateBox.setSelectedId (juce::approximatelyEqual (sr, 44100.0)  ? 1
-                                     : juce::approximatelyEqual (sr, 96000.0)  ? 3
-                                     : juce::approximatelyEqual (sr, 192000.0) ? 4 : 2,
-                                     juce::dontSendNotification);
+                rateBox.addItem ("44.1 kHz",  1);
+                rateBox.addItem ("48 kHz",    2);
+                rateBox.addItem ("88.2 kHz",  3);
+                rateBox.addItem ("96 kHz",    4);
+                rateBox.addItem ("176.4 kHz", 5);
+                rateBox.addItem ("192 kHz",   6);
+                rateBox.setSelectedId (rateIdFromHz (sr), juce::dontSendNotification);
                 addAndMakeVisible (rateBox);
 
                 addAndMakeVisible (bitsBox);
@@ -551,6 +555,23 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
                 addAndMakeVisible (cancelB);
             }
 
+            static int rateIdFromHz (double hz)
+            {
+                if (juce::approximatelyEqual (hz, 44100.0))  return 1;
+                if (juce::approximatelyEqual (hz, 88200.0))  return 3;
+                if (juce::approximatelyEqual (hz, 96000.0))  return 4;
+                if (juce::approximatelyEqual (hz, 176400.0)) return 5;
+                if (juce::approximatelyEqual (hz, 192000.0)) return 6;
+                return 2;   // 48 kHz default
+            }
+            static double hzFromRateId (int id)
+            {
+                switch (id) { case 1: return 44100.0;  case 3: return 88200.0;
+                              case 4: return 96000.0;  case 5: return 176400.0;
+                              case 6: return 192000.0; }
+                return 48000.0;
+            }
+
             void refreshBits()
             {
                 const int prev = bitsBox.getSelectedId();
@@ -574,13 +595,10 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
                 else             f = b == 1 ? F::Flac16 : F::Flac24;
                 eng.getRecorder().setCaptureFormat (f);
 
-                double sr = 48000.0;
-                switch (rateBox.getSelectedId())
-                { case 1: sr = 44100.0; break; case 2: sr = 48000.0; break;
-                  case 3: sr = 96000.0; break; case 4: sr = 192000.0; break; }
-                auto setup = eng.getDeviceManager().getAudioDeviceSetup();
-                setup.sampleRate = sr;
-                eng.getDeviceManager().setAudioDeviceSetup (setup, true);
+                // Change the SESSION rate (updates pendingSampleRate + the
+                // record-guard, and asks the device to follow) via the host,
+                // so it actually sticks instead of only nudging the device.
+                owner.applySessionSampleRate (hzFromRateId (rateBox.getSelectedId()));
                 close();
             }
 
