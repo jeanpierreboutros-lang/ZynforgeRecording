@@ -73,7 +73,9 @@ namespace zynforge
 
     void OscRemote::setChannelName (int idx1, const juce::String& s)
     {
-        engine.setTrackName (idx1 - 1, s);
+        // Route through the engine's capture-aware path so "Create session
+        // from console" can collect names for channels that don't exist yet.
+        engine.onConsoleChannelName (idx1, s);
     }
     void OscRemote::setChannelMute (int idx1, bool m)
     {

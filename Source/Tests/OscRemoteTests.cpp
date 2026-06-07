@@ -77,6 +77,49 @@ namespace zynforge
                 expect (! engine.getRecorder().getTrack (0).muted.load());
                 expect (! engine.getRecorder().getTrack (0).armed.load());
             }
+
+            beginTest ("Console name capture collects names for create-from-console");
+            {
+                AudioEngine engine;
+                engine.setStripCount (2);
+                OscRemote osc (engine);
+                osc.setDialect (OscRemote::Dialect::DiGiCo);
+
+                engine.setConsoleNameCapture (true);
+                osc.dispatchForTest (juce::OSCMessage ("/Console/Channels/1/name", juce::String ("Kick")));
+                osc.dispatchForTest (juce::OSCMessage ("/Console/Channels/5/name", juce::String ("Vox")));
+                engine.setConsoleNameCapture (false);
+
+                auto names = engine.takeCapturedConsoleNames();
+                expectEquals ((int) names.size(), 2);
+                expectEquals (names[1], juce::String ("Kick"));
+                expectEquals (names[5], juce::String ("Vox"));
+                expect (engine.takeCapturedConsoleNames().empty());   // taking clears
+            }
+
+            beginTest ("requestConsoleChannelNames sends an OSC packet to the console");
+            {
+                struct Rx : juce::OSCReceiver,
+                            juce::OSCReceiver::Listener<juce::OSCReceiver::RealtimeCallback>
+                {
+                    std::atomic<int> got { 0 };
+                    Rx() { addListener (this); }
+                    void oscMessageReceived (const juce::OSCMessage&) override
+                    { got.fetch_add (1, std::memory_order_relaxed); }
+                } rx;
+
+                const int port = 9223;
+                expect (rx.connect (port), "test receiver could not bind " + juce::String (port));
+
+                AudioEngine engine;
+                engine.setStripCount (1);
+                expect (engine.requestConsoleChannelNames ("127.0.0.1", port));
+                for (int i = 0; i < 60 && rx.got.load() == 0; ++i) juce::Thread::sleep (10);
+                expect (rx.got.load() > 0, "console request packet never arrived");
+                rx.disconnect();
+
+                expect (! engine.requestConsoleChannelNames ("", port));   // empty host -> false
+            }
         }
     };
 

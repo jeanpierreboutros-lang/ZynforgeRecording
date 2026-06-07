@@ -1,5 +1,6 @@
 #include "AudioEngine.h"
 #include "OscRemote.h"
+#include <juce_osc/juce_osc.h>
 #include "FastAccumulate.h"
 #include "TransientDetector.h"
 #include "../Network/CompanionServer.h"
@@ -316,6 +317,45 @@ namespace zynforge
                 return false;
             }
         return false;
+    }
+
+    bool AudioEngine::requestConsoleChannelNames (const juce::String& host, int port)
+    {
+        if (host.trim().isEmpty() || port <= 0 || port > 65535) return false;
+        juce::OSCSender sender;
+        if (! sender.connect (host.trim(), port)) return false;
+
+        // Best-effort DiGiCo "report your channels" nudge. DiGiCo's OSC differs
+        // by model, so we fire a few plausible refresh/subscribe forms; the
+        // console's channel-name replies come back on the normal receive path
+        // (the DiGiCo dialect already parses /Console/Channels/N/name).
+        sender.send (juce::OSCMessage ("/Console/Channels/?"));
+        sender.send (juce::OSCMessage ("/Console/Channels", (juce::int32) 1));
+        sender.send (juce::OSCMessage ("/info"));
+        sender.disconnect();
+        return true;
+    }
+
+    void AudioEngine::setConsoleNameCapture (bool on)
+    {
+        if (on) capturedConsoleNames.clear();
+        consoleCapture.store (on, std::memory_order_relaxed);
+    }
+
+    void AudioEngine::onConsoleChannelName (int oneBasedIndex, const juce::String& name)
+    {
+        if (oneBasedIndex >= 1 && consoleCapture.load (std::memory_order_relaxed))
+            capturedConsoleNames[oneBasedIndex] = name;
+        const int i = oneBasedIndex - 1;
+        if (i >= 0 && i < recorder.getNumTracks())
+            setTrackName (i, name);
+    }
+
+    std::map<int, juce::String> AudioEngine::takeCapturedConsoleNames()
+    {
+        auto out = capturedConsoleNames;
+        capturedConsoleNames.clear();
+        return out;
     }
 
     void AudioEngine::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m)

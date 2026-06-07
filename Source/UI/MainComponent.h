@@ -107,6 +107,9 @@ private:
     void importChannelNamesFromCsv();
     // Create a brand-new session sized + named from a channel CSV.
     void createSessionFromCsv();
+    // Request channel names from a DiGiCo console, then build a session from
+    // what comes back (the bidirectional console link).
+    void createSessionFromConsole();
     void showBatchColourDialog();
     void showSelectionMenu();
     void deleteSelectedStrips();

@@ -19,7 +19,9 @@ namespace zynforge
     class ControlSurfacesDialog
     {
     public:
-        static void launch (AudioEngine& engine);
+        // createFromConsole is invoked by the DiGiCo panel's "Create session
+        // from console" button (the host builds the session). Optional.
+        static void launch (AudioEngine& engine, std::function<void()> createFromConsole = {});
     };
 
     namespace cs_detail
@@ -81,7 +83,8 @@ namespace zynforge
         class OscSettings final : public juce::Component
         {
         public:
-            OscSettings (AudioEngine& e, ProtoInfo pi) : engine (e), info (std::move (pi))
+            OscSettings (AudioEngine& e, ProtoInfo pi, std::function<void()> createFromConsole)
+                : engine (e), info (std::move (pi)), onCreateFromConsole (std::move (createFromConsole))
             {
                 auto lab = [this] (juce::Label& l, const juce::String& t, juce::Colour c, bool b = false)
                 { l.setText (t, juce::dontSendNotification); l.setColour (juce::Label::textColourId, c);
@@ -99,22 +102,48 @@ namespace zynforge
                 portEd.setText (juce::String (oscPort (e)), juce::dontSendNotification);
                 addAndMakeVisible (portEd);
 
-                if (info.dialect == 1)   // DiGiCo: informational console-IP field
+                digico = (info.dialect == 1);
+                if (digico)   // DiGiCo: bidirectional console link
                 {
+                    auto* ap = e.getAppProps();
                     lab (ipKey, "Console IP", brand::textSecondary);
                     dialog::styleTextEditor (ipEd);
-                    ipEd.setText (e.getAppProps() ? e.getAppProps()->getValue ("cs_digico_ip") : juce::String(),
-                                  juce::dontSendNotification);
+                    ipEd.setText (ap ? ap->getValue ("cs_digico_ip") : juce::String(), juce::dontSendNotification);
                     addAndMakeVisible (ipEd);
+
+                    lab (rxKey, "Console Receive Port", brand::textSecondary);
+                    dialog::styleTextEditor (rxEd);
+                    rxEd.setInputRestrictions (5, "0123456789");
+                    rxEd.setText (juce::String (ap ? ap->getIntValue ("cs_digico_port", 8001) : 8001), juce::dontSendNotification);
+                    addAndMakeVisible (rxEd);
+
+                    reqB.setButtonText ("Request ALL channel names from console");
+                    dialog::stylePrimary (reqB);
+                    reqB.onClick = [this] { requestNames(); };
+                    createB.setButtonText ("Create session from console");
+                    dialog::styleSecondary (createB);
+                    createB.setEnabled (onCreateFromConsole != nullptr);
+                    createB.onClick = [this]
+                    {
+                        persist();
+                        if (onCreateFromConsole) onCreateFromConsole();
+                        if (auto* d = findParentComponentOfClass<juce::DialogWindow>()) d->exitModalState (0);
+                    };
+                    addAndMakeVisible (reqB); addAndMakeVisible (createB);
+
+                    statusL.setFont (brand::type::caption());
+                    statusL.setColour (juce::Label::textColourId, brand::textMuted);
+                    statusL.setJustificationType (juce::Justification::topLeft);
+                    addAndMakeVisible (statusL);
                 }
 
                 applyB.setButtonText ("Apply"); dialog::stylePrimary (applyB);
                 closeB.setButtonText ("Close"); dialog::styleSecondary (closeB);
-                applyB.onClick = [this] { apply(); };
+                applyB.onClick = [this] { persist(); rebind(); };
                 closeB.onClick = [this] { if (auto* d = findParentComponentOfClass<juce::DialogWindow>()) d->exitModalState (0); };
                 addAndMakeVisible (applyB); addAndMakeVisible (closeB);
 
-                setSize (480, info.dialect == 1 ? 290 : 250);
+                setSize (520, digico ? 420 : 250);
             }
 
             void paint (juce::Graphics& g) override { dialog::paintChrome (g, *this, info.name.toUpperCase() + " -- OSC"); }
@@ -123,10 +152,17 @@ namespace zynforge
             {
                 auto b = getLocalBounds().reduced (24).withTrimmedTop (44);
                 auto row = [&] (juce::Label& k, juce::Component& v, int h = 24)
-                { auto r = b.removeFromTop (h); k.setBounds (r.removeFromLeft (120)); v.setBounds (r); b.removeFromTop (10); };
+                { auto r = b.removeFromTop (h); k.setBounds (r.removeFromLeft (170)); v.setBounds (r); b.removeFromTop (10); };
                 row (connKey, connVal);
                 row (portKey, portEd, 30);
-                if (info.dialect == 1) row (ipKey, ipEd, 30);
+                if (digico)
+                {
+                    row (ipKey, ipEd, 30);
+                    row (rxKey, rxEd, 30);
+                    reqB.setBounds (b.removeFromTop (30)); b.removeFromTop (8);
+                    createB.setBounds (b.removeFromTop (30)); b.removeFromTop (8);
+                    statusL.setBounds (b.removeFromTop (32));
+                }
                 row (addrKey, addrVal);
                 auto br = getLocalBounds().removeFromBottom (50).reduced (24, 10);
                 applyB.setBounds (br.removeFromRight (90)); br.removeFromRight (10);
@@ -134,27 +170,49 @@ namespace zynforge
             }
 
         private:
-            void apply()
+            void persist()
             {
-                const int port = juce::jlimit (1, 65535, portEd.getText().getIntValue());
                 if (auto* p = engine.getAppProps())
                 {
-                    p->setValue ("oscListenPort", port);
-                    if (info.dialect == 1) p->setValue ("cs_digico_ip", ipEd.getText().trim());
+                    p->setValue ("oscListenPort", juce::jlimit (1, 65535, portEd.getText().getIntValue()));
+                    if (digico)
+                    {
+                        p->setValue ("cs_digico_ip", ipEd.getText().trim());
+                        p->setValue ("cs_digico_port", juce::jlimit (1, 65535, rxEd.getText().getIntValue()));
+                    }
                     p->saveIfNeeded();
                 }
-                // Rebind if this dialect is the active receiver.
+            }
+            void rebind()
+            {
+                const int port = juce::jlimit (1, 65535, portEd.getText().getIntValue());
                 if (engine.isOscListening() && engine.getOscDialect() == info.dialect)
                 { engine.stopOsc(); engine.startOsc (port, info.dialect); }
                 connVal.setText ("osc.udp://" + juce::SystemStats::getComputerName() + ".local:"
                                  + juce::String (port) + "/", juce::dontSendNotification);
             }
+            void requestNames()
+            {
+                persist();
+                if (! engine.isOscListening() || engine.getOscDialect() != 1)
+                    engine.startOsc (juce::jlimit (1, 65535, portEd.getText().getIntValue()), 1);   // ensure we're listening for replies
+                const auto ip = ipEd.getText().trim();
+                const int  rx = juce::jlimit (1, 65535, rxEd.getText().getIntValue());
+                const bool ok = engine.requestConsoleChannelNames (ip, rx);
+                statusL.setText (ok ? "Request sent to " + ip + ":" + juce::String (rx)
+                                      + " -- channel names fill in as the console replies."
+                                    : "Couldn't send -- check Console IP + Receive Port.",
+                                 juce::dontSendNotification);
+                statusL.setColour (juce::Label::textColourId, ok ? brand::accentStatus : brand::accentRecord);
+            }
 
             AudioEngine& engine;
             ProtoInfo info;
-            juce::Label connKey, connVal, portKey, addrKey, addrVal, ipKey;
-            juce::TextEditor portEd, ipEd;
-            juce::TextButton applyB, closeB;
+            std::function<void()> onCreateFromConsole;
+            bool digico { false };
+            juce::Label connKey, connVal, portKey, addrKey, addrVal, ipKey, rxKey, statusL;
+            juce::TextEditor portEd, ipEd, rxEd;
+            juce::TextButton applyB, closeB, reqB, createB;
         };
 
         // ── MIDI control-surface settings ────────────────────────────────
@@ -252,7 +310,8 @@ namespace zynforge
         class Hub final : public juce::Component, public juce::ListBoxModel
         {
         public:
-            explicit Hub (AudioEngine& e) : engine (e)
+            Hub (AudioEngine& e, std::function<void()> createFromConsole)
+                : engine (e), onCreateFromConsole (std::move (createFromConsole))
             {
                 list.setModel (this);
                 list.setRowHeight (32);
@@ -336,7 +395,7 @@ namespace zynforge
                 const auto& pi = protocols()[(size_t) row];
                 juce::DialogWindow::LaunchOptions opts;
                 opts.dialogTitle = pi.name;
-                if (pi.osc) opts.content.setOwned (new OscSettings (engine, pi));
+                if (pi.osc) opts.content.setOwned (new OscSettings (engine, pi, onCreateFromConsole));
                 else        opts.content.setOwned (new MidiSurfaceSettings (engine, pi));
                 opts.dialogBackgroundColour       = brand::bgPanel;
                 opts.escapeKeyTriggersCloseButton = true;
@@ -346,17 +405,18 @@ namespace zynforge
             }
 
             AudioEngine& engine;
+            std::function<void()> onCreateFromConsole;
             juce::ListBox list { "protocols", nullptr };
             juce::Label title, hint;
             juce::TextButton settingsB, closeB;
         };
     }
 
-    inline void ControlSurfacesDialog::launch (AudioEngine& engine)
+    inline void ControlSurfacesDialog::launch (AudioEngine& engine, std::function<void()> createFromConsole)
     {
         juce::DialogWindow::LaunchOptions opts;
         opts.dialogTitle                  = "Control Surfaces";
-        opts.content.setOwned (new cs_detail::Hub (engine));
+        opts.content.setOwned (new cs_detail::Hub (engine, std::move (createFromConsole)));
         opts.dialogBackgroundColour       = brand::bgPanel;
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar            = true;

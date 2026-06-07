@@ -10,6 +10,7 @@
 #include "../Network/NDIBridge.h"
 
 #include <array>
+#include <map>
 #include "ITransport.h"
 #include "ClipModel.h"
 #include "MultitrackRecorder.h"
@@ -321,6 +322,21 @@ namespace zynforge
         void  stopOsc();
         bool  isOscListening() const;
         int   getOscPort() const;
+
+        // ── Outbound console control (DiGiCo bidirectional link) ────────
+        // Ask the console (at host:port) to report all channel names. The
+        // replies arrive on the normal OSC receive path. Returns false if the
+        // sender couldn't connect.
+        bool  requestConsoleChannelNames (const juce::String& host, int port);
+        // Channel-name capture: while on, every console channel name we receive
+        // is collected (1-based index -> name) AND applied to a matching track.
+        // Used by "Create session from console". Enabling clears the buffer.
+        void  setConsoleNameCapture (bool on);
+        bool  isConsoleNameCapture () const noexcept { return consoleCapture.load (std::memory_order_relaxed); }
+        // Called by OscRemote for every incoming console channel name.
+        void  onConsoleChannelName (int oneBasedIndex, const juce::String& name);
+        // Take + clear the captured names (message thread).
+        std::map<int, juce::String> takeCapturedConsoleNames();
         int   getOscDialect() const;
 
         // Returns recording dir if recording, else loaded playback session,
@@ -846,6 +862,8 @@ namespace zynforge
         std::atomic<int> ltcSourceStrip { -1 };   // 0-based strip index, -1 = none
         std::atomic<int>  chaseMode      { 0 };    // 0=Off 1=LTC 2=MTC
         std::atomic<bool> keepRollingOnSyncLoss { false };
+        std::atomic<bool> consoleCapture { false };   // capturing console channel names
+        std::map<int, juce::String> capturedConsoleNames;   // message-thread only
         std::unique_ptr<juce::MidiInput> mtcInput;
         juce::String                     mtcInputName;
 

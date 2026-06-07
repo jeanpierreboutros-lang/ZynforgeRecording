@@ -191,21 +191,10 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                               ? juce::String ("Stop NDI broadcast")
                               : juce::String ("Start NDI broadcast..."));
 
-        // Control Surfaces hub -- full protocol list with enable ticks +
-        // per-brand settings. The quick OSC submenu stays below for speed.
+        // Control Surfaces hub -- full protocol list (OSC + every console /
+        // surface) with enable ticks + per-brand settings. This replaces the
+        // old standalone OSC submenu.
         menu.addItem (720, "Control Surfaces...");
-
-        // OSC submenu with the five dialects.
-        juce::PopupMenu oscMenu;
-        oscMenu.addItem (110, "OSC Generic /zynforge");
-        oscMenu.addItem (111, "OSC DiGiCo");
-        oscMenu.addItem (112, "OSC Allen & Heath");
-        oscMenu.addItem (113, "OSC SSL Live");
-        oscMenu.addItem (114, "OSC Yamaha");
-        oscMenu.addSeparator();
-        oscMenu.addItem (116, "Set OSC port (" + juce::String (oscListenPort()) + ")...");
-        oscMenu.addItem (115, "Stop OSC", engine.isOscListening());
-        menu.addSubMenu ("OSC", oscMenu);
 
         // MIDI clock master -- drive outboard synths / drum machines /
         // DAW slaves from the session tempo (24 PPQN). Submenu lists
@@ -507,7 +496,8 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
         showStatus (on ? "Trim-Follow ON -- console input-gain moves now track the recorded soundcheck"
                        : "Trim-Follow OFF -- recorded tracks play at their printed level");
     }
-    else if (id == 720)  zynforge::ControlSurfacesDialog::launch (engine);
+    else if (id == 720)  zynforge::ControlSurfacesDialog::launch (engine,
+                            [this] { createSessionFromConsole(); });
     else if (id == 600)  zynforge::TimecodeSyncDialog::launch (engine);
     else if (id == 610)
     {

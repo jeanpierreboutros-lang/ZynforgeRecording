@@ -577,3 +577,65 @@ void MainComponent::createSessionFromCsv()
                         + " channels from " + f.getFileName());
         });
 }
+
+void MainComponent::createSessionFromConsole()
+{
+    if (engine.isRecording()) { showStatus ("Stop recording before creating a session"); return; }
+
+    auto* p = engine.getAppProps();
+    const auto ip = p ? p->getValue ("cs_digico_ip").trim() : juce::String();
+    const int  rx = p ? p->getIntValue ("cs_digico_port", 8001) : 8001;
+    if (ip.isEmpty())
+    { showStatus ("Set the DiGiCo Console IP first (Control Surfaces -> DiGiCo)."); return; }
+
+    // Listen on the DiGiCo dialect so replies are parsed, capture incoming
+    // names, then nudge the console to report them.
+    if (! engine.isOscListening() || engine.getOscDialect() != 1)
+        engine.startOsc (oscListenPort(), 1);
+    engine.setConsoleNameCapture (true);
+    if (! engine.requestConsoleChannelNames (ip, rx))
+    {
+        engine.setConsoleNameCapture (false);
+        showStatus ("Couldn't reach console at " + ip + ":" + juce::String (rx));
+        return;
+    }
+    showStatus ("Requesting channel names from " + ip + " -- building session in ~3 s...");
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    juce::Timer::callAfterDelay (3000, [self]
+    {
+        if (self == nullptr) return;
+        self->engine.setConsoleNameCapture (false);
+        const auto names = self->engine.takeCapturedConsoleNames();
+        if (names.empty())
+        {
+            self->showStatus ("No channel names received -- check the desk is sending OSC to this Mac.");
+            return;
+        }
+        const int maxCh = names.rbegin()->first;   // highest 1-based channel
+
+        zynforge::NewSessionDialog::Result r;
+        r.name          = "DiGiCo " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M");
+        r.location      = self->getSessionsRoot();
+        r.captureFormat = self->engine.getRecorder().getCaptureFormat();
+        r.sampleRate    = self->pendingSampleRate;
+        r.interleaved   = true;
+        r.ioSettings    = "Last Used";
+        const auto dir  = self->createSessionFolderStructure (r);
+
+        self->engine.setActiveSessionDir (dir);
+        self->engine.clearAllStripOverrides();
+        self->engine.setStripCount (maxCh);
+        for (const auto& kv : names)
+        {
+            const int i = kv.first - 1;
+            if (i >= 0 && i < maxCh) self->engine.setTrackName (i, kv.second);
+        }
+        self->lastTrackCount = -1;
+        self->loadSetlistFromActiveSession();
+        self->loadUILayoutFromActiveSession();
+        self->saveSessionStateTo (dir);
+        self->showStatus ("Session created from console: " + juce::String ((int) names.size())
+                          + " named channel(s)");
+    });
+}
