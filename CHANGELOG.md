@@ -20,6 +20,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ### Changed (latest, hardening)
 - **Removed the dead, buggy `SessionSettingsDialog` duplicate** — Session ▸ "Session Format & Recording…" was served by an inline panel, while a separate `SessionSettingsDialog.{h,cpp}` (216 lines) shipped *unused* and still carried the old bugs (read + wrote the device sample rate, not the session's). Deleted it so there's no buggy twin to confuse the next change; the live panel keeps the session-rate-aware behaviour and the relocate path. Renamed its `StubContent` struct to `SessionFormatContent` (no "stub" in shipping code).
 
+### Fixed (latest, UI polish)
+- **Mojibaked glyphs in rendered text** — the bundled font renders non-ASCII char literals as garbage (`â` / `Ã`), so all rendered arrows/symbols are now ASCII: `→`/`↔` in menus + status messages, and the `×` (remove), `•` (OSC), `✓` (BACKUP) button glyphs (`x` / `*` / `OK`). Comments keep their nice arrows.
+- **"Colour selected…" and "Batch Colour Channels…" now use the app's gradient picker** — both were the OS colourspace selector; they now open the same hue×shade `StripColourPicker` as per-strip + EDIT recolour.
+- **Solo Selection (A) is a toggle** — press A to solo the selected strips, press A again to clear it.
+- **Save menu + shortcut** — "Save Session State" → **Save** with a working **Cmd+S**; "Save Session As…" → **Save As…**.
+- **"Analyse for noise / hum / bumps…" tells you when there's nothing to analyse** — instead of silently scanning an empty session, it now says "No recorded audio to analyse — record a take first."
+
 ### Added (latest, interchange)
 - **Export Timeline (markers/cues/tracks) as CSV** — File ▸ Export ▸ *Export Timeline…* writes a portable sidecar listing every track→`Track_NN.wav`, plus all markers and cues as **timecode (HH:MM:SS:FF) + sample positions**, so a session can be reconstructed in another DAW (Pro Tools / Nuendo / Reaper). RFC-4180 CSV (names with commas/quotes are escaped). This is the tractable interchange step — not full AAF, which is scoped as a separate effort. Pure builder is headless-tested (timecode mapping, CSV escaping, section emission) — 151 → 155 groups.
 

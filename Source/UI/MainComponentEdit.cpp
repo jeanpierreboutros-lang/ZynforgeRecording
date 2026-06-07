@@ -365,12 +365,31 @@ void MainComponent::editSoloSelection()
 {
     auto& rec = engine.getRecorder();
 
-    // If the engineer has a selection, solo exactly those logical strips.
+    // If the engineer has a selection, TOGGLE solo on exactly those logical
+    // strips: press A to solo the selection, press A again to clear it. The
+    // selection counts as "already soloed" only when every selected strip is
+    // soloed -- so the second press releases it.
     if (! selectedLogical.empty())
     {
-        recordUndoSnapshot ("Solo selection");
-        for (int i = 0; i < rec.getNumTracks(); ++i)
+        bool allSelectedSoloed = true;
+        for (int logical : selectedLogical)
+        {
+            const int phys = physicalFromLogical (engine, logical);
+            if (phys >= rec.getNumTracks()
+                || ! rec.getTrack (phys).soloed.load (std::memory_order_relaxed))
+                { allSelectedSoloed = false; break; }
+        }
+
+        recordUndoSnapshot (allSelectedSoloed ? "Clear solo" : "Solo selection");
+        for (int i = 0; i < rec.getNumTracks(); ++i)   // clean slate either way
             rec.getTrack (i).soloed.store (false, std::memory_order_relaxed);
+
+        if (allSelectedSoloed)
+        {
+            showStatus ("Solo cleared");
+            return;
+        }
+
         for (int logical : selectedLogical)
         {
             const int phys = physicalFromLogical (engine, logical);

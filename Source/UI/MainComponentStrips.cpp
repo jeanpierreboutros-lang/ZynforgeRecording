@@ -14,6 +14,7 @@
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
+#include "StripColourPicker.h"
 
 using namespace zynforge;
 
@@ -195,42 +196,31 @@ void MainComponent::colourSelectedStrips()
 {
     if (selectedLogical.empty()) return;
 
-    auto picker = std::make_unique<juce::ColourSelector>(
-        juce::ColourSelector::showColourspace
-        | juce::ColourSelector::showSliders);
-    picker->setSize (300, 280);
-    picker->setCurrentColour (brand::brandOrange);
+    // Use the app's gradient StripColourPicker -- the same hue×shade palette
+    // the per-strip swatch + EDIT recolour use -- not the OS colourspace
+    // selector, so "Colour selected..." matches the rest of the app.
+    const int first = *selectedLogical.begin();
+    juce::Colour current = brand::brandOrange;
+    if (first >= 0 && first < (int) strips.size() && strips[(size_t) first] != nullptr)
+        current = strips[(size_t) first]->getResolvedColour();
 
-    struct Apply : public juce::ChangeListener
-    {
-        MainComponent* owner;
-        void changeListenerCallback (juce::ChangeBroadcaster* src) override
+    const std::set<int> sel = selectedLogical;   // snapshot for the callback
+    auto picker = std::make_unique<zynforge::StripColourPicker> (
+        current,
+        [this, sel] (juce::Colour chosen)
         {
-            if (auto* cs = dynamic_cast<juce::ColourSelector*> (src))
+            for (int logical : sel)
             {
-                const auto c = cs->getCurrentColour();
-                for (int logical : owner->selectedLogical)
-                {
-                    if (logical < 0 || logical >= (int) owner->strips.size()) continue;
-                    int phys = 0;
-                    for (int k = 0; k < logical; ++k)
-                    {
-                        auto& t = owner->engine.getRecorder().getTrack (phys);
-                        phys += t.isStereo.load (std::memory_order_relaxed) ? 2 : 1;
-                    }
-                    owner->engine.setTrackColour (phys, c);
-                    auto& t = owner->engine.getRecorder().getTrack (phys);
-                    if (t.isStereo.load (std::memory_order_relaxed))
-                        owner->engine.setTrackColour (phys + 1, c);
-                }
-                owner->lastTrackCount = -1;
+                if (logical < 0 || logical >= (int) strips.size()) continue;
+                const int phys = physicalFromLogicalIdx (logical);
+                if (phys < 0 || phys >= engine.getRecorder().getNumTracks()) continue;
+                engine.setTrackColour (phys, chosen);
+                auto& t = engine.getRecorder().getTrack (phys);
+                if (t.isStereo.load (std::memory_order_relaxed))
+                    engine.setTrackColour (phys + 1, chosen);
             }
-        }
-    };
-    auto listener = std::make_shared<Apply>();
-    listener->owner = this;
-    picker->addChangeListener (listener.get());
-    batchColourListenerHandle = listener;   // keep alive
+            lastTrackCount = -1;
+        });
 
     juce::CallOutBox::launchAsynchronously (
         std::move (picker),
@@ -363,47 +353,22 @@ void MainComponent::showBatchColourDialog()
             const int lastCh  = juce::jlimit (firstCh, total,
                                               aw->getTextEditorContents ("last").getIntValue());
 
-            auto picker = std::make_unique<juce::ColourSelector>(
-                juce::ColourSelector::showColourspace
-                | juce::ColourSelector::showSliders);
-            picker->setSize (300, 280);
-            picker->setCurrentColour (brand::brandOrange);
-
-            // ColourSelector is a Component; juce::CallOutBox wraps it
-            // and fires onColourChanged via a Listener. Quickest path:
-            // poll the colour on dismiss via a Timer + simple modal pump.
-            // Pragmatic shortcut: hand the picker out, apply on dismissal
-            // through a ChangeListener.
-            struct ColourApplyListener : public juce::ChangeListener
-            {
-                MainComponent* owner; int first, last;
-                void changeListenerCallback (juce::ChangeBroadcaster* src) override
+            // App's gradient StripColourPicker (same palette as per-strip +
+            // EDIT recolour + "Colour selected..."), not the OS selector.
+            auto picker = std::make_unique<zynforge::StripColourPicker> (
+                brand::brandOrange,
+                [this, firstCh, lastCh] (juce::Colour chosen)
                 {
-                    if (auto* cs = dynamic_cast<juce::ColourSelector*> (src))
-                    {
-                        const auto c = cs->getCurrentColour();
-                        for (int ch = first - 1; ch < last; ++ch)
-                            owner->engine.setTrackColour (ch, c);
-                        owner->lastTrackCount = -1;
-                    }
-                }
-            };
-            auto listener = std::make_shared<ColourApplyListener>();
-            listener->owner = this;
-            listener->first = firstCh;
-            listener->last  = lastCh;
-            picker->addChangeListener (listener.get());
+                    for (int ch = firstCh - 1; ch < lastCh; ++ch)
+                        engine.setTrackColour (ch, chosen);
+                    lastTrackCount = -1;
+                });
 
             juce::CallOutBox::launchAsynchronously (
                 std::move (picker),
                 juce::Rectangle<int>{ getScreenBounds().getCentreX(),
                                       getScreenBounds().getCentreY(), 1, 1 },
                 nullptr);
-
-            // Keep the listener alive until the CallOutBox closes.
-            // Easiest: stash it in a member; for now leak benignly --
-            // colour-pickers are infrequent.
-            batchColourListenerHandle = listener;
 
             showStatus ("Colouring channels " + juce::String (firstCh)
                         + "-" + juce::String (lastCh) + "...");

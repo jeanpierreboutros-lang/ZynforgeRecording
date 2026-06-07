@@ -310,7 +310,7 @@ MainComponent::MainComponent()
             const int dialect = chosen - 1;
             if (engine.startOsc (8000, dialect))
             {
-                oscButton.setButtonText ("OSC •");
+                oscButton.setButtonText ("OSC *");
                 showStatus ("OSC listening on 8000 (" +
                             juce::StringArray ({"Generic","DiGiCo","A&H","SSL","Yamaha"})[dialect] + ")");
             }
@@ -1274,7 +1274,7 @@ void MainComponent::onRecordClicked()
         // backup volume. Pre-show beats mid-show discovery every time.
         const int mins = engine.getEstimatedMinutesRemaining();
         if (mins > 0 && mins < 30)
-            msg << "  --  ⚠ DISK ~" << mins << " min remaining";
+            msg << "  --  ! DISK ~" << mins << " min remaining";
         else if (mins > 0)
             msg << "  --  ~" << mins << " min remaining";
         statusLabel.setText (msg, juce::dontSendNotification);
@@ -1314,7 +1314,7 @@ void MainComponent::onPlayClicked()
 
         engine.startPlayback();
         playButton.setButtonText ("PAUSE");
-        statusLabel.setText ("Playing → " + player.getSessionName(), juce::dontSendNotification);
+        statusLabel.setText ("Playing -> " + player.getSessionName(), juce::dontSendNotification);
     }
 }
 
@@ -1487,8 +1487,8 @@ void MainComponent::onBackupClicked()
         auto dir = fc.getResult();
         if (dir.getFullPathName().isEmpty()) return;
         engine.setBackupDirectory (dir);
-        backupButton.setButtonText ("BACKUP ✓");
-        showStatus ("Backup folder → " + dir.getFileName());
+        backupButton.setButtonText ("BACKUP OK");
+        showStatus ("Backup folder -> " + dir.getFileName());
     });
 }
 

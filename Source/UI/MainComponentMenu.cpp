@@ -37,8 +37,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // session yet, Save falls through to Save As (picker), and
         // Save As is by definition a picker so it never needs prior
         // state.
-        menu.addItem (2, "Save Session State");
-        menu.addItem (3, "Save Session As...");
+        menu.addItem (2, "Save\tCmd+S");
+        menu.addItem (3, "Save As...");
         menu.addSeparator();
         // Close the session back to the Welcome screen WITHOUT quitting --
         // so the engineer can start/open another session between sets.
@@ -228,7 +228,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (255, "Session Format & Recording...", ! engine.isRecording());
         menu.addItem (251, "Session Info & Notes...",       engine.getActiveSessionDir().isDirectory());
         menu.addSeparator();
-        menu.addItem (256, "Trim-Follow (console input gain → soundcheck)",
+        menu.addItem (256, "Trim-Follow (console input gain -> soundcheck)",
                       true, engine.isTrimFollowEnabled());
 
         // External timecode chase -- LTC off an audio input, or MTC over MIDI.
@@ -374,7 +374,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
             engine.getMidiClockOut().setOutputDevice (outs[idx]);
             engine.getMidiClockOut().setTempoBpm (engine.getSessionTempoBpm());
             engine.getMidiClockOut().setEnabled (true);
-            showStatus ("MIDI clock → " + outs[idx]);
+            showStatus ("MIDI clock -> " + outs[idx]);
         }
     }
     else if (id == 260)

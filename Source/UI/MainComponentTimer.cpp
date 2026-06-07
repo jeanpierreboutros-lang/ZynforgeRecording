@@ -265,9 +265,9 @@ void MainComponent::timerCallback()
         if (primFail || diskTrouble || smartBad)
         {
             juce::String warn;
-            if (smartBad)    warn << "⚠ SMART FAILING -- replace this drive  ";
-            if (primFail)    warn << "⚠ PRIMARY WRITE FAILED -- recording on backup/mirror  ";
-            if (diskTrouble) warn << "⚠ DISK STRUGGLING -- missed samples imminent";
+            if (smartBad)    warn << "! SMART FAILING -- replace this drive  ";
+            if (primFail)    warn << "! PRIMARY WRITE FAILED -- recording on backup/mirror  ";
+            if (diskTrouble) warn << "! DISK STRUGGLING -- missed samples imminent";
             statusLabel.setText (warn.trim(), juce::dontSendNotification);
         }
     }

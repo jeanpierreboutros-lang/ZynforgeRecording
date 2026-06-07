@@ -278,6 +278,17 @@ void MainComponent::runNoiseAnalysis()
         return;
     }
 
+    // Nothing to analyse until a take is on disk -- the analyser reads the
+    // recorded Track_NN.* files. Tell the engineer plainly instead of running
+    // a background scan that finds nothing and pops an empty report.
+    const auto audioDir = sessionDir.getChildFile ("Audio Files").isDirectory()
+                            ? sessionDir.getChildFile ("Audio Files") : sessionDir;
+    if (audioDir.findChildFiles (juce::File::findFiles, false, "Track_*.wav;Track_*.aif;Track_*.aiff;Track_*.flac").isEmpty())
+    {
+        showStatus ("No recorded audio to analyse -- record a take first.");
+        return;
+    }
+
     showStatus ("Analysing tracks for noise / hum / bumps...");
 
     // Snapshot track names so the worker doesn't touch engine state
@@ -366,7 +377,7 @@ void MainComponent::writeSoundcheckReport()
 
     const auto reportFile = sessionDir.getChildFile ("soundcheck.report.json");
     reportFile.replaceWithText (juce::JSON::toString (juce::var (root.get())));
-    showStatus ("Soundcheck report → " + reportFile.getFileName());
+    showStatus ("Soundcheck report -> " + reportFile.getFileName());
 }
 
 void MainComponent::showSessionProperties()

@@ -366,7 +366,7 @@ void MainComponent::onSaveSessionState()
     if (dir.isDirectory())
     {
         if (saveSessionStateTo (dir))
-            showStatus ("Saved session state → " + dir.getFileName());
+            showStatus ("Saved session state -> " + dir.getFileName());
         else
             showStatus ("Save failed");
         return;
@@ -588,7 +588,7 @@ void MainComponent::onSaveSessionAs()
         // everything (settings + full mix state + .zfproj).
         engine.setActiveSessionDir (dest);
         saveSessionStateTo (dest);
-        showStatus ("Saved As → " + dest.getFileName());
+        showStatus ("Saved As -> " + dest.getFileName());
     });
 }
 
@@ -626,7 +626,7 @@ void MainComponent::onExportAllTracks()
 
             showStatus ("Exporting " + juce::String ((int) all.size()) + " tracks...");
             const int n = exportTracksTo (dest, all, chosenOpts);
-            showStatus ("Exported " + juce::String (n) + " tracks → " + dest.getFileName());
+            showStatus ("Exported " + juce::String (n) + " tracks -> " + dest.getFileName());
         });
     });
 }
@@ -1009,7 +1009,7 @@ void MainComponent::promptSaveSessionTemplate()
         const auto safeName = name.replaceCharacters ("/:\\?*<>|\"", "         ").trim();
         const auto out = self->templatesDir().getChildFile (safeName + ".zftemplate");
         out.replaceWithText (juce::JSON::toString (juce::var (obj.get())));
-        self->showStatus ("Template saved → " + out.getFileName());
+        self->showStatus ("Template saved -> " + out.getFileName());
     }));
 }
 

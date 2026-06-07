@@ -73,7 +73,7 @@ namespace zynforge
                 };
                 addAndMakeVisible (formatBox);
 
-                removeBtn.setButtonText ("×");
+                removeBtn.setButtonText ("x");
                 dialog::styleSecondary (removeBtn);
                 removeBtn.setColour (juce::TextButton::buttonColourId,
                                      brand::accentRecord.withAlpha (brand::alpha::dimmed));

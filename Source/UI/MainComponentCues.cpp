@@ -447,7 +447,7 @@ void MainComponent::renameCurrentCue()
         cues[(size_t) idx].name = name;
         setlistBar.setCues (cues, currentCueIndex);
         saveSetlistToActiveSession();
-        showStatus ("Renamed cue → '" + name + "'");
+        showStatus ("Renamed cue -> '" + name + "'");
     });
 }
 

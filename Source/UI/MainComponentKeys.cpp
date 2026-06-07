@@ -45,6 +45,10 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
             return true;
         }
         if (kc == 'R' || kc == 'r') { editRedo(); return true; }
+        // Cmd+S -- save the session (menu hint is display-only; this is the
+        // real handler). onSaveSessionState falls through to Save As when
+        // there's no active session yet.
+        if (kc == 'S' || kc == 's') { onSaveSessionState(); return true; }
         // Cmd++ -- toggle between the MIXER and EDIT views. Press once to
         // open EDIT, press again to go back to the MIXER. Matches the +/=
         // key (so Cmd+= and Cmd+Shift+= both work) and the numpad +.
