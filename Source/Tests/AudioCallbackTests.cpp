@@ -830,6 +830,100 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            beginTest ("Automation WRITE thinning collapses a dense fader stream into sparse points");
+            {
+                // The touch/latch/write path a fader drives during a pass:
+                // writeAutomationPointThinned is fed a 60 Hz value stream and
+                // must thin it to the requested minimum spacing so the lane
+                // doesn't fan out into per-frame cruft (the round-8 gap).
+                using AP = AudioEngine::AutomationParam;
+                CallbackFixture f (1, 1, 2);   // one track + its automation lane
+                auto& e = f.engine;
+                e.setAutomationWriteMode (AudioEngine::AutomationWriteMode::Write);
+                expect (e.getAutomationWriteMode() == AudioEngine::AutomationWriteMode::Write);
+
+                const int         sr     = 48000;
+                const juce::int64 minGap = 4800;     // thin to >= 10 Hz
+                float lastVal = 0.0f;
+                for (int n = 0; n < 60; ++n)         // ~1 s of 60 Hz fader intent
+                {
+                    const juce::int64 pos = (juce::int64) n * (sr / 60);   // 800-sample steps
+                    lastVal = juce::jmap ((float) n, 0.0f, 59.0f, -12.0f, 6.0f);
+                    e.writeAutomationPointThinned (0, AP::Volume, pos, lastVal, minGap);
+                }
+
+                const auto& lane = e.getAutomation (0, AP::Volume);
+                expect (! lane.empty(), "WRITE mode captured nothing");
+                // 60 intents thinned to >= 4800-sample spacing => ~11 points,
+                // an order of magnitude fewer than 60 -- no fan-out cruft.
+                expect ((int) lane.size() >= 6 && (int) lane.size() < 30,
+                        "thinning did not collapse the 60 Hz stream sensibly");
+                for (size_t i = 1; i < lane.size(); ++i)
+                {
+                    expect (lane[i].samplePos > lane[i - 1].samplePos, "points not monotonic in time");
+                    expect (lane[i].samplePos - lane[i - 1].samplePos >= minGap, "two points closer than the thin gap");
+                }
+                for (const auto& p : lane)
+                    expect (p.value >= -12.001f && p.value <= 6.001f, "captured value out of fader range");
+                // The ramp's direction survives the thinning.
+                expect (lane.back().value > lane.front().value, "thinned ramp lost its shape");
+
+                e.setAutomationWriteMode (AudioEngine::AutomationWriteMode::Off);
+                expect (e.getAutomationWriteMode() == AudioEngine::AutomationWriteMode::Off);
+            }
+
+            beginTest ("Equal-power crossfade across two overlapping clips has no dropout");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    CallbackFixture f (1, 1, 2);
+                    auto& e = f.engine;
+                    e.getRecorder().getTrack (0).armed.store (true);
+                    expect (e.startRecording (sessionDir));
+                    f.writeInput (0, 0.50f, 256);                 // constant 0.5 DC take
+                    for (int b = 0; b < 192; ++b) f.process (256);
+                    e.stopRecording();
+
+                    const juce::int64 L = e.getPlayer().getTotalLengthSamples();
+                    expect (L > 20000);
+                    const juce::int64 ov = 8000;                 // crossfade / overlap length
+
+                    // Clip 0 = [0, L); equal-power fade-out over its last `ov`.
+                    expect (e.setClipFades (0, 0, 0, ov));
+                    expect (e.setClipFadeCurve (0, 0, 1));
+                    // Clip 1 = same file pasted at (L - ov) so it overlaps clip 0's
+                    // fade-out; equal-power fade-in over `ov`.
+                    const int idx = e.pasteClip (0, L - ov, 0, L, ov, 0, 0.0f, "B");
+                    expect (idx >= 0);
+                    expect (e.setClipFadeCurve (0, idx, 1));
+
+                    juce::AudioBuffer<float> buf;
+                    const auto arrLen = e.getArrangementLengthSamples();
+                    expect (e.renderTrackArrangement (0, buf, arrLen));
+                    const int N = buf.getNumSamples();
+                    expect (N > (int) (L + ov));
+
+                    const auto* d = buf.getReadPointer (0);
+                    const float V = 0.50f;
+                    auto at = [&] (juce::int64 s) {
+                        return std::abs (d[(int) juce::jlimit<juce::int64> (0, N - 1, s)]); };
+
+                    // Edges of the overlap: one clip full, the other ~silent => ~V.
+                    expectWithinAbsoluteError (at (L - ov + 64), V, 0.06f);
+                    expectWithinAbsoluteError (at (L - 64),      V, 0.06f);
+                    // Midpoint: equal-power sum of two correlated constants bumps
+                    // to ~sqrt(2)*V -- proving the equal-power curve is applied
+                    // (a linear crossfade would stay flat at V).
+                    expect (at (L - ov / 2) > V * 1.30f, "equal-power seam did not bump above V");
+                    // No dropout anywhere across the seam.
+                    float minOverlap = 1.0f;
+                    for (juce::int64 s = L - ov + 64; s < L - 64; ++s)
+                        minOverlap = juce::jmin (minOverlap, at (s));
+                    expect (minOverlap > V * 0.9f, "crossfade dipped toward a gap");
+                }
+                sessionDir.deleteRecursively();
+            }
+
             beginTest ("renderStereoMix sums the edited mix with gain / pan / mute");
             {
                 const auto sessionDir = makeTempSessionDir();
