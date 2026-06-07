@@ -141,6 +141,11 @@ void MainComponent::timerCallback()
         return 48000.0;
     }();
 
+    // Warn if the device's actual rate (e.g. the incoming Dante / wordclock)
+    // doesn't match the session's intended rate -- a silent rate mismatch
+    // would record everything at the wrong speed / pitch.
+    checkDeviceSampleRate (deviceSR);
+
     BigClockPanel::Mode m = BigClockPanel::Mode::Idle;
     juce::int64 elapsed = 0;
     double      timerSR = deviceSR;
@@ -284,4 +289,45 @@ void MainComponent::updateTransportLabels()
     {
         sessionLabel.setText ("No session loaded", juce::dontSendNotification);
     }
+}
+
+// Compare the device's live sample rate against the session's intended rate
+// and warn once per distinct mismatch. A silent mismatch (e.g. the incoming
+// Dante clock running 44.1k while the session was created at 48k) would
+// capture every track at the wrong speed/pitch, so this is a data-integrity
+// guard. We don't pop a modal mid-take (a status-line warning still shows);
+// the dialog fires while stopped, which is when the engineer can fix it.
+void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
+{
+    if (deviceSampleRate <= 0.0) return;
+
+    const bool mismatch = std::abs (deviceSampleRate - pendingSampleRate) > 1.0;
+    if (! mismatch)
+    {
+        srMismatchWarned = 0.0;   // back in sync -> re-arm the warning
+        return;
+    }
+
+    const auto fmt = [] (double sr) { return juce::String (sr / 1000.0, 1) + " kHz"; };
+    showStatus ("\xE2\x9A\xA0 Sample-rate mismatch: device " + fmt (deviceSampleRate)
+                + " vs session " + fmt (pendingSampleRate)
+                + " -- fix the clock before recording");
+
+    // Already warned about this exact device rate, or mid-take -> status only.
+    if (std::abs (deviceSampleRate - srMismatchWarned) < 1.0 || engine.isRecording())
+        return;
+    srMismatchWarned = deviceSampleRate;
+
+    auto* aw = new juce::AlertWindow ("Sample-Rate Mismatch",
+        "The audio device is running at " + fmt (deviceSampleRate)
+        + ", but this session was created at " + fmt (pendingSampleRate) + ".\n\n"
+        "Recording now would capture every track at the wrong speed and pitch. "
+        "Match the device clock (or the incoming Dante/wordclock) to "
+        + fmt (pendingSampleRate) + ", or create a new session at "
+        + fmt (deviceSampleRate) + " before you record.",
+        juce::MessageBoxIconType::WarningIcon);
+    aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE-default navy
+    aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+        [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }), false);
 }

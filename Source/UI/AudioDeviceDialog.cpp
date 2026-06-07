@@ -510,15 +510,17 @@ namespace zynforge
             void applyAndClose()
             {
                 applied = true;
-                statusLabel.setText ("Applied.", juce::dontSendNotification);
+                // This panel is non-modal (launchFloating), so exitModalState
+                // is a no-op -- hide the window instead and let MainComponent's
+                // 10 Hz reaper (syncTab) delete it + clear the DEVICE tab light.
                 if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
-                    dw->exitModalState (1);
+                    dw->setVisible (false);
             }
             void cancelAndClose()
             {
                 applied = false;
                 if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
-                    dw->exitModalState (0);
+                    dw->setVisible (false);
             }
 
             AudioEngine& engine;

@@ -221,6 +221,10 @@ private:
     int    pendingContainer  { 0 };       // 0 = WAV, 1 = AIFF, 2 = FLAC
     int    pendingBitDepth   { 24 };      // 16 / 24 / 32 (32 = float)
     double pendingSampleRate { 48000.0 };
+    // Last device sample rate we warned about (mismatch vs the session rate);
+    // 0 = no outstanding warning, so we warn once per distinct device rate.
+    double srMismatchWarned  { 0.0 };
+    void   checkDeviceSampleRate (double deviceSampleRate);
     void onFormatClicked();
     void onPreRollClicked();
     void refreshFormatButton();

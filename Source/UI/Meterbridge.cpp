@@ -3,6 +3,7 @@
 #include "../Theme/BrandTokens.h"
 #include "LedMeter.h"
 #include "FloatingLaunch.h"
+#include "DismissOnOutsideClick.h"
 
 namespace zynforge
 {
@@ -64,6 +65,8 @@ namespace zynforge
             AudioEngine& engine;
             std::vector<std::unique_ptr<LedMeter>>    meters;
             std::vector<std::unique_ptr<juce::Label>> names;
+            // Click anywhere outside the meterbridge → it closes itself.
+            DismissOnOutsideClick dismisser { *this };
         };
     }
 

@@ -18,6 +18,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ## [Unreleased]
 
 ### Added (latest)
+- **Sample-rate mismatch warning** — the app now continuously compares the audio device's *live* sample rate (e.g. the incoming Dante / wordclock) against the rate the session was created at. If they diverge it warns you — a status-bar message always, plus a one-shot dialog while stopped — so you can't silently record every track at the wrong speed/pitch. Clears automatically once the clock matches again.
+
+### Changed (latest, dialogs)
+- **Audio Device: Apply (and Cancel) now close the panel** — the buttons previously just showed "Applied." and left the window open (they called `exitModalState`, a no-op for this non-modal panel). They now hide the panel, which the header-tab reaper finishes. Cancel still restores the pre-edit device state.
+- **Meterbridge closes on click-away** — clicking anywhere outside the floating METERS window now dismisses it (popup-style), in addition to the close box / METERS tab toggle. (Shared `DismissOnOutsideClick`.)
+
+### Added (latest, EDIT)
 - **EDIT: resize all track rows at once** — track-height changes were per-row only. Now you can size every lane together two ways: **Option-drag** any row's bottom edge and all rows follow to that height live, or right-click a row and pick **Set all tracks to ▸** (micro … extreme / fit to window) to snap every lane to a preset. Single-row resize (plain drag / the normal size list) is unchanged.
 - **Tab walks the input list when renaming inline in MIXER + EDIT too** — renaming a channel directly on its strip (MIXER) or row header (EDIT) by double-clicking the name now responds to **Tab** / **Shift+Tab**: it commits the current name and opens the next / previous channel's name editor (wrapping at the ends), scrolling that channel into view first. Same keyboard-only flow as the Rename Channels dialog — type, Tab, type, Tab — now from any of the three places you can rename. (Shared `RenameLabel`.)
 - **Rename Channels: Tab walks down the input list** — in the Rename Channels dialog (Track ▸ Batch Rename Channels…), after typing a name you can press **Tab** to jump straight to the next channel's field (and **Shift+Tab** for the previous one), wrapping at the ends. The list scrolls to keep the focused field in view, and the dialog now opens with the first field focused — so you can rename a whole input list keyboard-only: type, Tab, type, Tab.
