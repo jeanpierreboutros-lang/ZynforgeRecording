@@ -16,6 +16,7 @@
 
 #include "MainComponent.h"
 #include "../Theme/DialogChrome.h"
+#include "../Audio/TimelineExport.h"
 #include "NewSessionDialog.h"
 #include "ExportDialog.h"
 #include "TrackSelectDialog.h"
@@ -784,6 +785,49 @@ void MainComponent::applySessionSampleRate (double sr)
                     + khz (dev) + ". Match the clock to record.");
     else
         showStatus ("Session sample rate set to " + khz (sr));
+}
+
+void MainComponent::exportTimelineCsv()
+{
+    const auto dir = engine.getActiveSessionDir();
+    if (! dir.isDirectory()) { showStatus ("No active session to export."); return; }
+
+    namespace tx = zynforge::timelineexport;
+    std::vector<tx::TrackEntry> tracks;
+    auto& rec = engine.getRecorder();
+    for (int i = 0; i < rec.getNumTracks(); ++i)
+        tracks.push_back ({ i + 1, rec.getTrack (i).name,
+                            "Track_" + juce::String (i + 1).paddedLeft ('0', 2) + ".wav" });
+
+    std::vector<tx::MarkEntry> markers;
+    auto& mk = engine.getMarkers();
+    for (int i = 0; i < mk.getCount(); ++i)
+    {
+        const auto m = mk.getMarker (i);
+        markers.push_back ({ m.sampleOffset, m.name, m.type });
+    }
+
+    std::vector<tx::MarkEntry> cueList;
+    for (const auto& c : cues)
+        cueList.push_back ({ c.samplePos, c.name, juce::String() });
+
+    const double sr = engine.getSessionSampleRate() > 0.0 ? engine.getSessionSampleRate()
+                                                          : pendingSampleRate;
+    const auto csv = tx::buildCsv (dir.getFileName(), sr, 30, tracks, markers, cueList);
+
+    const auto def = dir.getChildFile ("Export Files")
+                        .getChildFile (dir.getFileName() + "_timeline.csv");
+    chooser = std::make_unique<juce::FileChooser> ("Export session timeline (CSV)", def, "*.csv");
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode
+                          | juce::FileBrowserComponent::warnAboutOverwriting,
+        [this, csv] (const juce::FileChooser& fc)
+        {
+            const auto f = fc.getResult();
+            if (f == juce::File()) return;
+            f.getParentDirectory().createDirectory();
+            showStatus (f.replaceWithText (csv) ? "Timeline exported: " + f.getFileName()
+                                                : "Couldn't write " + f.getFileName());
+        });
 }
 
 void MainComponent::relocateActiveSession()

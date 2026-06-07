@@ -121,6 +121,9 @@ private:
     // location, then re-pin everything from there. Stopped-only; the copy
     // runs on a background thread so a cross-volume move can't freeze the UI.
     void relocateActiveSession();
+    // Export a portable timeline sidecar (tracks + timecode-stamped markers
+    // + cues) to a CSV an editor can use to rebuild the session elsewhere.
+    void exportTimelineCsv();
     // Set the session's intended sample rate (the rate the mismatch guard
     // compares against) and try to bring the hardware along with it.
     void applySessionSampleRate (double sr);

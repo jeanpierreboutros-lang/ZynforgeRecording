@@ -72,6 +72,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/RecordingIntegrityTests.cpp
     Source/Tests/TransientTests.cpp
     Source/Tests/TimecodeTests.cpp
+    Source/Tests/TimelineExportTests.cpp
     Source/Tests/AudioCallbackTests.cpp
     Source/Tests/PlaceholderViewTests.cpp
     Source/Tests/ChannelStripAccessibilityTests.cpp
