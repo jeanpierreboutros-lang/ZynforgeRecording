@@ -43,7 +43,9 @@ namespace zynforge
                 juce::MessageManager::callAsync ([self, shift]
                 {
                     if (self == nullptr) return;
-                    self->hideEditor (true);                 // commit current edit
+                    // NB: Label::hideEditor's param is *discardCurrentEditorContents*
+                    // -- pass false so the typed name is committed (fires onTextChange).
+                    self->hideEditor (false);                // commit current edit
                     if (self->onTabKey) self->onTabKey (shift);   // open next field
                 });
             }
