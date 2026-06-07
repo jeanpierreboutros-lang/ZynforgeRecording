@@ -54,6 +54,7 @@ juce_add_binary_data(ZynforgeFonts SOURCES
 target_sources(ZynforgeRecording PRIVATE
     Source/Main.cpp
     Source/UI/MainComponent.cpp
+    Source/UI/MainComponentInit.cpp
     Source/UI/MainComponentTimer.cpp
     Source/UI/MainComponentKeys.cpp
     Source/UI/MainComponentLayout.cpp
