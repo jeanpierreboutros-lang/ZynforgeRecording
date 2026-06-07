@@ -16,6 +16,7 @@
 #include "ClickSettingsDialog.h"
 #include "MirrorDrivesDialog.h"
 #include "TimecodeSyncDialog.h"
+#include "ControlSurfacesDialog.h"
 
 using namespace zynforge;
 
@@ -187,6 +188,10 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (55, engine.getNDIBridge().isEnabled()
                               ? juce::String ("Stop NDI broadcast")
                               : juce::String ("Start NDI broadcast..."));
+
+        // Control Surfaces hub -- full protocol list with enable ticks +
+        // per-brand settings. The quick OSC submenu stays below for speed.
+        menu.addItem (130, "Control Surfaces...");
 
         // OSC submenu with the five dialects.
         juce::PopupMenu oscMenu;
@@ -499,6 +504,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
         showStatus (on ? "Trim-Follow ON -- console input-gain moves now track the recorded soundcheck"
                        : "Trim-Follow OFF -- recorded tracks play at their printed level");
     }
+    else if (id == 130)  zynforge::ControlSurfacesDialog::launch (engine);
     else if (id == 600)  zynforge::TimecodeSyncDialog::launch (engine);
     else if (id == 610)
     {
