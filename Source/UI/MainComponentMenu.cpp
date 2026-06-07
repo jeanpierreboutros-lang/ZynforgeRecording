@@ -101,6 +101,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             templates.addItem (250, "Delete a template...");
         }
         menu.addSubMenu ("New Session from Template", templates, ! engine.isRecording());
+        menu.addItem (7, "New Session from CSV (channel names)...", ! engine.isRecording());
 
         menu.addSeparator();
         menu.addItem (60, "Choose Backup Folder...", ! engine.isRecording());
@@ -155,6 +156,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // Batch ops -- sweep a range of channels in one dialog instead of
         // renaming / recolouring 24 strips by hand.
         menu.addItem (320, "Batch Rename Channels...",  engine.getRecorder().getNumTracks() > 0);
+        menu.addItem (322, "Import Channel Names from CSV...", engine.getRecorder().getNumTracks() > 0);
         menu.addItem (321, "Batch Colour Channels...",  engine.getRecorder().getNumTracks() > 0);
         menu.addSeparator();
         juce::PopupMenu sel;
@@ -304,6 +306,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 2)    onSaveSessionState();
     else if (id == 3)    onSaveSessionAs();
     else if (id == 4)    onImportAudioFiles();
+    else if (id == 7)    createSessionFromCsv();
     else if (id == 5)    launchNewSessionDialog();
     else if (id == 6)    closeSession();
     else if (id == 10)   onExportAllTracks();
@@ -759,6 +762,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 316)  editStripSilence();
     else if (id == 317)  editConsolidateSelection();
     else if (id == 320)  showBatchRenameDialog();
+    else if (id == 322)  importChannelNamesFromCsv();
     else if (id == 321)  showBatchColourDialog();
     else if (id == 330)  moveSelectedStrips (-1);
     else if (id == 331)  moveSelectedStrips ( 1);

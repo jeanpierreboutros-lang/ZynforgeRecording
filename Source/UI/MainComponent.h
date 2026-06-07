@@ -103,6 +103,10 @@ private:
     // editSplitAtPlayhead / editStartRange / editFinishRange).
     void removeLastCapture();
     void showBatchRenameDialog();
+    // Import channel names from a console/spreadsheet CSV onto existing tracks.
+    void importChannelNamesFromCsv();
+    // Create a brand-new session sized + named from a channel CSV.
+    void createSessionFromCsv();
     void showBatchColourDialog();
     void showSelectionMenu();
     void deleteSelectedStrips();

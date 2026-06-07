@@ -15,6 +15,8 @@
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
 #include "StripColourPicker.h"
+#include "NewSessionDialog.h"
+#include "../Audio/ChannelCsv.h"
 
 using namespace zynforge;
 
@@ -510,4 +512,68 @@ void MainComponent::showBatchColourDialog()
             showStatus ("Channel colours updated");
         }),
         false);
+}
+
+void MainComponent::importChannelNamesFromCsv()
+{
+    chooser = std::make_unique<juce::FileChooser> (
+        "Import channel names from CSV", getSessionsRoot(), "*.csv;*.txt");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode
+                          | juce::FileBrowserComponent::canSelectFiles,
+        [this] (const juce::FileChooser& fc)
+        {
+            const auto f = fc.getResult();
+            if (! f.existsAsFile()) return;
+            const auto names = zynforge::channelcsv::parseNames (f.loadFileAsString());
+            if (names.isEmpty()) { showStatus ("No channel names found in " + f.getFileName()); return; }
+
+            const int n = engine.getRecorder().getNumTracks();
+            int applied = 0;
+            for (int i = 0; i < names.size() && i < n; ++i)
+            { engine.setTrackName (i, names[i]); ++applied; }
+            lastTrackCount = -1;
+            showStatus ("Imported " + juce::String (applied) + " channel name(s) from "
+                        + f.getFileName()
+                        + (names.size() > n ? "  (" + juce::String (names.size() - n)
+                                              + " extra ignored)" : juce::String()));
+        });
+}
+
+void MainComponent::createSessionFromCsv()
+{
+    if (engine.isRecording()) { showStatus ("Stop recording before creating a session"); return; }
+
+    chooser = std::make_unique<juce::FileChooser> (
+        "New session from CSV", getSessionsRoot(), "*.csv;*.txt");
+    chooser->launchAsync (juce::FileBrowserComponent::openMode
+                          | juce::FileBrowserComponent::canSelectFiles,
+        [this] (const juce::FileChooser& fc)
+        {
+            const auto f = fc.getResult();
+            if (! f.existsAsFile()) return;
+            const auto names = zynforge::channelcsv::parseNames (f.loadFileAsString());
+            if (names.isEmpty()) { showStatus ("No channel names found in " + f.getFileName()); return; }
+
+            zynforge::NewSessionDialog::Result r;
+            r.name          = f.getFileNameWithoutExtension();
+            r.location      = getSessionsRoot();
+            r.captureFormat = engine.getRecorder().getCaptureFormat();
+            r.sampleRate    = pendingSampleRate;
+            r.interleaved   = true;
+            r.ioSettings    = "Last Used";
+            const auto dir  = createSessionFolderStructure (r);
+
+            engine.setActiveSessionDir (dir);
+            engine.clearAllStripOverrides();
+            engine.setStripCount (names.size());
+            for (int i = 0; i < names.size(); ++i)
+                engine.setTrackName (i, names[i]);
+            lastTrackCount = -1;
+            loadSetlistFromActiveSession();
+            loadUILayoutFromActiveSession();
+            saveSessionStateTo (dir);   // persist the names + strip count now
+
+            showStatus ("New session '" + r.name + "' with " + juce::String (names.size())
+                        + " channels from " + f.getFileName());
+        });
 }
