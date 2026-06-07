@@ -135,6 +135,31 @@ rig + real time:
    and the live disk-health flag never trips. Use the external monitor
    (`/tmp/zynforge_*.sh` pattern) to confirm overloads = 0, spread = 0.
 
+### Turnkey verification — `tools/verify_take.sh`
+
+The manual half of checks (1a–1c) and (2) is automated. After stopping the
+take, run:
+
+```bash
+tools/verify_take.sh                       # newest session under ~/Music/Zynforge Sessions
+tools/verify_take.sh "/path/to/Session"    # or a specific session folder
+```
+
+It checks every recorded WAV in one pass and **exits non-zero on any
+problem**:
+
+- no `Track_NN_partNN.wav` split files exist (RF64 = one continuous file);
+- each WAV opens at full length (`ffprobe` duration + frame count);
+- header is `RIFF` (<4 GiB) or `RF64` + `ds64` (>4 GiB) — and it **flags any
+  file that crossed 4 GiB without RF64 promotion** (the exact failure mode);
+- `session.report.json` exists, `missedSamples: 0`, track count matches;
+- every file's on-disk sha256 matches the report's manifest (once the report
+  flips `sha256Pending:false` — re-run if it's still hashing).
+
+Still do by hand: (1b) open in another DAW, and (1d) the hard-kill-mid-take
+crash-safety check — then run `verify_take.sh` on the survivor. Requires
+`ffprobe`, `xxd`, `shasum`, `jq`, `python3` (stock on a dev Mac).
+
 ## Control Surfaces — bench verification (hardware-only)
 
 The protocol logic is unit-tested; these confirm it against real gear. Open
