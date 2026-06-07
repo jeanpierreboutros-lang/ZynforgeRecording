@@ -17,6 +17,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Added (latest, soundcheck)
+- **Trim-Follow (console gain compensation for virtual soundcheck)** — Session ▸ *Trim-Follow* (toggle). When on, the console's per-channel **input gain / trim** (pushed over OSC) is tracked against the gain each take was recorded at, and the difference is applied to playback. So riding a desk preamp during soundcheck moves the recorded track exactly as it would the live mic — the missing piece that lets you tune the system off recorded multitrack. Applies to the recorded playback only (live input is untouched), reaches the monitor sum and routed outputs, snapshots the capture reference at record-start, and is off by default. OSC keys `gain`/`trim`/`preamp` on every dialect (DiGiCo/A&H/SSL/Yamaha/generic); `fader` is deliberately not mapped. Headless-tested (143 groups).
+
+### Fixed (latest, EDIT)
+- **Clip-gain readout no longer clips "dB" to "d"** — the GAIN pill was too narrow for the unit at that font, and `drawText` truncated rather than fit; widened the pill + trimmed the font so it always reads e.g. `GAIN +0.0 dB`.
+
+
 ### Added (latest)
 - **Sample-rate mismatch warning** — the app continuously compares the audio device's *live* rate (e.g. the incoming Dante / wordclock) against the session's rate (the loaded take's file rate, or the rate the session was created at) and warns on **any** divergence — 44.1 / 48 / 88.2 / 96 / 176.4 / 192 kHz. A persistent record-red banner sits in the header the whole time they disagree (so it can't scroll away), plus a one-shot dialog while stopped. Clears automatically once the clock matches again.
 

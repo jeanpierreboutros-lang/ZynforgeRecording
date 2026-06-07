@@ -1905,6 +1905,38 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
+            beginTest ("Trim-follow shifts soundcheck playback by the console gain delta");
+            {
+                // Captured at console gain 0 dB (recordTestSession arms the
+                // track, so startRecording snapshots captureInputGainDb=0).
+                const auto dir = recordTestSession (1, 0.5f);
+                {
+                    CallbackFixture f (1, 1, 2);
+                    f.engine.getPlayer().loadSession (dir);
+                    f.engine.startPlayback();
+                    const float baseline = fillPlaybackBuffer (f);
+                    expect (baseline > 0.20f);
+
+                    // Desk pushes this channel's input gain +6 dB during
+                    // soundcheck. OFF: recorded track unchanged.
+                    f.engine.setTrackLiveInputGain (0, 6.0f);
+                    f.engine.setTrimFollowEnabled (false);
+                    f.engine.getPlayer().setPositionSamples (0);
+                    f.process (256);
+                    const float off = juce::jmax (f.peakOut (0, 256), f.peakOut (1, 256));
+                    expectWithinAbsoluteError (off, baseline, baseline * 0.15f);
+
+                    // ON: playback rises by ~6 dB (×2). Capture ref was 0 dB.
+                    f.engine.setTrimFollowEnabled (true);
+                    expectWithinAbsoluteError (f.engine.getTrackTrimDelta (0), 6.0f, 0.001f);
+                    f.engine.getPlayer().setPositionSamples (0);
+                    f.process (256);
+                    const float on = juce::jmax (f.peakOut (0, 256), f.peakOut (1, 256));
+                    expect (on > off * 1.6f);   // +6 dB ≈ ×2 (allow headroom/clip)
+                }
+                dir.deleteRecursively();
+            }
+
             beginTest ("VCA gain attenuates a routed hardware output during playback");
             {
                 const auto dir = recordTestSession (1, 0.5f);

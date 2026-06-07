@@ -227,6 +227,9 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (255, "Session Format & Recording...", ! engine.isRecording());
         menu.addItem (251, "Session Info & Notes...",       engine.getActiveSessionDir().isDirectory());
         menu.addSeparator();
+        menu.addItem (256, "Trim-Follow (console input gain → soundcheck)",
+                      true, engine.isTrimFollowEnabled());
+        menu.addSeparator();
         menu.addItem (280, "Spectral auto-name strips",
                       engine.getRecorder().getNumTracks() > 0);
         menu.addItem (281, "Write soundcheck report",
@@ -268,7 +271,8 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) engine.isPunchModeOn()
         << '|' << (int) snapToMarkers
         << '|' << (int) cues.empty()
-        << '|' << (int) stripClipboard.isObject();
+        << '|' << (int) stripClipboard.isObject()
+        << '|' << (int) engine.isTrimFollowEnabled();
 
     if (sig != lastMenuStateSig)
     {
@@ -475,6 +479,13 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 280) runSpectralAutoName();
     else if (id == 281) writeSoundcheckReport();
     else if (id == 282) runNoiseAnalysis();
+    else if (id == 256)
+    {
+        const bool on = ! engine.isTrimFollowEnabled();
+        engine.setTrimFollowEnabled (on);
+        showStatus (on ? "Trim-Follow ON -- console input-gain moves now track the recorded soundcheck"
+                       : "Trim-Follow OFF -- recorded tracks play at their printed level");
+    }
     else if (id == 290) promptMirrorHost();
     else if (id == 255)
     {

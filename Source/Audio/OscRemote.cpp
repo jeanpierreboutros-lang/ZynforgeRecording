@@ -91,6 +91,10 @@ namespace zynforge
     {
         engine.setTrackColour (idx1 - 1, juce::Colour ((juce::uint32) (rgb | 0xff000000)));
     }
+    void OscRemote::setChannelGain (int idx1, float dB)
+    {
+        engine.setTrackLiveInputGain (idx1 - 1, dB);
+    }
 
     // ── Argument-fetch helpers ──────────────────────────────────────────────
 
@@ -115,6 +119,13 @@ namespace zynforge
             if (a.isString()) return a.getString();
             if (a.isInt32())  return juce::String (a.getInt32());
             return {};
+        }
+        float toFloat (const juce::OSCArgument& a)
+        {
+            if (a.isFloat32()) return a.getFloat32();
+            if (a.isInt32())   return (float) a.getInt32();
+            if (a.isString())  return a.getString().getFloatValue();
+            return 0.0f;
         }
     }
 
@@ -158,6 +169,8 @@ namespace zynforge
                 if (key == "name")   { setChannelName   (ch1, toString (m[0])); return true; }
                 if (key == "mute")   { setChannelMute   (ch1, toBool   (m[0])); return true; }
                 if (key == "arm")    { setChannelArm    (ch1, toBool   (m[0])); return true; }
+                if (key == "gain" || key == "trim" || key == "preamp")
+                                     { setChannelGain   (ch1, toFloat  (m[0])); return true; }
                 if (key == "colour" || key == "color")
                 {
                     setChannelColour (ch1, (juce::uint32) toInt (m[0]));
@@ -180,6 +193,12 @@ namespace zynforge
         if (k == "name")   { setChannelName   (ch1, toString (m[0])); return true; }
         if (k == "mute")   { setChannelMute   (ch1, toBool   (m[0])); return true; }
         if (k == "arm")    { setChannelArm    (ch1, toBool   (m[0])); return true; }
+        // Console preamp / input trim (dB) -> trim-follow. "fader" is the mix
+        // fader, a different thing, so it's deliberately NOT mapped here.
+        if (k == "gain" || k == "trim" || k == "preamp")
+        {
+            setChannelGain (ch1, toFloat (m[0])); return true;
+        }
         if (k == "colour" || k == "color")
         {
             setChannelColour (ch1, (juce::uint32) toInt (m[0]));

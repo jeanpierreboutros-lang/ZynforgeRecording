@@ -61,6 +61,7 @@ namespace zynforge
         void setChannelMute   (int oneBasedIndex, bool muted);
         void setChannelArm    (int oneBasedIndex, bool armed);
         void setChannelColour (int oneBasedIndex, juce::uint32 rgb);
+        void setChannelGain   (int oneBasedIndex, float dB);   // console preamp/trim → trim-follow
 
         // Shared channel-op dispatch -- returns true if the {ch1, key}
         // pair matched a known action (name / mute / arm / colour).

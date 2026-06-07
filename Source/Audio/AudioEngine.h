@@ -874,6 +874,7 @@ namespace zynforge
         // 0-100 % units.
         std::atomic<double> deviceSampleRate { 0.0 };
         std::atomic<double> sessionSampleRate { 0.0 };   // 0 = unset (no record guard)
+        std::atomic<bool>   trimFollowEnabled { false };  // virtual-soundcheck gain compensation
         std::atomic<int>    deviceBlockSize  { 0 };
         std::atomic<float>  audioLoadPct     { 0.0f };
 
@@ -1024,6 +1025,18 @@ namespace zynforge
         double getSessionSampleRate () const noexcept    { return sessionSampleRate.load (std::memory_order_relaxed); }
         // True when a device is open and its rate diverges from the session rate.
         bool   isSampleRateMismatched() const noexcept;
+
+        // ── Trim-follow (virtual-soundcheck gain compensation) ──────────
+        // The console pushes per-channel preamp/trim gain over OSC; with
+        // trim-follow ON, playback adds (live - capture) dB so soundcheck
+        // input-gain moves track the recorded audio like a live mic would.
+        void setTrimFollowEnabled (bool on) noexcept { trimFollowEnabled.store (on, std::memory_order_relaxed); }
+        bool isTrimFollowEnabled () const noexcept   { return trimFollowEnabled.load (std::memory_order_relaxed); }
+        // Console preamp/trim gain for a 0-based channel (called from OSC,
+        // message thread). Updates the live value; if recording, also seeds
+        // the capture reference so a channel that arms mid-take is sane.
+        void setTrackLiveInputGain (int channelIndex, float dB);
+        float getTrackTrimDelta (int channelIndex);   // live - capture (0 if out of range)
     private:
 
         void applyPersistedStripState();

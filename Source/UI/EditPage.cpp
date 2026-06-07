@@ -1359,13 +1359,15 @@ namespace zynforge
                                     const juce::String sign = c.gainDb > 0.05f ? "+" : "";
                                     const bool      touched = active || std::abs (c.gainDb) > 0.05f;
                                     const juce::Rectangle<int> pill (hr.getX() + 13, hr.getCentreY() - 9,
-                                                                     juce::jmin (88, hr.getRight() - (hr.getX() + 13)), 18);
+                                                                     juce::jmin (104, hr.getRight() - (hr.getX() + 13)), 18);
                                     g.setColour (brand::bgDeep.withAlpha (brand::alpha::bold));
                                     g.fillRoundedRectangle (pill.toFloat(), brand::radius::sm);
                                     g.setColour (touched ? col.brighter (0.5f) : brand::textSecondary);
-                                    g.setFont (brand::type::caption().withHeight (12.0f).boldened());
+                                    g.setFont (brand::type::caption().withHeight (11.0f).boldened());
+                                    // Right-trim the full string into the pill so the "dB"
+                                    // unit can never clip to a bare "d" (ellipsis on if tight).
                                     g.drawText ("GAIN " + sign + juce::String (c.gainDb, 1) + " dB",
-                                                pill.reduced (4, 0), juce::Justification::centredLeft, false);
+                                                pill.reduced (4, 0), juce::Justification::centredLeft, true);
                                 }
                             }
                         }

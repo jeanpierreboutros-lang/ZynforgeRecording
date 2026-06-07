@@ -92,8 +92,39 @@ namespace zynforge
         return false;
     }
 
+    void AudioEngine::setTrackLiveInputGain (int channelIndex, float dB)
+    {
+        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
+        auto& t = recorder.getTrack (channelIndex);
+        t.liveInputGainDb.store (dB, std::memory_order_relaxed);
+        // A channel whose gain we learn for the first time mid-take has no
+        // capture reference yet -- seed it so the trim delta starts at 0.
+        if (recorder.isRecording()
+            && t.captureInputGainDb.load (std::memory_order_relaxed) == 0.0f
+            && t.armed.load (std::memory_order_relaxed))
+            t.captureInputGainDb.store (dB, std::memory_order_relaxed);
+    }
+
+    float AudioEngine::getTrackTrimDelta (int channelIndex)
+    {
+        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return 0.0f;
+        auto& t = recorder.getTrack (channelIndex);
+        return t.liveInputGainDb.load (std::memory_order_relaxed)
+             - t.captureInputGainDb.load (std::memory_order_relaxed);
+    }
+
     bool AudioEngine::startRecording (const juce::File& sessionDir)
     {
+        // Trim-follow: snapshot each channel's current console input gain as the
+        // capture reference, so the delta applied during soundcheck is measured
+        // from the gain the take was actually printed at.
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+        {
+            auto& t = recorder.getTrack (i);
+            t.captureInputGainDb.store (t.liveInputGainDb.load (std::memory_order_relaxed),
+                                        std::memory_order_relaxed);
+        }
+
         // Bypass-proof guard: refuse to capture if the device clock disagrees
         // with the session rate (silent wrong-speed/pitch take). Covers every
         // caller -- record button, transport bar, punch auto-record, companion.
@@ -1786,8 +1817,14 @@ namespace zynforge
                 dB = automationValueAt (autoCh, AutomationParam::Volume, autoPlayPos, dB);
             }
             const int g = t.vcaGroup.load (std::memory_order_relaxed);
-            return (g >= 0 && g < kNumVcas)
-                 ? dB + vcas[(size_t) g].gainDb.load (std::memory_order_relaxed) : dB;
+            if (g >= 0 && g < kNumVcas)
+                dB += vcas[(size_t) g].gainDb.load (std::memory_order_relaxed);
+            // Trim-follow: track the console's input-gain change since capture
+            // so soundcheck preamp moves shift the recorded track like a live mic.
+            if (trimFollowEnabled.load (std::memory_order_relaxed))
+                dB += t.liveInputGainDb.load (std::memory_order_relaxed)
+                    - t.captureInputGainDb.load (std::memory_order_relaxed);
+            return dB;
         };
 
         // Aux sends → bus tracks. For every non-bus strip with a send
@@ -2093,16 +2130,30 @@ namespace zynforge
             const double gR = gain * std::sin (panNorm * juce::MathConstants<double>::halfPi);
 
             // (a) VSC playback -- always summed to master when audible.
+            // Trim-follow applies HERE (recorded content) but NOT to live
+            // input (b): the desk's input-gain change since capture is added
+            // so soundcheck preamp moves track the recorded track. Computed as
+            // a separate gain so the live mic path stays untouched.
             if (ch < playerScratch.getNumChannels())
             {
                 const float* psrc = playerScratch.getReadPointer (ch);
                 if (psrc != nullptr)
+                {
+                    double gLp = gL, gRp = gR;
+                    if (trimFollowEnabled.load (std::memory_order_relaxed))
+                    {
+                        const double trim = (double) (t.liveInputGainDb.load (std::memory_order_relaxed)
+                                                    - t.captureInputGainDb.load (std::memory_order_relaxed));
+                        const double m = juce::Decibels::decibelsToGain (dB + trim, -60.0) / juce::jmax (1.0e-9, gain);
+                        gLp = gL * m; gRp = gR * m;
+                    }
                     for (int i = 0; i < blk; ++i)
                     {
                         const double s = (double) psrc[i];
-                        accL[i] += s * gL;
-                        accR[i] += s * gR;
+                        accL[i] += s * gLp;
+                        accR[i] += s * gRp;
                     }
+                }
             }
 
             // (b) Live input -- reaches the master when the channel is

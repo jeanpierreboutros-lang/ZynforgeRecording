@@ -29,6 +29,14 @@ namespace zynforge
         std::atomic<float> gainDb  { 0.0f };           // -60 .. +12
         std::atomic<float> pan     { 0.0f };           // -1 = L, 0 = C, +1 = R
 
+        // Trim-follow (virtual-soundcheck gain compensation). The console's
+        // live preamp/trim gain for this channel, pushed in via OSC, and the
+        // value snapshotted at record-start. When trim-follow is on, playback
+        // adds (live - capture) dB so adjusting the desk's input gain during
+        // soundcheck moves the recorded track exactly as it would the live mic.
+        std::atomic<float> liveInputGainDb    { 0.0f };
+        std::atomic<float> captureInputGainDb { 0.0f };
+
         // Soft-takeover targets used during cue recall -- the audio thread
         // ramps gainDb / pan from their current value to these targets
         // over rampSamplesRemaining samples so a cue change doesn't
