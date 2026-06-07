@@ -749,6 +749,76 @@ void MainComponent::warnIfSampleRateMismatch()
         "OK");
 }
 
+void MainComponent::relocateActiveSession()
+{
+    if (engine.isRecording())
+    {
+        showStatus ("Stop recording before moving the session.");
+        return;
+    }
+    const auto oldDir = engine.getActiveSessionDir();
+    if (! oldDir.isDirectory())
+    {
+        showStatus ("No active session to move -- record or open one first.");
+        return;
+    }
+
+    chooser = std::make_unique<juce::FileChooser> (
+        "Choose a new location for this session",
+        oldDir.getParentDirectory(), "");
+
+    chooser->launchAsync (juce::FileBrowserComponent::canSelectDirectories
+                          | juce::FileBrowserComponent::openMode,
+        [this, oldDir] (const juce::FileChooser& fc)
+        {
+            const auto newParent = fc.getResult();
+            if (! newParent.isDirectory()) return;
+
+            const auto newDir = newParent.getChildFile (oldDir.getFileName());
+            if (newDir == oldDir) { showStatus ("That's already the session's location."); return; }
+            if (newDir.exists())
+            {
+                showStatus ("A folder named \"" + oldDir.getFileName()
+                            + "\" already exists there -- pick another location.");
+                return;
+            }
+
+            // Drop any open playback handles so the files aren't busy while
+            // we move them, then do the (possibly cross-volume) move off the
+            // message thread so a big session can't freeze the UI.
+            engine.stopPlayback();
+            showStatus ("Moving session to " + newParent.getFullPathName() + " ...");
+
+            juce::Component::SafePointer<MainComponent> self (this);
+            juce::Thread::launch ([self, oldDir, newDir, newParent]
+            {
+                bool ok = oldDir.moveFileTo (newDir);          // instant within a volume
+                if (! ok)                                       // cross-volume: copy + delete
+                {
+                    ok = oldDir.copyDirectoryTo (newDir);
+                    if (ok) oldDir.deleteRecursively();
+                }
+
+                juce::MessageManager::callAsync ([self, ok, newDir, newParent]
+                {
+                    if (self == nullptr) return;
+                    if (! ok)
+                    {
+                        self->showStatus ("Move failed -- check permissions / free space. Session left in place.");
+                        return;
+                    }
+                    if (auto* p = self->engine.getAppProps())
+                    {
+                        p->setValue ("sessionsRoot", newParent.getFullPathName());
+                        p->saveIfNeeded();
+                    }
+                    self->openSessionFolder (newDir);   // re-pin paths + reload audio from the new home
+                    self->showStatus ("Session moved to " + newDir.getFullPathName());
+                });
+            });
+        });
+}
+
 void MainComponent::onLoadSessionClicked()
 {
     chooser = std::make_unique<juce::FileChooser> (

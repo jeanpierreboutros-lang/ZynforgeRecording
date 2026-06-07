@@ -224,8 +224,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // Session Info     = name / notes / read-only config summary.
         // The old "Settings" + "Properties" labels were too close;
         // engineers couldn't tell which dialog owned what.
-        menu.addItem (250, "Session Format && Recording...", ! engine.isRecording());
-        menu.addItem (251, "Session Info && Notes...",       engine.getActiveSessionDir().isDirectory());
+        menu.addItem (250, "Session Format & Recording...", ! engine.isRecording());
+        menu.addItem (251, "Session Info & Notes...",       engine.getActiveSessionDir().isDirectory());
         menu.addSeparator();
         menu.addItem (280, "Spectral auto-name strips",
                       engine.getRecorder().getNumTracks() > 0);
@@ -480,7 +480,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     {
         struct StubContent final : public juce::Component
         {
-            explicit StubContent (AudioEngine& e) : eng (e) { rebuild(); setSize (380, 230); }
+            StubContent (AudioEngine& e, MainComponent& o) : eng (e), owner (o) { rebuild(); setSize (440, 320); }
 
             void rebuild()
             {
@@ -518,6 +518,30 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
                 bitsBox.setSelectedId ((cur == F::Wav16 || cur == F::Aiff16 || cur == F::Flac16) ? 1
                                      : (cur == F::Wav32Float || cur == F::Aiff32Float) ? 3 : 2,
                                      juce::dontSendNotification);
+
+                // Recording location -- the active session folder. "Change..."
+                // moves the whole session (recorded audio included) elsewhere.
+                pathL.setText ("Recording Path", juce::dontSendNotification);
+                pathL.setColour (juce::Label::textColourId, brand::textPrimary);
+                addAndMakeVisible (pathL);
+
+                const auto dir = eng.getActiveSessionDir();
+                pathVal.setText (dir.isDirectory() ? dir.getFullPathName()
+                                                   : juce::String ("(no active session)"),
+                                 juce::dontSendNotification);
+                pathVal.setColour (juce::Label::textColourId, brand::textSecondary);
+                pathVal.setFont (brand::type::caption());
+                pathVal.setTooltip (pathVal.getText());
+                addAndMakeVisible (pathVal);
+
+                changePathB.setButtonText ("Change...");
+                changePathB.setEnabled (dir.isDirectory() && ! eng.isRecording());
+                changePathB.onClick = [this]
+                {
+                    close();                          // dismiss settings first
+                    owner.relocateActiveSession();    // then run the move flow
+                };
+                addAndMakeVisible (changePathB);
 
                 applyB.setButtonText ("Apply");
                 cancelB.setButtonText ("Cancel");
@@ -578,6 +602,15 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
                     r.removeFromTop (brand::space::sm);
                 };
                 row (fmtL, fmtBox); row (rateL, rateBox); row (bitsL, bitsBox);
+
+                // Recording-path row: label on top, path + Change... below.
+                r.removeFromTop (brand::space::sm);
+                pathL.setBounds (r.removeFromTop (20));
+                auto pr = r.removeFromTop (rowH);
+                changePathB.setBounds (pr.removeFromRight (110));
+                pr.removeFromRight (brand::space::sm);
+                pathVal.setBounds (pr);
+
                 r.removeFromTop (brand::space::lg);
                 auto br = r.removeFromBottom (32);
                 applyB .setBounds (br.removeFromRight (110));
@@ -593,12 +626,13 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
             }
 
             AudioEngine& eng;
-            juce::Label fmtL, rateL, bitsL;
+            MainComponent& owner;
+            juce::Label fmtL, rateL, bitsL, pathL, pathVal;
             juce::ComboBox fmtBox, rateBox, bitsBox;
-            juce::TextButton applyB, cancelB;
+            juce::TextButton applyB, cancelB, changePathB;
         };
 
-        auto* content = new StubContent (engine);
+        auto* content = new StubContent (engine, *this);
 
         juce::DialogWindow::LaunchOptions opts;
         opts.content.setOwned (content);

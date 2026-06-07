@@ -20,6 +20,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ### Added (latest)
 - **Sample-rate mismatch warning** — the app continuously compares the audio device's *live* rate (e.g. the incoming Dante / wordclock) against the session's rate (the loaded take's file rate, or the rate the session was created at) and warns on **any** divergence — 44.1 / 48 / 88.2 / 96 / 176.4 / 192 kHz. A persistent record-red banner sits in the header the whole time they disagree (so it can't scroll away), plus a one-shot dialog while stopped. Clears automatically once the clock matches again.
 
+### Changed (latest, session)
+- **Session menu: fixed `&&` in two item names** — "Session Format **&&** Recording…" / "Session Info **&&** Notes…" had a stray double ampersand (it rendered literally); now a single `&`.
+- **Session Settings can relocate the session after creation** — Session ▸ "Session Format & Recording…" (which already changes sample rate / audio format / bit depth post-creation) now also shows the **Recording Path** and a **Change…** button. Change… moves the whole active session folder — recorded audio included — to a new drive/location and re-pins everything there. Stopped-only; the copy runs on a background thread so a cross-volume move doesn't freeze the UI, and on failure the session is left in place.
+
 ### Changed (latest, protection)
 - **Recording is hard-blocked on a sample-rate mismatch** — `AudioEngine::startRecording` now refuses to arm if the device clock disagrees with the session rate, so *no* path (record button, transport bar, punch auto-record, companion) can start a silent wrong-speed/pitch take. The record button shows why and re-pops the warning. Top-level data-integrity guard.
 - **Fixed mojibake in the mismatch banner** — the warning-triangle glyph rendered as `â` in the bundled Inter font; the banner is now plain ASCII (`! SAMPLE-RATE MISMATCH device 48 kHz vs session 44.1 kHz - recording blocked`), red carries the alarm.

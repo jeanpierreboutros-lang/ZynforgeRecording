@@ -117,6 +117,10 @@ private:
     // counted as one). Engineer toggles via shift/cmd-click on a strip.
     std::set<int> selectedLogical;
     void showSessionProperties();
+    // Move the active session folder (its recorded audio included) to a new
+    // location, then re-pin everything from there. Stopped-only; the copy
+    // runs on a background thread so a cross-volume move can't freeze the UI.
+    void relocateActiveSession();
     void runSpectralAutoName();
     void writeSoundcheckReport();
     void runNoiseAnalysis();
