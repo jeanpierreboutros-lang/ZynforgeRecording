@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (latest, companion security)
+- **Companion client now sends its access token on every request — including the audio stream.** Under the token regime the served page still hard-coded `/state.json`, `/cmd` and `<source src="/stream.wav">` with no token, so once you opened `/?t=<token>` every follow-up request 401'd — the strips, transport, and remote-audition stream were all locked out. The page now reads the token from its own URL and threads it onto each sub-request; since an `<audio>` element can't set an `Authorization` header, the stream carries `?t=<token>` in its URL. So **`/stream.wav` is now properly access-controlled** (no token → 401), not open and not broken. Transport confidentiality is still delivered by fronting loopback with a tunnel (no in-app TLS — see `decisions.md`). Locked by a headless integration test that drives the real server on loopback.
+
 ### Added (latest, design system)
 - **Error toasts for hard failures** — the non-modal toast pill gained a fourth, **red** `Error` variant (alongside Info / Success / Warning). Genuine failures the engineer must act on — disk full / out of space, audio device lost, a write that couldn't complete — now flash red instead of amber-or-grey, so they read as danger even at the edge of vision. `showStatus()` routes by message severity automatically.
 - **Documented the component system** — `design.md` now carries a *Component Reference* with the state × variant matrix for every interactive component (Button, Toast, Channel strip, Fader, LED/Meter, Dialog), so the system is documented as a system, not just enforced in code.

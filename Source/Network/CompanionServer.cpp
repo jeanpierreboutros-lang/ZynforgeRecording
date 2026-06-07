@@ -116,9 +116,23 @@ header .status { color:var(--muted); font-size:13px; }
 <div id="strips"></div>
 <script>
 let lastTag = "";
+// The page is opened as /?t=<token>; every sub-request (state poll,
+// command POST, and the audio stream) must carry that same access token
+// or the server 401s it. The <audio> element can't send an Authorization
+// header, so the token rides in the query string for all of them.
+const _t = new URLSearchParams(location.search).get("t") || "";
+const _q = _t ? ("?t=" + encodeURIComponent(_t)) : "";
+// Point the remote-audition stream at the tokened URL (preload="none"
+// means nothing is fetched until the engineer hits play, by which time
+// this src is set).
+(function () {
+    const src = document.querySelector(".audition source");
+    if (src) { src.src = "/stream.wav" + _q;
+               const a = src.parentElement; if (a && a.load) a.load(); }
+})();
 async function cmd(action, channel, value) {
     try {
-        await fetch("/cmd", { method:"POST", headers:{"Content-Type":"application/json"},
+        await fetch("/cmd" + _q, { method:"POST", headers:{"Content-Type":"application/json"},
                               body: JSON.stringify({action, channel, value}) });
     } catch (e) { document.getElementById("status").textContent = "send failed"; }
 }
@@ -168,7 +182,7 @@ function renderStrips(state) {
 }
 async function tick() {
     try {
-        const r = await fetch("/state.json", { cache:"no-store" });
+        const r = await fetch("/state.json" + _q, { cache:"no-store" });
         renderStrips(await r.json());
     } catch (e) { document.getElementById("status").textContent = "disconnected"; }
 }
