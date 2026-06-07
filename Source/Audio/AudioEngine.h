@@ -29,6 +29,7 @@ namespace zynforge
     class CompanionServer;
 
     class AudioEngine final : public juce::AudioIODeviceCallback,
+                              public juce::MidiInputCallback,
                               public ITransport
     {
     public:
@@ -54,6 +55,24 @@ namespace zynforge
         juce::PropertiesFile*     getAppProps()      noexcept       { return appProps.get(); }
         juce::PropertiesFile*     getAppProps() const noexcept       { return appProps.get(); }
         TimecodeChase&            getTimecodeChase() noexcept { return timecodeChase; }
+
+        // ── External timecode chase (LTC from audio / MTC from MIDI) ────
+        enum class ChaseMode { Off = 0, Ltc = 1, Mtc = 2 };
+        void      setChaseMode (ChaseMode m) noexcept { chaseMode.store ((int) m, std::memory_order_relaxed); }
+        ChaseMode getChaseMode() const noexcept       { return (ChaseMode) chaseMode.load (std::memory_order_relaxed); }
+        // MTC input device (MIDI). "" = none / close. Returns success.
+        juce::StringArray getMidiInputNames() const;
+        bool              setMtcInputByName (const juce::String& name);
+        juce::String      getMtcInputName() const { return mtcInputName; }
+        // True while a chase source is selected AND timecode is live.
+        bool        isChaseLive() const noexcept { return getChaseMode() != ChaseMode::Off && timecodeChase.isRunning(); }
+        // The position (in the player's sample domain) the chased timecode
+        // currently points at, and a HH:MM:SS:FF string for display.
+        juce::int64  getChaseTargetSamples() const;
+        juce::String getChaseTimecodeString() const;
+
+        // juce::MidiInputCallback -- decodes incoming MTC on the MIDI thread.
+        void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage&) override;
 
         // -1 = no LTC source. Otherwise the strip whose device input
         // feeds the LTC zero-crossing analyzer once per audio block.
@@ -821,6 +840,9 @@ namespace zynforge
 
         TimecodeChase    timecodeChase;
         std::atomic<int> ltcSourceStrip { -1 };   // 0-based strip index, -1 = none
+        std::atomic<int> chaseMode      { 0 };    // 0=Off 1=LTC 2=MTC
+        std::unique_ptr<juce::MidiInput> mtcInput;
+        juce::String                     mtcInputName;
 
         // Stereo mix bus → file recorder.
         std::atomic<bool>                                       recordStereoMixFlag { false };

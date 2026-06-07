@@ -146,6 +146,9 @@ void MainComponent::timerCallback()
     // would record everything at the wrong speed / pitch.
     checkDeviceSampleRate (deviceSR);
 
+    // External timecode chase: drive the transport from incoming LTC / MTC.
+    serviceTimecodeChase();
+
     BigClockPanel::Mode m = BigClockPanel::Mode::Idle;
     juce::int64 elapsed = 0;
     double      timerSR = deviceSR;
@@ -352,4 +355,40 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
     aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->enterModalState (true, juce::ModalCallbackFunction::create (
         [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }), false);
+}
+
+// Drive the transport from an external timecode master (LTC decoded off an
+// audio input, or MTC over MIDI). When the chase source is live we follow it:
+// start playback, and resync the playhead whenever it drifts more than ~80 ms
+// from the incoming timecode (otherwise free-run so it doesn't stutter). When
+// the master parks/stops, we stop the playback we started.
+void MainComponent::serviceTimecodeChase()
+{
+    if (engine.getChaseMode() == zynforge::AudioEngine::ChaseMode::Off)
+    {
+        chaseWasLive = false;
+        return;
+    }
+
+    const bool live = engine.isChaseLive();
+    if (live)
+    {
+        const double sr = engine.getPlayer().getSampleRate() > 0.0
+                            ? engine.getPlayer().getSampleRate() : pendingSampleRate;
+        const juce::int64 target = engine.getChaseTargetSamples();
+
+        if (! engine.isPlaying())
+            engine.startPlayback();
+
+        const juce::int64 cur   = engine.getPlayer().getPositionSamples();
+        const juce::int64 slack = (juce::int64) (0.08 * sr);   // 80 ms lock window
+        if (std::llabs ((long long) (cur - target)) > slack)
+            engine.getPlayer().setPositionSamples (target);
+    }
+    else if (chaseWasLive && engine.isPlaying())
+    {
+        // Timecode master stopped -> park the transport.
+        engine.stopPlayback();
+    }
+    chaseWasLive = live;
 }

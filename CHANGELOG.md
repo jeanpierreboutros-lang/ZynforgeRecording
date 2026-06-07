@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Added (latest, sync)
+- **Chase external timecode (LTC / MTC)** — Session ▸ *Chase external timecode*. The transport now follows an external timecode master: **LTC** decoded off any audio input strip (biphase-mark decoder, already present) or **MTC** over a selectable MIDI input (newly wired). When the master rolls, playback starts and the playhead locks to the incoming timecode (resync on >80 ms drift, free-run otherwise); when the master parks, the transport stops. Frame rate (24/25/29.97/30) is read from the stream. Pick the source from the submenu (LTC ▸ input strip, or MTC ▸ MIDI device). Decoder headless-tested (MTC quarter-frame assembly incl. two-digit fields + frame rate, full-frame, partial-run rejection, LTC presence) — 143 → 149 groups.
+
 ### Added (latest, soundcheck)
 - **Trim-Follow (console gain compensation for virtual soundcheck)** — Session ▸ *Trim-Follow* (toggle). When on, the console's per-channel **input gain / trim** (pushed over OSC) is tracked against the gain each take was recorded at, and the difference is applied to playback. So riding a desk preamp during soundcheck moves the recorded track exactly as it would the live mic — the missing piece that lets you tune the system off recorded multitrack. Applies to the recorded playback only (live input is untouched), reaches the monitor sum and routed outputs, snapshots the capture reference at record-start, and is off by default. OSC keys `gain`/`trim`/`preamp` on every dialect (DiGiCo/A&H/SSL/Yamaha/generic); `fader` is deliberately not mapped. Headless-tested (143 groups).
 

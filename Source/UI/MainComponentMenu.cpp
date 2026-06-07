@@ -229,6 +229,29 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addSeparator();
         menu.addItem (256, "Trim-Follow (console input gain → soundcheck)",
                       true, engine.isTrimFollowEnabled());
+
+        // External timecode chase -- LTC off an audio input, or MTC over MIDI.
+        {
+            const auto mode = engine.getChaseMode();
+            juce::PopupMenu chaseMenu;
+            chaseMenu.addItem (610, "Off", true, mode == zynforge::AudioEngine::ChaseMode::Off);
+            chaseMenu.addSeparator();
+            juce::PopupMenu ltcMenu;
+            const int nt = engine.getRecorder().getNumTracks();
+            for (int i = 0; i < nt && i < 16; ++i)
+                ltcMenu.addItem (620 + i, "Input " + juce::String (i + 1), true,
+                                 mode == zynforge::AudioEngine::ChaseMode::Ltc
+                                 && engine.getLtcSourceStrip() == i + 1);
+            chaseMenu.addSubMenu ("LTC from audio input", ltcMenu, nt > 0);
+            juce::PopupMenu mtcMenu;
+            const auto midiIns = engine.getMidiInputNames();
+            for (int j = 0; j < midiIns.size() && j < 30; ++j)
+                mtcMenu.addItem (640 + j, midiIns[j], true,
+                                 mode == zynforge::AudioEngine::ChaseMode::Mtc
+                                 && engine.getMtcInputName() == midiIns[j]);
+            chaseMenu.addSubMenu ("MTC from MIDI input", mtcMenu, midiIns.size() > 0);
+            menu.addSubMenu ("Chase external timecode", chaseMenu);
+        }
         menu.addSeparator();
         menu.addItem (280, "Spectral auto-name strips",
                       engine.getRecorder().getNumTracks() > 0);
@@ -272,7 +295,9 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) snapToMarkers
         << '|' << (int) cues.empty()
         << '|' << (int) stripClipboard.isObject()
-        << '|' << (int) engine.isTrimFollowEnabled();
+        << '|' << (int) engine.isTrimFollowEnabled()
+        << '|' << (int) engine.getChaseMode()
+        << '|' << engine.getLtcSourceStrip();
 
     if (sig != lastMenuStateSig)
     {
@@ -485,6 +510,36 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
         engine.setTrimFollowEnabled (on);
         showStatus (on ? "Trim-Follow ON -- console input-gain moves now track the recorded soundcheck"
                        : "Trim-Follow OFF -- recorded tracks play at their printed level");
+    }
+    else if (id == 610)
+    {
+        engine.setChaseMode (zynforge::AudioEngine::ChaseMode::Off);
+        engine.setMtcInputByName ({});
+        showStatus ("Timecode chase off");
+    }
+    else if (id >= 620 && id < 640)         // LTC from input strip
+    {
+        const int strip1 = id - 620 + 1;
+        engine.setMtcInputByName ({});
+        engine.setLtcSourceStrip (strip1);
+        engine.setChaseMode (zynforge::AudioEngine::ChaseMode::Ltc);
+        showStatus ("Chasing LTC on Input " + juce::String (strip1)
+                    + " -- transport follows incoming timecode");
+    }
+    else if (id >= 640 && id < 700)         // MTC from MIDI device
+    {
+        const auto names = engine.getMidiInputNames();
+        const int j = id - 640;
+        if (j >= 0 && j < names.size())
+        {
+            if (engine.setMtcInputByName (names[j]))
+            {
+                engine.setChaseMode (zynforge::AudioEngine::ChaseMode::Mtc);
+                showStatus ("Chasing MTC from " + names[j] + " -- transport follows incoming timecode");
+            }
+            else
+                showStatus ("Couldn't open MIDI input \"" + names[j] + "\"");
+        }
     }
     else if (id == 290) promptMirrorHost();
     else if (id == 255)

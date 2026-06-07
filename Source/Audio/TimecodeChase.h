@@ -126,6 +126,14 @@ namespace zynforge
                 ltcMinutes.store (mn, std::memory_order_relaxed);
                 ltcHours  .store (hr, std::memory_order_relaxed);
                 running   .store (true, std::memory_order_relaxed);
+
+                // Frame-rate lives in the hour-MS nibble (type 7): bits 1-2.
+                // 0=24, 1=25, 2=29.97-drop, 3=30. Publish it so the chaser
+                // maps frames→samples correctly (LTC derives fps differently).
+                const int rateCode = (mtcAcc.nibbles[7] >> 1) & 0x3;
+                ltcFps.store (rateCode == 0 ? 24.0f : rateCode == 1 ? 25.0f
+                            : rateCode == 2 ? 29.97f : 30.0f, std::memory_order_relaxed);
+                ltcDropFrame.store (rateCode == 2, std::memory_order_relaxed);
                 mtcAcc.seen = 0;
             }
             lastMtcTickMs = juce::Time::getMillisecondCounter();

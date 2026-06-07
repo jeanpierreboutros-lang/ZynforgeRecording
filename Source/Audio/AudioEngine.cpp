@@ -294,6 +294,67 @@ namespace zynforge
         }
     }
 
+    juce::StringArray AudioEngine::getMidiInputNames() const
+    {
+        juce::StringArray names;
+        for (const auto& d : juce::MidiInput::getAvailableDevices())
+            names.add (d.name);
+        return names;
+    }
+
+    bool AudioEngine::setMtcInputByName (const juce::String& name)
+    {
+        if (mtcInput != nullptr) { mtcInput->stop(); mtcInput.reset(); }
+        mtcInputName.clear();
+        if (name.isEmpty()) return true;   // closed = success
+
+        for (const auto& d : juce::MidiInput::getAvailableDevices())
+            if (d.name == name)
+            {
+                mtcInput = juce::MidiInput::openDevice (d.identifier, this);
+                if (mtcInput != nullptr) { mtcInput->start(); mtcInputName = name; return true; }
+                return false;
+            }
+        return false;
+    }
+
+    void AudioEngine::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m)
+    {
+        // Decoded on the MIDI thread -> TimecodeChase atomics (no locks). The
+        // message-thread chase poll reads getChaseTargetSamples() to seek.
+        if (m.isQuarterFrame())
+            timecodeChase.feedMtcQuarterFrame (m.getRawData()[1]);
+        else if (m.isFullFrame())
+        {
+            int h, mn, s, f;
+            juce::MidiMessage::SmpteTimecodeType tc;
+            m.getFullFrameParameters (h, mn, s, f, tc);
+            timecodeChase.feedMtcFullFrame ((juce::uint8) h, (juce::uint8) mn,
+                                            (juce::uint8) s, (juce::uint8) f);
+        }
+    }
+
+    juce::int64 AudioEngine::getChaseTargetSamples() const
+    {
+        double fps = timecodeChase.getFps();
+        if (fps <= 0.0) fps = 30.0;   // not yet learned -> sane default
+        const double rate = player.getSampleRate() > 0.0 ? player.getSampleRate()
+                          : (deviceManager.getCurrentAudioDevice() != nullptr
+                                ? deviceManager.getCurrentAudioDevice()->getCurrentSampleRate() : 48000.0);
+        const double secs = (double) timecodeChase.getHours()   * 3600.0
+                          + (double) timecodeChase.getMinutes() * 60.0
+                          + (double) timecodeChase.getSeconds()
+                          + (double) timecodeChase.getFrames()  / fps;
+        return (juce::int64) (secs * rate + 0.5);
+    }
+
+    juce::String AudioEngine::getChaseTimecodeString() const
+    {
+        return juce::String::formatted ("%02d:%02d:%02d:%02d",
+                                        timecodeChase.getHours(), timecodeChase.getMinutes(),
+                                        timecodeChase.getSeconds(), timecodeChase.getFrames());
+    }
+
     void AudioEngine::setRecordStereoMix (bool enabled)
     {
         recordStereoMixFlag.store (enabled, std::memory_order_release);

@@ -232,6 +232,8 @@ private:
     // 0 = no outstanding warning, so we warn once per distinct device rate.
     double srMismatchWarned  { 0.0 };
     void   checkDeviceSampleRate (double deviceSampleRate);
+    bool   chaseWasLive      { false };   // external-timecode chase: did we start playback?
+    void   serviceTimecodeChase();
     void onFormatClicked();
     void onPreRollClicked();
     void refreshFormatButton();
