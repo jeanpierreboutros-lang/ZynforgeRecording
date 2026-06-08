@@ -34,12 +34,15 @@ namespace zynforge
     {
         juce::Array<juce::File> out;
         if (appProps == nullptr) return out;
+        // Skip entries that no longer exist OR live under the temp dir (a
+        // scratch / test session) -- those shouldn't show as "recent".
+        const auto tempRoot = juce::File::getSpecialLocation (juce::File::tempDirectory);
         for (int i = 0; i < kMaxRecent; ++i)
         {
             const auto p = appProps->getValue ("recentSession_" + juce::String (i));
             if (p.isEmpty()) continue;
             juce::File f (p);
-            if (f.isDirectory()) out.add (f);
+            if (f.isDirectory() && ! f.isAChildOf (tempRoot)) out.add (f);
         }
         return out;
     }
@@ -1335,7 +1338,10 @@ namespace zynforge
                 if (f.isDirectory() && ! f.isAChildOf (tempRoot))
                     activeSession = f;
                 else
+                {
                     appProps->removeValue ("activeSessionDir");   // tidy the stale key
+                    appProps->saveIfNeeded();                     // flush so it's gone on disk too
+                }
             }
         }
 
