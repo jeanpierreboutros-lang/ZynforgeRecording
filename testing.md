@@ -73,6 +73,10 @@ BIN="build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app/Contents/M
 tail -1 "$HOME/Library/Logs/Zynforge/test-report.log"   # "[zynforge tests] N test groups, 0 failure(s)"
 ```
 
+**Test isolation:** the suite is safe to run on your own machine — a test-mode `AudioEngine` points its `appProps` at a throwaway `zynforge-test.settings` in the temp dir, so recording/pref-mutating tests can't corrupt your real `.settings` (`activeSessionDir`, recent list). This was a real bug (tests left the app reopening a deleted scratch session); `EngineStateTests` asserts the test engine's settings file lives under the temp dir. Tests that touch the engine should set `AudioEngine::setTestModeSkipAudioInit(true)` before constructing it.
+
+Notable suites: `CompanionServerTests` (loopback server end-to-end), `MenuDispatchTests` (id-collision + dispatch-range guard), `CompoundFileTests`/`FastHashTests`/`SessionBackupTests` (capture-side helpers), `AudioCallbackTests` (audio-thread integration, incl. RF64 policy + 64-ch throughput).
+
 ## Code Coverage Expectations
 
 No formal coverage target today. The bar for new code:

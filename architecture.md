@@ -134,6 +134,16 @@ Single source of truth for visual identity. `ZynForgeLookAndFeel` overrides butt
 ### Network (`Source/Network/`)
 `CompanionServer` exposes `/`, `/state.json`, `/cmd`, and `/stream.wav` for a tablet client. `OscRemote` parses five console dialects with feature parity (Generic, DiGiCo, A&H SQ, SSL Live, Yamaha / RIVAGE).
 
+The companion runs an accept thread + per-connection writes off the message thread; **the app ignores `SIGPIPE` at startup** (`Main.cpp::initialise`) so a browser closing the page / aborting the `/stream.wav` element makes the write fail with `EPIPE` instead of killing the process. Every request needs the per-session token (`?t=` or `Authorization: Bearer`); the served page threads that token onto its own sub-requests. Started from Session ▸ Start companion server (menu id **950** — kept outside every `menuItemSelected` dispatch range; the old id 270 sat inside the 261–289 template range, which made the handler dead code). Wired end-to-end and regression-tested in `CompanionServerTests` (token gate + state reflects engine + `/cmd` mutates engine + `/stream.wav` serves WAV).
+
+### Capture-integrity + backup helpers
+- **`Source/Audio/FastHash.h`** — `fileSha256()`, hardware-accelerated via `CC_SHA256` (ARMv8 crypto), used by the recorder's post-stop manifest (parallel-per-file, utility QoS). `shasum`-identical output.
+- **`Source/Audio/SessionBackup.h`** — `writeSnapshot()` copies the session-defining files (`.zfproj`, `session_mix.json`, `session_settings.json`, `markers.json` — never the audio) into a pruned, timestamped `Session File Backups/<Name>_<stamp>/`. Driven by manual Save, cue edits, and the auto-save timer (`MainComponent::serviceAutosave`, interval in appProps `autosaveMinutes`).
+- **`Source/Audio/Aaf/CompoundFile.h`** — native MS-CFB (OLE2 structured-storage) container writer, the envelope layer of the in-progress native AAF export. Phase 1 (container + round-trip oracle) complete; object model is future work. See `decisions.md` *AAF export built natively…*.
+
+### Test isolation
+`AudioEngine`'s ctor opens the user's real `.settings` `PropertiesFile` — EXCEPT in test mode (`s_testSkipAudioInit`), where it points at a throwaway `zynforge-test.settings` in the temp dir so the suite can record/mutate prefs without corrupting the user's live `activeSessionDir`/recent list. Asserted in `EngineStateTests`.
+
 ### MIDI control surfaces (`Source/Audio/McuProtocol.h` + `MidiControlSurface.{h,cpp}`)
 `McuProtocol.h` is a header-only, hardware-free set of Mackie Control Universal encode/decode helpers (fader law, button notes, V-pot relative encoders + ring, channel-pressure meters, scribble-strip SysEx, **master fader on MIDI ch 9, jog wheel on CC 0x3C, and the 10-digit time display**) — fully unit-tested in `Source/Tests/McuProtocolTests.cpp`. `MidiControlSurface` opens a paired MIDI in/out, runs a 15 Hz echo timer, and is bidirectional: inbound faders/V-pots/buttons/jog drive channel + transport state (channel writes are plain atomic stores off the MIDI thread; transport is marshalled to the message thread), and the timer pushes faders, LEDs, meters, names, the master fader and the playhead time display back to the surface. Banked 8 strips at a time. Wired from the Control Surfaces dialog (`enableControlSurface`/`disableControlSurface` on the engine).
 

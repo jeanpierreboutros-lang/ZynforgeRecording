@@ -98,7 +98,7 @@ Five dialects with **full action parity** (transport, scene recall → marker, p
 Bidirectional **Mackie Control / FaderPort (MCU)** surface: motor **faders ↔ channel gain**, **mute / solo / arm** with LED feedback, **V-pots → pan** with ring feedback, **scribble strips** show names, **bank / channel** buttons page through all tracks, and **meters** mirror to the surface. Plus a **master (9th) fader** for the monitor level, **jog-wheel transport scrub**, and the surface's **7-segment time display** showing the playhead as `HH:MM:SS:FF`. Channel state is applied straight off the MIDI thread (atomic); transport is marshalled to the message thread.
 
 ### Companion server
-HTTP server on `:9000` — browser / iPad opens `http://<this-mac>:9000/`. Polled state JSON, POST commands for mute / solo / arm / transport, continuous PCM stream for remote audition (`/stream.wav`).
+HTTP server on `:9000` — start it from **Session ▸ Start companion server on :9000…** (it copies the access URL, with token, to your clipboard); a browser / iPad then opens that URL. Polled state JSON, POST commands for mute / solo / arm / transport, continuous PCM stream for remote audition (`/stream.wav`).
 
 **Security & secure remote access.** The companion binds **loopback only (`127.0.0.1`)** and **every** request — the state poll, command POST, and the `/stream.wav` audio stream — needs a 32-hex access token (regenerated each start) via `?t=<token>` or `Authorization: Bearer`. The web client threads that token onto each sub-request automatically (the audio element carries it in its URL, since it can't send a header), so a token-less request to any endpoint, including the stream, gets a 401. On the same machine that's secure — localhost traffic isn't sniffable. The transport is **plaintext HTTP**, so it is *not* exposed to the LAN by default, and you should **not** serve it raw over Wi-Fi (the token and the audio stream would be sniffable). To reach it from a phone/tablet or off-machine, put a **tunnel** in front of loopback — the tunnel terminates real, CA-backed TLS and adds its own identity, which is stronger than any self-signed cert this app could ship:
 
@@ -112,6 +112,8 @@ Why no built-in HTTPS: JUCE has no server-side TLS, so in-app HTTPS would mean b
 - **LOCK** button disables every other control so a stray click can't kill a take
 - Redundant-write to a second drive in parallel
 - Recording always **pre-fader** — fader / pan / mute / solo are monitoring concerns only
+- **Auto-save + backup session** — Session ▸ *Auto-Save & Backup…* (Off / 1 / 2 / 5 / 10 / 15 min) periodically saves the session and drops a complete, restorable **backup session** (all session-defining files, not the multi-GB audio) into `Session File Backups/<Name>_<stamp>/`, keeping the 10 newest. Recordings are always written live and crash-safe independent of this
+- **RF64** large takes (one continuous file past 4 GiB) + a fast, hardware-accelerated SHA-256 integrity manifest written on stop. Field-verified with a 6 h+ overnight soak (0 crashes, flat RAM). Validate any take with `tools/verify_take.sh`
 
 ### Workflow polish
 - Every text / number prompt (rename track, marker name, cue name, clip gain, +CH, New Session, …) opens with its field focused + text selected; **Enter** confirms the primary action without reaching for the mouse
