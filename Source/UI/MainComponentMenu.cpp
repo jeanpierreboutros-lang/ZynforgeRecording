@@ -41,6 +41,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // state.
         menu.addItem (2, "Save\tCmd+S");
         menu.addItem (3, "Save As...");
+        menu.addItem (283, "Auto-Save & Backup...");
         menu.addSeparator();
         // Close the session back to the Welcome screen WITHOUT quitting --
         // so the engineer can start/open another session between sets.
@@ -293,6 +294,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
 
     if (id == 1)         onLoadSessionClicked();
     else if (id == 2)    onSaveSessionState();
+    else if (id == 283)  showAutosaveSettings();
     else if (id == 3)    onSaveSessionAs();
     else if (id == 4)    onImportAudioFiles();
     else if (id == 7)    createSessionFromCsv();

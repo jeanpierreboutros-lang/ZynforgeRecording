@@ -91,6 +91,13 @@ private:
     // File > Open, the Welcome dialog, and the launch auto-reopen.
     int  openSessionFolder (const juce::File& dir);
     bool saveSessionStateTo (const juce::File& dir);
+    // Periodic auto-save + timestamped backup of the active session, driven
+    // from the 10 Hz timer. Interval (minutes; 0 = off) lives in appProps
+    // "autosaveMinutes"; showAutosaveSettings() is the picker dialog. Only
+    // fires when the session actually changed since the last save (tracked
+    // via the undo manager's stored-command count).
+    void serviceAutosave();
+    void showAutosaveSettings();
     int  exportTracksTo (const juce::File& dir,
                          const std::vector<int>& channelIndices,
                          const zynforge::ExportOptions&);
@@ -166,6 +173,10 @@ private:
     // Edit-menu plumbing.
     juce::UndoManager undoManager;
     juce::var         stripClipboard;   // JSON of cut/copied strip settings
+
+    // Auto-save bookkeeping (see serviceAutosave / showAutosaveSettings).
+    juce::uint32 lastAutosaveMs    { 0 };   // 0 = clock not started yet
+    int          lastSavedUndoUnits { 0 };  // undo units at the last save -- the dirty signal
     juce::var         clipClipboard;    // JSON of cut/copied audio clip(s)
     int               nudgeMs { 100 };  // clip-nudge step; cycled with N, persisted
     void recordUndoSnapshot (const juce::String& label);

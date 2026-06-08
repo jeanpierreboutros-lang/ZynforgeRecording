@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Added (latest, safety)
+- **Auto-save + timestamped auto-backup, with a configurable interval.** Session ▸ **Auto-Save & Backup…** opens a picker — **Off / 1 / 2 / 5 / 10 / 15 minutes** (default 5). When on, the app periodically writes the full session (mix, cues, automation, layout) to disk **and** drops a timestamped snapshot into `Session File Backups/` (10 newest kept), so the mixer/edit work you do between manual saves isn't lost to a crash. It only writes when something actually changed since the last save (tracked via the undo stack), so it never churns identical backups, and it sits quietly in the footer (`Auto-saved HH:MM:SS`) rather than popping a toast. Recordings remain saved live and independent of this — a take is never at risk either way.
+
 ### Changed (latest, capture)
 - **Post-stop integrity hashing is ~100× faster.** The `session.report.json` SHA-256 manifest used to hash recorded audio with a portable software SHA at background QoS — an overnight 2-track / 8.6 GB take took ~8 minutes to finish hashing. It now (a) uses the CPU's **hardware SHA extensions** via `CC_SHA256` (ARMv8 crypto / SHA-NI), (b) **hashes files in parallel**, and (c) runs at **utility QoS** (still yields to the UI/next take, but isn't throttled to a trickle). Measured on the real 4.31 GB take: ~2.8 s/file in hardware vs ~480 s for the pair before — and both files now run concurrently. Digests are byte-identical to `shasum -a 256`, so the manifest stays verifiable with standard tools (`tools/verify_take.sh` unchanged). Validated against the canonical FIPS-180 vectors + `juce::SHA256` across buffer boundaries.
 

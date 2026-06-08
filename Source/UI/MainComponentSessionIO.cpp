@@ -184,7 +184,85 @@ bool MainComponent::saveSessionStateTo (const juce::File& dir)
     // the show brings back the engineer's view choice, strip width,
     // VCA-panel visibility, and EDIT zoom.
     saveUILayoutToActiveSession();
+
+    // Re-baseline the auto-save dirty signal: after any save (manual or auto)
+    // there are no unsaved edits, so the next auto-save waits for a real change.
+    lastSavedUndoUnits = undoManager.getNumberOfUnitsTakenUpByStoredCommands();
     return wroteSettings;
+}
+
+void MainComponent::serviceAutosave()
+{
+    auto* props = engine.getAppProps();
+    if (props == nullptr) return;
+
+    const int mins = props->getIntValue ("autosaveMinutes", 5);   // default: every 5 min
+    if (mins <= 0) return;                                          // Off
+
+    const auto dir = engine.getActiveSessionDir();
+    if (! dir.isDirectory()) return;                               // nothing to save into
+
+    const auto now = juce::Time::getMillisecondCounter();
+    if (lastAutosaveMs == 0)                                        // first tick -> start the clock
+    {
+        lastAutosaveMs     = now;
+        lastSavedUndoUnits = undoManager.getNumberOfUnitsTakenUpByStoredCommands();
+        return;
+    }
+    if (now - lastAutosaveMs < (juce::uint32) mins * 60000) return;
+    lastAutosaveMs = now;
+
+    // Only write when the session actually changed since the last save -- avoids
+    // churning identical backups when nothing's been touched.
+    const int units = undoManager.getNumberOfUnitsTakenUpByStoredCommands();
+    if (units == lastSavedUndoUnits) return;
+
+    if (saveSessionStateTo (dir))   // writes mix + .zfproj + a timestamped backup snapshot (10 kept)
+        statusLabel.setText ("Auto-saved " + juce::Time::getCurrentTime().formatted ("%H:%M:%S"),
+                             juce::dontSendNotification);
+}
+
+void MainComponent::showAutosaveSettings()
+{
+    auto* aw = new juce::AlertWindow ("Auto-Save & Backup",
+        "Automatically save the session (mix, cues, automation, layout) on a timer and keep a "
+        "timestamped backup snapshot (10 newest) in 'Session File Backups'. Recordings are always "
+        "written to disk live, independent of this -- a take is never at risk.",
+        juce::MessageBoxIconType::NoIcon);
+    aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
+
+    const juce::StringArray labels { "Off", "Every 1 minute", "Every 2 minutes",
+                                     "Every 5 minutes", "Every 10 minutes", "Every 15 minutes" };
+    static const int mapMins[] = { 0, 1, 2, 5, 10, 15 };
+    aw->addComboBox ("interval", labels, "Auto-save & back up:");
+
+    const int cur = engine.getAppProps() ? engine.getAppProps()->getIntValue ("autosaveMinutes", 5) : 5;
+    int sel = 3;   // default -> "Every 5 minutes"
+    for (int i = 0; i < 6; ++i) if (mapMins[i] == cur) sel = i;
+    if (auto* cb = aw->getComboBoxComponent ("interval"))
+        cb->setSelectedItemIndex (sel, juce::dontSendNotification);
+
+    aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+        [aw, self] (int r)
+    {
+        std::unique_ptr<juce::AlertWindow> dispose (aw);
+        if (r != 1 || self == nullptr) return;
+
+        int idx = 3;
+        if (auto* cb = aw->getComboBoxComponent ("interval")) idx = cb->getSelectedItemIndex();
+        const int mins = mapMins[juce::jlimit (0, 5, idx)];
+
+        if (auto* p = self->engine.getAppProps())
+        { p->setValue ("autosaveMinutes", mins); p->saveIfNeeded(); }
+        self->lastAutosaveMs = 0;   // restart the clock against the new interval
+        self->showStatus (mins > 0 ? ("Auto-save every " + juce::String (mins)
+                                      + (mins == 1 ? " minute" : " minutes"))
+                                   : juce::String ("Auto-save turned off"));
+    }), true);
 }
 
 void MainComponent::saveUILayoutToActiveSession()

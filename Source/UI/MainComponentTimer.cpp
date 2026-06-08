@@ -26,6 +26,10 @@ void MainComponent::timerCallback()
     // everyday operations, not just clip + automation edits. Skips recording.
     pollMixerUndo();
 
+    // Periodic auto-save + timestamped backup of the active session (interval
+    // from appProps "autosaveMinutes"; only writes when something changed).
+    serviceAutosave();
+
     // Header "tab" buttons (DEVICE / PATCH / METERS) light up while their
     // floating panel is open and clear when it closes. The non-modal panels
     // only HIDE themselves on their close box, so reap any hidden one here
