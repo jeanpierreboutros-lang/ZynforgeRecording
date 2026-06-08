@@ -1267,7 +1267,22 @@ namespace zynforge
         opts.folderName          = "Zynforge Recording";
         opts.osxLibrarySubFolder = "Application Support";
         opts.storageFormat       = juce::PropertiesFile::storeAsXML;
-        appProps = std::make_unique<juce::PropertiesFile> (opts);
+
+        if (s_testSkipAudioInit.load (std::memory_order_acquire))
+        {
+            // TEST ISOLATION: the in-binary test harness must NEVER touch the
+            // user's real .settings file. A test that records or sets a pref
+            // would otherwise persist (e.g.) a throwaway temp session path into
+            // `activeSessionDir`, so the next real launch tries to reopen a
+            // deleted folder. Point test engines at ONE fixed throwaway file in
+            // temp -- shared across test engines (as the real file effectively
+            // was), so the harness doesn't litter a file per construction.
+            const auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getChildFile ("zynforge-test.settings");
+            appProps = std::make_unique<juce::PropertiesFile> (tmp, opts);
+        }
+        else
+            appProps = std::make_unique<juce::PropertiesFile> (opts);
 
         // Restore the stereo-mix-recording flag from the prefs file so the
         // engineer's preference survives restart.
@@ -1313,7 +1328,14 @@ namespace zynforge
             if (saved.isNotEmpty())
             {
                 juce::File f (saved);
-                if (f.isDirectory()) activeSession = f;
+                // Only restore a real, still-present session folder. Reject a
+                // path under the temp dir (a leftover scratch / test session)
+                // so a stale entry can't make the app reopen a deleted folder.
+                const auto tempRoot = juce::File::getSpecialLocation (juce::File::tempDirectory);
+                if (f.isDirectory() && ! f.isAChildOf (tempRoot))
+                    activeSession = f;
+                else
+                    appProps->removeValue ("activeSessionDir");   // tidy the stale key
             }
         }
 
