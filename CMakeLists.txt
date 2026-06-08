@@ -90,6 +90,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/EditPageAccessibilityTests.cpp
     Source/Tests/CompanionServerTests.cpp
     Source/Tests/CompoundFileTests.cpp
+    Source/Tests/AafTests.cpp
     Source/Tests/FastHashTests.cpp
     Source/Tests/SessionBackupTests.cpp
     Source/UI/ChannelStrip.cpp
