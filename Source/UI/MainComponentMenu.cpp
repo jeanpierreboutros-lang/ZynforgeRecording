@@ -41,7 +41,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // state.
         menu.addItem (2, "Save\tCmd+S");
         menu.addItem (3, "Save As...");
-        menu.addItem (283, "Auto-Save & Backup...");
+        menu.addItem (951, "Auto-Save & Backup...");
         menu.addSeparator();
         // Close the session back to the Welcome screen WITHOUT quitting --
         // so the engineer can start/open another session between sets.
@@ -216,7 +216,10 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (261, "Configure cloud upload command...");
         menu.addSeparator();
         const bool compRunning = engine.isCompanionServerRunning();
-        menu.addItem (270, compRunning
+        // id 950 -- deliberately OUTSIDE every menuItemSelected dispatch range
+        // (notably 261..289, which used to swallow the old id 270 so this item
+        // never reached its handler).
+        menu.addItem (950, compRunning
                             ? juce::String ("Stop companion (port " + juce::String (engine.getCompanionServerPort()) + ")")
                             : juce::String ("Start companion server on :9000..."));
         menu.addSeparator();
@@ -294,7 +297,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
 
     if (id == 1)         onLoadSessionClicked();
     else if (id == 2)    onSaveSessionState();
-    else if (id == 283)  showAutosaveSettings();
+    else if (id == 951)  showAutosaveSettings();
     else if (id == 3)    onSaveSessionAs();
     else if (id == 4)    onImportAudioFiles();
     else if (id == 7)    createSessionFromCsv();
@@ -385,7 +388,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
             showStatus ("Cloud upload failed to launch -- check the configured command");
         }
     }
-    else if (id == 270)
+    else if (id == 950)
     {
         if (engine.isCompanionServerRunning())
         {

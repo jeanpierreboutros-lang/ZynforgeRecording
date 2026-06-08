@@ -59,6 +59,28 @@ namespace zynforge
                 expect (! dup,      "a menu id is claimed by two different items");
                 expect (! rangeHit, "a menu id falls inside the per-track-export range 100-199");
                 expect ((int) seen.size() > 25, "expected to walk a populated menu bar");
+
+                // Dispatch-RANGE collision guard: a static single-purpose item
+                // must not reuse an id that a menuItemSelected RANGE handler
+                // claims, or its real handler becomes dead code. The companion
+                // item was id 270, which sat inside the 261..289 template range
+                // -> "Start companion server" never reached its handler. Assert
+                // the marquee static items live outside every dispatch range.
+                static const std::pair<int,int> reservedRanges[] = {
+                    { 100, 199 },   // per-track export + OSC dialects
+                    { 200, 249 },   // session templates
+                    { 261, 289 },   // template-as-default
+                    { 401, 430 },   // MIDI clock outputs
+                    { 620, 699 },   // LTC / MTC sources
+                };
+                for (const auto& [mid, text] : seen)
+                    if (text.containsIgnoreCase ("companion server")
+                        || text.containsIgnoreCase ("Auto-Save"))
+                        for (const auto& r : reservedRanges)
+                            expect (mid < r.first || mid > r.second,
+                                    "menu item '" + text + "' (id " + juce::String (mid)
+                                    + ") falls inside dispatch range " + juce::String (r.first)
+                                    + ".." + juce::String (r.second) + " -> its handler is dead code");
             }
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);

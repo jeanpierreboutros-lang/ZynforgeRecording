@@ -221,6 +221,11 @@ setInterval(tick, 500); tick();
         listener = std::make_unique<juce::StreamingSocket>();
         if (! listener->createListener (port, bind))
         {
+            // Surface WHY the bind failed (port busy, etc.) -- DBG() is compiled
+            // out in Release, so use the always-on logger.
+            juce::Logger::writeToLog ("[companion] createListener FAILED port=" + juce::String (port)
+                                      + " bind=" + bind + " errno=" + juce::String (errno)
+                                      + " (" + juce::String (std::strerror (errno)) + ")");
             listener.reset();
             return false;
         }
