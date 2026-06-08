@@ -40,6 +40,9 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Recently Completed
 
+### 2026-06-08 — RF64 / 6 h+ stability field soak PASSED
+- [x] **>4 GiB single-file RF64 + multi-hour stability soak** (field) — real overnight capture (session "test rf64", 2 tracks, 48 k/32-float, 6 h 15 m). Both files crossed 4 GiB and promoted to **RF64 + ds64**, single continuous file (no `_partNN`), open at full length (22473.61 s, byte-identical). `missedSamples: 0`, sha256 manifest matches on-disk (verified via `tools/verify_take.sh`). Stability: **0 crashes**, RAM flat ~124–131 MB over the whole run (no leak), CPU steady. The remaining sub-item (96–128 ch @ 96k throughput soak) and the in-DAW open are still open. Note: post-stop sha256 took ~8 min for 8.6 GB at background QoS — flagged for the hash-speedup change.
+
 ### 2026-06-08 — Green-bucket + companion-security pass
 - [x] **Finish splitting `MainComponent.cpp`** (M) — the ctor (685), dtor, and `rebuildStrips` (352) moved verbatim into a new `MainComponentInit.cpp` (a clean cut — no file-local statics/anon-namespace to untangle, so no member-init refactor was actually needed). `MainComponent.cpp` 1837 → 718 lines. Build clean, 183 groups pass, GUI constructs + lays out strips without crash. (this commit)
 - [x] **EDIT zoom-button accessibility** (S) — the four `V+/V-/H+/H-` zoom buttons now carry spoken titles (Vertical/Horizontal zoom in/out) + tooltip help text; headless test builds EditPage in engine test mode. AutomationToolbar accessibility was already done (stale entry). (`bcff48a`)
