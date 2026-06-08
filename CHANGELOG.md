@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Changed (latest, capture)
+- **Post-stop integrity hashing is ~100× faster.** The `session.report.json` SHA-256 manifest used to hash recorded audio with a portable software SHA at background QoS — an overnight 2-track / 8.6 GB take took ~8 minutes to finish hashing. It now (a) uses the CPU's **hardware SHA extensions** via `CC_SHA256` (ARMv8 crypto / SHA-NI), (b) **hashes files in parallel**, and (c) runs at **utility QoS** (still yields to the UI/next take, but isn't throttled to a trickle). Measured on the real 4.31 GB take: ~2.8 s/file in hardware vs ~480 s for the pair before — and both files now run concurrently. Digests are byte-identical to `shasum -a 256`, so the manifest stays verifiable with standard tools (`tools/verify_take.sh` unchanged). Validated against the canonical FIPS-180 vectors + `juce::SHA256` across buffer boundaries.
+
 ### Fixed (latest, companion security)
 - **Companion client now sends its access token on every request — including the audio stream.** Under the token regime the served page still hard-coded `/state.json`, `/cmd` and `<source src="/stream.wav">` with no token, so once you opened `/?t=<token>` every follow-up request 401'd — the strips, transport, and remote-audition stream were all locked out. The page now reads the token from its own URL and threads it onto each sub-request; since an `<audio>` element can't set an `Authorization` header, the stream carries `?t=<token>` in its URL. So **`/stream.wav` is now properly access-controlled** (no token → 401), not open and not broken. Transport confidentiality is still delivered by fronting loopback with a tunnel (no in-app TLS — see `decisions.md`). Locked by a headless integration test that drives the real server on loopback.
 

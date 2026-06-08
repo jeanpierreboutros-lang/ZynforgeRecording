@@ -1,7 +1,12 @@
 #include "MultitrackRecorder.h"
+#include "FastHash.h"
 
 #include <juce_cryptography/juce_cryptography.h>
 #include <limits>
+#include <map>
+#include <thread>
+#include <mutex>
+#include <atomic>
 
 #if JUCE_MAC
  #include <pthread/qos.h>
@@ -814,7 +819,8 @@ namespace zynforge
              backupHadFailure]
             (const std::vector<TrackMeta>&   trackMetas,
              const std::vector<WriterReport>& writerSnaps,
-             bool withHashes) -> juce::String
+             bool withHashes,
+             const std::map<juce::String, juce::String>& shaByPath) -> juce::String
         {
             juce::DynamicObject::Ptr report (new juce::DynamicObject());
             report->setProperty ("stoppedAt",      stoppedAt.toISO8601 (true));
@@ -830,13 +836,14 @@ namespace zynforge
             report->setProperty ("preRollSeconds", preRoll);
             report->setProperty ("sha256Pending",  ! withHashes);
 
-            const auto sha256File = [withHashes] (const juce::File& f) -> juce::String
+            // Hashes are computed in parallel BEFORE this builder runs (see the
+            // background thread below) and looked up here by full path, so the
+            // JSON assembly never blocks on a multi-GB read.
+            const auto sha256File = [withHashes, &shaByPath] (const juce::File& f) -> juce::String
             {
-                if (! withHashes || ! f.existsAsFile()) return {};
-                juce::FileInputStream in (f);
-                if (! in.openedOk()) return {};
-                const juce::SHA256 digest (in);
-                return digest.toHexString();
+                if (! withHashes) return {};
+                const auto it = shaByPath.find (f.getFullPathName());
+                return it != shaByPath.end() ? it->second : juce::String();
             };
 
             juce::Array<juce::var> trackArray;
@@ -920,27 +927,68 @@ namespace zynforge
             //    stops, even for a huge take whose hashing runs for minutes
             //    (or if the app is killed before hashing finishes).
             sessionDir.getChildFile ("session.report.json")
-                      .replaceWithText (buildReportJson (trackMetas, writerSnapshots, false));
+                      .replaceWithText (buildReportJson (trackMetas, writerSnapshots, false, {}));
 
-            // 2) Compute SHA-256 over all recorded audio on a BACKGROUND-
-            //    priority thread and rewrite the report with the hashes. Low
-            //    priority so a multi-GB hash doesn't starve the UI or the
-            //    next take. If interrupted, the metadata report from step 1
-            //    still stands (sha256Pending stays true).
+            // 2) Hash all recorded audio off-thread and rewrite the report with
+            //    the SHA-256s. The hashing is (a) hardware-accelerated
+            //    (CC_SHA256 -> ARMv8 crypto / SHA-NI, see FastHash.h) and
+            //    (b) parallelised across files, so a multi-GB pass that used to
+            //    take minutes finishes in seconds and is disk-bound, not
+            //    CPU-bound. Runs at UTILITY QoS: still yields to the UI / next
+            //    take, but isn't throttled to a trickle the way BACKGROUND was.
+            //    If interrupted, the metadata report from step 1 still stands.
             juce::Thread::launch (
-                [buildReportJson, sessionDir,
+                [buildReportJson, sessionDir, bDir, backupWasRunning,
                  trackMetas  = std::move (trackMetas),
                  writerSnaps = std::move (writerSnapshots)]
                 {
                    #if JUCE_MAC
-                    // Drop this hashing thread to background QoS so a multi-GB
-                    // SHA-256 pass doesn't starve the UI or the next take.
-                    // (Thread::launch gives no priority hook; Thread::setPriority
-                    // is protected, so we lower the OS scheduling class directly.)
-                    pthread_set_qos_class_self_np (QOS_CLASS_BACKGROUND, 0);
+                    pthread_set_qos_class_self_np (QOS_CLASS_UTILITY, 0);
                    #endif
+
+                    // Collect every file the manifest will reference (primary +
+                    // backup + mirrors), mirroring buildReportJson's path logic.
+                    std::vector<juce::File> files;
+                    const auto primDir = sessionDir.getChildFile ("Audio Files");
+                    const auto bkDir   = bDir.getChildFile (sessionDir.getFileName())
+                                             .getChildFile ("Audio Files");
+                    for (const auto& ws : writerSnaps)
+                    {
+                        for (const auto& fn : ws.partFilesPrimary) files.push_back (primDir.getChildFile (fn));
+                        if (backupWasRunning)
+                            for (const auto& fn : ws.partFilesBackup) files.push_back (bkDir.getChildFile (fn));
+                        for (const auto& mr : ws.mirrors)
+                        {
+                            const auto mDir = mr.root.getChildFile (sessionDir.getFileName())
+                                                     .getChildFile ("Audio Files");
+                            for (const auto& fn : mr.partFiles) files.push_back (mDir.getChildFile (fn));
+                        }
+                    }
+
+                    // Hash them in parallel (bounded), then build the path->sha map.
+                    std::map<juce::String, juce::String> shaByPath;
+                    std::mutex mapMutex;
+                    std::atomic<size_t> next { 0 };
+                    const int nThreads = (int) juce::jlimit (1u, 8u,
+                                            std::max (1u, std::thread::hardware_concurrency()));
+                    std::vector<std::thread> pool;
+                    for (int t = 0; t < nThreads; ++t)
+                        pool.emplace_back ([&]
+                        {
+                            for (;;)
+                            {
+                                const size_t i = next.fetch_add (1);
+                                if (i >= files.size()) break;
+                                const auto sha  = zynforge::hashing::fileSha256 (files[i]);
+                                const auto path = files[i].getFullPathName();
+                                const std::lock_guard<std::mutex> lk (mapMutex);
+                                shaByPath[path] = sha;
+                            }
+                        });
+                    for (auto& th : pool) th.join();
+
                     sessionDir.getChildFile ("session.report.json")
-                              .replaceWithText (buildReportJson (trackMetas, writerSnaps, true));
+                              .replaceWithText (buildReportJson (trackMetas, writerSnaps, true, shaByPath));
                 });
         }
 
