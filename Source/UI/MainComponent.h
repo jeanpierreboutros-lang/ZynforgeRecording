@@ -401,6 +401,13 @@ private:
 
     void loadSetlistFromActiveSession();
     void saveSetlistToActiveSession() const;
+    // Snapshot the WHOLE session definition (mix + setlist/cues/automation/
+    // layout + settings + markers) into a timestamped sub-folder of the
+    // session's own "Session File Backups/" -- a restorable backup session.
+    // The immutable multi-GB audio is NOT copied (it lives once in Audio
+    // Files/); to restore, copy the snapshot's files back over the session
+    // root. Keeps the 10 most recent. Const: file ops only, no member writes.
+    void writeSessionBackupSnapshot() const;
     void jumpToCue (int index);
     void addCueAtTransport();
     void updateCueAtTransport();

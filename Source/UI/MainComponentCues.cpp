@@ -11,6 +11,7 @@
 #include "MainComponent.h"
 #include "../Theme/DialogChrome.h"
 #include "../Audio/SpectralClassifier.h"
+#include "../Audio/SessionBackup.h"
 #include "SessionProjPath.h"
 
 using namespace zynforge;
@@ -213,26 +214,14 @@ void MainComponent::saveSetlistToActiveSession() const
 
     proj.replaceWithText (juce::JSON::toString (juce::var (obj.get())));
 
-    // Drop a timestamped backup copy into Session File Backups/ so a
-    // misclicked cue / accidental delete is recoverable from the show.
-    // Keep the most recent ~10 backups; older snapshots get pruned.
-    const auto backupsDir = engine.getActiveSessionDir().getChildFile ("Session File Backups");
-    if (backupsDir.createDirectory().wasOk())
-    {
-        const auto stamp = juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S");
-        const auto bk = backupsDir.getChildFile (proj.getFileNameWithoutExtension()
-                                                  + "_" + stamp + ".zfproj");
-        proj.copyFileTo (bk);
+    // Drop a full backup session into Session File Backups/ so a misclicked
+    // cue / accidental delete / file corruption is recoverable from the show.
+    writeSessionBackupSnapshot();
+}
 
-        // Prune -- keep only the 10 most recent.
-        auto snaps = backupsDir.findChildFiles (juce::File::findFiles, false, "*.zfproj");
-        if (snaps.size() > 10)
-        {
-            snaps.sort();   // alphabetical = chronological because of the stamp
-            for (int i = 0; i < snaps.size() - 10; ++i)
-                snaps[i].deleteFile();
-        }
-    }
+void MainComponent::writeSessionBackupSnapshot() const
+{
+    zynforge::sessionbackup::writeSnapshot (engine.getActiveSessionDir());
 }
 
 void MainComponent::jumpToCue (int index)

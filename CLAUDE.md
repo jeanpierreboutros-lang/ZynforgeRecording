@@ -70,7 +70,7 @@ EDIT-view specifics in `Source/UI/EditPage.cpp`: the `TrackRow` header (swatch /
   - **`<Name>.zfproj`** — `setlist` (cues, incl. each cue's `automation` snapshot), `playlists` (comp Takes; each clip carries `fadeCurve` and, for cross-track paste, an `audioFile` filename resolved against `Audio Files/` on load), `automation` (global lanes), `ui` (view / strip width / zoom).
   - **`session_groups.json`** is the older name for VCA + edit groups; superseded by `session_mix.json`. Don't reintroduce it.
 - `Save` (and `Save As`) call `saveSessionStateTo`, which writes all of the above. Cues' own automation is captured by `addCueAtTransport` / `updateCueAtTransport`; recalling a cue **clears** every lane first, then loads the cue's snapshot (so a cue without a track-N entry doesn't leave another cue's curve on track N).
-- **Auto-save** (`MainComponent::serviceAutosave`, driven from the 10 Hz timer) calls the same `saveSessionStateTo` on a user-set interval (appProps `autosaveMinutes`, 0 = off, default 5; picker is Session ▸ Auto-Save & Backup…). It's gated on the undo manager's stored-command count so it only writes when the session actually changed since the last save — which also keeps the timestamped backup snapshots (written inside `saveSetlistToActiveSession`, pruned to 10) from churning. Recording is unaffected: audio is streamed live and the take is crash-safe regardless.
+- **Auto-save** (`MainComponent::serviceAutosave`, driven from the 10 Hz timer) calls the same `saveSessionStateTo` on a user-set interval (appProps `autosaveMinutes`, 0 = off, default 5; picker is Session ▸ Auto-Save & Backup…). It's gated on the undo manager's stored-command count so it only writes when the session actually changed since the last save — which also keeps the backup sessions from churning. The backup itself is `MainComponent::writeSessionBackupSnapshot` → `zynforge::sessionbackup::writeSnapshot` (`Source/Audio/SessionBackup.h`, headless-tested): a **full backup session** — a timestamped `Session File Backups/<Name>_<stamp>/` folder copying the session-defining files (`.zfproj`, `session_mix.json`, `session_settings.json`, `markers.json`), **never the audio**, pruned to 10. It's called from `saveSetlistToActiveSession`, so every Save, cue edit, and auto-save drops one. Recording is unaffected: audio is streamed live and the take is crash-safe regardless.
 - `.zfproj` carries a `formatVersion` field. Treat its absence as v1 and fall back gracefully.
 - Per-strip state used to live in **global** `appProps` keyed by index, which leaked between sessions. New sessions / freshly-grown strips now wipe the per-index `appProps` overrides (see `clearStripOverridesRange`); the session files are authoritative.
 
@@ -89,7 +89,7 @@ EDIT-view specifics in `Source/UI/EditPage.cpp`: the `TrackRow` header (swatch /
 ~/Music/Zynforge Sessions/<Name>/
 ├── Audio Files/                  Track_01.wav … (recordings)
 ├── Export Files/                 stereo bounce + per-track exports (was 'Bounced Files/')
-├── Session File Backups/         timestamped .zfproj snapshots (auto-pruned, keep 10 newest)
+├── Session File Backups/         timestamped backup-session folders <Name>_<stamp>/ (session-defining files, no audio; keep 10 newest)
 ├── Clip Groups/                  reserved
 ├── <Name>.zfproj                 cues, playlists, automation, UI layout
 ├── session_mix.json              per-strip mix + session tempo
