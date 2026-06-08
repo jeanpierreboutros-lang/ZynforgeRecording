@@ -48,6 +48,35 @@ namespace zynforge
             return mb.toString();
         }
 
+        // POST a JSON body and return the response (status + body).
+        static juce::String httpPost (int port, const juce::String& path, const juce::String& json)
+        {
+            juce::StreamingSocket sock;
+            if (! sock.connect ("127.0.0.1", port, 1000)) return {};
+            const auto body = json;
+            const auto req = "POST " + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                             "Content-Type: application/json\r\nContent-Length: "
+                             + juce::String (body.getNumBytesAsUTF8()) + "\r\nConnection: close\r\n\r\n" + body;
+            sock.write (req.toRawUTF8(), (int) req.getNumBytesAsUTF8());
+
+            juce::MemoryBlock mb;
+            const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) 600;
+            char buf[2048];
+            while (juce::Time::getMillisecondCounter() < deadline)
+            {
+                const int ready = sock.waitUntilReady (true, 100);
+                if (ready < 0) break;
+                if (ready == 1)
+                {
+                    const int n = sock.read (buf, sizeof (buf), false);
+                    if (n <= 0) break;
+                    mb.append (buf, (size_t) n);
+                    if (mb.getSize() > 4096) break;
+                }
+            }
+            return mb.toString();
+        }
+
         void runTest() override
         {
             beginTest ("Every endpoint -- including /stream.wav -- is token-gated; page threads the token");
@@ -81,6 +110,57 @@ namespace zynforge
                     // (c) The stream is reachable WITH a valid token.
                     expect (! httpGet (port, "/stream.wav?t=" + tok).contains ("401"),
                             "tokened stream wrongly rejected");
+
+                    engine.stopCompanionServer();
+                }
+            }
+
+            beginTest ("Every endpoint is wired to the engine (state reflects it, /cmd mutates it, /stream serves audio)");
+            {
+                AudioEngine engine;
+                engine.setStripCount (4);
+                engine.setTrackName (0, "KickTest");
+                engine.getRecorder().getTrack (1).armed.store (true);
+
+                int port = 0;
+                for (int p = 19250; p < 19260 && port == 0; ++p)
+                    if (engine.startCompanionServer (p)) port = p;
+                expect (port != 0, "companion server failed to start");
+
+                if (port != 0)
+                {
+                    const auto tok = engine.getCompanionAccessUrl()
+                                         .fromFirstOccurrenceOf ("t=", false, false).trim();
+
+                    // /state.json reflects real engine state (names, armed, counts).
+                    const auto state = httpGet (port, "/state.json?t=" + tok);
+                    expect (state.contains ("200"),        "state.json not served");
+                    expect (state.contains ("KickTest"),   "state.json missing the track name -> not wired to engine");
+                    expect (state.contains ("\"armed\":true") || state.contains ("\"armed\": true"),
+                            "state.json doesn't reflect the armed track");
+                    expect (state.contains ("\"recording\":false") || state.contains ("\"recording\": false"),
+                            "state.json missing transport state");
+
+                    // /cmd actually mutates engine state (mute ch 1 on, then off).
+                    expect (! engine.getRecorder().getTrack (0).muted.load(), "precondition: ch1 not muted");
+                    httpPost (port, "/cmd?t=" + tok, "{\"action\":\"mute\",\"channel\":1,\"value\":true}");
+                    expect (engine.getRecorder().getTrack (0).muted.load(), "/cmd mute did not reach the engine");
+                    httpPost (port, "/cmd?t=" + tok, "{\"action\":\"mute\",\"channel\":1,\"value\":false}");
+                    expect (! engine.getRecorder().getTrack (0).muted.load(), "/cmd unmute did not reach the engine");
+
+                    // /cmd arm on a different channel.
+                    httpPost (port, "/cmd?t=" + tok, "{\"action\":\"arm\",\"channel\":3,\"value\":true}");
+                    expect (engine.getRecorder().getTrack (2).armed.load(), "/cmd arm did not reach the engine");
+
+                    // A tokenless /cmd must NOT mutate.
+                    httpPost (port, "/cmd", "{\"action\":\"mute\",\"channel\":3,\"value\":true}");
+                    expect (! engine.getRecorder().getTrack (2).muted.load(), "tokenless /cmd wrongly mutated state");
+
+                    // /stream.wav serves a WAV stream (RIFF/RF64 header in the body).
+                    const auto stream = httpGet (port, "/stream.wav?t=" + tok, 700);
+                    expect (stream.contains ("200"), "stream not served");
+                    expect (stream.contains ("audio/wav") || stream.contains ("RIFF") || stream.contains ("WAVE"),
+                            "stream response carries no WAV payload");
 
                     engine.stopCompanionServer();
                 }
