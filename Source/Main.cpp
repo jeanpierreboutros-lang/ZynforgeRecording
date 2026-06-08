@@ -1,4 +1,5 @@
 #include <juce_gui_extra/juce_gui_extra.h>
+#include <csignal>
 
 #include "UI/MainComponent.h"
 #include "Theme/BrandColors.h"
@@ -101,6 +102,14 @@ public:
 
     void initialise (const juce::String& commandLine) override
     {
+        // Ignore SIGPIPE process-wide. The companion HTTP/stream server writes
+        // to client sockets; when a browser closes the page or aborts the
+        // /stream.wav audio element, the in-flight write hits a broken pipe and
+        // the default SIGPIPE action would TERMINATE the whole app (seen as the
+        // app vanishing with signal 13, no crash report). Ignoring it makes the
+        // write fail with EPIPE instead, which the socket code handles.
+        std::signal (SIGPIPE, SIG_IGN);
+
         // ZYNFORGE_RUN_TESTS=1 (or --run-tests on the cmd line) runs
         // every juce::UnitTest registered in the binary, prints the
         // results to stderr, and quits with a non-zero exit when any
