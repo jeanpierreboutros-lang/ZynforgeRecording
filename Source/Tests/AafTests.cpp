@@ -3,7 +3,7 @@
 // assert internal consistency (round-trip) + the documented byte structure.
 
 #include <juce_core/juce_core.h>
-#include "../Audio/Aaf/AafProperties.h"
+#include "../Audio/Aaf/AafObject.h"
 
 namespace zynforge
 {
@@ -11,6 +11,12 @@ namespace zynforge
     {
     public:
         AafTests() : UnitTest ("AAF primitives", "zynforge") {}
+
+        static const cfb::Node* findChild (const cfb::Node& n, const juce::String& name)
+        {
+            for (const auto& c : n.children) if (c->name == name) return c.get();
+            return nullptr;
+        }
 
         void runTest() override
         {
@@ -101,6 +107,48 @@ namespace zynforge
                 expectEquals ((int) stream.getSize(), 4);   // header only
                 PropertySet back;
                 expect (PropertySet::parse (stream, back) && back.size() == 0);
+            }
+
+            beginTest ("AAF object graph emits to a CFB storage tree + round-trips");
+            {
+                Auid header;   header.data1 = 0x0D010101; header.data3 = 0x2F00;
+                Auid mobClass; mobClass.data1 = 0x0D010101; mobClass.data3 = 0x3500;
+
+                AafObject root (header);
+                root.props.addData (0x4001, leI32 (1));
+                auto* cs = root.addChild ("ContentStorage", mobClass);
+                cs->props.addData (0x4002, encString ("Comp"));
+
+                cfb::CompoundFileWriter w;
+                root.emitInto (w.root());
+
+                // Root storage carries a "properties" stream + a "ContentStorage" sub-storage.
+                const auto* propsStream = findChild (w.root(), "properties");
+                const auto* csStorage   = findChild (w.root(), "ContentStorage");
+                expect (propsStream != nullptr && propsStream->type == cfb::NodeType::Stream,
+                        "root properties stream missing");
+                expect (csStorage != nullptr && csStorage->type == cfb::NodeType::Storage,
+                        "child storage missing");
+
+                // Root properties parse back, carrying the class AUID + the property.
+                PropertySet ps;
+                expect (PropertySet::parse (propsStream->data, ps), "root properties unparsable");
+                expect (ps.find (kPidObjClass) != nullptr
+                        && ps.find (kPidObjClass)->value == encAuid (header), "root class AUID lost");
+                expect (ps.find (0x4001) != nullptr, "root property lost");
+
+                // The child object's own properties survive in its sub-storage.
+                const auto* childProps = findChild (*csStorage, "properties");
+                expect (childProps != nullptr, "child properties stream missing");
+                PropertySet cps;
+                expect (PropertySet::parse (childProps->data, cps), "child properties unparsable");
+                expect (cps.find (kPidObjClass) != nullptr
+                        && cps.find (kPidObjClass)->value == encAuid (mobClass), "child class AUID lost");
+                expect (cps.find (0x4002) != nullptr
+                        && cps.find (0x4002)->value == encString ("Comp"), "child property lost");
+
+                // And the whole thing serialises to a valid CFB envelope.
+                expect (w.build().getSize() % 512 == 0, "assembled CFB not sector-aligned");
             }
         }
     };
