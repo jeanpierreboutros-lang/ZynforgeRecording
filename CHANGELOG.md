@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Added (latest, deliverables)
+- **Post-show QC report** (Session ▸ *Post-show QC report…*). Scans every recorded track in the background and pops a sortable table — **peak dBFS**, **BS.1770 integrated loudness**, **clipping events** (flat-top runs ≥ 3 samples at ≥ 0.999 FS, each with its timecode), and the **between-song noise floor** (10th percentile of 100 ms RMS windows). Click the *Clips* column header and the problem channels float to the top. A plain-text report (`Export Files/QC Report <stamp>.txt`) is written alongside, including the recorder's missed-samples count from `session.report.json` — "channel 23 clipped 4 times during song 6" is now a 10-second lookup the morning after. Streamed analysis (never loads a track into RAM); headless-tested (`QcAnalyzerTests`).
+
 ### Added (latest, show readiness)
 - **Pre-flight checklist now *measures* the rig instead of reading config.** New probes on top of the existing snapshot: **measured disk write speed** of the session volume (streams a 16 MB probe file and times it) vs. the throughput the armed channel count × format actually demands, with a 1.5× jitter margin; **every mirror drive verified mounted *and writable*** (a real create-write-delete probe, not `isDirectory()`); **live CPU callback load** (green < 50 %, amber < 80 %); **session-vs-device sample-rate mismatch** (catches the wrong-pitch virtual soundcheck before the band hears it); and **signal presence on armed inputs** (N of M armed channels showing > −60 dBFS at line check). Probes live in `Source/Audio/PreflightProbes.h`, headless-tested (`PreflightTests`, suite now 202 groups).
 

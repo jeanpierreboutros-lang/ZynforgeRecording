@@ -67,6 +67,7 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Ap
 - **Bounce stereo mix** — sums the whole edited arrangement through gain / pan / mute / solo + volume/pan/mute automation + VCA + master to a 24-bit stereo WAV
 - Both render offline on a worker thread (no real-time risk) and **stream to disk in fixed windows** — a multi-hour show bounces in a few MB of RAM; cross-track clips render from their own source file
 - Per-track / per-format export (WAV / AIFF / FLAC) with sample-rate conversion
+- **Post-show QC report** — one click scans every track for peak / integrated LUFS / clipping events (with timecode) / noise floor, pops a sortable table and writes a text report next to the exports
 
 ### Metering
 - Adaptive LED meters per strip + master; sticky clip latch

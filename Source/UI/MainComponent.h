@@ -154,6 +154,7 @@ private:
     void runSpectralAutoName();
     void writeSoundcheckReport();
     void runNoiseAnalysis();
+    void runQcAnalysis();
     void promptMirrorHost();
     zynforge::SessionMirror sessionMirror { engine };
     void togglePunchMode();

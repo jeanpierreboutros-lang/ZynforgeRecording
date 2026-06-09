@@ -10,8 +10,10 @@
 
 #include "MainComponent.h"
 #include "../Audio/NoiseAnalyzer.h"
+#include "../Audio/QcAnalyzer.h"
 #include "../Audio/SpectralClassifier.h"
 #include "NoiseReportDialog.h"
+#include "QcReportDialog.h"
 #include "SessionPropertiesDialog.h"
 
 using namespace zynforge;
@@ -329,6 +331,87 @@ void MainComponent::runNoiseAnalysis()
             // column headers to sort by worst hum / most bumps /
             // highest noise floor.
             zynforge::NoiseReportDialog::launch (findings);
+        });
+    });
+}
+
+void MainComponent::runQcAnalysis()
+{
+    const auto sessionDir = engine.getActiveSessionDir();
+    if (! sessionDir.isDirectory())
+    {
+        showStatus ("Open or create a session before running QC");
+        return;
+    }
+
+    const auto audioDir = sessionDir.getChildFile ("Audio Files").isDirectory()
+                            ? sessionDir.getChildFile ("Audio Files") : sessionDir;
+    auto files = audioDir.findChildFiles (juce::File::findFiles, false,
+                                          "Track_*.wav;Track_*.aif;Track_*.aiff;Track_*.flac");
+    if (files.isEmpty())
+    {
+        showStatus ("No recorded audio to QC -- record a take first.");
+        return;
+    }
+    files.sort();
+
+    showStatus ("Running post-show QC (peak / LUFS / clipping / noise floor)...");
+
+    // Snapshot names so the worker never touches engine state.
+    juce::StringArray names;
+    for (int i = 0; i < engine.getRecorder().getNumTracks(); ++i)
+        names.add (engine.getRecorder().getTrack (i).name);
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    juce::Thread::launch ([self, sessionDir, audioDir, files, names]
+    {
+        std::vector<zynforge::qc::TrackQc> results;
+        for (const auto& f : files)
+        {
+            auto q = zynforge::qc::analyzeFile (f);
+            const auto stem = f.getFileNameWithoutExtension();          // Track_NN
+            const int idx = stem.fromLastOccurrenceOf ("_", false, false).getIntValue() - 1;
+            q.trackIndex = juce::jmax (0, idx);
+            q.name = (idx >= 0 && idx < names.size() && names[idx].isNotEmpty())
+                       ? names[idx] : stem;
+            results.push_back (std::move (q));
+        }
+
+        // Recorder dropout count from the integrity manifest, if present.
+        juce::int64 missed = -1;
+        const auto reportFile = sessionDir.getChildFile ("session.report.json");
+        if (reportFile.existsAsFile())
+        {
+            const auto v = juce::JSON::parse (reportFile);
+            if (v.hasProperty ("missedSamples"))
+                missed = (juce::int64) v.getProperty ("missedSamples", -1);
+        }
+
+        // Write the morning-after text report next to the exports.
+        const auto exportDir = sessionDir.getChildFile ("Export Files");
+        exportDir.createDirectory();
+        const auto stamp = juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H%M%S");
+        const auto reportTxt = exportDir.getChildFile ("QC Report " + stamp + ".txt");
+        reportTxt.replaceWithText (
+            zynforge::qc::reportText (sessionDir.getFileName(), results, missed));
+
+        int clipped = 0, totalEvents = 0;
+        for (const auto& q : results)
+            if (q.clipEventCount > 0) { ++clipped; totalEvents += q.clipEventCount; }
+        juce::String summary = juce::String ((int) results.size()) + " track"
+            + (results.size() == 1 ? juce::String() : juce::String ("s")) + " QC'd -- "
+            + (clipped == 0 ? juce::String ("no clipping")
+                            : juce::String (clipped) + " with clipping ("
+                              + juce::String (totalEvents) + " events)")
+            + (missed > 0 ? juce::String (", DROPOUTS: ") + juce::String (missed) + " samples"
+                          : juce::String())
+            + ". Saved " + reportTxt.getFileName() + ".";
+
+        juce::MessageManager::callAsync ([self, summary, results]() mutable
+        {
+            if (self == nullptr) return;
+            self->showStatus (summary);
+            zynforge::QcReportDialog::launch (std::move (results));
         });
     });
 }
