@@ -252,6 +252,21 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Capture-process split (headless record daemon) — 2026-06-10
+
+**Status:** Proposed (design accepted, phased; no code yet)
+**Context:** The audio callback, file writers, and the entire UI live in one process. A UI crash, a wedged modal, or a graphics-driver fault kills the take. The hardware this app competes with (dedicated live recorders) is appliance-grade precisely because capture shares nothing with presentation. We already survived one instance of the class (the companion-server SIGPIPE killing the app mid-take) — the lesson generalises.
+**Decision:** Split capture into a minimal headless daemon owning the CoreAudio callback + `MultitrackRecorder` + integrity manifest, with the GUI as a client. Phased so every step ships independently:
+1. **Phase 0 — boundary hygiene (prereq, cheap).** Everything the UI reads from the engine during recording goes through a narrow, serialisable status struct (transport, peaks, disk stats, missed samples); no UI code touches recorder internals directly. Pure in-process refactor, testable now.
+2. **Phase 1 — daemon binary.** A `zynforge-capture` target reusing `MultitrackRecorder` + the device layer, controlled over a local socket with a versioned protocol (start/stop/arm/status — the companion server protocol is the starting point; it already proxies transport + state). The GUI launches and supervises it; if the GUI dies, the daemon finishes the take and writes the manifest.
+3. **Phase 2 — supervision + reattach.** A restarted GUI discovers the running daemon and reattaches mid-take (the session folder + `recording.session` marker already encode enough to rehydrate). Watchdogs both ways: daemon records on without a GUI; GUI flags a dead daemon loudly.
+**Rationale:** The biggest single reliability jump available — "app crashed mid-set" becomes a UI blip instead of a lost take. Phasing avoids a long-lived divergent branch.
+**Consequences:** + Take survives any UI fault; enables headless/rack operation later. − A protocol surface to version and test; device hot-plug handling moves daemon-side; debugging spans two processes. Input monitoring stays daemon-side with the callback, so monitor changes must flow through the protocol — that is most of phase 1's surface.
+**Alternatives Considered:** In-process hardening only (signal handlers, watchdog thread) — cheaper but can't survive SIGKILL or graphics faults; overlaps with phase 0 but rejected as the end state. XPC instead of sockets — macOS-idiomatic but couples to launchd and complicates a future headless build; sockets reuse the companion protocol work.
+**Related Documents:** `architecture.md` (threading model); companion-server ADR; `tasks.md` (phased breakdown).
+
+---
+
 ## Template
 
 ```
