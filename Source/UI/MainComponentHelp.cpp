@@ -56,10 +56,10 @@ namespace
                     { "M",            "Drop marker at playhead" },
                 }},
                 { "Cues", {
-                    { "1 – 9",        "Jump to cue 1 – 9" },
+                    { "1 - 9",        "Jump to cue 1 - 9" },
                 }},
                 { "Markers", {
-                    { "Cmd + 1 – 9",  "Jump to marker 1 – 9 (recalls layout if stored)" },
+                    { "Cmd + 1 - 9",  "Jump to marker 1 - 9 (recalls layout if stored)" },
                 }},
                 { "Edit", {
                     { "A",            "Solo selected strips" },
@@ -74,8 +74,8 @@ namespace
                     { "Cmd + V",      "Paste strips" },
                 }},
                 { "Automation (EDIT view, click a row to activate)", {
-                    { "← / →",        "Walk to prev / next automation point (seeks playhead)" },
-                    { "↑ / ↓",        "Nudge focused point's value" },
+                    { "Left / Right", "Walk to prev / next automation point (seeks playhead)" },
+                    { "Up / Down",    "Nudge focused point's value" },
                     { "Delete",       "Remove focused point" },
                 }},
                 { "Mixer", {

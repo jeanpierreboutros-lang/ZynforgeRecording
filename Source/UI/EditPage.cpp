@@ -4079,7 +4079,7 @@ namespace zynforge
         zoomVIn .setTooltip ("Taller waveforms (vertical zoom in)");
         zoomVOut.setTooltip ("Shorter waveforms (vertical zoom out)");
         zoomHIn .setTooltip ("Zoom in on the timeline");
-        zoomHOut.setTooltip ("Zoom out (1× = whole take)");
+        zoomHOut.setTooltip ("Zoom out (1x = whole take)");
         // Accessibility: the on-screen labels are "V+/V-/H+/H-", which a
         // screen reader would read as glyphs. Give each a spoken name (and
         // surface the tooltip as help text). They are TextButtons, so the

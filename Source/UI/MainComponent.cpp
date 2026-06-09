@@ -152,7 +152,7 @@ void MainComponent::onRecordClicked()
     if (engine.startRecording (dir))
     {
         auto msg = juce::String ("Recording ") + juce::String (armed) + "/"
-                 + juce::String (numTracks) + " tracks → " + dir.getFileName();
+                 + juce::String (numTracks) + " tracks -> " + dir.getFileName();
         if (autoRouted > 0)
             msg << " (auto-routed " << autoRouted << ")";
         // Free-space pre-flight: warn loudly if the engineer is about to

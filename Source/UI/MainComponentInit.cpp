@@ -644,7 +644,7 @@ MainComponent::MainComponent()
     vcaToggleButton.setColour (juce::TextButton::textColourOffId,
                                 brand::featureEngaged.brighter (0.10f));
     vcaToggleButton.setTooltip ("Toggle the 8-bus VCA fader panel -- group faders for "
-                                 "drums / vocals / etc. Strips opt in via right-click ▸ Assign to VCA.");
+                                 "drums / vocals / etc. Strips opt in via right-click > Assign to VCA.");
     vcaToggleButton.onClick = [this]
     {
         showVcaPanel = ! showVcaPanel;

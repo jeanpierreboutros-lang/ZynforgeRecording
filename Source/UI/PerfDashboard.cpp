@@ -78,9 +78,9 @@ namespace zynforge
             g.setColour (brand::textSecondary);
             g.setFont (brand::type::mono (recording ? 11.0f : 10.0f, true));
             const juce::String fmt = (sampleRate > 0.0 && blockSize > 0)
-                ? juce::String (sampleRate / 1000.0, 1) + " kHz  ·  "
+                ? juce::String (sampleRate / 1000.0, 1) + " kHz  /  "
                       + juce::String (blockSize) + " smp"
-                : juce::String ("-- kHz  ·  -- smp");
+                : juce::String ("-- kHz  /  -- smp");
             g.drawText (fmt, hdr, juce::Justification::centred, false);
             inner.removeFromTop (2.0f);
         }

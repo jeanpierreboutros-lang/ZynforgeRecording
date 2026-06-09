@@ -407,8 +407,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
             // See README "Companion server -- Security & secure remote access".
             juce::SystemClipboard::copyTextToClipboard (url);
             if (engine.isCompanionExposedOnLan())
-                showStatus (juce::String::fromUTF8 (
-                    "⚠ Companion EXPOSED ON LAN (plaintext) -- use a tunnel for remote access, not raw Wi-Fi"));
+                showStatus ("! Companion EXPOSED ON LAN (plaintext) -- use a tunnel for remote access, not raw Wi-Fi");
             else
                 showStatus ("Companion on (loopback-only) -- URL copied. For phone access, tunnel to 127.0.0.1:9000 (see README)");
         }

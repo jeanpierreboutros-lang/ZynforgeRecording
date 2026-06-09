@@ -57,7 +57,7 @@ namespace zynforge
         tapButton.setButtonText ("TAP");
         tapButton.setColour (juce::TextButton::buttonColourId,  brand::accentStatus);
         tapButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::accentStatus));
-        tapButton.setTooltip ("Tap repeatedly to set tempo (≥ 2 taps, < 2 s apart)");
+        tapButton.setTooltip ("Tap repeatedly to set tempo (2+ taps, < 2 s apart)");
         tapButton.onClick = [this] { doTap(); };
         addAndMakeVisible (tapButton);
 

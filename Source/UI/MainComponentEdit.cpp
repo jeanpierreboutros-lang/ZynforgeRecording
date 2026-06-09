@@ -251,7 +251,7 @@ void MainComponent::confirmDeleteRecording (bool ripple, std::function<void()> o
             .withMessage (juce::String (ripple
                 ? "Delete the selected audio and close the gap?"
                 : "Delete the selected audio?")
-                + "\n\nThe recorded file stays on disk — this only removes it "
+                + "\n\nThe recorded file stays on disk -- this only removes it "
                   "from the arrangement, and Cmd+Z restores it.")
             .withButton ("Delete")
             .withButton ("Cancel"),
@@ -272,7 +272,7 @@ void MainComponent::confirmDeleteChannels (std::function<void()> onConfirm)
             .withMessage (juce::String (n > 1
                 ? "Delete the " + juce::String (n) + " selected channels?"
                 : "Delete the selected channel?")
-                + "\n\nRecorded files stay on disk — this removes the "
+                + "\n\nRecorded files stay on disk -- this removes the "
                   "channel(s) from the session.")
             .withButton ("Delete")
             .withButton ("Cancel"),

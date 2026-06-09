@@ -742,7 +742,7 @@ void MainComponent::onExportIndividualTrack (int channelIndex)
             const int n = exportTracksTo (dest, { channelIndex }, chosenOpts);
             showStatus (n > 0
                         ? "Exported track " + juce::String (channelIndex + 1)
-                           + " → " + dest.getFileName()
+                           + " -> " + dest.getFileName()
                         : "Export failed");
         });
     });
@@ -802,7 +802,7 @@ void MainComponent::onExportIndividualTracks()
                             + " track(s)...");
                 const int done = exportTracksTo (dest, chosenTracks, chosenOpts);
                 showStatus (done > 0
-                            ? "Exported " + juce::String (done) + " track(s) → " + dest.getFileName()
+                            ? "Exported " + juce::String (done) + " track(s) -> " + dest.getFileName()
                             : "Export failed");
             });
         });
