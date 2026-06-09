@@ -48,6 +48,11 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Recently Completed
 
+### 2026-06-10 (later) — stereo-import fidelity + master-strip fix + debug pass
+- [x] **Imported stereo file behaves as ONE stereo track everywhere** (M) — pan spread hard-L/R on import; pairing persisted to `session_mix.json` on import (survives reopen, no re-split); Meterbridge collapses to one stereo meter; *Export individual tracks* lists one "(stereo)" row; export/bounce writes one interleaved stereo file (`TrackExporter::exportStereoPair` + `AudioEngine::bounceStereoPairToWav`). Storage stays mono-per-channel by design. `StereoExportTests` + a bounce-pair case in `AudioCallbackTests`.
+- [x] **Master fader value box no longer overlaps the etched "ZYNFORGE" mark** (S) — `MasterStrip::resized()` reserves the bottom mark band (shared `kMarkBandH`).
+- [x] **Debug pass on the new code** (S) — fixed a real ConsoleLink reconnect bug (`DatagramSocket::shutdown()` invalidates the handle; now recreated per connect) + guarded a test null-deref that SIGSEGV'd the suite (surfaced by the new crash telemetry on next launch). Suite 198 → 225 groups across the day, all green.
+
 ### 2026-06-10 — "advanced + better results" feature run (CI, pre-flight, QC, songs, crash telemetry, console link)
 - [x] **GitHub Actions CI** (S) — macos-14 build + full headless suite on every push/PR to main; test report uploads as an artifact; JUCE FetchContent cached. (`bd909d2`)
 - [x] **Measured pre-flight checklist** (M) — disk write speed measured against armed-config demand (1.5× margin), mirror drives verified mounted *and writable*, live CPU callback load, session-vs-device SR mismatch, signal presence on armed inputs. `Source/Audio/PreflightProbes.h` + `PreflightTests`. (`aeaa51f`)
