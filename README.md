@@ -68,6 +68,7 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Ap
 - Both render offline on a worker thread (no real-time risk) and **stream to disk in fixed windows** — a multi-hour show bounces in a few MB of RAM; cross-track clips render from their own source file
 - Per-track / per-format export (WAV / AIFF / FLAC) with sample-rate conversion
 - **Post-show QC report** — one click scans every track for peak / integrated LUFS / clipping events (with timecode) / noise floor, pops a sortable table and writes a text report next to the exports
+- **Detect songs → markers** — multi-track quorum scan (crowd noise on ambient mics doesn't fool it) drops a named marker at every song start for instant next-day navigation
 
 ### Metering
 - Adaptive LED meters per strip + master; sticky clip latch

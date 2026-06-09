@@ -155,6 +155,7 @@ private:
     void writeSoundcheckReport();
     void runNoiseAnalysis();
     void runQcAnalysis();
+    void detectSongsToMarkers();
     void promptMirrorHost();
     zynforge::SessionMirror sessionMirror { engine };
     void togglePunchMode();

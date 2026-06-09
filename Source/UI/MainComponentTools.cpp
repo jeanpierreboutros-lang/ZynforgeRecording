@@ -11,6 +11,7 @@
 #include "MainComponent.h"
 #include "../Audio/NoiseAnalyzer.h"
 #include "../Audio/QcAnalyzer.h"
+#include "../Audio/SongDetector.h"
 #include "../Audio/SpectralClassifier.h"
 #include "NoiseReportDialog.h"
 #include "QcReportDialog.h"
@@ -412,6 +413,62 @@ void MainComponent::runQcAnalysis()
             if (self == nullptr) return;
             self->showStatus (summary);
             zynforge::QcReportDialog::launch (std::move (results));
+        });
+    });
+}
+
+void MainComponent::detectSongsToMarkers()
+{
+    const auto sessionDir = engine.getActiveSessionDir();
+    if (! sessionDir.isDirectory())
+    {
+        showStatus ("Open or create a session before detecting songs");
+        return;
+    }
+
+    const auto audioDir = sessionDir.getChildFile ("Audio Files").isDirectory()
+                            ? sessionDir.getChildFile ("Audio Files") : sessionDir;
+    auto files = audioDir.findChildFiles (juce::File::findFiles, false,
+                                          "Track_*.wav;Track_*.aif;Track_*.aiff;Track_*.flac");
+    if (files.isEmpty())
+    {
+        showStatus ("No recorded audio to scan -- record a take first.");
+        return;
+    }
+    files.sort();
+
+    showStatus ("Detecting songs (multi-track quorum scan)...");
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    juce::Thread::launch ([self, files]
+    {
+        const zynforge::songs::Params params;        // -40 dB / 4 s gap / 60 s min / quorum 2
+        std::vector<std::vector<char>> flags;
+        double sr = 48000.0;
+        for (const auto& f : files)
+        {
+            double fileSr = 0.0;
+            auto fl = zynforge::songs::envelopeFlags (f, params.thresholdDb,
+                                                      params.windowSec, fileSr);
+            if (fileSr > 0.0) sr = fileSr;
+            if (! fl.empty()) flags.push_back (std::move (fl));
+        }
+        const auto found = zynforge::songs::detect (flags, sr, params);
+
+        juce::MessageManager::callAsync ([self, found]
+        {
+            if (self == nullptr) return;
+            if (found.empty())
+            {
+                self->showStatus ("No songs detected -- try Marker List to add them by hand.");
+                return;
+            }
+            auto& markers = self->engine.getMarkers();
+            int n = 0;
+            for (const auto& s : found)
+                markers.drop (s.startSample, "Song " + juce::String (++n));
+            self->showStatus (juce::String (n) + " song marker" + (n == 1 ? "" : "s")
+                              + " dropped -- rename them in the Marker List.");
         });
     });
 }

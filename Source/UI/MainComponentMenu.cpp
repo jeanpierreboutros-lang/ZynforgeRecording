@@ -244,8 +244,10 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                       engine.getActiveSessionDir().isDirectory());
         menu.addItem (282, "Analyse for noise / hum / bumps...",
                       engine.getActiveSessionDir().isDirectory());
-        // id 952 -- high id, deliberately outside every dispatch range.
+        // ids 952/953 -- high ids, deliberately outside every dispatch range.
         menu.addItem (952, "Post-show QC report...",
+                      engine.getActiveSessionDir().isDirectory());
+        menu.addItem (953, "Detect songs -> markers...",
                       engine.getActiveSessionDir().isDirectory());
         menu.addSeparator();
         menu.addItem (290, sessionMirror.isMirroring()
@@ -302,6 +304,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 2)    onSaveSessionState();
     else if (id == 951)  showAutosaveSettings();
     else if (id == 952)  runQcAnalysis();
+    else if (id == 953)  detectSongsToMarkers();
     else if (id == 3)    onSaveSessionAs();
     else if (id == 4)    onImportAudioFiles();
     else if (id == 7)    createSessionFromCsv();
