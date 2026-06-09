@@ -109,6 +109,7 @@ HTTP server on `:9000` — start it from **Session ▸ Start companion server on
 Why no built-in HTTPS: JUCE has no server-side TLS, so in-app HTTPS would mean bundling a TLS stack + a **self-signed** cert (scary browser warnings, more attack surface) — a worse security/UX trade than a tunnel that gives a trusted cert for free. See `decisions.md` *Companion server is loopback-only with a per-session access token*.
 
 ### Show-day reliability
+- **Measured pre-flight check** — one menu action before doors: device / SR / clock config, **measured** disk write speed vs. what the armed channel count demands, free-space headroom, every mirror drive verified mounted *and writable*, live CPU callback load, session-vs-device sample-rate mismatch, and signal presence on each armed input
 - **LOCK** button disables every other control so a stray click can't kill a take
 - Redundant-write to a second drive in parallel
 - Recording always **pre-fader** — fader / pan / mute / solo are monitoring concerns only

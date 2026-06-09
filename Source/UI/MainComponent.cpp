@@ -10,6 +10,7 @@
 #include "EditToolsBar.h"
 #include "../Audio/MidiClockOut.h"
 #include "../Audio/NoiseAnalyzer.h"
+#include "../Audio/PreflightProbes.h"
 #include "NoiseReportDialog.h"
 #include "SessionRecoveryDialog.h"
 #include "MarkerListDialog.h"
@@ -694,6 +695,66 @@ void MainComponent::showPreflightChecklist()
         const auto dn = device->getName();
         if (dn.containsIgnoreCase ("Dante") || dn.containsIgnoreCase ("DVS"))
             body << "[OK]  Dante network active (" << dn << ")\n";
+    }
+
+    // ── Measured probes (not just configuration snapshots) ─────────────
+
+    // CPU headroom: the real CoreAudio callback load right now.
+    const float cpuPct = engine.getAudioLoadPct();
+    body << "\n"
+         << chk (cpuPct < 50.0f, cpuPct < 80.0f)
+         << "CPU (audio callback): " << juce::String (cpuPct, 1) << " %\n";
+
+    // Session SR vs device SR -- a mismatched virtual soundcheck plays
+    // at the wrong pitch/speed.
+    if (engine.getPlayer().isLoaded() && sr > 0.0)
+    {
+        const double fileSr = engine.getPlayer().getSampleRate();
+        body << chk (std::abs (fileSr - sr) < 1.0)
+             << "Session SR matches device: " << juce::String ((int) fileSr) << " Hz\n";
+    }
+
+    // Signal presence on armed channels (peaks are live at line check).
+    if (armed > 0)
+    {
+        int withSignal = 0;
+        for (int i = 0; i < total; ++i)
+        {
+            auto& t = engine.getRecorder().getTrack (i);
+            if (t.armed.load (std::memory_order_relaxed)
+                && t.peak.load (std::memory_order_relaxed) > 0.001f)   // > -60 dBFS
+                ++withSignal;
+        }
+        body << chk (withSignal == armed, withSignal > 0)
+             << "Signal on armed inputs: " << withSignal << " / " << armed << "\n";
+    }
+
+    // Measured write speed of the session volume vs what the armed
+    // configuration demands (uncompressed worst case, with 1.5x margin
+    // for filesystem jitter mid-show).
+    const int bytesPerSample =
+          (fmt == zynforge::CaptureFormat::Wav16      || fmt == zynforge::CaptureFormat::Aiff16
+        || fmt == zynforge::CaptureFormat::Flac16)     ? 2
+        : (fmt == zynforge::CaptureFormat::Wav32Float || fmt == zynforge::CaptureFormat::Aiff32Float) ? 4
+                                                       : 3;
+    const double needMBps = zynforge::preflight::requiredWriteMBps (sr, juce::jmax (1, armed), bytesPerSample);
+    if (hasSes || root.isDirectory())
+    {
+        const auto speedDir = hasSes ? sess : root;
+        const double gotMBps = zynforge::preflight::measureWriteSpeedMBps (speedDir);
+        body << chk (gotMBps > needMBps * 1.5, gotMBps > needMBps)
+             << "Disk write speed (measured): " << juce::String (gotMBps, 0)
+             << " MB/s  (need " << juce::String (needMBps, 1) << " MB/s for "
+             << juce::jmax (1, armed) << " ch)\n";
+    }
+
+    // Every configured mirror drive: mounted AND actually writable.
+    for (const auto& m : engine.getMirrors())
+    {
+        const bool w = zynforge::preflight::volumeWritable (m.root);
+        body << chk (w)
+             << "Mirror " << m.root.getFullPathName()
+             << (w ? juce::String (": writable") : juce::String (": NOT writable / missing")) << "\n";
     }
 
     auto* aw = new juce::AlertWindow ("Pre-flight checklist",
