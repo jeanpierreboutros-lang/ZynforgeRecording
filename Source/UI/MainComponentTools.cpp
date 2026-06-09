@@ -418,6 +418,100 @@ void MainComponent::runQcAnalysis()
     });
 }
 
+void MainComponent::promptConsoleConnect()
+{
+    if (consoleLink.isConnected())
+    {
+        consoleLink.disconnect();
+        showStatus ("Console link closed");
+        return;
+    }
+
+    const auto lastHost = engine.getAppProps() != nullptr
+        ? engine.getAppProps()->getValue ("consoleHost", "192.168.1.10")
+        : juce::String ("192.168.1.10");
+
+    auto* aw = new juce::AlertWindow ("Connect to console",
+                                      "X32 / M32 IP address (OSC on UDP 10023). "
+                                      "Used for soundcheck repatch + head-amp gain capture.",
+                                      juce::MessageBoxIconType::NoIcon);
+    aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
+    aw->addTextEditor ("host", lastHost, "Console IP:");
+    dialog::primeNameEditor (*aw, "host");
+    aw->addButton ("Connect", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel",  0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    aw->enterModalState (true,
+        juce::ModalCallbackFunction::create ([this, aw] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            if (result != 1) return;
+            const auto host = aw->getTextEditorContents ("host").trim();
+            if (host.isEmpty()) return;
+
+            consoleLink.onStatus = [this] (const juce::String& s) { showStatus (s); };
+            if (! consoleLink.connect (host))
+            {
+                showStatus ("Console link failed -- check the IP and the network");
+                return;
+            }
+            if (auto* p = engine.getAppProps())
+            {
+                p->setValue ("consoleHost", host);
+                p->saveIfNeeded();
+            }
+            // Show-night state saved with the session (stage patch +
+            // gains) comes back automatically on VSC day.
+            const auto sess = engine.getActiveSessionDir();
+            if (sess.isDirectory() && consoleLink.loadFrom (sess))
+                showStatus ("Console link up: " + host
+                            + " -- loaded saved patch + gains from session");
+        }), false);
+}
+
+void MainComponent::consoleToggleSoundcheck()
+{
+    if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
+    if (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck)
+        consoleLink.exitSoundcheck();
+    else
+        consoleLink.enterSoundcheck();
+}
+
+void MainComponent::consoleCaptureGains()
+{
+    if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
+    const int n = juce::jlimit (1, 32, engine.getRecorder().getNumTracks());
+    consoleLink.captureGains (n);
+    // Persist once the replies have had time to land (UDP round trip on
+    // a local network is milliseconds; 1.5 s is generous).
+    juce::Component::SafePointer<MainComponent> self (this);
+    juce::Timer::callAfterDelay (1500, [self]
+    {
+        if (self == nullptr) return;
+        const auto sess = self->engine.getActiveSessionDir();
+        if (sess.isDirectory() && self->consoleLink.saveTo (sess))
+            self->showStatus (juce::String ((int) self->consoleLink.getCapturedGains().size())
+                              + " head-amp gains captured -> "
+                              + zynforge::ConsoleLink::kStateFileName);
+    });
+}
+
+void MainComponent::consoleRestoreGains()
+{
+    if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
+    if (consoleLink.getCapturedGains().empty())
+    {
+        const auto sess = engine.getActiveSessionDir();
+        if (! (sess.isDirectory() && consoleLink.loadFrom (sess)))
+        {
+            showStatus ("No captured gains -- capture them on show night first");
+            return;
+        }
+    }
+    consoleLink.restoreGains();
+}
+
 void MainComponent::scanForCrashReports()
 {
     auto* props = engine.getAppProps();

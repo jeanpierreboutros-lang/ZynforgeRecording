@@ -4,6 +4,7 @@
 
 #include "../Audio/AudioEngine.h"
 #include "../Audio/TrackExporter.h"
+#include "../Network/ConsoleLink.h"
 #include "../Network/SessionMirror.h"
 #include "../Theme/ZynForgeLookAndFeel.h"
 #include "AutomationToolbar.h"
@@ -161,6 +162,12 @@ private:
     void showCrashReportNotice (const juce::Array<juce::File>& reports);
     void promptMirrorHost();
     zynforge::SessionMirror sessionMirror { engine };
+    // X32/M32 console link: soundcheck repatch + head-amp gain capture.
+    zynforge::ConsoleLink consoleLink;
+    void promptConsoleConnect();
+    void consoleToggleSoundcheck();
+    void consoleCaptureGains();
+    void consoleRestoreGains();
     void togglePunchMode();
     void servicePunch();        // called each timerCallback tick
     bool wasInsidePunch { false };

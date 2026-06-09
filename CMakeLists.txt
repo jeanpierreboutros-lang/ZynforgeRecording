@@ -97,6 +97,8 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/QcAnalyzerTests.cpp
     Source/Tests/SongDetectorTests.cpp
     Source/Tests/CrashScanTests.cpp
+    Source/Tests/ConsoleLinkTests.cpp
+    Source/Network/ConsoleLink.cpp
     Source/UI/ChannelStrip.cpp
     Source/UI/LedMeter.cpp
     Source/UI/MiniSpectrum.cpp

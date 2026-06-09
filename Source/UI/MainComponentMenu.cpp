@@ -250,6 +250,19 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (953, "Detect songs -> markers...",
                       engine.getActiveSessionDir().isDirectory());
         menu.addSeparator();
+        // Console link (ids 954-957: high ids, outside every dispatch range).
+        menu.addItem (954, consoleLink.isConnected()
+                              ? "Console: disconnect " + consoleLink.getHost()
+                              : juce::String ("Console: connect (X32/M32)..."));
+        menu.addItem (955, consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck
+                              ? "Console: back to STAGE patch"
+                              : "Console: SOUNDCHECK patch (card returns)",
+                      consoleLink.isConnected());
+        menu.addItem (956, "Console: capture head-amp gains",
+                      consoleLink.isConnected());
+        menu.addItem (957, "Console: restore head-amp gains",
+                      consoleLink.isConnected());
+        menu.addSeparator();
         menu.addItem (290, sessionMirror.isMirroring()
                               ? "Stop mirroring " + sessionMirror.getPrimary()
                               : juce::String ("Mirror primary host..."));
@@ -287,7 +300,9 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) stripClipboard.isObject()
         << '|' << (int) engine.isTrimFollowEnabled()
         << '|' << (int) engine.getChaseMode()
-        << '|' << engine.getLtcSourceStrip();
+        << '|' << engine.getLtcSourceStrip()
+        << '|' << (int) consoleLink.isConnected()
+        << '|' << (int) consoleLink.getPatch();
 
     if (sig != lastMenuStateSig)
     {
@@ -305,6 +320,10 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 951)  showAutosaveSettings();
     else if (id == 952)  runQcAnalysis();
     else if (id == 953)  detectSongsToMarkers();
+    else if (id == 954)  promptConsoleConnect();
+    else if (id == 955)  consoleToggleSoundcheck();
+    else if (id == 956)  consoleCaptureGains();
+    else if (id == 957)  consoleRestoreGains();
     else if (id == 3)    onSaveSessionAs();
     else if (id == 4)    onImportAudioFiles();
     else if (id == 7)    createSessionFromCsv();
