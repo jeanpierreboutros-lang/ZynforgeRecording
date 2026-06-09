@@ -795,7 +795,7 @@ namespace zynforge
                                     juce::Justification::topLeft, false);
                         if (playheadX >= 0 && playheadX < wavePane.getWidth())
                         {
-                            g.setColour (brand::accentPlay.withAlpha (brand::alpha::prominent));
+                            g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (brand::alpha::prominent));
                             g.fillRect (juce::Rectangle<int> (headerW + playheadX,
                                                               0, 2, getHeight()));
                         }
@@ -862,7 +862,7 @@ namespace zynforge
                                     juce::Justification::topLeft, false);
                         if (playheadX >= 0 && playheadX < wavePane.getWidth())
                         {
-                            g.setColour (brand::accentPlay.withAlpha (brand::alpha::prominent));
+                            g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (brand::alpha::prominent));
                             g.fillRect (juce::Rectangle<int> (headerW + playheadX,
                                                               0, 2, getHeight()));
                         }
@@ -909,7 +909,7 @@ namespace zynforge
                         // Playhead overlay still applies below.
                         if (playheadX >= 0 && playheadX < wavePane.getWidth())
                         {
-                            g.setColour (brand::accentPlay.withAlpha (brand::alpha::prominent));
+                            g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (brand::alpha::prominent));
                             g.fillRect (juce::Rectangle<int> (headerW + playheadX,
                                                               0, 2, getHeight()));
                         }
@@ -1125,7 +1125,7 @@ namespace zynforge
 
                 if (playheadX >= 0 && playheadX < wavePane.getWidth())
                 {
-                    g.setColour (brand::accentPlay.withAlpha (brand::alpha::prominent));
+                    g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (brand::alpha::prominent));
                     g.fillRect (juce::Rectangle<int> (headerW + playheadX,
                                                       0, 2, getHeight()));
                 }
@@ -1185,7 +1185,7 @@ namespace zynforge
                     }
                     if (playheadX >= 0 && playheadX < wavePane.getWidth())
                     {
-                        g.setColour (brand::accentPlay.withAlpha (brand::alpha::prominent));
+                        g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (brand::alpha::prominent));
                         g.fillRect (juce::Rectangle<int> (headerW + playheadX, 0, 2, getHeight()));
                     }
                     return;   // comp lanes replace the normal waveform view
@@ -1419,17 +1419,18 @@ namespace zynforge
                         g.setColour (clipTint.brighter (0.30f).withAlpha (brand::alpha::prominent));
                         g.drawRect (block, 1);
 
-                        // Selected-clip highlight: a bright wash + border so
-                        // the engineer sees exactly what Delete / Duplicate /
-                        // Nudge will act on.
+                        // Selected-clip highlight -- the clip you're working
+                        // "runs hot": a warm ember wash + a forge-orange rim, so
+                        // the target of Delete / Duplicate / Nudge is
+                        // unmistakable and on-brand.
                         if (selPage != nullptr && selPage->isClipSelected (index, clipIdx_))
                         {
                             const juce::Rectangle<int> sel (xL_, inner2.getY(),
                                                             juce::jmax (1, xR_ - xL_),
                                                             inner2.getHeight());
-                            g.setColour (brand::toolActive().withAlpha (brand::alpha::subtle));
+                            g.setColour (brand::meterEmber.withAlpha (brand::alpha::subtle));
                             g.fillRect (sel);
-                            g.setColour (brand::toolActive().withAlpha (brand::alpha::bold));
+                            g.setColour (brand::meterHot.withAlpha (brand::alpha::bold));
                             g.drawRect (sel, 2);
                         }
                         if (c.muted)
@@ -1624,7 +1625,7 @@ namespace zynforge
             // ─── Playhead overlay
             if (playheadX >= 0 && playheadX < wavePane.getWidth())
             {
-                g.setColour (brand::accentPlay.withAlpha (brand::alpha::prominent));
+                g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (brand::alpha::prominent));
                 g.fillRect (juce::Rectangle<int> (headerW + playheadX, 0, 2, getHeight()));
             }
 
