@@ -156,6 +156,9 @@ private:
     void runNoiseAnalysis();
     void runQcAnalysis();
     void detectSongsToMarkers();
+    // Launch-time crash telemetry: offer the newest report since last run.
+    void scanForCrashReports();
+    void showCrashReportNotice (const juce::Array<juce::File>& reports);
     void promptMirrorHost();
     zynforge::SessionMirror sessionMirror { engine };
     void togglePunchMode();

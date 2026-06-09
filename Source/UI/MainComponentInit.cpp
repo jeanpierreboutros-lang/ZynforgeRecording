@@ -679,6 +679,11 @@ MainComponent::MainComponent()
     const bool firstRun = engine.getAppProps() == nullptr
                         || ! engine.getAppProps()->getBoolValue ("tutorialShown", false);
 
+    // Crash telemetry runs late in the launch-dialog queue (recovery and
+    // welcome are higher priority; ModalComponentManager serialises).
+    juce::Timer::callAfterDelay (brand::motion::launchDelayMs + 1500,
+                                 [this] { scanForCrashReports(); });
+
     juce::Timer::callAfterDelay (brand::motion::launchDelayMs, [this, firstRun]
     {
         offerSessionRecovery();

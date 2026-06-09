@@ -9,6 +9,7 @@
 // .zfproj metadata).
 
 #include "MainComponent.h"
+#include "../Audio/CrashReportScan.h"
 #include "../Audio/NoiseAnalyzer.h"
 #include "../Audio/QcAnalyzer.h"
 #include "../Audio/SongDetector.h"
@@ -415,6 +416,54 @@ void MainComponent::runQcAnalysis()
             zynforge::QcReportDialog::launch (std::move (results));
         });
     });
+}
+
+void MainComponent::scanForCrashReports()
+{
+    auto* props = engine.getAppProps();
+    if (props == nullptr) return;
+
+    // First-ever run: don't dump historic reports on a fresh install --
+    // just set the baseline and start watching from here.
+    const double lastMs = props->getDoubleValue ("lastCrashScanMs", 0.0);
+    props->setValue ("lastCrashScanMs",
+                     (double) juce::Time::getCurrentTime().toMilliseconds());
+    props->saveIfNeeded();
+    if (lastMs <= 0.0) return;
+
+    const auto reports = zynforge::crashscan::findNewReports (
+        zynforge::crashscan::reportsDirectory(), juce::Time ((juce::int64) lastMs));
+    if (! reports.isEmpty())
+        showCrashReportNotice (reports);
+}
+
+void MainComponent::showCrashReportNotice (const juce::Array<juce::File>& reports)
+{
+    if (reports.isEmpty()) return;
+    const auto newest = reports.getFirst();
+    juce::String body;
+    body << "ZynForge Recording crashed since the last run ("
+         << reports.size() << " report" << (reports.size() == 1 ? "" : "s") << ").\n\n"
+         << zynforge::crashscan::summarize (newest)
+         << "\nCopy the details into a GitHub issue, or reveal the report in Finder.";
+
+    auto* aw = new juce::AlertWindow ("Crash detected", body,
+                                      juce::MessageBoxIconType::WarningIcon);
+    aw->setLookAndFeel (&laf);
+    aw->addButton ("Copy details",     1);
+    aw->addButton ("Reveal in Finder", 2);
+    aw->addButton ("Dismiss",          0, juce::KeyPress (juce::KeyPress::escapeKey));
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+        [aw, newest] (int result)
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            if (result == 1)
+                juce::SystemClipboard::copyTextToClipboard (
+                    zynforge::crashscan::summarize (newest)
+                    + "\nFull report: " + newest.getFullPathName());
+            else if (result == 2)
+                newest.revealToUser();
+        }));
 }
 
 void MainComponent::detectSongsToMarkers()
