@@ -4,7 +4,7 @@
 
 ZynForge Recording is a live-stage tool. The cost of a regression discovered in front of an audience is qualitatively higher than the cost of a regression in a typical desktop app. The testing strategy reflects that: **catch crashes and data loss before the audience does, even at the cost of some manual effort.**
 
-The strategy is **build + unit + smoke + field**. The unit-test harness is in place (139 test groups and counting; see *How to Run Tests*) and covers the audio callback, recorder, player, automation, markers, clip-edit persistence, and accessibility paths headlessly. Smoke-test and field rehearsal still backstop it for anything the headless harness can't see (paint, real CoreAudio, live VoiceOver, **macOS menu enablement**, the session reopen-on-launch flow).
+The strategy is **build + unit + smoke + field**. The unit-test harness is in place (**221 test groups** as of 2026-06-10, and counting; see *How to Run Tests*) and covers the audio callback, recorder, player, automation, markers, clip-edit persistence, accessibility, the measured pre-flight probes, post-show QC, song detection, crash-report scanning, and the X32 console link — all headlessly. **CI** (`.github/workflows/ci.yml`, macos-14) builds and runs the full suite on every push and PR to `main`. Smoke-test and field rehearsal still backstop it for anything the headless harness can't see (paint, real CoreAudio, live VoiceOver, **macOS menu enablement**, the session reopen-on-launch flow).
 
 ## Testing Pyramid / Approach
 
@@ -75,7 +75,7 @@ tail -1 "$HOME/Library/Logs/Zynforge/test-report.log"   # "[zynforge tests] N te
 
 **Test isolation:** the suite is safe to run on your own machine — a test-mode `AudioEngine` points its `appProps` at a throwaway `zynforge-test.settings` in the temp dir, so recording/pref-mutating tests can't corrupt your real `.settings` (`activeSessionDir`, recent list). This was a real bug (tests left the app reopening a deleted scratch session); `EngineStateTests` asserts the test engine's settings file lives under the temp dir. Tests that touch the engine should set `AudioEngine::setTestModeSkipAudioInit(true)` before constructing it.
 
-Notable suites: `CompanionServerTests` (loopback server end-to-end), `MenuDispatchTests` (id-collision + dispatch-range guard), `CompoundFileTests`/`FastHashTests`/`SessionBackupTests` (capture-side helpers), `AudioCallbackTests` (audio-thread integration, incl. RF64 policy + 64-ch throughput).
+Notable suites: `CompanionServerTests` (loopback server end-to-end), `MenuDispatchTests` (id-collision + dispatch-range guard), `CompoundFileTests`/`FastHashTests`/`SessionBackupTests` (capture-side helpers), `AudioCallbackTests` (audio-thread integration, incl. RF64 policy + 64-ch throughput + the windowed offline-render equivalence), `PreflightTests` (measured disk-speed/writability/headroom), `QcAnalyzerTests` (peak/clip/floor against synthesized WAVs), `SongDetectorTests` (multi-track quorum, incl. an always-hot ambient mic detecting nothing alone), `CrashScanTests` (.ips filter + summary), and `ConsoleLinkTests` (full X32 query→stash→flip→restore state machine through a transport seam, plus a real connect→disconnect→reconnect socket-rebind regression).
 
 ## Code Coverage Expectations
 

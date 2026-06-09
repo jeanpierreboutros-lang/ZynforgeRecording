@@ -77,7 +77,12 @@ ZynforgeRecording/
 │   │   ├── TimecodeChase.h            — LTC bit decoder + MTC quarter-frame accumulator
 │   │   ├── StripColours / StripNames / StripGains / StripRouting  — appProps overrides
 │   │   ├── FastAccumulate.h           — NEON helpers for 64-bit summing on arm64
-│   │   └── NoiseAnalyzer.h            — post-record FFT heuristic
+│   │   ├── NoiseAnalyzer.h            — post-record FFT heuristic
+│   │   ├── QcAnalyzer.h               — post-show per-track QC (peak/LUFS/clips/floor), streamed
+│   │   ├── SongDetector.h            — multi-track quorum song-boundary scan → markers
+│   │   ├── PreflightProbes.h         — measured disk-speed / writability / headroom probes
+│   │   ├── TransientDetector.h        — onset detection (chunked file read)
+│   │   └── CrashReportScan.h          — launch-time .ips telemetry (find/summarize)
 │   ├── UI/                            — message-thread paint code
 │   │   ├── MainComponent.{h,cpp}      — root, menu bar, layout, 24 Hz refresh timer
 │   │   ├── ChannelStrip.{h,cpp}       — one logical strip (mixer view)
@@ -97,7 +102,10 @@ ZynforgeRecording/
 │   └── Network/                       — non-audio I/O
 │       ├── CompanionServer.{h,cpp}    — embedded HTTP + 48 kHz WAV audio stream
 │       ├── NDIBridge.h                — runtime-loaded NDI broadcast
-│       └── OscRemote.{h,cpp}          — 5-dialect console OSC parser
+│       ├── OscRemote.{h,cpp}          — 5-dialect inbound console OSC parser
+│       ├── ConsoleLink.{h,cpp}        — outbound X32/M32: soundcheck repatch + head-amp gains
+│       └── SessionMirror.{h,cpp}      — parallel session mirror to a second host
+├── .github/workflows/ci.yml          — GitHub Actions: build + headless suite on push/PR
 └── build/                             — CMake / Xcode build artefacts (gitignored)
 ```
 
@@ -132,7 +140,9 @@ The old "Settings" + "Properties" labels were ambiguous; relabelled 2026-05-24 t
 Single source of truth for visual identity. `ZynForgeLookAndFeel` overrides buttons, toggles, faders, and alert boxes. `DialogChrome` wraps every modal so prompts and dialogs share the AudioDevice dialog's look (orange title stripe + gradient `bgPanel` + footer divider).
 
 ### Network (`Source/Network/`)
-`CompanionServer` exposes `/`, `/state.json`, `/cmd`, and `/stream.wav` for a tablet client. `OscRemote` parses five console dialects with feature parity (Generic, DiGiCo, A&H SQ, SSL Live, Yamaha / RIVAGE).
+`CompanionServer` exposes `/`, `/state.json`, `/cmd`, and `/stream.wav` for a tablet client. `OscRemote` parses five **inbound** console dialects with feature parity (Generic, DiGiCo, A&H SQ, SSL Live, Yamaha / RIVAGE).
+
+`ConsoleLink` (`Source/Network/ConsoleLink.{h,cpp}`) is the **outbound** counterpart for virtual soundcheck — Behringer X32 / Midas M32 over OSC (UDP 10023). It owns one `juce::DatagramSocket` shared by an `OSCSender` + `OSCReceiver` (the desk replies to the request's source port, so send and listen must share a port); the socket is **recreated on every `connect()`** because `DatagramSocket::shutdown()` permanently invalidates the handle. Two jobs: (1) **soundcheck repatch** — `enterSoundcheck()` queries the four `/config/routing/IN/*` blocks, stashes whatever the show patch is, then sets the card-return blocks; `exitSoundcheck()` restores the stash verbatim (never assumes analog). (2) **head-amp gain capture/restore** — `captureGains()` polls `/headamp/NNN/gain`, `restoreGains()` writes them back; both persist to the session's `console_state.json` so show-night state survives to VSC day. A transport seam (`setSendHook`/`injectReply`) lets `ConsoleLinkTests` assert every message against the public X32 protocol with no console attached.
 
 The companion runs an accept thread + per-connection writes off the message thread; **the app ignores `SIGPIPE` at startup** (`Main.cpp::initialise`) so a browser closing the page / aborting the `/stream.wav` element makes the write fail with `EPIPE` instead of killing the process. Every request needs the per-session token (`?t=` or `Authorization: Bearer`); the served page threads that token onto its own sub-requests. Started from Session ▸ Start companion server (menu id **950** — kept outside every `menuItemSelected` dispatch range; the old id 270 sat inside the 261–289 template range, which made the handler dead code). Wired end-to-end and regression-tested in `CompanionServerTests` (token gate + state reflects engine + `/cmd` mutates engine + `/stream.wav` serves WAV).
 
@@ -174,6 +184,9 @@ sequenceDiagram
 3. Per-block: player reads each track at the current position, applies clip-aware gain / fade, emits to a scratch buffer.
 4. `AudioEngine` routes scratch → per-channel outputs through mute / solo / VCA / aux send → 64-bit accumulator → downcast → device outs.
 
+### Offline render (bounce / consolidate / QC)
+Bounce stems, bounce stereo mix, and Consolidate all run through a **windowed** render core in `AudioEngineClips.cpp` so memory stays O(window) regardless of show length (a multi-hour mono track no longer needs a ~2 GB flat buffer). `forEachArrangementWindow(track, start, end, consume)` and `forEachStereoMixWindow(total, consume)` render fixed 64 k-sample windows (a multiple of the 512-sample automation step, so output is sample-identical to a whole-buffer render) and hand each window to a callback. `bounceTrackArrangementToWav` / `bounceStereoMixToWav` stream those windows straight to a 24-bit WAV writer (used by File ▸ Bounce); `renderTrackArrangement` / `renderStereoMix` are thin buffer-returning wrappers over the same core for tests and short material; `consolidateRange` streams only the selected range. Post-show QC (`QcAnalyzer.h`) and song detection (`SongDetector.h`) likewise stream the recorded files in blocks rather than loading tracks into RAM.
+
 ### Cue recall with soft-takeover
 1. UI invokes `jumpToCue(idx)`.
 2. Engine arms a soft-takeover ramp per strip (`rampSamplesRemaining`).
@@ -197,9 +210,10 @@ sequenceDiagram
 
 - **`AudioEngine` is still one ~255-method hub.** Interface segregation has begun — `ITransport` (`Source/Audio/ITransport.h`) is the first extracted facet the engine implements — but current consumers (TransportBar, EditPage) still hold a full `AudioEngine&` because they reach through `getPlayer()`/`getRecorder()`. Migrating consumers to narrow interfaces (`ITransport`, future `IClipEditor`/`IRouting`) is incremental, per-consumer work.
 - **`MainComponent.cpp` is already split** along functional lines (`MainComponentTimer/Keys/Layout/Cues/Edit/SessionIO/Menu/Strips/Help/Tools/...`); see §5. Stereo logical↔physical mapping now lives on `AudioEngine`, not the UI.
-- **Headless unit tests exist** (`Source/Tests/`, `juce::UnitTest`, run via `--run-tests` / `ZYNFORGE_RUN_TESTS=1`): recorder/player state, clip edits (split/crop/trim/move/fade/mute/delete/duplicate/lock + undo round-trips), recording integrity, audio-callback routing, transients, automation, markers. See `testing.md`. UI paint/hit-test/modal flow is still out of scope for the suite and must be eyeballed.
+- **Headless unit tests exist** (`Source/Tests/`, `juce::UnitTest`, run via `--run-tests` / `ZYNFORGE_RUN_TESTS=1`; **221 groups** as of 2026-06-10): recorder/player state, clip edits (split/crop/trim/move/fade/mute/delete/duplicate/lock + undo round-trips), recording integrity, audio-callback routing, transients, automation, markers, pre-flight probes, post-show QC, song detection, crash-report scan, and the X32 console link. **CI runs the full suite on every push/PR** (`.github/workflows/ci.yml`, macos-14). See `testing.md`. UI paint/hit-test/modal flow is still out of scope for the suite and must be eyeballed.
+- **Capture and UI share one process.** A UI crash or wedge takes the take down. The phased fix (boundary hygiene → headless `zynforge-capture` daemon → mid-take reattach) is ADR'd in `decisions.md` (2026-06-10) and scoped in `tasks.md`; the biggest open reliability bet.
 - **Companion server runs unencrypted HTTP.** TLS / WebRTC migration is open. [TODO: target release.]
-- **iOS / iPad companion is web-only** today. Native client is a future consideration.
+- **iOS / iPad companion is web-only** today. Native client is a future consideration (and the intended push-alarm channel for pre-flight / write-latency warnings).
 - **Dante support depends on Audinate's Dante Virtual Soundcard** being installed and selected as the system audio device — no native Dante API integration.
 - **Workspace layout per show** is persisted globally, not per session yet. Edge case: an engineer with multiple regular gigs may want layouts saved alongside `.zfproj`.
 - **LSP diagnostics are unreliable** — the project's `clangd` setup does not see JUCE module headers, so "undeclared identifier 'juce'" warnings are stale. The build is authoritative.
