@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (latest, tests)
+- **De-flaked the volume-automation playback test.** "Volume automation attenuates the playback output by position" failed intermittently (~1 in 3 runs) under no code fault. The player reads through a `BufferingAudioReader` that buffers a window around the *current* position on a background thread; the test warmed the buffer at position 0, then seeked to sample 40000 to read the attenuated tail, then seeked **back** to 0 to measure the loud head — by which point the buffer window had moved to 40000, so the head read sometimes returned silence and the `high > 0.20` assertion flaked. Reordered so the loud head is measured **first**, while the buffer is still warm at 0, then the tail region is warmed with a short re-seek loop before the quiet sample is measured. 6 consecutive full-suite runs now pass clean (198 groups, 0 failures). No production-code change — test-only race.
+
 ### Fixed (latest, companion)
 - **"Start companion server on :9000…" now actually works** — it was **dead code**. The menu item used id 270, which falls inside the `menuItemSelected` dispatch range `261..289` (template-as-default), so every click was routed to the *template* handler and the companion code never ran — the server never started, nothing was copied to the clipboard, and there was no error. Moved the companion item to id 950 (and the new Auto-Save & Backup item, which had the same latent issue at id 283, to 951) — both now outside every dispatch range. Added a regression guard to `MenuDispatchTests` that fails if a marquee static item's id lands in a dispatch range, plus a logged reason when a bind fails.
 

@@ -2121,17 +2121,27 @@ namespace zynforge
                     f.engine.addAutomationPoint (0, P::Volume, 0,      0.0f);
                     f.engine.addAutomationPoint (0, P::Volume, 40000, -40.0f);
                     f.engine.startPlayback();
-                    expect (fillPlaybackBuffer (f) > 0.20f);   // head is full level
+                    expect (fillPlaybackBuffer (f) > 0.20f);   // buffer is now warm at pos 0
 
-                    // Tail: curve fully down.
-                    f.engine.getPlayer().setPositionSamples (40000);
-                    f.process (256);
-                    const float low = juce::jmax (f.peakOut (0, 256), f.peakOut (1, 256));
-
-                    // Head: curve at unity.
+                    // Measure the HEAD first, while the BufferingAudioReader is
+                    // still warm at position 0. (Measuring it after seeking away
+                    // to the tail used to read unbuffered silence -> a flaky
+                    // 'high' as the background reader moved its window.)
                     f.engine.getPlayer().setPositionSamples (0);
                     f.process (256);
                     const float high = juce::jmax (f.peakOut (0, 256), f.peakOut (1, 256));
+
+                    // Tail (curve fully down): re-seek into the -40 dB region and
+                    // let the background reader load it (brief sleeps), so 'low'
+                    // reflects the real attenuated level, not an unbuffered read.
+                    float low = high;
+                    for (int i = 0; i < 40; ++i)
+                    {
+                        f.engine.getPlayer().setPositionSamples (40000);
+                        f.process (256);
+                        low = juce::jmax (f.peakOut (0, 256), f.peakOut (1, 256));
+                        juce::Thread::sleep (8);
+                    }
 
                     expect (high > 0.20f);
                     expect (low  < high * 0.1f);
