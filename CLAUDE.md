@@ -60,6 +60,7 @@ EDIT-view specifics in `Source/UI/EditPage.cpp`: the `TrackRow` header (swatch /
 - A stereo pair is two adjacent physical tracks with `isStereo=true` on the L track. Every view (MIXER, EDIT, PATCH) must collapse the pair into one logical entry.
 - Mute / solo / arm / gain / pan / colour / name / VCA / edit-group changes mirror across the pair automatically — never half-update.
 - VCA gain + mute on a stereo pair: the R partner reads the L track's lane (in the audio callback) so both halves follow the curve. Pan stays per-channel so the stereo image isn't collapsed.
+- **Audio storage stays mono-per-channel** (`Track_NN.wav` per track); "stereo" is the pair + `isStereo` flag, NOT a single interleaved file. But it must *behave* as one stereo track: **import persists `session_mix.json` immediately** so the pairing survives reopen (don't leave the flags RAM-only — the recovery path would re-split it into two mono strips), and **export collapses the pair into ONE interleaved stereo file** — `TrackExporter::exportStereoPair` (raw per-track export, with SR conversion) and `AudioEngine::bounceStereoPairToWav` (edited-arrangement stem bounce, streamed). Both export callers in `MainComponentSessionIO.cpp` skip the R half when its L is handled.
 
 ### Persistence
 

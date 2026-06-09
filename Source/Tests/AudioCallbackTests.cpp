@@ -964,6 +964,47 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            beginTest ("bounceStereoPairToWav interleaves the pair's two arrangements");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    // Record track 0 at +0.5 DC, track 1 at -0.25 DC.
+                    CallbackFixture f (2, 2, 2);
+                    f.engine.getRecorder().getTrack (0).armed.store (true);
+                    f.engine.getRecorder().getTrack (1).armed.store (true);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0,  0.50f, 256);
+                    f.writeInput (1, -0.25f, 256);
+                    for (int b = 0; b < 192; ++b) f.process (256);
+                    f.engine.stopRecording();
+
+                    f.engine.setTrackStereo (0, true);   // pair: L = track 0, R = track 1
+                    const auto arrLen = f.engine.getArrangementLengthSamples();
+                    expect (arrLen > 0);
+
+                    auto out = sessionDir.getChildFile ("pair.wav");
+                    const double sr = f.engine.getPlayer().getSampleRate() > 0.0
+                                        ? f.engine.getPlayer().getSampleRate() : 48000.0;
+                    expect (f.engine.bounceStereoPairToWav (0, out, arrLen, sr));
+                    expect (out.existsAsFile());
+
+                    juce::AudioFormatManager fm; fm.registerBasicFormats();
+                    std::unique_ptr<juce::AudioFormatReader> rd (fm.createReaderFor (out));
+                    expect (rd != nullptr, "bounced stereo pair is unreadable");
+                    if (rd != nullptr)   // guard: expect() doesn't stop the test
+                    {
+                        expectEquals ((int) rd->numChannels, 2, "bounce is not stereo");
+                        const int n = (int) juce::jmin<juce::int64> (rd->lengthInSamples, 4096);
+                        juce::AudioBuffer<float> buf (2, n);
+                        rd->read (&buf, 0, n, 1000, true, true);   // skip the very start
+                        // L carries track 0's +0.5, R carries track 1's -0.25.
+                        expectWithinAbsoluteError (buf.getSample (0, n / 2),  0.50f, 0.01f);
+                        expectWithinAbsoluteError (buf.getSample (1, n / 2), -0.25f, 0.01f);
+                    }
+                }
+                sessionDir.deleteRecursively();
+            }
+
             beginTest ("Cross-track clip paste plays the source track's audio");
             {
                 // Record track 0 loud, track 1 silent into a session.

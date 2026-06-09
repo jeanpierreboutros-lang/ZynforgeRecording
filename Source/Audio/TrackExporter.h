@@ -35,6 +35,16 @@ namespace zynforge
                           const ExportOptions&,
                           juce::String& outError);
 
+        // Interleave two mono sources (L + R) into ONE stereo file in the
+        // requested format / sample rate. Used for stereo-pair tracks so a
+        // paired / imported stereo strip exports as a single stereo file
+        // rather than two mono stems.
+        bool exportStereoPair (const juce::File& sourceL,
+                               const juce::File& sourceR,
+                               const juce::File& destWithoutExtension,
+                               const ExportOptions&,
+                               juce::String& outError);
+
         // Maps a format to the file extension that exportTrack will produce.
         static juce::String extensionFor (ExportFormat);
 
@@ -44,6 +54,14 @@ namespace zynforge
         static juce::File findLameBinary();
 
     private:
+        // Shared MP3 tail: encodes an already-written temp WAV to .mp3 via
+        // lame, then deletes the temp. False (+ outError) if lame is missing
+        // or fails.
+        bool encodeMp3 (const juce::File& tempWav,
+                        const juce::File& destWithoutExt,
+                        const ExportOptions&,
+                        juce::String& outError);
+
         juce::AudioFormatManager formatManager;
     };
 }

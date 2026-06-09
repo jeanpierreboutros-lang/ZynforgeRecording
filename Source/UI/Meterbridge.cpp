@@ -26,7 +26,16 @@ namespace zynforge
                 for (int i = 0; i < n; ++i)
                 {
                     auto& t = engine.getRecorder().getTrack (i);
+
+                    // Collapse a stereo pair into ONE stereo meter: skip the
+                    // R half (shown on its L meter as the second bar).
+                    if (i > 0 && engine.getRecorder().getTrack (i - 1)
+                                       .isStereo.load (std::memory_order_relaxed))
+                        continue;
+
                     auto m = std::make_unique<LedMeter> (t);
+                    if (t.isStereo.load (std::memory_order_relaxed) && i + 1 < n)
+                        m->setStereoPartner (&engine.getRecorder().getTrack (i + 1));
                     addAndMakeVisible (*m);
                     meters.push_back (std::move (m));
 

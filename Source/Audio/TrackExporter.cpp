@@ -144,13 +144,88 @@ namespace zynforge
         resampler.releaseResources();
 
         if (! isMp3) return true;
+        return encodeMp3 (destPcmFile, destWithoutExt, opts, outError);
+    }
 
-        // MP3 stage: invoke lame on the temp WAV.
+    bool TrackExporter::exportStereoPair (const juce::File& sourceL,
+                                          const juce::File& sourceR,
+                                          const juce::File& destWithoutExt,
+                                          const ExportOptions& opts,
+                                          juce::String& outError)
+    {
+        outError.clear();
+        if (! sourceL.existsAsFile() || ! sourceR.existsAsFile())
+        { outError = "Source not found"; return false; }
+
+        std::unique_ptr<juce::AudioFormatReader> readerL (formatManager.createReaderFor (sourceL));
+        std::unique_ptr<juce::AudioFormatReader> readerR (formatManager.createReaderFor (sourceR));
+        if (readerL == nullptr || readerR == nullptr) { outError = "Cannot read source"; return false; }
+
+        const auto srcSR   = readerL->sampleRate;
+        const auto destSR  = opts.sampleRate;
+        const auto srcLen  = juce::jmax (readerL->lengthInSamples, readerR->lengthInSamples);
+        const auto destLen = (juce::int64) ((double) srcLen * destSR / srcSR);
+
+        const bool isMp3 = (opts.format == ExportFormat::Mp3);
+        auto destPcmFile = isMp3
+                            ? destWithoutExt.withFileExtension (".tmp.wav")
+                            : destWithoutExt.withFileExtension (extensionFor (opts.format));
+
+        destPcmFile.deleteFile();
+        std::unique_ptr<juce::FileOutputStream> outStream (destPcmFile.createOutputStream());
+        if (outStream == nullptr) { outError = "Cannot write to destination"; return false; }
+
+        const int bits = isMp3 ? 24 : juce::jlimit (16, 32, opts.bitsPerSample);
+        auto writer = makePcmWriter (isMp3 ? ExportFormat::Wav24 : opts.format,
+                                     outStream.get(), destSR, 2, bits);   // 2 channels
+        if (writer == nullptr) { outError = "Cannot create writer"; return false; }
+        outStream.release();
+
+        // Each mono source resamples independently; we interleave the two
+        // resampled mono blocks into one stereo block per write.
+        juce::AudioFormatReaderSource readerSrcL (readerL.get(), false);
+        juce::AudioFormatReaderSource readerSrcR (readerR.get(), false);
+        juce::ResamplingAudioSource   resL (&readerSrcL, false, 1);
+        juce::ResamplingAudioSource   resR (&readerSrcR, false, 1);
+        resL.setResamplingRatio (srcSR / destSR);
+        resR.setResamplingRatio (srcSR / destSR);
+        const int block = 4096;
+        resL.prepareToPlay (block, destSR);
+        resR.prepareToPlay (block, destSR);
+
+        juce::AudioBuffer<float> stereo (2, block), monoL (1, block), monoR (1, block);
+        juce::int64 written = 0;
+        while (written < destLen)
+        {
+            const int thisBlock = (int) juce::jmin ((juce::int64) block, destLen - written);
+            monoL.clear(); monoR.clear();
+            { juce::AudioSourceChannelInfo i (&monoL, 0, thisBlock); resL.getNextAudioBlock (i); }
+            { juce::AudioSourceChannelInfo i (&monoR, 0, thisBlock); resR.getNextAudioBlock (i); }
+            stereo.copyFrom (0, 0, monoL, 0, 0, thisBlock);
+            stereo.copyFrom (1, 0, monoR, 0, 0, thisBlock);
+            const auto** arr = (const float**) stereo.getArrayOfReadPointers();
+            if (! writer->writeFromFloatArrays (arr, 2, thisBlock))
+            { outError = "Write failed"; return false; }
+            written += thisBlock;
+        }
+        writer = nullptr;
+        resL.releaseResources();
+        resR.releaseResources();
+
+        if (! isMp3) return true;
+        return encodeMp3 (destPcmFile, destWithoutExt, opts, outError);
+    }
+
+    bool TrackExporter::encodeMp3 (const juce::File& tempWav,
+                                   const juce::File& destWithoutExt,
+                                   const ExportOptions& opts,
+                                   juce::String& outError)
+    {
         const auto lame = findLameBinary();
         if (lame == juce::File())
         {
             outError = "lame not found (install via `brew install lame`)";
-            destPcmFile.deleteFile();
+            tempWav.deleteFile();
             return false;
         }
 
@@ -162,16 +237,16 @@ namespace zynforge
             lame.getFullPathName(),
             "-b", juce::String (opts.mp3Bitrate),
             "--quiet",
-            destPcmFile.getFullPathName(),
+            tempWav.getFullPathName(),
             destMp3.getFullPathName()
         };
 
         const bool started = proc.start (cmd);
-        if (! started) { outError = "Failed to launch lame"; destPcmFile.deleteFile(); return false; }
+        if (! started) { outError = "Failed to launch lame"; tempWav.deleteFile(); return false; }
 
         proc.waitForProcessToFinish (120000);
         const auto code = proc.getExitCode();
-        destPcmFile.deleteFile();
+        tempWav.deleteFile();
 
         if (code != 0)
         {

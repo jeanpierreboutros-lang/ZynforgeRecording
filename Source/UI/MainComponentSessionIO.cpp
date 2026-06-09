@@ -298,25 +298,51 @@ int MainComponent::exportTracksTo (const juce::File& destDir,
     int succeeded = 0;
     juce::String firstError;
 
-    for (int i : channelIndices)
+    auto findTrackFile = [&] (int index1Based) -> juce::File
     {
         for (auto& src : allFiles)
+            if (matchesIndex (src, index1Based)) return src;
+        return {};
+    };
+
+    auto& rec = engine.getRecorder();
+    for (int i : channelIndices)
+    {
+        // A stereo pair exports as ONE interleaved stereo file from its L
+        // half. Skip the R half when its L is also in the export set
+        // (it's already written). A stereo track is the L; the next
+        // physical track is its R.
+        if (i > 0 && rec.getTrack (i - 1).isStereo.load (std::memory_order_relaxed)
+            && std::find (channelIndices.begin(), channelIndices.end(), i - 1) != channelIndices.end())
+            continue;
+
+        auto& trackState = rec.getTrack (i);
+        const bool stereo = trackState.isStereo.load (std::memory_order_relaxed);
+        const auto safeName = trackState.name.replaceCharacter ('/', '_')
+                                              .replaceCharacter ('\\', '_');
+        const auto baseName = juce::String::formatted ("Track_%02d - ", i + 1) + safeName;
+        const auto destStem = destDir.getChildFile (baseName);
+
+        juce::String err;
+        bool ok = false;
+        if (stereo)
         {
-            if (! matchesIndex (src, i + 1)) continue;
-
-            auto& trackState = engine.getRecorder().getTrack (i);
-            const auto safeName = trackState.name.replaceCharacter ('/', '_')
-                                                  .replaceCharacter ('\\', '_');
-            const auto baseName = juce::String::formatted ("Track_%02d - ", i + 1) + safeName;
-            const auto destStem = destDir.getChildFile (baseName);
-
-            juce::String err;
-            if (exporter.exportTrack (src, destStem, opts, err))
-                ++succeeded;
-            else if (firstError.isEmpty())
-                firstError = err;
-            break;
+            const auto srcL = findTrackFile (i + 1);
+            const auto srcR = findTrackFile (i + 2);
+            if (srcL.existsAsFile() && srcR.existsAsFile())
+                ok = exporter.exportStereoPair (srcL, srcR, destStem, opts, err);
+            else if (srcL.existsAsFile())          // R missing -> mono fallback
+                ok = exporter.exportTrack (srcL, destStem, opts, err);
         }
+        else
+        {
+            const auto src = findTrackFile (i + 1);
+            if (src.existsAsFile())
+                ok = exporter.exportTrack (src, destStem, opts, err);
+        }
+
+        if (ok) ++succeeded;
+        else if (firstError.isEmpty() && err.isNotEmpty()) firstError = err;
     }
 
     if (succeeded == 0 && firstError.isNotEmpty())
@@ -358,13 +384,22 @@ void MainComponent::onBounceStems()
             for (int t = 0; t < nTracks; ++t)
             {
                 if (self == nullptr) return;
-                const auto& ts = self->engine.getRecorder().getTrack (t);
+                auto& rec = self->engine.getRecorder();
+                // A stereo pair bounces as ONE interleaved stereo stem from
+                // its L half; skip the R half (already written).
+                if (t > 0 && rec.getTrack (t - 1).isStereo.load (std::memory_order_relaxed))
+                    continue;
+                const auto& ts = rec.getTrack (t);
                 const auto safe = ts.name.replaceCharacter ('/', '_').replaceCharacter ('\\', '_');
                 const auto outFile = dest.getChildFile (
                     juce::String::formatted ("Track_%02d - ", t + 1) + safe + ".wav");
                 // Streams the edited arrangement window-by-window straight to
                 // disk, so a multi-hour stem never needs a whole-track buffer.
-                if (self->engine.bounceTrackArrangementToWav (t, outFile, arrLen, sr)) ++written;
+                const bool stereo = ts.isStereo.load (std::memory_order_relaxed);
+                const bool okBounce = stereo
+                    ? self->engine.bounceStereoPairToWav (t, outFile, arrLen, sr)
+                    : self->engine.bounceTrackArrangementToWav (t, outFile, arrLen, sr);
+                if (okBounce) ++written;
             }
             juce::MessageManager::callAsync ([self, written, dest]
             {
@@ -566,6 +601,12 @@ void MainComponent::onImportAudioFiles()
                 engine.setTrackName  (rec.trackIndex + 1, rec.name + " R");
                 engine.setTrackStereo (rec.trackIndex + 1, false);
 
+                // Full stereo image: L hard-left, R hard-right so the pair
+                // reproduces the source's stereo field instead of summing
+                // toward mono at centre pan.
+                engine.setTrackPan (rec.trackIndex,     -1.0f);
+                engine.setTrackPan (rec.trackIndex + 1,  1.0f);
+
                 // Route the stereo pair to a sensible pair of inputs +
                 // outputs so the strip's combos read 'In 1-2' / 'Out 1-2'
                 // rather than (unrouted). L gets the even slot, R gets
@@ -585,6 +626,13 @@ void MainComponent::onImportAudioFiles()
         lastTrackCount = -1;
 
         const int loaded = engine.loadSession (sessionDir);
+
+        // Persist the mixer state NOW -- otherwise the stereo-pair flags
+        // (and names / routing) set above are RAM-only, and reopening the
+        // session would size the mixer from the audio files as plain mono,
+        // splitting every imported stereo track back into two strips.
+        saveSessionStateTo (sessionDir);
+
         const int stereoCount = (int) std::count_if (records.begin(), records.end(),
                                                      [] (const ImportRecord& r) { return r.stereo; });
         showStatus ("Imported " + juce::String ((int) records.size())
@@ -734,21 +782,36 @@ void MainComponent::onExportIndividualTracks()
     const int n = engine.getRecorder().getNumTracks();
     if (n <= 0) { showStatus ("No tracks to export"); return; }
 
-    // Step 1: tick-box picker of the session's tracks.
+    // Step 1: tick-box picker. ONE row per logical strip -- a stereo pair
+    // shows as a single "(stereo)" entry, not two mono rows. Each row maps
+    // back to its physical channel index(es) so the export collapses the
+    // pair into one stereo file.
     std::vector<juce::String> names;
-    names.reserve ((size_t) n);
-    for (int i = 0; i < n; ++i)
+    std::vector<std::vector<int>> rowChannels;   // dialog row -> physical channels
+    for (int i = 0; i < n; )
     {
         const auto& t = engine.getRecorder().getTrack (i);
+        const bool stereo = t.isStereo.load (std::memory_order_relaxed) && (i + 1 < n);
         const auto nm = t.name.isNotEmpty() ? t.name : juce::String (i + 1);
-        names.push_back (juce::String::formatted ("%02d  ", i + 1) + nm);
+        names.push_back (juce::String::formatted ("%02d  ", i + 1) + nm
+                         + (stereo ? juce::String ("  (stereo)") : juce::String()));
+        if (stereo) { rowChannels.push_back ({ i, i + 1 }); i += 2; }
+        else        { rowChannels.push_back ({ i });        i += 1; }
     }
 
     zynforge::TrackSelectDialog::launch ("Export individual tracks", names,
-        [this] (std::optional<std::vector<int>> picked)
+        [this, rowChannels] (std::optional<std::vector<int>> picked)
     {
         if (! picked.has_value() || picked->empty()) return;
-        const auto chosenTracks = *picked;
+
+        // Map picked dialog rows back to physical channel indices (a stereo
+        // row expands to both halves; exportTracksTo writes them as one file).
+        std::vector<int> chosenTracks;
+        for (int row : *picked)
+            if (row >= 0 && row < (int) rowChannels.size())
+                for (int ch : rowChannels[(size_t) row])
+                    chosenTracks.push_back (ch);
+        if (chosenTracks.empty()) return;
 
         // Step 2: format / sample-rate / bit-depth (or MP3 bitrate).
         zynforge::ExportDialog::launch ("Export format",

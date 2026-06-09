@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Changed (latest, stereo)
+- **An imported stereo file is now treated as one stereo track end-to-end.** Import still writes the two channels as the L/R halves of a stereo pair (the app's mono-per-channel storage model), but: the pairing is now **persisted to `session_mix.json` immediately on import**, so reopening the session keeps it as one collapsed strip instead of splitting it back into two mono strips (the old behaviour — the flags were RAM-only). And **export now bounces a stereo pair as ONE interleaved stereo file** rather than two mono stems — both the per-track export (`TrackExporter::exportStereoPair`, with sample-rate conversion) and the edited-arrangement stem bounce (`AudioEngine::bounceStereoPairToWav`, streamed window-by-window). The mixer already collapsed a pair into one strip with one stereo meter; this closes the persistence and export gaps. Headless-tested (`StereoExportTests` + a bounce-pair case in `AudioCallbackTests`).
+
 ### Fixed (latest, master strip)
 - **The master fader's value box no longer collides with the etched "ZYNFORGE" maker's mark.** `MasterStrip::resized()` laid the meter + fader (whose value text box shows e.g. "0.0 dB") all the way to the plate bottom, but `paint()` stamps the etched wordmark into the bottom 15 px — so the two overlapped. `resized()` now reserves that mark band (shared `kMarkBandH` constant keeps paint + layout in sync).
 

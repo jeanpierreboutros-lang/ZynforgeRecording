@@ -672,6 +672,14 @@ namespace zynforge
         bool bounceStereoMixToWav (const juce::File& dest,
                                    juce::int64 totalSamples, double sampleRate);
 
+        // Bounce a stereo-pair track (L = trackL, R = trackL+1) to ONE
+        // interleaved 24-bit stereo WAV -- each side's edited clip
+        // arrangement on its own channel, no pan/gain collapse. Used so a
+        // paired/imported stereo strip exports as a single stereo stem.
+        // Streamed window-by-window like the other bounces.
+        bool bounceStereoPairToWav (int trackL, const juce::File& dest,
+                                    juce::int64 totalSamples, double sampleRate);
+
         // ── Comp playlists (Take swap) ─────────────────────────────
         // Each track gets a Playlist (vector<Take>). The active Take's
         // clips are what the player renders. Engineer captures the

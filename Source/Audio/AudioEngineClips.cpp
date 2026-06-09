@@ -708,6 +708,44 @@ namespace zynforge
         return ok;
     }
 
+    bool AudioEngine::bounceStereoPairToWav (int trackL, const juce::File& dest,
+                                             juce::int64 totalSamples, double sampleRate)
+    {
+        if (totalSamples <= 0) return false;
+        const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
+        if (trackL < 0 || trackL + 1 >= maxTracks) return false;
+
+        auto sessionDir = getActiveSessionDir();
+        if (! sessionDir.isDirectory()) return false;
+        const auto audioDir = sessionDir.getChildFile ("Audio Files");
+
+        ArrangementSource L, R;
+        const std::vector<Clip>* clipsL = (trackL     < (int) trackClips.size()) ? &trackClips[(size_t) trackL]     : nullptr;
+        const std::vector<Clip>* clipsR = (trackL + 1 < (int) trackClips.size()) ? &trackClips[(size_t) trackL + 1] : nullptr;
+        const bool okL = L.open (audioDir, trackL,     clipsL);
+        const bool okR = R.open (audioDir, trackL + 1, clipsR);
+        if (! okL && ! okR) return false;   // neither side has audio
+
+        auto writer = createWav24Writer (dest, sampleRate, 2);
+        if (writer == nullptr) return false;
+
+        const int len = (int) juce::jmin<juce::int64> (totalSamples, 0x7fffffff);
+        juce::AudioBuffer<float> stereo (2, kRenderWindowSamples), tmp (1, 0);
+        bool ok = true;
+        for (juce::int64 winStart = 0; winStart < len && ok; winStart += kRenderWindowSamples)
+        {
+            const int winLen = (int) juce::jmin<juce::int64> (kRenderWindowSamples, len - winStart);
+            stereo.clear (0, 0, winLen);
+            stereo.clear (1, 0, winLen);
+            if (okL) L.mixWindow (stereo.getWritePointer (0), winStart, winLen, tmp);
+            if (okR) R.mixWindow (stereo.getWritePointer (1), winStart, winLen, tmp);
+            ok = writer->writeFromAudioSampleBuffer (stereo, 0, winLen);
+        }
+        writer.reset();
+        if (! ok) dest.deleteFile();
+        return ok;
+    }
+
     bool AudioEngine::splitTrackAtPlayhead (int track)
     {
         auto pos = player.isLoaded() ? player.getPositionSamples() : juce::int64 (0);
