@@ -24,27 +24,6 @@
 
 using namespace zynforge;
 
-namespace
-{
-    // Write a mono/stereo float buffer to a 24-bit WAV. Used by the
-    // edit-aware bounce path.
-    bool writeBufferToWav24 (const juce::File& f, const juce::AudioBuffer<float>& buf, double sr)
-    {
-        f.deleteFile();
-        juce::WavAudioFormat wav;
-        std::unique_ptr<juce::FileOutputStream> out (f.createOutputStream());
-        if (out == nullptr) return false;
-        juce::StringPairArray meta;
-        std::unique_ptr<juce::AudioFormatWriter> writer (
-            wav.createWriterFor (out.get(), sr, (unsigned int) juce::jmax (1, buf.getNumChannels()),
-                                 24, meta, 0));
-        if (writer == nullptr) return false;
-        out.release();
-        writer->writeFromAudioSampleBuffer (buf, 0, buf.getNumSamples());
-        return true;
-    }
-}
-
 int MainComponent::openSessionFolder (const juce::File& dir)
 {
     if (! dir.isDirectory()) return 0;
@@ -379,13 +358,13 @@ void MainComponent::onBounceStems()
             for (int t = 0; t < nTracks; ++t)
             {
                 if (self == nullptr) return;
-                juce::AudioBuffer<float> buf;
-                if (! self->engine.renderTrackArrangement (t, buf, arrLen)) continue;
                 const auto& ts = self->engine.getRecorder().getTrack (t);
                 const auto safe = ts.name.replaceCharacter ('/', '_').replaceCharacter ('\\', '_');
                 const auto outFile = dest.getChildFile (
                     juce::String::formatted ("Track_%02d - ", t + 1) + safe + ".wav");
-                if (writeBufferToWav24 (outFile, buf, sr)) ++written;
+                // Streams the edited arrangement window-by-window straight to
+                // disk, so a multi-hour stem never needs a whole-track buffer.
+                if (self->engine.bounceTrackArrangementToWav (t, outFile, arrLen, sr)) ++written;
             }
             juce::MessageManager::callAsync ([self, written, dest]
             {
@@ -425,9 +404,8 @@ void MainComponent::onBounceStereoMix()
         juce::Thread::launch ([self, dest, arrLen, sr]
         {
             if (self == nullptr) return;
-            juce::AudioBuffer<float> mix;
-            const bool ok = self->engine.renderStereoMix (mix, arrLen)
-                            && writeBufferToWav24 (dest, mix, sr);
+            // Streams the summed mix window-by-window straight to disk.
+            const bool ok = self->engine.bounceStereoMixToWav (dest, arrLen, sr);
             juce::MessageManager::callAsync ([self, ok, dest]
             {
                 if (self != nullptr)

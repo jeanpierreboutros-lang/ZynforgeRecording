@@ -393,109 +393,187 @@ namespace zynforge
         return maxEnd;
     }
 
-    bool AudioEngine::renderTrackArrangement (int track, juce::AudioBuffer<float>& out,
-                                              juce::int64 totalSamples)
+    namespace
+    {
+        // Offline renders run in fixed windows so memory stays O(window)
+        // regardless of arrangement length -- a multi-hour show no longer
+        // needs a multi-GB flat buffer. 65536 is a multiple of the
+        // 512-sample automation step, so windowed and whole-buffer renders
+        // evaluate automation at identical sample positions.
+        constexpr int kRenderWindowSamples = 1 << 16;
+
+        // One track's offline render source: the resolved clip list plus
+        // the opened readers (track file + any cross-track clip files).
+        struct ArrangementSource
+        {
+            juce::AudioFormatManager fm;
+            std::unique_ptr<juce::AudioFormatReader> reader;
+            std::map<juce::String, std::unique_ptr<juce::AudioFormatReader>> extra;
+            std::vector<Clip> clips;
+            juce::File srcFile;
+
+            bool open (const juce::File& audioDir, int track, const std::vector<Clip>* engineClips)
+            {
+                for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
+                {
+                    auto f = audioDir.getChildFile (juce::String::formatted ("Track_%02d", track + 1) + ext);
+                    if (f.existsAsFile()) { srcFile = f; break; }
+                }
+                if (! srcFile.existsAsFile()) return false;
+
+                fm.registerBasicFormats();
+                reader.reset (fm.createReaderFor (srcFile));
+                if (reader == nullptr) return false;
+
+                // Active-take clips; bootstrap a whole-file clip if the
+                // track was never edited so it still renders.
+                if (engineClips != nullptr) clips = *engineClips;
+                if (clips.empty())
+                {
+                    Clip c;
+                    c.timelineStartSamples = 0;
+                    c.fileStartSamples     = 0;
+                    c.fileLengthSamples    = reader->lengthInSamples;
+                    clips.push_back (c);
+                }
+                return true;
+            }
+
+            // Mix every clip's overlap with [winStart, winStart + winLen)
+            // into dst (window-relative, accumulating). Fades, clip gain
+            // and clip mute match the real-time player path.
+            void mixWindow (float* dst, juce::int64 winStart, int winLen, juce::AudioBuffer<float>& tmp)
+            {
+                for (const auto& c : clips)
+                {
+                    if (c.muted || c.fileLengthSamples <= 0) continue;
+                    const juce::int64 tlStart  = c.timelineStartSamples;
+                    const juce::int64 writeBeg = juce::jmax (winStart, tlStart);
+                    const juce::int64 writeEnd = juce::jmin (winStart + winLen, tlStart + c.fileLengthSamples);
+                    if (writeEnd <= writeBeg) continue;
+                    const int span = (int) (writeEnd - writeBeg);
+                    const juce::int64 fileReadStart = c.fileStartSamples + (writeBeg - tlStart);
+
+                    // Cross-track clips read from their own file -- cache one
+                    // reader per distinct path so the bounce matches playback.
+                    juce::AudioFormatReader* rd = reader.get();
+                    if (c.audioFile != juce::File() && c.audioFile != srcFile)
+                    {
+                        const auto key = c.audioFile.getFullPathName();
+                        auto it = extra.find (key);
+                        if (it == extra.end())
+                            it = extra.emplace (key, std::unique_ptr<juce::AudioFormatReader> (
+                                                         fm.createReaderFor (c.audioFile))).first;
+                        if (it->second != nullptr) rd = it->second.get();
+                    }
+                    if (rd == nullptr) continue;
+
+                    tmp.setSize (1, span, false, false, true);
+                    tmp.clear();
+                    rd->read (&tmp, 0, span, fileReadStart, true, true);
+
+                    const float clipGain = juce::Decibels::decibelsToGain (c.gainDb, -60.0f);
+                    const bool  eq        = (c.fadeCurve == 1);
+                    const juce::int64 fIn = c.fadeInSamples, fOut = c.fadeOutSamples;
+                    const juce::int64 fOutStart = c.fileLengthSamples - fOut;
+                    const juce::int64 spanOffsetInClip = writeBeg - tlStart;
+                    const auto* s = tmp.getReadPointer (0);
+                    auto* d = dst + (int) (writeBeg - winStart);
+                    for (int i = 0; i < span; ++i)
+                    {
+                        const juce::int64 clipPos = spanOffsetInClip + i;
+                        float g = clipGain;
+                        if (fIn > 0 && clipPos < fIn)
+                        { const float t = (float) clipPos / (float) fIn; g *= eq ? std::sin (t * 1.57079633f) : t; }
+                        else if (fOut > 0 && clipPos >= fOutStart)
+                        { const float t = (float) (c.fileLengthSamples - clipPos) / (float) fOut; g *= eq ? std::sin (t * 1.57079633f) : t; }
+                        d[i] += s[i] * g;
+                    }
+                }
+            }
+        };
+
+        std::unique_ptr<juce::AudioFormatWriter> createWav24Writer (const juce::File& f, double sr, int channels)
+        {
+            f.deleteFile();
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::FileOutputStream> os (f.createOutputStream());
+            if (os == nullptr) return nullptr;
+            std::unique_ptr<juce::AudioFormatWriter> w (
+                wav.createWriterFor (os.get(), sr, (unsigned int) channels, 24, {}, 0));
+            if (w != nullptr) os.release();
+            return w;
+        }
+    }
+
+    bool AudioEngine::forEachArrangementWindow (int track, juce::int64 startSample, juce::int64 endSample,
+                                                const std::function<bool (const float*, juce::int64, int)>& consume)
     {
         const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
         if (track < 0 || track >= maxTracks) return false;
-        if (totalSamples <= 0) return false;
+        if (endSample <= startSample) return false;
 
         auto sessionDir = getActiveSessionDir();
         if (! sessionDir.isDirectory()) return false;
-        const auto audioDir = sessionDir.getChildFile ("Audio Files");
-        juce::File src;
-        for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
+
+        ArrangementSource src;
+        const std::vector<Clip>* engineClips = (track < (int) trackClips.size())
+                                                 ? &trackClips[(size_t) track] : nullptr;
+        if (! src.open (sessionDir.getChildFile ("Audio Files"), track, engineClips)) return false;
+
+        juce::AudioBuffer<float> window (1, kRenderWindowSamples), tmp (1, 0);
+        for (juce::int64 winStart = startSample; winStart < endSample; winStart += kRenderWindowSamples)
         {
-            auto f = audioDir.getChildFile (juce::String::formatted ("Track_%02d", track + 1) + ext);
-            if (f.existsAsFile()) { src = f; break; }
-        }
-        if (! src.existsAsFile()) return false;
-
-        juce::AudioFormatManager fm;
-        fm.registerBasicFormats();
-        std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (src));
-        if (reader == nullptr) return false;
-
-        out.setSize (1, (int) juce::jmin<juce::int64> (totalSamples, 0x7fffffff),
-                     false, true, true);
-        out.clear();
-        const int outLen = out.getNumSamples();
-
-        // Active-take clips for this track; bootstrap a whole-file clip if
-        // the track was never edited so it still renders.
-        std::vector<Clip> clips = (track < (int) trackClips.size())
-                                    ? trackClips[(size_t) track] : std::vector<Clip>{};
-        if (clips.empty())
-        {
-            Clip c;
-            c.timelineStartSamples = 0;
-            c.fileStartSamples     = 0;
-            c.fileLengthSamples    = reader->lengthInSamples;
-            clips.push_back (c);
-        }
-
-        // Cross-track clips read from their own file -- cache one reader
-        // per distinct path so the bounce matches what playback renders.
-        std::map<juce::String, std::unique_ptr<juce::AudioFormatReader>> extra;
-
-        juce::AudioBuffer<float> tmp (1, 0);
-        auto* dst = out.getWritePointer (0);
-        for (const auto& c : clips)
-        {
-            if (c.muted || c.fileLengthSamples <= 0) continue;
-            const juce::int64 tlStart  = c.timelineStartSamples;
-            const juce::int64 writeBeg = juce::jmax<juce::int64> (0, tlStart);
-            const juce::int64 writeEnd = juce::jmin<juce::int64> (outLen, tlStart + c.fileLengthSamples);
-            if (writeEnd <= writeBeg) continue;
-            const int span = (int) (writeEnd - writeBeg);
-            const juce::int64 fileReadStart = c.fileStartSamples + (writeBeg - tlStart);
-
-            juce::AudioFormatReader* rd = reader.get();
-            if (c.audioFile != juce::File() && c.audioFile != src)
-            {
-                const auto key = c.audioFile.getFullPathName();
-                auto it = extra.find (key);
-                if (it == extra.end())
-                    it = extra.emplace (key, std::unique_ptr<juce::AudioFormatReader> (
-                                                 fm.createReaderFor (c.audioFile))).first;
-                if (it->second != nullptr) rd = it->second.get();
-            }
-            if (rd == nullptr) continue;
-
-            tmp.setSize (1, span, false, false, true);
-            tmp.clear();
-            rd->read (&tmp, 0, span, fileReadStart, true, true);
-
-            const float clipGain = juce::Decibels::decibelsToGain (c.gainDb, -60.0f);
-            const bool  eq        = (c.fadeCurve == 1);
-            const juce::int64 fIn = c.fadeInSamples, fOut = c.fadeOutSamples;
-            const juce::int64 fOutStart = c.fileLengthSamples - fOut;
-            const juce::int64 spanOffsetInClip = writeBeg - tlStart;
-            const auto* s = tmp.getReadPointer (0);
-            for (int i = 0; i < span; ++i)
-            {
-                const juce::int64 clipPos = spanOffsetInClip + i;
-                float g = clipGain;
-                if (fIn > 0 && clipPos < fIn)
-                { const float t = (float) clipPos / (float) fIn; g *= eq ? std::sin (t * 1.57079633f) : t; }
-                else if (fOut > 0 && clipPos >= fOutStart)
-                { const float t = (float) (c.fileLengthSamples - clipPos) / (float) fOut; g *= eq ? std::sin (t * 1.57079633f) : t; }
-                dst[(int) writeBeg + i] += s[i] * g;
-            }
+            const int winLen = (int) juce::jmin<juce::int64> (kRenderWindowSamples, endSample - winStart);
+            window.clear (0, 0, winLen);
+            src.mixWindow (window.getWritePointer (0), winStart, winLen, tmp);
+            if (! consume (window.getReadPointer (0), winStart, winLen)) return false;
         }
         return true;
     }
 
-    bool AudioEngine::renderStereoMix (juce::AudioBuffer<float>& outStereo, juce::int64 totalSamples)
+    bool AudioEngine::renderTrackArrangement (int track, juce::AudioBuffer<float>& out,
+                                              juce::int64 totalSamples)
     {
         if (totalSamples <= 0) return false;
-        const int len = (int) juce::jmin<juce::int64> (totalSamples, 0x7fffffff);
-        outStereo.setSize (2, len, false, true, true);
-        outStereo.clear();
-        auto* oL = outStereo.getWritePointer (0);
-        auto* oR = outStereo.getWritePointer (1);
+        const int outLen = (int) juce::jmin<juce::int64> (totalSamples, 0x7fffffff);
+        bool sized = false;
+        return forEachArrangementWindow (track, 0, outLen,
+            [&] (const float* data, juce::int64 winStart, int winLen)
+            {
+                if (! sized)
+                {
+                    out.setSize (1, outLen, false, true, true);
+                    out.clear();
+                    sized = true;
+                }
+                juce::FloatVectorOperations::copy (out.getWritePointer (0) + (int) winStart, data, winLen);
+                return true;
+            });
+    }
 
+    bool AudioEngine::bounceTrackArrangementToWav (int track, const juce::File& dest,
+                                                   juce::int64 totalSamples, double sampleRate)
+    {
+        auto writer = createWav24Writer (dest, sampleRate, 1);
+        if (writer == nullptr) return false;
+        const bool ok = forEachArrangementWindow (track, 0, totalSamples,
+            [&] (const float* data, juce::int64, int winLen)
+            {
+                const float* chans[1] = { data };
+                return writer->writeFromFloatArrays (chans, 1, winLen);
+            });
+        writer.reset();
+        if (! ok) dest.deleteFile();
+        return ok;
+    }
+
+    bool AudioEngine::forEachStereoMixWindow (juce::int64 totalSamples,
+                                              const std::function<bool (const juce::AudioBuffer<float>&, juce::int64, int)>& consume)
+    {
+        if (totalSamples <= 0) return false;
         const int nTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
+        const auto audioDir = getActiveSessionDir().getChildFile ("Audio Files");
 
         bool anySolo = false;
         for (int i = 0; i < nTracks; ++i)
@@ -504,10 +582,18 @@ namespace zynforge
         for (const auto& v : vcas)
             if (v.soloed.load (std::memory_order_relaxed)) { anyVcaSolo = true; break; }
 
-        const double halfPi = juce::MathConstants<double>::halfPi;
-        const int step = 512;   // re-evaluate automation every ~10 ms
-        juce::AudioBuffer<float> mono;
-
+        // Open every audible track's source up front; the tracks then
+        // render window-by-window in lockstep, so only O(window) audio is
+        // in RAM at once (readers, not buffers, stay open per track).
+        struct TrackCtx
+        {
+            int track {};
+            ArrangementSource src;
+            float baseDb {}, basePan {}, vcaDb {};
+            int   autoCh {};
+            TrackState* ts {};
+        };
+        std::vector<std::unique_ptr<TrackCtx>> live;
         for (int t = 0; t < nTracks; ++t)
         {
             auto& ts = recorder.getTrack (t);
@@ -526,44 +612,100 @@ namespace zynforge
             else                 audible = ! ts.muted.load (std::memory_order_relaxed);
             if (! audible) continue;
 
-            if (! renderTrackArrangement (t, mono, totalSamples)) continue;
-            const auto* s = mono.getReadPointer (0);
-            const float baseDb  = ts.gainDb.load (std::memory_order_relaxed);
-            const float basePan = ts.pan.load (std::memory_order_relaxed);
-            const float vcaDb   = (grp >= 0 && grp < kNumVcas)
-                                    ? vcas[(size_t) grp].gainDb.load (std::memory_order_relaxed) : 0.0f;
+            auto ctx = std::make_unique<TrackCtx>();
+            const std::vector<Clip>* engineClips = (t < (int) trackClips.size())
+                                                     ? &trackClips[(size_t) t] : nullptr;
+            if (! ctx->src.open (audioDir, t, engineClips)) continue;
+            ctx->track   = t;
+            ctx->baseDb  = ts.gainDb.load (std::memory_order_relaxed);
+            ctx->basePan = ts.pan.load (std::memory_order_relaxed);
+            ctx->vcaDb   = (grp >= 0 && grp < kNumVcas)
+                             ? vcas[(size_t) grp].gainDb.load (std::memory_order_relaxed) : 0.0f;
             // Stereo pair reads its left partner's volume + mute lanes.
-            const int autoCh = (t > 0 && recorder.getTrack (t - 1).isStereo.load (std::memory_order_relaxed))
-                                 ? t - 1 : t;
-
-            for (int i = 0; i < len; i += step)
-            {
-                const int n = juce::jmin (step, len - i);
-                const float volDb = automationValueAt (autoCh, AutomationParam::Volume, i, baseDb);
-                const float panV  = automationValueAt (t,      AutomationParam::Pan,    i, basePan);
-                const float muteV = automationValueAt (autoCh, AutomationParam::Mute,   i,
-                                                       ts.muted.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
-                if (muteV > 0.5f) continue;
-
-                const double gain = juce::Decibels::decibelsToGain ((double) (volDb + vcaDb), -60.0);
-                const double pn   = ((double) juce::jlimit (-1.0f, 1.0f, panV) + 1.0) * 0.5;
-                const double gL   = gain * std::cos (pn * halfPi);
-                const double gR   = gain * std::sin (pn * halfPi);
-                for (int k = 0; k < n; ++k)
-                {
-                    const float v = s[i + k];
-                    oL[i + k] += (float) (v * gL);
-                    oR[i + k] += (float) (v * gR);
-                }
-            }
+            ctx->autoCh  = (t > 0 && recorder.getTrack (t - 1).isStereo.load (std::memory_order_relaxed))
+                             ? t - 1 : t;
+            ctx->ts      = &ts;
+            live.push_back (std::move (ctx));
         }
+
+        const double halfPi = juce::MathConstants<double>::halfPi;
+        const int step = 512;   // re-evaluate automation every ~10 ms
 
         const bool   mMute = masterState.muted.load (std::memory_order_relaxed);
         const double mGain = mMute ? 0.0
                                    : juce::Decibels::decibelsToGain (
                                          (double) masterState.gainDb.load (std::memory_order_relaxed), -60.0);
-        if (std::abs (mGain - 1.0) > 1.0e-6) outStereo.applyGain ((float) mGain);
+
+        juce::AudioBuffer<float> stereo (2, kRenderWindowSamples), mono (1, kRenderWindowSamples), tmp (1, 0);
+        for (juce::int64 winStart = 0; winStart < totalSamples; winStart += kRenderWindowSamples)
+        {
+            const int winLen = (int) juce::jmin<juce::int64> (kRenderWindowSamples, totalSamples - winStart);
+            stereo.clear();
+            auto* oL = stereo.getWritePointer (0);
+            auto* oR = stereo.getWritePointer (1);
+
+            for (auto& cp : live)
+            {
+                mono.clear (0, 0, winLen);
+                cp->src.mixWindow (mono.getWritePointer (0), winStart, winLen, tmp);
+                const auto* s = mono.getReadPointer (0);
+
+                for (int i = 0; i < winLen; i += step)
+                {
+                    const int n = juce::jmin (step, winLen - i);
+                    const juce::int64 absPos = winStart + i;
+                    const float volDb = automationValueAt (cp->autoCh, AutomationParam::Volume, absPos, cp->baseDb);
+                    const float panV  = automationValueAt (cp->track,  AutomationParam::Pan,    absPos, cp->basePan);
+                    const float muteV = automationValueAt (cp->autoCh, AutomationParam::Mute,   absPos,
+                                                           cp->ts->muted.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
+                    if (muteV > 0.5f) continue;
+
+                    const double gain = juce::Decibels::decibelsToGain ((double) (volDb + cp->vcaDb), -60.0);
+                    const double pn   = ((double) juce::jlimit (-1.0f, 1.0f, panV) + 1.0) * 0.5;
+                    const double gL   = gain * std::cos (pn * halfPi);
+                    const double gR   = gain * std::sin (pn * halfPi);
+                    for (int k = 0; k < n; ++k)
+                    {
+                        const float v = s[i + k];
+                        oL[i + k] += (float) (v * gL);
+                        oR[i + k] += (float) (v * gR);
+                    }
+                }
+            }
+
+            if (std::abs (mGain - 1.0) > 1.0e-6)
+                stereo.applyGain (0, winLen, (float) mGain);
+            if (! consume (stereo, winStart, winLen)) return false;
+        }
         return true;
+    }
+
+    bool AudioEngine::renderStereoMix (juce::AudioBuffer<float>& outStereo, juce::int64 totalSamples)
+    {
+        if (totalSamples <= 0) return false;
+        const int len = (int) juce::jmin<juce::int64> (totalSamples, 0x7fffffff);
+        outStereo.setSize (2, len, false, true, true);
+        outStereo.clear();
+        return forEachStereoMixWindow (len,
+            [&] (const juce::AudioBuffer<float>& w, juce::int64 winStart, int winLen)
+            {
+                for (int ch = 0; ch < 2; ++ch)
+                    outStereo.copyFrom (ch, (int) winStart, w, ch, 0, winLen);
+                return true;
+            });
+    }
+
+    bool AudioEngine::bounceStereoMixToWav (const juce::File& dest,
+                                            juce::int64 totalSamples, double sampleRate)
+    {
+        auto writer = createWav24Writer (dest, sampleRate, 2);
+        if (writer == nullptr) return false;
+        const bool ok = forEachStereoMixWindow (totalSamples,
+            [&] (const juce::AudioBuffer<float>& w, juce::int64, int winLen)
+            { return writer->writeFromAudioSampleBuffer (w, 0, winLen); });
+        writer.reset();
+        if (! ok) dest.deleteFile();
+        return ok;
     }
 
     bool AudioEngine::splitTrackAtPlayhead (int track)
@@ -742,12 +884,9 @@ namespace zynforge
         const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
         if (track < 0 || track >= maxTracks) return false;
 
-        // Render the whole edited track, then slice out [start, end).
-        juce::AudioBuffer<float> full;
         const juce::int64 arrLen = juce::jmax (end, getArrangementLengthSamples());
-        if (! renderTrackArrangement (track, full, arrLen)) return false;
-        const int a = (int) juce::jmin<juce::int64> (start, full.getNumSamples());
-        const int b = (int) juce::jmin<juce::int64> (end,   full.getNumSamples());
+        const juce::int64 a = juce::jmin (start, arrLen);
+        const juce::int64 b = juce::jmin (end,   arrLen);
         if (b <= a) return false;
 
         auto sessionDir = getActiveSessionDir();
@@ -762,15 +901,17 @@ namespace zynforge
 
         const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
         {
-            juce::WavAudioFormat wav;
-            std::unique_ptr<juce::FileOutputStream> os (dst.createOutputStream());
-            if (os == nullptr) return false;
-            std::unique_ptr<juce::AudioFormatWriter> w (
-                wav.createWriterFor (os.get(), sr, 1, 24, {}, 0));
+            auto w = createWav24Writer (dst, sr, 1);
             if (w == nullptr) return false;
-            os.release();
-            juce::AudioBuffer<float> slice (full.getArrayOfWritePointers(), 1, a, b - a);
-            w->writeFromAudioSampleBuffer (slice, 0, b - a);
+            // Stream the edited arrangement for just [a, b) straight to the
+            // writer -- no whole-track buffer.
+            const bool ok = forEachArrangementWindow (track, a, b,
+                [&] (const float* data, juce::int64, int winLen)
+                {
+                    const float* chans[1] = { data };
+                    return w->writeFromFloatArrays (chans, 1, winLen);
+                });
+            if (! ok) { w.reset(); dst.deleteFile(); return false; }
         }
 
         // Replace the clips in [start, end) with one clip referencing dst.

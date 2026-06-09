@@ -65,7 +65,7 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Ap
 ### Export / deliver
 - **Bounce edited tracks (stems)** — renders each track's clip arrangement (positions, fades, clip gain, mutes, active take) to flat 24-bit WAVs, so the edits actually reach the deliverable
 - **Bounce stereo mix** — sums the whole edited arrangement through gain / pan / mute / solo + volume/pan/mute automation + VCA + master to a 24-bit stereo WAV
-- Both render offline on a worker thread (no real-time risk); cross-track clips render from their own source file
+- Both render offline on a worker thread (no real-time risk) and **stream to disk in fixed windows** — a multi-hour show bounces in a few MB of RAM; cross-track clips render from their own source file
 - Per-track / per-format export (WAV / AIFF / FLAC) with sample-rate conversion
 
 ### Metering

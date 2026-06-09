@@ -181,14 +181,38 @@ namespace zynforge
             }
         }
 
-        const juce::ScopedLock sl (clipsLock);
-        for (auto& b : built)
-            if (extraReaders.find (b.first) == extraReaders.end())
-                extraReaders.emplace (b.first, std::move (b.second));
-        if (trackIdx >= (int) activeClips.size())        activeClips.resize ((size_t) trackIdx + 1);
-        if (trackIdx >= (int) clipsAuthoritative.size()) clipsAuthoritative.resize ((size_t) trackIdx + 1, 0);
-        activeClips[(size_t) trackIdx]        = std::move (clips);
-        clipsAuthoritative[(size_t) trackIdx] = 1;   // explicit list (even if empty)
+        // Readers whose file no clip references any more (e.g. superseded
+        // consolidates) are moved here and destroyed AFTER the lock is
+        // released -- tearing down a BufferingAudioReader unregisters it
+        // from the read thread, which is too slow to hold the lock for.
+        std::vector<std::unique_ptr<juce::BufferingAudioReader>> stale;
+        {
+            const juce::ScopedLock sl (clipsLock);
+            for (auto& b : built)
+                if (extraReaders.find (b.first) == extraReaders.end())
+                    extraReaders.emplace (b.first, std::move (b.second));
+            if (trackIdx >= (int) activeClips.size())        activeClips.resize ((size_t) trackIdx + 1);
+            if (trackIdx >= (int) clipsAuthoritative.size()) clipsAuthoritative.resize ((size_t) trackIdx + 1, 0);
+            activeClips[(size_t) trackIdx]        = std::move (clips);
+            clipsAuthoritative[(size_t) trackIdx] = 1;   // explicit list (even if empty)
+
+            // Prune cross-track readers nothing references across ANY
+            // track -- otherwise every consolidate / cross-track paste
+            // leaks a buffered reader + file handle until session close.
+            for (auto it = extraReaders.begin(); it != extraReaders.end();)
+            {
+                bool wanted = false;
+                for (const auto& list : activeClips)
+                {
+                    for (const auto& c : list)
+                        if (c.audioFile != juce::File()
+                            && c.audioFile.getFullPathName() == it->first) { wanted = true; break; }
+                    if (wanted) break;
+                }
+                if (wanted) ++it;
+                else { stale.push_back (std::move (it->second)); it = extraReaders.erase (it); }
+            }
+        }
     }
 
     void SessionPlayer::clearAllClips()

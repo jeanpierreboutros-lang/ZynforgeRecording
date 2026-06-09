@@ -87,6 +87,9 @@ namespace zynforge
 
         // Loads an audio file off-thread, runs detect on the L channel,
         // returns the sample-position list. Returns empty on failure.
+        // Reads in ~60 s chunks (with enough overlap for the long window
+        // + rising-edge primer) so a long track never needs more than a
+        // few MB of RAM; analysis still caps at the first 30 minutes.
         static std::vector<juce::int64> detectInFile (const juce::File& f)
         {
             std::vector<juce::int64> onsets;
@@ -99,11 +102,40 @@ namespace zynforge
 
             const auto sr = reader->sampleRate;
             const auto n  = (juce::int64) reader->lengthInSamples;
-            if (n < 1024) return onsets;
+            if (n < 1024 || sr <= 0.0) return onsets;
 
-            juce::AudioBuffer<float> buf (1, (int) juce::jmin ((juce::int64) (sr * 1800.0), n));
-            reader->read (&buf, 0, buf.getNumSamples(), 0, true, false);
-            return detect (buf.getReadPointer (0), buf.getNumSamples(), sr);
+            const Params p;
+            const auto longN       = (juce::int64) (p.longWinSec  * sr);
+            const auto shortN      = (juce::int64) (p.shortWinSec * sr);
+            const auto hopN        = (juce::int64) std::max ((juce::int64) 1, (juce::int64) (p.hopSec * sr));
+            const auto refractoryN = (juce::int64) (p.minSeparationSec * sr);
+
+            const juce::int64 analyseLen = juce::jmin ((juce::int64) (sr * 1800.0), n);
+            const juce::int64 chunkCore  = (juce::int64) (sr * 60.0);
+
+            juce::AudioBuffer<float> buf;
+            for (juce::int64 coreStart = 0; coreStart < analyseLen; coreStart += chunkCore)
+            {
+                // Back up by the long window plus one hop so the first core
+                // hop has real history and a primed previous-ratio.
+                const juce::int64 readStart = juce::jmax ((juce::int64) 0, coreStart - longN - hopN);
+                const juce::int64 readEnd   = juce::jmin (analyseLen, coreStart + chunkCore + shortN);
+                const int nRead = (int) (readEnd - readStart);
+                if (nRead < 1024) break;
+
+                buf.setSize (1, nRead, false, false, true);
+                reader->read (&buf, 0, nRead, readStart, true, false);
+
+                const juce::int64 coreEnd = juce::jmin (analyseLen, coreStart + chunkCore);
+                for (auto pos : detect (buf.getReadPointer (0), nRead, sr, p))
+                {
+                    const juce::int64 global = readStart + pos;
+                    if (global < coreStart || global >= coreEnd) continue;     // another chunk's core
+                    if (! onsets.empty() && global - onsets.back() < refractoryN) continue;
+                    onsets.push_back (global);
+                }
+            }
+            return onsets;
         }
     };
 }

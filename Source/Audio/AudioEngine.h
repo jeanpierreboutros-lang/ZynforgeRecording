@@ -10,6 +10,7 @@
 #include "../Network/NDIBridge.h"
 
 #include <array>
+#include <functional>
 #include <map>
 #include "ITransport.h"
 #include "ClipModel.h"
@@ -646,10 +647,30 @@ namespace zynforge
                                      juce::int64 totalSamples);
         // Render the whole edited arrangement summed to a stereo mix --
         // each track's clip render (above) through its gain / pan / mute /
-        // solo + volume/pan/mute automation + VCA, then master gain. One
-        // track buffer is held at a time so memory stays O(length), not
-        // O(length x tracks). Offline; call from a background thread.
+        // solo + volume/pan/mute automation + VCA, then master gain.
+        // Offline; call from a background thread.
         bool renderStereoMix (juce::AudioBuffer<float>& outStereo, juce::int64 totalSamples);
+
+        // Windowed render cores. Both render in fixed 64k-sample windows
+        // and hand each window to `consume`, so memory stays O(window)
+        // instead of O(arrangement length) -- a multi-hour show bounces in
+        // a few MB of RAM. The two renders above are built on these;
+        // consume returning false aborts the render (and the render
+        // returns false).
+        bool forEachArrangementWindow (int track, juce::int64 startSample, juce::int64 endSample,
+                                       const std::function<bool (const float*, juce::int64, int)>& consume);
+        bool forEachStereoMixWindow (juce::int64 totalSamples,
+                                     const std::function<bool (const juce::AudioBuffer<float>&, juce::int64, int)>& consume);
+
+        // Streaming bounce variants: identical audio to the renders above,
+        // but each window is written straight to a 24-bit WAV instead of
+        // accumulating in RAM. Use these for File ▸ Bounce on real
+        // sessions; the buffer-returning renders are for tests / short
+        // material. On failure the partial file is deleted.
+        bool bounceTrackArrangementToWav (int track, const juce::File& dest,
+                                          juce::int64 totalSamples, double sampleRate);
+        bool bounceStereoMixToWav (const juce::File& dest,
+                                   juce::int64 totalSamples, double sampleRate);
 
         // ── Comp playlists (Take swap) ─────────────────────────────
         // Each track gets a Playlist (vector<Take>). The active Take's
