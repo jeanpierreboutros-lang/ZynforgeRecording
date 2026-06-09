@@ -1,0 +1,49 @@
+name: build-and-test
+
+# Build the app and run the headless unit-test suite (--run-tests exits
+# non-zero on any failure) on every push / PR to main. Mirrors the local
+# recipe in CLAUDE.md: Xcode generator, Release config.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # JUCE arrives via CMake FetchContent; cache the download so only
+      # the first run after a JUCE version bump pays for it.
+      - name: Cache JUCE sources
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: juce-deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure
+        run: cmake -B build -G Xcode
+
+      - name: Build (Release)
+        run: cmake --build build --config Release
+
+      - name: Headless tests
+        run: |
+          "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app/Contents/MacOS/Zynforge Recording" --run-tests
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: ~/Library/Logs/Zynforge/test-report.log
+          if-no-files-found: ignore
