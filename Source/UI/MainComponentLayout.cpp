@@ -28,6 +28,28 @@ void MainComponent::paint (juce::Graphics& g)
     auto header = getLocalBounds().removeFromTop (44 + 52).toFloat();
     g.setGradientFill (brand::verticalGradient (brand::bgPanel, header, 0.08f, 0.18f));
     g.fillRect (header);
+
+    // Brushed-steel grain on the header plate -- faint, irregular vertical
+    // striations + a top bevel sheen, so the top bar reads as machined steel
+    // (the "cold steel" half of the forge identity) rather than flat paint.
+    // Fixed RNG seed -> a stable grain that never flickers between repaints,
+    // and alphas kept to ~0.02-0.05 so it never competes with the controls.
+    {
+        juce::Random rng (0x57EE15);
+        const int   x0 = (int) header.getX(), x1 = (int) header.getRight();
+        const float top = header.getY(), bot = header.getBottom() - 1.0f;
+        for (int x = x0; x < x1; x += 2)
+        {
+            const float a = 0.018f + 0.03f * rng.nextFloat();
+            g.setColour (rng.nextBool() ? brand::gloss (a)
+                                        : brand::shadow::elev1().withAlpha (a));
+            g.drawVerticalLine (x, top, bot);
+        }
+        // Top bevel: a bright machined sheen along the very top edge.
+        g.setColour (brand::gloss (0.16f));
+        g.drawHorizontalLine ((int) top, header.getX(), header.getRight());
+    }
+
     g.setColour (brand::edge);
     g.drawHorizontalLine ((int) header.getBottom() - 1,
                           header.getX(), header.getRight());
