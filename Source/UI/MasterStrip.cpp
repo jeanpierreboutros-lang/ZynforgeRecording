@@ -4,6 +4,11 @@
 
 namespace zynforge
 {
+    // Height of the etched "ZYNFORGE" maker's-mark band at the bottom of the
+    // plate. Shared by paint() (which stamps it) and resized() (which reserves
+    // it) so the fader value box never overlaps the mark.
+    static constexpr int kMarkBandH = 15;
+
     MasterStrip::MasterStrip (AudioEngine& eng)
         : engine (eng), meter (eng.getMasterState())
     {
@@ -177,7 +182,7 @@ namespace zynforge
         // Etched maker's mark -- "ZYNFORGE" pressed into the bottom of the
         // master plate like a stamp on forged steel. Deboss: a gloss lower lip
         // + a dark engraved face, so it reads as worked metal, not a label.
-        const auto mark = r.removeFromBottom (15.0f).withTrimmedBottom (2.0f);
+        const auto mark = r.removeFromBottom ((float) kMarkBandH).withTrimmedBottom (2.0f);
         g.setFont (brand::type::label());
         g.setColour (brand::gloss (0.10f));                                  // light lower lip
         g.drawText ("ZYNFORGE", mark.translated (0.0f, 1.0f).toNearestInt(),
@@ -201,6 +206,11 @@ namespace zynforge
         r.removeFromTop (brand::space::sm);
         gainLabel.setBounds (r.removeFromTop (brand::space::xl));
         r.removeFromTop (brand::space::xs);
+
+        // Reserve the etched "ZYNFORGE" maker's-mark band that paint() stamps
+        // into the bottom 15 px of the plate, plus a small gap, so the fader's
+        // value text box doesn't collide with it. Keep in sync with paint().
+        r.removeFromBottom (kMarkBandH + brand::space::xs);
 
         // Meter shrinks in mono since only one bar is needed.
         const int meterW = stereo ? 40 : 26;

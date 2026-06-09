@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (latest, master strip)
+- **The master fader's value box no longer collides with the etched "ZYNFORGE" maker's mark.** `MasterStrip::resized()` laid the meter + fader (whose value text box shows e.g. "0.0 dB") all the way to the plate bottom, but `paint()` stamps the etched wordmark into the bottom 15 px — so the two overlapped. `resized()` now reserves that mark band (shared `kMarkBandH` constant keeps paint + layout in sync).
+
 ### Fixed (latest, console link)
 - **Console reconnect was silently broken.** Disconnecting from the desk and connecting again failed without explanation: `juce::DatagramSocket::shutdown()` permanently invalidates the socket handle (sets it to −1, never reopened), so re-binding the reused socket always returned false. `ConsoleLink` now creates a fresh `DatagramSocket` on every `connect()`. Regression-tested with a real connect → disconnect → reconnect cycle (the test fails on the old code).
 - **Capturing head-amp gains while the desk is unreachable no longer wipes the saved capture.** `captureGains()` clears the in-memory gains before polling; if no replies come back, the delayed auto-save now skips writing rather than overwriting a good `console_state.json` with an empty one.
