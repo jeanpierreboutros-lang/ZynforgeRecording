@@ -390,9 +390,30 @@ universal across ZynForge apps:
   dB ticks at -inf, -60, -30, -10, 0, +6. Thumb is rounded
   (`thumb-radius: lg`).
 - **`meter`** — vertical LED-segment bar with 20 discrete painted
-  segments (NOT a gradient). Bottom ~70% green, next ~15% amber, top
-  ~15% red. Black gaps between segments make it read as physical
-  hardware. Click clears clip.
+  segments (NOT a gradient). Black gaps between segments make it read as
+  physical hardware. Click clears clip. **Forge-heat ramp (brand
+  signature):** the safe zone (bottom ~70%) stays green (live-sound
+  convention), but the hot zone climbs like heated metal — **ember**
+  (`meter-ember`) → **forge-orange** (`meter-hot`) → **white-hot**
+  (`meter-white-hot`) at clip. Loud literally glows like steel in a forge.
+  One ramp helper, `brand::meterHeatAt(frac)`, drives both the segmented
+  and gradient paths. The clip pip is white-hot.
+
+## Brand thesis — "the forge"
+
+ZynForge's visual identity is a **forge**: cold dark steel that runs HOT
+where the signal and the action live. This is functional, not decorative
+(hot = loud / armed / recording), and it's what separates the app from a
+generic dark-grey DAW. The signature surfaces:
+- **Forge-heat meters** (above) — the most-looked-at element.
+- **Ember armed-glow** — a record-armed channel strip gets a warm ember
+  bloom from the top + a hot forge-orange rim (`ChannelStrip::paint`), so a
+  live-to-disk channel reads as heated metal across the room.
+- Reserved/next: milled-steel fader cap, etched maker's-mark wordmark,
+  BigClock ember-underglow while recording.
+Heat tokens live in `BrandColors.h` (`meterEmber` / `meterHot` /
+`meterWhiteHot`); never inline a hot colour — route through the tokens so
+the whole identity tunes from one place.
 
 ## Component Reference — states & variants
 

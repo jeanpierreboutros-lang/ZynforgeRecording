@@ -98,15 +98,9 @@ namespace zynforge
         const float litPeak = linearToNormalisedDb (displayPeakLocal);
         const float litRms  = linearToNormalisedDb (displayRmsLocal);
 
-        // Pick a colour for any height-fraction (0..1) along the meter.
-        auto colourAt = [] (float frac)
-        {
-            // Top 15% red, next 15% amber, rest green -- same proportions as
-            // the segmented mode below.
-            if (frac > 0.85f) return brand::meterRed;
-            if (frac > 0.70f) return brand::meterAmber;
-            return brand::meterGreen;
-        };
+        // Pick a colour for any height-fraction (0..1) along the meter -- the
+        // forge-heat ramp (green safe zone -> ember -> forge-orange -> white-hot).
+        auto colourAt = [] (float frac) { return brand::meterHeatAt (frac); };
 
         // ── Adaptive rendering ──────────────────────────────────────────
         // The segmented LED ladder is the brand look -- match it
@@ -121,11 +115,12 @@ namespace zynforge
 
         if (h < 24.0f)
         {
-            // Smooth gradient bar -- bottom green, top red.
-            juce::ColourGradient grad (brand::meterGreen, r.getX(), r.getBottom(),
-                                       brand::meterRed,   r.getX(), r.getY(), false);
-            grad.addColour (0.70, brand::meterAmber);
-            grad.addColour (0.85, brand::meterRed);
+            // Smooth gradient bar -- forge heat: green safe zone at the bottom,
+            // climbing through ember + forge-orange to white-hot at the top.
+            juce::ColourGradient grad (brand::meterGreen,    r.getX(), r.getBottom(),
+                                       brand::meterWhiteHot, r.getX(), r.getY(), false);
+            grad.addColour (0.70, brand::meterEmber);
+            grad.addColour (0.88, brand::meterHot);
 
             // Background -- idle bar.
             g.setColour (brand::meterIdle);
@@ -157,8 +152,6 @@ namespace zynforge
         // Scale segment count so each segment is at least ~3 px tall.
         const int nSegments = juce::jlimit (8, kNumSegments,
                                             (int) std::round (h / 4.0f));
-        const int red    = juce::jmax (1, nSegments * 15 / 100);
-        const int amber  = juce::jmax (1, nSegments * 15 / 100);
         const float segH = h / (float) nSegments;
         const float gap  = juce::jmax (1.0f, segH * 0.15f);
 
@@ -172,9 +165,9 @@ namespace zynforge
             const bool  litByPeak = frac <= litPeak;
             const bool  litByRms  = frac <= litRms;
 
-            const auto base = (i >= nSegments - red) ? brand::meterRed
-                            : (i >= nSegments - red - amber) ? brand::meterAmber
-                            : brand::meterGreen;
+            // Forge-heat ramp by segment height: green safe zone, then ember /
+            // forge-orange / white-hot as it climbs.
+            const auto base = brand::meterHeatAt (frac);
 
             if (litByRms)        g.setColour (base);
             else if (litByPeak)  g.setColour (base.withAlpha (0.45f));
@@ -238,10 +231,10 @@ namespace zynforge
                         juce::Justification::centredRight, false);
         }
 
-        // Clip pip -- only over the bar area, not the label column.
+        // Clip pip -- white-hot, like metal that's been pushed past temper.
         if (showClip)
         {
-            g.setColour (brand::meterRed);
+            g.setColour (brand::meterWhiteHot);
             g.fillRoundedRectangle (barArea.removeFromTop (5.0f).reduced (1.0f, 0.0f), 1.5f);
         }
     }

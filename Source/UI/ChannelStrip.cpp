@@ -860,11 +860,35 @@ namespace zynforge
         g.setGradientFill (brand::verticalGradient (stripColour, r, 0.18f, 0.28f));
         g.fillRoundedRectangle (r, brand::radius::xl);
 
+        // ── Ember armed-glow (brand signature) ──────────────────────────────
+        // A forged channel runs HOT. When record-armed, the strip gets a warm
+        // ember bloom weighted to the top (where REC / arm live) fading down,
+        // so an armed channel reads as heated steel from across the room. The
+        // meter already supplies the heat motion; this marks the *channel*.
+        const bool isArmed = state.armed.load (std::memory_order_relaxed);
+        if (isArmed)
+        {
+            juce::ColourGradient bloom (brand::meterEmber.withAlpha (0.30f),
+                                        r.getCentreX(), r.getY(),
+                                        brand::meterEmber.withAlpha (0.0f),
+                                        r.getCentreX(), r.getY() + r.getHeight() * 0.55f, false);
+            g.setGradientFill (bloom);
+            g.fillRoundedRectangle (r, brand::radius::xl);
+        }
+
         // Hover border -- a touch brighter than the resting edge so the
         // strip lifts subtly off the canvas.
         const float edgeAlpha = hovered ? 0.55f : 0.30f;
         g.setColour (stripColour.brighter (0.40f).withAlpha (edgeAlpha));
         g.drawRoundedRectangle (r, brand::radius::xl, 1.0f);
+
+        // An armed strip wins the edge: a hot forge-orange rim over the resting
+        // border so "this channel is live to disk" reads instantly.
+        if (isArmed)
+        {
+            g.setColour (brand::meterHot.withAlpha (0.65f));
+            g.drawRoundedRectangle (r.reduced (0.5f), brand::radius::xl, 1.5f);
+        }
 
         // Multi-select highlight -- a 2 px accent-yellow outline so a
         // group of selected strips is unambiguous from the side of the

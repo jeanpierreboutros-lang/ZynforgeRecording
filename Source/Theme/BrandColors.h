@@ -55,6 +55,25 @@ namespace zynforge::brand
     inline const auto meterRed     = juce::Colour::fromRGB (0xdc, 0x38, 0x38);
     inline const auto meterIdle    = juce::Colour::fromRGB (0x2c, 0x30, 0x3a);   // visible against bgDeep
 
+    // ── Forge-heat meter ramp (brand signature) ───────────────────────────
+    // ZynForge's identity: cold steel that runs HOT where the signal lives.
+    // The safe zone stays green (live-sound muscle memory), but the hot zone
+    // climbs like heated metal -- ember → bright forge-orange → white-hot at
+    // clip. Loud literally glows like steel in a forge.
+    inline const auto meterEmber    = juce::Colour::fromRGB (0xe0, 0x55, 0x18);  // ember (heating up)
+    inline const auto meterHot      = juce::Colour::fromRGB (0xff, 0x8a, 0x24);  // bright forge orange
+    inline const auto meterWhiteHot = juce::Colour::fromRGB (0xff, 0xef, 0xcf);  // white-hot (clip-adjacent)
+
+    // Meter colour for a height fraction (0 = floor, 1 = top). Centralises the
+    // ramp so the gradient + segmented paths agree.
+    inline juce::Colour meterHeatAt (float frac) noexcept
+    {
+        if (frac > 0.95f) return meterWhiteHot;   // white-hot tip
+        if (frac > 0.85f) return meterHot;        // bright forge orange
+        if (frac > 0.70f) return meterEmber;      // ember
+        return meterGreen;                         // safe zone
+    }
+
     // ── Transport / control-button chrome (3 hover states) ────────────────
     inline const auto controlBg          = juce::Colour::fromRGB (0x2a, 0x2c, 0x30);
     inline const auto controlBgHover     = juce::Colour::fromRGB (0x36, 0x38, 0x3e);
