@@ -121,6 +121,21 @@ namespace zynforge
                 expectWithinAbsoluteError (sent[0].args[0].getFloat32(), 0.5f, 1.0e-6f);
             }
 
+            beginTest ("connect -> disconnect -> reconnect rebinds a fresh socket");
+            {
+                // Regression: juce::DatagramSocket::shutdown() invalidates the
+                // handle permanently, so a reused socket can't re-bind. A
+                // fresh socket per connect() must let reconnect succeed.
+                ConsoleLink link;          // no send hook -> real socket path
+                expect (link.connect ("127.0.0.1", 10023), "first connect failed");
+                expect (link.isConnected());
+                link.disconnect();
+                expect (! link.isConnected());
+                expect (link.connect ("127.0.0.1", 10023), "RECONNECT failed -- socket not rebound");
+                expect (link.isConnected());
+                link.disconnect();
+            }
+
             beginTest ("stashed patch + gains round-trip through the session JSON");
             {
                 auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)

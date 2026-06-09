@@ -489,6 +489,14 @@ void MainComponent::consoleCaptureGains()
     juce::Timer::callAfterDelay (1500, [self]
     {
         if (self == nullptr) return;
+        // Only persist if replies actually came back -- never clobber a
+        // previously-saved console_state.json with an empty capture (e.g.
+        // the desk went unreachable between connect and capture).
+        if (self->consoleLink.getCapturedGains().empty())
+        {
+            self->showStatus ("No head-amp replies from the console -- gains not saved");
+            return;
+        }
         const auto sess = self->engine.getActiveSessionDir();
         if (sess.isDirectory() && self->consoleLink.saveTo (sess))
             self->showStatus (juce::String ((int) self->consoleLink.getCapturedGains().size())

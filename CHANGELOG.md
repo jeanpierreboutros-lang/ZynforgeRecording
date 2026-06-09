@@ -17,6 +17,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (latest, console link)
+- **Console reconnect was silently broken.** Disconnecting from the desk and connecting again failed without explanation: `juce::DatagramSocket::shutdown()` permanently invalidates the socket handle (sets it to −1, never reopened), so re-binding the reused socket always returned false. `ConsoleLink` now creates a fresh `DatagramSocket` on every `connect()`. Regression-tested with a real connect → disconnect → reconnect cycle (the test fails on the old code).
+- **Capturing head-amp gains while the desk is unreachable no longer wipes the saved capture.** `captureGains()` clears the in-memory gains before polling; if no replies come back, the delayed auto-save now skips writing rather than overwriting a good `console_state.json` with an empty one.
+
 ### Added (latest, console link)
 - **One-tap soundcheck repatch + head-amp gain capture for X32 / M32** (Session ▸ *Console: …*). Connect to the desk over OSC (UDP 10023), then: **SOUNDCHECK patch** first *queries* the console's four input-routing blocks and stashes whatever the show patch is (analog, AES50 stage boxes — no assumptions), then flips them to the card returns; **back to STAGE** restores the stashed patch verbatim. **Capture head-amp gains** polls `/headamp/NNN/gain` for every strip and saves them (with dB values) into the session's `console_state.json`; **restore head-amp gains** writes them back to the desk — recall the preamps to exactly where they were on show night, so virtual soundcheck hits the console at show levels. Stashed patch + gains survive to VSC day with the session and reload on connect. Refuses to "restore" a stage patch it never captured. Every message format is unit-tested against the public X32 OSC protocol through a transport seam (`ConsoleLinkTests`) — no console needed for the suite.
 

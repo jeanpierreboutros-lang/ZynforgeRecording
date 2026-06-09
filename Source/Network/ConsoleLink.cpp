@@ -27,9 +27,12 @@ namespace zynforge
         disconnect();
         // One UDP socket shared by sender + receiver: the X32 replies to
         // the request's source port, so we must listen where we send from.
-        if (! socket.bindToPort (0))                       return false;
-        if (! receiver.connectToSocket (socket))           return false;
-        if (! sender.connectToSocket (socket, targetHost, port)) return false;
+        // A FRESH socket each time -- shutdown() in disconnect() left the
+        // previous one's handle invalid for re-binding.
+        socket = std::make_unique<juce::DatagramSocket> (false);
+        if (! socket->bindToPort (0))                       { socket.reset(); return false; }
+        if (! receiver.connectToSocket (*socket))           { socket.reset(); return false; }
+        if (! sender.connectToSocket (*socket, targetHost, port)) { socket.reset(); return false; }
         host      = targetHost;
         connected = true;
         patch     = Patch::Unknown;
@@ -42,7 +45,7 @@ namespace zynforge
         if (! connected) return;
         sender.disconnect();
         receiver.disconnect();
-        socket.shutdown();
+        socket.reset();           // closes + frees the handle; connect() makes a new one
         connected = false;
         host.clear();
         patch = Patch::Unknown;

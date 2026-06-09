@@ -4,6 +4,7 @@
 
 #include <functional>
 #include <map>
+#include <memory>
 #include <vector>
 
 namespace zynforge
@@ -91,7 +92,11 @@ namespace zynforge
         static juce::String inBlockAddress (int blockIdx);     // /config/routing/IN/1-8 ...
         static juce::String headampAddress (int headampIdx);   // /headamp/000/gain ...
 
-        juce::DatagramSocket socket { false };
+        // Recreated on every connect(): juce::DatagramSocket::shutdown()
+        // permanently invalidates the handle (handle = -1, never reopened),
+        // so a reused socket can't re-bind after a disconnect. A fresh
+        // socket per connect makes disconnect -> reconnect work.
+        std::unique_ptr<juce::DatagramSocket> socket;
         juce::OSCSender      sender;
         juce::OSCReceiver    receiver;
         bool                 connected { false };
