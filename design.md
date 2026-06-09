@@ -419,6 +419,19 @@ generic dark-grey DAW. The signature surfaces:
 - **BigClock ember-underglow** — while recording, the hero timecode plate
   breathes an ember tint + a hot underglow rising from its base
   (`BigClockPanel::paint`), so the centrepiece reads as metal being worked.
+- **Forge-heat waveform (EDIT)** — the EDIT-tab analog of the heat meter:
+  the waveform body stays the channel colour in the quiet centre band but
+  glows ember → forge-orange → white-hot toward the loud peaks
+  (`EditPage` `setHeatWaveFill`, applied to the continuous waveform + clip
+  regions). The live recording envelope is forge-orange. Loud sections read
+  as heated metal at a glance.
+
+**Restraint rule:** bright `meter-hot` is reserved for *live signal /
+armed / recording*; resting chrome stays cold steel (e.g. the fader-cap
+groove uses the calmer `meter-ember`, not the blazing hot, so a 24-strip
+mixer at rest doesn't over-orange). **Legibility wins:** scale numerals
+(fader dB scale) are bold mono in `text-secondary` with a drop-shadow so
+they read in a dark venue over the coloured fill — never `text-muted`.
 Heat tokens live in `BrandColors.h` (`meterEmber` / `meterHot` /
 `meterWhiteHot`); never inline a hot colour — route through the tokens so
 the whole identity tunes from one place.

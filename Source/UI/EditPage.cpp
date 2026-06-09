@@ -558,6 +558,26 @@ namespace zynforge
             const auto waveColour = getStripColour().brighter (0.25f);
             const auto inner = wavePane.reduced (brand::space::xs, brand::space::sm);
 
+            // ── Forge-heat waveform fill (brand signature) ──────────────────
+            // The waveform body stays the channel's own colour in the quiet
+            // centre band, but glows ember → forge-orange → white-hot toward
+            // the loud peaks (the top/bottom extremes of the lane). Loud
+            // sections read as heated metal at a glance -- the EDIT-tab analog
+            // of the forge-heat meter. Set this as the fill before drawChannels
+            // (which fills each waveform column with the current fill type).
+            auto setHeatWaveFill = [this, &g, waveColour] (juce::Rectangle<int> lane)
+            {
+                const float cx  = (float) lane.getCentreX();
+                juce::ColourGradient grad (brand::meterWhiteHot, cx, (float) lane.getY(),
+                                           brand::meterWhiteHot, cx, (float) lane.getBottom(), false);
+                grad.addColour (0.14, brand::meterHot);
+                grad.addColour (0.32, brand::meterEmber);
+                grad.addColour (0.50, waveColour);          // quiet body = channel colour
+                grad.addColour (0.68, brand::meterEmber);
+                grad.addColour (0.86, brand::meterHot);
+                g.setGradientFill (grad);
+            };
+
             // ─── Timeline grid ─────────────────────────────────────────
             // Faint vertical grid behind the clips, aligned to the ruler's
             // 1-2-5 second steps (minor + major), so the time scale reads
@@ -1197,20 +1217,19 @@ namespace zynforge
 
                 if (! liveRecording && thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
                 {
-                    g.setColour (waveColour);
+                    setHeatWaveFill (laneL);
                     thumbnailL.drawChannels (g, laneL, 0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
                 }
                 if (! liveRecording && thumbnailR.getTotalLength() > 0.0 && ! arrangementEmptied)
                 {
-                    g.setColour (waveColour);
+                    setHeatWaveFill (laneR);
                     thumbnailR.drawChannels (g, laneR, 0.0, thumbnailR.getTotalLength(), waveZoom (thumbnailR));
                 }
-                // Live capture envelope -- grows L→R during the take so the
-                // engineer sees recording is happening (the file thumbnail
-                // is empty until stop).
+                // Live capture envelope -- grows L→R during the take, glowing
+                // forge-orange so the engineer sees the take is HOT / rolling.
                 if (liveRecording)
                 {
-                    g.setColour (brand::accentRecord);
+                    g.setColour (brand::meterHot);
                     drawRecEnvelope (g, laneL, recPeakL, vz);
                     drawRecEnvelope (g, laneR, recPeakR, vz);
                 }
@@ -1223,15 +1242,16 @@ namespace zynforge
             }
             else if (liveRecording)
             {
-                // While the take is rolling the live red envelope OWNS the lane
-                // -- never the (possibly partial / cached) file thumbnail, or
-                // the lane shows blocky garbage instead of the growing capture.
-                g.setColour (brand::accentRecord);
+                // While the take is rolling the live forge-orange envelope OWNS
+                // the lane -- never the (possibly partial / cached) file
+                // thumbnail, or the lane shows blocky garbage instead of the
+                // growing capture.
+                g.setColour (brand::meterHot);
                 drawRecEnvelope (g, inner, recPeakL, vz);
             }
             else if (thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
             {
-                g.setColour (waveColour);
+                setHeatWaveFill (inner);
                 thumbnailL.drawChannels (g, inner, 0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
             }
             }   // end "! haveClipBlocks" continuous-waveform fallback
@@ -1300,17 +1320,25 @@ namespace zynforge
                                 // the shape visibly grows when boosted and
                                 // shrinks when cut -- matching what you'll hear.
                                 const float gz = juce::Decibels::decibelsToGain (c.gainDb, -60.0f);
-                                g.setColour (c.muted
-                                    ? clipTint.brighter (0.20f).withAlpha (brand::alpha::muted)
-                                    : clipTint.brighter (0.45f));
+                                // Non-muted clips glow with the forge-heat fill
+                                // (loud = hot); a muted clip stays a dim, cool
+                                // tint so it visibly drops below the rest.
+                                const auto setClipFill = [&] (juce::Rectangle<int> lane)
+                                {
+                                    if (c.muted) g.setColour (clipTint.brighter (0.20f).withAlpha (brand::alpha::muted));
+                                    else         setHeatWaveFill (lane);
+                                };
                                 if (stereo && thumbnailR.getTotalLength() > 0.0)
                                 {
                                     const int half = waveArea.getHeight() / 2;
-                                    thumbnailL.drawChannels (g, waveArea.withHeight (half), t0, t1, waveZoom (thumbnailL) * gz);
-                                    thumbnailR.drawChannels (g, waveArea.withTrimmedTop (half), t0, t1, waveZoom (thumbnailR) * gz);
+                                    auto la = waveArea.withHeight (half);
+                                    auto ra = waveArea.withTrimmedTop (half);
+                                    setClipFill (la); thumbnailL.drawChannels (g, la, t0, t1, waveZoom (thumbnailL) * gz);
+                                    setClipFill (ra); thumbnailR.drawChannels (g, ra, t0, t1, waveZoom (thumbnailR) * gz);
                                 }
                                 else
                                 {
+                                    setClipFill (waveArea);
                                     thumbnailL.drawChannels (g, waveArea, t0, t1, waveZoom (thumbnailL) * gz);
                                 }
                             }

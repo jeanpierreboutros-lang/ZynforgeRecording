@@ -333,11 +333,13 @@ namespace zynforge
                                   thumb.getX() + gripPad,
                                   thumb.getRight() - gripPad);
 
-        // Signature: a single HOT forge groove milled down the steel cap. The
+        // Signature: a single ember forge groove milled down the steel cap. The
         // channel's own colour already shows in the fader FILL below the thumb,
-        // so the cap's hot line is pure brand -- a glowing line worked into
-        // metal. Makes every ZynForge cap unmistakable at a glance.
-        g.setColour (brand::meterHot);
+        // so the cap's line is pure brand -- a warm line worked into metal.
+        // Deliberately the calmer EMBER (not the blazing meterHot): across 24+
+        // strips a bright groove on every cap would over-orange the resting
+        // mixer. Bright hot is reserved for live signal / armed state.
+        g.setColour (brand::meterEmber);
         const float stripeH = 3.0f;
         g.fillRoundedRectangle (
             juce::Rectangle<float> (thumb.getX() + 2.0f,

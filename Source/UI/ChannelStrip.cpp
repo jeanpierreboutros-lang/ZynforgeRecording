@@ -26,28 +26,37 @@ namespace zynforge
                 return (int) (bottom - prop * (double) trackH);
             };
 
-            g.setColour (brand::textMuted);
-            g.setFont (brand::type::label());
+            // Crisp tabular (mono, bold) numerals -- a dB scale must be
+            // glanceable in a dark venue, so legibility wins over subtlety.
+            g.setFont (brand::type::mono (10.0f, true));
 
-            // dB tick values (top → bottom) -- matches the reference
-            // screenshot. Positive values keep the '+' sign, negatives
-            // drop the minus to keep the column tight.
+            // Draw a label with a 1 px dark drop-shadow then a bright face, so
+            // it stays readable both over the dark track AND over the coloured
+            // fader fill below the thumb.
+            auto drawScaleLabel = [&] (const juce::String& txt, int y)
+            {
+                const auto box = juce::Rectangle<int> (6, y - 6, getWidth() - 6, 12);
+                g.setColour (brand::shadow::elev3());
+                g.drawText (txt, box.translated (0, 1), juce::Justification::centredLeft, false);
+                g.setColour (brand::textSecondary);
+                g.drawText (txt, box, juce::Justification::centredLeft, false);
+            };
+
+            // dB tick values (top → bottom). Positive values keep the '+' sign,
+            // negatives drop the minus to keep the column tight.
             const int dBValues[] = { 12, 6, 0, -5, -10, -15, -20, -30, -40, -60 };
             for (int dB : dBValues)
             {
                 if ((float) dB < minDb || (float) dB > maxDb) continue;
                 const int y = yForDb ((float) dB);
+                g.setColour (brand::textTertiary);
                 g.drawHorizontalLine (y, 0.0f, 4.0f);
-                const auto txt = (dB > 0) ? "+" + juce::String (dB)
-                                          : juce::String (std::abs (dB));
-                g.drawText (txt, 6, y - 6, getWidth() - 6, 12,
-                            juce::Justification::centredLeft, false);
+                drawScaleLabel ((dB > 0) ? "+" + juce::String (dB)
+                                         : juce::String (std::abs (dB)), y);
             }
 
             // Infinity glyph at the bottom of the range.
-            g.drawText (juce::String::fromUTF8 ("\xe2\x88\x9e"),
-                        6, bottom - 12, getWidth() - 6, 12,
-                        juce::Justification::centredLeft, false);
+            drawScaleLabel (juce::String::fromUTF8 ("\xe2\x88\x9e"), bottom - 6);
         }
 
     private:
