@@ -173,6 +173,17 @@ namespace zynforge
         g.fillRoundedRectangle (r, brand::radius::xl);
         g.setColour (brand::brandOrange.withAlpha (brand::alpha::ghost));
         g.drawRoundedRectangle (r, brand::radius::xl, 1.5f);
+
+        // Etched maker's mark -- "ZYNFORGE" pressed into the bottom of the
+        // master plate like a stamp on forged steel. Deboss: a gloss lower lip
+        // + a dark engraved face, so it reads as worked metal, not a label.
+        const auto mark = r.removeFromBottom (15.0f).withTrimmedBottom (2.0f);
+        g.setFont (brand::type::label());
+        g.setColour (brand::gloss (0.10f));                                  // light lower lip
+        g.drawText ("ZYNFORGE", mark.translated (0.0f, 1.0f).toNearestInt(),
+                    juce::Justification::centred, false);
+        g.setColour (brand::bgDeep);                                         // engraved (recessed) face
+        g.drawText ("ZYNFORGE", mark.toNearestInt(), juce::Justification::centred, false);
     }
 
     void MasterStrip::resized()

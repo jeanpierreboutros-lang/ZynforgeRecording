@@ -110,12 +110,9 @@ namespace zynforge
         // can read 'rolling' from across the room without looking at
         // the timer value.
         juce::Colour bg = brand::bgPanel;
+        const float pulse = 0.5f + 0.5f * std::sin (pulsePhase);      // 0..1
         if (mode == Mode::Recording)
-        {
-            const float pulse = 0.5f + 0.5f * std::sin (pulsePhase);  // 0..1
-            const float a = 0.12f + 0.08f * pulse;                    // 0.12..0.20
-            bg = brand::accentRecord.withAlpha (a);
-        }
+            bg = brand::meterEmber.withAlpha (0.14f + 0.10f * pulse); // ember, breathing
         else if (mode == Mode::Playing) bg = brand::accentPlay.withAlpha (0.14f);
         auto bgRect = r.reduced (2.0f);
         g.setGradientFill (juce::ColourGradient (
@@ -123,6 +120,18 @@ namespace zynforge
             bg.darker   (0.18f), bgRect.getCentreX(), bgRect.getBottom(),
             false));
         g.fillRoundedRectangle (bgRect, brand::radius::lg);
+
+        // Forge ember-underglow -- while recording, heat rises from the base of
+        // the plate behind the timecode (breathing at 1 Hz), so the centrepiece
+        // reads as metal being worked, not just a red lamp.
+        if (mode == Mode::Recording)
+        {
+            g.setGradientFill (juce::ColourGradient (
+                brand::meterHot.withAlpha (0.0f),                  bgRect.getCentreX(), bgRect.getCentreY(),
+                brand::meterHot.withAlpha (0.16f + 0.12f * pulse), bgRect.getCentreX(), bgRect.getBottom(),
+                false));
+            g.fillRoundedRectangle (bgRect, brand::radius::lg);
+        }
 
         // Soft top highlight -- reinforces the glass / depth feel and
         // makes the timer read as raised metal under stage lights.

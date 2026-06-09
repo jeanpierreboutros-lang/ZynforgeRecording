@@ -333,14 +333,22 @@ namespace zynforge
                                   thumb.getX() + gripPad,
                                   thumb.getRight() - gripPad);
 
-        // Centre highlight stripe -- coloured by the slider's thumb colour
-        // so each channel's cap accent matches its fader fill.
-        g.setColour (s.findColour (juce::Slider::thumbColourId).brighter (0.30f));
+        // Signature: a single HOT forge groove milled down the steel cap. The
+        // channel's own colour already shows in the fader FILL below the thumb,
+        // so the cap's hot line is pure brand -- a glowing line worked into
+        // metal. Makes every ZynForge cap unmistakable at a glance.
+        g.setColour (brand::meterHot);
         const float stripeH = 3.0f;
         g.fillRoundedRectangle (
             juce::Rectangle<float> (thumb.getX() + 2.0f,
                                     thumb.getCentreY() - stripeH * 0.5f,
                                     thumb.getWidth() - 4.0f, stripeH),
             1.0f);
+
+        // Milled top sheen -- a thin specular line along the cap's top edge so
+        // it reads as machined steel under stage light, not moulded plastic.
+        g.setColour (brand::gloss (0.35f));
+        g.drawHorizontalLine ((int) (thumb.getY() + 1.5f),
+                              thumb.getX() + 3.0f, thumb.getRight() - 3.0f);
     }
 }

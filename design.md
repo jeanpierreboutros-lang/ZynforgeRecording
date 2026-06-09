@@ -409,8 +409,16 @@ generic dark-grey DAW. The signature surfaces:
 - **Ember armed-glow** — a record-armed channel strip gets a warm ember
   bloom from the top + a hot forge-orange rim (`ChannelStrip::paint`), so a
   live-to-disk channel reads as heated metal across the room.
-- Reserved/next: milled-steel fader cap, etched maker's-mark wordmark,
-  BigClock ember-underglow while recording.
+- **Milled-steel fader cap** — the fader thumb has a single HOT forge groove
+  (`meter-hot`) milled down its centre + a gloss top sheen
+  (`ZynForgeLookAndFeel::drawLinearSlider`). The channel colour shows in the
+  fader *fill*, so the cap's hot line is pure brand.
+- **Etched maker's mark** — a debossed "ZYNFORGE" pressed into the bottom of
+  the master plate (`MasterStrip::paint`): gloss lower lip + dark engraved
+  face, like a stamp on forged steel.
+- **BigClock ember-underglow** — while recording, the hero timecode plate
+  breathes an ember tint + a hot underglow rising from its base
+  (`BigClockPanel::paint`), so the centrepiece reads as metal being worked.
 Heat tokens live in `BrandColors.h` (`meterEmber` / `meterHot` /
 `meterWhiteHot`); never inline a hot colour — route through the tokens so
 the whole identity tunes from one place.
