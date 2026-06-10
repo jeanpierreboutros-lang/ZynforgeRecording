@@ -70,7 +70,7 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Ap
 - **Imported stereo files stay one stereo track** — collapsed to a single strip with one stereo meter, persisted across reopen, and bounced/exported as one stereo file
 - **Post-show QC report** — one click scans every track for peak / integrated LUFS / clipping events (with timecode) / noise floor, pops a sortable table and writes a text report next to the exports
 - **Detect songs → markers** — multi-track quorum scan (crowd noise on ambient mics doesn't fool it) drops a named marker at every song start for instant next-day navigation
-- **X32 / M32 console link** — one menu action repatches the desk's inputs to the card returns for virtual soundcheck and back (the show patch is queried and stashed first, never assumed); head-amp gains capture on show night into the session and restore to the desk on VSC day
+- **Console link (pluggable per console family)** — pick your desk in the connect dialog. On a **Behringer X32 / Midas M32** one menu action repatches the inputs to the card returns for virtual soundcheck and back (the show patch is queried and stashed first, never assumed), and head-amp gains capture on show night into the session and restore to the desk on VSC day. **DiGiCo, Yamaha, SSL, Allen & Heath** ship as native-VSC profiles — ZynForge records and plays their record card and the console's own Virtual Soundcheck does the repatch (deeper over-the-wire control for those is on the roadmap)
 
 ### Metering
 - Adaptive LED meters per strip + master; sticky clip latch

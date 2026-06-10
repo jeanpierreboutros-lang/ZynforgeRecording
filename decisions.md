@@ -252,6 +252,18 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Console VSC control is profile-based, not one universal protocol — 2026-06-10
+
+**Status:** Accepted (X32 reference shipped; other profiles are capability-declared placeholders pending hardware)
+**Context:** The outbound virtual-soundcheck control (soundcheck⇄stage repatch + head-amp gain capture) shipped X32/M32-only. The goal is "works with all the mixers" — DiGiCo, Yamaha, SSL, Allen & Heath. But "universal" is NOT four more OSC dialects: (a) console control protocols differ — X32 is OSC/UDP, Yamaha is **SCP over TCP**, A&H is MIDI/TCP, DiGiCo/SSL have partial/version-specific OSC; and (b) crucially, the large-format desks **already have a native Virtual Soundcheck mode** that flips every input between the stage preamps and the Dante/MADI record card in one console action. So per-input repatch automation is mainly valuable for **X32-class desks that have no native VSC button** but do expose a clean OSC routing model.
+**Decision:** Make `ConsoleLink` a transport + state machine driven by a pluggable **`ConsoleProfile`** (`Source/Network/ConsoleProfile.h`). A profile declares its capabilities honestly (`canRepatch`, `canCaptureGains`, `hasNativeVsc`) and, when applicable, the OSC address model. `ConsoleLink` guards every action on the active profile's capabilities. The X32/M32 profile is the full reference implementation; DiGiCo / Yamaha / SSL / A&H ship as capability-declared profiles (`hasNativeVsc=true`, repatch/gain over the wire = false) that point the engineer at the console's own VSC, until their control protocols are wired + verified on real hardware.
+**Rationale:** Encodes the real-world truth instead of faking it — the app doesn't pretend to repatch a DiGiCo it can't talk to, and it doesn't need to (the desk's native VSC does it). The architecture is genuinely universal (any console plugs in as a profile), and the value-add automation lights up exactly where it's wanted (OSC desks without native VSC). UI surfaces a console picker; capability-gated menu items grey out for native-VSC desks.
+**Consequences:** + Honest, pluggable, ready for per-console wiring. + The market story is "works with your console" (record/play into any card + native VSC), with deep automation on X32-class desks. − Full repatch/gain on Yamaha (SCP/TCP) or A&H (MIDI/TCP) needs a second transport layer, not just an address profile — tracked. − Each concrete non-X32 profile needs hardware to verify.
+**Alternatives Considered:** Add OSC dialects like `OscRemote` does for inbound — rejected: most target desks don't expose repatch over OSC and several aren't OSC at all. Fake/stub repatch for all consoles — rejected: dishonest and dangerous (would claim to flip a patch it can't).
+**Related Documents:** `Source/Network/ConsoleProfile.h`, `ConsoleLink.{h,cpp}`, `ConsoleLinkTests`; inbound `OscRemote` (5-dialect parser) is the analog for the receive side.
+
+---
+
 ## Capture-process split (headless record daemon) — 2026-06-10
 
 **Status:** Proposed (design accepted, phased; no code yet)

@@ -108,10 +108,10 @@ namespace zynforge
                 const auto& g = link.getCapturedGains();
                 expectEquals ((int) g.size(), 3);
                 expectWithinAbsoluteError (g.at (0), 0.5f, 1.0e-6f);
-                // Raw 0..1 maps -12..+60 dB.
-                expectWithinAbsoluteError (ConsoleLink::gainToDb (g.at (0)), 24.0f, 1.0e-4f);
-                expectWithinAbsoluteError (ConsoleLink::gainToDb (g.at (1)), -12.0f, 1.0e-4f);
-                expectWithinAbsoluteError (ConsoleLink::gainToDb (g.at (2)), 60.0f, 1.0e-4f);
+                // Raw 0..1 maps -12..+60 dB (via the active X32 profile).
+                expectWithinAbsoluteError (link.gainToDb (g.at (0)), 24.0f, 1.0e-4f);
+                expectWithinAbsoluteError (link.gainToDb (g.at (1)), -12.0f, 1.0e-4f);
+                expectWithinAbsoluteError (link.gainToDb (g.at (2)), 60.0f, 1.0e-4f);
 
                 // Restore writes the same floats back to the same heads.
                 sent.clear();
@@ -176,6 +176,31 @@ namespace zynforge
                 expectEquals ((int) sent[0].args[0].getInt32(), 10);
 
                 dir.deleteRecursively();
+            }
+
+            beginTest ("profile selection drives capabilities + a native-VSC desk refuses OSC repatch");
+            {
+                ConsoleLink link;
+                // Default is the X32 reference profile: full OSC control.
+                expect (link.getProfile().kind == ConsoleProfile::Kind::BehringerX32);
+                expect (link.getProfile().canRepatch);
+                expect (link.getProfile().canCaptureGains);
+
+                // A large-format desk: native VSC, no OSC repatch/gain.
+                link.setProfile (ConsoleProfile::Kind::DiGiCo);
+                expect (link.getProfile().kind == ConsoleProfile::Kind::DiGiCo);
+                expect (! link.getProfile().canRepatch);
+                expect (link.getProfile().hasNativeVsc);
+
+                int sent = 0;
+                link.setSendHook ([&sent] (const juce::OSCMessage&) { ++sent; });
+                link.enterSoundcheck();      // must NOT touch the wire
+                link.captureGains (8);       // must NOT touch the wire
+                expectEquals (sent, 0, "native-VSC profile sent OSC it shouldn't");
+
+                // The X32 profile uses port 10023; the catalogue has 6 entries.
+                expectEquals (consoleProfileFor (ConsoleProfile::Kind::BehringerX32).defaultPort, 10023);
+                expect ((int) consoleProfiles().size() >= 5);
             }
         }
     };

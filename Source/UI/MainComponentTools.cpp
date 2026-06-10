@@ -427,27 +427,45 @@ void MainComponent::promptConsoleConnect()
         return;
     }
 
-    const auto lastHost = engine.getAppProps() != nullptr
-        ? engine.getAppProps()->getValue ("consoleHost", "192.168.1.10")
+    auto* props = engine.getAppProps();
+    const auto lastHost = props != nullptr
+        ? props->getValue ("consoleHost", "192.168.1.10")
         : juce::String ("192.168.1.10");
+    const int lastProfile = props != nullptr ? props->getIntValue ("consoleProfile", 0) : 0;
 
     auto* aw = new juce::AlertWindow ("Connect to console",
-                                      "X32 / M32 IP address (OSC on UDP 10023). "
-                                      "Used for soundcheck repatch + head-amp gain capture.",
+                                      "Pick your console family and enter its IP. The X32 / M32 "
+                                      "is driven fully over OSC (repatch + head-amp gains); the "
+                                      "large-format desks use their own Virtual Soundcheck mode.",
                                       juce::MessageBoxIconType::NoIcon);
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
+
+    const auto profiles = zynforge::consoleProfiles();
+    juce::StringArray profileNames;
+    for (auto& p : profiles) profileNames.add (p.displayName);
+    aw->addComboBox ("console", profileNames, "Console:");
+    if (auto* cb = aw->getComboBoxComponent ("console"))
+        cb->setSelectedItemIndex (juce::jlimit (0, profileNames.size() - 1, lastProfile),
+                                  juce::dontSendNotification);
+
     aw->addTextEditor ("host", lastHost, "Console IP:");
     dialog::primeNameEditor (*aw, "host");
     aw->addButton ("Connect", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel",  0, juce::KeyPress (juce::KeyPress::escapeKey));
 
     aw->enterModalState (true,
-        juce::ModalCallbackFunction::create ([this, aw] (int result)
+        juce::ModalCallbackFunction::create ([this, aw, profiles] (int result)
         {
             std::unique_ptr<juce::AlertWindow> dispose (aw);
             if (result != 1) return;
             const auto host = aw->getTextEditorContents ("host").trim();
             if (host.isEmpty()) return;
+
+            const int profileIdx = aw->getComboBoxComponent ("console") != nullptr
+                ? juce::jlimit (0, (int) profiles.size() - 1,
+                                aw->getComboBoxComponent ("console")->getSelectedItemIndex())
+                : 0;
+            consoleLink.setProfile (profiles[(size_t) profileIdx].kind);
 
             consoleLink.onStatus = [this] (const juce::String& s) { showStatus (s); };
             if (! consoleLink.connect (host))
@@ -458,8 +476,14 @@ void MainComponent::promptConsoleConnect()
             if (auto* p = engine.getAppProps())
             {
                 p->setValue ("consoleHost", host);
+                p->setValue ("consoleProfile", profileIdx);
                 p->saveIfNeeded();
             }
+            // For a native-VSC desk, point the engineer at the console.
+            if (! consoleLink.getProfile().canRepatch
+                && consoleLink.getProfile().note.isNotEmpty())
+                showStatus (consoleLink.getProfile().displayName + " -- "
+                            + consoleLink.getProfile().note);
             // Show-night state saved with the session (stage patch +
             // gains) comes back automatically on VSC day.
             const auto sess = engine.getActiveSessionDir();

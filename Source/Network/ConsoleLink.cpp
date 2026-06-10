@@ -2,15 +2,6 @@
 
 namespace zynforge
 {
-    // X32 input-routing block addresses, in block order 0..3.
-    static const char* const kInBlockAddr[ConsoleLink::kNumInBlocks] =
-    {
-        "/config/routing/IN/1-8",
-        "/config/routing/IN/9-16",
-        "/config/routing/IN/17-24",
-        "/config/routing/IN/25-32",
-    };
-
     ConsoleLink::ConsoleLink()
     {
         receiver.addListener (this);
@@ -22,21 +13,33 @@ namespace zynforge
         disconnect();
     }
 
+    void ConsoleLink::setProfile (ConsoleProfile::Kind k)
+    {
+        if (k == profile.kind) return;
+        disconnect();                       // addresses / port change with the desk
+        profile = consoleProfileFor (k);
+        stagePatch.clear();
+        gains.clear();
+        patch = Patch::Unknown;
+    }
+
     bool ConsoleLink::connect (const juce::String& targetHost, int port)
     {
         disconnect();
-        // One UDP socket shared by sender + receiver: the X32 replies to
+        const int usePort = port > 0 ? port : profile.defaultPort;
+        // One UDP socket shared by sender + receiver: the desk replies to
         // the request's source port, so we must listen where we send from.
         // A FRESH socket each time -- shutdown() in disconnect() left the
         // previous one's handle invalid for re-binding.
         socket = std::make_unique<juce::DatagramSocket> (false);
         if (! socket->bindToPort (0))                       { socket.reset(); return false; }
         if (! receiver.connectToSocket (*socket))           { socket.reset(); return false; }
-        if (! sender.connectToSocket (*socket, targetHost, port)) { socket.reset(); return false; }
+        if (! sender.connectToSocket (*socket, targetHost, usePort)) { socket.reset(); return false; }
         host      = targetHost;
         connected = true;
         patch     = Patch::Unknown;
-        if (onStatus) onStatus ("Console link up: " + targetHost + ":" + juce::String (port));
+        if (onStatus) onStatus (profile.displayName + " link up: "
+                                + targetHost + ":" + juce::String (usePort));
         return true;
     }
 
@@ -51,15 +54,14 @@ namespace zynforge
         patch = Patch::Unknown;
     }
 
-    juce::String ConsoleLink::inBlockAddress (int blockIdx)
+    juce::String ConsoleLink::inBlockAddress (int blockIdx) const
     {
-        return blockIdx >= 0 && blockIdx < kNumInBlocks ? kInBlockAddr[blockIdx]
-                                                        : juce::String();
+        return profile.inBlockAddress ? profile.inBlockAddress (blockIdx) : juce::String();
     }
 
-    juce::String ConsoleLink::headampAddress (int headampIdx)
+    juce::String ConsoleLink::headampAddress (int headampIdx) const
     {
-        return "/headamp/" + juce::String (headampIdx).paddedLeft ('0', 3) + "/gain";
+        return profile.gainAddress ? profile.gainAddress (headampIdx) : juce::String();
     }
 
     void ConsoleLink::sendMessage (const juce::OSCMessage& m)
@@ -71,20 +73,27 @@ namespace zynforge
     void ConsoleLink::enterSoundcheck()
     {
         if (! connected) return;
-        // Phase 1: query the current routing of all four blocks. The
-        // replies stash the show patch; once all four are in, phase 2
-        // (in oscMessageReceived) flips the blocks to the card returns.
+        if (! profile.canRepatch)
+        {
+            if (onStatus) onStatus (profile.hasNativeVsc
+                ? profile.displayName + ": use the console's Virtual Soundcheck mode."
+                : profile.displayName + ": repatch over the wire isn't supported.");
+            return;
+        }
+        // Phase 1: query the current routing of every block. The replies
+        // stash the show patch; once all are in, phase 2 (in
+        // oscMessageReceived) flips the blocks to the card returns.
         stagePatch.clear();
-        pendingPatchQueries = kNumInBlocks;
-        for (int b = 0; b < kNumInBlocks; ++b)
+        pendingPatchQueries = profile.numInBlocks;
+        for (int b = 0; b < profile.numInBlocks; ++b)
             sendMessage (juce::OSCMessage (juce::OSCAddressPattern (inBlockAddress (b))));
         if (onStatus) onStatus ("Reading console patch...");
     }
 
     void ConsoleLink::exitSoundcheck()
     {
-        if (! connected) return;
-        if (stagePatch.size() < (size_t) kNumInBlocks)
+        if (! connected || ! profile.canRepatch) return;
+        if (stagePatch.size() < (size_t) profile.numInBlocks)
         {
             if (onStatus) onStatus ("No stashed stage patch -- enter soundcheck first.");
             return;
@@ -99,6 +108,11 @@ namespace zynforge
     void ConsoleLink::captureGains (int numHeadamps)
     {
         if (! connected) return;
+        if (! profile.canCaptureGains)
+        {
+            if (onStatus) onStatus (profile.displayName + ": head-amp gain capture isn't supported.");
+            return;
+        }
         gains.clear();
         expectedGainReplies = juce::jlimit (0, 128, numHeadamps);
         for (int i = 0; i < expectedGainReplies; ++i)
@@ -109,7 +123,7 @@ namespace zynforge
 
     void ConsoleLink::restoreGains()
     {
-        if (! connected) return;
+        if (! connected || ! profile.canCaptureGains) return;
         if (gains.empty())
         {
             if (onStatus) onStatus ("No captured gains to restore.");
@@ -127,7 +141,7 @@ namespace zynforge
         const auto addr = m.getAddressPattern().toString();
 
         // Routing-block reply (query response carries the enum as int).
-        for (int b = 0; b < kNumInBlocks; ++b)
+        for (int b = 0; b < profile.numInBlocks; ++b)
         {
             if (addr != inBlockAddress (b)) continue;
             if (m.size() < 1 || ! m[0].isInt32()) return;
@@ -137,10 +151,10 @@ namespace zynforge
                 if (--pendingPatchQueries == 0)
                 {
                     // Phase 2: full show patch stashed -> flip to card.
-                    for (int blk = 0; blk < kNumInBlocks; ++blk)
+                    for (int blk = 0; blk < profile.numInBlocks; ++blk)
                         sendMessage (juce::OSCMessage (
                             juce::OSCAddressPattern (inBlockAddress (blk)),
-                            (juce::int32) (kCardBlockFirst + blk)));
+                            (juce::int32) (profile.cardBlockFirst + blk)));
                     patch = Patch::Soundcheck;
                     if (onStatus) onStatus ("Console repatched to SOUNDCHECK (card returns); show patch stashed.");
                 }
@@ -173,7 +187,7 @@ namespace zynforge
         obj->setProperty ("capturedAt", juce::Time::getCurrentTime().toISO8601 (true));
 
         juce::Array<juce::var> patchArr;
-        for (int b = 0; b < kNumInBlocks; ++b)
+        for (int b = 0; b < profile.numInBlocks; ++b)
         {
             auto it = stagePatch.find (b);
             patchArr.add (it != stagePatch.end() ? it->second : -1);
@@ -199,7 +213,7 @@ namespace zynforge
         if (auto* patchArr = v.getProperty ("stagePatch", {}).getArray())
         {
             stagePatch.clear();
-            for (int b = 0; b < juce::jmin (kNumInBlocks, patchArr->size()); ++b)
+            for (int b = 0; b < patchArr->size(); ++b)
                 if ((int) (*patchArr)[b] >= 0)
                     stagePatch[b] = (int) (*patchArr)[b];
         }

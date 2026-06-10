@@ -253,15 +253,18 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // Console link (ids 954-957: high ids, outside every dispatch range).
         menu.addItem (954, consoleLink.isConnected()
                               ? "Console: disconnect " + consoleLink.getHost()
-                              : juce::String ("Console: connect (X32/M32)..."));
+                              : juce::String ("Console: connect..."));
+        // Repatch + gain items only light up for a desk we drive over OSC.
+        const bool consoleRepatch = consoleLink.isConnected() && consoleLink.getProfile().canRepatch;
+        const bool consoleGains   = consoleLink.isConnected() && consoleLink.getProfile().canCaptureGains;
         menu.addItem (955, consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck
                               ? "Console: back to STAGE patch"
                               : "Console: SOUNDCHECK patch (card returns)",
-                      consoleLink.isConnected());
+                      consoleRepatch);
         menu.addItem (956, "Console: capture head-amp gains",
-                      consoleLink.isConnected());
+                      consoleGains);
         menu.addItem (957, "Console: restore head-amp gains",
-                      consoleLink.isConnected());
+                      consoleGains);
         menu.addSeparator();
         menu.addItem (290, sessionMirror.isMirroring()
                               ? "Stop mirroring " + sessionMirror.getPrimary()
@@ -302,7 +305,9 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) engine.getChaseMode()
         << '|' << engine.getLtcSourceStrip()
         << '|' << (int) consoleLink.isConnected()
-        << '|' << (int) consoleLink.getPatch();
+        << '|' << (int) consoleLink.getPatch()
+        << '|' << (int) consoleLink.getProfile().canRepatch
+        << '|' << (int) consoleLink.getProfile().canCaptureGains;
 
     if (sig != lastMenuStateSig)
     {
