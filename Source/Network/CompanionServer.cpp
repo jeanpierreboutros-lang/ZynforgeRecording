@@ -367,28 +367,12 @@ setInterval(tick, 500); tick();
 
     void CompanionServer::writeStateJson (juce::StreamingSocket& s)
     {
-        juce::DynamicObject::Ptr root (new juce::DynamicObject());
-        root->setProperty ("recording", engine.isRecording());
-        root->setProperty ("playing",   engine.getPlayer().isPlaying());
-        const int n = engine.getRecorder().getNumTracks();
-        juce::Array<juce::var> arr;
-        for (int i = 0; i < n; ++i)
-        {
-            auto& t = engine.getRecorder().getTrack (i);
-            juce::DynamicObject::Ptr td (new juce::DynamicObject());
-            td->setProperty ("name",   t.name);
-            td->setProperty ("armed",  t.armed .load());
-            td->setProperty ("muted",  t.muted .load());
-            td->setProperty ("soloed", t.soloed.load());
-            td->setProperty ("peak",   t.peak  .load());
-            const auto argb = t.colourARGB.load();
-            const auto col  = argb != 0 ? juce::Colour ((juce::uint32) argb)
-                                        : zynforge::brand::swatchGraphite;
-            td->setProperty ("colour", "#" + col.toString().substring (2));
-            arr.add (juce::var (td.get()));
-        }
-        root->setProperty ("tracks", juce::var (arr));
-        writeRaw (s, "200 OK", "application/json", juce::JSON::toString (juce::var (root.get())));
+        // Phase-0 status boundary: serve the engine's canonical EngineStatus
+        // snapshot instead of reaching into recorder internals here. Same JSON
+        // shape the web client already consumes (recording / playing /
+        // tracks[].{name,armed,muted,soloed,peak,colour}) plus richer fields.
+        const auto json = engine.captureStatus().toJson();
+        writeRaw (s, "200 OK", "application/json", juce::JSON::toString (json));
     }
 
     void CompanionServer::handleCommand (juce::StreamingSocket& s, const juce::String& body)

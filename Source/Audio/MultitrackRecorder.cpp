@@ -1148,6 +1148,12 @@ namespace zynforge
     {
         if (! writersReady.load (std::memory_order_acquire)) return;
 
+        // One drainer per shard at a time: the shard's TimeSliceThread and a
+        // fan-out drainOnce() (stopRecording flush / drainPendingForTests)
+        // must not read the single-reader FIFO concurrently. Consumer-side
+        // only -- never contends the audio thread.
+        const juce::ScopedLock sl (shard.drainLock);
+
         const auto t0 = juce::Time::getMillisecondCounterHiRes();
         juce::int64 totalWritten = 0;
         int         worstFillPct = 0;

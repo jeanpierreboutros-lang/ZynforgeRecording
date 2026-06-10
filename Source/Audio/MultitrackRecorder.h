@@ -200,6 +200,15 @@ namespace zynforge
             double              throughputWindowMs    { 0.0 };
             std::atomic<int>    shardRingFillPct      { 0 };
 
+            // Serialises drainShard() for THIS shard. The FIFO is single-
+            // reader, but the shard's own TimeSliceThread and a fan-out
+            // drainOnce() (stopRecording's final flush, or the test harness's
+            // drainPendingForTests) can both try to drain it -- two readers
+            // corrupt the FIFO + the part-file/byte bookkeeping. Per-shard
+            // (not global) so different shards still drain in parallel.
+            // Never taken on the audio thread (drainShard is consumer-side).
+            juce::CriticalSection drainLock;
+
             int useTimeSlice() override;
         };
 

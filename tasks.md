@@ -27,7 +27,7 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Backlog
 
-- [ ] **Capture-process split, phase 0: boundary hygiene** (M) — narrow, serialisable engine→UI status struct for everything the UI reads during recording (transport, peaks, disk stats, missed samples); no UI code touches recorder internals directly. Prereq for the daemon; shippable alone. See the 2026-06-10 ADR in `decisions.md`.
+- [~] **Capture-process split, phase 0: boundary hygiene** (M) — **first increment DONE 2026-06-10.** Canonical serialisable `EngineStatus` (`Source/Audio/EngineStatus.h`) + `AudioEngine::captureStatus()` + JSON round-trip (`EngineStatusTests`); companion `/state.json` migrated onto it. **Remaining:** migrate the UI readouts (PerfDashboard / BigClockPanel / record-status line) off the scattered `engine.isRecording()` / `getRecorder().getTrack()` / disk getters onto `captureStatus()` — per-consumer, low-risk. Per-track meters (LedMeter holding `TrackState&`) can stay until Phase 1.
 - [ ] **Capture-process split, phase 1: `zynforge-capture` daemon** (L) — headless binary owning the device callback + `MultitrackRecorder`, GUI as client over a versioned local-socket protocol (start from the companion-server protocol). GUI death must not stop the take.
 - [ ] **Capture-process split, phase 2: supervision + mid-take reattach** (L) — restarted GUI discovers and reattaches to a rolling daemon; bidirectional watchdogs.
 - [ ] **De-flake 'session.report.json enumerates Track_NN_partXX files in order'** (S) — failed 1 in 5 full-suite runs on 2026-06-10 (test 10 in the group), passes in isolation; likely a timing/window race like the volume-automation flake fixed 2026-06-09. Find the race, fix the test (or the code, if it's real).
@@ -48,6 +48,12 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 - [ ] ~~Per-track plugin slots / AU / VST hosting~~ — explicitly rejected. See `decisions.md` *No plugin hosting*. Recorded here so future contributors don't relitigate.
 
 ## Recently Completed
+
+### 2026-06-10 (night) — capture-split Phase 0 + partXX de-flake + console-profile refactor + EDIT playhead
+- [x] **Capture-split Phase 0 (first increment)** (M) — canonical `EngineStatus` boundary + `captureStatus()` + JSON round-trip; companion `/state.json` migrated onto it. `EngineStatusTests`.
+- [x] **De-flaked `session.report.json` partXX enumeration** (S) — per-shard drain lock; was 2/30, now 0/50 + 0/25. Latent production race in stopRecording's flush too.
+- [x] **Console link is profile-based** (L) — pluggable `ConsoleProfile` per console family; X32 reference + native-VSC profiles for DiGiCo/Yamaha/SSL/A&H; connect-dialog picker. ADR in `decisions.md`.
+- [x] **EDIT ruler/lane playhead alignment** (S) — shared inset-aware mapping helpers; the two playheads now line up at any zoom.
 
 ### 2026-06-10 (later) — stereo-import fidelity + master-strip fix + debug pass
 - [x] **Imported stereo file behaves as ONE stereo track everywhere** (M) — pan spread hard-L/R on import; pairing persisted to `session_mix.json` on import (survives reopen, no re-split); Meterbridge collapses to one stereo meter; *Export individual tracks* lists one "(stereo)" row; export/bounce writes one interleaved stereo file (`TrackExporter::exportStereoPair` + `AudioEngine::bounceStereoPairToWav`). Storage stays mono-per-channel by design. `StereoExportTests` + a bounce-pair case in `AudioCallbackTests`.

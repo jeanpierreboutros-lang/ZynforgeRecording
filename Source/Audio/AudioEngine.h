@@ -14,6 +14,7 @@
 #include <map>
 #include "ITransport.h"
 #include "ClipModel.h"
+#include "EngineStatus.h"
 #include "MultitrackRecorder.h"
 #include "SessionPlayer.h"
 #include "LoudnessMeter.h"
@@ -1107,6 +1108,13 @@ namespace zynforge
         std::atomic<float>  ringFillPct      { 0.0f };
     public:
         float  getAudioLoadPct() const noexcept { return audioLoadPct.load (std::memory_order_relaxed); }
+
+        // Phase-0 status boundary: one serialisable snapshot of transport +
+        // disk + per-track state, so consumers (UI readouts, companion
+        // server, a future capture daemon) read this instead of reaching
+        // into recorder/engine internals. Fills from the atomics; call from
+        // the message thread.
+        EngineStatus captureStatus();
         float  getDiskMBPerSec() const noexcept { return recorder.getDiskBytesPerSec() / (1024.0f * 1024.0f); }
         float  getRingFillPct()  const noexcept { return recorder.getRingFillPct(); }
         // Live device format -- the actual buffer (block) size in samples and

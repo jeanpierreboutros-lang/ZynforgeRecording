@@ -544,6 +544,45 @@ namespace zynforge
         return n;
     }
 
+    EngineStatus AudioEngine::captureStatus()
+    {
+        EngineStatus s;
+        s.recording        = isRecording();
+        s.playing          = player.isPlaying();
+        s.positionSamples  = player.getPositionSamples();
+        s.elapsedSamples   = recorder.getSamplesSinceStart();
+        s.sampleRate       = getDeviceSampleRate();
+        s.blockSize        = getDeviceBlockSize();
+        s.audioLoadPct     = getAudioLoadPct();
+        s.diskMBPerSec     = (double) getDiskMBPerSec();
+        s.minutesRemaining = getEstimatedMinutesRemaining();
+        s.missedSamples    = recorder.getMissedSamples();
+        s.numTracks        = recorder.getNumTracks();
+        s.backupActive     = recorder.isBackupActive();
+        s.captureFormat    = (int) recorder.getCaptureFormat();
+
+        constexpr juce::uint32 kDefaultSwatch = 0xff3a3f44;   // neutral graphite
+        s.tracks.reserve ((size_t) s.numTracks);
+        for (int i = 0; i < s.numTracks; ++i)
+        {
+            auto& t = recorder.getTrack (i);
+            TrackStatus ts;
+            ts.name       = t.name;
+            ts.peak       = t.peak  .load (std::memory_order_relaxed);
+            ts.rms        = t.rms   .load (std::memory_order_relaxed);
+            ts.armed      = t.armed .load (std::memory_order_relaxed);
+            ts.muted      = t.muted .load (std::memory_order_relaxed);
+            ts.soloed     = t.soloed.load (std::memory_order_relaxed);
+            ts.monitor    = t.monitor.load (std::memory_order_relaxed);
+            ts.stereoLeft = t.isStereo.load (std::memory_order_relaxed);
+            const auto argb = (juce::uint32) t.colourARGB.load (std::memory_order_relaxed);
+            ts.colourARGB = argb != 0 ? argb : kDefaultSwatch;
+            if (ts.armed) ++s.armedTracks;
+            s.tracks.push_back (std::move (ts));
+        }
+        return s;
+    }
+
     void AudioEngine::saveSessionMixTo (const juce::File& sessionDir)
     {
         if (! sessionDir.isDirectory()) return;
