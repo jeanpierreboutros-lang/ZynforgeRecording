@@ -104,7 +104,9 @@ ZynforgeRecording/
 │       ├── CompanionServer.{h,cpp}    — embedded HTTP + 48 kHz WAV audio stream
 │       ├── NDIBridge.h                — runtime-loaded NDI broadcast
 │       ├── OscRemote.{h,cpp}          — 5-dialect inbound console OSC parser
-│       ├── ConsoleLink.{h,cpp}        — outbound X32/M32: soundcheck repatch + head-amp gains
+│       ├── ConsoleLink.{h,cpp}        — outbound console VSC (profile-based; X32 reference)
+│       ├── ConsoleProfile.h           — per-console-family VSC capability profiles
+│       ├── CaptureProtocol.h          — capture daemon↔GUI wire protocol (Phase 1 contract)
 │       └── SessionMirror.{h,cpp}      — parallel session mirror to a second host
 ├── .github/workflows/ci.yml          — GitHub Actions: build + headless suite on push/PR
 └── build/                             — CMake / Xcode build artefacts (gitignored)

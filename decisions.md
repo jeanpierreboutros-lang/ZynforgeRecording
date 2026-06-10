@@ -266,7 +266,7 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ## Capture-process split (headless record daemon) — 2026-06-10
 
-**Status:** Proposed (design accepted, phased; no code yet)
+**Status:** In progress — Phase 0 mostly done; Phase 1 protocol contract built + tested (no live daemon yet).
 **Context:** The audio callback, file writers, and the entire UI live in one process. A UI crash, a wedged modal, or a graphics-driver fault kills the take. The hardware this app competes with (dedicated live recorders) is appliance-grade precisely because capture shares nothing with presentation. We already survived one instance of the class (the companion-server SIGPIPE killing the app mid-take) — the lesson generalises.
 **Decision:** Split capture into a minimal headless daemon owning the CoreAudio callback + `MultitrackRecorder` + integrity manifest, with the GUI as a client. Phased so every step ships independently:
 1. **Phase 0 — boundary hygiene (prereq, cheap).** Everything the UI reads from the engine during recording goes through a narrow, serialisable status struct (transport, peaks, disk stats, missed samples); no UI code touches recorder internals directly. Pure in-process refactor, testable now.
@@ -276,6 +276,14 @@ When making a non-trivial decision, add a new entry below using the template at 
 **Consequences:** + Take survives any UI fault; enables headless/rack operation later. − A protocol surface to version and test; device hot-plug handling moves daemon-side; debugging spans two processes. Input monitoring stays daemon-side with the callback, so monitor changes must flow through the protocol — that is most of phase 1's surface.
 **Alternatives Considered:** In-process hardening only (signal handlers, watchdog thread) — cheaper but can't survive SIGKILL or graphics faults; overlaps with phase 0 but rejected as the end state. XPC instead of sockets — macOS-idiomatic but couples to launchd and complicates a future headless build; sockets reuse the companion protocol work.
 **Related Documents:** `architecture.md` (threading model); companion-server ADR; `tasks.md` (phased breakdown).
+
+### Progress + Phase-1 design detail
+
+**Phase 0 (status boundary) — mostly done.** `EngineStatus` (`Source/Audio/EngineStatus.h`) is the serialisable snapshot; `AudioEngine::captureStatus()` fills it; the companion `/state.json` and the header readouts (PerfDashboard + BigClock) consume it. Per-track meters + the record-status string still read `getTrack()` directly — deferred to land with Phase-1 component changes.
+
+**Phase 1 wire protocol — built + tested (contract only).** `Source/Network/CaptureProtocol.h` defines the daemon↔GUI messages: **newline-delimited JSON**, each line tagged `type` = `cmd` / `reply` / `status`. `Command` carries the control vocabulary (Hello, StartRecording, Stop, StartPlayback, ArmTrack, SetCaptureFormat, SetSessionDir, Ping — a superset of the companion `/cmd` verbs); `status` wraps `EngineStatus`; a **Hello handshake** negotiates `kProtocolVersion` (v1 = exact match, so a mismatched GUI/daemon fails LOUD instead of silently mis-recording). Header-only + engine-free + transport-free, so it's tested in isolation (`CaptureProtocolTests`) before any socket exists — same approach proven on ConsoleLink. **Deliberately not wired to the recorder yet:** a half-built split that owns recording would *reduce* reliability, which defeats the purpose.
+
+**Remaining Phase-1 chunks (each its own PR + soak):** (a) the local-socket transport (a `juce::StreamingSocket` server in the daemon, client in the GUI; reuse the companion accept-thread pattern + SIGPIPE-ignore); (b) the `zynforge-capture` binary target (links `MultitrackRecorder` + the device layer, no UI); (c) GUI-side `CaptureClient` that launches + supervises the daemon and drives recording through `Command`s, rendering `status`; (d) the cutover — route recording through the daemon behind a flag, soak-test at 64 ch, then make it the default. **Phase 2** (mid-take reattach + bidirectional watchdogs) follows. Monitoring (input→output routing) stays daemon-side with the callback, so monitor changes flow through the protocol — that's most of Phase 1's control surface.
 
 ---
 
