@@ -215,7 +215,12 @@ void MainComponent::timerCallback()
     }
     bigClock.setArmedReady (anyArmed && ! engine.isRecording() && ! engine.isPlaying());
 
-    const bool rec = engine.isRecording();
+    // Phase-0 status boundary: take ONE EngineStatus snapshot and feed the
+    // header readouts from it, instead of pulling a dozen individual engine
+    // getters here. When capture moves to a daemon (Phase 1) this becomes the
+    // single point that swaps its source from the local engine to IPC.
+    const auto status = engine.captureStatus();
+    const bool rec = status.recording;
     formatButton .setEnabled (! rec);
     preRollButton.setEnabled (! rec);
 
@@ -227,24 +232,24 @@ void MainComponent::timerCallback()
 
     const int    bitDepth     = 24;
     const int    bytesPerSamp = bitDepth / 8;
-    const int    channels     = juce::jmax (1, recorder.getNumTracks());
+    const int    channels     = juce::jmax (1, status.numTracks);
     const double bytesPerSec  = deviceSR * bytesPerSamp * channels;
     const double remainingSec = bytesPerSec > 0 ? (double) bytesFree / bytesPerSec : 0.0;
 
     bigClock.setDiskInfo (freeGB,
-                          recorder.getLastWriteMs(),
-                          recorder.getMissedSamples(),
+                          status.lastWriteMs,
+                          status.missedSamples,
                           remainingSec);
-    bigClock.setLoudness (engine.getIntegratedLufs(),
-                          engine.getMomentaryLufs(),
-                          engine.getTruePeakDb());
+    bigClock.setLoudness (status.integratedLufs,
+                          status.momentaryLufs,
+                          status.truePeakDb);
 
-    perfDashboard.setMetrics (engine.getAudioLoadPct(),
-                              engine.getDiskMBPerSec(),
-                              engine.getRingFillPct(),
-                              recorder.getMissedSamples());
-    perfDashboard.setDeviceInfo (engine.getDeviceSampleRate(),
-                                 engine.getDeviceBlockSize());
+    perfDashboard.setMetrics (status.audioLoadPct,
+                              (float) status.diskMBPerSec,
+                              status.ringFillPct,
+                              status.missedSamples);
+    perfDashboard.setDeviceInfo (status.sampleRate,
+                                 status.blockSize);
     perfDashboard.setRecording (rec);
     // Drives per-strip meter/spectrum refresh: full rate while recording or
     // playing, throttled to ~8 Hz when stopped (see TrackState.h).

@@ -21,8 +21,10 @@ namespace zynforge
                 s.recording = true;  s.playing = false;
                 s.positionSamples = 123456; s.elapsedSamples = 654321;
                 s.sampleRate = 48000.0; s.blockSize = 256;
-                s.audioLoadPct = 17.5f; s.diskMBPerSec = 12.3; s.minutesRemaining = 88;
+                s.audioLoadPct = 17.5f; s.ringFillPct = 42.0f;
+                s.diskMBPerSec = 12.3; s.lastWriteMs = 2.5; s.minutesRemaining = 88;
                 s.missedSamples = 0; s.numTracks = 2; s.armedTracks = 1;
+                s.integratedLufs = -14.2f; s.momentaryLufs = -11.7f; s.truePeakDb = -1.3f;
                 s.backupActive = true; s.captureFormat = 3;
 
                 TrackStatus a; a.name = "Kick"; a.peak = 0.8f; a.rms = 0.3f;
@@ -39,6 +41,10 @@ namespace zynforge
                 expectWithinAbsoluteError (back.sampleRate, s.sampleRate, 1.0e-9);
                 expectEquals (back.blockSize, s.blockSize);
                 expectWithinAbsoluteError (back.audioLoadPct, s.audioLoadPct, 1.0e-4f);
+                expectWithinAbsoluteError (back.ringFillPct, s.ringFillPct, 1.0e-4f);
+                expectWithinAbsoluteError (back.lastWriteMs, s.lastWriteMs, 1.0e-6);
+                expectWithinAbsoluteError (back.integratedLufs, s.integratedLufs, 1.0e-4f);
+                expectWithinAbsoluteError (back.truePeakDb, s.truePeakDb, 1.0e-4f);
                 expectEquals (back.minutesRemaining, s.minutesRemaining);
                 expectEquals (back.numTracks, s.numTracks);
                 expectEquals (back.armedTracks, s.armedTracks);

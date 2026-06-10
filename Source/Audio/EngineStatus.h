@@ -75,9 +75,14 @@ namespace zynforge
         double        sampleRate  { 0.0 };
         int           blockSize   { 0 };
         float         audioLoadPct { 0.0f };
+        float         ringFillPct  { 0.0f };   // worst writer-FIFO occupancy
         double        diskMBPerSec { 0.0 };
+        double        lastWriteMs  { 0.0 };    // most recent disk-flush duration
         int           minutesRemaining { 0 };
         juce::int64   missedSamples { 0 };
+        float         integratedLufs { -120.0f };
+        float         momentaryLufs  { -120.0f };
+        float         truePeakDb     { -120.0f };
         int           numTracks   { 0 };
         int           armedTracks { 0 };
         bool          backupActive { false };
@@ -94,9 +99,14 @@ namespace zynforge
             o->setProperty ("sampleRate", sampleRate);
             o->setProperty ("blockSize",  blockSize);
             o->setProperty ("audioLoadPct", audioLoadPct);
+            o->setProperty ("ringFillPct",  ringFillPct);
             o->setProperty ("diskMBPerSec", diskMBPerSec);
+            o->setProperty ("lastWriteMs",  lastWriteMs);
             o->setProperty ("minutesRemaining", minutesRemaining);
             o->setProperty ("missedSamples", missedSamples);
+            o->setProperty ("integratedLufs", integratedLufs);
+            o->setProperty ("momentaryLufs",  momentaryLufs);
+            o->setProperty ("truePeakDb",     truePeakDb);
             o->setProperty ("numTracks",   numTracks);
             o->setProperty ("armedTracks", armedTracks);
             o->setProperty ("backupActive", backupActive);
@@ -117,9 +127,14 @@ namespace zynforge
             s.sampleRate  = (double) v.getProperty ("sampleRate", 0.0);
             s.blockSize   = (int) v.getProperty ("blockSize", 0);
             s.audioLoadPct = (float) (double) v.getProperty ("audioLoadPct", 0.0);
+            s.ringFillPct  = (float) (double) v.getProperty ("ringFillPct", 0.0);
             s.diskMBPerSec = (double) v.getProperty ("diskMBPerSec", 0.0);
+            s.lastWriteMs  = (double) v.getProperty ("lastWriteMs", 0.0);
             s.minutesRemaining = (int) v.getProperty ("minutesRemaining", 0);
             s.missedSamples = (juce::int64) v.getProperty ("missedSamples", 0);
+            s.integratedLufs = (float) (double) v.getProperty ("integratedLufs", -120.0);
+            s.momentaryLufs  = (float) (double) v.getProperty ("momentaryLufs", -120.0);
+            s.truePeakDb     = (float) (double) v.getProperty ("truePeakDb", -120.0);
             s.numTracks   = (int) v.getProperty ("numTracks", 0);
             s.armedTracks = (int) v.getProperty ("armedTracks", 0);
             s.backupActive = (bool) v.getProperty ("backupActive", false);

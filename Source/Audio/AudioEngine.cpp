@@ -554,9 +554,14 @@ namespace zynforge
         s.sampleRate       = getDeviceSampleRate();
         s.blockSize        = getDeviceBlockSize();
         s.audioLoadPct     = getAudioLoadPct();
+        s.ringFillPct      = (float) getRingFillPct();
         s.diskMBPerSec     = (double) getDiskMBPerSec();
+        s.lastWriteMs      = recorder.getLastWriteMs();
         s.minutesRemaining = getEstimatedMinutesRemaining();
         s.missedSamples    = recorder.getMissedSamples();
+        s.integratedLufs   = getIntegratedLufs();
+        s.momentaryLufs    = getMomentaryLufs();
+        s.truePeakDb       = getTruePeakDb();
         s.numTracks        = recorder.getNumTracks();
         s.backupActive     = recorder.isBackupActive();
         s.captureFormat    = (int) recorder.getCaptureFormat();
