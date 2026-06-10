@@ -26,6 +26,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
   - **Export files** — a pair bounces/exports as **one interleaved stereo file**, not two mono stems: `TrackExporter::exportStereoPair` (per-track, with sample-rate conversion) and `AudioEngine::bounceStereoPairToWav` (edited-arrangement stem, streamed). Both export callers skip the R half when its L is handled.
   - The mixer already collapsed a pair into one strip with one stereo meter; this closes the pan, persistence, meterbridge, export-list, and export-file gaps. Headless-tested (`StereoExportTests` + a bounce-pair case in `AudioCallbackTests`).
 
+### Fixed (latest, EDIT playhead)
+- **The EDIT time-ruler playhead and the waveform-lane playhead now line up.** They drifted a few pixels apart (offset `4 − 8·position`, so right at the start, crossing in the middle, left at the end) because the wave lanes inset their clip content by `brand::space::xs` (4 px each side) and mapped the playhead across `waveW − 8`, while the ruler mapped time across the full pane with no inset. The ruler's ticks, markers, and playhead now route through shared `rulerPxPerSec` / `rulerTimeToX` / `rulerXToTime` helpers that bake in the same 4 px inset. The lane playhead also now maps across the rows' content width (`list->getWidth()`) instead of the EditPage's visible width, so the two stay aligned when zoomed in as well.
+
 ### Fixed (latest, master strip)
 - **The master fader's value box no longer collides with the etched "ZYNFORGE" maker's mark.** `MasterStrip::resized()` laid the meter + fader (whose value text box shows e.g. "0.0 dB") all the way to the plate bottom, but `paint()` stamps the etched wordmark into the bottom 15 px — so the two overlapped. `resized()` now reserves that mark band (shared `kMarkBandH` constant keeps paint + layout in sync).
 

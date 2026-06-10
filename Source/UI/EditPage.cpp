@@ -4380,8 +4380,12 @@ namespace zynforge
             // Mirror TrackRow::headerW (private, but the value is
             // pinned in the design system). Keep these in sync.
             constexpr int kHeaderW = 380;
-            const auto wavePaneWidth = juce::jmax (1, getWidth() - kHeaderW);
-            // -8 px to account for waveform reduction in paint.
+            // Map across the ROWS' width (list->getWidth() == contentW), not
+            // the EditPage's visible width -- when zoomed in the two differ,
+            // and the playhead lives inside the contentW-wide TrackRow. The
+            // -8/+4 matches the lane's clip inset (brand::space::xs each side)
+            // AND the ruler's mapping, so both playheads land on the same x.
+            const auto wavePaneWidth = juce::jmax (1, list->getWidth() - kHeaderW);
             const double frac = (double) pos / (double) total;
             playheadX = (int) (frac * (wavePaneWidth - 8)) + 4;
         }

@@ -43,6 +43,28 @@ namespace zynforge
         // the full session length.
         void setContentWidth (int w) { contentW = juce::jmax (1, w); repaint(); }
 
+        // Sample/second <-> screen-x mapping. The wave LANES inset their clip
+        // content by brand::space::xs on each side (TrackRow paints into
+        // `withTrimmedLeft(headerW).reduced(xs, sm)`, and the lane playhead is
+        // `headerW + xs + frac*(waveW - 2*xs)`). The ruler MUST use the exact
+        // same mapping or its ticks / markers / playhead drift a few px from
+        // the audio they label. Route every ruler mapping through these.
+        static constexpr int kWaveInset = brand::space::xs;
+        double rulerPxPerSec (double totalSec) const noexcept
+        {
+            const int effW = juce::jmax (1, contentW - headerW - 2 * kWaveInset);
+            return (double) effW / juce::jmax (0.001, totalSec);
+        }
+        int rulerTimeToX (double sec, double pxPerSec) const noexcept
+        {
+            return headerW + kWaveInset + (int) (sec * pxPerSec);
+        }
+        double rulerXToTime (int xPx, double pxPerSec) const noexcept
+        {
+            return juce::jmax (0.0, (double) (xPx - headerW - kWaveInset)
+                                        / juce::jmax (1.0, pxPerSec));
+        }
+
         // Double-click a marker flag (or its name label) -> rename
         // dialog. The hit-test mirrors the paint layout: the flag is
         // an 8 px-wide triangle at the marker's x; the name extends
@@ -90,8 +112,7 @@ namespace zynforge
             const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
             const auto totalLoaded = player.getTotalLengthSamples();
             const double totalSec = totalLoaded > 0 ? (double) totalLoaded / sr : 300.0;
-            const int waveW = juce::jmax (1, contentW - headerW);
-            const double pxPerSec = (double) waveW / juce::jmax (0.001, totalSec);
+            const double pxPerSec = rulerPxPerSec (totalSec);
 
             auto& markers = engine.getMarkers();
             const auto& list = markers.getAll();
@@ -99,7 +120,7 @@ namespace zynforge
             {
                 const double tSec = (double) list[(size_t) i].sampleOffset / sr;
                 if (tSec < 0.0 || tSec > totalSec) continue;
-                const int markerX = headerW + (int) (tSec * pxPerSec);
+                const int markerX = rulerTimeToX (tSec, pxPerSec);
 
                 // Flag is 8 px wide centered on markerX. Name label
                 // extends ~120 px to the right. Use that whole span as
@@ -218,10 +239,9 @@ namespace zynforge
             const double sr  = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
             const double totalSec = recording ? juce::jmax ((double) recSamples / sr, 1.0)
                                               : (total > 0 ? (double) total / sr : 300.0);
-            const int waveW = juce::jmax (1, contentW - headerW);
-            const double pxPerSec = (double) waveW / juce::jmax (0.001, totalSec);
+            const double pxPerSec = rulerPxPerSec (totalSec);
             const double rulerBottom = (double) (rulerTop + rulerH);
-            const auto secToX = [&] (double s) { return headerW + (int) (s * pxPerSec); };
+            const auto secToX = [&] (double s) { return rulerTimeToX (s, pxPerSec); };
 
             // Pick a labelled "major" interval whose labels won't collide,
             // then subdivide it into minor + mid ticks. A 1-2-5 progression
@@ -400,7 +420,7 @@ namespace zynforge
             {
                 const double tSec = (double) m.sampleOffset / sr;
                 if (tSec < 0.0 || tSec > totalSec) continue;
-                const int x = headerW + (int) (tSec * pxPerSec);
+                const int x = rulerTimeToX (tSec, pxPerSec);
                 if (x < headerW || x >= getWidth()) continue;
 
                 // Flag: 8x8 px brand-orange downward triangle anchored
@@ -456,9 +476,8 @@ namespace zynforge
             const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
             const auto total = player.getTotalLengthSamples();
             const double totalSec = total > 0 ? (double) total / sr : 300.0;
-            const int waveW = juce::jmax (1, contentW - headerW);
-            const double pxPerSec = (double) waveW / juce::jmax (0.001, totalSec);
-            const double sec = juce::jmax (0.0, (double) (xPx - headerW) / juce::jmax (1.0, pxPerSec));
+            const double pxPerSec = rulerPxPerSec (totalSec);
+            const double sec = rulerXToTime (xPx, pxPerSec);
             return (juce::int64) (sec * sr);
         }
 
