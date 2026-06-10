@@ -101,6 +101,8 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/StereoExportTests.cpp
     Source/Tests/EngineStatusTests.cpp
     Source/Tests/CaptureProtocolTests.cpp
+    Source/Tests/CaptureLinkTests.cpp
+    Source/Network/CaptureLink.cpp
     Source/Network/ConsoleLink.cpp
     Source/UI/ChannelStrip.cpp
     Source/UI/LedMeter.cpp

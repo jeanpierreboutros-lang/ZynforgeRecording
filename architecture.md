@@ -107,6 +107,7 @@ ZynforgeRecording/
 │       ├── ConsoleLink.{h,cpp}        — outbound console VSC (profile-based; X32 reference)
 │       ├── ConsoleProfile.h           — per-console-family VSC capability profiles
 │       ├── CaptureProtocol.h          — capture daemon↔GUI wire protocol (Phase 1 contract)
+│       ├── CaptureLink.{h,cpp}         — capture daemon↔GUI local-socket transport (Phase 1b)
 │       └── SessionMirror.{h,cpp}      — parallel session mirror to a second host
 ├── .github/workflows/ci.yml          — GitHub Actions: build + headless suite on push/PR
 └── build/                             — CMake / Xcode build artefacts (gitignored)
