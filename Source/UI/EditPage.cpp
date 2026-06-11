@@ -9,6 +9,8 @@
 #include "StripColourPicker.h"
 #include "RenameLabel.h"
 
+#include <algorithm>
+
 namespace zynforge
 {
     // Waveform thumbnail resolution: samples averaged per drawn min/max
@@ -2878,10 +2880,30 @@ namespace zynforge
         std::vector<int> editGroupPeers() const
         {
             const int g = engine.getTrackEditGroup (index);
-            if (g < 0) return { index };
-            auto v = engine.getStripsInEditGroup (g);
+            std::vector<int> v = g < 0 ? std::vector<int> { index }
+                                       : engine.getStripsInEditGroup (g);
             if (v.empty()) v.push_back (index);
-            return v;
+
+            // A collapsed stereo row edits BOTH halves: every peer that is a
+            // stereo L gets its R partner appended (dedup-safe -- a grouped
+            // pair may already carry both). Without this, clip ops on an
+            // ungrouped stereo track hit only the LEFT channel -- the gain
+            // ride the engineer hears splits the stereo image.
+            std::vector<int> out;
+            auto add = [&out] (int t)
+            {
+                if (std::find (out.begin(), out.end(), t) == out.end())
+                    out.push_back (t);
+            };
+            const int n = engine.getRecorder().getNumTracks();
+            for (int t : v)
+            {
+                add (t);
+                if (t + 1 < n
+                    && engine.getRecorder().getTrack (t).isStereo.load (std::memory_order_relaxed))
+                    add (t + 1);
+            }
+            return out;
         }
 
         // True once the background thumbnail scan has finished for this row's
@@ -3039,12 +3061,14 @@ namespace zynforge
                         }));
                         return;
                     }
-                    case 501: withUndo ("Clip gain", [&]{ self->engine.setClipGainDb (self->index, clipIdx, -12.0f); });        return;
-                    case 502: withUndo ("Clip gain", [&]{ self->engine.setClipGainDb (self->index, clipIdx,  -6.0f); });        return;
-                    case 503: withUndo ("Clip gain", [&]{ self->engine.setClipGainDb (self->index, clipIdx,  -3.0f); });        return;
-                    case 504: withUndo ("Clip gain", [&]{ self->engine.setClipGainDb (self->index, clipIdx,   0.0f); });        return;
-                    case 505: withUndo ("Clip gain", [&]{ self->engine.setClipGainDb (self->index, clipIdx,   3.0f); });        return;
-                    case 506: withUndo ("Clip gain", [&]{ self->engine.setClipGainDb (self->index, clipIdx,   6.0f); });        return;
+                    // Gain presets apply to every peer (stereo R partner +
+                    // edit-group members), like the gain-handle drag.
+                    case 501: withUndo ("Clip gain", [&]{ for (int p : self->editGroupPeers()) self->engine.setClipGainDb (p, clipIdx, -12.0f); }); return;
+                    case 502: withUndo ("Clip gain", [&]{ for (int p : self->editGroupPeers()) self->engine.setClipGainDb (p, clipIdx,  -6.0f); }); return;
+                    case 503: withUndo ("Clip gain", [&]{ for (int p : self->editGroupPeers()) self->engine.setClipGainDb (p, clipIdx,  -3.0f); }); return;
+                    case 504: withUndo ("Clip gain", [&]{ for (int p : self->editGroupPeers()) self->engine.setClipGainDb (p, clipIdx,   0.0f); }); return;
+                    case 505: withUndo ("Clip gain", [&]{ for (int p : self->editGroupPeers()) self->engine.setClipGainDb (p, clipIdx,   3.0f); }); return;
+                    case 506: withUndo ("Clip gain", [&]{ for (int p : self->editGroupPeers()) self->engine.setClipGainDb (p, clipIdx,   6.0f); }); return;
                     case 320: withUndo ("Fade curve", [&]{ self->engine.setClipFadeCurve (self->index, clipIdx, curveNow == 1 ? 0 : 1); }); return;
                     case 510:
                     {
@@ -3066,7 +3090,8 @@ namespace zynforge
                             const float dB = juce::jlimit (-60.0f, 12.0f, txt.getFloatValue());
                             auto* page = rowSafe->findParentComponentOfClass<EditPage>();
                             if (page != nullptr) page->beginClipEdit();
-                            rowSafe->engine.setClipGainDb (rowSafe->index, clipIdx, dB);
+                            for (int p : rowSafe->editGroupPeers())
+                                rowSafe->engine.setClipGainDb (p, clipIdx, dB);
                             if (page != nullptr) page->commitClipEdit ("Clip gain");
                             rowSafe->repaint();
                         }));
