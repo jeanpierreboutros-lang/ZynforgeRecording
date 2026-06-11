@@ -136,6 +136,30 @@ namespace zynforge
                 server.stop();
             }
 
+            beginTest ("a second GUI connection supersedes the first (no accept-loop wedge)");
+            {
+                CaptureServer server;
+                const int port = listenSomewhere (server);
+                expect (port > 0);
+                if (port <= 0) return;
+
+                CaptureClient a;
+                expect (a.connect ("127.0.0.1", port));
+                expect (a.hello (2000).ok, "first client handshake failed");
+
+                // Client A stays connected. B must still get through: the
+                // server closes A's socket and serves B (the old code joined
+                // A's reader first, wedging accept until A disconnected).
+                CaptureClient b;
+                expect (b.connect ("127.0.0.1", port));
+                const auto reply = b.hello (3000);
+                expect (reply.ok, "second client was never served -- accept loop wedged");
+
+                a.disconnect();
+                b.disconnect();
+                server.stop();
+            }
+
             beginTest ("server reports listening / port / no-client cleanly");
             {
                 CaptureServer server;

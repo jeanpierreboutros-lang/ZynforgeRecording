@@ -4,7 +4,7 @@
 
 ZynForge Recording is a live-stage tool. The cost of a regression discovered in front of an audience is qualitatively higher than the cost of a regression in a typical desktop app. The testing strategy reflects that: **catch crashes and data loss before the audience does, even at the cost of some manual effort.**
 
-The strategy is **build + unit + smoke + field**. The unit-test harness is in place (**236 test groups** as of 2026-06-10, and counting; see *How to Run Tests*) and covers the audio callback, recorder, player, automation, markers, clip-edit persistence, accessibility, the measured pre-flight probes, post-show QC, song detection, crash-report scanning, the console link (+ profile capabilities), stereo-pair export, and the `EngineStatus` boundary — all headlessly. **CI** (`.github/workflows/ci.yml`, macos-14) builds and runs the full suite on every push and PR to `main`. Smoke-test and field rehearsal still backstop it for anything the headless harness can't see (paint, real CoreAudio, live VoiceOver, **macOS menu enablement**, the session reopen-on-launch flow).
+The strategy is **build + unit + smoke + field**. The unit-test harness is in place (**237 test groups** as of 2026-06-12, and counting; see *How to Run Tests*) and covers the audio callback, recorder, player, automation, markers, clip-edit persistence, accessibility, the measured pre-flight probes, post-show QC, song detection, crash-report scanning, the console link (+ profile capabilities), stereo-pair export, and the `EngineStatus` boundary — all headlessly. **CI** (`.github/workflows/ci.yml`, macos-14) builds and runs the full suite on every push and PR to `main`. Smoke-test and field rehearsal still backstop it for anything the headless harness can't see (paint, real CoreAudio, live VoiceOver, **macOS menu enablement**, the session reopen-on-launch flow).
 
 ## Testing Pyramid / Approach
 
@@ -54,7 +54,10 @@ pkill -x "Zynforge Recording" 2>/dev/null
 open "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
 sleep 10
 PID=$(pgrep -f "Zynforge Recording")
-ps -p $PID -o pid,rss,etime,%cpu                                            # expect ~49 MB, <1% CPU
+ps -p $PID -o pid,rss,etime,%cpu   # ~49 MB / <1% with NO session; ~115 MB / ~5% with a session
+                                   # auto-reopened (live input meters repaint by design --
+                                   # measured 2026-06-12 after the idle-repaint fixes; 14%+ means
+                                   # a blanket-repaint regression, go sample the process)
 ls -lt ~/Library/Logs/DiagnosticReports/Zynforge*.ips 2>/dev/null | head -1 # expect no new entries
 log show --process "Zynforge Recording" \
     --predicate 'messageType == error or messageType == fault' --last 1m    # expect empty

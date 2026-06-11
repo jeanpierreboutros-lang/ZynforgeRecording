@@ -37,6 +37,9 @@ namespace zynforge
         LedMeter         meter;
         int lastNumOutputs { -1 };
         bool             cachedStereo { true };
+        // Stereo mode the output combo was last BUILT for -- refreshOutputs()
+        // skips its 10 Hz rebuild while (device count, mode) are unchanged.
+        bool             lastComboStereo { true };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MasterStrip)
     };

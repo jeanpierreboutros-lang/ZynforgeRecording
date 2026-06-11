@@ -123,8 +123,14 @@ namespace zynforge
             dev = d->getActiveOutputChannels().countNumberOfSetBits();
         const bool stereo = engine.getMasterStereo();
 
-        // Always rebuild on stereo-mode change OR device-count change so
-        // the single combo reflects the right kind of items.
+        // Rebuild only on stereo-mode change OR device-count change -- this
+        // is called from the 10 Hz timer, and unconditionally clearing +
+        // re-adding the items rebuilt the combo (and dirtied it for repaint)
+        // every tick at idle. A mode flip forces a rebuild by resetting
+        // lastNumOutputs to -1; the selected-id sync stays in timerCallback.
+        if (dev == lastNumOutputs && stereo == lastComboStereo) return;
+        lastComboStereo = stereo;
+
         outputCombo.clear (juce::dontSendNotification);
         const int visible = juce::jmax (dev, stereo ? 16 : 8);
         const int step    = stereo ? 2 : 1;

@@ -69,7 +69,10 @@ namespace zynforge
     private:
         void timerCallback() override
         {
-            for (auto& s : strips) if (s != nullptr) s->repaint();
+            // Change-gated: each strip syncs its controls from the engine and
+            // repaints only when a painted value actually moved. A blanket
+            // repaint here drove 8 full strip redraws 20x/sec at idle.
+            for (auto& s : strips) if (s != nullptr) s->syncFromEngine();
         }
 
         // Inner: one VCA mini-strip.
@@ -162,9 +165,15 @@ namespace zynforge
                 g.drawText (juce::String (dB, 1) + " dB",
                             getLocalBounds().withTop (getHeight() - 18).withHeight (16),
                             juce::Justification::centred, false);
+            }
 
-                // Sync button visuals with the bus state (cue recall /
-                // OSC may have flipped them under us).
+            // Pull external state changes (cue recall / OSC / ramps) into the
+            // controls + painted readout. Called from the panel's timer;
+            // repaints only when something SHOWN actually changed, so an idle
+            // panel costs nothing. (This sync used to live inside paint(),
+            // driven by a blanket 20 Hz repaint of every strip.)
+            void syncFromEngine()
+            {
                 auto& v = engine.getVca (index);
                 if (mute.getToggleState() != v.muted.load (std::memory_order_relaxed))
                     mute.setToggleState (v.muted.load (std::memory_order_relaxed),
@@ -178,6 +187,16 @@ namespace zynforge
                     const float live = v.gainDb.load (std::memory_order_relaxed);
                     if (std::abs ((float) fader.getValue() - live) > 0.05f)
                         fader.setValue (live, juce::dontSendNotification);
+                }
+                // Repaint only when the painted dB readout (0.1 resolution)
+                // or the colour swatch moved.
+                const float shownDb = std::round (v.gainDb.load (std::memory_order_relaxed) * 10.0f) / 10.0f;
+                const auto  colour  = (juce::uint32) v.colourARGB.load (std::memory_order_relaxed);
+                if (shownDb != lastShownDb || colour != lastShownColour)
+                {
+                    lastShownDb     = shownDb;
+                    lastShownColour = colour;
+                    repaint();
                 }
             }
 
@@ -280,6 +299,10 @@ namespace zynforge
             juce::ToggleButton solo;
             juce::Label        nameLabel;
             bool               hovered { false };
+            // Last values the paint actually showed -- syncFromEngine()
+            // repaints only when one of these moves.
+            float        lastShownDb     { -1000.0f };
+            juce::uint32 lastShownColour { 0xffffffffu };
         };
 
         AudioEngine& engine;

@@ -64,8 +64,15 @@ namespace zynforge::capture
 
     void CaptureServer::stop()
     {
+        // Never call from onCommand (it fires on the reader thread): the
+        // join below would deadlock on itself. Assert in debug.
+        jassert (std::this_thread::get_id() != readThread.get_id());
         if (! running.exchange (false)) return;
         if (listener != nullptr) listener->close();
+        {
+            const std::lock_guard<std::mutex> g (writeLock);
+            if (client != nullptr) client->close();   // unblock the reader's wait
+        }
         if (acceptThread.joinable()) acceptThread.join();
         if (readThread.joinable())   readThread.join();
         listener.reset();
@@ -79,8 +86,15 @@ namespace zynforge::capture
         {
             auto sock = std::unique_ptr<juce::StreamingSocket> (listener->waitForNextConnection());
             if (sock == nullptr) break;
-            // One GUI at a time: drop any previous reader before taking the new
-            // connection. (A live daemon would arbitrate; v1 keeps it simple.)
+            // One GUI at a time: a NEW connection supersedes the old one.
+            // Close the old client's socket first so its readLoop exits --
+            // otherwise the join below would block until the old GUI
+            // disconnected on its own, wedging the accept loop (and the new
+            // connection) indefinitely.
+            {
+                const std::lock_guard<std::mutex> g (writeLock);
+                if (client != nullptr) client->close();
+            }
             if (readThread.joinable()) readThread.join();
             readThread = std::thread ([this, s = std::move (sock)] () mutable
             {
@@ -160,7 +174,16 @@ namespace zynforge::capture
 
     void CaptureClient::disconnect()
     {
-        if (! connected.exchange (false)) { socket.reset(); return; }
+        // Never call from onStatus / onReply (they fire on the reader
+        // thread): the join below would deadlock on itself.
+        jassert (std::this_thread::get_id() != readThread.get_id());
+        // ALWAYS join a joinable reader -- even when `connected` is already
+        // false. The readLoop clears `connected` itself when the DAEMON drops
+        // the connection; gating the join on that flag left the finished
+        // thread unjoined, and destroying a joinable std::thread calls
+        // std::terminate (crashed the suite). It also reset the socket while
+        // the reader could still be touching it.
+        connected.store (false);
         if (socket != nullptr) socket->close();
         if (readThread.joinable()) readThread.join();
         socket.reset();
