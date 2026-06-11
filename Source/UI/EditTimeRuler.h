@@ -179,8 +179,28 @@ namespace zynforge
                 fastTimer = active;
                 startTimerHz (active ? playHz : idleHz);
             }
-            repaint();
+            // While the transport rolls, the playhead moves every tick --
+            // always repaint. At idle, repaint only when something the ruler
+            // DRAWS changed (seek, marker add/move, loop edits, session
+            // length): the unconditional 4 Hz repaint re-shaped the ruler's
+            // text labels forever at idle.
+            if (active) { repaint(); return; }
+            juce::int64 sig = engine.getPlayer().getPositionSamples()
+                            ^ (engine.getPlayer().getTotalLengthSamples() << 1)
+                            ^ (engine.getPlayer().getLoopStart() << 2)
+                            ^ (engine.getPlayer().getLoopEnd()   << 3)
+                            ^ (engine.getEditCursorSample()      << 4);
+            const auto& list = engine.getMarkers().getAll();
+            sig ^= (juce::int64) list.size() << 40;
+            for (const auto& m : list) sig += m.sampleOffset;
+            if (sig != lastIdleSig)
+            {
+                lastIdleSig = sig;
+                repaint();
+            }
         }
+
+        juce::int64 lastIdleSig { -1 };
 
         static constexpr int idleHz = 4;
         static constexpr int playHz = 30;

@@ -480,7 +480,15 @@ namespace zynforge
         // Drawn position of the playhead within this row, in pixels from
         // the start of the waveform pane. -1 = playhead not visible / no
         // session loaded.
-        void setPlayheadX (int px) { playheadX = px; repaint(); }
+        // Change-gated: the EditPage timer pushes this to EVERY row each
+        // tick; repainting full waveform rows when the playhead hasn't
+        // moved (transport idle) burned ~100% of a core in EDIT view.
+        void setPlayheadX (int px)
+        {
+            if (px == playheadX) return;
+            playheadX = px;
+            repaint();
+        }
 
         // Live capture envelope -----------------------------------------
         // EditPage flips this when a take starts / stops. Starting clears
