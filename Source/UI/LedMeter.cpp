@@ -30,7 +30,7 @@ namespace zynforge
             const bool active = gTransportActive.load (std::memory_order_relaxed)
                              || state.armed  .load (std::memory_order_relaxed)
                              || state.monitor.load (std::memory_order_relaxed);
-            const int wantHz = active ? 30 : 8;
+            const int wantHz = active ? 60 : 8;   // gig-one field report: meters felt laggy live
             if (getTimerInterval() != 1000 / wantHz)
                 startTimerHz (wantHz);
         }
@@ -41,8 +41,8 @@ namespace zynforge
 
         const float prevP = displayPeak, prevR = displayRms;
         // smooth display values
-        displayPeak = juce::jmax (peak, displayPeak * 0.85f);
-        displayRms  = juce::jmax (rms,  displayRms  * 0.7f);
+        displayPeak = juce::jmax (peak, displayPeak * 0.80f);   // faster fall (field report)
+        displayRms  = juce::jmax (rms,  displayRms  * 0.62f);
         const bool prevClip = showClip;
         if (clip) showClip = true;
 
@@ -52,8 +52,8 @@ namespace zynforge
             const float pR = stereoR->peak.load (std::memory_order_relaxed);
             const float rR = stereoR->rms .load (std::memory_order_relaxed);
             const bool  cR = stereoR->clipped.load (std::memory_order_relaxed);
-            displayPeakR = juce::jmax (pR, displayPeakR * 0.85f);
-            displayRmsR  = juce::jmax (rR, displayRmsR  * 0.7f);
+            displayPeakR = juce::jmax (pR, displayPeakR * 0.80f);
+            displayRmsR  = juce::jmax (rR, displayRmsR  * 0.62f);
             if (cR) showClip = true;
         }
 
