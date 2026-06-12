@@ -32,7 +32,8 @@ namespace zynforge::capture
         SetCaptureFormat, // intValue = CaptureFormat
         SetTrackCount,    // intValue = number of tracks
         SetSessionDir,    // sessionDir
-        Ping              // liveness
+        Ping,             // liveness
+        Quit              // ask an IDLE daemon to exit (refused mid-take)
     };
 
     inline juce::String actionToString (Action a)
@@ -49,6 +50,7 @@ namespace zynforge::capture
             case Action::SetTrackCount:    return "setTrackCount";
             case Action::SetSessionDir:    return "setSessionDir";
             case Action::Ping:             return "ping";
+            case Action::Quit:             return "quit";
         }
         return "ping";
     }
@@ -66,6 +68,7 @@ namespace zynforge::capture
         if (s == "setTrackCount")    return Action::SetTrackCount;
         if (s == "setSessionDir")    return Action::SetSessionDir;
         if (s == "ping")             return Action::Ping;
+        if (s == "quit")             return Action::Quit;
         ok = false;
         return Action::Ping;
     }

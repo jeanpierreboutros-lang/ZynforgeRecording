@@ -684,6 +684,16 @@ MainComponent::MainComponent()
     juce::Timer::callAfterDelay (brand::motion::launchDelayMs + 1500,
                                  [this] { scanForCrashReports(); });
 
+    // Capture daemon (Phase 1d/2): restore the flag and reattach -- a take
+    // left rolling by a crashed/quit GUI is adopted, not orphaned.
+    if (engine.getAppProps() != nullptr
+        && engine.getAppProps()->getBoolValue ("useCaptureDaemon", false))
+    {
+        useCaptureDaemon = true;
+        juce::Timer::callAfterDelay (brand::motion::launchDelayMs + 800,
+                                     [this] { connectCaptureDaemon (true); });
+    }
+
     juce::Timer::callAfterDelay (brand::motion::launchDelayMs, [this, firstRun]
     {
         offerSessionRecovery();

@@ -152,6 +152,23 @@ namespace zynforge::capture
                 server.sendReply (r);
                 break;
             }
+
+            case Action::Quit:
+            {
+                Reply r;
+                if (recorder.isRecording())
+                {
+                    // Protect the take: a Quit can't stop a rolling record.
+                    r.error = "refusing to quit mid-take; StopRecording first";
+                }
+                else
+                {
+                    r.ok = true;
+                    if (onQuitRequest) onQuitRequest();
+                }
+                server.sendReply (r);
+                break;
+            }
         }
     }
 

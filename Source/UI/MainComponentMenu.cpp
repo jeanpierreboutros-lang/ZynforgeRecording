@@ -265,6 +265,11 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                       consoleGains);
         menu.addItem (957, "Console: restore head-amp gains",
                       consoleGains);
+        menu.addItem (958, useCaptureDaemon
+                              ? (captureSupervisor.isDaemonRecording()
+                                     ? "Capture daemon: TAKE ROLLING (stop to disable)"
+                                     : "Capture daemon: ON (experimental)")
+                              : juce::String ("Capture daemon: off (experimental)..."));
         menu.addSeparator();
         menu.addItem (290, sessionMirror.isMirroring()
                               ? "Stop mirroring " + sessionMirror.getPrimary()
@@ -307,7 +312,10 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) consoleLink.isConnected()
         << '|' << (int) consoleLink.getPatch()
         << '|' << (int) consoleLink.getProfile().canRepatch
-        << '|' << (int) consoleLink.getProfile().canCaptureGains;
+        << '|' << (int) consoleLink.getProfile().canCaptureGains
+        << '|' << (int) useCaptureDaemon
+        << '|' << (int) captureSupervisor.isAttached()
+        << '|' << (int) (useCaptureDaemon && captureSupervisor.isDaemonRecording());
 
     if (sig != lastMenuStateSig)
     {
@@ -329,6 +337,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 955)  consoleToggleSoundcheck();
     else if (id == 956)  consoleCaptureGains();
     else if (id == 957)  consoleRestoreGains();
+    else if (id == 958)  toggleCaptureDaemon();
     else if (id == 3)    onSaveSessionAs();
     else if (id == 4)    onImportAudioFiles();
     else if (id == 7)    createSessionFromCsv();

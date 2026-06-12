@@ -544,6 +544,63 @@ void MainComponent::consoleRestoreGains()
     consoleLink.restoreGains();
 }
 
+void MainComponent::connectCaptureDaemon (bool announceReattach)
+{
+    captureSupervisor.onDaemonDied = [this] (bool wasRecording)
+    {
+        showStatus (wasRecording
+            ? "!! CAPTURE DAEMON DIED MID-TAKE -- audio up to the last flush is on disk. NOT relaunching automatically."
+            : "Capture daemon exited.");
+        recordButton.setButtonText ("RECORD");
+    };
+
+    if (! captureSupervisor.connectOrLaunch (kCaptureDaemonPort))
+    {
+        useCaptureDaemon = false;
+        showStatus ("Capture daemon unavailable (binary not found / port busy) -- in-process recording stays active.");
+        return;
+    }
+
+    // Phase 2: if a daemon left rolling by a previous GUI is mid-take,
+    // adopt it -- the engineer sees the take immediately.
+    juce::Thread::sleep (250);   // let the first status push land
+    if (captureSupervisor.isDaemonRecording())
+    {
+        recordButton.setButtonText ("STOP");
+        if (announceReattach)
+            showStatus ("REATTACHED to a rolling capture-daemon take -- STOP closes it normally.");
+    }
+    else
+        showStatus (captureSupervisor.didLaunch()
+            ? "Capture daemon launched (experimental) -- RECORD now runs out-of-process."
+            : "Attached to running capture daemon -- RECORD now runs out-of-process.");
+}
+
+void MainComponent::toggleCaptureDaemon()
+{
+    if (useCaptureDaemon)
+    {
+        if (captureSupervisor.isDaemonRecording())
+        {
+            showStatus ("Daemon take rolling -- STOP it before disabling the capture daemon.");
+            return;
+        }
+        captureSupervisor.shutdown();
+        useCaptureDaemon = false;
+        showStatus ("Capture daemon disabled -- recording is in-process again.");
+    }
+    else
+    {
+        useCaptureDaemon = true;
+        connectCaptureDaemon (true);
+    }
+    if (auto* p = engine.getAppProps())
+    {
+        p->setValue ("useCaptureDaemon", useCaptureDaemon);
+        p->saveIfNeeded();
+    }
+}
+
 void MainComponent::scanForCrashReports()
 {
     auto* props = engine.getAppProps();

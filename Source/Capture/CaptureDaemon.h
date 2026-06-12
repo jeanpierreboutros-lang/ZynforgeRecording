@@ -6,6 +6,7 @@
 #include "../Network/CaptureLink.h"
 
 #include <atomic>
+#include <functional>
 #include <mutex>
 #include <thread>
 
@@ -45,6 +46,12 @@ namespace zynforge::capture
         bool isRecording() const noexcept { return recorder.isRecording(); }
 
         MultitrackRecorder& getRecorder() noexcept { return recorder; }
+
+        // Fired (on the command/reader thread) when a Quit command is
+        // accepted -- only ever while idle; a rolling take refuses Quit.
+        // CaptureMain wires this to its exit flag. Don't call stop() from
+        // inside it (reader-thread self-join); set a flag and return.
+        std::function<void()> onQuitRequest;
 
         // Test seams (mirror AudioEngine::prepareForTests + the fixture's
         // input feed): prepare the recorder without a device, then push

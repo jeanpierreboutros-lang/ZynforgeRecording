@@ -111,7 +111,8 @@ ZynforgeRecording/
 │       └── SessionMirror.{h,cpp}      — parallel session mirror to a second host
 │   ├── Capture/                       — headless capture daemon (Phase 1c)
 │   │   ├── CaptureDaemon.{h,cpp}      — device callback + recorder + CaptureServer engine
-│   │   └── CaptureMain.cpp            — `zynforge-capture` console entry (2nd CMake target)
+│   │   ├── CaptureMain.cpp            — `zynforge-capture` console entry (2nd CMake target)
+│   │   └── CaptureSupervisor.{h,cpp}  — GUI-side launch/attach/watchdog (Phases 1d+2)
 ├── .github/workflows/ci.yml          — GitHub Actions: build + headless suite on push/PR
 └── build/                             — CMake / Xcode build artefacts (gitignored)
 ```

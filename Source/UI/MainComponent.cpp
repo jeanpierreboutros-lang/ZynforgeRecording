@@ -42,6 +42,15 @@ void MainComponent::updateMixerPlaceholder()
 
 void MainComponent::onRecordClicked()
 {
+    // Phase 1d: a rolling daemon take stops over the wire.
+    if (daemonModeActive() && captureSupervisor.isDaemonRecording())
+    {
+        captureSupervisor.stopRecording();
+        statusLabel.setText ("Idle (daemon take closed)", juce::dontSendNotification);
+        recordButton.setButtonText ("RECORD");
+        return;
+    }
+
     if (engine.isRecording())
     {
         engine.stopRecording();
@@ -148,6 +157,31 @@ void MainComponent::onRecordClicked()
                                  juce::dontSendNotification);
             return;
         }
+    }
+
+    // Phase 1d (flagged): route the take through the capture daemon. The
+    // GUI keeps its own device open for monitoring/meters/playback; the
+    // daemon writes the files, so a GUI death can no longer stop the take.
+    if (daemonModeActive())
+    {
+        juce::BigInteger arms;
+        for (int i = 0; i < numTracks; ++i)
+            if (recorder.getTrack (i).armed.load (std::memory_order_relaxed))
+                arms.setBit (i);
+        if (captureSupervisor.startRecording (dir, numTracks,
+                                              (int) recorder.getCaptureFormat(), arms))
+        {
+            engine.setActiveSessionDir (dir);
+            statusLabel.setText ("DAEMON recording " + juce::String (armed) + "/"
+                                 + juce::String (numTracks) + " tracks -> " + dir.getFileName()
+                                 + "  (take survives a GUI crash)",
+                                 juce::dontSendNotification);
+            recordButton.setButtonText ("STOP");
+        }
+        else
+            statusLabel.setText ("Daemon record failed -- check Session > Capture daemon.",
+                                 juce::dontSendNotification);
+        return;
     }
 
     if (engine.startRecording (dir))

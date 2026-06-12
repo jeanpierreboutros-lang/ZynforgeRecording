@@ -4,6 +4,7 @@
 
 #include "../Audio/AudioEngine.h"
 #include "../Audio/TrackExporter.h"
+#include "../Capture/CaptureSupervisor.h"
 #include "../Network/ConsoleLink.h"
 #include "../Network/SessionMirror.h"
 #include "../Theme/ZynForgeLookAndFeel.h"
@@ -164,6 +165,16 @@ private:
     zynforge::SessionMirror sessionMirror { engine };
     // X32/M32 console link: soundcheck repatch + head-amp gain capture.
     zynforge::ConsoleLink consoleLink;
+    // Capture-process split, Phase 1d: out-of-process recording behind a
+    // flag (Session menu, id 958; appProps "useCaptureDaemon", default
+    // OFF until the 64-ch hardware soak passes). When active, RECORD
+    // routes through the daemon; playback/monitoring stay in-process.
+    zynforge::capture::CaptureSupervisor captureSupervisor;
+    bool useCaptureDaemon { false };
+    static constexpr int kCaptureDaemonPort = 17890;
+    bool daemonModeActive() const { return useCaptureDaemon && captureSupervisor.isAttached(); }
+    void toggleCaptureDaemon();
+    void connectCaptureDaemon (bool announceReattach);
     void promptConsoleConnect();
     void consoleToggleSoundcheck();
     void consoleCaptureGains();

@@ -24,7 +24,7 @@ namespace zynforge
                     Action::Hello, Action::StartRecording, Action::StopRecording,
                     Action::StartPlayback, Action::StopPlayback, Action::ArmTrack,
                     Action::SetCaptureFormat, Action::SetTrackCount,
-                    Action::SetSessionDir, Action::Ping };
+                    Action::SetSessionDir, Action::Ping, Action::Quit };
                 for (auto a : all)
                 {
                     bool ok = false;

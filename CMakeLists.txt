@@ -103,8 +103,10 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/CaptureProtocolTests.cpp
     Source/Tests/CaptureLinkTests.cpp
     Source/Tests/CaptureDaemonTests.cpp
+    Source/Tests/CaptureSupervisorTests.cpp
     Source/Network/CaptureLink.cpp
     Source/Capture/CaptureDaemon.cpp
+    Source/Capture/CaptureSupervisor.cpp
     Source/Network/ConsoleLink.cpp
     Source/UI/ChannelStrip.cpp
     Source/UI/LedMeter.cpp

@@ -219,6 +219,9 @@ void MainComponent::timerCallback()
     // header readouts from it, instead of pulling a dozen individual engine
     // getters here. When capture moves to a daemon (Phase 1) this becomes the
     // single point that swaps its source from the local engine to IPC.
+    // Capture-daemon watchdog (Phase 1d/2): cheap when inactive.
+    if (useCaptureDaemon) captureSupervisor.tick();
+
     const auto status = engine.captureStatus();
     const bool rec = status.recording;
     formatButton .setEnabled (! rec);
