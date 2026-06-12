@@ -513,6 +513,16 @@ One variant, fully centralized — **all 23 modals** paint through it
 Prompts prime their editor via `dialog::primeNameEditor` (focus + select-all
 + Enter→OK=result 1). Custom dialog `paint()` is a smell — there are none.
 
+
+### TrackRow (EditPage.cpp — the EDIT lane)
+The most complex component in the app: one timeline lane per logical strip (stereo pairs collapse). **Anatomy:** pinned header (swatch / name / R-I-S-M / VIEW / slim LedMeter / routing — drawn at the scroll offset so it never scrolls off) + wave pane (clip region blocks with per-clip waveforms, fades, gain corner-fader; 1-2-5 s grid behind). **States:** resting (cold steel, clips in channel colour) · armed (ember bloom + hot rim) · recording (forge-orange live envelope + hot playhead) · selected clip (hot rim) · muted clip (0.22 scrim wash) · locked clip (no edit affordances) · hovered (header lift). **Layout tokens:** `space::editHeaderW` (380, shared with the ruler/timer), `space::editWaveInset` (4 px clip-content inset — the ruler MUST use the same mapping; this drifted once and shipped a playhead misalignment). **Behaviour:** tools (Smart/Range/Trim/Move/Fade/Scrub) gate the mouse; clip ops fan out through `editGroupPeers()` (edit groups + the stereo R partner — never edit one half of a pair).
+
+### TransportBar
+Path-drawn icon buttons (no glyph fonts): play/pause, stop, record, loop, return-to-zero, marker-drop. **States:** idle (cold control chrome, 3-step hover) · play active (accentPlay) · record active (accentRecord + the app-wide REC treatment) · loop engaged (engagedAmber). Record is shape-distinct from play (field rule: readable across a dark stage). All six expose spoken accessibility names (headless-tested).
+
+### BigClockPanel
+The hero timecode plate (44 pt JetBrains Mono, `type::hero`). **Modes:** Idle (cold) · Playing (0.14 active tint) · Recording (ember underglow rising from the base + 1 Hz `motion::pulseHz` breathe — the centrepiece reads as metal being worked) · ArmedReady (engagedAmber border pulse). Carries the disk-health banner (free GB / last-write ms / missed samples — missed > 0 glows red) and the BS.1770 loudness readout. Fed once per tick from the `EngineStatus` snapshot, change-gated repaints.
+
 ## Do's and Don'ts
 
 These should be mechanically enforced (pre-commit hook + CI). Six

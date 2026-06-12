@@ -30,6 +30,9 @@ jobs:
           path: build/_deps
           key: juce-deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
 
+      - name: Design-system audit
+        run: ./tools/design_audit.sh
+
       - name: Configure
         run: cmake -B build -G Xcode
 

@@ -60,6 +60,14 @@ namespace zynforge::brand
         inline constexpr int ioH   = forge::space_ioH;   // I/O selector rows
         inline constexpr int rowH  = forge::space_rowH;   // standard row pitch
         inline constexpr int btnH  = forge::space_btnH;   // action button height
+
+        // ── Shared EDIT-view layout constants ──────────────────────
+        // Previously duplicated as `headerW`/`kHeaderW` literals across
+        // TrackRow, the EditPage timer, and the auto-scroll logic with
+        // "keep in sync" comments -- a duplicated-constant class that
+        // already shipped one bug (the 4 px wave-inset playhead drift).
+        inline constexpr int editHeaderW   = 380;  // pinned row-header column
+        inline constexpr int editWaveInset = xs;   // lane clip-content inset (each side)
     }
 
     // ── Typography scale ──────────────────────────────────────────────────

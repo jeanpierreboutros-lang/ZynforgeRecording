@@ -150,13 +150,13 @@ namespace zynforge
                 // for the colour picker.
                 auto bg = hovered ? brand::bgPanel.brighter (0.06f) : brand::bgPanel;
                 g.setColour (bg);
-                g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (1), 4);
+                g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (1), brand::radius::md);
                 const juce::uint32 c = engine.getVca (index).colourARGB.load (std::memory_order_relaxed);
                 const auto swatch = c != 0 ? juce::Colour (c) : brand::stripColour (index);
                 g.setColour (swatch);
                 g.fillRect (getLocalBounds().withTop (0).withHeight (6));
                 g.setColour (brand::edge);
-                g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1), 4, 1);
+                g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1), brand::radius::md, 1);
 
                 // Live dB readout.
                 const float dB = engine.getVca (index).gainDb.load (std::memory_order_relaxed);

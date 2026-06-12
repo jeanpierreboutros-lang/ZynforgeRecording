@@ -3703,7 +3703,7 @@ namespace zynforge
         //  - left content block: name + 4-button row + chip row (~140 px)
         //  - middle column: a/b/c/d send dots (~80 px)
         //  - right column: input/output pills + vol/pan readout + plus (~140 px)
-        static constexpr int headerW = 380;
+        static constexpr int headerW = brand::space::editHeaderW;
         static constexpr int swatchW = 14;
         static constexpr int meterW  = 12;
 
@@ -4410,9 +4410,7 @@ namespace zynforge
         int playheadX = -1;
         if (total > 0 && list->rowCount() > 0)
         {
-            // Mirror TrackRow::headerW (private, but the value is
-            // pinned in the design system). Keep these in sync.
-            constexpr int kHeaderW = 380;
+            constexpr int kHeaderW = brand::space::editHeaderW;   // == TrackRow::headerW (same token)
             // Map across the ROWS' width (list->getWidth() == contentW), not
             // the EditPage's visible width -- when zoomed in the two differ,
             // and the playhead lives inside the contentW-wide TrackRow. The
@@ -4435,7 +4433,7 @@ namespace zynforge
         // freely.
         if (player.isPlaying() && total > 0 && list != nullptr)
         {
-            constexpr int kHeaderW = 380;
+            constexpr int kHeaderW = brand::space::editHeaderW;   // == TrackRow::headerW (same token)
             const int viewW = viewport.getViewWidth();
             const int contentW = list->getWidth();
             if (contentW > viewW + 1)   // zoomed in

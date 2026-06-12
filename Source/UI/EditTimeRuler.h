@@ -49,7 +49,7 @@ namespace zynforge
         // `headerW + xs + frac*(waveW - 2*xs)`). The ruler MUST use the exact
         // same mapping or its ticks / markers / playhead drift a few px from
         // the audio they label. Route every ruler mapping through these.
-        static constexpr int kWaveInset = brand::space::xs;
+        static constexpr int kWaveInset = brand::space::editWaveInset;
         double rulerPxPerSec (double totalSec) const noexcept
         {
             const int effW = juce::jmax (1, contentW - headerW - 2 * kWaveInset);
