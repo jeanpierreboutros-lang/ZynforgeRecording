@@ -27,6 +27,9 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Backlog
 
+- [ ] **New Session must mean EMPTY** (S) — 2026-06-12 gig prep: after clearing `activeSessionDir`, stale strips still appeared because strip count + per-index overrides persist in global appProps. Make File ▸ New Session (and a cleared session pin) wipe stale per-index strip state so a clean launch never needs manual pref surgery. Workaround used: prefs moved to `Zynforge Recording.settings.pregig.bak`.
+- [ ] **Field report from tonight's live event** (S) — first real gig on the frozen build (`/Applications/Zynforge Recording.app`, commit b22b39b, 242/0, daemon OFF). Capture: pre-flight screen on real hardware, any warnings, post-show QC output, general stability.
+
 - [ ] **Audit finding: cross-thread `TrackState::name` read in `captureStatus()`** (S) — `juce::String name` is not atomic; the companion server calls `engine.captureStatus()` from a detached client thread while the message thread can rename a track. Pre-existing (the old `/state.json` read `t.name` directly the same way), low likelihood, but it's a data race. Options: marshal `/state.json` to the message thread, or guard names with a small lock / copy-on-publish. (Found in the 2026-06-12 audit.)
 
 - [~] **Capture-process split, phase 0: boundary hygiene** (M) — **mostly DONE 2026-06-10.** Canonical serialisable `EngineStatus` (`Source/Audio/EngineStatus.h`) + `AudioEngine::captureStatus()` + JSON round-trip (`EngineStatusTests`). Migrated onto it: companion `/state.json`, AND the header readouts (PerfDashboard CPU/disk/buffer/missed + BigClock loudness/disk) now read one per-tick snapshot instead of scattered getters. **Remaining (small):** the per-track meter loop + the record-status string still read `getRecorder().getTrack()` directly; per-track meters (LedMeter holds `TrackState&`) are best migrated alongside Phase 1 when the strip components change anyway.

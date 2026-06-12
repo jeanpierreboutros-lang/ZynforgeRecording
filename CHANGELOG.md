@@ -29,7 +29,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ### Fixed (latest, recorder)
 - **De-flaked the `session.report.json` part-file enumeration** (~7% failure rate, 2/30 runs). `drainOnce()` (stopRecording's final flush and the test harness's `drainPendingForTests`) fans out to every shard, but each shard's own `TimeSliceThread` is *also* draining it — two readers on a single-reader `AbstractFifo` corrupted the part-file list, byte counts, and sample totals (the auto-split bookkeeping). Added a **per-shard drain lock** so concurrent drains of the same shard serialise; different shards still drain in parallel, and it never touches the audio thread. Also a latent production race in `stopRecording`'s flush, not just the test. 0/50 + 0/25 stress runs after.
 
-### Added (latest, design-system enforcement)
+### Added (latest, family icons + gig build)
+- **FORGE family icon** — the forged-Z mark (steel plate, ember glow, accent-hot groove, ZYNFORGE stamp) is now the app icon, generated from the family tokens; all six sibling apps received theirs.
+- **Gig-build procedure** — a tested build is frozen to `/Applications/Zynforge Recording.app` (separate from the dev tree) for live use; experimental capture daemon stays OFF until the 64-ch soak. Known wart: a truly clean first launch can require moving the global prefs aside because per-index strip overrides persist — fix tracked in tasks.md.
+
+### Added (design-system enforcement)
 - **The design-system rules are now enforced, not just documented.** `tools/design_audit.sh` (ported from ZynForge Live's pre-commit audit) greps the app code for raw colours / bare white-black / raw fonts / un-catalogued alphas / non-token radii, and **runs in CI before every build**. It caught one real violation on first run (VcaPanel's raw radius 4 → `brand::radius::md`). Shared EDIT layout constants are tokens now (`space::editHeaderW`, `space::editWaveInset`) — killing the duplicated-literal "keep in sync" class that already shipped the playhead-drift bug. design.md's Component Reference gains **TrackRow, TransportBar, and BigClockPanel** (states, tokens, behaviour).
 
 ### Changed (FORGE family design system)
