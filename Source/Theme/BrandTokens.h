@@ -2,6 +2,8 @@
 
 #include <juce_graphics/juce_graphics.h>
 
+#include "ForgeTokens.h"
+
 #include <cmath>
 #include <unordered_map>
 
@@ -17,47 +19,47 @@ namespace zynforge::brand
     namespace motion
     {
         // Fade-in for brief feedback (toast surface, status pills).
-        inline constexpr int  quickFadeMs   = 200;
+        inline constexpr int  quickFadeMs   = forge::motion_quickFadeMs;
         // Fade-out for the same: longer than the fade-in so the
         // engineer registers what just appeared before it leaves.
-        inline constexpr int  fadeOutMs     = 320;
+        inline constexpr int  fadeOutMs     = forge::motion_fadeOutMs;
         // Hold duration for a non-modal toast before it begins fading.
-        inline constexpr int  toastHoldMs   = 2800;
+        inline constexpr int  toastHoldMs   = forge::motion_toastHoldMs;
         // Hold for a one-shot clip indicator (PEAK tally bar, etc.)
         // after the last clip event.
-        inline constexpr int  clipLatchMs   = 1000;
+        inline constexpr int  clipLatchMs   = forge::motion_clipLatchMs;
         // Rate at which the BigClock pulses while recording / waiting.
-        inline constexpr float pulseHz      = 1.0f;
+        inline constexpr float pulseHz      = forge::motion_pulseHz;
         // Cross-strip soft-takeover ramp on cue recall. Seconds, not
         // milliseconds, because the audio thread integrates per-sample.
-        inline constexpr float cueRampSec   = 0.50f;
+        inline constexpr float cueRampSec   = forge::motion_cueRampSec;
         // Standard delay before showing a launch-flow dialog so the
         // window has finished sizing first.
-        inline constexpr int  launchDelayMs = 250;
+        inline constexpr int  launchDelayMs = forge::motion_launchDelayMs;
     }
 
     // ── Corner-radius scale (matches ZynForge Live's rounded.{sm,md,lg,xl}) ──
     namespace radius
     {
-        inline constexpr float sm = 2.5f;   // chips, fader caps, micro pills
-        inline constexpr float md = 4.0f;   // patch dots, picker rows, slots
-        inline constexpr float lg = 5.0f;   // knobs, fader thumbs, toolbar buttons
-        inline constexpr float xl = 8.0f;   // dialogs, callouts
+        inline constexpr float sm = forge::radius_sm;   // chips, fader caps, micro pills
+        inline constexpr float md = forge::radius_md;   // patch dots, picker rows, slots
+        inline constexpr float lg = forge::radius_lg;   // knobs, fader thumbs, toolbar buttons
+        inline constexpr float xl = forge::radius_xl;   // dialogs, callouts
     }
 
     // ── Spacing scale (matches ZynForge Live's spacing.xs..xl) ───────────────
     namespace space
     {
-        inline constexpr int xs = 4;   // tight icon-to-text padding
-        inline constexpr int sm = 6;   // sibling controls on the same row
-        inline constexpr int md = 8;   // section inner padding
-        inline constexpr int lg = 10;  // section outer margin
-        inline constexpr int xl = 16;  // large section gaps
+        inline constexpr int xs = forge::space_xs;   // tight icon-to-text padding
+        inline constexpr int sm = forge::space_sm;   // sibling controls on the same row
+        inline constexpr int md = forge::space_md;   // section inner padding
+        inline constexpr int lg = forge::space_lg;  // section outer margin
+        inline constexpr int xl = forge::space_xl;  // large section gaps
 
-        inline constexpr int ctrlH = 22;   // standard control height
-        inline constexpr int ioH   = 20;   // I/O selector rows
-        inline constexpr int rowH  = 26;   // standard row pitch
-        inline constexpr int btnH  = 24;   // action button height
+        inline constexpr int ctrlH = forge::space_ctrlH;   // standard control height
+        inline constexpr int ioH   = forge::space_ioH;   // I/O selector rows
+        inline constexpr int rowH  = forge::space_rowH;   // standard row pitch
+        inline constexpr int btnH  = forge::space_btnH;   // action button height
     }
 
     // ── Typography scale ──────────────────────────────────────────────────
@@ -74,21 +76,21 @@ namespace zynforge::brand
     // These names match the bundled BinaryData faces directly. The
     // LookAndFeel still accepts "SF Pro" / "SF Mono" for any legacy
     // call, but new code should ask by the canonical name.
-    inline constexpr const char* uiFamily   = "Inter";
-    inline constexpr const char* monoFamily = "JetBrains Mono";
+    inline constexpr const char* uiFamily   = forge::uiFamily;
+    inline constexpr const char* monoFamily = forge::monoFamily;
 
     namespace type
     {
         // Sized scale. Seven discrete heights. Anything outside this
         // list should be considered a bug -- the system should be tight.
-        inline constexpr float h_label    = 10.0f;   // tiny captions / dB ruler ticks
-        inline constexpr float h_caption  = 11.0f;   // small labels, chips
-        inline constexpr float h_body     = 13.0f;   // standard body
-        inline constexpr float h_title    = 14.0f;   // dialog + section titles
-        inline constexpr float h_headline = 18.0f;   // big-ish accents
-        inline constexpr float h_subhead  = 22.0f;   // cue countdown, next-up labels
-        inline constexpr float h_display  = 28.0f;   // section hero numbers
-        inline constexpr float h_hero     = 44.0f;   // BigClock timer
+        inline constexpr float h_label    = forge::type_label;   // tiny captions / dB ruler ticks
+        inline constexpr float h_caption  = forge::type_caption;   // small labels, chips
+        inline constexpr float h_body     = forge::type_body;   // standard body
+        inline constexpr float h_title    = forge::type_title;   // dialog + section titles
+        inline constexpr float h_headline = forge::type_headline;   // big-ish accents
+        inline constexpr float h_subhead  = forge::type_subhead;   // cue countdown, next-up labels
+        inline constexpr float h_display  = forge::type_display;   // section hero numbers
+        inline constexpr float h_hero     = forge::type_hero;   // BigClock timer
 
         // Small (height, bold) -> Font cache. JUCE 8 routes
         // juce::Font(FontOptions) through a CoreText typeface lookup

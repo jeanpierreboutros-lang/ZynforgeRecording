@@ -127,6 +127,8 @@ Why no built-in HTTPS: JUCE has no server-side TLS, so in-app HTTPS would mean b
 
 ## Visual identity
 
+Design values are sourced from the **FORGE family design system** (`../ZynForgeBrand/tokens.json` → generated, vendored `Source/Theme/ForgeTokens.h`) — one token edit retunes the whole ZynForge family. See `ZynForgeBrand/FORGE.md`.
+
 Part of the ZynForge family — shares palette + fader/meter style with ZynForge Live (sibling project). Near-black canvas, neutral-grey strips by default (recoloured per channel from a gradient picker), LED-segment meters, brand-orange for armed-but-not-rolling.
 
 `Inter` (UI) + `JetBrains Mono` (tabular numerals) bundled as BinaryData. Seven-step type scale. Three-step elevation tokens. All chrome routes through `Source/Theme/BrandColors.h` + `BrandTokens.h` + `DialogChrome.h` — never raw hex literals. Full rationale in [`design.md`](design.md).

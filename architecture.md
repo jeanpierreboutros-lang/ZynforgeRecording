@@ -96,7 +96,8 @@ ZynforgeRecording/
 │   │   ├── Toast.h                    — non-modal feedback pill
 │   │   └── *Dialog.{h,cpp}            — modal prompts (all use DialogChrome)
 │   ├── Theme/                         — design system
-│   │   ├── BrandColors.h              — palette, personality, accents, shadow, onSignal
+│   │   ├── ForgeTokens.h              — GENERATED family tokens (vendored from ZynForgeBrand)
+│   │   ├── BrandColors.h              — palette, personality, accents, shadow, onSignal (values from forge::)
 │   │   ├── BrandTokens.h              — type scale, spacing, radius
 │   │   ├── DialogChrome.h             — unified modal chrome helpers
 │   │   └── ZynForgeLookAndFeel.{h,cpp}— JUCE LookAndFeel override

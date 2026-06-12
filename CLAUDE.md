@@ -46,7 +46,7 @@ EDIT-view specifics in `Source/UI/EditPage.cpp`: the `TrackRow` header (swatch /
 
 ### Brand + design system
 
-- Colours come from `Source/Theme/BrandColors.h`. Never use raw `juce::Colour::fromRGB` or `juce::Colours::black/white` for chrome.
+- Colours come from `Source/Theme/BrandColors.h`. Never use raw `juce::Colour::fromRGB` or `juce::Colours::black/white` for chrome. **The VALUES behind BrandColors/BrandTokens come from the family token source of truth** (`Desktop/zynforge/ZynForgeBrand/tokens.json` → generated `Source/Theme/ForgeTokens.h`, vendored): to change a brand value, edit tokens.json, run `generate.py`, re-vendor the header — never edit ForgeTokens.h or hard-code a value here. See `ZynForgeBrand/FORGE.md`.
 - Fonts come from `Source/Theme/BrandTokens.h` via `brand::type::*`. Never construct a raw `juce::Font`.
 - Dialog modals use `Source/Theme/DialogChrome.h::dialog::paintChrome(...)`. Custom dialog `paint()` is a smell.
 - Shadows: `brand::shadow::elev1/elev2/elev3`. Never inline `Colours::black.withAlpha(...)`.

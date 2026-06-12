@@ -3,92 +3,96 @@
 #include <juce_graphics/juce_graphics.h>
 #include <array>
 
+#include "ForgeTokens.h"
+
 namespace zynforge::brand
 {
-    // ── Tokens taken byte-for-byte from the shared ZynForge design
-    // system (DESIGN.md authored 2026-05-21). Live and Recording must
-    // stay aligned here so the family reads as one product.
+    // ── Values come from the FAMILY token source of truth: ZynForgeBrand/
+    // tokens.json -> generated ForgeTokens.h (vendored next to this file).
+    // This header defines Recording's juce::Colour constants FROM forge::
+    // values and keeps the helpers; edit tokens.json + regenerate to retune
+    // the whole ZynForge family at once. See ZynForgeBrand/FORGE.md.
 
     // ── Brand mark ────────────────────────────────────────────────────────
-    inline const auto brandOrange = juce::Colour::fromRGB (0xff, 0x77, 0x33);  // forge accent
-    inline const auto brandDeep   = juce::Colour::fromRGB (0x0a, 0x0a, 0x0f);  // navy ground
+    inline const auto brandOrange = juce::Colour (forge::brandOrange);  // forge accent
+    inline const auto brandDeep = juce::Colour (forge::brandDeep);  // navy ground
 
     // ── Background levels (3-step) ────────────────────────────────────────
-    inline const auto bgDeep      = juce::Colour::fromRGB (0x0d, 0x0d, 0x12);  // deepest plane
-    inline const auto bgPanel     = juce::Colour::fromRGB (0x12, 0x13, 0x16);  // panel surface
-    inline const auto bgStrip     = juce::Colour::fromRGB (0x1e, 0x1e, 0x1e);  // main app surface
-    inline const auto bgElevated  = juce::Colour::fromRGB (0x30, 0x30, 0x30);  // popups, dialogs
+    inline const auto bgDeep = juce::Colour (forge::bgDeep);  // deepest plane
+    inline const auto bgPanel = juce::Colour (forge::bgPanel);  // panel surface
+    inline const auto bgStrip = juce::Colour (forge::bgStrip);  // main app surface
+    inline const auto bgElevated = juce::Colour (forge::bgElevated);  // popups, dialogs
 
     // ── Control chrome ────────────────────────────────────────────────────
-    inline const auto edge          = juce::Colour::fromRGB (0x26, 0x28, 0x2e);
-    inline const auto borderSubtle  = juce::Colour::fromRGB (0x3a, 0x3a, 0x3a);
-    inline const auto borderBright  = juce::Colour::fromRGB (0x5a, 0x5a, 0x5a);
+    inline const auto edge = juce::Colour (forge::edge);
+    inline const auto borderSubtle = juce::Colour (forge::borderSubtle);
+    inline const auto borderBright = juce::Colour (forge::borderBright);
 
     // Background for text editors, combo bodies, and any other input
     // chrome that wants to read as a recessed slot on the panel.
     // Deliberately deeper than bgDeep so it sinks below the surface.
-    inline const auto inputBg       = juce::Colour::fromRGB (0x00, 0x00, 0x00);
+    inline const auto inputBg = juce::Colour (forge::inputBg);
 
     // Loop-region / selection band -- Pro Tools-blue-adjacent.
     // Used as a low-alpha fill + medium-alpha edge on the EDIT view.
-    inline const auto accentEdit    = juce::Colour::fromRGB (0x3a, 0x90, 0xe0);
+    inline const auto accentEdit = juce::Colour (forge::accentEdit);
 
     // ── Text (4-step, all WCAG-AA against bg-surface) ─────────────────────
-    inline const auto textPrimary   = juce::Colour::fromRGB (0xff, 0xff, 0xff);
-    inline const auto textSecondary = juce::Colour::fromRGB (0xb8, 0xc2, 0xcc);
-    inline const auto textTertiary  = juce::Colour::fromRGB (0x7a, 0x8a, 0x9a);
-    inline const auto textMuted     = juce::Colour::fromRGB (0x55, 0x60, 0x6c);  // genuine disabled state
+    inline const auto textPrimary = juce::Colour (forge::textPrimary);
+    inline const auto textSecondary = juce::Colour (forge::textSecondary);
+    inline const auto textTertiary = juce::Colour (forge::textTertiary);
+    inline const auto textMuted = juce::Colour (forge::textMuted);  // genuine disabled state
 
     // ── Semantic signal accents ───────────────────────────────────────────
-    inline const auto accentRecord    = juce::Colour::fromRGB (0xff, 0x3b, 0x3b);  // record / danger
-    inline const auto accentPlay      = juce::Colour::fromRGB (0x4a, 0xd8, 0x78);  // transport active
-    inline const auto accentVS        = juce::Colour::fromRGB (0xff, 0xb4, 0x2a);  // virtual soundcheck
-    inline const auto accentStatus    = juce::Colour::fromRGB (0x5d, 0xd8, 0x7a);  // session-clock green
-    inline const auto accentSolo      = juce::Colour::fromRGB (0xff, 0xd6, 0x4d);  // solo yellow
-    inline const auto alertAmber      = juce::Colour::fromRGB (0xe8, 0x98, 0x27);
-    inline const auto engagedAmber    = juce::Colour::fromRGB (0xff, 0x9e, 0x2c);  // BYPASS / LIVE / LOCK
-    inline const auto featureEngaged  = juce::Colour::fromRGB (0x33, 0xc4, 0xd4);  // cool-teal toggle-on
+    inline const auto accentRecord = juce::Colour (forge::accentRecord);  // record / danger
+    inline const auto accentPlay = juce::Colour (forge::accentPlay);  // transport active
+    inline const auto accentVS = juce::Colour (forge::accentVS);  // virtual soundcheck
+    inline const auto accentStatus = juce::Colour (forge::accentStatus);  // session-clock green
+    inline const auto accentSolo = juce::Colour (forge::accentSolo);  // solo yellow
+    inline const auto alertAmber = juce::Colour (forge::alertAmber);
+    inline const auto engagedAmber = juce::Colour (forge::engagedAmber);  // BYPASS / LIVE / LOCK
+    inline const auto featureEngaged = juce::Colour (forge::featureEngaged);  // cool-teal toggle-on
 
     // ── Meter colours (deliberately duller than accents) ──────────────────
-    inline const auto meterGreen   = juce::Colour::fromRGB (0x3c, 0xb8, 0x78);
-    inline const auto meterAmber   = juce::Colour::fromRGB (0xf0, 0xc0, 0x60);
-    inline const auto meterRed     = juce::Colour::fromRGB (0xdc, 0x38, 0x38);
-    inline const auto meterIdle    = juce::Colour::fromRGB (0x2c, 0x30, 0x3a);   // visible against bgDeep
+    inline const auto meterGreen = juce::Colour (forge::meterGreen);
+    inline const auto meterAmber = juce::Colour (forge::meterAmber);
+    inline const auto meterRed = juce::Colour (forge::meterRed);
+    inline const auto meterIdle = juce::Colour (forge::meterIdle);   // visible against bgDeep
 
     // ── Forge-heat meter ramp (brand signature) ───────────────────────────
     // ZynForge's identity: cold steel that runs HOT where the signal lives.
     // The safe zone stays green (live-sound muscle memory), but the hot zone
     // climbs like heated metal -- ember → bright forge-orange → white-hot at
     // clip. Loud literally glows like steel in a forge.
-    inline const auto meterEmber    = juce::Colour::fromRGB (0xe0, 0x55, 0x18);  // ember (heating up)
-    inline const auto meterHot      = juce::Colour::fromRGB (0xff, 0x8a, 0x24);  // bright forge orange
-    inline const auto meterWhiteHot = juce::Colour::fromRGB (0xff, 0xef, 0xcf);  // white-hot (clip-adjacent)
+    inline const auto meterEmber = juce::Colour (forge::meterEmber);  // ember (heating up)
+    inline const auto meterHot = juce::Colour (forge::meterHot);  // bright forge orange
+    inline const auto meterWhiteHot = juce::Colour (forge::meterWhiteHot);  // white-hot (clip-adjacent)
 
     // Meter colour for a height fraction (0 = floor, 1 = top). Centralises the
     // ramp so the gradient + segmented paths agree.
     inline juce::Colour meterHeatAt (float frac) noexcept
     {
-        if (frac > 0.95f) return meterWhiteHot;   // white-hot tip
-        if (frac > 0.85f) return meterHot;        // bright forge orange
-        if (frac > 0.70f) return meterEmber;      // ember
+        if (frac > forge::heat_whiteHotAbove) return meterWhiteHot;   // white-hot tip
+        if (frac > forge::heat_hotAbove)      return meterHot;        // bright forge orange
+        if (frac > forge::heat_emberAbove)    return meterEmber;      // ember
         return meterGreen;                         // safe zone
     }
 
     // ── Transport / control-button chrome (3 hover states) ────────────────
-    inline const auto controlBg          = juce::Colour::fromRGB (0x2a, 0x2c, 0x30);
-    inline const auto controlBgHover     = juce::Colour::fromRGB (0x36, 0x38, 0x3e);
-    inline const auto controlBgDown      = juce::Colour::fromRGB (0x3e, 0x40, 0x46);
-    inline const auto controlBorder      = juce::Colour::fromRGB (0x14, 0x15, 0x18);
+    inline const auto controlBg = juce::Colour (forge::controlBg);
+    inline const auto controlBgHover = juce::Colour (forge::controlBgHover);
+    inline const auto controlBgDown = juce::Colour (forge::controlBgDown);
+    inline const auto controlBorder = juce::Colour (forge::controlBorder);
 
     // ── Fader thumb body greys ────────────────────────────────────────────
-    inline const auto faderThumbHi    = juce::Colour::fromRGB (0x33, 0x35, 0x3c);
-    inline const auto faderThumbLo    = juce::Colour::fromRGB (0x1c, 0x1e, 0x23);
-    inline const auto faderThumbEdge  = juce::Colour::fromRGB (0x55, 0x57, 0x60);
-    inline const auto faderThumbGrip  = juce::Colour::fromRGB (0xa0, 0xa3, 0xad);
+    inline const auto faderThumbHi = juce::Colour (forge::faderThumbHi);
+    inline const auto faderThumbLo = juce::Colour (forge::faderThumbLo);
+    inline const auto faderThumbEdge = juce::Colour (forge::faderThumbEdge);
+    inline const auto faderThumbGrip = juce::Colour (forge::faderThumbGrip);
 
     // ── Strip-colour picker neutral presets ───────────────────────────────
-    inline const auto swatchSlate    = juce::Colour::fromRGB (0x40, 0x45, 0x50);
-    inline const auto swatchGraphite = juce::Colour::fromRGB (0x55, 0x55, 0x5a);
+    inline const auto swatchSlate = juce::Colour (forge::swatchSlate);
+    inline const auto swatchGraphite = juce::Colour (forge::swatchGraphite);
 
     // ── Signal semantics -- KEEP THESE MAPPINGS STABLE ACROSS THE APP ──
     //
@@ -129,13 +133,13 @@ namespace zynforge::brand
         // 0.55-0.60, 0.95). The 3-step (subtle/ghost/prominent)
         // semantic intent is preserved -- the new values just give
         // engineers a named slot instead of inventing 0.35 inline.
-        inline constexpr float subtle    = 0.18f;  // grid lines, off-beat ticks
-        inline constexpr float dimmed    = 0.35f;  // background washes, mute scrim edges
-        inline constexpr float ghost     = 0.40f;  // downbeats, secondary cues
-        inline constexpr float scrim     = 0.45f;  // zebra-row tints, surface-dimming washes
-        inline constexpr float muted     = 0.55f;  // mid-contrast overlays
-        inline constexpr float prominent = 0.85f;  // playhead, focus highlight
-        inline constexpr float bold      = 0.95f;  // near-opaque text on translucent bg
+        inline constexpr float subtle    = forge::alpha_subtle;  // grid lines, off-beat ticks
+        inline constexpr float dimmed    = forge::alpha_dimmed;  // background washes, mute scrim edges
+        inline constexpr float ghost    = forge::alpha_ghost;  // downbeats, secondary cues
+        inline constexpr float scrim    = forge::alpha_scrim;  // zebra-row tints, surface-dimming washes
+        inline constexpr float muted    = forge::alpha_muted;  // mid-contrast overlays
+        inline constexpr float prominent    = forge::alpha_prominent;  // playhead, focus highlight
+        inline constexpr float bold    = forge::alpha_bold;  // near-opaque text on translucent bg
 
         // ── Ad-hoc values that DON'T fit the scale ──────────────
         // Audit catalog of every withAlpha(...) literal that doesn't
@@ -187,9 +191,9 @@ namespace zynforge::brand
     // /dialogs < modal popovers.
     namespace shadow
     {
-        inline juce::Colour elev1() { return juce::Colours::black.withAlpha (0.25f); }
-        inline juce::Colour elev2() { return juce::Colours::black.withAlpha (0.40f); }
-        inline juce::Colour elev3() { return juce::Colours::black.withAlpha (0.55f); }
+        inline juce::Colour elev1() { return juce::Colours::black.withAlpha (forge::shadow_elev1); }
+        inline juce::Colour elev2() { return juce::Colours::black.withAlpha (forge::shadow_elev2); }
+        inline juce::Colour elev3() { return juce::Colours::black.withAlpha (forge::shadow_elev3); }
     }
 
     // ── Specular / scrim white-overlay helper ─────────────────────────
@@ -221,21 +225,21 @@ namespace zynforge::brand
     // Saturation + luminance bumped ~12-15% on each so every personality
     // reads cleanly even in a 256-strip layout. The hue is preserved.
     inline const std::array<juce::Colour, 8> personality {
-        juce::Colour::fromRGB (0x4c, 0x6c, 0x88),  // INS 1 -- dusty blue
-        juce::Colour::fromRGB (0x52, 0x8a, 0x6a),  // INS 2 -- moss      (bumped)
-        juce::Colour::fromRGB (0x80, 0x76, 0x46),  // INS 3 -- olive     (bumped)
-        juce::Colour::fromRGB (0x76, 0x5a, 0x8c),  // INS 4 -- violet    (bumped)
-        juce::Colour::fromRGB (0x78, 0x3c, 0x4e),  // INS 5 -- wine
-        juce::Colour::fromRGB (0x3c, 0x82, 0x86),  // INS 6 -- teal      (bumped)
-        juce::Colour::fromRGB (0x80, 0x5c, 0x32),  // INS 7 -- amber
-        juce::Colour::fromRGB (0x7a, 0x6a, 0x38),  // INS 8 -- mustard
+        juce::Colour (forge::personality[0]),  // INS 1 -- dusty blue
+        juce::Colour (forge::personality[1]),  // INS 2 -- moss      (bumped)
+        juce::Colour (forge::personality[2]),  // INS 3 -- olive     (bumped)
+        juce::Colour (forge::personality[3]),  // INS 4 -- violet    (bumped)
+        juce::Colour (forge::personality[4]),  // INS 5 -- wine
+        juce::Colour (forge::personality[5]),  // INS 6 -- teal      (bumped)
+        juce::Colour (forge::personality[6]),  // INS 7 -- amber
+        juce::Colour (forge::personality[7]),  // INS 8 -- mustard
     };
 
     // Default strip colour. Channels are a neutral grey when first added --
     // the engineer colours the ones that matter from the swatch picker. (The
     // per-index `personality` palette above is kept for reference / future
     // use; the default no longer auto-assigns it.)
-    inline const auto stripDefaultGrey = juce::Colour::fromRGB (0x53, 0x55, 0x5b);
+    inline const auto stripDefaultGrey = juce::Colour (forge::stripDefaultGrey);
 
     inline juce::Colour stripColour (int /*index*/) noexcept
     {
