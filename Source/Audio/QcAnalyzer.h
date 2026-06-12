@@ -5,6 +5,7 @@
 #include "LoudnessMeter.h"
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
 namespace zynforge::qc
@@ -117,13 +118,14 @@ namespace zynforge::qc
         }
         endClipRun();
 
-        qc.peakDb         = juce::Decibels::gainToDecibels (peak, -120.0f);
-        qc.integratedLufs = loudness.getIntegratedLufs();
+        auto safe = [] (float v) { return std::isfinite (v) ? v : -120.0f; };
+        qc.peakDb         = safe (juce::Decibels::gainToDecibels (peak, -120.0f));
+        qc.integratedLufs = safe (loudness.getIntegratedLufs());
         if (! windowsDb.empty())
         {
             auto sorted = windowsDb;
             std::sort (sorted.begin(), sorted.end());
-            qc.noiseFloorDb = sorted[(size_t) ((double) (sorted.size() - 1) * 0.10)];
+            qc.noiseFloorDb = safe (sorted[(size_t) ((double) (sorted.size() - 1) * 0.10)]);
         }
         return qc;
     }

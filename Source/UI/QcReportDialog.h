@@ -8,6 +8,7 @@
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
+#include <cmath>
 #include <vector>
 
 namespace zynforge
@@ -130,17 +131,21 @@ namespace zynforge
             {
                 const auto& qa = data[(size_t) a];
                 const auto& qb = data[(size_t) b];
+                // NaN violates strict-weak-ordering and crashes introsort
+                // (SIGBUS at the first real gig's QC run) -- map non-finite
+                // to a floor so the sort is total no matter the data.
+                auto num = [] (float v) { return std::isfinite (v) ? v : -1.0e9f; };
                 auto lt = [&]() -> bool
                 {
                     switch (col)
                     {
                         case 1: return qa.name.compareNatural (qb.name) < 0;
-                        case 2: return qa.peakDb < qb.peakDb;
-                        case 3: return qa.integratedLufs < qb.integratedLufs;
+                        case 2: return num (qa.peakDb) < num (qb.peakDb);
+                        case 3: return num (qa.integratedLufs) < num (qb.integratedLufs);
                         case 4: return qa.clipEventCount < qb.clipEventCount;
                         case 5: return (qa.clipEvents.empty() ? -1 : (juce::int64) qa.clipEvents.front().startSample)
                                      < (qb.clipEvents.empty() ? -1 : (juce::int64) qb.clipEvents.front().startSample);
-                        case 6: return qa.noiseFloorDb < qb.noiseFloorDb;
+                        case 6: return num (qa.noiseFloorDb) < num (qb.noiseFloorDb);
                     }
                     return false;
                 }();
