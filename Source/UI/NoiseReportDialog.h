@@ -129,8 +129,10 @@ namespace zynforge
 
         void sortIndicesBy (int col, bool forwards)
         {
-            auto cmp = [this, col, forwards] (int a, int b) -> bool
+            auto cmp = [this, col, forwards] (int ia, int ib) -> bool
             {
+                const int a = forwards ? ia : ib;   // descending = swapped
+                const int b = forwards ? ib : ia;   // operands, never !lt
                 const auto& fa = data[(size_t) a];
                 const auto& fb = data[(size_t) b];
                 auto lt = [&]() -> bool
@@ -147,7 +149,7 @@ namespace zynforge
                     }
                     return false;
                 }();
-                return forwards ? lt : ! lt;
+                return lt;
             };
             std::sort (sortedIndices.begin(), sortedIndices.end(), cmp);
         }
