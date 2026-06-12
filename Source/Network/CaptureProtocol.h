@@ -30,6 +30,7 @@ namespace zynforge::capture
         StopPlayback,
         ArmTrack,         // trackIndex, boolValue
         SetCaptureFormat, // intValue = CaptureFormat
+        SetTrackCount,    // intValue = number of tracks
         SetSessionDir,    // sessionDir
         Ping              // liveness
     };
@@ -45,6 +46,7 @@ namespace zynforge::capture
             case Action::StopPlayback:     return "stopPlayback";
             case Action::ArmTrack:         return "armTrack";
             case Action::SetCaptureFormat: return "setCaptureFormat";
+            case Action::SetTrackCount:    return "setTrackCount";
             case Action::SetSessionDir:    return "setSessionDir";
             case Action::Ping:             return "ping";
         }
@@ -61,6 +63,7 @@ namespace zynforge::capture
         if (s == "stopPlayback")     return Action::StopPlayback;
         if (s == "armTrack")         return Action::ArmTrack;
         if (s == "setCaptureFormat") return Action::SetCaptureFormat;
+        if (s == "setTrackCount")    return Action::SetTrackCount;
         if (s == "setSessionDir")    return Action::SetSessionDir;
         if (s == "ping")             return Action::Ping;
         ok = false;

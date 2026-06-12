@@ -23,7 +23,8 @@ namespace zynforge
                 const Action all[] = {
                     Action::Hello, Action::StartRecording, Action::StopRecording,
                     Action::StartPlayback, Action::StopPlayback, Action::ArmTrack,
-                    Action::SetCaptureFormat, Action::SetSessionDir, Action::Ping };
+                    Action::SetCaptureFormat, Action::SetTrackCount,
+                    Action::SetSessionDir, Action::Ping };
                 for (auto a : all)
                 {
                     bool ok = false;

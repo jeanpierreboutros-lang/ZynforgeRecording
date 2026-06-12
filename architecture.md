@@ -109,6 +109,9 @@ ZynforgeRecording/
 │       ├── CaptureProtocol.h          — capture daemon↔GUI wire protocol (Phase 1 contract)
 │       ├── CaptureLink.{h,cpp}         — capture daemon↔GUI local-socket transport (Phase 1b)
 │       └── SessionMirror.{h,cpp}      — parallel session mirror to a second host
+│   ├── Capture/                       — headless capture daemon (Phase 1c)
+│   │   ├── CaptureDaemon.{h,cpp}      — device callback + recorder + CaptureServer engine
+│   │   └── CaptureMain.cpp            — `zynforge-capture` console entry (2nd CMake target)
 ├── .github/workflows/ci.yml          — GitHub Actions: build + headless suite on push/PR
 └── build/                             — CMake / Xcode build artefacts (gitignored)
 ```

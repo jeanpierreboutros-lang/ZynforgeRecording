@@ -102,7 +102,9 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/EngineStatusTests.cpp
     Source/Tests/CaptureProtocolTests.cpp
     Source/Tests/CaptureLinkTests.cpp
+    Source/Tests/CaptureDaemonTests.cpp
     Source/Network/CaptureLink.cpp
+    Source/Capture/CaptureDaemon.cpp
     Source/Network/ConsoleLink.cpp
     Source/UI/ChannelStrip.cpp
     Source/UI/LedMeter.cpp
@@ -164,6 +166,39 @@ target_link_libraries(ZynforgeRecording PRIVATE
     juce::juce_gui_extra
     juce::juce_dsp
     juce::juce_osc
+    juce::juce_cryptography
+    juce::juce_recommended_config_flags
+    juce::juce_recommended_lto_flags
+    juce::juce_recommended_warning_flags
+)
+
+# ── zynforge-capture: headless capture daemon (capture-split Phase 1c) ──────
+# Owns the audio device + MultitrackRecorder out-of-process; the GUI talks to
+# it over the local-socket CaptureProtocol. Console app -- no UI, no fonts.
+juce_add_console_app(ZynforgeCapture
+    PRODUCT_NAME                  "zynforge-capture"
+    COMPANY_NAME                  "ZynForge"
+    MICROPHONE_PERMISSION_ENABLED TRUE
+    MICROPHONE_PERMISSION_TEXT    "zynforge-capture records audio input."
+)
+
+target_sources(ZynforgeCapture PRIVATE
+    Source/Capture/CaptureMain.cpp
+    Source/Capture/CaptureDaemon.cpp
+    Source/Audio/MultitrackRecorder.cpp
+    Source/Network/CaptureLink.cpp
+)
+
+target_compile_definitions(ZynforgeCapture PRIVATE
+    JUCE_WEB_BROWSER=0
+    JUCE_USE_CURL=0
+    JUCE_APPLICATION_NAME_STRING="zynforge-capture"
+    JUCE_APPLICATION_VERSION_STRING="0.1.0"
+)
+
+target_link_libraries(ZynforgeCapture PRIVATE
+    juce::juce_audio_devices
+    juce::juce_audio_formats
     juce::juce_cryptography
     juce::juce_recommended_config_flags
     juce::juce_recommended_lto_flags
