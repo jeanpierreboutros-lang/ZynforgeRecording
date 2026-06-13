@@ -3049,7 +3049,25 @@ namespace zynforge
                     case 401: withUndo (locked ? "Unlock clip" : "Lock clip",   [&]{ for (int p : self->editGroupPeers()) self->engine.setClipLocked (p, clipIdx, ! locked); }); return;
                     case 410: withUndo ("Duplicate clip", [&]{ for (int p : self->editGroupPeers()) self->engine.duplicateClip (p, clipIdx); });           return;
                     case 411: withUndo ("Delete clip",    [&]{ for (int p : self->editGroupPeers()) self->engine.deleteClip    (p, clipIdx); });           return;
-                    case 414: withUndo ("Normalize clip", [&]{ self->engine.normalizeClip (self->index, clipIdx); });          return;
+                    case 414: withUndo ("Normalize clip", [&]
+                              {
+                                  // One shared gain for the whole (possibly stereo)
+                                  // clip: take the most conservative gain across
+                                  // peers (min => the loudest channel lands at
+                                  // target, the stereo image stays balanced), then
+                                  // apply it to every peer. For a native-stereo
+                                  // pair the L's 2-ch file already spans both
+                                  // channels, so its gain alone covers the pair.
+                                  float g = 0.0f; bool found = false;
+                                  for (int p : self->editGroupPeers())
+                                  {
+                                      const float pg = self->engine.clipNormalizeGainDb (p, clipIdx);
+                                      if (std::isfinite (pg)) { g = found ? juce::jmin (g, pg) : pg; found = true; }
+                                  }
+                                  if (found)
+                                      for (int p : self->editGroupPeers())
+                                          self->engine.setClipGainDb (p, clipIdx, g);
+                              }); return;
                     case 413: withUndo ("Consolidate clip", [&]
                               {
                                   // Flatten the SAME timeline range on every peer.

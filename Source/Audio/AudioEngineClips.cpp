@@ -13,6 +13,8 @@
 #include "AudioEngine.h"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <map>
 
 namespace zynforge
@@ -1313,29 +1315,33 @@ namespace zynforge
         return true;
     }
 
-    bool AudioEngine::normalizeClip (int track, int clipIndex, float targetDbFS)
+    float AudioEngine::clipNormalizeGainDb (int track, int clipIndex, float targetDbFS)
     {
+        const float kFail = std::numeric_limits<float>::quiet_NaN();
+
         auto* list = validClipList (trackClips, track, clipIndex);
-        if (list == nullptr) return false;
+        if (list == nullptr) return kFail;
         const auto& c = (*list)[(size_t) clipIndex];
-        if (c.locked) return false;
+        if (c.locked) return kFail;
 
         // The clip's source audio. Fall back to the track's Track_NN.wav when
         // the clip doesn't carry an explicit file (seeded full-range clip).
+        // For a native-stereo L slot this resolves to the 2-channel file, so
+        // the peak below spans BOTH channels -> one gain covers the pair.
         auto file = c.audioFile;
         if (! file.existsAsFile())
             file = getActiveSessionDir().getChildFile ("Audio Files")
                        .getChildFile (juce::String::formatted ("Track_%02d.wav", track + 1));
-        if (! file.existsAsFile()) return false;
+        if (! file.existsAsFile()) return kFail;
 
         juce::AudioFormatManager fm; fm.registerBasicFormats();
         std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (file));
-        if (reader == nullptr || reader->numChannels == 0) return false;
+        if (reader == nullptr || reader->numChannels == 0) return kFail;
 
         const juce::int64 start = juce::jmax ((juce::int64) 0, c.fileStartSamples);
         const juce::int64 len   = juce::jmin (c.fileLengthSamples,
                                               (juce::int64) reader->lengthInSamples - start);
-        if (len <= 0) return false;
+        if (len <= 0) return kFail;
 
         // Read-only offline scan for the peak magnitude over the clip's region.
         float peak = 0.0f;
@@ -1348,12 +1354,18 @@ namespace zynforge
             for (int ch = 0; ch < buf.getNumChannels(); ++ch)
                 peak = juce::jmax (peak, buf.getMagnitude (ch, 0, n));
         }
-        if (peak <= 0.0f) return false;   // silent -> nothing to normalize
+        if (peak <= 0.0f) return kFail;   // silent -> nothing to normalize
 
+        return targetDbFS - juce::Decibels::gainToDecibels (peak);
+    }
+
+    bool AudioEngine::normalizeClip (int track, int clipIndex, float targetDbFS)
+    {
+        const float gainDb = clipNormalizeGainDb (track, clipIndex, targetDbFS);
+        if (! std::isfinite (gainDb)) return false;
         // Non-destructive: set the clip gain so the peak hits the target.
         // setClipGainDb clamps to +12 dB, so a very quiet clip boosts as far
         // as the clip-gain range allows (the audio file is never altered).
-        const float gainDb = targetDbFS - juce::Decibels::gainToDecibels (peak);
         return setClipGainDb (track, clipIndex, gainDb);
     }
 

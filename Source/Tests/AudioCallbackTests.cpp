@@ -1067,6 +1067,40 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            beginTest ("clipNormalizeGainDb spans both channels of a native-stereo file");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    CallbackFixture f (2, 2, 2);
+                    f.engine.setTrackStereo (0, true);
+                    f.engine.getRecorder().getTrack (0).armed.store (true);
+                    f.engine.getRecorder().getTrack (1).armed.store (true);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0, 0.50f, 256);   // L louder
+                    f.writeInput (1, 0.25f, 256);   // R quieter
+                    for (int b = 0; b < 64; ++b) f.process (256);
+                    f.engine.stopRecording();
+
+                    f.engine.getPlayer().loadSession (sessionDir);
+                    f.engine.seedDefaultClips();
+
+                    // The L slot resolves to the 2-channel file, so the peak
+                    // spans BOTH channels (0.50) -> one gain covers the pair.
+                    const float gL = f.engine.clipNormalizeGainDb (0, 0, -0.3f);
+                    expect (std::isfinite (gL), "L normalize gain should be finite");
+                    expectWithinAbsoluteError (
+                        gL, -0.3f - juce::Decibels::gainToDecibels (0.50f), 0.3f);
+
+                    // The R slot has no own file (native stereo) -> not
+                    // independently scannable; the UI normalises the pair with
+                    // the L's gain (min across peers).
+                    const float gR = f.engine.clipNormalizeGainDb (1, 0, -0.3f);
+                    expect (! std::isfinite (gR),
+                            "R slot must not yield an independent gain");
+                }
+                sessionDir.deleteRecursively();
+            }
+
             beginTest ("Cross-track clip paste plays the source track's audio");
             {
                 // Record track 0 loud, track 1 silent into a session.

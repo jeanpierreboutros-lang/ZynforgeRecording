@@ -805,6 +805,12 @@ namespace zynforge
         // set the clip gain so that peak lands at targetDbFS. Non-destructive
         // (the file is untouched); the clip-gain +12 dB ceiling caps the boost.
         bool normalizeClip   (int track, int clipIndex, float targetDbFS = -0.3f);
+        // The gain (dB) normalizeClip WOULD apply, computed but not applied --
+        // so a caller can normalise a collapsed stereo pair with ONE shared
+        // gain (the min across both halves: the loudest channel lands exactly
+        // at target, the image is preserved) instead of two independent gains
+        // that would skew it. Returns NaN if the clip has no scannable audio.
+        float clipNormalizeGainDb (int track, int clipIndex, float targetDbFS = -0.3f);
         // Offline (read-only) nearest-zero-crossing search around a timeline
         // sample on a track, within ±windowSamples. Returns the adjusted
         // timeline sample (or the original if no crossing / no audio). Used to
