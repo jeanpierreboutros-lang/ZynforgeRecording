@@ -5,6 +5,7 @@
 #include "../Audio/AudioEngine.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
+#include "FineFader.h"
 #include "StripColourPicker.h"
 
 #include <array>
@@ -294,7 +295,7 @@ namespace zynforge
         private:
             AudioEngine& engine;
             int          index;
-            juce::Slider       fader;
+            FineFader          fader;   // 0.5 dB/notch wheel
             juce::ToggleButton mute;
             juce::ToggleButton solo;
             juce::Label        nameLabel;

@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "../Audio/TrackState.h"
+#include "FineFader.h"
 #include "LedMeter.h"
 #include "MiniSpectrum.h"
 #include "RenameLabel.h"
@@ -184,7 +185,7 @@ namespace zynforge
         juce::Slider  panSliderR;
         juce::Label   panLabel;
         juce::Label   panLabelR;
-        juce::Slider  gainFader;
+        FineFader     gainFader;   // fixed 0.5 dB/notch wheel (Shift = 0.1)
         LedMeter      meter;
         std::unique_ptr<Swatch> swatch;
 

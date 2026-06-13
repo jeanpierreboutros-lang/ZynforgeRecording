@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "../Audio/AudioEngine.h"
+#include "FineFader.h"
 #include "LedMeter.h"
 
 #include <memory>
@@ -33,7 +34,7 @@ namespace zynforge
         juce::ComboBox   outputCombo;
         juce::ToggleButton modeButton { "ST" };   // toggles between MONO and STEREO
         juce::ToggleButton muteButton { "MUTE" };
-        juce::Slider     fader { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
+        FineFader        fader { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
         LedMeter         meter;
         int lastNumOutputs { -1 };
         bool             cachedStereo { true };

@@ -4076,6 +4076,16 @@ namespace zynforge
         // getAutomationToolbar() + addAndMakeVisible().
         autoToolbar = std::make_unique<AutomationToolbar>();
 
+        // Gig-one field report: waveform builds felt slow after record/load.
+        // The AudioThumbnailCache scans on its own TimeSliceThread at default
+        // priority, competing with everything; re-start it high so freshly
+        // recorded takes paint their waveforms as fast as the disk allows.
+        {
+            auto& scanThread = thumbnailCache.getTimeSliceThread();
+            scanThread.stopThread (2000);
+            scanThread.startThread (juce::Thread::Priority::high);
+        }
+
         list = std::make_unique<TrackList> (engine, formatManager, thumbnailCache);
         list->sharedToolsBar = toolsBar.get();
         viewport.setViewedComponent (list.get(), false);
@@ -4403,10 +4413,15 @@ namespace zynforge
         if (rec && list != nullptr)
             list->pushRecLevels();
 
-        // Playhead
+        // Playhead. While RECORDING the live head is the recorder's elapsed
+        // count on a grow-to-fit timeline (same timebase as the ruler + the
+        // live capture envelope) -- gig-one field report: the engineer must
+        // see the take rolling in EDIT, not a parked view.
         const auto& player = engine.getPlayer();
-        const auto total = player.getTotalLengthSamples();
-        const auto pos   = player.getPositionSamples();
+        const auto  recPos  = rec ? engine.getRecorder().getSamplesSinceStart() : 0;
+        const auto  total   = rec ? juce::jmax (player.getTotalLengthSamples(), recPos)
+                                  : player.getTotalLengthSamples();
+        const auto  pos     = rec ? recPos : player.getPositionSamples();
         int playheadX = -1;
         if (total > 0 && list->rowCount() > 0)
         {
@@ -4431,7 +4446,7 @@ namespace zynforge
         // audio that's coming up. Only while playing and only when zoomed in
         // (content wider than the view) -- so a stopped engineer can scroll
         // freely.
-        if (player.isPlaying() && total > 0 && list != nullptr)
+        if ((player.isPlaying() || rec) && total > 0 && list != nullptr)
         {
             constexpr int kHeaderW = brand::space::editHeaderW;   // == TrackRow::headerW (same token)
             const int viewW = viewport.getViewWidth();

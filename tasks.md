@@ -16,11 +16,11 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 ## Current Priorities
 
 ### FIELD REPORT — first live gig ("llilwatan", 2026-06-12) — missedSamples:0, no crashes
-- [ ] **Record stereo tracks as ONE stereo file** (L) — adding a stereo track must RECORD one interleaved stereo WAV, not two mono Track_NN files. Extends the import/export stereo collapse into the capture path (MultitrackRecorder writer per pair). Biggest gig-one ask.
-- [ ] **Waveform build too slow after record/load** (M) — thumbnail scan felt slow at the gig. Profile the thumb-cache scan; consider higher-priority scan thread or coarser first pass + refine.
-- [ ] **VU meter refresh too slow** (S) — meters felt laggy live. Check LedMeter timer rates + the gTransportActive throttle; meters should be snappy (~24-30 Hz) while recording/playing.
-- [ ] **Fader scroll-wheel jumps / inaccurate** (S) — mouse scroll on channel + master faders jumps in coarse steps. Scroll is disabled on master deliberately; channel faders need fine smooth increments (≤0.5 dB per notch, shift = finer).
-- [ ] **EDIT view should auto-scroll the waveform while recording** (M) — the live capture envelope should follow/scroll like during playback so the engineer sees the take rolling.
+- [ ] **Record stereo tracks as ONE stereo file** (L) — ADR'd 2026-06-13 (see decisions.md): 4 phases (recorder writer-per-pair → channel-aware player → editor/QC/export → legacy compat). Own dedicated effort with per-phase tests; biggest gig-one ask.
+- [x] **Waveform build too slow after record/load** — thumb-cache scan thread now runs at Priority::high (was default, competing with everything). Done 2026-06-13; if still slow at next gig, next lever is a coarse-first-pass scan.
+- [x] **VU meter refresh too slow** — 60 Hz while transport active + faster fall ballistics. Done 2026-06-13.
+- [x] **Fader scroll-wheel jumps / inaccurate** — new `FineFader` (channel + VCA + master): fixed 0.5 dB per wheel notch, Shift = 0.1 dB, trackpad-delta accumulation. Master scroll re-enabled (precise trim can't yank it). Done 2026-06-13.
+- [x] **EDIT view auto-scrolls while recording** — playhead + page-scroll now track `getSamplesSinceStart()` on the grow-to-fit timeline during a take. Done 2026-06-13.
 
 
 - [x] **Per-session persistence consolidation / schema** (M) — **Done.** Aux **sends**, `strip_isbus_*`, `strip_vca_*`, and `strip_editgroup_*` are all out of global `appProps` and authoritative in `session_mix.json`; the engine no longer reads/writes any of them to appProps (they also went stale after a reorder, since `swapTracks` never swapped them). `session_mix.json` carries `formatVersion` (v1) and the loader is hardened against corrupt/truncated files (unparseable → ignored, absurd `trackCount` → clamped to 256, out-of-range index → skipped). The automation `safe`/`vTrim`/`pTrim` flags already round-trip via the `.zfproj` snapshot — never leaked. Covered by an extended save→load→save round-trip test + a corrupt-file resilience test + a device-restart regression test.

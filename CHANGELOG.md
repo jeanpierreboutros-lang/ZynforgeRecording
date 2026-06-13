@@ -70,7 +70,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ### Fixed (latest, EDIT playhead)
 - **The EDIT time-ruler playhead and the waveform-lane playhead now line up.** They drifted a few pixels apart (offset `4 − 8·position`, so right at the start, crossing in the middle, left at the end) because the wave lanes inset their clip content by `brand::space::xs` (4 px each side) and mapped the playhead across `waveW − 8`, while the ruler mapped time across the full pane with no inset. The ruler's ticks, markers, and playhead now route through shared `rulerPxPerSec` / `rulerTimeToX` / `rulerXToTime` helpers that bake in the same 4 px inset. The lane playhead also now maps across the rows' content width (`list->getWidth()`) instead of the EditPage's visible width, so the two stay aligned when zoomed in as well.
 
-### Fixed (latest, master strip)
+### Fixed (latest, gig-one field report)
+- **Meters are gig-snappy** — 60 Hz while the transport rolls (idle throttle unchanged) + faster fall ballistics, so they track the program like a console bridge.
+- **Fader scroll is precise everywhere** — new `FineFader` on channel, VCA, *and* master faders: a wheel notch = exactly 0.5 dB (Shift = 0.1 dB), with trackpad-delta accumulation. No more coarse jumps; the master's scroll is re-enabled because a deliberate 0.5 dB trim can't yank it like the old default could.
+- **EDIT view follows the take** — during recording the playhead and page auto-scroll track the recorder's elapsed position on the live timeline, so you watch the waveform roll instead of a parked view.
+- **Waveform builds faster** after record/load — the thumbnail scan thread now runs at high priority.
+- **Stereo-as-one-file recording is ADR'd** (the gig's #1 ask) — phased plan in `decisions.md`; it's the next major project.
+
+### Fixed (master strip)
 - **The master fader's value box no longer collides with the etched "ZYNFORGE" maker's mark.** `MasterStrip::resized()` laid the meter + fader (whose value text box shows e.g. "0.0 dB") all the way to the plate bottom, but `paint()` stamps the etched wordmark into the bottom 15 px — so the two overlapped. `resized()` now reserves that mark band (shared `kMarkBandH` constant keeps paint + layout in sync).
 
 ### Fixed (latest, console link)

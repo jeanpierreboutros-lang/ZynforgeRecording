@@ -817,7 +817,7 @@ namespace zynforge
         // Same reasoning as the pan knob: scroll-wheel / trackpad
         // gestures should NEVER move the gain. The fader changes only
         // on a direct click+drag interaction.
-        gainFader.setScrollWheelEnabled (false);
+        // Scroll = fine trim now (FineFader: 0.5 dB/notch, Shift 0.1).
         gainFader.setValue (s.gainDb.load(), juce::dontSendNotification);
         gainFader.onValueChange = [this]
         {

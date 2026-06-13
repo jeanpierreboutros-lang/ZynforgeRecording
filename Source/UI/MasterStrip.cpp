@@ -75,7 +75,8 @@ namespace zynforge
         addAndMakeVisible (muteButton);
 
         fader.setSliderStyle (juce::Slider::LinearVertical);
-        fader.setScrollWheelEnabled (false);   // trackpad scroll mustn't move the master
+        // FineFader: wheel = deliberate 0.5 dB trim (Shift 0.1) -- precise enough
+        // that a stray trackpad flick can't yank the master like the old default.
         fader.setRange (-60.0, 12.0, 0.1);
         fader.setSkewFactorFromMidPoint (-15.0);
         fader.setDoubleClickReturnValue (true, 0.0);

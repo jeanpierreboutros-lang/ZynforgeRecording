@@ -287,6 +287,19 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Stereo tracks record as ONE interleaved file — 2026-06-13
+
+**Status:** Proposed (gig-one field report #1; phased, not yet implemented)
+**Context:** A stereo track currently records as two mono `Track_NN.wav` files + an `isStereo` flag. Import/export/mixer already collapse the pair, but the engineer rightly expects the *capture* to produce one stereo file — and every downstream consumer (player, clips, thumbnails, QC, export) is built on mono-per-channel files, so this touches the core.
+**Decision (phased):**
+1. **Recorder**: `MultitrackRecorder` opens ONE 2-channel writer per stereo pair (file named for the L slot); `processBlock` interleaves both inputs into its FIFO; part-files/RF64/manifest follow.
+2. **Player**: `SessionPlayer` becomes channel-aware — a 2-ch `Track_NN.wav` routes ch0→out N, ch1→out N+1; clip reads honour per-file channel count.
+3. **Editor/QC/export**: thumbnails read L/R from the same file's two channels; `QcAnalyzer` scans both; export of a native-stereo track is a direct copy/convert (no interleave step).
+4. **Compatibility**: sessions with legacy mono pairs keep working (loader sniffs channel count); `session_mix.json` unchanged (`isStereo` stays authoritative).
+**Rationale:** Matches every engineer's mental model and removes the pair-collapse special-casing long-term.
+**Consequences:** − touches recorder/player/editor/export + their tests (the largest cross-cutting change since the capture split); must land behind its own test pass per phase. + simpler downstream code once complete.
+**Related:** gig-one field report (tasks.md); stereo import/export collapse work of 2026-06-10.
+
 ## Template
 
 ```
