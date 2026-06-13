@@ -239,6 +239,14 @@ MainComponent::MainComponent()
                         engine.setTrackStereo (cursor + 1, false);
                         engine.setTrackIsBus  (cursor,     e.isBus);
                         engine.setTrackIsBus  (cursor + 1, e.isBus);
+                        // Hard-pan the new pair L/R so it reproduces its full
+                        // stereo image from the start (buses excepted -- a
+                        // stereo bus sums centred). Matches import.
+                        if (! e.isBus)
+                        {
+                            engine.setTrackPan (cursor,     -1.0f);
+                            engine.setTrackPan (cursor + 1,  1.0f);
+                        }
                         cursor += 2;
                         ++totalStereo;
                     }
@@ -998,6 +1006,14 @@ void MainComponent::rebuildStrips()
             if (i + 1 >= total) return;
             const bool wasStereo = engine.getRecorder().getTrack (i).isStereo.load();
             engine.setTrackStereo (i, ! wasStereo);
+            // Newly linked stereo -> hard-pan L/R for the full image; unlinked
+            // back to mono -> recentre both halves so a mono strip isn't left
+            // stuck hard-right. (Buses sum centred, so skip them.)
+            if (! engine.getRecorder().getTrack (i).isBus.load())
+            {
+                engine.setTrackPan (i,     ! wasStereo ? -1.0f : 0.0f);
+                engine.setTrackPan (i + 1, ! wasStereo ?  1.0f : 0.0f);
+            }
             // Trigger a full rebuild on the next timer tick.
             lastTrackCount = -1;
         };

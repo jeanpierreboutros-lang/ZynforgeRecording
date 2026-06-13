@@ -356,10 +356,23 @@ namespace zynforge
                         // Going mono → stereo. Need a right partner.
                         if (ls.trackIndex + 1 >= totalTracks) return;
                         engine.setTrackStereo (ls.trackIndex, true);
+                        // Hard-pan L/R for the full stereo image (buses sum
+                        // centred, so skip them). Matches the mixer + import.
+                        if (! engine.getRecorder().getTrack (ls.trackIndex).isBus.load())
+                        {
+                            engine.setTrackPan (ls.trackIndex,     -1.0f);
+                            engine.setTrackPan (ls.trackIndex + 1,  1.0f);
+                        }
                     }
                     else
                     {
                         engine.setTrackStereo (ls.trackIndex, false);
+                        // Back to mono -> recentre both halves.
+                        if (! engine.getRecorder().getTrack (ls.trackIndex).isBus.load())
+                        {
+                            engine.setTrackPan (ls.trackIndex,     0.0f);
+                            engine.setTrackPan (ls.trackIndex + 1, 0.0f);
+                        }
                     }
                     dragActive = false;
                     repaint();
