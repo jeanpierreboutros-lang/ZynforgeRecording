@@ -209,6 +209,14 @@ namespace zynforge
             // Never taken on the audio thread (drainShard is consumer-side).
             juce::CriticalSection drainLock;
 
+            // Reused planar staging buffers for the stereo-pair write path:
+            // a 2-channel writer needs its two source channels as contiguous
+            // arrays (writeFromFloatArrays is planar, not interleaved), but
+            // the L + R FIFOs each hand back a possibly-wrapped two-region
+            // ScopedRead. We copy both into these before the single 2-ch
+            // write. Owned by the shard so a steady take never reallocates.
+            std::vector<float> stageL, stageR;
+
             int useTimeSlice() override;
         };
 
@@ -289,6 +297,17 @@ namespace zynforge
             int          backupContainer      { 0 };
             int          bytesPerSamplePrimary { 3 };
             int          bytesPerSampleBackup  { 3 };
+
+            // Interleaved-stereo capture: a stereo pair (isStereo on the L
+            // track) records ONE 2-channel file named for the L slot --
+            // Track_NN.wav with two channels -- instead of two mono files.
+            // The R partner's WriterChannel is left empty (no writer); its
+            // FIFO is drained here, by the L channel's drain step, which
+            // reads both FIFOs and does one 2-ch write. All destinations
+            // (primary / backup / every mirror) carry the same channel
+            // count, so one field governs the whole WriterChannel. 1 = mono
+            // (the default, every non-stereo track), 2 = interleaved stereo.
+            int          numChannels { 1 };
         };
 
         // Per-channel rolling history used for pre-roll. Audio thread is the
@@ -333,7 +352,8 @@ namespace zynforge
         // full, permissions).
         juce::AudioFormatWriter* openWriterAtPath (const juce::File& target,
                                                    int containerCode,
-                                                   int bits) noexcept;
+                                                   int bits,
+                                                   int numChannels = 1) noexcept;
 
     public:
         // Safe byte-count ceiling per container. WAV / FLAC: 3.9 GiB.

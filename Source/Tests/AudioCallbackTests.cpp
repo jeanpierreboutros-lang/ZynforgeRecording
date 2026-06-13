@@ -1005,6 +1005,68 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            beginTest ("Stereo pair records ONE interleaved file + player routes both channels");
+            {
+                const auto sessionDir = makeTempSessionDir();
+                {
+                    CallbackFixture f (2, 2, 2);
+                    // Mark the pair BEFORE recording so the recorder opens a
+                    // single 2-channel writer for the L slot (native stereo).
+                    f.engine.setTrackStereo (0, true);
+                    f.engine.getRecorder().getTrack (0).armed.store (true);
+                    f.engine.getRecorder().getTrack (1).armed.store (true);
+                    expect (f.engine.startRecording (sessionDir));
+                    f.writeInput (0,  0.50f, 256);   // L
+                    f.writeInput (1, -0.25f, 256);   // R
+                    for (int b = 0; b < 192; ++b) f.process (256);
+                    f.engine.stopRecording();
+
+                    const auto audioDir = sessionDir.getChildFile ("Audio Files");
+                    const auto trackL   = audioDir.getChildFile ("Track_01.wav");
+                    const auto trackR   = audioDir.getChildFile ("Track_02.wav");
+                    expect (trackL.existsAsFile(), "stereo L file missing");
+                    expect (! trackR.existsAsFile(),
+                            "stereo pair must NOT split into a second mono file");
+
+                    juce::AudioFormatManager fm; fm.registerBasicFormats();
+                    std::unique_ptr<juce::AudioFormatReader> rd (fm.createReaderFor (trackL));
+                    expect (rd != nullptr, "recorded stereo file unreadable");
+                    if (rd != nullptr)
+                    {
+                        expectEquals ((int) rd->numChannels, 2, "recorded file is not stereo");
+                        const int n = (int) juce::jmin<juce::int64> (rd->lengthInSamples, 4096);
+                        juce::AudioBuffer<float> buf (2, n);
+                        rd->read (&buf, 0, n, 1000, true, true);
+                        expectWithinAbsoluteError (buf.getSample (0, n / 2),  0.50f, 0.01f);  // ch0 = L = track 0
+                        expectWithinAbsoluteError (buf.getSample (1, n / 2), -0.25f, 0.01f);  // ch1 = R = track 1
+                    }
+
+                    // Phase 2: the one 2-channel file expands into TWO logical
+                    // player tracks (L reads ch0, R reads ch1) so the
+                    // index->output mapping is identical to a two-mono layout.
+                    auto& player = f.engine.getPlayer();
+                    const int loaded = player.loadSession (sessionDir);
+                    expectEquals (loaded, 2, "stereo file did not expand into two player tracks");
+
+                    player.start();
+                    float l = 0.0f, r = 0.0f;
+                    for (int attempt = 0; attempt < 80; ++attempt)
+                    {
+                        player.setPositionSamples (1000);
+                        juce::AudioBuffer<float> pb (2, 256);
+                        pb.clear();
+                        player.processBlock (pb.getArrayOfWritePointers(), 2, 256);
+                        l = pb.getSample (0, 128);
+                        r = pb.getSample (1, 128);
+                        if (std::abs (l) > 0.05f) break;
+                        juce::Thread::sleep (15);
+                    }
+                    expectWithinAbsoluteError (l,  0.50f, 0.02f);   // out 0 <- file ch0 (L track)
+                    expectWithinAbsoluteError (r, -0.25f, 0.02f);   // out 1 <- file ch1 (R track)
+                }
+                sessionDir.deleteRecursively();
+            }
+
             beginTest ("Cross-track clip paste plays the source track's audio");
             {
                 // Record track 0 loud, track 1 silent into a session.

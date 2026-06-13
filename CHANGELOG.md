@@ -17,8 +17,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
-### Changed (latest, stereo)
-- **An imported stereo file is now treated as one stereo track everywhere.** Storage stays mono-per-channel (the app's model — recording is mono-per-channel too), but a pair now *behaves* as a single stereo track across every surface:
+### Changed (latest, native stereo capture)
+- **A stereo pair now RECORDS as one interleaved stereo file**, not two mono files. When you arm a stereo track, capture writes a single 2-channel `Track_NN.wav` (named for the L slot) — drag it straight into your DAW as a stereo stem; there's no second mono file to reconcile. The pair still shows as one logical strip across MIXER / EDIT / PATCH.
+  - **Recorder** opens one 2-channel writer for the pair and interleaves both inputs into it; backup + every N-way mirror copy the stereo file too; auto-split / RF64-past-4 GiB / pre-roll all account for both channels. The real-time meter + capture path are unchanged.
+  - **Playback / virtual soundcheck** loads the one file as two routed channels (ch0 → L's output, ch1 → R's), so monitoring and console routing are identical to before.
+  - **Bounce / export** of the pair reads both halves from the one file (`bounceStereoPairToWav`); **EDIT** shows true L-top / R-bottom lanes drawn from the file's two channels; **import** of an external stereo file likewise writes one interleaved `Track_NN.wav`.
+  - **Old sessions still open**: a session recorded the previous way (two mono files) plays, edits, and exports exactly as before — the loader sniffs the file's channel count. See the 2026-06-13 ADR in `decisions.md`. Headless-tested (new "Stereo pair records ONE interleaved file + player routes both channels" case; 243 groups, 0 failures).
+
+### Changed (stereo collapse — earlier)
+- **An imported stereo file is treated as one stereo track everywhere.** A pair *behaves* as a single stereo track across every surface:
   - **Pan** — import spreads the pair **hard-left / hard-right** for the full stereo image (was centre/centre, which summed toward mono).
   - **Persistence** — the pairing is written to `session_mix.json` **immediately on import**, so it survives reopen instead of being RAM-only (the old behaviour re-split it into two mono strips via the recovery path).
   - **Meterbridge** — a pair collapses to **one stereo meter** (the L meter shows the R as its second bar; the "… R" column is gone).

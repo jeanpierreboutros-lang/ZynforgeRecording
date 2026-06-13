@@ -552,6 +552,40 @@ void MainComponent::onImportAudioFiles()
             return true;
         };
 
+        // Write an imported stereo file as ONE interleaved 2-channel
+        // Track_NN.wav -- matching how a stereo pair is now NATIVELY
+        // recorded (one file, not two mono splits). The pair still occupies
+        // two logical strips; only the L slot has a file on disk.
+        auto writeStereo = [] (juce::AudioFormatReader& reader,
+                               const juce::File& dst, double sr) -> bool
+        {
+            dst.deleteFile();
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::FileOutputStream> out (dst.createOutputStream());
+            if (out == nullptr) return false;
+            juce::StringPairArray meta;
+            std::unique_ptr<juce::AudioFormatWriter> writer (
+                wav.createWriterFor (out.get(), sr, 2, 24, meta, 0));
+            if (writer == nullptr) return false;
+            out.release();
+
+            constexpr int chunk = 16384;
+            juce::AudioBuffer<float> buf ((int) reader.numChannels, chunk);
+            const int srcR = juce::jmin (1, (int) reader.numChannels - 1);
+            juce::int64 pos = 0;
+            while (pos < reader.lengthInSamples)
+            {
+                const int n = (int) juce::jmin ((juce::int64) chunk,
+                                                reader.lengthInSamples - pos);
+                if (! reader.read (&buf, 0, n, pos, true, true)) return false;
+                const float* chans[2] = { buf.getReadPointer (0),
+                                          buf.getReadPointer (srcR) };
+                if (! writer->writeFromFloatArrays (chans, 2, n)) return false;
+                pos += n;
+            }
+            return true;
+        };
+
         for (int i = 0; i < picks.size(); ++i)
         {
             const auto& src = picks.getReference (i);
@@ -564,18 +598,15 @@ void MainComponent::onImportAudioFiles()
             const int lTrack = nextTrack;
             const auto lDst = audioFilesDir.getChildFile (
                 "Track_" + juce::String (lTrack + 1).paddedLeft ('0', 2) + ".wav");
-            const bool lOk = writeMono (*reader, 0, lDst, reader->sampleRate);
 
-            bool rOk = true;
-            if (isStereoFile)
-            {
-                const int rTrack = nextTrack + 1;
-                const auto rDst = audioFilesDir.getChildFile (
-                    "Track_" + juce::String (rTrack + 1).paddedLeft ('0', 2) + ".wav");
-                rOk = writeMono (*reader, 1, rDst, reader->sampleRate);
-            }
+            // Stereo source -> ONE interleaved 2-ch file in the L slot (no
+            // separate R file). Mono source -> one mono file. Both reserve
+            // their strip count below so the pair still spans two strips.
+            const bool ok = isStereoFile
+                              ? writeStereo (*reader, lDst, reader->sampleRate)
+                              : writeMono   (*reader, 0, lDst, reader->sampleRate);
 
-            if (! lOk || ! rOk) { ++failed; continue; }
+            if (! ok) { ++failed; continue; }
 
             records.push_back ({ lTrack, isStereoFile, baseName });
             nextTrack += isStereoFile ? 2 : 1;

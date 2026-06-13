@@ -35,6 +35,7 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Ap
 
 ### Capture
 - Lock-free per-channel ring + background WAV writer (up to 256 channels)
+- **Stereo tracks capture as ONE interleaved stereo file** (`Track_NN.wav`, 2 channels) — not two mono stems; drag it straight into your DAW. Backup + mirror copies are stereo too; legacy two-mono-file sessions still open
 - BWF (`bext`) metadata + ~5 s periodic header flush — crashes leave playable files
 - Pre-roll buffer (0 / 5 / 10 / 30 s) — last N seconds dumped into every track when RECORD is pressed
 - Formats: WAV / AIFF (16 / 24 / 32-float), FLAC (16 / 24)
@@ -42,7 +43,7 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Ap
 - Auto-recover orphan sessions on next launch; `session.report.json` written on clean stop
 
 ### Playback / virtual soundcheck
-- Each `Track_NN.wav` plays through the matching hardware output during soundcheck
+- Each `Track_NN.wav` plays through the matching hardware output during soundcheck (a stereo file's two channels route to the L + R outputs)
 - Clip-aware playback: per-clip mute / lock / gain / fade (linear **or equal-power**), all applied on the audio thread
 - Cross-track clips read from a file-keyed reader cache, so a clip pasted onto another track plays the copied audio
 - Loop region between markers; Spacebar global play/pause

@@ -289,15 +289,15 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ## Stereo tracks record as ONE interleaved file — 2026-06-13
 
-**Status:** Proposed (gig-one field report #1; phased, not yet implemented)
-**Context:** A stereo track currently records as two mono `Track_NN.wav` files + an `isStereo` flag. Import/export/mixer already collapse the pair, but the engineer rightly expects the *capture* to produce one stereo file — and every downstream consumer (player, clips, thumbnails, QC, export) is built on mono-per-channel files, so this touches the core.
-**Decision (phased):**
-1. **Recorder**: `MultitrackRecorder` opens ONE 2-channel writer per stereo pair (file named for the L slot); `processBlock` interleaves both inputs into its FIFO; part-files/RF64/manifest follow.
-2. **Player**: `SessionPlayer` becomes channel-aware — a 2-ch `Track_NN.wav` routes ch0→out N, ch1→out N+1; clip reads honour per-file channel count.
-3. **Editor/QC/export**: thumbnails read L/R from the same file's two channels; `QcAnalyzer` scans both; export of a native-stereo track is a direct copy/convert (no interleave step).
-4. **Compatibility**: sessions with legacy mono pairs keep working (loader sniffs channel count); `session_mix.json` unchanged (`isStereo` stays authoritative).
-**Rationale:** Matches every engineer's mental model and removes the pair-collapse special-casing long-term.
-**Consequences:** − touches recorder/player/editor/export + their tests (the largest cross-cutting change since the capture split); must land behind its own test pass per phase. + simpler downstream code once complete.
+**Status:** Accepted — implemented 2026-06-13
+**Context:** A stereo track used to record as two mono `Track_NN.wav` files + an `isStereo` flag. Import/export/mixer already collapsed the pair, but the engineer rightly expects the *capture* to produce one stereo file — and every downstream consumer (player, clips, thumbnails, QC, export) was built on mono-per-channel files, so this touched the core.
+**Decision (phased, all shipped):**
+1. **Recorder** (`MultitrackRecorder`): the L `WriterChannel` opens ONE 2-channel writer (`openWriterAtPath(..., numChannels=2)`); the R slot is an empty `WriterChannel`. The L drain step reads BOTH per-channel FIFOs (min frames ready), stages them planar (`ShardClient::stageL/stageR`), and does one `writeFromFloatArrays(..., 2, n)`. Byte/roll/RF64 accounting × `numChannels`; pre-roll dumps both channels. The RT push path + meters + per-channel FIFOs are unchanged. A pair never straddles a shard (contiguous index slices, `perShard ≥ 2`).
+2. **Player** (`SessionPlayer`): `loadSession` sniffs `reader->numChannels`; a 2-ch file expands into TWO `Track`s sharing ONE `BufferingAudioReader` — L reads ch0, R reads ch1 (`useLeft`/`useRight`). One output stream per physical channel → index→output mapping unchanged.
+3. **Editor/bounce/import**: `AudioEngineClips::ArrangementSource::open` resolves the channel (own 2-ch file → ch0; no own file but prior slot's `Track_<track>` is 2-ch → ch1), so `bounceStereoPairToWav` reads both halves from the one file. EDIT `TrackRow` draws ch0 in the L lane and ch1 in the R lane from the same thumbnail (`stereoOneFile` → `drawChannel`). Import writes one interleaved 2-ch file (`writeStereo`).
+4. **Compatibility**: legacy mono-pair sessions keep working everywhere — channel-sniffing makes both on-disk layouts transparent; `session_mix.json` unchanged (`isStereo` stays authoritative).
+**Rationale:** Matches every engineer's mental model (drag one stereo stem into the DAW) and removes the two-file special-casing in capture.
+**Consequences:** + the recorded/imported file IS a stereo WAV. − a native-stereo session has no `Track_(N+1).wav`; any path that resolves audio by physical index must sniff channel count (the resolver does this for player/bounce/EDIT). Per-R-index offline ops (normalize/consolidate/stripSilence) are unreachable from the UI (the R row is collapsed) so they were left index-direct; document if that changes. Tests: `AudioCallbackTests` "Stereo pair records ONE interleaved file + player routes both channels" (243 groups, 0 failures); legacy "bounceStereoPairToWav interleaves" stays green via the resolver.
 **Related:** gig-one field report (tasks.md); stereo import/export collapse work of 2026-06-10.
 
 ## Template

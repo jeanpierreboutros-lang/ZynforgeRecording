@@ -20,6 +20,14 @@ namespace zynforge
     // Disk I/O happens on a background TimeSliceThread via
     // juce::BufferingAudioReader; the audio thread only copies samples
     // from already-buffered RAM.
+    //
+    // Stereo files: a natively-recorded stereo pair is ONE interleaved
+    // 2-channel Track_NN.wav. loadSession expands it into TWO logical
+    // tracks that SHARE one reader -- the L track reads file channel 0,
+    // the R track channel 1 -- so each physical channel still gets its
+    // own output stream and the index→output mapping is unchanged.
+    // Legacy two-mono-file pairs load as two independent mono tracks and
+    // keep working untouched.
     class SessionPlayer
     {
     public:
@@ -85,8 +93,15 @@ namespace zynforge
     private:
         struct Track
         {
-            std::unique_ptr<juce::BufferingAudioReader> reader;
+            // shared_ptr because the two halves of an interleaved stereo
+            // file share ONE reader (L reads channel 0, R reads channel 1).
+            std::shared_ptr<juce::BufferingAudioReader> reader;
             juce::int64 length { 0 };
+            // Which file channel this logical track reads. For a mono file
+            // both are true (the single channel). For a stereo file the L
+            // track is (true,false) and the R track is (false,true).
+            bool        useLeft  { true };
+            bool        useRight { true };
         };
 
         juce::AudioFormatManager formatManager;

@@ -440,8 +440,15 @@ namespace zynforge
             if (outputCombo.getSelectedId() != wantOut) outputCombo.setSelectedId (wantOut, juce::dontSendNotification);
         }
 
-        void setWaveformFiles (const juce::File& fL, const juce::File& fR)
+        void setWaveformFiles (const juce::File& fL, const juce::File& fRin)
         {
+            // Native interleaved stereo: the pair is ONE 2-channel file with
+            // no separate R file. Point BOTH lanes at it (each draws its own
+            // channel) so the stereo image still shows two lanes. Legacy
+            // two-mono-file pairs have a real fR and keep drawing as before.
+            stereoOneFile = stereo && fL.existsAsFile() && ! fRin.existsAsFile();
+            const juce::File fR = stereoOneFile ? fL : fRin;
+
             if (fL != currentFileL)
             {
                 currentFileL = fL;
@@ -453,6 +460,22 @@ namespace zynforge
                 thumbnailR.setSource (fR.existsAsFile() ? new juce::FileInputSource (fR) : nullptr);
             }
             repaint();
+        }
+
+        // Draw one stereo lane. When the pair is a single interleaved file
+        // (stereoOneFile) the L lane is file channel 0 and the R lane channel
+        // 1; otherwise each thumbnail is a whole mono file -> drawChannels.
+        void drawLaneL (juce::Graphics& g, juce::Rectangle<int> area,
+                        double t0, double t1, float zoom)
+        {
+            if (stereoOneFile) thumbnailL.drawChannel  (g, area, t0, t1, 0, zoom);
+            else               thumbnailL.drawChannels (g, area, t0, t1, zoom);
+        }
+        void drawLaneR (juce::Graphics& g, juce::Rectangle<int> area,
+                        double t0, double t1, float zoom)
+        {
+            if (stereoOneFile) thumbnailR.drawChannel  (g, area, t0, t1, 1, zoom);
+            else               thumbnailR.drawChannels (g, area, t0, t1, zoom);
         }
 
         // Re-issue the thumbnail's input source from the current files so
@@ -660,14 +683,14 @@ namespace zynforge
                     if (thumbnailL.getTotalLength() > 0.0)
                     {
                         g.setColour (waveColour.withAlpha (brand::alpha::muted));
-                        thumbnailL.drawChannels (g, laneL, 0.0,
-                                                 thumbnailL.getTotalLength(), waveZoom (thumbnailL));
+                        drawLaneL (g, laneL, 0.0,
+                                   thumbnailL.getTotalLength(), waveZoom (thumbnailL));
                     }
                     if (thumbnailR.getTotalLength() > 0.0)
                     {
                         g.setColour (waveColour.withAlpha (brand::alpha::muted));
-                        thumbnailR.drawChannels (g, laneR, 0.0,
-                                                 thumbnailR.getTotalLength(), waveZoom (thumbnailR));
+                        drawLaneR (g, laneR, 0.0,
+                                   thumbnailR.getTotalLength(), waveZoom (thumbnailR));
                     }
                 }
                 else if (thumbnailL.getTotalLength() > 0.0)
@@ -1228,12 +1251,12 @@ namespace zynforge
                 if (! liveRecording && thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
                 {
                     setHeatWaveFill (laneL);
-                    thumbnailL.drawChannels (g, laneL, 0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
+                    drawLaneL (g, laneL, 0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
                 }
                 if (! liveRecording && thumbnailR.getTotalLength() > 0.0 && ! arrangementEmptied)
                 {
                     setHeatWaveFill (laneR);
-                    thumbnailR.drawChannels (g, laneR, 0.0, thumbnailR.getTotalLength(), waveZoom (thumbnailR));
+                    drawLaneR (g, laneR, 0.0, thumbnailR.getTotalLength(), waveZoom (thumbnailR));
                 }
                 // Live capture envelope -- grows L→R during the take, glowing
                 // forge-orange so the engineer sees the take is HOT / rolling.
@@ -1343,8 +1366,8 @@ namespace zynforge
                                     const int half = waveArea.getHeight() / 2;
                                     auto la = waveArea.withHeight (half);
                                     auto ra = waveArea.withTrimmedTop (half);
-                                    setClipFill (la); thumbnailL.drawChannels (g, la, t0, t1, waveZoom (thumbnailL) * gz);
-                                    setClipFill (ra); thumbnailR.drawChannels (g, ra, t0, t1, waveZoom (thumbnailR) * gz);
+                                    setClipFill (la); drawLaneL (g, la, t0, t1, waveZoom (thumbnailL) * gz);
+                                    setClipFill (ra); drawLaneR (g, ra, t0, t1, waveZoom (thumbnailR) * gz);
                                 }
                                 else
                                 {
@@ -3715,6 +3738,10 @@ namespace zynforge
         juce::File                currentFileL;
         juce::File                currentFileR;
         bool                      stereo;
+        // True when the stereo pair is ONE natively-recorded interleaved
+        // 2-channel file (no separate R file): the L lane draws file channel
+        // 0, the R lane channel 1, both from the same thumbnail source.
+        bool                      stereoOneFile { false };
         RenameLabel               nameLabel;
         // Same single-letter glyphs as the mixer strips: R / I / M / S.
         // LookAndFeel::drawToggleButton paints the pill in the colour

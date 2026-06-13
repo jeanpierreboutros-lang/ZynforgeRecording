@@ -21,7 +21,9 @@ namespace zynforge
     {
         deviceSampleRate = sr;
         blockSize        = block;
-        scratch.setSize (1, juce::jmax (block, 4096), false, true, true);
+        // 2 channels: a stereo file is read in full (L+R) and the wanted
+        // channel selected, so the scratch needs room for both.
+        scratch.setSize (2, juce::jmax (block, 4096), false, true, true);
     }
 
     void SessionPlayer::release()
@@ -70,20 +72,34 @@ namespace zynforge
             auto* raw = formatManager.createReaderFor (f);
             if (raw == nullptr) continue;
 
-            const auto fileSR = raw->sampleRate;
+            const auto fileSR     = raw->sampleRate;
+            const auto fileLen    = (juce::int64) raw->lengthInSamples;
+            const auto numChans   = (int) raw->numChannels;
             const auto bufferSamples = (int) (fileSR * kReaderBufferSeconds);
 
-            Track t;
-            t.length = raw->lengthInSamples;
-
-            auto buf = std::make_unique<juce::BufferingAudioReader> (raw, readerThread, bufferSamples);
+            auto buf = std::make_shared<juce::BufferingAudioReader> (raw, readerThread, bufferSamples);
             buf->setReadTimeout (0); // non-blocking -- fill silence if not buffered yet
-            t.reader = std::move (buf);
 
-            maxLen = juce::jmax (maxLen, t.length);
+            if (numChans >= 2)
+            {
+                // Interleaved stereo file -> two logical tracks sharing one
+                // reader: index N reads file channel 0 (L), index N+1 reads
+                // channel 1 (R). This keeps one output stream per physical
+                // channel so the index→output routing is identical to the
+                // legacy two-mono-file layout.
+                Track l; l.reader = buf; l.length = fileLen; l.useLeft = true;  l.useRight = false;
+                Track r; r.reader = buf; r.length = fileLen; r.useLeft = false; r.useRight = true;
+                tracks.push_back (std::move (l));
+                tracks.push_back (std::move (r));
+            }
+            else
+            {
+                Track t; t.reader = buf; t.length = fileLen; t.useLeft = true; t.useRight = true;
+                tracks.push_back (std::move (t));
+            }
+
+            maxLen = juce::jmax (maxLen, fileLen);
             sr     = fileSR;
-
-            tracks.push_back (std::move (t));
         }
 
         this->sessionDir = sessionDir;
@@ -257,7 +273,7 @@ namespace zynforge
         const int n                 = juce::jmin (numOutputs, numTracks);
 
         if (scratch.getNumSamples() < playableThisBlock)
-            scratch.setSize (1, playableThisBlock, false, false, true);
+            scratch.setSize (2, playableThisBlock, false, false, true);
 
         // Snapshot the clip lists under the lock -- held only long enough
         // to take a const reference. After release we iterate read-only
@@ -308,17 +324,24 @@ namespace zynforge
                         c.fileStartSamples + (ovStartTL - c.timelineStartSamples);
 
                     if (scratch.getNumSamples() < spanLen)
-                        scratch.setSize (1, spanLen, false, false, true);
-                    scratch.clear (0, 0, spanLen);
+                        scratch.setSize (2, spanLen, false, false, true);
+                    scratch.clear (0, spanLen);   // both channels
                     // Cross-track clips read from their own file's reader
                     // (resolved under the clipsLock we already hold); clips
                     // with no audioFile use the track's default reader.
+                    // A stereo file is read in full; readChan picks the L (0)
+                    // or R (1) half for THIS logical track. Cross-track clips
+                    // reference mono Track files, so they always read ch 0.
                     juce::AudioFormatReader* rd = t.reader.get();
+                    int readChan = t.useRight ? 1 : 0;
                     if (c.audioFile != juce::File())
                     {
                         auto it = extraReaders.find (c.audioFile.getFullPathName());
                         if (it != extraReaders.end() && it->second != nullptr)
+                        {
                             rd = it->second.get();
+                            readChan = 0;
+                        }
                     }
                     if (rd != nullptr)
                         rd->read (&scratch, 0, spanLen, fileReadStart, true, true);
@@ -326,7 +349,7 @@ namespace zynforge
                     // Apply linear fade envelopes (if any). The clip-relative
                     // offset of this span's first sample is (ovStartTL -
                     // c.timelineStartSamples); we walk from there.
-                    auto* src = scratch.getReadPointer (0);
+                    auto* src = scratch.getReadPointer (readChan);
                     auto* dst = out + outOffset;
                     const juce::int64 spanOffsetInClip = ovStartTL - c.timelineStartSamples;
                     const juce::int64 fIn  = c.fadeInSamples;
@@ -372,13 +395,14 @@ namespace zynforge
                 continue;
             }
 
-            // Legacy whole-file path.
+            // Legacy whole-file path. For a stereo file both channels are
+            // read; useRight selects which half routes to this track's out.
             const int avail = (int) juce::jmin ((juce::int64) playableThisBlock, t.length - startPos);
 
-            scratch.clear (0, 0, avail);
+            scratch.clear (0, avail);   // both channels
             t.reader->read (&scratch, 0, avail, startPos, true, true);
 
-            juce::FloatVectorOperations::copy (out, scratch.getReadPointer (0), avail);
+            juce::FloatVectorOperations::copy (out, scratch.getReadPointer (t.useRight ? 1 : 0), avail);
             if (avail < numSamples)
                 juce::FloatVectorOperations::clear (out + avail, numSamples - avail);
         }

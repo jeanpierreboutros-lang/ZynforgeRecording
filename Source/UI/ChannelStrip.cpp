@@ -802,14 +802,14 @@ namespace zynforge
         gainFader.setColour (juce::Slider::trackColourId,        brand::edge);
         gainFader.setColour (juce::Slider::backgroundColourId,   brand::bgDeep);
         gainFader.setColour (juce::Slider::thumbColourId,        getResolvedColour().brighter (0.30f));
-        gainFader.setMouseDragSensitivity (250);
-        // The fader value must NEVER jump when the engineer clicks
-        // somewhere on the strip body to select / right-click. Only a
-        // direct drag of the thumb cap should move it. Disabling
-        // "snap to mouse position" prevents click-on-track-to-jump.
-        // Combined with the fader's narrow visual track, the engineer
-        // has to actually grab the cap to change gain.
-        gainFader.setSliderSnapsToMousePosition (false);
+        // Snap to mouse position so the cap STICKS to the pointer 1:1 while
+        // dragging (standard DAW fader feel). The old "relative drag"
+        // (snap=false + a 250 px sensitivity longer than the fader itself)
+        // made the cap drift up/down out of sync with the cursor -- the
+        // gig-two complaint. The fader only receives clicks inside its own
+        // narrow bounds, not the strip body, so strip-select clicks elsewhere
+        // never touch it.
+        gainFader.setSliderSnapsToMousePosition (true);
         gainFader.setColour (juce::Slider::textBoxTextColourId,  brand::textPrimary);
         gainFader.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
         gainFader.setColour (juce::Slider::textBoxBackgroundColourId,

@@ -411,19 +411,49 @@ namespace zynforge
             std::map<juce::String, std::unique_ptr<juce::AudioFormatReader>> extra;
             std::vector<Clip> clips;
             juce::File srcFile;
+            // Which channel of srcFile this track reads: -1 = read all (mono
+            // file), 0 = LEFT of an interleaved stereo file, 1 = RIGHT of one.
+            int readChannel { -1 };
 
             bool open (const juce::File& audioDir, int track, const std::vector<Clip>* engineClips)
             {
+                fm.registerBasicFormats();
+
+                // 1) The track's OWN file (Track_<track+1>). A 2-channel own
+                //    file means this index is the LEFT of an interleaved
+                //    stereo pair -> read channel 0; a mono file reads all.
                 for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
                 {
                     auto f = audioDir.getChildFile (juce::String::formatted ("Track_%02d", track + 1) + ext);
                     if (f.existsAsFile()) { srcFile = f; break; }
                 }
-                if (! srcFile.existsAsFile()) return false;
 
-                fm.registerBasicFormats();
-                reader.reset (fm.createReaderFor (srcFile));
-                if (reader == nullptr) return false;
+                if (srcFile.existsAsFile())
+                {
+                    reader.reset (fm.createReaderFor (srcFile));
+                    if (reader == nullptr) return false;
+                    readChannel = (reader->numChannels >= 2) ? 0 : -1;
+                }
+                else if (track > 0)
+                {
+                    // 2) No own file: this may be the RIGHT half of an
+                    //    interleaved stereo pair, whose audio lives in the
+                    //    LEFT slot's 2-ch file (named Track_<track>, since the
+                    //    L partner is index track-1). Read channel 1 from it.
+                    for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
+                    {
+                        auto f = audioDir.getChildFile (juce::String::formatted ("Track_%02d", track) + ext);
+                        if (f.existsAsFile()) { srcFile = f; break; }
+                    }
+                    if (! srcFile.existsAsFile()) return false;
+                    reader.reset (fm.createReaderFor (srcFile));
+                    if (reader == nullptr || reader->numChannels < 2) return false;
+                    readChannel = 1;
+                }
+                else
+                {
+                    return false;
+                }
 
                 // Active-take clips; bootstrap a whole-file clip if the
                 // track was never edited so it still renders.
@@ -468,7 +498,11 @@ namespace zynforge
                     }
                     if (rd == nullptr) continue;
 
-                    tmp.setSize (1, span, false, false, true);
+                    // Read both channels (a stereo file fills L+R; a mono file
+                    // fills ch 0). For the track's own reader, pick the L/R
+                    // half via readChannel; cross-track clips are mono -> ch 0.
+                    const int ch = (rd == reader.get()) ? (readChannel < 0 ? 0 : readChannel) : 0;
+                    tmp.setSize (2, span, false, false, true);
                     tmp.clear();
                     rd->read (&tmp, 0, span, fileReadStart, true, true);
 
@@ -477,7 +511,7 @@ namespace zynforge
                     const juce::int64 fIn = c.fadeInSamples, fOut = c.fadeOutSamples;
                     const juce::int64 fOutStart = c.fileLengthSamples - fOut;
                     const juce::int64 spanOffsetInClip = writeBeg - tlStart;
-                    const auto* s = tmp.getReadPointer (0);
+                    const auto* s = tmp.getReadPointer (ch);
                     auto* d = dst + (int) (writeBeg - winStart);
                     for (int i = 0; i < span; ++i)
                     {

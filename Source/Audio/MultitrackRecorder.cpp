@@ -260,9 +260,25 @@ namespace zynforge
         const int wanted = (int) (sampleRate * preRollSeconds);
         std::vector<float> tmp ((std::size_t) wanted, 0.0f);
 
+        std::vector<float> tmpR ((std::size_t) wanted, 0.0f);
+
         for (std::size_t i = 0; i < writers.size() && i < preRoll.size(); ++i)
         {
             if (writers[i].writer == nullptr) continue;
+
+            // Stereo pair: dump BOTH channels' history into the one 2-ch
+            // writer so pre-roll keeps the L/R image, matching the live path.
+            if (writers[i].numChannels == 2 && i + 1 < preRoll.size())
+            {
+                const int gotL = preRoll[i]    ->readHistory (tmp .data(), wanted);
+                const int gotR = preRoll[i + 1]->readHistory (tmpR.data(), wanted);
+                const int got  = juce::jmin (gotL, gotR);
+                if (got <= 0) continue;
+                const float* const arr[] = { tmp.data(), tmpR.data() };
+                writers[i].writer->writeFromFloatArrays (arr, 2, got);
+                continue;
+            }
+
             const int got = preRoll[i]->readHistory (tmp.data(), wanted);
             if (got <= 0) continue;
             const float* const arr[] = { tmp.data() };
@@ -444,10 +460,33 @@ namespace zynforge
         const auto primary = resolve (captureFormat);
         const auto backup  = resolve (backupCaptureFormat);
 
+        // True when track k is one we open a writer for: not a bus, and armed.
+        auto isArmedCapture = [this] (std::size_t k)
+        {
+            return ! tracks[k]->isBus .load (std::memory_order_relaxed)
+                   &&  tracks[k]->armed.load (std::memory_order_relaxed);
+        };
+
         for (std::size_t i = 0; i < tracks.size(); ++i)
         {
             WriterChannel w;
             const auto trackName = juce::String::formatted ("Track_%02d", (int) i + 1);
+
+            // RIGHT half of an interleaved stereo pair. When the previous
+            // track is an armed stereo-L, THIS track's audio is written into
+            // that L's single 2-channel file -- so it gets NO writer of its
+            // own. Push an empty WriterChannel for index alignment + reset
+            // its FIFO; the L channel's drain step reads this FIFO and does
+            // the 2-ch write. (Checked before the arm gate: the R partner is
+            // itself armed, so it would otherwise open a second mono file.)
+            if (i > 0
+                && tracks[i - 1]->isStereo.load (std::memory_order_relaxed)
+                && isArmedCapture (i - 1))
+            {
+                writers.push_back (std::move (w));
+                fifos[i]->fifo.reset();
+                continue;
+            }
 
             // No writer for bus tracks (no input) OR unarmed tracks. Push
             // an empty WriterChannel so the per-channel index stays aligned
@@ -467,9 +506,17 @@ namespace zynforge
                 continue;
             }
 
+            // LEFT half of an armed stereo pair (isStereo set + a valid R
+            // partner) records ONE interleaved 2-channel file. Otherwise a
+            // standalone mono track. The channel count flows into every
+            // destination (primary / backup / mirrors) and the drain path.
+            const int chans = (tracks[i]->isStereo.load (std::memory_order_relaxed)
+                               && i + 1 < tracks.size()) ? 2 : 1;
+            w.numChannels = chans;
+
             // Primary writer -- under <session>/Audio Files/Track_NN.<ext>.
             const auto primaryFile = audioFilesDir.getChildFile (trackName + primary.ext);
-            w.writer.reset (openWriterAtPath (primaryFile, primary.container, primary.bitDepth));
+            w.writer.reset (openWriterAtPath (primaryFile, primary.container, primary.bitDepth, chans));
             w.primaryBaseFile       = audioFilesDir.getChildFile (trackName);
             w.primaryExt            = primary.ext;
             w.primaryBitDepth       = primary.bitDepth;
@@ -489,7 +536,7 @@ namespace zynforge
                                               .getChildFile ("Audio Files");
                 backupSession.createDirectory();
                 const auto backupFile = backupSession.getChildFile (trackName + backup.ext);
-                w.backupWriter.reset (openWriterAtPath (backupFile, backup.container, backup.bitDepth));
+                w.backupWriter.reset (openWriterAtPath (backupFile, backup.container, backup.bitDepth, chans));
                 w.backupBaseFile       = backupSession.getChildFile (trackName);
                 w.backupExt            = backup.ext;
                 w.backupBitDepth       = backup.bitDepth;
@@ -514,7 +561,7 @@ namespace zynforge
                 const auto mFmt = resolve (mc.format);
                 const auto mFile = mirrorSession.getChildFile (trackName + mFmt.ext);
                 WriterChannel::Mirror m;
-                m.writer.reset (openWriterAtPath (mFile, mFmt.container, mFmt.bitDepth));
+                m.writer.reset (openWriterAtPath (mFile, mFmt.container, mFmt.bitDepth, chans));
                 m.baseFile       = mirrorSession.getChildFile (trackName);
                 m.ext            = mFmt.ext;
                 m.container      = mFmt.container;
@@ -658,8 +705,13 @@ namespace zynforge
 
     juce::AudioFormatWriter* MultitrackRecorder::openWriterAtPath (const juce::File& target,
                                                                    int containerCode,
-                                                                   int bits) noexcept
+                                                                   int bits,
+                                                                   int numChannels) noexcept
     {
+        // numChannels: 1 = mono (the default, every standalone track),
+        // 2 = interleaved stereo (a stereo pair captured to one file).
+        const unsigned int chans = (unsigned int) juce::jmax (1, numChannels);
+
         target.deleteFile();
         auto* out = target.createOutputStream().release();
         if (out == nullptr) return nullptr;
@@ -683,9 +735,9 @@ namespace zynforge
         }
 
         juce::AudioFormatWriter* w = nullptr;
-        if      (containerCode == 2) w = flac.createWriterFor (out, sampleRate, 1, bits, meta, 5);
-        else if (containerCode == 1) w = aiff.createWriterFor (out, sampleRate, 1, bits, meta, 0);
-        else                         w = wav .createWriterFor (out, sampleRate, 1, bits, meta, 0);
+        if      (containerCode == 2) w = flac.createWriterFor (out, sampleRate, chans, bits, meta, 5);
+        else if (containerCode == 1) w = aiff.createWriterFor (out, sampleRate, chans, bits, meta, 0);
+        else                         w = wav .createWriterFor (out, sampleRate, chans, bits, meta, 0);
         if (w == nullptr) delete out;
         return w;
     }
@@ -1179,11 +1231,6 @@ namespace zynforge
                 if (pct > worstFillPct) worstFillPct = pct;
             }
 
-            const int available = cf.fifo.getNumReady();
-            if (available <= 0) continue;
-
-            const auto scope = cf.fifo.read (available);
-
             // Roll a writer over to the next part file when it's about
             // to cross its format's chunk-size ceiling. Closing the
             // current writer (.reset()) finalises the header so the
@@ -1191,10 +1238,15 @@ namespace zynforge
             // part keeps recording continuous from the engineer's POV.
             auto rollIfNeeded = [this] (WriterChannel& wc, int samplesPending) noexcept
             {
+                // Byte projection counts ALL channels in the file: a stereo
+                // pair's interleaved 2-ch file grows twice as fast per frame,
+                // so it must roll (or promote to RF64) at the same wall-clock
+                // size as two mono files would.
+                const juce::int64 chans = (juce::int64) juce::jmax (1, wc.numChannels);
                 if (wc.writer != nullptr)
                 {
                     const juce::int64 projected = wc.bytesWrittenPrimary
-                        + (juce::int64) samplesPending * wc.bytesPerSamplePrimary;
+                        + (juce::int64) samplesPending * chans * wc.bytesPerSamplePrimary;
                     if (projected >= maxBytesForContainer (wc.primaryContainer))
                     {
                         wc.writer.reset();   // closes + finalises header
@@ -1205,7 +1257,7 @@ namespace zynforge
                                            + juce::String::formatted ("%02d", wc.partNumberPrimary)
                                            + wc.primaryExt);
                         wc.writer.reset (openWriterAtPath (nextFile, wc.primaryContainer,
-                                                           wc.primaryBitDepth));
+                                                           wc.primaryBitDepth, wc.numChannels));
                         wc.bytesWrittenPrimary = 0;
                         if (wc.writer != nullptr)
                             wc.partFilesPrimary.add (nextFile.getFileName());
@@ -1214,7 +1266,7 @@ namespace zynforge
                 if (wc.backupWriter != nullptr)
                 {
                     const juce::int64 projected = wc.bytesWrittenBackup
-                        + (juce::int64) samplesPending * wc.bytesPerSampleBackup;
+                        + (juce::int64) samplesPending * chans * wc.bytesPerSampleBackup;
                     if (projected >= maxBytesForContainer (wc.backupContainer))
                     {
                         wc.backupWriter.reset();
@@ -1225,7 +1277,7 @@ namespace zynforge
                                            + juce::String::formatted ("%02d", wc.partNumberBackup)
                                            + wc.backupExt);
                         wc.backupWriter.reset (openWriterAtPath (nextFile, wc.backupContainer,
-                                                                  wc.backupBitDepth));
+                                                                  wc.backupBitDepth, wc.numChannels));
                         wc.bytesWrittenBackup = 0;
                         if (wc.backupWriter != nullptr)
                             wc.partFilesBackup.add (nextFile.getFileName());
@@ -1236,7 +1288,7 @@ namespace zynforge
                 {
                     if (m.writer == nullptr || m.failed) continue;
                     const juce::int64 projected = m.bytesWritten
-                        + (juce::int64) samplesPending * m.bytesPerSample;
+                        + (juce::int64) samplesPending * chans * m.bytesPerSample;
                     if (projected >= maxBytesForContainer (m.container))
                     {
                         m.writer.reset();
@@ -1246,13 +1298,95 @@ namespace zynforge
                                            + "_part"
                                            + juce::String::formatted ("%02d", m.partNumber)
                                            + m.ext);
-                        m.writer.reset (openWriterAtPath (nextFile, m.container, m.bitDepth));
+                        m.writer.reset (openWriterAtPath (nextFile, m.container, m.bitDepth, wc.numChannels));
                         m.bytesWritten = 0;
                         if (m.writer != nullptr)
                             m.partFiles.add (nextFile.getFileName());
                     }
                 }
             };
+
+            // ── Interleaved stereo pair ──────────────────────────────────
+            // A stereo-L writer (numChannels == 2) owns BOTH this FIFO and
+            // the R partner's (i + 1). Drain the SAME number of frames from
+            // each -- min(ready) so neither runs ahead -- gather them into
+            // two contiguous planar staging buffers (the FIFO read may wrap),
+            // then do ONE 2-channel write. The R partner's WriterChannel is
+            // empty (writer == nullptr), so it's skipped on its own iteration
+            // and its FIFO is consumed only here -- never left to overflow.
+            if (w.numChannels == 2 && i + 1 < fifos.size())
+            {
+                auto& cfR = *fifos[i + 1];
+                const int avail = juce::jmin (cf.fifo.getNumReady(), cfR.fifo.getNumReady());
+                if (avail <= 0) continue;
+
+                const auto scopeL = cf .fifo.read (avail);
+                const auto scopeR = cfR.fifo.read (avail);
+
+                // Copy a (possibly wrapped) ScopedRead into a contiguous array.
+                auto gather = [avail] (std::vector<float>& dst, const ChannelFifo& src,
+                                       const auto& sc) noexcept
+                {
+                    dst.resize ((std::size_t) avail);
+                    if (sc.blockSize1 > 0)
+                        std::memcpy (dst.data(),
+                                     src.data.data() + sc.startIndex1,
+                                     (std::size_t) sc.blockSize1 * sizeof (float));
+                    if (sc.blockSize2 > 0)
+                        std::memcpy (dst.data() + sc.blockSize1,
+                                     src.data.data() + sc.startIndex2,
+                                     (std::size_t) sc.blockSize2 * sizeof (float));
+                };
+                gather (shard.stageL, cf,  scopeL);
+                gather (shard.stageR, cfR, scopeR);
+
+                rollIfNeeded (w, avail);
+                const float* const channels[] = { shard.stageL.data(), shard.stageR.data() };
+
+                if (w.writer != nullptr)
+                {
+                    if (! w.writer->writeFromFloatArrays (channels, 2, avail))
+                    {
+                        w.writer.reset();
+                        primaryFailed.store (true, std::memory_order_relaxed);
+                    }
+                    else
+                    {
+                        w.bytesWrittenPrimary += (juce::int64) avail * 2 * w.bytesPerSamplePrimary;
+                        w.totalSamplesPrimary += avail;
+                    }
+                }
+                if (w.backupWriter != nullptr
+                    && ! w.backupWriter->writeFromFloatArrays (channels, 2, avail))
+                {
+                    w.backupWriter.reset();
+                    backupFailed.store (true, std::memory_order_relaxed);
+                }
+                else if (w.backupWriter != nullptr)
+                {
+                    w.bytesWrittenBackup += (juce::int64) avail * 2 * w.bytesPerSampleBackup;
+                    w.totalSamplesBackup += avail;
+                }
+                for (auto& m : w.mirrors)
+                {
+                    if (m.writer == nullptr || m.failed) continue;
+                    if (! m.writer->writeFromFloatArrays (channels, 2, avail))
+                    {
+                        m.writer.reset();
+                        m.failed = true;
+                        continue;
+                    }
+                    m.bytesWritten += (juce::int64) avail * 2 * m.bytesPerSample;
+                    m.totalSamples += avail;
+                }
+                totalWritten += avail;
+                continue;
+            }
+
+            const int available = cf.fifo.getNumReady();
+            if (available <= 0) continue;
+
+            const auto scope = cf.fifo.read (available);
 
             if (scope.blockSize1 > 0)
             {
