@@ -3041,19 +3041,31 @@ namespace zynforge
                 switch (chosen)
                 {
                     case 400: withUndo (muted  ? "Unmute clip" : "Mute clip",   [&]{ self->engine.setClipMuted  (self->index, clipIdx, ! muted); });  return;
-                    case 401: withUndo (locked ? "Unlock clip" : "Lock clip",   [&]{ self->engine.setClipLocked (self->index, clipIdx, ! locked); }); return;
-                    case 410: withUndo ("Duplicate clip", [&]{ self->engine.duplicateClip (self->index, clipIdx); });           return;
-                    case 411: withUndo ("Delete clip",    [&]{ self->engine.deleteClip    (self->index, clipIdx); });           return;
+                    // Structural per-clip ops mirror to every edit peer -- a
+                    // collapsed stereo row carries its R partner (editGroupPeers
+                    // appends it), so lock / duplicate / delete / consolidate hit
+                    // BOTH channels and the pair stays in sync. Without this they
+                    // edited only the LEFT half (the parallel clip lists drift).
+                    case 401: withUndo (locked ? "Unlock clip" : "Lock clip",   [&]{ for (int p : self->editGroupPeers()) self->engine.setClipLocked (p, clipIdx, ! locked); }); return;
+                    case 410: withUndo ("Duplicate clip", [&]{ for (int p : self->editGroupPeers()) self->engine.duplicateClip (p, clipIdx); });           return;
+                    case 411: withUndo ("Delete clip",    [&]{ for (int p : self->editGroupPeers()) self->engine.deleteClip    (p, clipIdx); });           return;
                     case 414: withUndo ("Normalize clip", [&]{ self->engine.normalizeClip (self->index, clipIdx); });          return;
                     case 413: withUndo ("Consolidate clip", [&]
                               {
+                                  // Flatten the SAME timeline range on every peer.
+                                  // For a native-stereo pair each channel renders
+                                  // to its own mono consolidated file (the R reads
+                                  // file channel 1 via ArrangementSource), so the
+                                  // pair stays stereo instead of collapsing to the
+                                  // LEFT channel only.
                                   if (auto* cl = self->engine.tryClipsFor (self->index))
                                       if (clipIdx < (int) cl->size())
                                       {
                                           const auto& cc = (*cl)[(size_t) clipIdx];
-                                          self->engine.consolidateRange (self->index,
-                                              cc.timelineStartSamples,
-                                              cc.timelineStartSamples + cc.fileLengthSamples);
+                                          const auto s = cc.timelineStartSamples;
+                                          const auto e = cc.timelineStartSamples + cc.fileLengthSamples;
+                                          for (int p : self->editGroupPeers())
+                                              self->engine.consolidateRange (p, s, e);
                                       }
                               }); return;
                     case 412:
