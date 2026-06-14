@@ -36,7 +36,7 @@ namespace
                                                      zynforge::brand::steelMasterLo, r.getCentreX(), r.getBottom(), false));
             g.fillRect (r);
             g.setColour (zynforge::brand::gloss (0.14f)); g.fillRect (r.withHeight (1.0f));
-            g.setColour (zynforge::brand::structuralForge().withAlpha (0.80f));            // bright orange under-seam
+            g.setColour (zynforge::brand::structuralForge().withAlpha (0.60f));            // structural seam (subdued)
             g.fillRect (r.getX(), r.getBottom() - 3.0f, r.getWidth(), 2.0f);
             g.setColour (zynforge::brand::debossInk.withAlpha (0.75f)); g.fillRect (r.removeFromBottom (1.0f));
         }
@@ -44,7 +44,7 @@ namespace
         {
             const auto c = structuralForge();
             if (armed) { g.setColour (zynforge::brand::structuralForge().withAlpha (0.30f)); g.fillRect (r.getX(), r.getY(), 7.0f, r.getHeight()); }
-            g.setColour (c.withAlpha (armed ? 1.0f : 0.85f));
+            g.setColour (c.withAlpha (armed ? 1.0f : 0.55f));   // subdued at rest, hot when armed
             g.fillRect (r.getX(), r.getY(), 3.0f, r.getHeight());
         }
         inline void drawForgeMark (juce::Graphics& g, juce::Rectangle<float> r, bool hot)

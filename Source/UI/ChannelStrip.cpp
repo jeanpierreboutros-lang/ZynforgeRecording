@@ -58,7 +58,7 @@ namespace
             g.fillRect (r);
             g.setColour (zynforge::brand::gloss (0.18f));                 // top bevel highlight
             g.fillRect (r.withHeight (1.0f));
-            g.setColour (zynforge::brand::structuralForge().withAlpha (0.90f));            // bright orange under-seam (2px)
+            g.setColour (zynforge::brand::structuralForge().withAlpha (0.55f));            // subdued structural seam (2px)
             g.fillRect (r.getX(), r.getBottom() - 3.0f, r.getWidth(), 2.0f);
             g.setColour (zynforge::brand::debossInk.withAlpha (0.85f));         // crisp dark divider
             g.fillRect (r.removeFromBottom (1.0f));
@@ -69,11 +69,15 @@ namespace
             const auto c = structuralForge();
             // Armed: the spine breathes -- glow alpha + width pulse with `pulse`
             // (0..1). Idle: a steady resting spine.
-            const float glowA = armed ? (0.34f + 0.30f * pulse) : 0.28f;
-            const float glowW = armed ? (9.0f + 5.0f * pulse)   : 9.0f;
+            // Structural identity spine: EMBER-subdued at rest, escalating to a
+            // hot, glowing bar only when the channel is record-armed -- so the
+            // bright orange means "this channel is live", not just "this channel
+            // exists" (it no longer competes with a hot meter for the eye).
+            const float glowA = armed ? (0.34f + 0.30f * pulse) : 0.18f;
+            const float glowW = armed ? (9.0f + 5.0f * pulse)   : 7.0f;
             g.setColour (c.withAlpha (glowA));                            // glow
             g.fillRect (r.getX(), r.getY(), glowW, r.getHeight());
-            g.setColour (c.withAlpha (1.0f));                             // bright bar
+            g.setColour (c.withAlpha (armed ? 1.0f : 0.45f));             // bar: ember at rest, hot when armed
             g.fillRect (r.getX(), r.getY(), 5.0f, r.getHeight());
         }
 
