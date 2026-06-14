@@ -8,6 +8,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "../Audio/MultitrackRecorder.h"
+#include "../Audio/AudioEngine.h"
 #include "../Audio/FastHash.h"
 
 namespace zynforge
@@ -128,6 +129,55 @@ namespace zynforge
             }
 
             dir.deleteRecursively();
+
+            // ── Continue recording = a NEW PART, original untouched ──────────
+            auto cdir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getChildFile ("zf-continue-" + juce::Uuid().toString());
+            cdir.deleteRecursively();
+            auto cTrack = cdir.getChildFile ("Audio Files").getChildFile ("Track_01.wav");
+            auto cPart2 = cdir.getChildFile ("Audio Files").getChildFile ("Track_01_part02.wav");
+            const int contBlocks = 20;
+            const int contLen    = contBlocks * block;
+
+            beginTest ("continue appends a new part; the original take is untouched");
+            {
+                recordDc (cdir, baseVal, baseBlocks, block, sr, /*punchIn*/ -1);
+                expect (cTrack.existsAsFile(), "base take missing");
+                const auto baseSha = juce::String (zynforge::hashing::fileSha256 (cTrack));
+                std::unique_ptr<juce::AudioFormatReader> br (fm.createReaderFor (cTrack));
+                const int origLen = br != nullptr ? (int) br->lengthInSamples : 0;
+                br.reset();
+
+                // Continue: arm the SAME track, armContinue, record more.
+                {
+                    MultitrackRecorder rec;
+                    rec.prepare (sr, block, 1);
+                    rec.getTrack (0).armed.store (true, std::memory_order_relaxed);
+                    rec.armContinue();
+                    rec.startRecording (cdir);
+                    std::vector<float> buf ((size_t) block, punchVal);
+                    const float* ptr = buf.data();
+                    for (int b = 0; b < contBlocks; ++b) rec.processBlock (&ptr, 1, block);
+                    rec.stopRecording();
+                }
+
+                // Original Track_01.wav is byte-identical (never touched).
+                expect (cTrack.existsAsFile(), "original take vanished");
+                expectEquals (juce::String (zynforge::hashing::fileSha256 (cTrack)), baseSha,
+                              "continue MODIFIED the original take");
+                // A new part exists with the continuation audio.
+                expect (cPart2.existsAsFile(), "continuation part not written");
+                expectWithinAbsoluteError (regionMean (fm, cPart2, 0, contLen), punchVal, 0.02f);
+
+                // The player stitches them: total = base + continuation.
+                AudioEngine::setTestModeSkipAudioInit (true);
+                AudioEngine eng;
+                expectEquals (eng.loadSession (cdir), 1, "parts should load as one track");
+                expectEquals ((int) eng.getPlayer().getTotalLengthSamples(), origLen + contLen,
+                              "take length should span base + continuation");
+            }
+
+            cdir.deleteRecursively();
         }
     };
 

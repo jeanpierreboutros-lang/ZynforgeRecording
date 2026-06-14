@@ -1,74 +1,10 @@
 #include "SessionPlayer.h"
+#include "MultiPartReader.h"
 
 namespace zynforge
 {
     static constexpr int  kReaderBufferSeconds = 2;
     static constexpr int  kStopSettleMs        = 40;  // > one audio buffer @ any sane size
-
-    // ── Multi-part take reader ─────────────────────────────────────────────
-    // Presents a take that was split across several files -- the main
-    // Track_NN.<ext> plus its Track_NN_partXX.<ext> continuations (from
-    // auto-split past the container size cap, or from continue-recording) --
-    // as ONE seamless reader. Read-only: it owns the per-part readers and maps
-    // a global sample position to the part that holds it, reading across part
-    // boundaries. The Track playback path is unchanged; it just gets this in
-    // place of a single-file reader. All parts share format/channels/SR (same
-    // take), so the public format fields come from the first part.
-    class ConcatReader final : public juce::AudioFormatReader
-    {
-    public:
-        explicit ConcatReader (std::vector<std::unique_ptr<juce::AudioFormatReader>> ps)
-            : juce::AudioFormatReader (nullptr, "ZF multi-part"), parts (std::move (ps))
-        {
-            jassert (! parts.empty());
-            auto& first = *parts.front();
-            sampleRate            = first.sampleRate;
-            bitsPerSample         = first.bitsPerSample;
-            usesFloatingPointData = first.usesFloatingPointData;
-            numChannels           = first.numChannels;
-            metadataValues        = first.metadataValues;
-
-            juce::int64 acc = 0;
-            for (auto& p : parts) { partStart.push_back (acc); acc += p->lengthInSamples; }
-            lengthInSamples = acc;
-        }
-
-        bool readSamples (int* const* dest, int numDest, int destOffset,
-                          juce::int64 startSampleInFile, int numSamples) override
-        {
-            int written = 0;
-            juce::int64 pos = startSampleInFile;
-            while (numSamples > 0)
-            {
-                // Which part holds `pos`?
-                int pi = -1;
-                for (int i = (int) parts.size() - 1; i >= 0; --i)
-                    if (pos >= partStart[(size_t) i]) { pi = i; break; }
-                if (pi < 0 || pos >= lengthInSamples)
-                {
-                    // Past the end -- pad the remainder with silence.
-                    for (int c = 0; c < numDest; ++c)
-                        if (dest[c] != nullptr)
-                            juce::FloatVectorOperations::clear (
-                                reinterpret_cast<float*> (dest[c] + destOffset + written), numSamples);
-                    break;
-                }
-                const juce::int64 local = pos - partStart[(size_t) pi];
-                const int chunk = (int) juce::jmin ((juce::int64) numSamples,
-                                                    parts[(size_t) pi]->lengthInSamples - local);
-                if (chunk <= 0) break;
-                parts[(size_t) pi]->readSamples (dest, numDest, destOffset + written, local, chunk);
-                written    += chunk;
-                pos        += chunk;
-                numSamples -= chunk;
-            }
-            return true;
-        }
-
-    private:
-        std::vector<std::unique_ptr<juce::AudioFormatReader>> parts;
-        std::vector<juce::int64>                              partStart;
-    };
 
     SessionPlayer::SessionPlayer()
     {

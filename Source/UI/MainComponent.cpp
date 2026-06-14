@@ -163,23 +163,32 @@ void MainComponent::onRecordClicked()
                         && engine.getPlayer().isLoaded()
                         && ! daemonModeActive();
     juce::int64 punchAt = -1;
+    // continueAppend: APPEND past the end of the take -> record a NEW PART
+    // (Track_NN_partXX), the safe live-recorder model that never touches the
+    // existing file (works on multi-part takes too). A cursor parked INSIDE the
+    // take -> a mid-take punch (splice), which needs single-file takes. No
+    // cursor / cursor at the end -> append.
+    bool continueAppend = false;
     if (continueTake)
     {
-        // Refuse to punch an auto-split (multi-part) take -- the single-file
-        // splice can't represent it; fall back to a fresh take, original safe.
-        for (int i = 0; i < numTracks; ++i)
-            if (recorder.getTrack (i).armed.load (std::memory_order_relaxed)
-                && AudioEngine::punchTakeMultiPart (activeDir, i))
-            {
-                continueTake = false;
-                break;
-            }
-    }
-    if (continueTake)
-    {
-        const auto cur = engine.getEditCursorSample();
-        punchAt = cur >= 0 ? cur
-                           : juce::jmax ((juce::int64) 0, engine.getPlayer().getTotalLengthSamples());
+        const auto cur   = engine.getEditCursorSample();
+        const auto total = juce::jmax ((juce::int64) 0, engine.getPlayer().getTotalLengthSamples());
+        if (cur >= 0 && cur < total)
+        {
+            // Mid-take punch -- the splice can't represent a multi-part base, so
+            // a split take continues as a new part instead (still non-destructive).
+            bool multiPart = false;
+            for (int i = 0; i < numTracks; ++i)
+                if (recorder.getTrack (i).armed.load (std::memory_order_relaxed)
+                    && AudioEngine::punchTakeMultiPart (activeDir, i))
+                { multiPart = true; break; }
+            if (multiPart) continueAppend = true;
+            else           { punchAt = cur; continueAppend = false; }
+        }
+        else
+        {
+            continueAppend = true;
+        }
     }
 
     const auto dir = continueTake ? activeDir : makeNewSessionDir();
@@ -269,21 +278,26 @@ void MainComponent::onRecordClicked()
         }
     }
 
-    // Punch-in continues into the loaded take(s) at `punchAt`; armed for the
-    // recorder to splice on stop. No-op for tracks with no take (they record
-    // fresh from 0). Cleared automatically when the take stops.
+    // Continue: append a new part (safe, no file touched), or punch-in at the
+    // cursor (splice). No-op for tracks with no take (they record fresh).
     if (continueTake)
-        engine.armPunchIn (punchAt);
+    {
+        if (continueAppend) engine.armContinue();
+        else                engine.armPunchIn (punchAt);
+    }
 
     if (engine.startRecording (dir))
     {
         const double sr = engine.getPlayer().getSampleRate() > 0.0
                               ? engine.getPlayer().getSampleRate() : 48000.0;
-        auto msg = continueTake
-                 ? juce::String ("Continuing take -- punch-in ") + juce::String (armed)
-                       + " track(s) at " + juce::String (punchAt / sr, 1) + " s"
-                 : juce::String ("Recording ") + juce::String (armed) + "/"
-                       + juce::String (numTracks) + " tracks -> " + dir.getFileName();
+        auto msg = ! continueTake
+                 ? juce::String ("Recording ") + juce::String (armed) + "/"
+                       + juce::String (numTracks) + " tracks -> " + dir.getFileName()
+                 : continueAppend
+                 ? juce::String ("Continuing take -- recording a new part on ")
+                       + juce::String (armed) + " track(s)"
+                 : juce::String ("Punch-in ") + juce::String (armed)
+                       + " track(s) at " + juce::String (punchAt / sr, 1) + " s";
         if (autoRouted > 0)
             msg << " (auto-routed " << autoRouted << ")";
         // Free-space pre-flight: warn loudly if the engineer is about to

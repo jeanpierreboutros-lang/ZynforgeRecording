@@ -428,6 +428,25 @@ namespace zynforge
         return ! base.findChildFiles (juce::File::findFiles, false, stem + "_part*").isEmpty();
     }
 
+    std::pair<juce::File, int> MultitrackRecorder::nextContinuationPart (
+        const juce::File& audioDir, const juce::String& trackName, const juce::String& ext)
+    {
+        // Track_NN.<ext> is part 1; continuations are Track_NN_part02, _part03 ...
+        int highest = audioDir.getChildFile (trackName + ext).existsAsFile() ? 1 : 0;
+        for (int p = 2; ; ++p)
+        {
+            const auto f = audioDir.getChildFile (trackName + "_part"
+                              + juce::String::formatted ("%02d", p) + ext);
+            if (f.existsAsFile()) highest = p; else break;
+        }
+        const int next = highest + 1;
+        const auto file = (next == 1)
+            ? audioDir.getChildFile (trackName + ext)
+            : audioDir.getChildFile (trackName + "_part"
+                  + juce::String::formatted ("%02d", next) + ext);
+        return { file, next };
+    }
+
     bool MultitrackRecorder::startRecording (const juce::File& sessionDir)
     {
         if (recording.load()) return false;
@@ -541,7 +560,15 @@ namespace zynforge
             w.numChannels = chans;
 
             // Primary writer -- under <session>/Audio Files/Track_NN.<ext>.
-            const auto primaryFile = audioFilesDir.getChildFile (trackName + primary.ext);
+            // Continue mode appends a NEW part (Track_NN_partXX) so the existing
+            // take is never touched; otherwise it's the normal Track_NN.<ext>.
+            auto primaryFile = audioFilesDir.getChildFile (trackName + primary.ext);
+            if (continueAsPart)
+            {
+                auto [pf, pn] = nextContinuationPart (audioFilesDir, trackName, primary.ext);
+                primaryFile = pf;
+                w.partNumberPrimary = pn;
+            }
             stashForPunch (primaryFile);
             w.writer.reset (openWriterAtPath (primaryFile, primary.container, primary.bitDepth, chans));
             w.primaryBaseFile       = audioFilesDir.getChildFile (trackName);
@@ -562,7 +589,13 @@ namespace zynforge
                 auto backupSession = backupDir.getChildFile (sessionDir.getFileName())
                                               .getChildFile ("Audio Files");
                 backupSession.createDirectory();
-                const auto backupFile = backupSession.getChildFile (trackName + backup.ext);
+                auto backupFile = backupSession.getChildFile (trackName + backup.ext);
+                if (continueAsPart)
+                {
+                    auto [bf, bn] = nextContinuationPart (backupSession, trackName, backup.ext);
+                    backupFile = bf;
+                    w.partNumberBackup = bn;
+                }
                 stashForPunch (backupFile);
                 w.backupWriter.reset (openWriterAtPath (backupFile, backup.container, backup.bitDepth, chans));
                 w.backupBaseFile       = backupSession.getChildFile (trackName);
@@ -587,9 +620,17 @@ namespace zynforge
                                                     .getChildFile ("Audio Files");
                 mirrorSession.createDirectory();
                 const auto mFmt = resolve (mc.format);
-                const auto mFile = mirrorSession.getChildFile (trackName + mFmt.ext);
+                auto mFile = mirrorSession.getChildFile (trackName + mFmt.ext);
+                int  mPart = 1;
+                if (continueAsPart)
+                {
+                    auto [mf, mn] = nextContinuationPart (mirrorSession, trackName, mFmt.ext);
+                    mFile = mf;
+                    mPart = mn;
+                }
                 stashForPunch (mFile);
                 WriterChannel::Mirror m;
+                m.partNumber = mPart;
                 m.writer.reset (openWriterAtPath (mFile, mFmt.container, mFmt.bitDepth, chans));
                 m.baseFile       = mirrorSession.getChildFile (trackName);
                 m.ext            = mFmt.ext;
@@ -916,7 +957,8 @@ namespace zynforge
                         writerSnapshots[i].mirrors[mi].totalSamples = len;
             }
         }
-        punchInActive = false;
+        punchInActive  = false;
+        continueAsPart = false;   // consume the continue arm
 
         // Post-show JSON report -- one file per session that captures every
         // datum a mix engineer / producer needs after the gig: total time,

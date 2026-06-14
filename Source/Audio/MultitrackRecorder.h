@@ -67,9 +67,27 @@ namespace zynforge
         }
         bool isPunchInArmed() const noexcept { return punchInActive; }
 
+        // ── Continue recording (append a new part) ─────────────────────────
+        // Arm the NEXT startRecording to CONTINUE the existing take rather than
+        // overwrite it: each armed track that already has a take records a fresh
+        // Track_NN_partXX continuation file, leaving the existing file(s)
+        // untouched -- the take is the sequence of parts (SessionPlayer stitches
+        // them on playback). This is the safe "keep recording on my file" model:
+        // nothing existing is modified, only a new finalised part is added.
+        // Auto-cleared after each stopRecording(). An armed track with no take
+        // yet just records Track_NN normally (part 1).
+        void armContinue() noexcept { continueAsPart = true; }
+        bool isContinueArmed() const noexcept { return continueAsPart; }
+
         // True if the session's take for `trackIndex` was auto-split into
         // multiple parts (Track_NN_partXX) -- punch-in must refuse these.
         static bool takeIsMultiPart (const juce::File& sessionDir, int trackIndex);
+
+        // Next continuation file for a take: Track_NN.<ext> is part 1, then
+        // Track_NN_part02, _part03 ... Returns the path to write next + its part
+        // number (1 when no take exists yet -> a normal first recording).
+        static std::pair<juce::File, int> nextContinuationPart (
+            const juce::File& audioDir, const juce::String& trackName, const juce::String& ext);
 
         // Capture format & pre-roll are settings -- only changeable while not recording.
         void setCaptureFormat (CaptureFormat f) noexcept     { if (! isRecording()) captureFormat = f; }
@@ -482,6 +500,7 @@ namespace zynforge
         // audio is spliced in at.
         bool        punchInActive { false };
         juce::int64 punchInPos    { 0 };
+        bool        continueAsPart { false };   // append a new part instead of overwriting
 
         // Sidecar path that holds an existing take while a punch records over
         // it: "Audio Files/Track_01.wav" -> "Audio Files/Track_01.punchbase.wav".

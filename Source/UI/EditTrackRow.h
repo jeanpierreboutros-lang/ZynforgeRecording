@@ -9,6 +9,7 @@
 #include "AutomationToolbar.h"
 #include "EditToolsBar.h"
 #include "EditTimeRuler.h"
+#include "../Audio/MultiPartReader.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
@@ -188,6 +189,7 @@ namespace zynforge
                   juce::AudioFormatManager& formats,
                   juce::AudioThumbnailCache& cache)
             : index (trackIdx), stereo (isStereoPair), engine (eng),
+              formats (formats),
               thumbCache (cache),
               thumbnailL (kThumbResolution, formats, cache),
               thumbnailR (kThumbResolution, formats, cache),
@@ -462,14 +464,40 @@ namespace zynforge
             if (fL != currentFileL)
             {
                 currentFileL = fL;
-                thumbnailL.setSource (fL.existsAsFile() ? new juce::FileInputSource (fL) : nullptr);
+                applyThumbSource (thumbnailL, fL, false);
             }
             if (fR != currentFileR)
             {
                 currentFileR = fR;
-                thumbnailR.setSource (fR.existsAsFile() ? new juce::FileInputSource (fR) : nullptr);
+                applyThumbSource (thumbnailR, fR, false);
             }
             repaint();
+        }
+
+        // Point a thumbnail at a take. A single file -> FileInputSource (cached
+        // by file hash, as before). A MULTI-PART take (Track_NN + its
+        // Track_NN_partXX continuations from auto-split / continue-recording) ->
+        // a ConcatReader spanning ALL parts, so the whole take draws instead of
+        // only part 1. force=true drops the cached thumb first (post-stop, to
+        // re-scan a take that just grew a new part).
+        void applyThumbSource (juce::AudioThumbnail& thumb, const juce::File& main, bool force)
+        {
+            if (! main.existsAsFile()) { thumb.setSource (nullptr); return; }
+            const auto parts = findTakeParts (main);
+            if (parts.size() <= 1)
+            {
+                if (force) thumbCache.removeThumb (main.hashCode());
+                thumb.setSource (new juce::FileInputSource (main));
+                return;
+            }
+            // Stable combined hash so the multi-part thumb caches across reopen
+            // without colliding with the single-file entry.
+            const juce::int64 h = main.hashCode() ^ ((juce::int64) parts.size() << 48) ^ 0x5bd1e995LL;
+            if (force) thumbCache.removeThumb (h);
+            if (auto r = ConcatReader::create (formats, parts))
+                thumb.setReader (r.release(), h);
+            else
+                thumb.setSource (new juce::FileInputSource (main));
         }
 
         // Draw one stereo lane. When the pair is a single interleaved file
@@ -499,16 +527,8 @@ namespace zynforge
             // first read mid-capture as a fraction of a second), that stale
             // partial would shadow the finished file forever. Drop the cached
             // thumb first so the now-complete file is re-scanned at full length.
-            if (currentFileL.existsAsFile())
-            {
-                thumbCache.removeThumb (currentFileL.hashCode());
-                thumbnailL.setSource (new juce::FileInputSource (currentFileL));
-            }
-            if (currentFileR.existsAsFile())
-            {
-                thumbCache.removeThumb (currentFileR.hashCode());
-                thumbnailR.setSource (new juce::FileInputSource (currentFileR));
-            }
+            if (currentFileL.existsAsFile()) applyThumbSource (thumbnailL, currentFileL, true);
+            if (currentFileR.existsAsFile()) applyThumbSource (thumbnailR, currentFileR, true);
             repaint();
         }
 
@@ -3829,6 +3849,7 @@ namespace zynforge
 
         int                       index;
         AudioEngine&              engine;
+        juce::AudioFormatManager& formats;       // for building multi-part thumbnail readers
         juce::AudioThumbnailCache& thumbCache;   // shared; used to drop stale thumbs
         juce::AudioThumbnail      thumbnailL;
         juce::AudioThumbnail      thumbnailR;
