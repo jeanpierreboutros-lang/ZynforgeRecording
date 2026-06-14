@@ -6,6 +6,42 @@
 
 namespace zynforge
 {
+    namespace
+    {
+        // The ZynForge forge-mark badge -- the app-icon glyph (forged-steel
+        // squircle + orange hex + rising double-chevron). Drawn programmatically
+        // so it scales crisply at any size and needs no embedded PNG. Used as the
+        // icon on every prompt in place of JUCE's stock warning/question glyph.
+        void drawForgeBadge (juce::Graphics& g, juce::Rectangle<float> r)
+        {
+            // Forged-steel squircle plate.
+            g.setColour (brand::controlBg);
+            g.fillRoundedRectangle (r, brand::radius::lg);
+            g.setColour (brand::gloss (0.10f));
+            g.drawRoundedRectangle (r.reduced (0.5f), brand::radius::lg, 1.0f);
+
+            const auto glyph = r.reduced (r.getWidth() * 0.22f, r.getHeight() * 0.22f);
+            const auto xf = juce::AffineTransform::scale (glyph.getWidth(), glyph.getHeight())
+                                                   .translated (glyph.getX(), glyph.getY());
+            juce::Path hex;
+            hex.startNewSubPath (0.50f, 0.05f); hex.lineTo (0.92f, 0.28f); hex.lineTo (0.92f, 0.72f);
+            hex.lineTo (0.50f, 0.95f); hex.lineTo (0.08f, 0.72f); hex.lineTo (0.08f, 0.28f); hex.closeSubPath();
+            juce::Path chv;
+            chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
+            chv.startNewSubPath (0.36f, 0.73f); chv.lineTo (0.50f, 0.58f); chv.lineTo (0.64f, 0.73f);
+            hex.applyTransform (xf); chv.applyTransform (xf);
+
+            g.setColour (brand::structuralForge().withAlpha (0.12f));
+            g.fillPath (hex);
+            g.setColour (brand::structuralForge().withAlpha (0.55f));
+            g.strokePath (hex, juce::PathStrokeType (1.0f));
+            g.setColour (brand::structuralForge());
+            g.strokePath (chv, juce::PathStrokeType (juce::jmax (1.0f, glyph.getWidth() * 0.07f),
+                                                     juce::PathStrokeType::curved,
+                                                     juce::PathStrokeType::rounded));
+        }
+    }
+
     ZynForgeLookAndFeel::ZynForgeLookAndFeel()
     {
         // Per Live's design system: bg-elevated (#303030) is the default
@@ -194,23 +230,23 @@ namespace zynforge
         g.drawHorizontalLine ((int) footerRect.getY(),
                               full.getX(), full.getRight());
 
-        // Message text. textLayout was prepared by JUCE; draw it where
-        // JUCE expected, but shift it left into the freed icon column
-        // by re-running the layout against a wider rect.
-        const auto bodyRect = juce::Rectangle<int> (
-            (int) full.getX() + 22,
-            (int) full.getY() + 16,
-            (int) full.getWidth() - 44,
-            (int) (full.getHeight() - footerH - 28));
+        // ZynForge forge-mark badge -- drawn in the icon column JUCE reserves
+        // for a Warning / Info / Question alert, REPLACING its stock triangle /
+        // question glyph with the app's forge-mark. We draw the text exactly
+        // where JUCE laid it out (textArea), so the message never re-flows and
+        // never clips. NoIcon prompts reserve no column, so they stay clean
+        // grey chrome with no glyph (and crucially, no warning triangle).
+        const float iconColRight = (float) textArea.getX();
+        if (iconColRight > full.getX() + 50.0f)
+        {
+            const float badge = juce::jmin (44.0f, iconColRight - full.getX() - 16.0f);
+            drawForgeBadge (g, juce::Rectangle<float> (full.getX() + 16.0f,
+                                                       (float) textArea.getY() + 2.0f,
+                                                       badge, badge));
+        }
 
-        // Re-layout the attributed string into the wider body rect so
-        // the icon's old space is reclaimed. textLayout's source is
-        // not directly accessible, so the simplest reliable path is
-        // to draw the existing layout shifted to bodyRect's origin.
-        // Anything that doesn't fit gets clipped, but the alert's
-        // own sizing already accounts for the full message.
-        juce::ignoreUnused (textArea);
-        textLayout.draw (g, bodyRect.toFloat());
+        // Message text exactly at JUCE's computed area -- no re-flow, no clip.
+        textLayout.draw (g, textArea.toFloat());
     }
 
     int ZynForgeLookAndFeel::getAlertBoxWindowFlags()

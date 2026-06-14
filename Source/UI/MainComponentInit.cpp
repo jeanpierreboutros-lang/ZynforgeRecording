@@ -23,6 +23,12 @@ using namespace zynforge;
 MainComponent::MainComponent()
 {
     setLookAndFeel (&laf);
+    // Make the ZynForge chrome the app-wide default so EVERY prompt --
+    // including juce::AlertWindow::showAsync(...) boxes that don't set their
+    // own LookAndFeel -- renders as a first-party dialog (grey chrome + the
+    // forge-mark badge) instead of JUCE's stock warning-triangle alert.
+    // Reset to nullptr in the destructor before `laf` is torn down.
+    juce::LookAndFeel::setDefaultLookAndFeel (&laf);
 
     // Restore the persisted clip-nudge step (cycled with N).
     if (auto* props = engine.getAppProps())
@@ -739,6 +745,10 @@ MainComponent::~MainComponent()
     juce::MenuBarModel::setMacMainMenu (nullptr);
    #endif
     removeKeyListener (this);
+    // Clear the app-wide default BEFORE `laf` (a member) is destroyed, so no
+    // lingering AlertWindow can dereference a dangling LookAndFeel on shutdown.
+    if (&juce::LookAndFeel::getDefaultLookAndFeel() == &laf)
+        juce::LookAndFeel::setDefaultLookAndFeel (nullptr);
     setLookAndFeel (nullptr);
 }
 
