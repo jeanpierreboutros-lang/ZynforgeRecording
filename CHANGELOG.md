@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (playback routing)
+- **Imported / stereo tracks no longer play out of the wrong strips.** `SessionPlayer` assigned playback to strips by the *order* files loaded, not by each file's `Track_NN` name. So a session whose earlier strips were created but never recorded (no file on disk) shifted every later file onto the wrong strip — e.g. importing a stereo track into a session with two empty mono strips made the stereo play out of those mono strips, left the real stereo strip metering nothing, and muting the mono strips muted the (mis-routed) sound. The player now maps each file to the index encoded in its filename (`Track_04.wav` → strip 4) and fills gaps with silent tracks, so player index always equals strip index. Regression-tested (mono at 0, gap at 1, stereo at 2 → routes to strips 2+3).
+
 ### Changed (latest, native stereo capture)
 - **A stereo pair now RECORDS as one interleaved stereo file**, not two mono files. When you arm a stereo track, capture writes a single 2-channel `Track_NN.wav` (named for the L slot) — drag it straight into your DAW as a stereo stem; there's no second mono file to reconcile. The pair still shows as one logical strip across MIXER / EDIT / PATCH.
   - **Recorder** opens one 2-channel writer for the pair and interleaves both inputs into it; backup + every N-way mirror copy the stereo file too; auto-split / RF64-past-4 GiB / pre-roll all account for both channels. The real-time meter + capture path are unchanged.

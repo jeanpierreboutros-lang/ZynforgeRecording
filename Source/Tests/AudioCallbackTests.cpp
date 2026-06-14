@@ -1101,6 +1101,61 @@ namespace zynforge
                 sessionDir.deleteRecursively();
             }
 
+            beginTest ("Player maps files by Track_NN index, not load order (gap + stereo)");
+            {
+                // Repro of the import-into-unrecorded-strips bug: a session with
+                // a mono file at index 0, NO file at index 1 (strip created but
+                // never recorded), and an interleaved stereo file at index 2.
+                // The stereo must play out of strips 2+3 -- NOT shift onto the
+                // empty strip 1 -- and strip 1 must be silent.
+                auto dir = makeTempSessionDir();
+                const auto audioDir = dir.getChildFile ("Audio Files");
+                audioDir.createDirectory();
+
+                auto writeWav = [] (const juce::File& f, int chans,
+                                    std::vector<float> dc, int len)
+                {
+                    f.deleteFile();
+                    juce::WavAudioFormat wav;
+                    std::unique_ptr<juce::FileOutputStream> os (f.createOutputStream());
+                    std::unique_ptr<juce::AudioFormatWriter> w (
+                        wav.createWriterFor (os.get(), 48000.0, (unsigned) chans, 24, {}, 0));
+                    if (w != nullptr) os.release(); else return;
+                    juce::AudioBuffer<float> buf (chans, len);
+                    for (int c = 0; c < chans; ++c)
+                        for (int i = 0; i < len; ++i) buf.setSample (c, i, dc[(size_t) c]);
+                    w->writeFromAudioSampleBuffer (buf, 0, len);
+                };
+
+                writeWav (audioDir.getChildFile ("Track_01.wav"), 1, { 0.30f },        24000);
+                // no Track_02.wav -- index 1 is a gap
+                writeWav (audioDir.getChildFile ("Track_03.wav"), 2, { 0.50f, -0.25f }, 24000);
+
+                CallbackFixture f (4, 4, 4);
+                auto& player = f.engine.getPlayer();
+                const int n = player.loadSession (dir);
+                expectEquals (n, 4, "expected 4 player tracks (mono, gap, stereo L, stereo R)");
+
+                player.start();
+                juce::AudioBuffer<float> out (4, 256);
+                float v0 = 0, v1 = 0, v2 = 0, v3 = 0;
+                for (int attempt = 0; attempt < 80; ++attempt)
+                {
+                    player.setPositionSamples (1000);
+                    out.clear();
+                    player.processBlock (out.getArrayOfWritePointers(), 4, 256);
+                    v0 = out.getSample (0, 128); v1 = out.getSample (1, 128);
+                    v2 = out.getSample (2, 128); v3 = out.getSample (3, 128);
+                    if (std::abs (v0) > 0.05f || std::abs (v2) > 0.05f) break;
+                    juce::Thread::sleep (15);
+                }
+                expectWithinAbsoluteError (v0,  0.30f, 0.02f);  // Track_01 mono -> strip 0
+                expectWithinAbsoluteError (v1,  0.00f, 0.02f);  // gap -> SILENT
+                expectWithinAbsoluteError (v2,  0.50f, 0.02f);  // stereo L -> strip 2 (NOT strip 0/1)
+                expectWithinAbsoluteError (v3, -0.25f, 0.02f);  // stereo R -> strip 3
+                dir.deleteRecursively();
+            }
+
             beginTest ("Cross-track clip paste plays the source track's audio");
             {
                 // Record track 0 loud, track 1 silent into a session.

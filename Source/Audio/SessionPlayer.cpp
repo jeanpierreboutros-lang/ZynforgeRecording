@@ -67,39 +67,73 @@ namespace zynforge
         juce::int64 maxLen = 0;
         double      sr     = deviceSampleRate;
 
+        // CRITICAL: place each file at the track index encoded in its
+        // FILENAME (Track_NN -> index N-1), NOT at its position in the sorted
+        // file list. Strips can be created but never recorded (no file on
+        // disk), so load-order indexing would shift every later file onto the
+        // wrong strip -- e.g. importing a stereo track into a session whose
+        // earlier mono strips were never recorded made the stereo play out of
+        // those mono strips and left the real stereo strip silent. Gaps are
+        // filled with empty (silent) tracks so player index == strip index.
+        struct Pending
+        {
+            int  index;   // 0-based strip index (L slot for a stereo file)
+            std::shared_ptr<juce::BufferingAudioReader> reader;
+            juce::int64 length;
+            bool stereo;
+        };
+        std::vector<Pending> pending;
+        int maxIndex = -1;
+
         for (auto& f : files)
         {
+            // "Track_04.wav" -> 4 ; "Track_04_part02.wav" -> 4 (getIntValue
+            // stops at the underscore). 1-based on disk, so index = num - 1.
+            const int num = f.getFileNameWithoutExtension()
+                              .fromFirstOccurrenceOf ("Track_", false, false)
+                              .getIntValue();
+            if (num < 1) continue;
+            const int idx = num - 1;
+
+            // First file wins a given index (the main Track_NN.wav sorts before
+            // any Track_NN_partXX.wav continuation).
+            bool taken = false;
+            for (auto& p : pending) if (p.index == idx) { taken = true; break; }
+            if (taken) continue;
+
             auto* raw = formatManager.createReaderFor (f);
             if (raw == nullptr) continue;
 
             const auto fileSR     = raw->sampleRate;
             const auto fileLen    = (juce::int64) raw->lengthInSamples;
-            const auto numChans   = (int) raw->numChannels;
+            const bool stereo     = raw->numChannels >= 2;
             const auto bufferSamples = (int) (fileSR * kReaderBufferSeconds);
 
             auto buf = std::make_shared<juce::BufferingAudioReader> (raw, readerThread, bufferSamples);
             buf->setReadTimeout (0); // non-blocking -- fill silence if not buffered yet
 
-            if (numChans >= 2)
+            pending.push_back ({ idx, std::move (buf), fileLen, stereo });
+            maxIndex = juce::jmax (maxIndex, idx + (stereo ? 1 : 0));
+            maxLen   = juce::jmax (maxLen, fileLen);
+            sr       = fileSR;
+        }
+
+        // Build the index-aligned track list. Empty slots (no file) get a
+        // default Track (null reader) which processBlock renders as silence.
+        tracks.assign ((std::size_t) (maxIndex + 1), Track{});
+        for (auto& p : pending)
+        {
+            if (p.stereo)
             {
-                // Interleaved stereo file -> two logical tracks sharing one
-                // reader: index N reads file channel 0 (L), index N+1 reads
-                // channel 1 (R). This keeps one output stream per physical
-                // channel so the index→output routing is identical to the
-                // legacy two-mono-file layout.
-                Track l; l.reader = buf; l.length = fileLen; l.useLeft = true;  l.useRight = false;
-                Track r; r.reader = buf; r.length = fileLen; r.useLeft = false; r.useRight = true;
-                tracks.push_back (std::move (l));
-                tracks.push_back (std::move (r));
+                if (p.index + 1 >= (int) tracks.size()) continue;
+                // L reads file channel 0, R reads channel 1 (shared reader).
+                tracks[(std::size_t) p.index]     = Track { p.reader, p.length, true,  false };
+                tracks[(std::size_t) p.index + 1] = Track { p.reader, p.length, false, true  };
             }
             else
             {
-                Track t; t.reader = buf; t.length = fileLen; t.useLeft = true; t.useRight = true;
-                tracks.push_back (std::move (t));
+                tracks[(std::size_t) p.index] = Track { p.reader, p.length, true, true };
             }
-
-            maxLen = juce::jmax (maxLen, fileLen);
-            sr     = fileSR;
         }
 
         this->sessionDir = sessionDir;
