@@ -292,22 +292,27 @@ namespace zynforge
         const auto timerCol = mode == Mode::Recording ? brand::accentRecord
                             : mode == Mode::Playing   ? brand::accentPlay
                                                       : brand::accentStatus;
-        // Recording: the mockup's timer reads as INCANDESCENT red-orange,
-        // not white. Halo the digits with a SAME-SIZE hot-orange glow drawn
-        // at small offsets (NOT a larger font -- that mis-aligns and reads as
-        // a doubled layer), then stamp the crisp red-orange face on top.
+        // Legibility first: a soft orange bloom around the digits (the old
+        // approach) fringed every glyph and made the timer read as a blurry
+        // smear against the warm, breathing ember background. Instead anchor
+        // the digits with a CRISP 1 px dark contour -- a hard edge separates
+        // each glyph from the bg, so the readout stays sharp at a glance --
+        // then stamp the bright face on top. The "heat" now comes from the
+        // panel's ember underglow, not from blurring the numerals.
         g.setFont (brand::type::mono (timerPt, true));
-        if (mode == Mode::Recording)
         {
-            g.setColour (brand::meterHot.withAlpha (brand::alpha::edgeSoft));
-            const float o = 1.5f;
+            g.setColour (brand::debossInk.withAlpha (brand::alpha::muted));
+            const float o = 1.0f;
             for (auto d : { juce::Point<float> (-o, 0.0f), {  o, 0.0f },
                             {  0.0f, -o },                 {  0.0f, o },
                             { -o, -o }, { o, -o }, { -o, o }, { o, o } })
                 g.drawText (elapsedText, inner.translated (d.x, d.y),
                             juce::Justification::centred, false);
         }
-        g.setColour (timerCol);
+        // Recording stays incandescent but brighter/cleaner so it pops off the
+        // dark contour; play/idle keep their accent face.
+        g.setColour (mode == Mode::Recording ? brand::lift (timerCol, brand::tint::hover)
+                                             : timerCol);
         g.drawText (elapsedText, inner, juce::Justification::centred, false);
     }
 }
