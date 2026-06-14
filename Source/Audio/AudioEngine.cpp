@@ -909,6 +909,14 @@ namespace zynforge
                     appProps->removeValue ("strip_send_" + juce::String (s)
                                            + "_" + suffix);
             }
+            // CRITICAL: also reset the persisted strip COUNT. Wiping only the
+            // per-index overrides left `stripCount` pointing at last gig's
+            // number, so a "new / cleared session" silently revived that many
+            // (now blank) strips on the next launch -- the gig-prep "why are
+            // there tracks?" bug. A cleared/new session is empty; callers that
+            // build real strips (New-from-CSV/console, or opening a session
+            // with a saved mix) set the count explicitly afterward.
+            appProps->setValue ("stripCount", 0);
             appProps->saveIfNeeded();
         }
 
