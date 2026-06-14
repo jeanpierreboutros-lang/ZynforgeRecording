@@ -289,7 +289,16 @@ void MainComponent::runNoiseAnalysis()
                             ? sessionDir.getChildFile ("Audio Files") : sessionDir;
     if (audioDir.findChildFiles (juce::File::findFiles, false, "Track_*.wav;Track_*.aif;Track_*.aiff;Track_*.flac").isEmpty())
     {
-        showStatus ("No recorded audio to analyse -- record a take first.");
+        // Spell out what the tool does + why it can't run yet, instead of a
+        // status line that's easy to miss (the "it does nothing" report).
+        juce::AlertWindow::showMessageBoxAsync (
+            juce::MessageBoxIconType::InfoIcon,
+            "Nothing to analyse yet",
+            "Analyse for noise scans your RECORDED tracks for electrical hum "
+            "(50 / 60 Hz), mic bumps / thumps, and each track's noise floor, "
+            "then shows a sortable report (and saves noise_report.json).\n\n"
+            "This session has no recorded or imported audio yet -- record a "
+            "take or import audio first, then run it.");
         return;
     }
 
