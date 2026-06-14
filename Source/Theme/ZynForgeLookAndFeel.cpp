@@ -87,18 +87,18 @@ namespace zynforge
         // Pronounced top-to-bottom gradient -- top is noticeably lighter
         // and bottom darker than the base so the button reads as a
         // glossy pill rather than a flat tinted rectangle.
-        const auto top = base.brighter (down ? 0.10f : 0.30f);
-        const auto bot = base.darker   (down ? 0.05f : 0.28f);
+        const auto top = base.brighter (down ? 0.08f : 0.16f);
+        const auto bot = base.darker   (down ? 0.05f : 0.18f);
         g.setGradientFill (juce::ColourGradient (
             top, r.getCentreX(), r.getY(),
             bot, r.getCentreX(), r.getBottom(),
             false));
         g.fillRoundedRectangle (r, brand::radius::md);
 
-        // Specular highlight on the top half -- reinforces the gloss.
+        // Faint top sheen -- matte pill, like the mock (not glossy).
         auto hi = r.withTrimmedBottom (r.getHeight() * 0.55f);
         g.setGradientFill (juce::ColourGradient (
-            juce::Colours::white.withAlpha (down ? 0.08f : 0.14f),
+            juce::Colours::white.withAlpha (down ? 0.04f : 0.06f),
                 hi.getCentreX(), hi.getY(),
             juce::Colours::white.withAlpha (0.0f),
                 hi.getCentreX(), hi.getBottom(),
@@ -298,59 +298,92 @@ namespace zynforge
         g.setColour (brand::edge);
         g.drawRoundedRectangle (trackX, trackY, trackW, trackH, 2.0f, 1.0f);
 
-        // Wide horizontal pill cap -- matches the reference screenshot.
-        // The cap is wider than tall, with rounded shoulders and a clear
-        // centre line so the engineer can read its position at a glance.
-        const float thumbW = juce::jmin (34.0f, bounds.getWidth() - 2.0f);
-        const float thumbH = 22.0f;
+        // Mock cap (Direction C): a near-square machined-steel cap, slightly
+        // TALLER than wide, with rounded shoulders and a single VERTICAL
+        // forge-orange groove milled down its centre. Reads as a forged steel
+        // handle, not a moulded pill.
+        const float thumbW = juce::jmin (30.0f, bounds.getWidth() - 2.0f);
+        const float thumbH = 36.0f;
         const auto  thumb  = juce::Rectangle<float> (
                                 bounds.getCentreX() - thumbW * 0.5f,
                                 thumbY - thumbH * 0.5f,
                                 thumbW, thumbH);
+        const float capR = 6.0f;
 
-        // Drop shadow lifts the cap off the track (elev2 -- fader caps
-        // sit between flat strips and floating dialogs in the system).
+        // Drop shadow lifts the cap off the track.
         g.setColour (brand::shadow::elev2());
-        g.fillRoundedRectangle (thumb.translated (0.0f, 1.5f).expanded (1.0f, 1.0f),
-                                brand::radius::sm);
+        g.fillRoundedRectangle (thumb.translated (0.0f, 2.0f).expanded (1.0f, 1.0f), capR);
 
-        // Body -- vertical gradient.
+        // Steel body -- vertical gradient, lighter at the top.
         g.setGradientFill (juce::ColourGradient (
-            brand::faderThumbHi, thumb.getCentreX(), thumb.getY(),
-            brand::faderThumbLo, thumb.getCentreX(), thumb.getBottom(),
+            brand::faderThumbHi.brighter (0.06f), thumb.getCentreX(), thumb.getY(),
+            brand::faderThumbLo,                  thumb.getCentreX(), thumb.getBottom(),
             false));
-        g.fillRoundedRectangle (thumb, brand::radius::sm);
+        g.fillRoundedRectangle (thumb, capR);
 
+        // Inner top highlight + outer edge -- the bevel.
+        g.setColour (brand::gloss (0.30f));
+        g.drawRoundedRectangle (thumb.reduced (1.0f).withTrimmedBottom (thumb.getHeight() * 0.45f),
+                                capR - 1.0f, 1.0f);
         g.setColour (brand::faderThumbEdge);
-        g.drawRoundedRectangle (thumb, brand::radius::sm, 1.0f);
+        g.drawRoundedRectangle (thumb, capR, 1.0f);
 
-        // Two grip lines above the centre stripe, two below -- gives the
-        // cap clear top / bottom orientation.
-        g.setColour (brand::faderThumbGrip);
-        const float gripPad = 5.0f;
-        for (float dy : { -5.0f, 5.0f })
-            g.drawHorizontalLine ((int) (thumb.getCentreY() + dy),
-                                  thumb.getX() + gripPad,
-                                  thumb.getRight() - gripPad);
+        // Signature: a single VERTICAL forge groove down the centre of the cap.
+        {
+            const float grooveW = 3.0f;
+            const float inset   = 6.0f;
+            auto groove = juce::Rectangle<float> (thumb.getCentreX() - grooveW * 0.5f,
+                                                  thumb.getY() + inset,
+                                                  grooveW, thumb.getHeight() - inset * 2.0f);
+            g.setColour (brand::meterHot.withAlpha (0.40f));               // glow
+            g.fillRoundedRectangle (groove.expanded (2.0f, 1.0f), 2.0f);
+            g.setColour (brand::meterHot);                                 // hot forge line
+            g.fillRoundedRectangle (groove, 1.5f);
+        }
 
-        // Signature: a single ember forge groove milled down the steel cap. The
-        // channel's own colour already shows in the fader FILL below the thumb,
-        // so the cap's line is pure brand -- a warm line worked into metal.
-        // Deliberately the calmer EMBER (not the blazing meterHot): across 24+
-        // strips a bright groove on every cap would over-orange the resting
-        // mixer. Bright hot is reserved for live signal / armed state.
-        g.setColour (brand::meterEmber);
-        const float stripeH = 3.0f;
-        g.fillRoundedRectangle (
-            juce::Rectangle<float> (thumb.getX() + 2.0f,
-                                    thumb.getCentreY() - stripeH * 0.5f,
-                                    thumb.getWidth() - 4.0f, stripeH),
-            1.0f);
+        // Milled top sheen -- thin specular line along the cap's top edge.
+        g.setColour (brand::gloss (0.40f));
+        g.drawHorizontalLine ((int) (thumb.getY() + 2.0f),
+                              thumb.getX() + 4.0f, thumb.getRight() - 4.0f);
+    }
 
-        // Milled top sheen -- a thin specular line along the cap's top edge so
-        // it reads as machined steel under stage light, not moulded plastic.
-        g.setColour (brand::gloss (0.35f));
-        g.drawHorizontalLine ((int) (thumb.getY() + 1.5f),
-                              thumb.getX() + 3.0f, thumb.getRight() - 3.0f);
+    void ZynForgeLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h,
+                                                float pos, float startA, float endA,
+                                                juce::Slider& s)
+    {
+        const auto bounds = juce::Rectangle<int> (x, y, w, h).toFloat().reduced (4.0f);
+        const float d      = juce::jmin (bounds.getWidth(), bounds.getHeight());
+        const auto  centre = bounds.getCentre();
+        const float radius = d * 0.5f;
+        const float angle  = startA + pos * (endA - startA);
+        const auto  fill   = s.findColour (juce::Slider::rotarySliderFillColourId);
+
+        // Recessed seat under the knob.
+        g.setColour (brand::shadow::elev2());
+        g.fillEllipse (juce::Rectangle<float> (d + 3.0f, d + 3.0f).withCentre (centre.translated (0.0f, 1.5f)));
+
+        // Machined-steel knob body -- radial gradient lit from top-left.
+        juce::ColourGradient body (brand::faderThumbHi.brighter (0.10f),
+                                   centre.x - radius * 0.4f, centre.y - radius * 0.5f,
+                                   brand::faderThumbLo.darker (0.20f),
+                                   centre.x + radius * 0.4f, centre.y + radius * 0.6f, true);
+        g.setGradientFill (body);
+        g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (centre));
+
+        // Rim.
+        g.setColour (brand::faderThumbEdge);
+        g.drawEllipse (juce::Rectangle<float> (d, d).withCentre (centre), 1.0f);
+        // Top specular arc.
+        g.setColour (brand::gloss (0.22f));
+        g.drawEllipse (juce::Rectangle<float> (d - 4.0f, d - 4.0f).withCentre (centre.translated (0.0f, -0.5f)), 1.0f);
+
+        // Forge-orange pointer line from mid-radius to the edge.
+        const float p0 = radius * 0.42f, p1 = radius * 0.92f;
+        juce::Point<float> a (centre.x + std::sin (angle) * p0, centre.y - std::cos (angle) * p0);
+        juce::Point<float> b (centre.x + std::sin (angle) * p1, centre.y - std::cos (angle) * p1);
+        g.setColour (fill.withMultipliedBrightness (1.15f));
+        g.drawLine ({ a, b }, 2.6f);
+        // Bright tip dot.
+        g.fillEllipse (juce::Rectangle<float> (3.2f, 3.2f).withCentre (b));
     }
 }

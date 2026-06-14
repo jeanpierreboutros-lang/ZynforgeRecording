@@ -27,6 +27,14 @@ namespace zynforge
                                float sliderPos, float minSliderPos, float maxSliderPos,
                                juce::Slider::SliderStyle, juce::Slider&) override;
 
+        // Heated Steel pan knob: a small machined-steel knob with a single
+        // forge-orange pointer line. Replaces JUCE's default "C" ring so the
+        // pan control matches the Direction-C mock.
+        void drawRotarySlider (juce::Graphics&, int x, int y, int width, int height,
+                               float sliderPosProportional,
+                               float rotaryStartAngle, float rotaryEndAngle,
+                               juce::Slider&) override;
+
         // Wide pill-shaped toggle button: dark gradient body, accent-coloured
         // bold text whose colour reflects the toggle state.
         void drawToggleButton (juce::Graphics&, juce::ToggleButton&,

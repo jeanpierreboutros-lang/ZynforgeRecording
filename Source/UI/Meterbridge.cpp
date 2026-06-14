@@ -68,6 +68,32 @@ namespace zynforge
                 auto r = getLocalBounds().toFloat();
                 g.setGradientFill (brand::verticalGradient (brand::bgDeep, r, 0.08f, 0.12f));
                 g.fillRect (r);
+
+                // Heated Steel: near-black header band + orange seam behind the
+                // track-name row, plus a stamped column number per meter.
+                if (! meters.empty())
+                {
+                    auto inner = getLocalBounds().reduced (12);
+                    auto band  = juce::Rectangle<int> (inner.getX(), inner.getY(), inner.getWidth(), 20);
+                    g.setGradientFill (juce::ColourGradient (
+                        brand::steelHeaderHi, (float) band.getCentreX(), (float) band.getY(),
+                        brand::steelHeaderLo, (float) band.getCentreX(), (float) band.getBottom(), false));
+                    g.fillRect (band);
+                    g.setColour (brand::brandOrange.withAlpha (0.55f));
+                    g.fillRect (band.getX(), band.getBottom(), band.getWidth(), 1);
+
+                    // Stamped column numbers, aligned to the resized() columns.
+                    const int colW = juce::jmax (28, inner.getWidth() / (int) meters.size());
+                    g.setFont (brand::type::mono (11.0f, true));
+                    for (std::size_t i = 0; i < meters.size(); ++i)
+                    {
+                        auto numBox = juce::Rectangle<int> (inner.getX() + (int) i * colW + 3,
+                                                            inner.getY() + 2, 22, 14);
+                        g.setColour (brand::debossFace.withAlpha (0.85f));
+                        g.drawText (juce::String ((int) i + 1).paddedLeft ('0', 2),
+                                    numBox, juce::Justification::centredLeft, false);
+                    }
+                }
             }
 
         private:

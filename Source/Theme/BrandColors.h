@@ -2,6 +2,7 @@
 
 #include <juce_graphics/juce_graphics.h>
 #include <array>
+#include <atomic>
 
 #include "ForgeTokens.h"
 
@@ -235,16 +236,49 @@ namespace zynforge::brand
         juce::Colour (forge::personality[7]),  // INS 8 -- mustard
     };
 
-    // Default strip colour. Channels are a neutral grey when first added --
-    // the engineer colours the ones that matter from the swatch picker. (The
-    // per-index `personality` palette above is kept for reference / future
-    // use; the default no longer auto-assigns it.)
+    // Default strip colour. Channels open with a neutral default; the engineer
+    // colours the ones that matter from the swatch picker (that sets an explicit
+    // colourARGB which getResolvedColour() prefers over this default). The
+    // per-index `personality` palette above stays available for manual picks.
     inline const auto stripDefaultGrey = juce::Colour (forge::stripDefaultGrey);
 
     inline juce::Colour stripColour (int /*index*/) noexcept
     {
         return stripDefaultGrey;
     }
+
+    // ── Heated Steel tokens ───────────────────────────────────────────────
+    // Promoted from the trial drop-ins so every forged surface routes through
+    // a named token instead of an inline hex. (Canonical home is tokens.json →
+    // regenerate ForgeTokens.h; mirrored here until that regen runs so Live +
+    // the family apps can pick them up.)
+    inline const auto steelHeaderHi  = juce::Colour (0xff0b0b0e);  // near-black header plate top
+    inline const auto steelHeaderLo  = juce::Colour (0xff000000);  // header plate bottom
+    inline const auto steelMasterHi  = juce::Colour (0xff16171c);  // master-strip plate top (deeper than channel)
+    inline const auto steelMasterLo  = juce::Colour (0xff070809);  // master-strip plate bottom
+    inline const auto debossInk      = juce::Colour (0xff000000);  // stamped-number engraved shadow
+    inline const auto debossFace     = juce::Colour (0xffb4b7bf);  // stamped-number raised steel face
+    // Structural identity orange. Separate accessor from signalMute() so the
+    // spine / stamp / seam can be tuned (or HC-widened) apart from the mute
+    // state button, even though both resolve to brandOrange today.
+    inline juce::Colour structuralForge() noexcept { return brandOrange; }
+
+    // ── Reduced-motion flag ───────────────────────────────────────────────
+    // Global accessibility switch. When true, decorative animations (the
+    // record-arm spine pulse + the big-clock breathe/ignite) hold a static
+    // end-state instead of animating. Defaults OFF. Wire the setter to the
+    // host's reduced-motion source once per launch, e.g. on macOS:
+    //   brand::setReduceMotion ([[NSWorkspace sharedWorkspace]
+    //       accessibilityDisplayShouldReduceMotion]);
+    // (do it in a .mm, and re-query on the relevant workspace notification),
+    // or from an in-app Preferences toggle. Nothing reads this until set.
+    inline std::atomic<bool>& reduceMotionFlag() noexcept
+    {
+        static std::atomic<bool> f { false };
+        return f;
+    }
+    inline bool reduceMotion() noexcept { return reduceMotionFlag().load (std::memory_order_relaxed); }
+    inline void setReduceMotion (bool on) noexcept { reduceMotionFlag().store (on, std::memory_order_relaxed); }
 
     // ── Gradient helpers -- every painted surface should use these ─────────
     // Top-to-bottom vertical gradient for buttons / pills / strip backs.

@@ -2,13 +2,46 @@
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
+// ── Heated Steel (Direction C) -- forge-mark glyph ────────────────────
+namespace
+{
+    namespace steel
+    {
+        inline void drawForgeMark (juce::Graphics& g, juce::Rectangle<float> r, bool hot)
+        {
+            const auto orange = zynforge::brand::brandOrange;
+            const auto xf = juce::AffineTransform::scale (r.getWidth(), r.getHeight()).translated (r.getX(), r.getY());
+            juce::Path hex;
+            hex.startNewSubPath (0.50f, 0.05f); hex.lineTo (0.92f, 0.28f); hex.lineTo (0.92f, 0.72f);
+            hex.lineTo (0.50f, 0.95f); hex.lineTo (0.08f, 0.72f); hex.lineTo (0.08f, 0.28f); hex.closeSubPath();
+            juce::Path chv;
+            chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
+            chv.startNewSubPath (0.36f, 0.73f); chv.lineTo (0.50f, 0.58f); chv.lineTo (0.64f, 0.73f);
+            hex.applyTransform (xf); chv.applyTransform (xf);
+            g.setColour (hot ? orange.withAlpha (0.12f) : zynforge::brand::debossInk.withAlpha (0.28f)); g.fillPath (hex);
+            g.setColour (hot ? orange.withAlpha (0.55f) : zynforge::brand::gloss (0.10f)); g.strokePath (hex, juce::PathStrokeType (1.0f));
+            g.setColour (hot ? orange : zynforge::brand::gloss (0.24f));
+            g.strokePath (chv, juce::PathStrokeType (juce::jmax (1.0f, r.getWidth() * 0.07f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            const float s = r.getWidth() * 0.05f;
+            g.setColour (hot ? orange : zynforge::brand::gloss (0.30f));
+            g.fillEllipse (r.getCentreX() - s, r.getY() + r.getHeight() * 0.27f - s, s * 2.0f, s * 2.0f);
+        }
+    }
+}
+
 namespace zynforge
 {
     BigClockPanel::BigClockPanel() = default;
 
     void BigClockPanel::setMode (Mode m)
     {
-        if (mode != m) { mode = m; syncPulseTimer(); repaint(); }
+        if (mode != m)
+        {
+            const bool igniting = (m == Mode::Recording && mode != Mode::Recording);
+            mode = m;
+            if (igniting) igniteLevel = 0.0f;   // start cold, ramp the heat in
+            syncPulseTimer(); repaint();
+        }
     }
 
     void BigClockPanel::setElapsed (juce::int64 samples, double sr)
@@ -68,7 +101,7 @@ namespace zynforge
 
     void BigClockPanel::syncPulseTimer()
     {
-        const bool wantPulse = (mode == Mode::Recording) || armedReady;
+        const bool wantPulse = ! brand::reduceMotion() && ((mode == Mode::Recording) || armedReady);
         if (wantPulse)
         {
             if (! isTimerRunning())
@@ -88,6 +121,9 @@ namespace zynforge
         constexpr float twoPi = juce::MathConstants<float>::twoPi;
         pulsePhase += twoPi / 30.0f;
         if (pulsePhase > twoPi) pulsePhase -= twoPi;
+        // Heat ignite: ramp 0→1 over ~9 frames (300ms) at record start.
+        igniteLevel = juce::jlimit (0.0f, 1.0f,
+                                    igniteLevel + (mode == Mode::Recording ? 1.0f : -1.0f) / 9.0f);
         repaint();
     }
 
@@ -110,9 +146,11 @@ namespace zynforge
         // can read 'rolling' from across the room without looking at
         // the timer value.
         juce::Colour bg = brand::bgPanel;
-        const float pulse = 0.5f + 0.5f * std::sin (pulsePhase);      // 0..1
+        const bool  rm     = brand::reduceMotion();
+        const float pulse  = rm ? 0.5f : 0.5f + 0.5f * std::sin (pulsePhase);   // 0..1 (static under reduced-motion)
+        const float ignite = rm ? 1.0f : igniteLevel;                          // full heat, no ramp
         if (mode == Mode::Recording)
-            bg = brand::meterEmber.withAlpha (0.14f + 0.10f * pulse); // ember, breathing
+            bg = brand::meterEmber.withAlpha ((0.14f + 0.10f * pulse) * ignite); // ember, breathing + igniting
         else if (mode == Mode::Playing) bg = brand::accentPlay.withAlpha (0.14f);
         auto bgRect = r.reduced (2.0f);
         g.setGradientFill (juce::ColourGradient (
@@ -127,8 +165,8 @@ namespace zynforge
         if (mode == Mode::Recording)
         {
             g.setGradientFill (juce::ColourGradient (
-                brand::meterHot.withAlpha (0.0f),                  bgRect.getCentreX(), bgRect.getCentreY(),
-                brand::meterHot.withAlpha (0.16f + 0.12f * pulse), bgRect.getCentreX(), bgRect.getBottom(),
+                brand::meterHot.withAlpha (0.0f),                                bgRect.getCentreX(), bgRect.getCentreY(),
+                brand::meterHot.withAlpha ((0.16f + 0.12f * pulse) * ignite), bgRect.getCentreX(), bgRect.getBottom(),
                 false));
             g.fillRoundedRectangle (bgRect, brand::radius::lg);
         }
@@ -149,7 +187,7 @@ namespace zynforge
         // 1 Hz so the call-to-action draws the eye.
         if (armedReady && mode == Mode::Idle)
         {
-            const float pulse = 0.5f + 0.5f * std::sin (pulsePhase);
+            const float pulse = rm ? 0.5f : 0.5f + 0.5f * std::sin (pulsePhase);
             const auto  col   = brand::signalArmedReady().withMultipliedBrightness (0.85f + 0.25f * pulse);
             g.setColour (col);
             g.drawRoundedRectangle (r.reduced (2.0f), brand::radius::lg, 2.0f);
@@ -159,6 +197,23 @@ namespace zynforge
             g.setColour (brand::edge);
             g.drawRoundedRectangle (r.reduced (2.0f), brand::radius::lg, 1.0f);
         }
+
+        // ── Heated Steel: structural orange frame + forge-mark ─────────────
+        g.setColour (brand::brandOrange.withAlpha (0.55f));
+        g.drawRoundedRectangle (r.reduced (3.0f), brand::radius::lg, 2.0f);
+        // Orange corner brackets (top-left / top-right) -- target detail.
+        {
+            const float br = 20.0f, bw = 2.0f, off = 8.0f;
+            g.setColour (brand::brandOrange.withAlpha (0.85f));
+            // top-left
+            g.fillRect (r.getX() + off, r.getY() + off, br, bw);
+            g.fillRect (r.getX() + off, r.getY() + off, bw, br);
+            // top-right
+            g.fillRect (r.getRight() - off - br, r.getY() + off, br, bw);
+            g.fillRect (r.getRight() - off - bw, r.getY() + off, bw, br);
+        }
+        steel::drawForgeMark (g, { r.getX() + 14.0f, r.getBottom() - 34.0f, 24.0f, 24.0f },
+                              mode == Mode::Recording);
 
         auto inner = r.reduced (16.0f, 10.0f);
 
@@ -189,8 +244,8 @@ namespace zynforge
             // while the engineer's eye is on the timer.
             auto drawRow = [&] (juce::Rectangle<float> line,
                                 const char* label, const juce::String& value,
-                                juce::Colour labelCol = brand::textTertiary,
-                                juce::Colour valueCol = brand::textSecondary)
+                                juce::Colour labelCol = brand::textSecondary,
+                                juce::Colour valueCol = brand::textPrimary)
             {
                 g.setColour (labelCol);
                 g.setFont (brand::type::caption());
@@ -209,8 +264,8 @@ namespace zynforge
             drawRow (right.removeFromTop (14.0f),
                      missed > 0 ? "MISSED SAMPLES" : "NO MISSED WRITES",
                      missed > 0 ? juce::String (missed) : juce::String(),
-                     missed > 0 ? brand::accentRecord : brand::textTertiary,
-                     missed > 0 ? brand::accentRecord : brand::textSecondary);
+                     missed > 0 ? brand::accentRecord : brand::textSecondary,
+                     missed > 0 ? brand::accentRecord : brand::textPrimary);
             drawRow (right.removeFromTop (14.0f), "MARKERS",
                      juce::String (markerCount));
 
@@ -220,17 +275,17 @@ namespace zynforge
             { return v <= -119.0f ? juce::String ("--") : juce::String (v, 1) + " LUFS"; };
             drawRow (right.removeFromTop (14.0f), "LOUDNESS (I)", lufsStr (lufsIntegrated));
             drawRow (right.removeFromTop (14.0f), "MOMENTARY",    lufsStr (lufsMomentary),
-                     brand::textTertiary, brand::textSecondary);
+                     brand::textSecondary, brand::textPrimary);
             const bool tpHot = truePeakDb > -1.0f;
             drawRow (right.removeFromTop (14.0f), "TRUE PEAK",
                      truePeakDb <= -119.0f ? juce::String ("--")
                                            : juce::String (truePeakDb, 1) + " dBTP",
-                     tpHot ? brand::accentRecord : brand::textTertiary,
-                     tpHot ? brand::accentRecord : brand::textSecondary);
+                     tpHot ? brand::accentRecord : brand::textSecondary,
+                     tpHot ? brand::accentRecord : brand::textPrimary);
         }
 
         // Centre: huge timer
-        g.setColour (mode == Mode::Recording ? brand::accentRecord
+        g.setColour (mode == Mode::Recording ? brand::meterWhiteHot
                    : mode == Mode::Playing   ? brand::accentPlay
                                              : brand::accentStatus);
         // Tabular numerals -- the timer string can't shift width as

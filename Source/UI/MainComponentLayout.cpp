@@ -54,6 +54,62 @@ void MainComponent::paint (juce::Graphics& g)
     g.drawHorizontalLine ((int) header.getBottom() - 1,
                           header.getX(), header.getRight());
 
+    // ── Heated Steel wordmark lockup: forge-mark badge + two-tone text ──
+    // Painted (not a Label) so we get the glyph, two colours, and letter
+    // tracking the mock uses. Sits in the 248px slot reserved in resized().
+    {
+        const float cy = 22.0f;            // vertical centre of the 44px row 1
+        float x = 14.0f;
+
+        // Forge-mark badge: dark rounded square + orange hex + rising chevron.
+        const float bs = 26.0f;
+        juce::Rectangle<float> badge (x, cy - bs * 0.5f, bs, bs);
+        g.setColour (brand::controlBg);
+        g.fillRoundedRectangle (badge, brand::radius::lg);
+        g.setColour (brand::gloss (0.07f));
+        g.drawRoundedRectangle (badge, brand::radius::lg, 1.0f);
+        {
+            auto u = badge.reduced (5.0f);
+            const auto xf = juce::AffineTransform::scale (u.getWidth(), u.getHeight())
+                                                   .translated (u.getX(), u.getY());
+            juce::Path hex;
+            hex.startNewSubPath (0.50f, 0.05f); hex.lineTo (0.92f, 0.28f); hex.lineTo (0.92f, 0.72f);
+            hex.lineTo (0.50f, 0.95f); hex.lineTo (0.08f, 0.72f); hex.lineTo (0.08f, 0.28f); hex.closeSubPath();
+            juce::Path chv;
+            chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
+            hex.applyTransform (xf); chv.applyTransform (xf);
+            g.setColour (brand::brandOrange.withAlpha (0.16f)); g.fillPath (hex);
+            g.setColour (brand::brandOrange);
+            g.strokePath (hex, juce::PathStrokeType (1.4f));
+            g.strokePath (chv, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved,
+                                                            juce::PathStrokeType::rounded));
+            const float sp = u.getWidth() * 0.05f;
+            g.fillEllipse (u.getCentreX() - sp, u.getY() + u.getHeight() * 0.27f - sp, sp * 2.0f, sp * 2.0f);
+        }
+        x = badge.getRight() + 11.0f;
+
+        // Two-tone, letter-tracked wordmark.
+        auto drawTracked = [&g, cy] (const juce::String& s, juce::Font f, juce::Colour col,
+                                     float startX, float tracking) -> float
+        {
+            g.setFont (f); g.setColour (col);
+            float cx = startX;
+            for (int i = 0; i < s.length(); ++i)
+            {
+                const auto cs = s.substring (i, i + 1);
+                const float w = f.getStringWidthFloat (cs);
+                g.drawText (cs, juce::Rectangle<float> (cx, cy - f.getHeight() * 0.5f,
+                                                        w + 4.0f, f.getHeight()),
+                            juce::Justification::centredLeft, false);
+                cx += w + tracking;
+            }
+            return cx;
+        };
+        x = drawTracked ("ZYNFORGE",  brand::type::ui (14.0f, true),  brand::textPrimary,  x, 2.0f);
+        x += 6.0f;
+        drawTracked      ("RECORDING", brand::type::ui (14.0f, false), brand::textTertiary, x, 2.0f);
+    }
+
     // (The MIXER empty state is now the reusable mixerPlaceholder overlay,
     // shown/hidden by updateMixerPlaceholder() -- no painted hint here.)
 }
@@ -91,9 +147,12 @@ void MainComponent::resized()
 
     // Row 1 -- title + status + LOCK + + CH + DEVICE + RECORD
     auto row1 = r.removeFromTop (44).reduced (brand::space::lg, brand::space::md);
-    titleLabel   .setBounds ({});
+    // Mock parity: reserve the slot for the PAINTED wordmark lockup (badge +
+    // ZYNFORGE RECORDING). The text is drawn in paint(); this just keeps the
+    // status labels clear of it.
+    titleLabel   .setBounds (row1.removeFromLeft (248));
     row1.removeFromLeft (brand::space::md);
-    midiStatusLabel.setBounds (row1.removeFromLeft (220).reduced (0, 4));
+    midiStatusLabel.setBounds (row1.removeFromLeft (180).reduced (0, 4));
     row1.removeFromLeft (brand::space::sm);
     danteLabel.setBounds (row1.removeFromLeft (180).reduced (0, 4));
     row1.removeFromLeft (brand::space::sm);
@@ -181,7 +240,7 @@ void MainComponent::resized()
     const int kMinStripW     = floorW;
     const int kMaxStripW     = 220;
     const int margin = 12;
-    const int gap    = 6;
+    const int gap    = 8;   // mock parity: carded strips with an 8px gap
     const int total  = (int) strips.size();
 
     auto viewportArea = r.reduced (margin);

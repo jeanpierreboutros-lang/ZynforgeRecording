@@ -1733,8 +1733,27 @@ namespace zynforge
 
             g.setColour (headerBg);
             g.fillRect (header);
+
+            // ── Heated Steel: orange spine + stamped number + orange seam ──
+            // Mirrors the mixer strip header identity on the EDIT track rows.
+            g.setColour (brand::brandOrange.withAlpha (0.30f));               // spine glow
+            g.fillRect (juce::Rectangle<float> ((float) hx, 0.0f, 7.0f, (float) getHeight()));
+            g.setColour (brand::brandOrange);                                 // spine
+            g.fillRect (juce::Rectangle<float> ((float) hx, 0.0f, 3.0f, (float) getHeight()));
+            {
+                const auto num = juce::String (index + 1).paddedLeft ('0', 2);
+                auto numBox = juce::Rectangle<int> (hx + swatchW + 7, 3, 24, 18);
+                g.setFont (brand::type::mono (15.0f, true));
+                g.setColour (brand::debossInk.withAlpha (0.85f));            // engraved shadow
+                g.drawText (num, numBox.translated (0, 1), juce::Justification::centredLeft, false);
+                g.setColour (brand::debossFace);                             // raised steel face
+                g.drawText (num, numBox, juce::Justification::centredLeft, false);
+            }
+
             g.setColour (brand::edge);
             g.drawVerticalLine (hx + headerW - 1, 0.0f, (float) getHeight());
+            g.setColour (brand::brandOrange.withAlpha (0.50f));               // orange seam
+            g.drawVerticalLine (hx + headerW - 2, 0.0f, (float) getHeight());
 
             if (auto* page = findParentComponentOfClass<EditPage>())
                 if (page->isTrackSelected && page->isTrackSelected (index))
@@ -1796,7 +1815,8 @@ namespace zynforge
             constexpr int leftBlockW = 140;
             auto leftBlock = header.removeFromLeft (leftBlockW).reduced (brand::space::xs, brand::space::xs);
 
-            nameLabel.setBounds (leftBlock.removeFromTop (18));
+            // Name shifted right to clear the painted Heated Steel number stamp.
+            nameLabel.setBounds (leftBlock.removeFromTop (18).withTrimmedLeft (26));
             leftBlock.removeFromTop (3);
 
             const int btnH = 22;

@@ -27,6 +27,7 @@ namespace zynforge
             // Square button body -- gradient fill, 1px border. Matches the
             // ZynForge Live transport button finish.
             auto r = getLocalBounds().toFloat().reduced (2.0f);
+            const float rad = 9.0f;   // mock: softly rounded square tiles
 
             const bool isRec   = (icon == Icon::Record);
             // Solid red while rolling; a lit red frame on the "on" half
@@ -48,7 +49,7 @@ namespace zynforge
             else if (blinkOn)   base = brand::accentRecord.darker (0.30f); // armed -- blink lit
             else if (litActive) base = baseColour;                         // PLAY lit -- green
             g.setGradientFill (brand::verticalGradient (base, r, 0.10f, 0.18f));
-            g.fillRoundedRectangle (r, brand::radius::md);
+            g.fillRoundedRectangle (r, rad);
 
             // Record gets a permanent brand-red 2 px stroke even when
             // idle -- engineer at the console reading at distance and
@@ -61,18 +62,18 @@ namespace zynforge
             {
                 const float a = (recOn || blinkOn) ? 1.0f : brand::alpha::prominent;
                 g.setColour (brand::accentRecord.withAlpha (a));
-                g.drawRoundedRectangle (r.reduced (1.0f), brand::radius::md, 2.0f);
+                g.drawRoundedRectangle (r.reduced (1.0f), rad, 2.0f);
             }
             else if (litActive)
             {
                 // Bright accent ring around the lit (running) button.
                 g.setColour (baseColour.brighter (0.20f));
-                g.drawRoundedRectangle (r.reduced (1.0f), brand::radius::md, 2.0f);
+                g.drawRoundedRectangle (r.reduced (1.0f), rad, 2.0f);
             }
             else
             {
-                g.setColour (brand::controlBorder);
-                g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
+                g.setColour (brand::edge);
+                g.drawRoundedRectangle (r, rad, 1.0f);
             }
 
             // Icon (centred inside the inner area).
@@ -172,7 +173,7 @@ namespace zynforge
             if (flashLevel > 0.0f)
             {
                 g.setColour (baseColour.withAlpha (juce::jlimit (0.0f, 0.85f, flashLevel)));
-                g.fillRoundedRectangle (r, brand::radius::md);
+                g.fillRoundedRectangle (r, rad);
             }
         }
 
@@ -211,9 +212,9 @@ namespace zynforge
         gotoStart = make ("Go to start",  IconButton::Icon::GotoStart, brand::textPrimary);
         gotoEnd   = make ("Go to end",    IconButton::Icon::GotoEnd,   brand::textPrimary);
         play      = make ("Play",         IconButton::Icon::Play,      brand::accentPlay);
-        stop      = make ("Stop",         IconButton::Icon::Stop,      brand::accentVS);
+        stop      = make ("Stop",         IconButton::Icon::Stop,      brand::textSecondary);
         record    = make ("Record",       IconButton::Icon::Record,    brand::accentRecord);
-        loop      = make ("Loop region",  IconButton::Icon::Loop,      brand::textMuted);
+        loop      = make ("Loop region",  IconButton::Icon::Loop,      brand::brandOrange);
 
         gotoStart->setTooltip ("Go to session start (rewind playback to 0).");
         gotoEnd  ->setTooltip ("Go to session end.");

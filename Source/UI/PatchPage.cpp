@@ -224,6 +224,12 @@ namespace zynforge
                     }
                 }
 
+                // ─── Heated Steel: orange seams framing the frozen panes,
+                // mirroring the mixer-strip spine/seam identity.
+                g.setColour (brand::brandOrange.withAlpha (0.50f));
+                g.fillRect (0, bodyY - 1, getWidth(), 1);   // under the column-header band
+                g.fillRect (bodyX - 1, 0, 1, getHeight());  // right of the row-header column
+
                 // ─── Dot body -- scrolls in both axes.
                 {
                     juce::Graphics::ScopedSaveState clip (g);

@@ -50,6 +50,7 @@ namespace zynforge
         // brightness. When neither state is active the timer stops and
         // the value is reset, so an idle window doesn't burn CPU.
         float pulsePhase { 0.0f };
+        float igniteLevel { 0.0f };   // ramps 0→1 over ~300ms when recording starts
         void  timerCallback() override;
         void  syncPulseTimer();
 

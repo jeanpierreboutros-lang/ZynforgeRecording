@@ -2,6 +2,72 @@
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
+// ── Heated Steel (Direction C) -- self-contained paint helpers ───────────
+namespace
+{
+    namespace steel
+    {
+        inline juce::Colour structuralForge() { return zynforge::brand::brandOrange; }
+
+        inline const juce::Image& hammeredTile()
+        {
+            static const juce::Image tile = []
+            {
+                const int W = 96, H = 96;
+                juce::Image img (juce::Image::ARGB, W, H, true);
+                juce::Graphics g (img);
+                for (int x = 0; x < W; x += 4) { g.setColour (zynforge::brand::gloss (0.045f)); g.fillRect (x, 0, 1, H); }
+                juce::Graphics::ScopedSaveState ss (g);
+                g.addTransform (juce::AffineTransform::rotation (0.14f, W * 0.5f, H * 0.5f));
+                for (int y = -H; y < H * 2; y += 9) { g.setColour (zynforge::brand::debossInk.withAlpha (0.10f)); g.fillRect (-W, y, W * 3, 2); }
+                return img;
+            }();
+            return tile;
+        }
+        inline void drawHammered (juce::Graphics& g, juce::Rectangle<float> r, float a = 0.40f)
+        {
+            juce::Graphics::ScopedSaveState ss (g);
+            g.setFillType (juce::FillType (hammeredTile(), juce::AffineTransform::translation (r.getX(), r.getY())));
+            g.setOpacity (a); g.fillRect (r);
+        }
+        inline void drawSteelHeader (juce::Graphics& g, juce::Rectangle<float> r)
+        {
+            g.setGradientFill (juce::ColourGradient (zynforge::brand::steelMasterHi, r.getCentreX(), r.getY(),
+                                                     zynforge::brand::steelMasterLo, r.getCentreX(), r.getBottom(), false));
+            g.fillRect (r);
+            g.setColour (zynforge::brand::gloss (0.14f)); g.fillRect (r.withHeight (1.0f));
+            g.setColour (zynforge::brand::structuralForge().withAlpha (0.80f));            // bright orange under-seam
+            g.fillRect (r.getX(), r.getBottom() - 3.0f, r.getWidth(), 2.0f);
+            g.setColour (zynforge::brand::debossInk.withAlpha (0.75f)); g.fillRect (r.removeFromBottom (1.0f));
+        }
+        inline void drawSpine (juce::Graphics& g, juce::Rectangle<float> r, bool armed)
+        {
+            const auto c = structuralForge();
+            if (armed) { g.setColour (zynforge::brand::structuralForge().withAlpha (0.30f)); g.fillRect (r.getX(), r.getY(), 7.0f, r.getHeight()); }
+            g.setColour (c.withAlpha (armed ? 1.0f : 0.85f));
+            g.fillRect (r.getX(), r.getY(), 3.0f, r.getHeight());
+        }
+        inline void drawForgeMark (juce::Graphics& g, juce::Rectangle<float> r, bool hot)
+        {
+            const auto xf = juce::AffineTransform::scale (r.getWidth(), r.getHeight()).translated (r.getX(), r.getY());
+            juce::Path hex;
+            hex.startNewSubPath (0.50f, 0.05f); hex.lineTo (0.92f, 0.28f); hex.lineTo (0.92f, 0.72f);
+            hex.lineTo (0.50f, 0.95f); hex.lineTo (0.08f, 0.72f); hex.lineTo (0.08f, 0.28f); hex.closeSubPath();
+            juce::Path chv;
+            chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
+            chv.startNewSubPath (0.36f, 0.73f); chv.lineTo (0.50f, 0.58f); chv.lineTo (0.64f, 0.73f);
+            hex.applyTransform (xf); chv.applyTransform (xf);
+            g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (0.12f) : zynforge::brand::debossInk.withAlpha (0.28f)); g.fillPath (hex);
+            g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (0.55f) : zynforge::brand::gloss (0.10f)); g.strokePath (hex, juce::PathStrokeType (1.0f));
+            g.setColour (hot ? structuralForge() : zynforge::brand::gloss (0.24f));
+            g.strokePath (chv, juce::PathStrokeType (juce::jmax (1.0f, r.getWidth() * 0.07f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            const float s = r.getWidth() * 0.05f;
+            g.setColour (hot ? structuralForge() : zynforge::brand::gloss (0.30f));
+            g.fillEllipse (r.getCentreX() - s, r.getY() + r.getHeight() * 0.27f - s, s * 2.0f, s * 2.0f);
+        }
+    }
+}
+
 namespace zynforge
 {
     // Height of the etched "ZYNFORGE" maker's-mark band at the bottom of the
@@ -14,7 +80,7 @@ namespace zynforge
     {
         title.setFont (brand::type::sectionTitle());
         title.setColour (juce::Label::textColourId, brand::brandOrange);
-        title.setJustificationType (juce::Justification::centred);
+        title.setJustificationType (juce::Justification::centredLeft);
         addAndMakeVisible (title);
 
         gainLabel.setFont (brand::type::caption());
@@ -186,6 +252,18 @@ namespace zynforge
         g.setColour (brand::brandOrange.withAlpha (brand::alpha::ghost));
         g.drawRoundedRectangle (r, brand::radius::xl, 1.5f);
 
+        // ── Heated Steel: forged finish (Direction C) ────────────────────
+        {
+            juce::Path bodyClip;
+            bodyClip.addRoundedRectangle (r, brand::radius::xl);
+            juce::Graphics::ScopedSaveState steelClip (g);
+            g.reduceClipRegion (bodyClip);
+            steel::drawHammered    (g, r, 0.40f);
+            steel::drawSteelHeader (g, r.withHeight (30.0f));
+            steel::drawSpine       (g, r, false);
+            steel::drawForgeMark   (g, { r.getX() + 8.0f, r.getY() + 7.0f, 19.0f, 19.0f }, true);
+        }
+
         // Etched maker's mark -- "ZYNFORGE" pressed into the bottom of the
         // master plate like a stamp on forged steel. Deboss: a gloss lower lip
         // + a dark engraved face, so it reads as worked metal, not a label.
@@ -203,7 +281,9 @@ namespace zynforge
         auto r = getLocalBounds().reduced (brand::space::md, brand::space::lg);
         const bool stereo = engine.getMasterStereo();
 
-        title    .setBounds (r.removeFromTop (brand::space::ioH));
+        // Title sits in the near-black steel header plate, left-aligned next
+        // to the forge-mark logo (painted at x+8). Inset clears the logo.
+        title    .setBounds (r.removeFromTop (brand::space::ioH).withTrimmedLeft (28));
         r.removeFromTop (brand::space::sm);
         modeButton.setBounds (r.removeFromTop (brand::space::ctrlH));
         r.removeFromTop (brand::space::xs);

@@ -30,6 +30,8 @@ MainComponent::MainComponent()
 
     // Title text removed from the header -- the macOS window title +
     // app icon already identify the product, no need to repeat it.
+    // Mock parity: the wordmark is now PAINTED in MainComponent::paint()
+    // (badge + two-tone tracked text), so the plain Label stays hidden.
     titleLabel.setFont (brand::type::headline());
     titleLabel.setColour (juce::Label::textColourId, brand::textPrimary);
     titleLabel.setJustificationType (juce::Justification::centredLeft);
@@ -109,18 +111,19 @@ MainComponent::MainComponent()
     preRollButton.onClick = [this] { onPreRollClicked(); };
     addAndMakeVisible (preRollButton);
 
-    lockButton.setColour (juce::TextButton::buttonColourId, brand::accentRecord.darker (0.55f));
+    // Mock parity: neutral dark pill; keep a subtle red label as the danger cue.
+    lockButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
     lockButton.setColour (juce::TextButton::textColourOffId, brand::accentRecord.brighter (0.10f));
     lockButton.onClick = [this] { onLockToggled(); };
     addAndMakeVisible (lockButton);
 
-    backupButton.setColour (juce::TextButton::buttonColourId,    brand::accentVS.darker (0.55f));
-    backupButton.setColour (juce::TextButton::textColourOffId,   brand::accentVS.brighter (0.10f));
+    backupButton.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
+    backupButton.setColour (juce::TextButton::textColourOffId,   brand::textSecondary);
     backupButton.onClick = [this] { onBackupClicked(); };
     addAndMakeVisible (backupButton);
 
-    patchButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus.darker (0.55f));
-    patchButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus.brighter (0.10f));
+    patchButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
+    patchButton.setColour (juce::TextButton::textColourOffId, brand::textSecondary);
     patchButton.onClick = [this]
     {
         if (auto* w = patchDialog.getComponent())
@@ -135,8 +138,9 @@ MainComponent::MainComponent()
     // VSC chip uses the dedicated brand::signalVsc() colour so the
     // 'virtual soundcheck' role has a unique visual identity (was
     // sharing engagedAmber, now ties to accentVS).
-    vscButton.setColour (juce::TextButton::buttonColourId,  brand::signalVsc().darker (0.55f));
-    vscButton.setColour (juce::TextButton::textColourOffId, brand::signalVsc().brighter (0.10f));
+    // Mock parity: neutral pill, amber glyph/label keeps the VSC dot identity.
+    vscButton.setColour (juce::TextButton::buttonColourId,  brand::bgElevated);
+    vscButton.setColour (juce::TextButton::textColourOffId, brand::accentVS);
     vscButton.setTooltip ("Virtual Soundcheck -- repatch every strip's OUTPUT to match its INPUT, "
                           "so playback feeds the desk via the same channels the live mics did.");
     vscButton.onClick = [this] { onVscClicked(); };
@@ -195,7 +199,7 @@ MainComponent::MainComponent()
         else                    stripWidthPreset = StripWidth::M;
     }
 
-    addChannelButton.setColour (juce::TextButton::buttonColourId, brand::accentStatus.darker (0.55f));
+    addChannelButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
     addChannelButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus.brighter (0.10f));
     addChannelButton.setTooltip ("Set the number of recording channels -- opens a prompt where you type the count (1-256).");
     addChannelButton.onClick = [this]
@@ -268,7 +272,7 @@ MainComponent::MainComponent()
     };
     addAndMakeVisible (addChannelButton);
 
-    metersButton.setColour (juce::TextButton::buttonColourId,    brand::featureEngaged.darker (0.55f));
+    metersButton.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
     metersButton.setColour (juce::TextButton::textColourOffId,   brand::featureEngaged.brighter (0.10f));
     metersButton.onClick = [this]
     {

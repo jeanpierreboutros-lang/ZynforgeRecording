@@ -3,6 +3,117 @@
 #include "../Theme/BrandTokens.h"
 #include "StripColourPicker.h"
 
+// ── Heated Steel: resting-identity paint helpers (self-contained) ─────────
+// Direction C drop-in. Inlined here so this single file needs no new header
+// and no other edits. Colours route through brand:: tokens; the steel greys
+// are raw hex for the trial -- promote them to BrandColors.h (steelHeaderHi/
+// Lo + debossInk + a structuralForge() accessor) once you keep this.
+// Textures/paths are built ONCE (function-local statics) so a 24-strip wall
+// repaints at today's cost.
+namespace
+{
+    namespace steel
+    {
+        inline juce::Colour structuralForge() { return zynforge::brand::brandOrange; }
+
+        inline const juce::Image& hammeredTile()
+        {
+            static const juce::Image tile = []
+            {
+                const int W = 96, H = 96;
+                juce::Image img (juce::Image::ARGB, W, H, true);
+                juce::Graphics g (img);
+                for (int x = 0; x < W; x += 4)
+                {
+                    g.setColour (zynforge::brand::gloss (0.045f));
+                    g.fillRect (x, 0, 1, H);
+                }
+                juce::Graphics::ScopedSaveState ss (g);
+                g.addTransform (juce::AffineTransform::rotation (0.14f, W * 0.5f, H * 0.5f));
+                for (int y = -H; y < H * 2; y += 9)
+                {
+                    g.setColour (zynforge::brand::debossInk.withAlpha (0.10f));
+                    g.fillRect (-W, y, W * 3, 2);
+                }
+                return img;
+            }();
+            return tile;
+        }
+
+        inline void drawHammered (juce::Graphics& g, juce::Rectangle<float> r, float a = 0.42f)
+        {
+            juce::Graphics::ScopedSaveState ss (g);
+            g.setFillType (juce::FillType (hammeredTile(),
+                           juce::AffineTransform::translation (r.getX(), r.getY())));
+            g.setOpacity (a);
+            g.fillRect (r);
+        }
+
+        inline void drawSteelHeader (juce::Graphics& g, juce::Rectangle<float> r)
+        {
+            // Pixel target: near-pure-black plate so it reads as a distinct
+            // band even on an uncoloured (grey) strip; bright orange under-seam.
+            g.setGradientFill (juce::ColourGradient (zynforge::brand::steelHeaderHi, r.getCentreX(), r.getY(),
+                                                     zynforge::brand::steelHeaderLo, r.getCentreX(), r.getBottom(), false));
+            g.fillRect (r);
+            g.setColour (zynforge::brand::gloss (0.18f));                 // top bevel highlight
+            g.fillRect (r.withHeight (1.0f));
+            g.setColour (zynforge::brand::structuralForge().withAlpha (0.90f));            // bright orange under-seam (2px)
+            g.fillRect (r.getX(), r.getBottom() - 3.0f, r.getWidth(), 2.0f);
+            g.setColour (zynforge::brand::debossInk.withAlpha (0.85f));         // crisp dark divider
+            g.fillRect (r.removeFromBottom (1.0f));
+        }
+
+        inline void drawSpine (juce::Graphics& g, juce::Rectangle<float> r, bool armed, float pulse = 0.0f)
+        {
+            const auto c = structuralForge();
+            // Armed: the spine breathes -- glow alpha + width pulse with `pulse`
+            // (0..1). Idle: a steady resting spine.
+            const float glowA = armed ? (0.34f + 0.30f * pulse) : 0.28f;
+            const float glowW = armed ? (9.0f + 5.0f * pulse)   : 9.0f;
+            g.setColour (c.withAlpha (glowA));                            // glow
+            g.fillRect (r.getX(), r.getY(), glowW, r.getHeight());
+            g.setColour (c.withAlpha (1.0f));                             // bright bar
+            g.fillRect (r.getX(), r.getY(), 5.0f, r.getHeight());
+        }
+
+        inline void drawForgeMark (juce::Graphics& g, juce::Rectangle<float> r, bool hot)
+        {
+            const auto xf = juce::AffineTransform::scale (r.getWidth(), r.getHeight())
+                                                   .translated (r.getX(), r.getY());
+            juce::Path hex;
+            hex.startNewSubPath (0.50f, 0.05f); hex.lineTo (0.92f, 0.28f); hex.lineTo (0.92f, 0.72f);
+            hex.lineTo (0.50f, 0.95f); hex.lineTo (0.08f, 0.72f); hex.lineTo (0.08f, 0.28f); hex.closeSubPath();
+            juce::Path chv;
+            chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
+            chv.startNewSubPath (0.36f, 0.73f); chv.lineTo (0.50f, 0.58f); chv.lineTo (0.64f, 0.73f);
+            hex.applyTransform (xf); chv.applyTransform (xf);
+            g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (0.12f) : zynforge::brand::debossInk.withAlpha (0.28f));
+            g.fillPath (hex);
+            g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (0.55f) : zynforge::brand::gloss (0.10f));
+            g.strokePath (hex, juce::PathStrokeType (1.0f));
+            g.setColour (hot ? structuralForge() : zynforge::brand::gloss (0.24f));
+            g.strokePath (chv, juce::PathStrokeType (juce::jmax (1.0f, r.getWidth() * 0.07f),
+                                                     juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            const float s = r.getWidth() * 0.05f;
+            g.setColour (hot ? structuralForge() : zynforge::brand::gloss (0.30f));
+            g.fillEllipse (r.getCentreX() - s, r.getY() + r.getHeight() * 0.27f - s, s * 2.0f, s * 2.0f);
+        }
+
+        // Deboss-stamped channel number -- font sizes to the box so it fits
+        // the strip's short name row. Engraved look: gloss underprint + dark face.
+        inline void drawDebossNumber (juce::Graphics& g, juce::Rectangle<int> box, int channel1Based)
+        {
+            const auto txt = juce::String (channel1Based).paddedLeft ('0', 2);
+            g.setFont (zynforge::brand::type::mono ((float) juce::jlimit (12, 26, box.getHeight()), true));
+            g.setColour (zynforge::brand::debossInk.withAlpha (0.85f));          // engraved shadow
+            g.drawText (txt, box.translated (0, 1), juce::Justification::centredLeft, false);
+            g.setColour (zynforge::brand::debossFace);                           // raised steel face
+            g.drawText (txt, box, juce::Justification::centredLeft, false);
+        }
+    }
+}
+
 namespace zynforge
 {
     // dB scale strip: paints tick + label at the standard fader dB values,
@@ -119,6 +230,15 @@ namespace zynforge
                 }
                 lastClips = clips;
             }
+
+            // Heated Steel: while record-armed, repaint just the left spine
+            // column (12px) at 10 Hz so the orange spine breathes. Cheap --
+            // the rest of the strip stays static, honouring the 24-strip
+            // repaint budget; only ARMED strips animate. Skipped entirely
+            // under reduced-motion (the spine then holds a static glow).
+            if (! zynforge::brand::reduceMotion()
+                && strip.state.armed.load (std::memory_order_relaxed))
+                strip.repaint (0, 0, 12, strip.getHeight());
         }
     private:
         ChannelStrip& strip;
@@ -855,7 +975,7 @@ namespace zynforge
 
     void ChannelStrip::paint (juce::Graphics& g)
     {
-        auto r = getLocalBounds().toFloat().reduced (2.0f);
+        auto r = getLocalBounds().toFloat().reduced (4.0f);
         auto stripColour = getResolvedColour();
 
         // Hover lift -- mouse over the strip brightens the wash ~6% so
@@ -868,6 +988,37 @@ namespace zynforge
         // of depth instead of a flat block.
         g.setGradientFill (brand::verticalGradient (stripColour, r, 0.18f, 0.28f));
         g.fillRoundedRectangle (r, brand::radius::xl);
+
+        // ── Heated Steel: forged resting identity (paint-only) ── FORGE_STEEL_V3
+        {
+            const bool armedNow = state.armed.load (std::memory_order_relaxed);
+            juce::Path bodyClip;
+            bodyClip.addRoundedRectangle (r, brand::radius::xl);
+            juce::Graphics::ScopedSaveState clip (g);
+            g.reduceClipRegion (bodyClip);
+            steel::drawHammered    (g, r, 0.38f);              // ③ hammered steel
+            g.setColour (zynforge::brand::debossInk.withAlpha (0.16f));  // light forged scrim -- lets colour show
+            g.fillRect (r);
+            steel::drawSteelHeader (g, r.withHeight (30.0f));  // taller near-black stamped plate
+            // Heated Steel: the spine breathes at ~1 Hz while record-armed.
+            // Phase from the wall clock so it animates whenever paint() runs
+            // (StripTimer repaints the spine column at 10 Hz when armed).
+            float armPulse = 0.0f;
+            if (armedNow)
+                armPulse = zynforge::brand::reduceMotion()
+                             ? 0.6f   // reduced-motion: static raised-glow end-state
+                             : 0.5f + 0.5f * std::sin ((float) (juce::Time::getMillisecondCounter() % 1000)
+                                                       / 1000.0f * juce::MathConstants<float>::twoPi);
+            steel::drawSpine       (g, r, armedNow, armPulse); // ① structural orange spine (pulses when armed)
+            if (getWidth() >= 78)                               // ② deboss channel number
+                steel::drawDebossNumber (g, { 15, 7, 30, 17 }, stripIndex + 1);
+            // ④ forge-mark top-right, only where no VCA/EG/BUS chip sits
+            const bool badgeHere = state.vcaGroup .load (std::memory_order_relaxed) >= 0
+                                || state.editGroup.load (std::memory_order_relaxed) >= 0
+                                || state.isBus    .load (std::memory_order_relaxed);
+            if (! badgeHere)
+                steel::drawForgeMark (g, { r.getRight() - 18.0f, r.getY() + 3.0f, 13.0f, 13.0f }, armedNow);
+        }
 
         // ── Ember armed-glow (brand signature) ──────────────────────────────
         // A forged channel runs HOT. When record-armed, the strip gets a warm
@@ -1019,18 +1170,34 @@ namespace zynforge
     {
         auto r = getLocalBounds().reduced (brand::space::sm, brand::space::md);
 
-        // ── 1. Name + colour swatch (top of strip) ─────────────────
-        auto nameRow = r.removeFromTop (18);
-        if (swatch != nullptr)
-            swatch->setBounds (nameRow.removeFromLeft (brand::space::xl).reduced (1, 2));
-        // Reserve room on the right for the VCA / edit-group / bus badge so a
-        // long channel name doesn't run underneath it.
+        // ── 1. Name + colour swatch (top of strip) ── mock header layout
+        auto nameRow = r.removeFromTop (22);
+        const bool wideHdr = getWidth() >= 78;
         const bool hasBadge = state.vcaGroup .load (std::memory_order_relaxed) >= 0
                            || state.editGroup.load (std::memory_order_relaxed) >= 0
                            || state.isBus    .load (std::memory_order_relaxed);
-        if (hasBadge && nameRow.getWidth() > 50)
-            nameRow.removeFromRight (44);
-        nameLabel.setBounds (nameRow);
+        if (wideHdr)
+        {
+            // Painted deboss number occupies the far left -- reserve it.
+            nameRow.removeFromLeft (44);
+            // Reserve the far right for the collapse caret so the name never
+            // runs under it, then the colour chip -- mock header order.
+            nameRow.removeFromRight (20);
+            if (hasBadge && nameRow.getWidth() > 60)
+                nameRow.removeFromRight (36);
+            if (swatch != nullptr)
+                swatch->setBounds (nameRow.removeFromRight (18).withSizeKeepingCentre (12, 12));
+            nameLabel.setJustificationType (juce::Justification::centredLeft);
+        }
+        else
+        {
+            if (swatch != nullptr)
+                swatch->setBounds (nameRow.removeFromLeft (brand::space::xl).reduced (1, 2));
+            if (hasBadge && nameRow.getWidth() > 50)
+                nameRow.removeFromRight (44);
+            nameLabel.setJustificationType (juce::Justification::centred);
+        }
+        nameLabel.setBounds (nameRow.reduced (2, 0));
         r.removeFromTop (brand::space::xs);
 
         // Routing combos: keep them in flow but small -- they live above
@@ -1045,7 +1212,7 @@ namespace zynforge
         // Mono: one knob (72 px) centred + "pan  ◂ N ▸" readout.
         // Stereo: two knobs (56 px each) side by side + two compact
         // "◂ N ▸" readouts under each.
-        const int knobH    = (pairState != nullptr) ? 56 : 72;
+        const int knobH    = (pairState != nullptr) ? 30 : 40;
         const int panLabelH = 16;
         auto panKnobs = r.removeFromTop (knobH);
         auto panText  = r.removeFromTop (panLabelH);
