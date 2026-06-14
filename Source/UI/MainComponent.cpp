@@ -136,7 +136,38 @@ void MainComponent::onRecordClicked()
         }
     }
 
-    const auto dir = makeNewSessionDir();
+    // CONTINUE vs FRESH take. If a session is loaded, RECORD continues INTO it
+    // (punch-in) instead of spinning up a throwaway new session -- this is how
+    // you "keep recording on an existing take". The freshly-recorded audio is
+    // spliced into each armed track's take at the edit cursor; with no cursor
+    // set it APPENDS at the end (continue where the take stopped). Audio before
+    // the punch-in and after the punch-out is preserved. A fresh, no-session
+    // record (or daemon mode, which can't punch) still starts a new session.
+    const auto activeDir = engine.getActiveSessionDir();
+    bool continueTake = activeDir.isDirectory()
+                        && engine.getPlayer().isLoaded()
+                        && ! daemonModeActive();
+    juce::int64 punchAt = -1;
+    if (continueTake)
+    {
+        // Refuse to punch an auto-split (multi-part) take -- the single-file
+        // splice can't represent it; fall back to a fresh take, original safe.
+        for (int i = 0; i < numTracks; ++i)
+            if (recorder.getTrack (i).armed.load (std::memory_order_relaxed)
+                && AudioEngine::punchTakeMultiPart (activeDir, i))
+            {
+                continueTake = false;
+                break;
+            }
+    }
+    if (continueTake)
+    {
+        const auto cur = engine.getEditCursorSample();
+        punchAt = cur >= 0 ? cur
+                           : juce::jmax ((juce::int64) 0, engine.getPlayer().getTotalLengthSamples());
+    }
+
+    const auto dir = continueTake ? activeDir : makeNewSessionDir();
 
     // Disk-space pre-flight -- abort if the drive can't hold at least
     // 30 minutes at current SR × armed-track count × bit depth (assume
@@ -184,10 +215,21 @@ void MainComponent::onRecordClicked()
         return;
     }
 
+    // Punch-in continues into the loaded take(s) at `punchAt`; armed for the
+    // recorder to splice on stop. No-op for tracks with no take (they record
+    // fresh from 0). Cleared automatically when the take stops.
+    if (continueTake)
+        engine.armPunchIn (punchAt);
+
     if (engine.startRecording (dir))
     {
-        auto msg = juce::String ("Recording ") + juce::String (armed) + "/"
-                 + juce::String (numTracks) + " tracks -> " + dir.getFileName();
+        const double sr = engine.getPlayer().getSampleRate() > 0.0
+                              ? engine.getPlayer().getSampleRate() : 48000.0;
+        auto msg = continueTake
+                 ? juce::String ("Continuing take -- punch-in ") + juce::String (armed)
+                       + " track(s) at " + juce::String (punchAt / sr, 1) + " s"
+                 : juce::String ("Recording ") + juce::String (armed) + "/"
+                       + juce::String (numTracks) + " tracks -> " + dir.getFileName();
         if (autoRouted > 0)
             msg << " (auto-routed " << autoRouted << ")";
         // Free-space pre-flight: warn loudly if the engineer is about to

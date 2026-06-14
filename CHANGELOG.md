@@ -17,8 +17,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
-### Added (punch-in recording — 2026-06-14)
-- **Punch-in recording** — drop in and re-record a *section* of an existing take while keeping the audio **before the punch-in and after the punch-out**. Arm PUNCH, set the punch region (the loop region), arm the tracks to overdub, and play through it: each armed track records fresh audio that's spliced into its take at the punch point. It's capture-safe by construction — the recorder still writes a clean fresh file, the existing take is moved aside first, and the splice happens on stop via a temp file + atomic swap, so a failure reverts to the original take instead of corrupting it. **Every copy stays identical** — the primary, backup, and all mirror drives are spliced together. (Auto-split/RF64-multipart takes are refused for now; pre-roll monitoring of the existing track is a later pass.)
+### Added (continue / punch-in recording — 2026-06-14)
+- **RECORD continues into a loaded take instead of overwriting it.** With a session open, pressing RECORD now keeps recording on the existing take(s): the freshly-recorded audio is spliced into each armed track at the **edit cursor**, or — with no cursor set — **appended at the end** (continue where the take stopped). Audio before the punch-in and after the punch-out is preserved. Put the edit cursor mid-take to drop in and replace just that section. (A fresh record with no session open still starts a new session.)
+- It's capture-safe by construction — the recorder still writes a clean fresh file, the existing take is moved aside first, and the splice happens on stop via a temp file + atomic swap, so a failure reverts to the original take instead of corrupting it. **Every copy stays identical** — the primary, backup, and all mirror drives are spliced together. (Auto-split/RF64-multipart takes are refused and fall back to a fresh take; pre-roll monitoring of the existing track is a later pass.)
+- The PUNCH-mode + loop-region + play-through flow does the same splice for an automatic position-windowed punch.
 
 ### Added (mixer density + views — 2026-06-14)
 - **GRID view** — a new toolbar toggle (beside XS/S/M/L) lays the strips out **12 per row in 2 rows = 24 faders on one page**, scrolling vertically for more. A table-style overview for big channel counts; persisted across launches.

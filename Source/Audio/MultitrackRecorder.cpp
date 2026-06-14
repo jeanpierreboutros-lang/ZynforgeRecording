@@ -414,6 +414,11 @@ namespace zynforge
             samplesSinceStart.fetch_add (numSamples, std::memory_order_relaxed);
     }
 
+    // NOTE: punch-in is triggered two ways, both via armPunchIn(): the normal
+    // RECORD button when a session is loaded (MainComponent::onRecordClicked --
+    // continue/overdub at the edit cursor, append at the end by default), and
+    // the PUNCH-mode position window (MainComponent::servicePunch). Either way
+    // this recorder just stashes + splices; it doesn't know which path armed it.
     bool MultitrackRecorder::takeIsMultiPart (const juce::File& sessionDir, int trackIndex)
     {
         const auto audioFiles = sessionDir.getChildFile ("Audio Files");
