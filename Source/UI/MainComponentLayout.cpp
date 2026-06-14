@@ -261,7 +261,7 @@ void MainComponent::resized()
     const int kMinStripW     = floorW;
     const int kMaxStripW     = ceilW;
     const int margin = 12;
-    const int gap    = 8;   // mock parity: carded strips with an 8px gap
+    const int gap    = 4;   // tighter carded-strip gap (was 8) -- packs more in
     const int total  = (int) strips.size();
 
     auto viewportArea = r.reduced (margin);

@@ -6,12 +6,15 @@
 
 namespace zynforge
 {
-    // Gig-one field report: fader scroll either jumped (JUCE's default
-    // proportional wheel step on the VCA faders) or did nothing (channel +
-    // master had scroll disabled to avoid those jumps). A live engineer
-    // expects the wheel to TRIM: this slider steps a fixed, predictable
-    // 0.5 dB per wheel notch (Shift = 0.1 dB fine trim), clamped to the
-    // range. Drag behaviour is unchanged.
+    // A fader that moves ONLY by a direct click + drag on the cap -- never by
+    // the scroll wheel / trackpad. A stray two-finger swipe over the mixer must
+    // not nudge a channel / master / VCA / bus level mid-show. We skip Slider's
+    // wheel handling entirely and hand the event to Component, which propagates
+    // it up the parent chain so the mixer viewport can still SCROLL when the
+    // pointer happens to be over a fader. Drag behaviour is unchanged.
+    //
+    // (Was a fine-trim fader; the engineer asked for click-drag-only, so the
+    // wheel-step logic is gone.)
     class FineFader : public juce::Slider
     {
     public:
@@ -20,23 +23,7 @@ namespace zynforge
         void mouseWheelMove (const juce::MouseEvent& e,
                              const juce::MouseWheelDetails& wheel) override
         {
-            if (! isEnabled()) return;
-            const double notch = e.mods.isShiftDown() ? 0.1 : 0.5;   // dB
-            // Trackpads stream small deltas; accumulate so a slow two-finger
-            // drag still trims smoothly instead of waiting for a full notch.
-            accum += wheel.isReversed ? -wheel.deltaY : wheel.deltaY;
-            const double kNotchPerDelta = 0.4;   // one notch ~ a classic wheel click
-            while (std::abs (accum) >= kNotchPerDelta)
-            {
-                const double dir = accum > 0 ? 1.0 : -1.0;
-                accum -= dir * kNotchPerDelta;
-                setValue (juce::jlimit (getMinimum(), getMaximum(),
-                                        getValue() + dir * notch),
-                          juce::sendNotificationSync);
-            }
+            juce::Component::mouseWheelMove (e, wheel);   // ignore + propagate
         }
-
-    private:
-        double accum { 0.0 };
     };
 }
