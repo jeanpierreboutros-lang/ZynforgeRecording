@@ -163,31 +163,33 @@ void MainComponent::onRecordClicked()
                         && engine.getPlayer().isLoaded()
                         && ! daemonModeActive();
     juce::int64 punchAt = -1;
-    // continueAppend: APPEND past the end of the take -> record a NEW PART
-    // (Track_NN_partXX), the safe live-recorder model that never touches the
-    // existing file (works on multi-part takes too). A cursor parked INSIDE the
-    // take -> a mid-take punch (splice), which needs single-file takes. No
-    // cursor / cursor at the end -> append.
+    // Where does the take continue from? The EDIT cursor if you set one (click
+    // in the timeline), otherwise the PLAYHEAD (play / scrub to a spot and stop).
+    // INSIDE the take -> record OVER from there (mid-take punch / splice). At the
+    // start or end -> APPEND a NEW PART (Track_NN_partXX) -- the safe live model
+    // that never touches the existing file (and works on multi-part takes).
     bool continueAppend = false;
     if (continueTake)
     {
         const auto cur   = engine.getEditCursorSample();
+        const auto pos   = cur >= 0 ? cur : engine.getPlayer().getPositionSamples();
         const auto total = juce::jmax ((juce::int64) 0, engine.getPlayer().getTotalLengthSamples());
-        if (cur >= 0 && cur < total)
+        if (pos > 0 && pos < total)
         {
-            // Mid-take punch -- the splice can't represent a multi-part base, so
-            // a split take continues as a new part instead (still non-destructive).
+            // Mid-take "record over this part" -- the splice can't represent a
+            // multi-part base, so a split take continues as a new part instead
+            // (still non-destructive).
             bool multiPart = false;
             for (int i = 0; i < numTracks; ++i)
                 if (recorder.getTrack (i).armed.load (std::memory_order_relaxed)
                     && AudioEngine::punchTakeMultiPart (activeDir, i))
                 { multiPart = true; break; }
             if (multiPart) continueAppend = true;
-            else           { punchAt = cur; continueAppend = false; }
+            else           { punchAt = pos; continueAppend = false; }
         }
         else
         {
-            continueAppend = true;
+            continueAppend = true;   // at the start / end -> append a new part
         }
     }
 
