@@ -108,6 +108,27 @@ namespace zynforge
                 expect (false, "boundary block did not contain both parts (gap at the seam)");
             }
 
+            beginTest ("unload() fully empties the player (new session can't inherit it)");
+            {
+                AudioEngine eng;
+                expect (eng.loadSession (dir) >= 1);
+                auto& player = eng.getPlayer();
+                expect (player.isLoaded(), "should be loaded after loadSession");
+                expect (player.getTotalLengthSamples() > 0);
+
+                player.unload();
+                expect (! player.isLoaded(), "player still loaded after unload");
+                expectEquals ((int) player.getTotalLengthSamples(), 0,
+                              "length should reset to 0 on unload");
+                // A reload of an EMPTY dir must report no tracks (the new-session
+                // case): proves the old session didn't linger.
+                auto empty = dir.getParentDirectory().getChildFile ("zf-empty-" + juce::Uuid().toString());
+                empty.getChildFile ("Audio Files").createDirectory();
+                expectEquals (eng.loadSession (empty), 0, "empty session should load 0 tracks");
+                expect (! player.isLoaded());
+                empty.deleteRecursively();
+            }
+
             dir.deleteRecursively();
         }
     };

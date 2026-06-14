@@ -435,6 +435,9 @@ void MainComponent::showStartupWelcome()
         self->engine.clearAllStripOverrides();
         self->engine.setStripCount (0);
         self->lastTrackCount = -1;
+        // Unload the previous session's audio + clips, or the new empty session
+        // inherits them on a freshly-added channel (see launchNewSessionDialog).
+        self->engine.getPlayer().unload();
 
         // Fresh session starts EMPTY -- no auto-applied template,
         // no leftover names. Engineers add channels with +CH or pick
@@ -536,6 +539,13 @@ void MainComponent::launchNewSessionDialog()
         self->engine.resetAllStripState();
         self->engine.setStripCount (0);
         self->lastTrackCount = -1;
+
+        // Unload the previous session's audio + clips from the player, or the
+        // new (empty) session inherits them: a freshly-added channel would show
+        // the old session's waveform, and RECORD would think there's a take to
+        // continue (player.isLoaded()). The Open-Session path already does this
+        // via loadSession(); New Session must too.
+        self->engine.getPlayer().unload();
 
         // Fresh session starts EMPTY (see showStartupWelcome for the
         // same rule). Templates apply only via explicit menu choice.

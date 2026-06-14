@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (New Session is truly empty — 2026-06-14)
+- **A new session no longer inherits the previous session's audio.** File ▸ New Session reset the strips but never unloaded the *player*, so the old session's tracks + clips lingered — a freshly-added channel drew the previous session's waveform (and RECORD thought there was a take to continue). New Session now unloads the player, and `SessionPlayer::unload()` clears the clip state too (it was only clearing cross-track readers). The Welcome-dialog new-session path got the same fix.
+
 ### Fixed (multi-part takes play seamlessly — 2026-06-14)
 - **A take split across files now plays back as one continuous take.** When a recording spans `Track_NN.wav` + `Track_NN_partXX.wav` continuations (from auto-split past the 4 GB/2 GB container cap — and, soon, from continue-recording), the player **stitches the parts** into one seamless stream instead of playing only the first file. The take loads as one track with the full summed length. Foundation for the live-recorder "a take is a sequence of files" model (Phase 1; read-only, can't affect capture). New `ConcatReader` + `MultiPartPlaybackTests`.
 

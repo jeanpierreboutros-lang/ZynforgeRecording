@@ -169,7 +169,12 @@ namespace zynforge
 
         {
             const juce::ScopedLock sl (clipsLock);
+            // Clear ALL clip state, not just the cross-track readers -- otherwise
+            // a new/empty session inherits the previous session's clips and draws
+            // its audio on a freshly-added channel.
             extraReaders.clear();
+            activeClips.clear();
+            clipsAuthoritative.clear();
         }
         tracks.clear();
         readerCount.store (0, std::memory_order_release);
