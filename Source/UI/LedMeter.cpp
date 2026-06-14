@@ -187,10 +187,14 @@ namespace zynforge
 
         // Reserve a dedicated left-hand gutter for the dB labels so they
         // never overlap the meter segments. The bar(s) get the right side.
-        // When the host turned labels off (narrow meter -- EDIT view),
-        // the bar gets the full width.
-        const float labelW = showLabels ? 14.0f : 0.0f;
-        const float gap    = showLabels ? 2.0f  : 0.0f;
+        // When the host turned labels off (narrow meter -- EDIT view), OR the
+        // meter is simply too narrow to fit the 14px label column without
+        // starving the bar (the compact mixer strips), drop the labels and
+        // give the bar the full width. This also prevents a NEGATIVE-width
+        // barArea, which asserted/crashed in paintBar.
+        const bool  roomForLabels = showLabels && bounds.getWidth() > 30.0f;
+        const float labelW = roomForLabels ? 14.0f : 0.0f;
+        const float gap    = roomForLabels ? 2.0f  : 0.0f;
         auto labelCol = bounds.withWidth (labelW);
         auto barArea  = bounds.withTrimmedLeft (labelW + gap);
 
@@ -208,9 +212,10 @@ namespace zynforge
         }
 
         // dB scale -- labels live in their own column, ticks bridge the gap.
+        // Skipped entirely when there's no room (compact strips / EDIT meter).
         const float dBLabels[] = { 0.0f, -3.0f, -6.0f, -10.0f, -16.0f, -22.0f, -32.0f, -60.0f };
         g.setFont (brand::type::label());
-        for (float dB : dBLabels)
+        if (roomForLabels) for (float dB : dBLabels)
         {
             const float frac = (dB - kMinDb) / (kMaxDb - kMinDb);
             const float y    = bounds.getBottom() - bounds.getHeight() * frac;
