@@ -173,107 +173,122 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
     }
     else if (topLevelIndex == 3)  // Session
     {
+        // The Session menu had grown to ~25 flat items. Keep the primary,
+        // frequently-reached actions at the top level and group the rest into
+        // submenus. IDs + enable conditions are UNCHANGED -- only the menu
+        // structure is reorganised -- so menuItemSelected dispatch and the
+        // menu-state signature keep working untouched.
         menu.addItem (54, "Show pre-flight checklist...");
         menu.addSeparator();
         menu.addItem (50, "Patch...");
         menu.addItem (52, "Virtual Soundcheck -- repatch outputs to match inputs");
         menu.addItem (51, "Meterbridge...");
+        menu.addSeparator();
         menu.addItem (56, "Add Marker...\tM",
                       engine.getActiveSessionDir().isDirectory());
         menu.addItem (53, "Memory Locations...");
         menu.addSeparator();
-        // Auto-arm toggle. Convenience for first-time pre-show
-        // channel discovery (walk the stage, hit each mic, watch the
-        // strips arm themselves). Marked with a check when on.
-        menu.addItem (62, "Auto-arm on input detect", true,
-                      engine.isAutoArmOnInputDetect());
-        menu.addSeparator();
-        menu.addItem (55, engine.getNDIBridge().isEnabled()
-                              ? juce::String ("Stop NDI broadcast")
-                              : juce::String ("Start NDI broadcast..."));
 
-        // Control Surfaces hub -- full protocol list (OSC + every console /
-        // surface) with enable ticks + per-brand settings. This replaces the
-        // old standalone OSC submenu.
-        menu.addItem (720, "Control Surfaces...");
+        // ── Recording & Sync ─────────────────────────────────────────────
+        {
+            juce::PopupMenu m;
+            // Auto-arm: walk the stage, hit each mic, watch strips arm.
+            m.addItem (62, "Auto-arm on input detect", true,
+                       engine.isAutoArmOnInputDetect());
+            m.addSeparator();
+            m.addItem (255, "Session Format & Recording...", ! engine.isRecording());
+            m.addItem (256, "Trim-Follow (console input gain -> soundcheck)",
+                       true, engine.isTrimFollowEnabled());
+            // Transport Sync -- chase MTC / LTC with live status.
+            m.addItem (600, engine.getChaseMode() != zynforge::AudioEngine::ChaseMode::Off
+                               ? juce::String ("Transport Sync (chasing)...")
+                               : juce::String ("Transport Sync (MTC / LTC)..."));
+            m.addSeparator();
+            m.addItem (958, useCaptureDaemon
+                               ? (captureSupervisor.isDaemonRecording()
+                                      ? "Capture daemon: TAKE ROLLING (stop to disable)"
+                                      : "Capture daemon: ON (experimental)")
+                               : juce::String ("Capture daemon: off (experimental)..."));
+            menu.addSubMenu ("Recording & Sync", m);
+        }
 
-        // MIDI clock master -- drive outboard synths / drum machines /
-        // DAW slaves from the session tempo (24 PPQN). Submenu lists
-        // every installed MIDI output; pick one to enable, or "Stop"
-        // to disable. Currently-active device is checkmarked.
-        juce::PopupMenu midiMenu;
-        const auto outs = zynforge::MidiClockOut::listOutputs();
-        const auto active = engine.getMidiClockOut().getOutputDeviceName();
-        const bool clockOn = engine.getMidiClockOut().isEnabled();
-        midiMenu.addItem (400, "Stop MIDI clock", clockOn, ! clockOn);
-        midiMenu.addSeparator();
-        for (int i = 0; i < outs.size() && i < 30; ++i)
-            midiMenu.addItem (401 + i, outs[i], true, clockOn && outs[i] == active);
-        menu.addSubMenu ("MIDI clock out", midiMenu);
+        // ── Network & Surfaces ───────────────────────────────────────────
+        {
+            juce::PopupMenu m;
+            m.addItem (55, engine.getNDIBridge().isEnabled()
+                               ? juce::String ("Stop NDI broadcast")
+                               : juce::String ("Start NDI broadcast..."));
+            // Control Surfaces hub -- OSC + every console/surface protocol.
+            m.addItem (720, "Control Surfaces...");
+
+            // MIDI clock master -- drive outboard gear from session tempo.
+            juce::PopupMenu midiMenu;
+            const auto outs    = zynforge::MidiClockOut::listOutputs();
+            const auto active  = engine.getMidiClockOut().getOutputDeviceName();
+            const bool clockOn = engine.getMidiClockOut().isEnabled();
+            midiMenu.addItem (400, "Stop MIDI clock", clockOn, ! clockOn);
+            midiMenu.addSeparator();
+            for (int i = 0; i < outs.size() && i < 30; ++i)
+                midiMenu.addItem (401 + i, outs[i], true, clockOn && outs[i] == active);
+            m.addSubMenu ("MIDI clock out", midiMenu);
+
+            m.addSeparator();
+            const bool compRunning = engine.isCompanionServerRunning();
+            // id 950 -- outside every menuItemSelected dispatch range.
+            m.addItem (950, compRunning
+                               ? juce::String ("Stop companion (port " + juce::String (engine.getCompanionServerPort()) + ")")
+                               : juce::String ("Start companion server on :9000..."));
+            menu.addSubMenu ("Network & Surfaces", m);
+        }
+
+        // ── Console link (ids 954-957, outside every dispatch range) ──────
+        {
+            juce::PopupMenu m;
+            m.addItem (954, consoleLink.isConnected()
+                               ? "Console: disconnect " + consoleLink.getHost()
+                               : juce::String ("Console: connect..."));
+            // Repatch + gain items only light up for a desk we drive over OSC.
+            const bool consoleRepatch = consoleLink.isConnected() && consoleLink.getProfile().canRepatch;
+            const bool consoleGains   = consoleLink.isConnected() && consoleLink.getProfile().canCaptureGains;
+            m.addItem (955, consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck
+                               ? "Console: back to STAGE patch"
+                               : "Console: SOUNDCHECK patch (card returns)",
+                       consoleRepatch);
+            m.addItem (956, "Console: capture head-amp gains", consoleGains);
+            m.addItem (957, "Console: restore head-amp gains", consoleGains);
+            menu.addSubMenu ("Console", m);
+        }
+
+        // ── Cloud & Mirror ───────────────────────────────────────────────
+        {
+            juce::PopupMenu m;
+            m.addItem (260, "Upload session to cloud...", ! engine.isRecording());
+            m.addItem (261, "Configure cloud upload command...");
+            m.addSeparator();
+            m.addItem (290, sessionMirror.isMirroring()
+                               ? "Stop mirroring " + sessionMirror.getPrimary()
+                               : juce::String ("Mirror primary host..."));
+            menu.addSubMenu ("Cloud & Mirror", m);
+        }
+
+        // ── Analysis & Reports (ids 952/953 outside dispatch ranges) ──────
+        {
+            juce::PopupMenu m;
+            m.addItem (280, "Spectral auto-name strips",
+                       engine.getRecorder().getNumTracks() > 0);
+            m.addItem (281, "Write soundcheck report",
+                       engine.getActiveSessionDir().isDirectory());
+            m.addItem (282, "Analyse for noise / hum / bumps...",
+                       engine.getActiveSessionDir().isDirectory());
+            m.addItem (952, "Post-show QC report...",
+                       engine.getActiveSessionDir().isDirectory());
+            m.addItem (953, "Detect songs -> markers...",
+                       engine.getActiveSessionDir().isDirectory());
+            menu.addSubMenu ("Analysis & Reports", m);
+        }
 
         menu.addSeparator();
-        menu.addItem (260, "Upload session to cloud...", ! engine.isRecording());
-        menu.addItem (261, "Configure cloud upload command...");
-        menu.addSeparator();
-        const bool compRunning = engine.isCompanionServerRunning();
-        // id 950 -- deliberately OUTSIDE every menuItemSelected dispatch range
-        // (notably 261..289, which used to swallow the old id 270 so this item
-        // never reached its handler).
-        menu.addItem (950, compRunning
-                            ? juce::String ("Stop companion (port " + juce::String (engine.getCompanionServerPort()) + ")")
-                            : juce::String ("Start companion server on :9000..."));
-        menu.addSeparator();
-        // Session Settings = format / sample-rate / bit-depth (editable).
-        // Session Info     = name / notes / read-only config summary.
-        // The old "Settings" + "Properties" labels were too close;
-        // engineers couldn't tell which dialog owned what.
-        menu.addItem (255, "Session Format & Recording...", ! engine.isRecording());
-        menu.addItem (251, "Session Info & Notes...",       engine.getActiveSessionDir().isDirectory());
-        menu.addSeparator();
-        menu.addItem (256, "Trim-Follow (console input gain -> soundcheck)",
-                      true, engine.isTrimFollowEnabled());
-
-        // Transport Sync -- chase MTC / LTC with live status (full dialog).
-        menu.addItem (600, engine.getChaseMode() != zynforge::AudioEngine::ChaseMode::Off
-                              ? juce::String ("Transport Sync (chasing)...")
-                              : juce::String ("Transport Sync (MTC / LTC)..."));
-        menu.addSeparator();
-        menu.addItem (280, "Spectral auto-name strips",
-                      engine.getRecorder().getNumTracks() > 0);
-        menu.addItem (281, "Write soundcheck report",
-                      engine.getActiveSessionDir().isDirectory());
-        menu.addItem (282, "Analyse for noise / hum / bumps...",
-                      engine.getActiveSessionDir().isDirectory());
-        // ids 952/953 -- high ids, deliberately outside every dispatch range.
-        menu.addItem (952, "Post-show QC report...",
-                      engine.getActiveSessionDir().isDirectory());
-        menu.addItem (953, "Detect songs -> markers...",
-                      engine.getActiveSessionDir().isDirectory());
-        menu.addSeparator();
-        // Console link (ids 954-957: high ids, outside every dispatch range).
-        menu.addItem (954, consoleLink.isConnected()
-                              ? "Console: disconnect " + consoleLink.getHost()
-                              : juce::String ("Console: connect..."));
-        // Repatch + gain items only light up for a desk we drive over OSC.
-        const bool consoleRepatch = consoleLink.isConnected() && consoleLink.getProfile().canRepatch;
-        const bool consoleGains   = consoleLink.isConnected() && consoleLink.getProfile().canCaptureGains;
-        menu.addItem (955, consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck
-                              ? "Console: back to STAGE patch"
-                              : "Console: SOUNDCHECK patch (card returns)",
-                      consoleRepatch);
-        menu.addItem (956, "Console: capture head-amp gains",
-                      consoleGains);
-        menu.addItem (957, "Console: restore head-amp gains",
-                      consoleGains);
-        menu.addItem (958, useCaptureDaemon
-                              ? (captureSupervisor.isDaemonRecording()
-                                     ? "Capture daemon: TAKE ROLLING (stop to disable)"
-                                     : "Capture daemon: ON (experimental)")
-                              : juce::String ("Capture daemon: off (experimental)..."));
-        menu.addSeparator();
-        menu.addItem (290, sessionMirror.isMirroring()
-                              ? "Stop mirroring " + sessionMirror.getPrimary()
-                              : juce::String ("Mirror primary host..."));
+        menu.addItem (251, "Session Info & Notes...", engine.getActiveSessionDir().isDirectory());
     }
     else if (topLevelIndex == 4)  // Help
     {
