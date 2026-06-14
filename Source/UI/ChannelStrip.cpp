@@ -1321,28 +1321,28 @@ namespace zynforge
         auto bottom = r.removeFromBottom (brand::space::xl);
         dbLabel.setBounds (bottom);
 
-        // Ruler is on the LEFT (numbers 12/6/0/5/.../60/∞ left of the fader).
-        // On NARROW strips (compact presets, 12+/page) the dB ruler is hidden:
-        // the meter's own scale carries the levels, and dropping the ruler's
-        // ~26px gives the fader a usable width instead of a sliver. The meter
-        // also slims a touch so the fader keeps its room.
-        const bool showRuler = getWidth() >= 100;
-        const int  meterW    = (pairState != nullptr) ? (showRuler ? 38 : 30)
-                                                       : (showRuler ? 30 : 24);
-        const int  rulerW    = 22;
+        // Pro-Tools-style COMPACT fader cluster: the dB ruler hugs the fader on
+        // the left and the meter hugs it on the right, with the fader just wide
+        // enough for its cap -- no wide empty gutter. The cluster is centred in
+        // whatever width the strip has, so on a narrow strip it fills it (lots
+        // of strips per page) and on a wide one the scales still sit right
+        // beside the fader instead of floating at the strip edges.
+        const int meterW   = (pairState != nullptr) ? 26 : 16;
+        const int rulerW    = 20;
+        const int faderW    = 30;
+        const int clusterW  = rulerW + 2 + faderW + 2 + meterW;
 
+        auto cluster = r.withSizeKeepingCentre (juce::jmin (r.getWidth(), clusterW),
+                                                r.getHeight());
         if (dbRuler != nullptr)
         {
-            dbRuler->setVisible (showRuler);
-            if (showRuler)
-            {
-                dbRuler->setBounds (r.removeFromLeft (rulerW));
-                r.removeFromLeft (2);
-            }
+            dbRuler->setVisible (true);
+            dbRuler->setBounds (cluster.removeFromLeft (rulerW));
+            cluster.removeFromLeft (2);
         }
-        meter.setBounds (r.removeFromRight (meterW));
-        r.removeFromRight (2);
-        gainFader.setBounds (r);
+        meter.setBounds (cluster.removeFromRight (meterW));
+        cluster.removeFromRight (2);
+        gainFader.setBounds (cluster);
 
         outLabel.setBounds ({});  // collapsed -- output combo serves the role
     }

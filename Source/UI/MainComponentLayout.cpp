@@ -248,14 +248,14 @@ void MainComponent::resized()
     // ruler below ~100px (the meter scale suffices) to keep the fader usable
     // at these narrow widths while still leaving room for the name.
     int targetPerPage = 12;
-    int floorW = 78;
-    int ceilW  = 140;
+    int floorW = 70;
+    int ceilW  = 120;
     switch (stripWidthPreset)
     {
-        case StripWidth::XS: targetPerPage = 24; floorW = 52;  ceilW = 84;  break;
-        case StripWidth::S:  targetPerPage = 16; floorW = 64;  ceilW = 110; break;
-        case StripWidth::M:  targetPerPage = 12; floorW = 78;  ceilW = 140; break;
-        case StripWidth::L:  targetPerPage = 8;  floorW = 120; ceilW = 220; break;
+        case StripWidth::XS: targetPerPage = 24; floorW = 48;  ceilW = 78;  break;
+        case StripWidth::S:  targetPerPage = 16; floorW = 58;  ceilW = 100; break;
+        case StripWidth::M:  targetPerPage = 12; floorW = 70;  ceilW = 120; break;
+        case StripWidth::L:  targetPerPage = 8;  floorW = 104; ceilW = 200; break;
     }
     const int kStripsPerPage = targetPerPage;
     const int kMinStripW     = floorW;
