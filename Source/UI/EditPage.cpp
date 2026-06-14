@@ -202,7 +202,24 @@ namespace zynforge
         // below the last row) read as bgDeep, separating the light rows.
         void paint (juce::Graphics& g) override { g.fillAll (brand::bgDeep); }
 
-        void setWaveformsFromSession (const juce::File& sessionDir)
+        // True when this row's track (or its stereo partner) is armed for
+        // capture -- such a row defers its lane to the live capture envelope.
+        bool rowIsArmed (const TrackRow& r) const
+        {
+            auto& rec = engine.getRecorder();
+            const int idx = r.getTrackIndex();
+            if (idx < 0 || idx >= rec.getNumTracks()) return false;
+            if (rec.getTrack (idx).armed.load (std::memory_order_relaxed)) return true;
+            return r.isStereoPair() && idx + 1 < rec.getNumTracks()
+                && rec.getTrack (idx + 1).armed.load (std::memory_order_relaxed);
+        }
+
+        // skipArmedRows: while recording, the ARMED rows show the live capture
+        // envelope (their growing files would scan as garbage + contend with
+        // capture writes), but every OTHER row keeps showing its existing
+        // waveform -- so arming one track and rolling no longer blanks the
+        // already-recorded tracks.
+        void setWaveformsFromSession (const juce::File& sessionDir, bool skipArmedRows = false)
         {
             if (! sessionDir.isDirectory())
             {
@@ -230,6 +247,11 @@ namespace zynforge
             };
             for (auto& r : rows)
             {
+                if (skipArmedRows && rowIsArmed (*r))
+                {
+                    r->setWaveformFiles ({}, {});   // armed -> live envelope owns the lane
+                    continue;
+                }
                 const int trackIdx = r->getTrackIndex();
                 const auto fL = findTrackFile (trackIdx);
                 const auto fR = r->isStereoPair() ? findTrackFile (trackIdx + 1) : juce::File();
@@ -603,13 +625,14 @@ namespace zynforge
         if (sessionDir != lastSessionDir && sessionDir.isDirectory())
             loadCacheFromSession (sessionDir);
 
-        // While recording, keep the lanes clear (the live red capture envelope
-        // owns them) and do NOT point thumbnails at the growing WAVs -- scanning
-        // a half-written file paints blocky garbage and the 55-channel disk read
-        // contends with the recorder's own writes. The real waveform is scanned
-        // once, cleanly, the moment the take stops (recJustStopped path).
+        // While recording, only the ARMED rows defer to the live red capture
+        // envelope (their growing WAVs would scan as blocky garbage and the
+        // disk read would contend with the recorder's own writes). Every OTHER
+        // row keeps showing its already-recorded waveform -- arming one track
+        // and rolling no longer blanks the tracks you captured earlier. The
+        // armed rows' real waveforms scan in once, cleanly, on stop.
         if (engine.isRecording())
-            list->setWaveformsFromSession ({});
+            list->setWaveformsFromSession (sessionDir, /*skipArmedRows*/ true);
         else
             list->setWaveformsFromSession (sessionDir);
 
