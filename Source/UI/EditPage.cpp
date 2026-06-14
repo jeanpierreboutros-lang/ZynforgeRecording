@@ -272,9 +272,9 @@ namespace zynforge
         // (each tick) feed every armed row its current input peak so the
         // lane grows a red waveform during the take. Reads only the live
         // meter atomics -- no disk I/O, so capture integrity is untouched.
-        void setLiveRecording (bool on)
+        void setLiveRecording (bool on, int prefillSilentPoints = 0)
         {
-            for (auto& r : rows) r->setLiveRecording (on);
+            for (auto& r : rows) r->setLiveRecording (on, prefillSilentPoints);
         }
         // Take stopped: hold each row's live envelope as a provisional waveform
         // until its real thumbnail scans in, so the lane never blanks.
@@ -682,7 +682,18 @@ namespace zynforge
 
         // Live capture envelope: clear + arm on take start, disarm on stop
         // (before the post-stop disk re-scan swaps in the real waveform).
-        if (recJustStarted && list != nullptr) list->setLiveRecording (true);
+        if (recJustStarted && list != nullptr)
+        {
+            // Continue take: seed the envelope with silent columns for the
+            // existing take so the live waveform draws AFTER it (at the base),
+            // matching the playhead. The EDIT timer ticks at 24 Hz, so the
+            // envelope grows ~24 columns/sec -- prefill the same density.
+            const auto base = engine.getRecorder().getRecordBaseSamples();
+            const double sr = engine.getPlayer().getSampleRate() > 0.0
+                                  ? engine.getPlayer().getSampleRate() : 48000.0;
+            const int prefill = base > 0 ? (int) ((double) base / sr * 24.0) : 0;
+            list->setLiveRecording (true, prefill);
+        }
         // On stop, HOLD the live envelope (don't clear it) until the real disk
         // thumbnail scans in -- the lane shows the just-captured waveform
         // instantly instead of blanking for the duration of the scan.
@@ -738,7 +749,10 @@ namespace zynforge
         // live capture envelope) -- gig-one field report: the engineer must
         // see the take rolling in EDIT, not a parked view.
         const auto& player = engine.getPlayer();
-        const auto  recPos  = rec ? engine.getRecorder().getSamplesSinceStart() : 0;
+        // Timeline position: on a CONTINUE this is the take end + samples so far,
+        // so the playhead carries on past the existing take instead of jumping
+        // back to 0.
+        const auto  recPos  = rec ? engine.getRecorder().getRecordTimelineSamples() : 0;
         const auto  total   = rec ? juce::jmax (player.getTotalLengthSamples(), recPos)
                                   : player.getTotalLengthSamples();
         const auto  pos     = rec ? recPos : player.getPositionSamples();

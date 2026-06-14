@@ -325,8 +325,12 @@ namespace zynforge
         // to the recorder; auto-cleared on stop. See MultitrackRecorder.
         void armPunchIn (juce::int64 punchInSample) noexcept { recorder.armPunchIn (punchInSample); }
         // Arm the next startRecording to CONTINUE the take as a new part file
-        // (append, existing files untouched). See MultitrackRecorder::armContinue.
-        void armContinue() noexcept { recorder.armContinue(); }
+        // (append, existing files untouched), continuing the timeline from
+        // `baseSamples` (the existing take length). See armContinue.
+        void armContinue (juce::int64 baseSamples) noexcept { recorder.armContinue (baseSamples); }
+        // Recording position on the timeline (take base + samples so far) -- for
+        // the playhead / clock, so a continue carries on from where it stopped.
+        juce::int64 getRecordTimelineSamples() const noexcept { return recorder.getRecordTimelineSamples(); }
         // True if `channel`'s existing take in `sessionDir` is auto-split into
         // parts -- punch-in must refuse those (the single-file splice can't
         // represent a multi-part base).

@@ -548,12 +548,16 @@ namespace zynforge
         // Live capture envelope -----------------------------------------
         // EditPage flips this when a take starts / stops. Starting clears
         // the previous envelope so the new take draws from scratch.
-        void setLiveRecording (bool on)
+        // prefillSilentPoints seeds the envelope with that many silent columns
+        // before live capture begins -- used for a CONTINUE take so the new
+        // audio draws AFTER the existing take (at the base position) instead of
+        // from the left edge, matching the playhead.
+        void setLiveRecording (bool on, int prefillSilentPoints = 0)
         {
             if (on && ! liveRecording)
             {
-                recPeakL.clear();
-                recPeakR.clear();
+                recPeakL.assign ((size_t) juce::jmax (0, prefillSilentPoints), 0.0f);
+                recPeakR.assign ((size_t) juce::jmax (0, prefillSilentPoints), 0.0f);
                 liveHold = false;           // a new take supersedes any held envelope
             }
             liveRecording = on;

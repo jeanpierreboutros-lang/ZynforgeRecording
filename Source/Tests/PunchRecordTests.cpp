@@ -153,8 +153,11 @@ namespace zynforge
                     MultitrackRecorder rec;
                     rec.prepare (sr, block, 1);
                     rec.getTrack (0).armed.store (true, std::memory_order_relaxed);
-                    rec.armContinue();
+                    rec.armContinue ((juce::int64) origLen);   // timeline base = existing take
                     rec.startRecording (cdir);
+                    // The continue's timeline position = base + samples captured.
+                    expectEquals ((int) rec.getRecordBaseSamples(), origLen,
+                                  "continue base should be the existing take length");
                     std::vector<float> buf ((size_t) block, punchVal);
                     const float* ptr = buf.data();
                     for (int b = 0; b < contBlocks; ++b) rec.processBlock (&ptr, 1, block);

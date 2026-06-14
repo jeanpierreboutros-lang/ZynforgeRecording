@@ -957,8 +957,9 @@ namespace zynforge
                         writerSnapshots[i].mirrors[mi].totalSamples = len;
             }
         }
-        punchInActive  = false;
-        continueAsPart = false;   // consume the continue arm
+        punchInActive     = false;
+        continueAsPart    = false;   // consume the continue arm
+        recordBaseSamples = 0;
 
         // Post-show JSON report -- one file per session that captures every
         // datum a mix engineer / producer needs after the gig: total time,

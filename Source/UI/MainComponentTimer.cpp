@@ -168,7 +168,9 @@ void MainComponent::timerCallback()
     if (engine.isRecording())
     {
         m = BigClockPanel::Mode::Recording;
-        elapsed = recorder.getSamplesSinceStart();
+        // Timeline position (continues from the take end on a continue), not the
+        // new file's raw length, so the clock carries on instead of restarting.
+        elapsed = recorder.getRecordTimelineSamples();
 
         // Refresh the free-space estimate every ~2 s of timer ticks
         // (the timer runs at 24 Hz, so divide by 48). Querying the

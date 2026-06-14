@@ -76,8 +76,24 @@ namespace zynforge
         // nothing existing is modified, only a new finalised part is added.
         // Auto-cleared after each stopRecording(). An armed track with no take
         // yet just records Track_NN normally (part 1).
-        void armContinue() noexcept { continueAsPart = true; }
+        // baseSamples is the existing take's length: the new part records into
+        // its own file from 0, but the take's TIMELINE position continues from
+        // baseSamples, so the clock / playhead / ruler show "carrying on from
+        // where it stopped" instead of restarting at 0.
+        void armContinue (juce::int64 baseSamples) noexcept
+        {
+            continueAsPart    = true;
+            recordBaseSamples = juce::jmax ((juce::int64) 0, baseSamples);
+        }
         bool isContinueArmed() const noexcept { return continueAsPart; }
+
+        // Recording position ON THE TIMELINE: the take base (0 for a normal
+        // take, the existing length for a continue) + samples captured so far.
+        // Use this for the playhead / clock; getSamplesSinceStart() is the new
+        // FILE's length (integrity / write accounting).
+        juce::int64 getRecordTimelineSamples() const noexcept
+        { return recordBaseSamples + getSamplesSinceStart(); }
+        juce::int64 getRecordBaseSamples() const noexcept { return recordBaseSamples; }
 
         // True if the session's take for `trackIndex` was auto-split into
         // multiple parts (Track_NN_partXX) -- punch-in must refuse these.
@@ -500,7 +516,8 @@ namespace zynforge
         // audio is spliced in at.
         bool        punchInActive { false };
         juce::int64 punchInPos    { 0 };
-        bool        continueAsPart { false };   // append a new part instead of overwriting
+        bool        continueAsPart    { false };   // append a new part instead of overwriting
+        juce::int64 recordBaseSamples { 0 };       // timeline offset for a continue take
 
         // Sidecar path that holds an existing take while a punch records over
         // it: "Audio Files/Track_01.wav" -> "Audio Files/Track_01.punchbase.wav".

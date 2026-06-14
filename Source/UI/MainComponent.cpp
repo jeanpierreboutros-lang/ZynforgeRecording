@@ -282,8 +282,13 @@ void MainComponent::onRecordClicked()
     // cursor (splice). No-op for tracks with no take (they record fresh).
     if (continueTake)
     {
-        if (continueAppend) engine.armContinue();
-        else                engine.armPunchIn (punchAt);
+        if (continueAppend)
+            // Continue the timeline from the end of the existing take so the
+            // clock + playhead carry on instead of restarting at 0.
+            engine.armContinue (juce::jmax ((juce::int64) 0,
+                                            engine.getPlayer().getTotalLengthSamples()));
+        else
+            engine.armPunchIn (punchAt);
     }
 
     if (engine.startRecording (dir))
