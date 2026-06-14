@@ -1195,10 +1195,14 @@ namespace zynforge
 
             auto nameLine = r.removeFromTop (18);
             nameLabel.setBounds (nameLine.reduced (4, 0));
-            nameLabel.setJustificationType (juce::Justification::centredLeft);
+            // L view: the name reads as its own field -- centred on a near-black
+            // plate (matching the routing box below it), not floating on steel.
+            nameLabel.setJustificationType (juce::Justification::centred);
+            nameLabel.setColour (juce::Label::backgroundColourId, brand::bgDeep);
         }
         else if (wideHdr)
         {
+            nameLabel.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
             // Painted deboss number occupies the far left -- reserve it.
             nameRow.removeFromLeft (44);
             // Reserve the far right for the collapse caret so the name never
@@ -1222,6 +1226,7 @@ namespace zynforge
                 swatch->setBounds (nameRow.removeFromLeft (14).withSizeKeepingCentre (10, 10));
             nameLabel.setBounds (nameRow.reduced (2, 0));
             nameLabel.setJustificationType (juce::Justification::centredLeft);
+            nameLabel.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
         }
         r.removeFromTop (brand::space::xs);
 
