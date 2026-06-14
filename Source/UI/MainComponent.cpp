@@ -560,7 +560,7 @@ void MainComponent::confirmAndQuit()
         auto* aw = new juce::AlertWindow ("Recording is still rolling",
                                           "A recording is in progress.\n"
                                           "Stop the recording cleanly and quit?",
-                                          juce::MessageBoxIconType::NoIcon, this);
+                                          juce::MessageBoxIconType::WarningIcon, this);   // -> forge-mark badge (LAF)
         aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
         aw->addButton ("Stop & Quit", kStopQuit, juce::KeyPress (juce::KeyPress::returnKey));
         aw->addButton ("Cancel",      kCancel,   juce::KeyPress (juce::KeyPress::escapeKey));
@@ -583,7 +583,7 @@ void MainComponent::confirmAndQuit()
         constexpr int kQuit = 1, kCancel = 2;
         auto* aw = new juce::AlertWindow ("Quit Zynforge Recording?",
                                           "No active session. Any unsaved app state will be lost.",
-                                          juce::MessageBoxIconType::NoIcon, this);
+                                          juce::MessageBoxIconType::QuestionIcon, this);   // -> forge-mark badge (LAF)
         aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
         aw->addButton ("Quit",   kQuit,   juce::KeyPress (juce::KeyPress::returnKey));
         aw->addButton ("Cancel", kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
@@ -617,7 +617,7 @@ void MainComponent::confirmAndQuit()
                                        + "\" before closing?",
                                       "Your session state, take history, cues and "
                                       "markers will be written to the session folder.",
-                                      juce::MessageBoxIconType::NoIcon,
+                                      juce::MessageBoxIconType::QuestionIcon,   // -> forge-mark badge (LAF)
                                       this);
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
     aw->addButton ("Don't Save", kDontSave);
