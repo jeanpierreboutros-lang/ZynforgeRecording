@@ -1183,22 +1183,19 @@ namespace zynforge
                            || state.isBus    .load (std::memory_order_relaxed);
         if (veryWide)
         {
-            // L view: row 1 is chrome only (painted deboss number left, badge +
-            // colour chip + caret right); the NAME gets a dedicated FULL-WIDTH
-            // row below, so even long channel names show in full.
+            // L view: the NAME sits INSIDE the black steel header plate,
+            // centred in the space between the painted deboss number (left)
+            // and the colour chip / caret / badge (right) -- no separate plate
+            // underneath it.
             nameRow.removeFromLeft (44);     // painted deboss number
             nameRow.removeFromRight (20);    // collapse caret
             if (hasBadge)
                 nameRow.removeFromRight (36);
             if (swatch != nullptr)
                 swatch->setBounds (nameRow.removeFromRight (18).withSizeKeepingCentre (12, 12));
-
-            auto nameLine = r.removeFromTop (18);
-            nameLabel.setBounds (nameLine.reduced (4, 0));
-            // L view: the name reads as its own field -- centred on a near-black
-            // plate (matching the routing box below it), not floating on steel.
+            nameLabel.setBounds (nameRow.reduced (4, 0));
             nameLabel.setJustificationType (juce::Justification::centred);
-            nameLabel.setColour (juce::Label::backgroundColourId, brand::bgDeep);
+            nameLabel.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
         }
         else if (wideHdr)
         {
