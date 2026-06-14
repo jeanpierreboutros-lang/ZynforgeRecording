@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (multi-part takes play seamlessly — 2026-06-14)
+- **A take split across files now plays back as one continuous take.** When a recording spans `Track_NN.wav` + `Track_NN_partXX.wav` continuations (from auto-split past the 4 GB/2 GB container cap — and, soon, from continue-recording), the player **stitches the parts** into one seamless stream instead of playing only the first file. The take loads as one track with the full summed length. Foundation for the live-recorder "a take is a sequence of files" model (Phase 1; read-only, can't affect capture). New `ConcatReader` + `MultiPartPlaybackTests`.
+
 ### Added (continue / punch-in-out recording — 2026-06-14)
 - **Punch in/out from a selection (Pro Tools-style).** Select a region on the EDIT timeline (the loop selection) and press RECORD: the transport rolls from a **pre-roll** lead-in (you hear the existing track), **auto punches in** at the selection start, **auto punches out** at its end, then plays a **post-roll** tail and stops. Only the selected region is re-recorded; audio before the punch-in and after the punch-out is preserved. Press RECORD/STOP again any time to end the punch early.
 - **RECORD continues into a loaded take when there's NO selection.** The freshly-recorded audio is spliced into each armed track at the **edit cursor**, or — with no cursor set — **appended at the end** (pick up where the take stopped). A fresh record with no session open still starts a new session.

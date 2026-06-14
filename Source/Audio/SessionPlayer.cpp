@@ -5,6 +5,71 @@ namespace zynforge
     static constexpr int  kReaderBufferSeconds = 2;
     static constexpr int  kStopSettleMs        = 40;  // > one audio buffer @ any sane size
 
+    // ── Multi-part take reader ─────────────────────────────────────────────
+    // Presents a take that was split across several files -- the main
+    // Track_NN.<ext> plus its Track_NN_partXX.<ext> continuations (from
+    // auto-split past the container size cap, or from continue-recording) --
+    // as ONE seamless reader. Read-only: it owns the per-part readers and maps
+    // a global sample position to the part that holds it, reading across part
+    // boundaries. The Track playback path is unchanged; it just gets this in
+    // place of a single-file reader. All parts share format/channels/SR (same
+    // take), so the public format fields come from the first part.
+    class ConcatReader final : public juce::AudioFormatReader
+    {
+    public:
+        explicit ConcatReader (std::vector<std::unique_ptr<juce::AudioFormatReader>> ps)
+            : juce::AudioFormatReader (nullptr, "ZF multi-part"), parts (std::move (ps))
+        {
+            jassert (! parts.empty());
+            auto& first = *parts.front();
+            sampleRate            = first.sampleRate;
+            bitsPerSample         = first.bitsPerSample;
+            usesFloatingPointData = first.usesFloatingPointData;
+            numChannels           = first.numChannels;
+            metadataValues        = first.metadataValues;
+
+            juce::int64 acc = 0;
+            for (auto& p : parts) { partStart.push_back (acc); acc += p->lengthInSamples; }
+            lengthInSamples = acc;
+        }
+
+        bool readSamples (int* const* dest, int numDest, int destOffset,
+                          juce::int64 startSampleInFile, int numSamples) override
+        {
+            int written = 0;
+            juce::int64 pos = startSampleInFile;
+            while (numSamples > 0)
+            {
+                // Which part holds `pos`?
+                int pi = -1;
+                for (int i = (int) parts.size() - 1; i >= 0; --i)
+                    if (pos >= partStart[(size_t) i]) { pi = i; break; }
+                if (pi < 0 || pos >= lengthInSamples)
+                {
+                    // Past the end -- pad the remainder with silence.
+                    for (int c = 0; c < numDest; ++c)
+                        if (dest[c] != nullptr)
+                            juce::FloatVectorOperations::clear (
+                                reinterpret_cast<float*> (dest[c] + destOffset + written), numSamples);
+                    break;
+                }
+                const juce::int64 local = pos - partStart[(size_t) pi];
+                const int chunk = (int) juce::jmin ((juce::int64) numSamples,
+                                                    parts[(size_t) pi]->lengthInSamples - local);
+                if (chunk <= 0) break;
+                parts[(size_t) pi]->readSamples (dest, numDest, destOffset + written, local, chunk);
+                written    += chunk;
+                pos        += chunk;
+                numSamples -= chunk;
+            }
+            return true;
+        }
+
+    private:
+        std::vector<std::unique_ptr<juce::AudioFormatReader>> parts;
+        std::vector<juce::int64>                              partStart;
+    };
+
     SessionPlayer::SessionPlayer()
     {
         formatManager.registerBasicFormats();
@@ -85,6 +150,11 @@ namespace zynforge
         std::vector<Pending> pending;
         int maxIndex = -1;
 
+        // Group every file by its track index. files.sort() already orders a
+        // group as main-first then parts ascending ("Track_07.wav" < "..._part02"
+        // < "..._part03"), so each group is in playback order. A take split
+        // across parts is read back as ONE seamless stream via ConcatReader.
+        std::map<int, std::vector<juce::File>> byIndex;
         for (auto& f : files)
         {
             // "Track_04.wav" -> 4 ; "Track_04_part02.wav" -> 4 (getIntValue
@@ -93,28 +163,37 @@ namespace zynforge
                               .fromFirstOccurrenceOf ("Track_", false, false)
                               .getIntValue();
             if (num < 1) continue;
-            const int idx = num - 1;
+            byIndex[num - 1].push_back (f);
+        }
 
-            // First file wins a given index (the main Track_NN.wav sorts before
-            // any Track_NN_partXX.wav continuation).
-            bool taken = false;
-            for (auto& p : pending) if (p.index == idx) { taken = true; break; }
-            if (taken) continue;
+        for (auto& [idx, partFiles] : byIndex)
+        {
+            std::vector<std::unique_ptr<juce::AudioFormatReader>> partReaders;
+            double      fileSR = deviceSampleRate;
+            bool        stereo = false;
+            juce::int64 takeLen = 0;
+            for (auto& pf : partFiles)
+            {
+                std::unique_ptr<juce::AudioFormatReader> raw (formatManager.createReaderFor (pf));
+                if (raw == nullptr) continue;
+                if (partReaders.empty()) { fileSR = raw->sampleRate; stereo = raw->numChannels >= 2; }
+                takeLen += (juce::int64) raw->lengthInSamples;
+                partReaders.push_back (std::move (raw));
+            }
+            if (partReaders.empty()) continue;
 
-            auto* raw = formatManager.createReaderFor (f);
-            if (raw == nullptr) continue;
+            // One file -> use it directly; many -> stitch with ConcatReader.
+            std::unique_ptr<juce::AudioFormatReader> reader;
+            if (partReaders.size() == 1) reader = std::move (partReaders.front());
+            else                         reader = std::make_unique<ConcatReader> (std::move (partReaders));
 
-            const auto fileSR     = raw->sampleRate;
-            const auto fileLen    = (juce::int64) raw->lengthInSamples;
-            const bool stereo     = raw->numChannels >= 2;
             const auto bufferSamples = (int) (fileSR * kReaderBufferSeconds);
-
-            auto buf = std::make_shared<juce::BufferingAudioReader> (raw, readerThread, bufferSamples);
+            auto buf = std::make_shared<juce::BufferingAudioReader> (reader.release(), readerThread, bufferSamples);
             buf->setReadTimeout (0); // non-blocking -- fill silence if not buffered yet
 
-            pending.push_back ({ idx, std::move (buf), fileLen, stereo });
+            pending.push_back ({ idx, std::move (buf), takeLen, stereo });
             maxIndex = juce::jmax (maxIndex, idx + (stereo ? 1 : 0));
-            maxLen   = juce::jmax (maxLen, fileLen);
+            maxLen   = juce::jmax (maxLen, takeLen);
             sr       = fileSR;
         }
 

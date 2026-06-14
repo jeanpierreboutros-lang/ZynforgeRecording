@@ -32,7 +32,10 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## In Progress
 
-- *(none — close out a session by moving items here back into the appropriate list.)*
+- [~] **Live-recorder multi-part take model** (JP, 2026-06-14) — "a take is a sequence of files" (continue-recording + safe splitting), the way live multitrack recorders work. Replaces the destructive punch splice for the continue case; **never modifies an existing file** (only adds finalised parts), so capture carries no new corruption risk.
+  - **Phase 1 — seamless multi-part PLAYBACK (DONE):** `SessionPlayer` stitches `Track_NN.wav` + `Track_NN_partXX.wav` into one continuous take via `ConcatReader` (load groups files per index; total length = sum). Fixes the old "only part 1 plays" gap. `MultiPartPlaybackTests` (loads-as-one-track + seamless-across-boundary). Read-only.
+  - **Phase 2 — continue recording = a new part** (next): RECORD-continue records `Track_NN_partNN.<ext>` after the take instead of splicing the file; EDIT view draws the parts as one take (today it thumbnails only part 1). Retire the splice for the append case (keep it only for mid-take punch, or move punch to parts too).
+  - **Phase 3 — safe auto-split reuse + `Fade Files/` folder** — auto-split already writes parts (now they play); render crossfades to a `Fade Files/` folder (Pro Tools structure; lowest priority — fades already work non-destructively in real time).
 
 ## Backlog
 
