@@ -1172,11 +1172,28 @@ namespace zynforge
 
         // ── 1. Name + colour swatch (top of strip) ── mock header layout
         auto nameRow = r.removeFromTop (22);
-        const bool wideHdr = getWidth() >= 78;
+        const bool wideHdr  = getWidth() >= 78;
+        const bool veryWide = getWidth() >= 150;   // L preset -- name on its OWN row
         const bool hasBadge = state.vcaGroup .load (std::memory_order_relaxed) >= 0
                            || state.editGroup.load (std::memory_order_relaxed) >= 0
                            || state.isBus    .load (std::memory_order_relaxed);
-        if (wideHdr)
+        if (veryWide)
+        {
+            // L view: row 1 is chrome only (painted deboss number left, badge +
+            // colour chip + caret right); the NAME gets a dedicated FULL-WIDTH
+            // row below, so even long channel names show in full.
+            nameRow.removeFromLeft (44);     // painted deboss number
+            nameRow.removeFromRight (20);    // collapse caret
+            if (hasBadge)
+                nameRow.removeFromRight (36);
+            if (swatch != nullptr)
+                swatch->setBounds (nameRow.removeFromRight (18).withSizeKeepingCentre (12, 12));
+
+            auto nameLine = r.removeFromTop (18);
+            nameLabel.setBounds (nameLine.reduced (4, 0));
+            nameLabel.setJustificationType (juce::Justification::centredLeft);
+        }
+        else if (wideHdr)
         {
             // Painted deboss number occupies the far left -- reserve it.
             nameRow.removeFromLeft (44);
@@ -1187,6 +1204,7 @@ namespace zynforge
                 nameRow.removeFromRight (36);
             if (swatch != nullptr)
                 swatch->setBounds (nameRow.removeFromRight (18).withSizeKeepingCentre (12, 12));
+            nameLabel.setBounds (nameRow.reduced (2, 0));
             nameLabel.setJustificationType (juce::Justification::centredLeft);
         }
         else
@@ -1198,9 +1216,9 @@ namespace zynforge
             // start, and double-click still opens the rename editor.
             if (swatch != nullptr)
                 swatch->setBounds (nameRow.removeFromLeft (14).withSizeKeepingCentre (10, 10));
+            nameLabel.setBounds (nameRow.reduced (2, 0));
             nameLabel.setJustificationType (juce::Justification::centredLeft);
         }
-        nameLabel.setBounds (nameRow.reduced (2, 0));
         r.removeFromTop (brand::space::xs);
 
         // Routing combos: keep them in flow but small -- they live above
