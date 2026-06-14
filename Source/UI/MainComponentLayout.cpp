@@ -255,7 +255,7 @@ void MainComponent::resized()
         case StripWidth::XS: targetPerPage = 24; floorW = 48;  ceilW = 78;  break;
         case StripWidth::S:  targetPerPage = 16; floorW = 58;  ceilW = 100; break;
         case StripWidth::M:  targetPerPage = 12; floorW = 70;  ceilW = 120; break;
-        case StripWidth::L:  targetPerPage = 6;  floorW = 160; ceilW = 300; break;
+        case StripWidth::L:  targetPerPage = 8;  floorW = 150; ceilW = 280; break;
     }
     const int kStripsPerPage = targetPerPage;
     const int kMinStripW     = floorW;
