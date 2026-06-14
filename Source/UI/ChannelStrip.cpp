@@ -1191,11 +1191,14 @@ namespace zynforge
         }
         else
         {
+            // Narrow header: a small colour chip + the NAME, which gets every
+            // remaining pixel -- the rename field always has room (the badge /
+            // group glyph is dropped here; the spine colour still IDs the
+            // strip). Left-justified so a truncated long name reads from its
+            // start, and double-click still opens the rename editor.
             if (swatch != nullptr)
-                swatch->setBounds (nameRow.removeFromLeft (brand::space::xl).reduced (1, 2));
-            if (hasBadge && nameRow.getWidth() > 50)
-                nameRow.removeFromRight (44);
-            nameLabel.setJustificationType (juce::Justification::centred);
+                swatch->setBounds (nameRow.removeFromLeft (14).withSizeKeepingCentre (10, 10));
+            nameLabel.setJustificationType (juce::Justification::centredLeft);
         }
         nameLabel.setBounds (nameRow.reduced (2, 0));
         r.removeFromTop (brand::space::xs);
