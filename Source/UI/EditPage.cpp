@@ -1399,19 +1399,30 @@ namespace zynforge
                                 const float g12 = juce::jlimit (-12.0f, 12.0f, c.gainDb);
                                 const auto col = active ? brand::accentStatus
                                                         : brand::accentStatus.withAlpha (brand::alpha::prominent);
-                                const float cx = (float) hr.getX() + 6.0f;
-                                // Fader track.
+                                const float cx = (float) hr.getX() + 10.0f;
+                                // Fader track -- wider + clearer than the old hairline.
                                 g.setColour (brand::bgDeep.withAlpha (brand::alpha::scrim));
-                                g.fillRoundedRectangle (juce::Rectangle<float> (cx - 5.0f, (float) hr.getY(), 10.0f, (float) hr.getHeight()), 2.0f);
-                                g.setColour (col.withAlpha (active ? 0.95f : 0.65f));
+                                g.fillRoundedRectangle (juce::Rectangle<float> (cx - 6.0f, (float) hr.getY(), 12.0f, (float) hr.getHeight()), 2.0f);
+                                g.setColour (col.withAlpha (active ? 0.95f : 0.55f));
                                 g.drawVerticalLine ((int) cx, (float) hr.getY() + 1.0f, (float) hr.getBottom() - 1.0f);
-                                // Thumb -- a small fader grip at the gain line
-                                // (rides up for boost, down for cut). Replaces
-                                // the old triangular arrow; the value is now
-                                // spelled out in the GAIN readout beside it.
-                                const float ty = (float) hr.getCentreY() - g12 / 12.0f * ((float) hr.getHeight() * 0.5f - 2.0f);
+                                // Machined cap thumb -- a proper little fader grip
+                                // (steel body + edge + a coloured centre groove),
+                                // big enough to SEE and grab. Rides up = boost,
+                                // down = cut; value spelled out in the GAIN pill.
+                                const float ty   = (float) hr.getCentreY()
+                                                 - g12 / 12.0f * ((float) hr.getHeight() * 0.5f - 6.0f);
+                                const float capW = 18.0f, capH = 12.0f;
+                                const auto  cap  = juce::Rectangle<float> (cx - capW * 0.5f, ty - capH * 0.5f, capW, capH);
+                                g.setColour (brand::shadow::elev2());
+                                g.fillRoundedRectangle (cap.translated (0.0f, 1.5f), brand::radius::sm);
+                                g.setGradientFill (juce::ColourGradient (
+                                    brand::controlBg.brighter (0.16f), cap.getCentreX(), cap.getY(),
+                                    brand::controlBg.darker   (0.22f), cap.getCentreX(), cap.getBottom(), false));
+                                g.fillRoundedRectangle (cap, brand::radius::sm);
+                                g.setColour (active ? col.brighter (0.30f) : brand::edge);
+                                g.drawRoundedRectangle (cap, brand::radius::sm, 1.0f);
                                 g.setColour (col);
-                                g.fillRoundedRectangle (juce::Rectangle<float> (cx - 5.0f, ty - 2.5f, 10.0f, 5.0f), 2.0f);
+                                g.fillRoundedRectangle (cap.getCentreX() - 6.0f, cap.getCentreY() - 1.0f, 12.0f, 2.0f, 1.0f);
                                 // "GAIN ±X.X dB" readout on a dark pill -- always
                                 // shown (when there's room) so the control reads
                                 // as a labelled gain, not a mystery green arrow.
@@ -1711,8 +1722,10 @@ namespace zynforge
         static juce::Rectangle<int> clipGainHandleRect (juce::Rectangle<int> block, int headH) noexcept
         {
             auto body = block.withTrimmedTop (headH);
-            const int h = juce::jmin (24, juce::jmax (14, body.getHeight() - 2));
-            const int w = juce::jmin (84, juce::jmax (18, body.getWidth() - 2));
+            // Slightly taller + wider grab target than before so the (now
+            // larger) cap is easy to click and ride.
+            const int h = juce::jmin (30, juce::jmax (16, body.getHeight() - 2));
+            const int w = juce::jmin (90, juce::jmax (22, body.getWidth() - 2));
             return { body.getX() + 2, body.getBottom() - h - 2, w, h };
         }
 
