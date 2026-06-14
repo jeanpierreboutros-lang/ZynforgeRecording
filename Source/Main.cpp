@@ -69,21 +69,30 @@ public:
                     juce::Justification::centred, false);
     }
 
+    // New ZynForge forge-mark: orange hexagon + rising double-chevron + dot,
+    // matching the app icon / dialog badge (replaces the old forged-Z).
     static void drawZ (juce::Graphics& g, juce::Rectangle<float> b)
     {
-        const float t = b.getWidth() * 0.22f;
-        juce::Path p;
-        p.addRectangle (b.getX(), b.getY(), b.getWidth(), t);
-        p.addRectangle (b.getX(), b.getBottom() - t, b.getWidth(), t);
-        juce::Path diag;
-        diag.startNewSubPath (b.getRight() - t, b.getY() + t);
-        diag.lineTo (b.getRight(),     b.getY() + t);
-        diag.lineTo (b.getX() + t,     b.getBottom() - t);
-        diag.lineTo (b.getX(),         b.getBottom() - t);
-        diag.closeSubPath();
-        p.addPath (diag);
+        const auto xf = juce::AffineTransform::scale (b.getWidth(), b.getHeight())
+                                               .translated (b.getX(), b.getY());
+        juce::Path hex;
+        hex.startNewSubPath (0.50f, 0.05f); hex.lineTo (0.92f, 0.28f); hex.lineTo (0.92f, 0.72f);
+        hex.lineTo (0.50f, 0.95f); hex.lineTo (0.08f, 0.72f); hex.lineTo (0.08f, 0.28f); hex.closeSubPath();
+        juce::Path chv;
+        chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
+        chv.startNewSubPath (0.36f, 0.73f); chv.lineTo (0.50f, 0.58f); chv.lineTo (0.64f, 0.73f);
+        hex.applyTransform (xf); chv.applyTransform (xf);
+
+        g.setColour (zynforge::brand::brandOrange.withAlpha (zynforge::brand::alpha::subtle));
+        g.fillPath (hex);
         g.setColour (zynforge::brand::brandOrange);
-        g.fillPath (p);
+        g.strokePath (hex, juce::PathStrokeType (juce::jmax (1.5f, b.getWidth() * 0.035f)));
+        g.strokePath (chv, juce::PathStrokeType (juce::jmax (2.0f, b.getWidth() * 0.075f),
+                                                 juce::PathStrokeType::curved,
+                                                 juce::PathStrokeType::rounded));
+        // Spark dot above the chevron.
+        const float s = b.getWidth() * 0.05f;
+        g.fillEllipse (b.getCentreX() - s, b.getY() + b.getHeight() * 0.27f - s, s * 2.0f, s * 2.0f);
     }
 
 private:
