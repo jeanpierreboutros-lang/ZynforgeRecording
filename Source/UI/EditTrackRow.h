@@ -533,8 +533,23 @@ namespace zynforge
             {
                 recPeakL.clear();
                 recPeakR.clear();
+                liveHold = false;           // a new take supersedes any held envelope
             }
             liveRecording = on;
+        }
+
+        // Take stopped: stop appending, but KEEP the envelope drawn as a
+        // provisional waveform until the file thumbnail finishes scanning.
+        // No-op for rows that captured nothing (empty envelope), so existing
+        // audio on un-armed rows keeps showing its real thumbnail.
+        void holdLiveEnvelopeUntilScanned()
+        {
+            liveRecording = false;
+            // Set unconditionally on captured rows: the post-stop re-scan
+            // (forceRefreshWaveforms) re-issues the source right after this, so
+            // waveformsLoaded() goes false and paint() only releases the hold
+            // once the FRESH scan completes. Checking it here would race that.
+            liveHold = ! recPeakL.empty();
         }
 
         // Append one column to the live envelope. Called once per UI tick
@@ -1248,6 +1263,12 @@ namespace zynforge
             // fallback would redraw the deleted audio. Suppress it in that case
             // (the live-capture envelope below still draws while recording).
             const bool arrangementEmptied = engine.isTrackArrangementEmpty (index);
+            // Release the post-stop hold the moment the real thumbnail is ready
+            // -- from here on the file waveform owns the lane. Until then,
+            // `showLive` keeps the just-captured envelope on screen so the lane
+            // is never blank while the background scan runs.
+            if (liveHold && waveformsLoaded()) liveHold = false;
+            const bool showLive = liveRecording || liveHold;
             if (! haveClipBlocks)
             {
             if (stereo)
@@ -1257,21 +1278,23 @@ namespace zynforge
                 auto laneL = inner.withHeight (laneH);
                 auto laneR = inner.withTrimmedTop (laneH);
 
-                if (! liveRecording && thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
+                if (! showLive && thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
                 {
                     setHeatWaveFill (laneL);
                     drawLaneL (g, laneL, 0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
                 }
-                if (! liveRecording && thumbnailR.getTotalLength() > 0.0 && ! arrangementEmptied)
+                if (! showLive && thumbnailR.getTotalLength() > 0.0 && ! arrangementEmptied)
                 {
                     setHeatWaveFill (laneR);
                     drawLaneR (g, laneR, 0.0, thumbnailR.getTotalLength(), waveZoom (thumbnailR));
                 }
                 // Live capture envelope -- grows L→R during the take, glowing
                 // forge-orange so the engineer sees the take is HOT / rolling.
-                if (liveRecording)
+                // After stop (liveHold) it dims to ember -- a provisional
+                // waveform that sits there until the real thumbnail scans in.
+                if (showLive)
                 {
-                    g.setColour (brand::meterHot);
+                    g.setColour (liveRecording ? brand::meterHot : brand::meterEmber);
                     drawRecEnvelope (g, laneL, recPeakL, vz);
                     drawRecEnvelope (g, laneR, recPeakR, vz);
                 }
@@ -1282,13 +1305,14 @@ namespace zynforge
                 // Empty lanes are left blank -- the EDIT view's PlaceholderView
                 // owns the "no session" message, so no per-row hint here.
             }
-            else if (liveRecording)
+            else if (showLive)
             {
                 // While the take is rolling the live forge-orange envelope OWNS
                 // the lane -- never the (possibly partial / cached) file
                 // thumbnail, or the lane shows blocky garbage instead of the
-                // growing capture.
-                g.setColour (brand::meterHot);
+                // growing capture. After stop it dims to ember and holds until
+                // the real thumbnail finishes scanning (no blank gap).
+                g.setColour (liveRecording ? brand::meterHot : brand::meterEmber);
                 drawRecEnvelope (g, inner, recPeakL, vz);
             }
             else if (thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
@@ -3836,6 +3860,13 @@ namespace zynforge
         // R partner on a stereo pair.
         std::vector<float>        recPeakL, recPeakR;
         bool                      liveRecording         { false };
+        // Provisional hand-off: when a take stops, keep the just-built live
+        // envelope on screen as a coarse waveform until the real file
+        // thumbnail finishes its background scan -- so the lane is never blank
+        // during the post-stop scan. Released in paint() the moment the
+        // thumbnail isFullyLoaded(). This is what makes the waveform appear
+        // INSTANTLY on stop instead of "building" for a beat.
+        bool                      liveHold              { false };
         int                       lastInputDeviceCount  { -1 };
         int                       lastOutputDeviceCount { -1 };
         unsigned int              lastColourArgb        { 0 };

@@ -30,6 +30,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - **Session menu grouped into submenus** (Recording & Sync · Network & Surfaces · Console · Cloud & Mirror · Analysis & Reports) — the ~25-item flat list is now short; all IDs/dispatch unchanged.
 - **EDIT view:** double-click (not single-click) the empty area to add a track; the clip-gain control is now a proper machined fader cap (bigger, easier to grab).
 
+### Changed (performance — 2026-06-14)
+- **Waveforms appear instantly when a take stops** — recording builds a live envelope for free during the take; instead of throwing it away on stop (which left the lane blank/coarse while the file re-scanned), the EDIT lane now **holds that envelope as a provisional waveform until the real thumbnail finishes scanning**, then snaps to full resolution. It dims from hot-orange to ember during the hand-off to read as "finalising". No extra disk read; the perceived "waveform build" delay is gone.
+- **BigClock timer is brighter / hotter** in record mode and crisper to read.
+
 ### Fixed (correctness + stability — 2026-06-14)
 - **Playback routing maps by `Track_NN` name, not file load order** — importing a stereo track into a session whose earlier mono strips were never recorded made the stereo play out of those mono strips (real strip silent, muting the monos muted it). Files now land at the strip index encoded in their filename; gaps fill with silent tracks.
 - **`TrackState::name` data race** — the companion server read the name from a detached thread while the message thread could rename it; now guarded by a SpinLock (`get/setNameThreadSafe`).

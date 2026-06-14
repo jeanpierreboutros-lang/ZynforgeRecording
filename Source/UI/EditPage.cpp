@@ -250,6 +250,12 @@ namespace zynforge
         {
             for (auto& r : rows) r->setLiveRecording (on);
         }
+        // Take stopped: hold each row's live envelope as a provisional waveform
+        // until its real thumbnail scans in, so the lane never blanks.
+        void holdLiveEnvelopesUntilScanned()
+        {
+            for (auto& r : rows) r->holdLiveEnvelopeUntilScanned();
+        }
         void pushRecLevels()
         {
             auto& rec = engine.getRecorder();
@@ -626,7 +632,10 @@ namespace zynforge
         // Live capture envelope: clear + arm on take start, disarm on stop
         // (before the post-stop disk re-scan swaps in the real waveform).
         if (recJustStarted && list != nullptr) list->setLiveRecording (true);
-        if (recJustStopped && list != nullptr) list->setLiveRecording (false);
+        // On stop, HOLD the live envelope (don't clear it) until the real disk
+        // thumbnail scans in -- the lane shows the just-captured waveform
+        // instantly instead of blanking for the duration of the scan.
+        if (recJustStopped && list != nullptr) list->holdLiveEnvelopesUntilScanned();
         if (loaded != lastLoaded || rec != lastRecording || engine.getActiveSessionDir() != lastSessionDir)
         {
             if (engine.getActiveSessionDir() != lastSessionDir)
