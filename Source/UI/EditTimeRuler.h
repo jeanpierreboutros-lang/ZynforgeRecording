@@ -323,7 +323,7 @@ namespace zynforge
                 const auto label = "Sel " + fmt (player.getLoopStart())
                                  + " \xe2\x96\xb8 " + fmt (player.getLoopEnd())
                                  + "  (" + fmt (player.getLoopEnd() - player.getLoopStart()) + ")";
-                const auto font = brand::type::caption().withHeight (10.0f);
+                const auto font = brand::type::label();
                 const int  tw   = juce::GlyphArrangement::getStringWidthInt (font, label) + 12;
                 const int  tx   = juce::jlimit (headerW + 4,
                                                 juce::jmax (headerW + 4, getWidth() - tw - 4),
@@ -333,7 +333,7 @@ namespace zynforge
                 g.fillRoundedRectangle (pill.toFloat(), brand::radius::sm);
                 g.setColour (brand::accentEdit.withAlpha (0.45f));
                 g.drawRoundedRectangle (pill.toFloat().reduced (0.5f), brand::radius::sm, 1.0f);
-                g.setColour (brand::accentEdit.brighter (0.35f));
+                g.setColour (brand::lift (brand::accentEdit, 0.35f));
                 g.setFont (font);
                 g.drawText (label, pill.reduced (6, 0),
                             juce::Justification::centredLeft, false);
@@ -463,7 +463,7 @@ namespace zynforge
                                   (float) x,        fy);
                 g.setColour (brand::brandOrange);
                 g.fillPath (flag);
-                g.setColour (brand::brandOrange.darker (0.40f));
+                g.setColour (brand::sink (brand::brandOrange, 0.40f));
                 g.strokePath (flag, juce::PathStrokeType (0.75f));
 
                 // Name to the right of the flag. Clip to ~120 px so a

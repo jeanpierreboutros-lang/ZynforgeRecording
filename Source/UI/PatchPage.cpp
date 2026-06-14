@@ -160,11 +160,11 @@ namespace zynforge
 
                         juce::Rectangle<int> head (colX, 0, L.colW, L.colorBandH);
                         auto inner = head.reduced (3, 3);
-                        juce::ColourGradient grad (stripCol.brighter (0.10f), inner.getX(), inner.getY(),
+                        juce::ColourGradient grad (brand::lift (stripCol, 0.10f), inner.getX(), inner.getY(),
                                                    stripCol.darker  (0.10f), inner.getX(), inner.getBottom(), false);
                         g.setGradientFill (grad);
                         g.fillRoundedRectangle (inner.toFloat(), brand::radius::lg);
-                        g.setColour (stripCol.brighter (0.30f).withAlpha (brand::alpha::muted));
+                        g.setColour (brand::lift (stripCol, 0.30f).withAlpha (brand::alpha::muted));
                         g.drawRoundedRectangle (inner.toFloat(), brand::radius::lg, 1.0f);
 
                         g.setColour (brand::onSignal (stripCol));
@@ -193,7 +193,7 @@ namespace zynforge
                         {
                             g.setColour (brand::bgElevated);
                             g.fillRoundedRectangle (pill.toFloat(), pill.getHeight() * 0.5f);
-                            g.setColour (stripCol.brighter (0.20f).withAlpha (brand::alpha::muted));
+                            g.setColour (brand::lift (stripCol, 0.20f).withAlpha (brand::alpha::muted));
                             g.drawRoundedRectangle (pill.toFloat(), pill.getHeight() * 0.5f, 1.0f);
                             g.setColour (brand::textSecondary);
                         }

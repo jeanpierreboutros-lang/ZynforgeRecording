@@ -18,7 +18,7 @@ void MainComponent::paint (juce::Graphics& g)
     {
         auto fullBounds = getLocalBounds().toFloat();
         g.setGradientFill (juce::ColourGradient (
-            brand::bgDeep.brighter (0.06f), fullBounds.getCentreX(), fullBounds.getY(),
+            brand::lift (brand::bgDeep, 0.06f), fullBounds.getCentreX(), fullBounds.getY(),
             brand::bgDeep.darker   (0.04f), fullBounds.getCentreX(), fullBounds.getBottom(),
             false));
         g.fillRect (fullBounds);
@@ -78,7 +78,7 @@ void MainComponent::paint (juce::Graphics& g)
             juce::Path chv;
             chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
             hex.applyTransform (xf); chv.applyTransform (xf);
-            g.setColour (brand::brandOrange.withAlpha (0.16f)); g.fillPath (hex);
+            g.setColour (brand::brandOrange.withAlpha (brand::alpha::edgeSoft)); g.fillPath (hex);
             g.setColour (brand::brandOrange);
             g.strokePath (hex, juce::PathStrokeType (1.4f));
             g.strokePath (chv, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved,

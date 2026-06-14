@@ -18,8 +18,8 @@ namespace
             chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
             chv.startNewSubPath (0.36f, 0.73f); chv.lineTo (0.50f, 0.58f); chv.lineTo (0.64f, 0.73f);
             hex.applyTransform (xf); chv.applyTransform (xf);
-            g.setColour (hot ? orange.withAlpha (0.12f) : zynforge::brand::debossInk.withAlpha (0.28f)); g.fillPath (hex);
-            g.setColour (hot ? orange.withAlpha (0.55f) : zynforge::brand::gloss (0.10f)); g.strokePath (hex, juce::PathStrokeType (1.0f));
+            g.setColour (hot ? orange.withAlpha (zynforge::brand::alpha::chrome) : zynforge::brand::debossInk.withAlpha (0.28f)); g.fillPath (hex);
+            g.setColour (hot ? orange.withAlpha (zynforge::brand::alpha::muted) : zynforge::brand::gloss (0.10f)); g.strokePath (hex, juce::PathStrokeType (1.0f));
             g.setColour (hot ? orange : zynforge::brand::gloss (0.24f));
             g.strokePath (chv, juce::PathStrokeType (juce::jmax (1.0f, r.getWidth() * 0.07f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             const float s = r.getWidth() * 0.05f;
@@ -154,7 +154,7 @@ namespace zynforge
         else if (mode == Mode::Playing) bg = brand::accentPlay.withAlpha (0.14f);
         auto bgRect = r.reduced (2.0f);
         g.setGradientFill (juce::ColourGradient (
-            bg.brighter (0.12f), bgRect.getCentreX(), bgRect.getY(),
+            brand::lift (bg, 0.12f), bgRect.getCentreX(), bgRect.getY(),
             bg.darker   (0.18f), bgRect.getCentreX(), bgRect.getBottom(),
             false));
         g.fillRoundedRectangle (bgRect, brand::radius::lg);
@@ -199,12 +199,12 @@ namespace zynforge
         }
 
         // ── Heated Steel: structural orange frame + forge-mark ─────────────
-        g.setColour (brand::brandOrange.withAlpha (0.55f));
+        g.setColour (brand::brandOrange.withAlpha (brand::alpha::muted));
         g.drawRoundedRectangle (r.reduced (3.0f), brand::radius::lg, 2.0f);
         // Orange corner brackets (top-left / top-right) -- target detail.
         {
             const float br = 20.0f, bw = 2.0f, off = 8.0f;
-            g.setColour (brand::brandOrange.withAlpha (0.85f));
+            g.setColour (brand::brandOrange.withAlpha (brand::alpha::prominent));
             // top-left
             g.fillRect (r.getX() + off, r.getY() + off, br, bw);
             g.fillRect (r.getX() + off, r.getY() + off, bw, br);
@@ -299,7 +299,7 @@ namespace zynforge
         g.setFont (brand::type::mono (timerPt, true));
         if (mode == Mode::Recording)
         {
-            g.setColour (brand::meterHot.withAlpha (0.16f));
+            g.setColour (brand::meterHot.withAlpha (brand::alpha::edgeSoft));
             const float o = 1.5f;
             for (auto d : { juce::Point<float> (-o, 0.0f), {  o, 0.0f },
                             {  0.0f, -o },                 {  0.0f, o },

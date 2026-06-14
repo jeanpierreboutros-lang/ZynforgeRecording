@@ -53,13 +53,15 @@ EDIT-view specifics in `Source/UI/EditTrackRow.h` (was `EditPage.cpp`): the `Tra
 - **Structural-vs-signal orange (2026-06-14):** bright/hot orange and `meterHot` mean **STATE** (record-armed, peaking) — never permanent chrome. `brand::structuralForge()` is the structural-identity orange (= brandOrange) for the strip spine / fader-cap groove / header seams / forge-marks, and it is drawn **ember-subdued at rest** (low alpha), escalating to full only when armed. Don't reuse `meterHot` for always-on chrome (it makes a live meter indistinguishable from idle UI). Identity marks (dialog badge, splash) keep full brand orange.
 - **Prompts:** `MainComponentInit` sets the ZynForge LAF as the **app-wide default** (`juce::LookAndFeel::setDefaultLookAndFeel(&laf)`, reset to nullptr in the dtor), so EVERY `juce::AlertWindow::showAsync(...)` reads as a first-party prompt (grey chrome + forge-mark badge via `ZynForgeLookAndFeel::drawAlertBox`, which mirrors JUCE's 80px icon column and draws the badge for non-`NoIcon` alerts). This also fixes app-wide **font resolution** — JUCE resolves typefaces through the default LAF, so without it custom-paint `Inter`/`JetBrains Mono` fell back to system fonts.
 - Colours come from `Source/Theme/BrandColors.h`. Never use raw `juce::Colour::fromRGB` or `juce::Colours::black/white` for chrome. **The VALUES behind BrandColors/BrandTokens come from the family token source of truth** (`Desktop/zynforge/ZynForgeBrand/tokens.json` → generated `Source/Theme/ForgeTokens.h`, vendored): to change a brand value, edit tokens.json, run `generate.py`, re-vendor the header — never edit ForgeTokens.h or hard-code a value here. See `ZynForgeBrand/FORGE.md`.
-- Fonts come from `Source/Theme/BrandTokens.h` via `brand::type::*`. Never construct a raw `juce::Font`.
+- Fonts come from `Source/Theme/BrandTokens.h` via `brand::type::*` (scale: `micro`/`label`/`caption`/`uiBody`/`channelName`/`sectionTitle`/`headline`/`subhead`/`display`/`hero`). Never construct a raw `juce::Font`, and never re-size a role with `.withHeight(n)` — pick the right rung (add one to tokens.json if none fits).
 - Dialog modals use `Source/Theme/DialogChrome.h::dialog::paintChrome(...)`. Custom dialog `paint()` is a smell.
 - Shadows: `brand::shadow::elev1/elev2/elev3`. Never inline `Colours::black.withAlpha(...)`.
 - Specular gloss / light scrim (the one sanctioned white): `brand::gloss(alpha)`. Never inline `Colours::white.withAlpha(...)`.
-- Alpha: `brand::alpha::{subtle,dimmed,ghost,scrim,muted,prominent,bold}`. Never inline `withAlpha(0.xx)`; if no step fits, catalog it in `BrandColors.h`.
+- Alpha: `brand::alpha::{faint,chrome,edgeSoft,subtle,wash,dimmed,ghost,scrim,muted,prominent,bold}`. Never inline `withAlpha(0.xx)`; if no step fits, catalog it in `BrandColors.h`.
+- Tints (lighten/darken): `brand::lift(c, amt)` / `brand::sink(c, amt)`, with named amounts in `brand::tint::{faint,hover,edge,deep}`. **Never call raw `juce::Colour::brighter()/darker()` outside `Theme/`** — the gate bans it.
 - Corner radius: `brand::radius::{sm,md,lg,xl}`. Never pass a raw float (sub-2 px meter/icon micro-radii excepted).
 - Text on a saturated accent: `brand::onSignal(bg)`. Never hardcode black or white.
+- `tools/design_audit.sh` is the CI gate enforcing all of the above (6 rules) — must stay CLEAN.
 
 ### Stereo + view linkage
 

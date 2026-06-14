@@ -6,6 +6,16 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Tints route through `brand::lift()/sink()`; raw `brighter()/darker()` is gate-banned — 2026-06-14
+
+**Context.** A design-system audit found the token infrastructure strong (generated, in-sync, gated) but with two last-mile leaks the gate couldn't see: 60+ raw `juce::Colour::brighter()/darker()` tint calls with ad-hoc amounts, and 53% of `withAlpha(...)` values bypassing the named alpha scale. Tints were the single largest source of *uncontrolled* visual variance — and completely invisible to `design_audit.sh`.
+
+**Decision.** (1) Every lighten/darken outside `Theme/` routes through `brand::lift(c, amt)` / `brand::sink(c, amt)` (pure pass-throughs over JUCE's `brighter/darker`), with named amounts in `brand::tint::{faint,hover,edge,deep}`; a 6th gate rule bans raw `.brighter()/.darker()` outside `Theme/`. (2) The most-repeated catalogued opacities were promoted to *named* alpha steps in the family token source (`tokens.json`): `faint` 0.10, `chrome` 0.12, `edgeSoft` 0.16, `wash` 0.30 — and `0.10f` dropped from the gate's ad-hoc catalog. (3) A `type::micro` (9.5 pt) rung was added so dense EDIT lanes stop re-sizing `caption()` off-scale.
+
+**Rationale.** A token system that can't *see* tints isn't enforcing them. Making tints a single, gate-visible chokepoint means a future re-skin (or a high-contrast mode) can retune lift/sink in one place instead of hunting 60 magic numbers. Promoting alphas was the system telling us the scale was too small — when >half of usage can't find a named step, the scale is wrong, not the components. Keeping the values in `tokens.json` (not app-local) holds the whole ZynForge family on one source of truth.
+
+**Consequences.** Tokens regenerated → `tokens.json` sha `857c0847a54e` (re-vendored into Recording only; other apps pick it up when they re-vendor). The migration is visually identical (pass-through helpers, same numeric amounts), verified by 245/0 tests + CLEAN 6-rule gate. New code must use `lift/sink` + named alpha/type rungs; the gate will reject raw tints. `NewSessionDialog` was also de-duplicated onto `DialogChrome` stylers as part of the same pass. See *Unified dialog chrome via `DialogChrome.h`*.
+
 ## AAF export built natively + de-risked with a round-trip oracle — 2026-06-08
 
 **Status:** Accepted (in progress — Phase 1 landed)

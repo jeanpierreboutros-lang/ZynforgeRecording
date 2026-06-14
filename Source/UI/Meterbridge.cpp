@@ -79,7 +79,7 @@ namespace zynforge
                         brand::steelHeaderHi, (float) band.getCentreX(), (float) band.getY(),
                         brand::steelHeaderLo, (float) band.getCentreX(), (float) band.getBottom(), false));
                     g.fillRect (band);
-                    g.setColour (brand::brandOrange.withAlpha (0.55f));
+                    g.setColour (brand::brandOrange.withAlpha (brand::alpha::muted));
                     g.fillRect (band.getX(), band.getBottom(), band.getWidth(), 1);
 
                     // Stamped column numbers, aligned to the resized() columns.
@@ -89,7 +89,7 @@ namespace zynforge
                     {
                         auto numBox = juce::Rectangle<int> (inner.getX() + (int) i * colW + 3,
                                                             inner.getY() + 2, 22, 14);
-                        g.setColour (brand::debossFace.withAlpha (0.85f));
+                        g.setColour (brand::debossFace.withAlpha (brand::alpha::prominent));
                         g.drawText (juce::String ((int) i + 1).paddedLeft ('0', 2),
                                     numBox, juce::Justification::centredLeft, false);
                     }

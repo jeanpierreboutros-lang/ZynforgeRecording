@@ -91,6 +91,7 @@ namespace zynforge::brand
     {
         // Sized scale. Seven discrete heights. Anything outside this
         // list should be considered a bug -- the system should be tight.
+        inline constexpr float h_micro    = forge::type_micro;   // sub-label EDIT-lane density (clip badges, gain pips)
         inline constexpr float h_label    = forge::type_label;   // tiny captions / dB ruler ticks
         inline constexpr float h_caption  = forge::type_caption;   // small labels, chips
         inline constexpr float h_body     = forge::type_body;   // standard body
@@ -161,6 +162,7 @@ namespace zynforge::brand
         // CoreText, and its typeface destructor then crashes the process
         // on quit. Routing through the clearable cache (emptied in
         // clearFontCache()) keeps the perf win without the teardown bomb.
+        inline juce::Font micro()        { return ui   (h_micro);          }
         inline juce::Font label()        { return ui   (h_label);          }
         inline juce::Font ledLabel()     { return mono (9.0f, true);       }
         inline juce::Font hint()         { return ui   (h_label);          }

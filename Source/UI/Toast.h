@@ -55,7 +55,7 @@ namespace zynforge
 
             // Body -- gradient pill in the kind-tinted colour.
             g.setGradientFill (juce::ColourGradient (
-                base.brighter (0.25f), r.getCentreX(), r.getY(),
+                brand::lift (base, 0.25f), r.getCentreX(), r.getY(),
                 base.darker   (0.20f), r.getCentreX(), r.getBottom(),
                 false));
             g.fillRoundedRectangle (r, brand::radius::lg);
@@ -66,7 +66,7 @@ namespace zynforge
             g.fillRoundedRectangle (juce::Rectangle<float> (r.getX(), r.getY(), 4.0f, r.getHeight()),
                                     brand::radius::sm);
 
-            g.setColour (base.brighter (0.45f).withAlpha (0.45f));
+            g.setColour (brand::lift (base, 0.45f).withAlpha (0.45f));
             g.drawRoundedRectangle (r, brand::radius::lg, 1.0f);
 
             // Message text.
@@ -100,9 +100,9 @@ namespace zynforge
         {
             switch (k)
             {
-                case Kind::Success: return brand::accentPlay   .darker (0.30f);
-                case Kind::Warning: return brand::alertAmber   .darker (0.30f);
-                case Kind::Error:   return brand::accentRecord .darker (0.30f);
+                case Kind::Success: return brand::sink (brand::accentPlay,   0.30f);
+                case Kind::Warning: return brand::sink (brand::alertAmber,   0.30f);
+                case Kind::Error:   return brand::sink (brand::accentRecord, 0.30f);
                 case Kind::Info:
                 default:            return brand::bgElevated;
             }

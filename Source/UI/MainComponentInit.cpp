@@ -85,8 +85,8 @@ MainComponent::MainComponent()
     transportLabel.setJustificationType (juce::Justification::centred);
     addAndMakeVisible (transportLabel);
 
-    recordButton.setColour (juce::TextButton::buttonColourId, brand::accentRecord.darker (0.55f));
-    recordButton.setColour (juce::TextButton::textColourOffId, brand::accentRecord.brighter (0.10f));
+    recordButton.setColour (juce::TextButton::buttonColourId, brand::sink (brand::accentRecord, 0.55f));
+    recordButton.setColour (juce::TextButton::textColourOffId, brand::lift (brand::accentRecord, 0.10f));
     recordButton.onClick = [this] { onRecordClicked(); };
     // The transport-bar red-circle button now owns the RECORD action;
     // keep this button alive (status text updates still reference it)
@@ -119,7 +119,7 @@ MainComponent::MainComponent()
 
     // Mock parity: neutral dark pill; keep a subtle red label as the danger cue.
     lockButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
-    lockButton.setColour (juce::TextButton::textColourOffId, brand::accentRecord.brighter (0.10f));
+    lockButton.setColour (juce::TextButton::textColourOffId, brand::lift (brand::accentRecord, 0.10f));
     lockButton.onClick = [this] { onLockToggled(); };
     addAndMakeVisible (lockButton);
 
@@ -156,10 +156,10 @@ MainComponent::MainComponent()
     auto styleViewBtn = [] (juce::TextButton& b, bool engaged)
     {
         b.setColour (juce::TextButton::buttonColourId,
-                     engaged ? brand::accentStatus.darker (0.55f)
+                     engaged ? brand::sink (brand::accentStatus, 0.55f)
                              : brand::bgElevated);
         b.setColour (juce::TextButton::textColourOffId,
-                     engaged ? brand::accentStatus.brighter (0.10f)
+                     engaged ? brand::lift (brand::accentStatus, 0.10f)
                              : brand::textSecondary);
     };
     styleViewBtn (mixViewButton,  true);
@@ -223,7 +223,7 @@ MainComponent::MainComponent()
     }
 
     addChannelButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
-    addChannelButton.setColour (juce::TextButton::textColourOffId, brand::accentStatus.brighter (0.10f));
+    addChannelButton.setColour (juce::TextButton::textColourOffId, brand::lift (brand::accentStatus, 0.10f));
     addChannelButton.setTooltip ("Set the number of recording channels -- opens a prompt where you type the count (1-256).");
     addChannelButton.onClick = [this]
     {
@@ -296,7 +296,7 @@ MainComponent::MainComponent()
     addAndMakeVisible (addChannelButton);
 
     metersButton.setColour (juce::TextButton::buttonColourId,    brand::bgElevated);
-    metersButton.setColour (juce::TextButton::textColourOffId,   brand::featureEngaged.brighter (0.10f));
+    metersButton.setColour (juce::TextButton::textColourOffId,   brand::lift (brand::featureEngaged, 0.10f));
     metersButton.onClick = [this]
     {
         if (auto* w = metersDialog.getComponent())
@@ -675,9 +675,9 @@ MainComponent::MainComponent()
     addChildComponent (*vcaPanel);   // hidden by default; VCA button toggles
 
     vcaToggleButton.setColour (juce::TextButton::buttonColourId,
-                                brand::featureEngaged.darker (0.55f));
+                                brand::sink (brand::featureEngaged, 0.55f));
     vcaToggleButton.setColour (juce::TextButton::textColourOffId,
-                                brand::featureEngaged.brighter (0.10f));
+                                brand::lift (brand::featureEngaged, 0.10f));
     vcaToggleButton.setTooltip ("Toggle the 8-bus VCA fader panel -- group faders for "
                                  "drums / vocals / etc. Strips opt in via right-click > Assign to VCA.");
     vcaToggleButton.onClick = [this]

@@ -135,7 +135,7 @@ namespace zynforge
                 }
                 else
                 {
-                    g.setColour (brand::bgDeep.brighter (0.05f));
+                    g.setColour (brand::lift (brand::bgDeep, 0.05f));
                 }
                 g.fillRoundedRectangle (seg, 1.5f);
             }

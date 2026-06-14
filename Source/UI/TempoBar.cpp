@@ -171,7 +171,7 @@ namespace zynforge
             r.getCentreY() - ledD * 0.5f,
             ledD, ledD);
         g.setColour (beatOn ? brand::accentStatus
-                            : brand::bgDeep.brighter (0.10f));
+                            : brand::lift (brand::bgDeep, 0.10f));
         g.fillEllipse (ledR);
         g.setColour (brand::edge);
         g.drawEllipse (ledR, 1.0f);

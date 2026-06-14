@@ -46,7 +46,7 @@ namespace zynforge
                               : over ? brand::controlBgHover
                                      : brand::controlBg);
             if      (recOn)     base = brand::accentRecord;                // ON AIR -- stable
-            else if (blinkOn)   base = brand::accentRecord.darker (0.30f); // armed -- blink lit
+            else if (blinkOn)   base = brand::sink (brand::accentRecord, 0.30f); // armed -- blink lit
             else if (litActive) base = baseColour;                         // PLAY lit -- green
             g.setGradientFill (brand::verticalGradient (base, r, 0.10f, 0.18f));
             g.fillRoundedRectangle (r, rad);
@@ -67,7 +67,7 @@ namespace zynforge
             else if (litActive)
             {
                 // Bright accent ring around the lit (running) button.
-                g.setColour (baseColour.brighter (0.20f));
+                g.setColour (brand::lift (baseColour, 0.20f));
                 g.drawRoundedRectangle (r.reduced (1.0f), rad, 2.0f);
             }
             else

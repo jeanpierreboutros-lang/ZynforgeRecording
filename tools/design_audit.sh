@@ -20,12 +20,20 @@ check "no bare Colours::white/black outside Theme/" \
 # 3. Raw font construction (brand::type:: is the path)
 check "no raw juce::Font/FontOptions outside Theme/" \
   "$(scope 'juce::Font (juce::FontOptions\|juce::FontOptions ()')"
-# 4. Inline withAlpha literals not in the documented BrandColors catalog
-CATALOG="0.06f|0.10f|0.14f|0.22f|0.25f|0.32f|0.45f|0.75f|0.78f"
+# 4. Inline withAlpha literals not in the documented BrandColors catalog.
+# 2026-06-14: 0.10/0.12/0.16/0.30 promoted to named alpha steps (faint/chrome/
+# edgeSoft/wash) and removed from this catalog -- the remaining values are
+# genuinely one-off, each documented in BrandColors.h alpha::.
+CATALOG="0.06f|0.14f|0.22f|0.25f|0.32f|0.45f|0.75f|0.78f"
 check "withAlpha literals are tokens or catalogued ad-hoc values" \
   "$(scope 'withAlpha (0\.' | grep -vE "alpha::|brand::|shadow::|gloss" | grep -vE "withAlpha \(($CATALOG)\)")"
 # 5. RoundedRectangle radii must be tokens (micro-radii <= 2.0f exempt per CLAUDE.md)
 check "rounded-rect radii are brand::radius tokens (<=2px micro exempt)" \
   "$(scope 'RoundedRectangle' | grep -E ', ([3-9][0-9]*\.?[0-9]*|2\.[1-9])f?\);' | grep -vE 'radius::|brand::')"
+# 6. Raw brighten/darken: every tint must route through brand::lift()/sink()
+# (the sanctioned seam) so tints are gate-visible + re-themable. Theme/ holds
+# the implementation and is out of scope.
+check "no raw .brighter()/.darker() outside Theme/ (use brand::lift/sink)" \
+  "$(scope '\.brighter (\|\.darker (')"
 [ $FAIL -eq 0 ] && echo "design audit: CLEAN" || echo "design audit: FAILED"
 exit $FAIL

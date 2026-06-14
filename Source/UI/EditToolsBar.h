@@ -167,10 +167,10 @@ namespace zynforge
                 if (active)
                 {
                     g.setGradientFill (juce::ColourGradient (
-                        accent.brighter (0.18f), rect.getCentreX(), rect.getY(),
+                        brand::lift (accent, 0.18f), rect.getCentreX(), rect.getY(),
                         accent.darker  (0.20f), rect.getCentreX(), rect.getBottom(), false));
                     g.fillRoundedRectangle (rect, brand::radius::md);
-                    g.setColour (accent.brighter (0.30f));
+                    g.setColour (brand::lift (accent, 0.30f));
                     g.drawRoundedRectangle (rect.reduced (0.5f), brand::radius::md, 1.0f);
                 }
                 else
@@ -186,7 +186,7 @@ namespace zynforge
                 auto capArea   = rect.removeFromBottom (12.0f);
                 g.setColour (active ? brand::onSignal (accent) : brand::textSecondary);
                 paintGlyph (g, rect, tool);
-                g.setFont (brand::type::caption().withHeight (10.0f));
+                g.setFont (brand::type::label());
                 g.setColour (active ? brand::onSignal (accent) : brand::textMuted);
                 g.drawText (caption, capArea, juce::Justification::centred, false);
             }

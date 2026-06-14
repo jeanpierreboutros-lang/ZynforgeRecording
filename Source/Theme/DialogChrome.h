@@ -188,6 +188,15 @@ namespace zynforge::dialog
         }
     }
 
+    // Field label above an editor / combo -- the small secondary-text caption
+    // every dialog stacks over its inputs. Shared so dialogs don't each
+    // re-implement it (and drift onto off-scale sizes).
+    inline void styleFieldLabel (juce::Label& l) noexcept
+    {
+        l.setFont (brand::type::uiBody());
+        l.setColour (juce::Label::textColourId, brand::textSecondary);
+    }
+
     inline void styleTextEditor (juce::TextEditor& t) noexcept
     {
         t.setColour (juce::TextEditor::backgroundColourId,     brand::bgDeep);

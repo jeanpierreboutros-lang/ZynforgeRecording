@@ -10,6 +10,9 @@ The format follows `/design-system document` output: description, when-to-use, v
 
 - [`ChannelStrip`](ChannelStrip.md) — per-channel vertical strip (MIXER view)
 - [`MasterStrip`](MasterStrip.md) — master fader + stereo/mono toggle
+- [`FineFader`](FineFader.md) — app-wide click-drag-only level fader (channel / VCA / bus / master)
+- [`LedMeter`](LedMeter.md) — segmented forge-heat level meter (mixer + EDIT)
+- [`DialogChrome`](DialogChrome.md) — shared dialog chrome + control-styling helpers (title badge, fields, buttons)
 - [`AutomationToolbar`](AutomationToolbar.md) — EDIT-view automation editing toolbar
 - [`EditToolsBar`](EditToolsBar.md) — Smart / Selector / Trim / Grabber / Fade / Scrubber tool palette
 - [`BigClockPanel`](BigClockPanel.md) — transport state + timer + armed-ready indicator
@@ -23,7 +26,7 @@ The format follows `/design-system document` output: description, when-to-use, v
 
 ### TODO
 
-The remaining ~55 component files are mostly internal helpers (LedMeter, MiniSpectrum, TimelineStrip, StripColourPicker, etc.) and modal dialogs for specific settings flows (ClickSettings, ExportDialog, etc.). Document on demand when an engineer extends one of them; no value in pre-emptively covering every helper class.
+The remaining ~50 component files are mostly internal helpers (MiniSpectrum, TimelineStrip, StripColourPicker, etc.) and modal dialogs for specific settings flows (ClickSettings, ExportDialog, etc.). Document on demand when an engineer extends one of them; no value in pre-emptively covering every helper class.
 
 ## Style
 

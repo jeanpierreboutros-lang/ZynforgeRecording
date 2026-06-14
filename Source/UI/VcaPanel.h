@@ -152,11 +152,11 @@ namespace zynforge
                 // Background + colour swatch strip. The swatch is a
                 // thicker (6 px) bar so it's an obvious click target
                 // for the colour picker.
-                auto bg = hovered ? brand::bgPanel.brighter (0.06f) : brand::bgPanel;
+                auto bg = hovered ? brand::lift (brand::bgPanel, 0.06f) : brand::bgPanel;
                 g.setColour (bg);
                 g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (1), brand::radius::md);
                 // Heated Steel: structural orange spine on the left edge.
-                g.setColour (brand::brandOrange.withAlpha (0.85f));
+                g.setColour (brand::brandOrange.withAlpha (brand::alpha::prominent));
                 g.fillRect (1, 1, 3, getHeight() - 2);
                 const juce::uint32 c = engine.getVca (index).colourARGB.load (std::memory_order_relaxed);
                 const auto swatch = c != 0 ? juce::Colour (c) : brand::stripColour (index);

@@ -134,7 +134,14 @@ namespace zynforge::brand
         // 0.55-0.60, 0.95). The 3-step (subtle/ghost/prominent)
         // semantic intent is preserved -- the new values just give
         // engineers a named slot instead of inventing 0.35 inline.
+        // Low-end chrome steps (promoted 2026-06-14 from the ad-hoc catalog --
+        // these were the most-repeated sub-0.18 literals: forge-glyph fills,
+        // hammered scrims, light value-pill washes).
+        inline constexpr float faint    = forge::alpha_faint;  // lightest visible fill (crossfade band, gloss)
+        inline constexpr float chrome    = forge::alpha_chrome;  // forge-mark glyph fill, faint structural tint
+        inline constexpr float edgeSoft    = forge::alpha_edgeSoft;  // hammered-steel scrim, soft edge wash
         inline constexpr float subtle    = forge::alpha_subtle;  // grid lines, off-beat ticks
+        inline constexpr float wash    = forge::alpha_wash;  // mid value-pill backing, structural seam wash
         inline constexpr float dimmed    = forge::alpha_dimmed;  // background washes, mute scrim edges
         inline constexpr float ghost    = forge::alpha_ghost;  // downbeats, secondary cues
         inline constexpr float scrim    = forge::alpha_scrim;  // zebra-row tints, surface-dimming washes
@@ -206,6 +213,29 @@ namespace zynforge::brand
     inline juce::Colour gloss (float a) noexcept
     {
         return juce::Colours::white.withAlpha (a);
+    }
+
+    // ── Tint helpers (the sanctioned brighten / darken seam) ──────────
+    // Every lightening / darkening of a colour routes through these instead
+    // of inlining juce::Colour::brighter()/darker() at the call site. Before
+    // 2026-06-14 there were 60+ raw `.brighter(0.xx)` / `.darker(0.xx)` calls
+    // -- a hover lift, an armed-edge brighten, a deboss darken -- each with an
+    // ad-hoc amount the design gate couldn't see. Centralising them here makes
+    // tints (a) gate-visible (raw brighter/darker is now banned outside Theme/)
+    // and (b) re-themable from one seam. `amt` is the same 0..1 JUCE takes, so
+    // the migration is visually identical; the win is the single chokepoint.
+    inline juce::Colour lift (juce::Colour c, float amt) noexcept { return c.brighter (amt); }
+    inline juce::Colour sink (juce::Colour c, float amt) noexcept { return c.darker  (amt); }
+
+    // Common, named tint amounts -- reach for these so repeated lifts share a
+    // meaning instead of each picking a number. Off-amount one-offs may still
+    // pass a literal to lift()/sink().
+    namespace tint
+    {
+        inline constexpr float faint = 0.06f;  // barely-there surface separation (zebra plates, panel lift)
+        inline constexpr float hover = 0.20f;  // pointer-over lift on a control
+        inline constexpr float edge  = 0.30f;  // chip / swatch edge highlight, colour-key brighten
+        inline constexpr float deep  = 0.40f;  // strong rim / hot-edge lift, deboss sink
     }
 
     // ── Text-on-accent helper ─────────────────────────────────────────

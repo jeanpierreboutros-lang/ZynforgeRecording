@@ -97,7 +97,7 @@ namespace zynforge
                 }
                 else if (hovered)
                 {
-                    g.setColour (brand::bgPanel.brighter (0.04f));
+                    g.setColour (brand::lift (brand::bgPanel, 0.04f));
                     g.fillRect (r);
                 }
 

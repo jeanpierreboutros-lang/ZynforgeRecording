@@ -7,31 +7,13 @@ namespace zynforge
 {
     namespace
     {
-        // Field-label style used above every editor / combo.
-        static void styleFieldLabel (juce::Label& l)
-        {
-            l.setFont (brand::type::uiBody().withHeight (13.0f));
-            l.setColour (juce::Label::textColourId, brand::textSecondary);
-        }
-
-        // Black-bg / outlined editor, matches the screenshot.
-        static void styleTextField (juce::TextEditor& t)
-        {
-            t.setFont (brand::type::uiBody().withHeight (15.0f));
-            t.setColour (juce::TextEditor::backgroundColourId,   brand::bgDeep);
-            t.setColour (juce::TextEditor::textColourId,         brand::textPrimary);
-            t.setColour (juce::TextEditor::outlineColourId,      brand::edge);
-            t.setColour (juce::TextEditor::focusedOutlineColourId, brand::accentStatus);
-            t.setColour (juce::TextEditor::highlightColourId,    brand::accentStatus.withAlpha (brand::alpha::dimmed));
-        }
-
-        static void styleCombo (juce::ComboBox& c)
-        {
-            c.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep);
-            c.setColour (juce::ComboBox::outlineColourId,    brand::edge);
-            c.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
-            c.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
-        }
+        // Dialog control styling is shared -- route through DialogChrome so this
+        // dialog can't drift away from the rest (it previously re-implemented
+        // styleFieldLabel/styleTextField/styleCombo, with off-scale 13/15 pt
+        // field fonts). One source of truth: dialog::style*.
+        using dialog::styleFieldLabel;
+        using dialog::styleCombo;
+        inline void styleTextField (juce::TextEditor& t) { dialog::styleTextEditor (t); }
 
         class Content final : public juce::Component
         {

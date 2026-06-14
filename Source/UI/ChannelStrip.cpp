@@ -32,7 +32,7 @@ namespace
                 g.addTransform (juce::AffineTransform::rotation (0.14f, W * 0.5f, H * 0.5f));
                 for (int y = -H; y < H * 2; y += 9)
                 {
-                    g.setColour (zynforge::brand::debossInk.withAlpha (0.10f));
+                    g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::faint));
                     g.fillRect (-W, y, W * 3, 2);
                 }
                 return img;
@@ -58,9 +58,9 @@ namespace
             g.fillRect (r);
             g.setColour (zynforge::brand::gloss (0.18f));                 // top bevel highlight
             g.fillRect (r.withHeight (1.0f));
-            g.setColour (zynforge::brand::structuralForge().withAlpha (0.55f));            // subdued structural seam (2px)
+            g.setColour (zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::muted));            // subdued structural seam (2px)
             g.fillRect (r.getX(), r.getBottom() - 3.0f, r.getWidth(), 2.0f);
-            g.setColour (zynforge::brand::debossInk.withAlpha (0.85f));         // crisp dark divider
+            g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::prominent));         // crisp dark divider
             g.fillRect (r.removeFromBottom (1.0f));
         }
 
@@ -92,9 +92,9 @@ namespace
             chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
             chv.startNewSubPath (0.36f, 0.73f); chv.lineTo (0.50f, 0.58f); chv.lineTo (0.64f, 0.73f);
             hex.applyTransform (xf); chv.applyTransform (xf);
-            g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (0.12f) : zynforge::brand::debossInk.withAlpha (0.28f));
+            g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::chrome) : zynforge::brand::debossInk.withAlpha (0.28f));
             g.fillPath (hex);
-            g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (0.55f) : zynforge::brand::gloss (0.10f));
+            g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::muted) : zynforge::brand::gloss (0.10f));
             g.strokePath (hex, juce::PathStrokeType (1.0f));
             g.setColour (hot ? structuralForge() : zynforge::brand::gloss (0.24f));
             g.strokePath (chv, juce::PathStrokeType (juce::jmax (1.0f, r.getWidth() * 0.07f),
@@ -110,7 +110,7 @@ namespace
         {
             const auto txt = juce::String (channel1Based).paddedLeft ('0', 2);
             g.setFont (zynforge::brand::type::mono ((float) juce::jlimit (12, 26, box.getHeight()), true));
-            g.setColour (zynforge::brand::debossInk.withAlpha (0.85f));          // engraved shadow
+            g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::prominent));          // engraved shadow
             g.drawText (txt, box.translated (0, 1), juce::Justification::centredLeft, false);
             g.setColour (zynforge::brand::debossFace);                           // raised steel face
             g.drawText (txt, box, juce::Justification::centredLeft, false);
@@ -366,7 +366,7 @@ namespace zynforge
         if (resolved.getARGB() != lastAppliedColour)
         {
             lastAppliedColour = resolved.getARGB();
-            const auto knobCol = resolved.brighter (0.30f);
+            const auto knobCol = brand::lift (resolved, 0.30f);
             if (swatch != nullptr)
                 swatch->setDisplayColour (resolved);
             gainFader.setColour (juce::Slider::thumbColourId, knobCol);
@@ -852,10 +852,10 @@ namespace zynforge
             s.setDoubleClickReturnValue (true, 0.0);
             s.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
             s.setColour (juce::Slider::rotarySliderFillColourId,
-                         getResolvedColour().brighter (0.30f));
+                         brand::lift (getResolvedColour(), 0.30f));
             s.setColour (juce::Slider::rotarySliderOutlineColourId, brand::edge);
             s.setColour (juce::Slider::thumbColourId,
-                         getResolvedColour().brighter (0.30f));
+                         brand::lift (getResolvedColour(), 0.30f));
             s.setMouseDragSensitivity (160);
         };
 
@@ -925,7 +925,7 @@ namespace zynforge
         gainFader.setNumDecimalPlacesToDisplay (1);
         gainFader.setColour (juce::Slider::trackColourId,        brand::edge);
         gainFader.setColour (juce::Slider::backgroundColourId,   brand::bgDeep);
-        gainFader.setColour (juce::Slider::thumbColourId,        getResolvedColour().brighter (0.30f));
+        gainFader.setColour (juce::Slider::thumbColourId,        brand::lift (getResolvedColour(), 0.30f));
         // Snap to mouse position so the cap STICKS to the pointer 1:1 while
         // dragging (standard DAW fader feel). The old "relative drag"
         // (snap=false + a 250 px sensitivity longer than the fader itself)
@@ -985,7 +985,7 @@ namespace zynforge
         // Hover lift -- mouse over the strip brightens the wash ~6% so
         // the engineer reads 'this is the strip my pointer is on'
         // without needing a focus ring or selection state.
-        if (hovered) stripColour = stripColour.brighter (0.06f);
+        if (hovered) stripColour = brand::lift (stripColour, 0.06f);
 
         // Vertical gradient wash in the personality colour -- matches
         // ZynForge Live's strip finish and gives every channel a sense
@@ -1001,7 +1001,7 @@ namespace zynforge
             juce::Graphics::ScopedSaveState clip (g);
             g.reduceClipRegion (bodyClip);
             steel::drawHammered    (g, r, 0.38f);              // ③ hammered steel
-            g.setColour (zynforge::brand::debossInk.withAlpha (0.16f));  // light forged scrim -- lets colour show
+            g.setColour (zynforge::brand::debossInk.withAlpha (brand::alpha::edgeSoft));  // light forged scrim -- lets colour show
             g.fillRect (r);
             steel::drawSteelHeader (g, r.withHeight (30.0f));  // taller near-black stamped plate
             // Heated Steel: the spine breathes at ~1 Hz while record-armed.
@@ -1032,7 +1032,7 @@ namespace zynforge
         const bool isArmed = state.armed.load (std::memory_order_relaxed);
         if (isArmed)
         {
-            juce::ColourGradient bloom (brand::meterEmber.withAlpha (0.30f),
+            juce::ColourGradient bloom (brand::meterEmber.withAlpha (brand::alpha::wash),
                                         r.getCentreX(), r.getY(),
                                         brand::meterEmber.withAlpha (0.0f),
                                         r.getCentreX(), r.getY() + r.getHeight() * 0.55f, false);
@@ -1043,7 +1043,7 @@ namespace zynforge
         // Hover border -- a touch brighter than the resting edge so the
         // strip lifts subtly off the canvas.
         const float edgeAlpha = hovered ? 0.55f : 0.30f;
-        g.setColour (stripColour.brighter (0.40f).withAlpha (edgeAlpha));
+        g.setColour (brand::lift (stripColour, 0.40f).withAlpha (edgeAlpha));
         g.drawRoundedRectangle (r, brand::radius::xl, 1.0f);
 
         // An armed strip wins the edge: a hot forge-orange rim over the resting
@@ -1083,7 +1083,7 @@ namespace zynforge
             auto badge = juce::Rectangle<float> (r.getRight() - 42.0f, topY + 4.0f, 38.0f, 15.0f);
             g.setColour (brand::featureEngaged);
             g.fillRoundedRectangle (badge, brand::radius::sm);
-            g.setColour (brand::featureEngaged.brighter (0.60f));
+            g.setColour (brand::lift (brand::featureEngaged, 0.60f));
             g.drawRoundedRectangle (badge, brand::radius::sm, 1.0f);
             g.setColour (brand::onSignal (brand::featureEngaged));
             g.setFont (brand::type::ui (10.5f, true));
@@ -1104,11 +1104,11 @@ namespace zynforge
             const float yOffset = (vca >= 0 && vca < 8) ? 23.0f : 4.0f;
             auto badge = juce::Rectangle<float> (r.getRight() - 26.0f,
                                                   r.getY() + yOffset, 22.0f, 12.0f);
-            g.setColour (brand::accentVS.darker (0.30f));
+            g.setColour (brand::sink (brand::accentVS, 0.30f));
             g.fillRoundedRectangle (badge, brand::radius::sm);
-            g.setColour (brand::accentVS.brighter (0.40f));
+            g.setColour (brand::lift (brand::accentVS, 0.40f));
             g.drawRoundedRectangle (badge, brand::radius::sm, 0.75f);
-            g.setColour (brand::onSignal (brand::accentVS.darker (0.30f)));
+            g.setColour (brand::onSignal (brand::sink (brand::accentVS, 0.30f)));
             g.setFont (brand::type::caption());
             g.drawText (label, badge.toNearestInt(), juce::Justification::centred, false);
         }
@@ -1122,11 +1122,11 @@ namespace zynforge
         if (state.isBus.load (std::memory_order_relaxed))
         {
             auto badge = juce::Rectangle<float> (r.getRight() - 30.0f, r.getY() + 4.0f, 26.0f, 12.0f);
-            g.setColour (brand::alertAmber.darker (0.30f));
+            g.setColour (brand::sink (brand::alertAmber, 0.30f));
             g.fillRoundedRectangle (badge, brand::radius::sm);
-            g.setColour (brand::alertAmber.brighter (0.20f));
+            g.setColour (brand::lift (brand::alertAmber, 0.20f));
             g.drawRoundedRectangle (badge, brand::radius::sm, 0.75f);
-            g.setColour (brand::onSignal (brand::alertAmber.darker (0.30f)));
+            g.setColour (brand::onSignal (brand::sink (brand::alertAmber, 0.30f)));
             g.setFont (brand::type::caption());
             g.drawText ("BUS", badge.toNearestInt(), juce::Justification::centred, false);
         }
@@ -1141,7 +1141,7 @@ namespace zynforge
             const auto c   = autoSafeOn ? brand::engagedAmber : brand::accentRecord;
             g.setColour (c.withAlpha (brand::alpha::bold));
             g.fillEllipse (led);
-            g.setColour (c.brighter (0.45f));
+            g.setColour (brand::lift (c, 0.45f));
             g.drawEllipse (led, 0.6f);
         }
     }

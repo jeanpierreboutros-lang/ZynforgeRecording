@@ -126,8 +126,8 @@ namespace zynforge
                                        : over ? brand::controlBgHover
                                               : brand::bgElevated;
                 g.setGradientFill (juce::ColourGradient (
-                    base.brighter (down ? 0.10f : 0.30f), r.getCentreX(), r.getY(),
-                    base.darker   (down ? 0.05f : 0.28f), r.getCentreX(), r.getBottom(),
+                    brand::lift (base, down ? 0.10f : 0.30f), r.getCentreX(), r.getY(),
+                    brand::sink (base, down ? 0.05f : 0.28f), r.getCentreX(), r.getBottom(),
                     false));
                 g.fillRoundedRectangle (r, brand::radius::md);
                 g.setColour (brand::edge);

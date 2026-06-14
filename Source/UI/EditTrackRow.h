@@ -578,9 +578,9 @@ namespace zynforge
             // than bgDeep). The EditPage's own background fills the
             // empty area below the last row in bgDeep, so the engineer
             // sees a clear 'rows = light, empty area = dark' contrast.
-            const auto headerBg = hovered ? brand::bgStrip.brighter (0.06f)
+            const auto headerBg = hovered ? brand::lift (brand::bgStrip, 0.06f)
                                            : brand::bgStrip;
-            if (hovered) fillColour = fillColour.brighter (0.06f);
+            if (hovered) fillColour = brand::lift (fillColour, 0.06f);
 
             // Row bottom divider (full content width). The swatch column,
             // header panel, vertical divider, selection highlight and TAKE
@@ -597,7 +597,7 @@ namespace zynforge
 
             // Paint the waveform in the strip's own colour so it tracks
             // any colour changes the user makes in the mixer or EDIT view.
-            const auto waveColour = getStripColour().brighter (0.25f);
+            const auto waveColour = brand::lift (getStripColour(), 0.25f);
             const auto inner = wavePane.reduced (brand::space::xs, brand::space::sm);
 
             // ── Forge-heat waveform fill (brand signature) ──────────────────
@@ -646,7 +646,7 @@ namespace zynforge
                     for (int i = 1; i * minorSec < totalSec; ++i)
                         g.drawVerticalLine (secToX (i * minorSec),
                                             (float) inner.getY(), (float) inner.getBottom());
-                    g.setColour (brand::edge.brighter (0.18f).withAlpha (brand::alpha::muted));
+                    g.setColour (brand::lift (brand::edge, 0.18f).withAlpha (brand::alpha::muted));
                     for (int i = 1; i * majorSec < totalSec; ++i)
                         g.drawVerticalLine (secToX (i * majorSec),
                                             (float) inner.getY(), (float) inner.getBottom());
@@ -726,7 +726,7 @@ namespace zynforge
                 g.drawRect (inner, 1);
 
                 // Centre line for reference (zero / unity).
-                g.setColour (brand::edge.brighter (0.2f).withAlpha (brand::alpha::muted));
+                g.setColour (brand::lift (brand::edge, 0.2f).withAlpha (brand::alpha::muted));
                 g.drawHorizontalLine (inner.getCentreY(),
                                       (float) inner.getX(), (float) inner.getRight());
 
@@ -942,7 +942,7 @@ namespace zynforge
                             if (mk.name.isNotEmpty())
                             {
                                 g.setColour (brand::onSignal (brand::accentStatus));
-                                g.setFont (brand::type::caption().withHeight (9.5f));
+                                g.setFont (brand::type::micro());
                                 g.drawText (mk.name,
                                             juce::Rectangle<int> (x + 4, inner.getY() + 1, 90, 11),
                                             juce::Justification::topLeft, false);
@@ -1086,7 +1086,7 @@ namespace zynforge
                     // the eye sees. Skip segments that are too narrow
                     // (< 18 px) to host a handle without colliding
                     // with the endpoints.
-                    const juce::Colour handleCol = lineCol.brighter (0.35f);
+                    const juce::Colour handleCol = brand::lift (lineCol, 0.35f);
                     for (size_t i = 1; i < points.size(); ++i)
                     {
                         const auto& prev = points[i - 1];
@@ -1194,10 +1194,10 @@ namespace zynforge
                                                            inner.getWidth(), laneH - 1);
                         const bool isActive = (tk == activeTk);
                         const bool isHot    = (compDragTake == tk);
-                        g.setColour (isActive ? brand::bgStrip.brighter (0.05f) : brand::bgDeep);
+                        g.setColour (isActive ? brand::lift (brand::bgStrip, 0.05f) : brand::bgDeep);
                         g.fillRect (laneR);
 
-                        const auto wc = isActive ? getStripColour().brighter (0.25f)
+                        const auto wc = isActive ? brand::lift (getStripColour(), 0.25f)
                                                  : getStripColour().withAlpha (brand::alpha::muted);
                         g.setColour (wc);
                         for (const auto& c : engine.getTakeClips (index, tk))
@@ -1218,7 +1218,7 @@ namespace zynforge
                             g.fillRect (juce::Rectangle<int> (a, laneR.getY(), b - a, laneR.getHeight()));
                         }
                         g.setColour (isActive ? brand::accentSolo : brand::textMuted);
-                        g.setFont (brand::type::caption().withHeight (9.5f));
+                        g.setFont (brand::type::micro());
                         g.drawText ((isActive ? juce::String ("COMP  ") : juce::String())
                                         + engine.getTakeName (index, tk),
                                     laneR.reduced (3, 0), juce::Justification::topLeft, false);
@@ -1367,7 +1367,7 @@ namespace zynforge
                                 // tint so it visibly drops below the rest.
                                 const auto setClipFill = [&] (juce::Rectangle<int> lane)
                                 {
-                                    if (c.muted) g.setColour (clipTint.brighter (0.20f).withAlpha (brand::alpha::muted));
+                                    if (c.muted) g.setColour (brand::lift (clipTint, 0.20f).withAlpha (brand::alpha::muted));
                                     else         setHeatWaveFill (lane);
                                 };
                                 if (stereo && thumbnailR.getTotalLength() > 0.0)
@@ -1425,10 +1425,10 @@ namespace zynforge
                                 g.setColour (brand::shadow::elev2());
                                 g.fillRoundedRectangle (cap.translated (0.0f, 1.5f), brand::radius::sm);
                                 g.setGradientFill (juce::ColourGradient (
-                                    brand::controlBg.brighter (0.16f), cap.getCentreX(), cap.getY(),
+                                    brand::lift (brand::controlBg, 0.16f), cap.getCentreX(), cap.getY(),
                                     brand::controlBg.darker   (0.22f), cap.getCentreX(), cap.getBottom(), false));
                                 g.fillRoundedRectangle (cap, brand::radius::sm);
-                                g.setColour (active ? col.brighter (0.30f) : brand::edge);
+                                g.setColour (active ? brand::lift (col, 0.30f) : brand::edge);
                                 g.drawRoundedRectangle (cap, brand::radius::sm, 1.0f);
                                 g.setColour (col);
                                 g.fillRoundedRectangle (cap.getCentreX() - 6.0f, cap.getCentreY() - 1.0f, 12.0f, 2.0f, 1.0f);
@@ -1443,8 +1443,8 @@ namespace zynforge
                                                                      juce::jmin (104, hr.getRight() - (hr.getX() + 13)), 18);
                                     g.setColour (brand::bgDeep.withAlpha (brand::alpha::bold));
                                     g.fillRoundedRectangle (pill.toFloat(), brand::radius::sm);
-                                    g.setColour (touched ? col.brighter (0.5f) : brand::textSecondary);
-                                    g.setFont (brand::type::caption().withHeight (11.0f).boldened());
+                                    g.setColour (touched ? brand::lift (col, 0.5f) : brand::textSecondary);
+                                    g.setFont (brand::type::caption().boldened());
                                     // Right-trim the full string into the pill so the "dB"
                                     // unit can never clip to a bare "d" (ellipsis on if tight).
                                     g.drawText ("GAIN " + sign + juce::String (c.gainDb, 1) + " dB",
@@ -1464,12 +1464,12 @@ namespace zynforge
                                     ? c.name
                                     : engine.getTakeName (index, engine.getActiveTakeIdx (index));
                                 g.setColour (brand::onSignal (clipTint));
-                                g.setFont (brand::type::caption().withHeight (9.5f));
+                                g.setFont (brand::type::micro());
                                 g.drawText (clipName, headRect.reduced (5, 0),
                                             juce::Justification::centredLeft, false);
                             }
                         }
-                        g.setColour (clipTint.brighter (0.30f).withAlpha (brand::alpha::prominent));
+                        g.setColour (brand::lift (clipTint, 0.30f).withAlpha (brand::alpha::prominent));
                         g.drawRect (block, 1);
 
                         // Selected-clip highlight -- the clip you're working
@@ -1581,7 +1581,7 @@ namespace zynforge
                         const auto band = juce::Rectangle<int> (xL, inner2.getY(),
                                                                 xR - xL,
                                                                 inner2.getHeight());
-                        g.setColour (brand::accentStatus.withAlpha (0.10f));
+                        g.setColour (brand::accentStatus.withAlpha (brand::alpha::faint));
                         g.fillRect (band);
                         g.setColour (brand::accentStatus.withAlpha (brand::alpha::prominent));
                         // Outgoing (a) -- top-left to bottom-right.
@@ -1750,7 +1750,7 @@ namespace zynforge
             auto swatchArea = header.removeFromLeft (swatchW);
             g.setGradientFill (brand::verticalGradient (fillColour, swatchArea.toFloat(), 0.18f, 0.28f));
             g.fillRect (swatchArea);
-            g.setColour (fillColour.darker (0.40f));
+            g.setColour (brand::sink (fillColour, 0.40f));
             g.drawVerticalLine (swatchArea.getRight() - 1, 0.0f, (float) getHeight());
 
             g.setColour (headerBg);
@@ -1758,7 +1758,7 @@ namespace zynforge
 
             // ── Heated Steel: orange spine + stamped number + orange seam ──
             // Mirrors the mixer strip header identity on the EDIT track rows.
-            g.setColour (brand::brandOrange.withAlpha (0.30f));               // spine glow
+            g.setColour (brand::brandOrange.withAlpha (brand::alpha::wash));               // spine glow
             g.fillRect (juce::Rectangle<float> ((float) hx, 0.0f, 7.0f, (float) getHeight()));
             g.setColour (brand::brandOrange);                                 // spine
             g.fillRect (juce::Rectangle<float> ((float) hx, 0.0f, 3.0f, (float) getHeight()));
@@ -1766,7 +1766,7 @@ namespace zynforge
                 const auto num = juce::String (index + 1).paddedLeft ('0', 2);
                 auto numBox = juce::Rectangle<int> (hx + swatchW + 7, 3, 24, 18);
                 g.setFont (brand::type::mono (15.0f, true));
-                g.setColour (brand::debossInk.withAlpha (0.85f));            // engraved shadow
+                g.setColour (brand::debossInk.withAlpha (brand::alpha::prominent));            // engraved shadow
                 g.drawText (num, numBox.translated (0, 1), juce::Justification::centredLeft, false);
                 g.setColour (brand::debossFace);                             // raised steel face
                 g.drawText (num, numBox, juce::Justification::centredLeft, false);
@@ -1794,11 +1794,11 @@ namespace zynforge
                 const auto label = "TAKE " + juce::String (activeTake + 1)
                                  + " / " + juce::String (takeCount);
                 auto chip = juce::Rectangle<int> (hx + headerW - 78, 4, 70, 13);
-                g.setColour (brand::featureEngaged.darker (0.30f));
+                g.setColour (brand::sink (brand::featureEngaged, 0.30f));
                 g.fillRoundedRectangle (chip.toFloat(), brand::radius::sm);
-                g.setColour (brand::featureEngaged.brighter (0.40f));
+                g.setColour (brand::lift (brand::featureEngaged, 0.40f));
                 g.drawRoundedRectangle (chip.toFloat(), brand::radius::sm, 0.75f);
-                g.setColour (brand::onSignal (brand::featureEngaged.darker (0.30f)));
+                g.setColour (brand::onSignal (brand::sink (brand::featureEngaged, 0.30f)));
                 g.setFont (brand::type::caption());
                 g.drawText (label, chip, juce::Justification::centred, false);
             }
