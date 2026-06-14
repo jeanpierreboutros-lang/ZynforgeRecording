@@ -230,23 +230,34 @@ namespace zynforge
         g.drawHorizontalLine ((int) footerRect.getY(),
                               full.getX(), full.getRight());
 
-        // ZynForge forge-mark badge -- drawn in the icon column JUCE reserves
-        // for a Warning / Info / Question alert, REPLACING its stock triangle /
-        // question glyph with the app's forge-mark. We draw the text exactly
-        // where JUCE laid it out (textArea), so the message never re-flows and
-        // never clips. NoIcon prompts reserve no column, so they stay clean
-        // grey chrome with no glyph (and crucially, no warning triangle).
-        const float iconColRight = (float) textArea.getX();
-        if (iconColRight > full.getX() + 50.0f)
+        // ZynForge forge-mark badge. JUCE reserves an 80px icon column in the
+        // window WIDTH for any non-NoIcon alert (juce_AlertWindow: iconSpace =
+        // iconWidth) but leaves the icon + text positioning to the LookAndFeel:
+        // it lays the text out left-justified and the LAF draws text at
+        // x = iconSpaceUsed. So we mirror that exactly -- draw the forge-mark in
+        // the left column (replacing JUCE's stock triangle / question glyph) and
+        // draw the text at x = iconSpace, where it was sized to fit (never
+        // clips). NoIcon prompts keep their centred full-width text + no glyph.
+        const bool hasIcon  = alert.getAlertType() != juce::MessageBoxIconType::NoIcon;
+        const int  iconSpace = hasIcon ? 80 : 0;
+
+        if (hasIcon)
         {
-            const float badge = juce::jmin (44.0f, iconColRight - full.getX() - 16.0f);
-            drawForgeBadge (g, juce::Rectangle<float> (full.getX() + 16.0f,
-                                                       (float) textArea.getY() + 2.0f,
+            const float badge = 46.0f;
+            drawForgeBadge (g, juce::Rectangle<float> (full.getX() + 18.0f,
+                                                       full.getY() + 26.0f,
                                                        badge, badge));
         }
 
-        // Message text exactly at JUCE's computed area -- no re-flow, no clip.
-        textLayout.draw (g, textArea.toFloat());
+        // Text positioned exactly as JUCE's LookAndFeel_V4::drawAlertBox does
+        // (origin x = iconSpace, y = 30, full width) so the pre-sized layout
+        // lands without re-flow or clipping.
+        juce::ignoreUnused (textArea);
+        const juce::Rectangle<int> alertBounds (
+            (int) full.getX() + iconSpace, 30,
+            (int) full.getWidth(),
+            (int) full.getHeight() - getAlertWindowButtonHeight() - 20);
+        textLayout.draw (g, alertBounds.toFloat());
     }
 
     int ZynForgeLookAndFeel::getAlertBoxWindowFlags()
