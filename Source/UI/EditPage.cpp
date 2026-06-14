@@ -3961,13 +3961,14 @@ namespace zynforge
             resized();
         }
 
-        void mouseDown (const juce::MouseEvent& e) override
+        void mouseDoubleClick (const juce::MouseEvent& e) override
         {
-            // Click in the empty area below the last row -> create a
-            // new mono audio track. The TrackList itself only sees the
-            // event when no TrackRow consumes it, which means the
-            // engineer hit empty space. Right-click is left alone for
-            // potential future "Add multiple..." menu.
+            // DOUBLE-click in the empty area below the last row -> create a
+            // new mono audio track. (Single click no longer adds a track --
+            // it was too easy to spawn empty tracks by accident.) The
+            // TrackList only sees the event when no TrackRow consumes it,
+            // which means the engineer hit empty space. Right-click is left
+            // alone for a potential future "Add multiple..." menu.
             if (e.mods.isPopupMenu() || e.mods.isRightButtonDown()) return;
             if (engine.getRecorder().isRecording()) return;   // safety
             engine.addOneStrip();
