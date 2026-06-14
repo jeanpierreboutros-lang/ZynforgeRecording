@@ -300,6 +300,22 @@ When making a non-trivial decision, add a new entry below using the template at 
 **Consequences:** + the recorded/imported file IS a stereo WAV. − a native-stereo session has no `Track_(N+1).wav`; any path that resolves audio by physical index must sniff channel count (the resolver does this for player/bounce/EDIT). Per-R-index offline ops (normalize/consolidate/stripSilence) are unreachable from the UI (the R row is collapsed) so they were left index-direct; document if that changes. Tests: `AudioCallbackTests` "Stereo pair records ONE interleaved file + player routes both channels" (243 groups, 0 failures); legacy "bounceStereoPairToWav interleaves" stays green via the resolver.
 **Related:** gig-one field report (tasks.md); stereo import/export collapse work of 2026-06-10.
 
+## Orange means STATE, not chrome — 2026-06-14
+
+**Status:** Accepted
+**Context:** The Heated-Steel redesign reused bright brand orange and the meter's `meterHot` for *permanent* chrome — the strip spine, the fader-cap groove, the header seams — drawn at full intensity always. In a dark venue the eye couldn't separate "this channel exists" from "this channel is HOT": a record-armed strip and a peaking meter looked the same as idle UI.
+**Decision:** Bright/hot orange (and `meterHot` specifically) is reserved for **state** — record-armed, peaking, recording. Permanent structural chrome uses `brand::structuralForge()` (the structural-identity orange) drawn **ember-subdued at rest** (low alpha), escalating to full only when the element's owner is active (e.g. the spine brightens + glows when the strip is armed). The fader-cap groove moved off `meterHot` onto `structuralForge()` so a hot meter is once again the brightest orange on screen. Identity marks (dialog badge, splash, forge-marks) keep full brand orange — they're brand, not state.
+**Rationale:** "Cold steel that runs HOT where the signal lives" only works if *hot* is visually earned. Reserving the loudest accent for live state restores at-a-glance readability without losing the forge identity.
+**Consequences:** + armed/peaking now pop; the resting wall is calmer. − any new always-on accent must consciously pick `structuralForge()` (subdued) over `meterHot`/`brandOrange`-at-full. Enforced by eye, not the token audit (both are valid tokens).
+
+## ZynForge LookAndFeel is the app-wide default (prompts + fonts) — 2026-06-14
+
+**Status:** Accepted
+**Context:** `juce::AlertWindow::showAsync(...)` prompts (Delete channel, etc.) rendered as JUCE's stock alert — grey-blue chrome + a red warning triangle — because only `MainComponent` + a few hand-made `AlertWindow`s set the ZynForge LAF; `showAsync` boxes use the **default** LAF, which was never set. Separately, JUCE resolves every typeface through the default LAF, so custom-paint `Inter`/`JetBrains Mono` text fell back to system fonts.
+**Decision:** `MainComponent` sets `juce::LookAndFeel::setDefaultLookAndFeel(&laf)` in its ctor (and resets to `nullptr` in the dtor, before the member `laf` is destroyed). `ZynForgeLookAndFeel::drawAlertBox` draws the forge-mark badge in JUCE's reserved 80px icon column for any non-`NoIcon` alert and the text at JUCE's own `textArea` (no re-flow / clip).
+**Rationale:** One line makes every prompt first-party AND fixes font resolution app-wide — both were the same root cause (no default LAF).
+**Consequences:** + every popup/menu/tooltip/alert is ZynForge chrome with the bundled fonts. − broad blast radius (governs all default-LAF components); the member-LAF lifetime must be reset in the dtor to avoid a dangling default on shutdown (done).
+
 ## Template
 
 ```

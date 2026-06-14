@@ -17,6 +17,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Added (mixer density + views — 2026-06-14)
+- **GRID view** — a new toolbar toggle (beside XS/S/M/L) lays the strips out **12 per row in 2 rows = 24 faders on one page**, scrolling vertically for more. A table-style overview for big channel counts; persisted across launches.
+- **Compact, Pro-Tools-style strips** — the dB ruler and meter now **hug the fader** (no wide empty gutter), and the ruler+fader+meter cluster centres in the strip, so far more strips fit per page. The width presets were retuned: **M** caps compact (≈70–120px) so a normal window fits its full 12-per-page without scrolling; **XS/S** tighter; **L** (8/page) shows the **full channel name on its own row**.
+- **Tighter strip gap** (8 → 4px).
+
+### Changed (faders, chrome, menus, design — 2026-06-14)
+- **Faders are click-drag only** — channel / master / VCA / bus faders no longer respond to the scroll wheel or trackpad (a stray swipe can't nudge a level mid-show); the wheel scrolls the mixer instead. They move only on a direct click+drag of the cap, which now snaps to the pointer.
+- **Every prompt is first-party ZynForge chrome** — the app-wide default LookAndFeel is now the ZynForge one, so `showAsync` alerts (Delete channel, etc.) render in grey chrome with the **forge-mark badge** instead of JUCE's stock warning triangle.
+- **New app icon + splash + fonts** — the refined forge-mark "RECORDING" icon is embedded; the launch splash uses the new mark; and the bundled **Inter + JetBrains Mono** now render everywhere (the default-LAF change also fixed custom-paint text falling back to system fonts).
+- **Design: structural-vs-signal orange resolved** — permanent chrome (strip spine, fader-cap groove, header seams) is **ember-subdued at rest** and reserves bright/hot orange (and `meterHot`) for **state** — a record-armed strip glows, a hot meter is the brightest orange. Identity marks keep full brand orange.
+- **Session menu grouped into submenus** (Recording & Sync · Network & Surfaces · Console · Cloud & Mirror · Analysis & Reports) — the ~25-item flat list is now short; all IDs/dispatch unchanged.
+- **EDIT view:** double-click (not single-click) the empty area to add a track; the clip-gain control is now a proper machined fader cap (bigger, easier to grab).
+
+### Fixed (correctness + stability — 2026-06-14)
+- **Playback routing maps by `Track_NN` name, not file load order** — importing a stereo track into a session whose earlier mono strips were never recorded made the stereo play out of those mono strips (real strip silent, muting the monos muted it). Files now land at the strip index encoded in their filename; gaps fill with silent tracks.
+- **`TrackState::name` data race** — the companion server read the name from a detached thread while the message thread could rename it; now guarded by a SpinLock (`get/setNameThreadSafe`).
+- **New / cleared session is truly EMPTY** — `clearAllStripOverrides` now also resets the persisted `stripCount`, so a fresh session no longer revives last gig's strip count on relaunch.
+- **Console link no longer hangs on a lost reply** — `ConsoleLink` is a `juce::Timer`; a query that loses a UDP reply aborts after ~1.2–1.5s instead of sitting on "Reading console patch…".
+- **Crash fix** — the compact meter width tripped a negative-rect assertion in `LedMeter::paint`; the dB labels now auto-drop on narrow meters (also removes the redundant right-hand meter scale).
+- **Recording timer** reads incandescent red-orange with a glow (was near-white); fixed a doubled-digit artifact.
+
+### Changed (internal — 2026-06-14)
+- **`EditPage.cpp` god-class split** — the ~3,800-line `EditPage::TrackRow` moved to `EditTrackRow.h`; `EditPage.cpp` is now ~870 lines.
+
 ### Fixed (playback routing)
 - **Imported / stereo tracks no longer play out of the wrong strips.** `SessionPlayer` assigned playback to strips by the *order* files loaded, not by each file's `Track_NN` name. So a session whose earlier strips were created but never recorded (no file on disk) shifted every later file onto the wrong strip — e.g. importing a stereo track into a session with two empty mono strips made the stereo play out of those mono strips, left the real stereo strip metering nothing, and muting the mono strips muted the (mis-routed) sound. The player now maps each file to the index encoded in its filename (`Track_04.wav` → strip 4) and fills gaps with silent tracks, so player index always equals strip index. Regression-tested (mono at 0, gap at 1, stereo at 2 → routes to strips 2+3).
 

@@ -49,8 +49,8 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Ap
 - Loop region between markers; Spacebar global play/pause
 
 ### Mixer / EDIT / PATCH (linked views)
-- 12 strips per page (adaptive width 56–160 px); channels default to neutral grey and are recoloured from a hue×shade **gradient** swatch picker (with an OK button)
-- Per-strip fader (−60..+12 dB), constant-power pan, REC / MON / MUTE / SOLO toggles
+- **Compact, console-style strips** — the dB ruler + fader + meter hug each other (no wasted gutter). Width presets **XS / S / M / L** (M ≈ 12 per page, L = 8 with the **full channel name on its own row**), plus a **GRID** view: 12 strips per row × 2 rows = **24 faders on one page** (scrolls vertically). Channels default to neutral grey and recolour from a hue×shade **gradient** swatch picker
+- Per-strip fader (−60..+12 dB) — **click-drag only** (the cap snaps to the pointer; the scroll wheel scrolls the mixer, never the level), constant-power pan, REC / MON / MUTE / SOLO toggles
 - Adaptive LED meter (smooth gradient at small heights, 20-segment LEDs at full size)
 - Stereo pairs collapse into one logical strip / row / column in **all three views**
 - Pro Tools-style EDIT view: per-row size menu, custom heights, captioned **Smart / Range / Trim / Move / Fade / Scrub** tools with single-key shortcuts (**S / R / T / G / F / B**, Cmd+E to separate), a row header that stays pinned to the left when you scroll the timeline, a graduated DAW time ruler (playhead time bubble, edit cursor that merges with the playhead when stopped, loop shading) and a draggable timeline minimap when zoomed

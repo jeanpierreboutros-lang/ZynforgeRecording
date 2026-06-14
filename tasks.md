@@ -68,6 +68,18 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Recently Completed
 
+### 2026-06-14 — mixer density + view modes + click-drag faders + design re-tone + audit fixes + crash fix
+- [x] **Compact channel strips + GRID view** (M) — per-preset floor/ceil widths (XS 48/78, S 58/100, M 70/120, L 150/280; targetPerPage 24/16/12/8), Pro-Tools-tight fader cluster (dB ruler + 30px fader + 16/26px meter centred, name room preserved), inter-strip gap trimmed to 4px. New toolbar **GRID** toggle shows 24 faders as a 12-col × 2-row table (vertical scroll), persisted in appProps. L preset shows the full channel name at 8/page.
+- [x] **Faders are click-drag-only** (S) — channel/VCA/bus/master faders ignore the scroll wheel (`FineFader::mouseWheelMove` propagates to parent) and the cap snaps to the pointer (`setSliderSnapsToMousePosition(true)`); no more accidental trackpad nudges.
+- [x] **EDIT double-click to create an empty track** (S) — single-click no longer spawns a track; clip-gain cap enlarged + machined for grab accuracy.
+- [x] **Playback routing by `Track_NN` index** (M) — `SessionPlayer::loadSession` maps files to strips by filename index (not load order) and fills gaps with silent tracks, so an imported stereo file lands on its own stereo strip instead of two mono strips. Regression test added.
+- [x] **Design re-tone: orange means STATE, not chrome** (M) — `meterHot`/bright orange reserved for live signal; chrome routed through ember-subdued `structuralForge()`. design_audit.sh CI gate stays CLEAN (zero token violations). ADR in `decisions.md`.
+- [x] **App-wide ZynForge LookAndFeel** (S) — `setDefaultLookAndFeel` in MainComponent ctor (reset in dtor) so every AlertWindow prompt carries the forge-mark badge + correct typeface; prompts stay neutral grey. ADR in `decisions.md`.
+- [x] **New app icon + splash** (S) — RECORDING mark baked into `.icns` (needs full `rm -rf build` reconfigure since juceaide builds the icon at CMake configure time).
+- [x] **Audit engineering fixes** (M) — ConsoleLink routing-query timeout (juce::Timer watchdog), cross-thread `TrackState::name` SpinLock, New-Session-means-empty `stripCount` reset, EditPage god-class split (`EditTrackRow.h` carries `TrackRow` + `TimelineMapper`, EditPage.cpp now ~869 lines).
+- [x] **SIGABRT crash fix** (S) — `LedMeter::paint` produced a negative-width bar area at compact meter widths (16px mono / 26px stereo); labels now auto-drop below 30px so the bar never goes negative. Root-caused from the compact-fader change.
+- [x] **Field-test checklist** (S) — `FIELD-TEST-AUDIT.md` (RF64 >4GiB, throughput soak, real X32/M32 link incl. new timeout, native-stereo routing regression, mixer UI, faders/prompts/identity, dashboard/pre-flight).
+
 ### 2026-06-10 (night) — capture-split Phase 0 + partXX de-flake + console-profile refactor + EDIT playhead
 - [x] **Capture-split Phase 0 (first increment)** (M) — canonical `EngineStatus` boundary + `captureStatus()` + JSON round-trip; companion `/state.json` migrated onto it. `EngineStatusTests`.
 - [x] **De-flaked `session.report.json` partXX enumeration** (S) — per-shard drain lock; was 2/30, now 0/50 + 0/25. Latent production race in stopRecording's flush too.
