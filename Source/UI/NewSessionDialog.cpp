@@ -172,7 +172,12 @@ namespace zynforge
 
             void resized() override
             {
-                auto b = getLocalBounds().reduced (24, 20);
+                // Start the body BELOW the 44 px chrome title bar -- otherwise
+                // the first field ("Name") draws on top of the "NEW SESSION"
+                // title that dialog::paintChrome stamps in that band.
+                auto b = getLocalBounds();
+                b.removeFromTop (dialog::titleH);
+                b = b.reduced (24, 12);
 
                 // Name
                 nameLabel.setBounds (b.removeFromTop (18));

@@ -310,7 +310,10 @@ namespace zynforge
                 }
 
                 // Numeric selection readout (Pro Tools-style): Start > End
-                // (Length) in M:SS.mmm, in the marker strip at the top.
+                // (Length) in M:SS.mmm. Lives in the MARKER strip at the very
+                // top -- NOT the ruler strip, where it used to collide with the
+                // major time-tick labels and become unreadable. An opaque
+                // pill behind it keeps it legible over markers / ticks / shading.
                 auto fmt = [sr] (juce::int64 s)
                 {
                     const double t = juce::jmax (0.0, (double) s / sr);
@@ -320,11 +323,19 @@ namespace zynforge
                 const auto label = "Sel " + fmt (player.getLoopStart())
                                  + " \xe2\x96\xb8 " + fmt (player.getLoopEnd())
                                  + "  (" + fmt (player.getLoopEnd() - player.getLoopStart()) + ")";
-                const int tw = 250;
-                const int tx = juce::jlimit (headerW + 4, juce::jmax (headerW + 4, getWidth() - tw - 4), xA + 3);
+                const auto font = brand::type::caption().withHeight (10.0f);
+                const int  tw   = juce::GlyphArrangement::getStringWidthInt (font, label) + 12;
+                const int  tx   = juce::jlimit (headerW + 4,
+                                                juce::jmax (headerW + 4, getWidth() - tw - 4),
+                                                xA + 3);
+                juce::Rectangle<int> pill (tx, 2, tw, juce::jmax (12, markerStripH - 4));
+                g.setColour (brand::bgDeep.withAlpha (0.92f));
+                g.fillRoundedRectangle (pill.toFloat(), brand::radius::sm);
+                g.setColour (brand::accentEdit.withAlpha (0.45f));
+                g.drawRoundedRectangle (pill.toFloat().reduced (0.5f), brand::radius::sm, 1.0f);
                 g.setColour (brand::accentEdit.brighter (0.35f));
-                g.setFont (brand::type::caption().withHeight (10.0f));
-                g.drawText (label, juce::Rectangle<int> (tx, rulerTop + 1, tw, 13),
+                g.setFont (font);
+                g.drawText (label, pill.reduced (6, 0),
                             juce::Justification::centredLeft, false);
             }
 

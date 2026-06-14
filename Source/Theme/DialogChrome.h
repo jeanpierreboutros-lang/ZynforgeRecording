@@ -28,9 +28,43 @@ namespace zynforge::dialog
         g.fillAll();
     }
 
+    // The ZynForge forge-mark badge -- the app-icon glyph (forged-steel
+    // squircle + orange hex + rising double-chevron), drawn programmatically
+    // so it scales crisply and needs no embedded PNG. Mirrors the badge the
+    // LookAndFeel stamps on AlertWindow prompts, so a custom dialog title bar
+    // carries the same identity. Pass the square rect to draw into.
+    inline void drawForgeBadge (juce::Graphics& g, juce::Rectangle<float> r) noexcept
+    {
+        g.setColour (brand::controlBg);
+        g.fillRoundedRectangle (r, brand::radius::md);
+        g.setColour (brand::gloss (0.10f));
+        g.drawRoundedRectangle (r.reduced (0.5f), brand::radius::md, 1.0f);
+
+        const auto glyph = r.reduced (r.getWidth() * 0.22f, r.getHeight() * 0.22f);
+        const auto xf = juce::AffineTransform::scale (glyph.getWidth(), glyph.getHeight())
+                                               .translated (glyph.getX(), glyph.getY());
+        juce::Path hex;
+        hex.startNewSubPath (0.50f, 0.05f); hex.lineTo (0.92f, 0.28f); hex.lineTo (0.92f, 0.72f);
+        hex.lineTo (0.50f, 0.95f); hex.lineTo (0.08f, 0.72f); hex.lineTo (0.08f, 0.28f); hex.closeSubPath();
+        juce::Path chv;
+        chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
+        chv.startNewSubPath (0.36f, 0.73f); chv.lineTo (0.50f, 0.58f); chv.lineTo (0.64f, 0.73f);
+        hex.applyTransform (xf); chv.applyTransform (xf);
+
+        g.setColour (brand::structuralForge().withAlpha (0.12f));
+        g.fillPath (hex);
+        g.setColour (brand::structuralForge().withAlpha (0.55f));
+        g.strokePath (hex, juce::PathStrokeType (1.0f));
+        g.setColour (brand::structuralForge());
+        g.strokePath (chv, juce::PathStrokeType (juce::jmax (1.0f, glyph.getWidth() * 0.07f),
+                                                 juce::PathStrokeType::curved,
+                                                 juce::PathStrokeType::rounded));
+    }
+
     // Title bar -- 44 px tall, brand-orange 3 px stripe down the left
-    // edge, section-title text in textPrimary. Returns the rect the
-    // title bar occupied so the caller can measure remaining space.
+    // edge, forge-mark badge, then section-title text in textPrimary.
+    // Returns the rect the title bar occupied so the caller can measure
+    // remaining space.
     inline juce::Rectangle<int> paintTitle (juce::Graphics& g,
                                             juce::Component& host,
                                             const juce::String& title) noexcept
@@ -39,10 +73,18 @@ namespace zynforge::dialog
                                         .reduced (brand::space::md, 0);
         g.setColour (brand::brandOrange);
         g.fillRect (bar.removeFromLeft (stripeW));
+        bar.removeFromLeft (brand::space::md);
+
+        // Forge-mark badge, vertically centred in the title bar.
+        const float badgeSz = 26.0f;
+        auto badge = bar.removeFromLeft ((int) badgeSz).toFloat()
+                        .withSizeKeepingCentre (badgeSz, badgeSz);
+        drawForgeBadge (g, badge);
+        bar.removeFromLeft (brand::space::sm);
+
         g.setColour (brand::textPrimary);
         g.setFont (brand::type::sectionTitle());
-        g.drawText (title.toUpperCase(),
-                    bar.translated (brand::space::md, 0),
+        g.drawText (title.toUpperCase(), bar,
                     juce::Justification::centredLeft, false);
         return host.getLocalBounds().removeFromTop (titleH);
     }
