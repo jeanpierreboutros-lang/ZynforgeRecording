@@ -252,17 +252,39 @@ void MainComponent::servicePunch()
 
     if (inside && ! wasInsidePunch && player.isPlaying())
     {
-        // Crossed into the punch window -- drop into record on every
-        // punch-armed track, leave the rest playing back as normal.
+        // Crossed into the punch window -- punch-in on every punch-armed track:
+        // record fresh audio into the CURRENT session and splice it into the
+        // existing take at the punch-in point (audio before the punch-in and
+        // after the punch-out is preserved). The rest keep playing back.
         if (! engine.isRecording())
         {
-            // Save each strip's pre-punch arm state, then force-arm
-            // only the punch-armed ones for the duration of the punch.
+            const auto sessionDir = engine.getActiveSessionDir();
+            if (! sessionDir.isDirectory())
+            {
+                // No take to punch into -- punch-in only overdubs an existing
+                // session. (A fresh recording uses normal RECORD.)
+                showStatus ("Punch-in needs a loaded session with a take");
+                wasInsidePunch = inside;
+                return;
+            }
+            // Refuse if any punch-armed take was auto-split (the single-file
+            // splice can't represent a multi-part base) -- never corrupt it.
             auto& rec = engine.getRecorder();
+            for (int i = 0; i < rec.getNumTracks(); ++i)
+                if (engine.isTrackPunchArmed (i)
+                    && AudioEngine::punchTakeMultiPart (sessionDir, i))
+                {
+                    showStatus ("Punch-in needs single-file takes (this one was auto-split)");
+                    wasInsidePunch = inside;
+                    return;
+                }
+
+            // Force-arm only the punch-armed tracks for the punch.
             for (int i = 0; i < rec.getNumTracks(); ++i)
                 rec.getTrack (i).armed.store (engine.isTrackPunchArmed (i),
                                               std::memory_order_relaxed);
-            engine.startRecording (makeNewSessionDir());
+            engine.armPunchIn (player.getLoopStart());   // splice point = punch-in
+            engine.startRecording (sessionDir);
         }
     }
     else if (! inside && wasInsidePunch && engine.isRecording())

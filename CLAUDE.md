@@ -47,6 +47,7 @@ EDIT-view specifics in `Source/UI/EditTrackRow.h` (was `EditPage.cpp`): the `Tra
 - The audio callback never allocates, locks, opens files, calls `Logger`, or touches the message thread.
 - State transitions happen via `std::atomic` flags. Writers + readers are constructed / destroyed only on the message or background threads.
 - Scratch buffers (`outputAccum`, `playerScratch`, companion ring) pre-allocate in `audioDeviceAboutToStart`.
+- **Punch-in is OFFLINE, never a real-time write into a take.** A punch records a clean fresh `Track_NN` from 0 like any take; the existing copies are moved to `.punchbase` sidecars in `startRecording` (before the writer truncates) and spliced back in `stopRecording` via `Source/Audio/PunchSplice.h` (`base[0,punchIn)+fresh+base[after]`, temp + atomic swap, all copies). The splice sits **after `closeWriters()` but before the async SHA thread** so the report's SHA/length describe the spliced files. Keep it there — never push punch writes onto the audio thread, and never overwrite a take in place (a failure must revert to the untouched base). Multi-part bases are refused. See the punch ADR + *Read-only offline DSP is allowed…* in `decisions.md`.
 
 ### Brand + design system
 

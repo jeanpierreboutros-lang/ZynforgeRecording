@@ -319,6 +319,16 @@ namespace zynforge
         void setPunchModeOn (bool en) noexcept   { punchEnabled.store (en, std::memory_order_relaxed); }
         bool isTrackPunchArmed (int channel) const noexcept;
         void setTrackPunchArmed (int channel, bool armed);
+        // Arm the next startRecording as a punch-in at `punchInSample` -- the
+        // freshly-recorded audio is spliced into the existing take there (audio
+        // before the punch-in and after the punch-out is preserved). Forwarded
+        // to the recorder; auto-cleared on stop. See MultitrackRecorder.
+        void armPunchIn (juce::int64 punchInSample) noexcept { recorder.armPunchIn (punchInSample); }
+        // True if `channel`'s existing take in `sessionDir` is auto-split into
+        // parts -- punch-in must refuse those (the single-file splice can't
+        // represent a multi-part base).
+        static bool punchTakeMultiPart (const juce::File& sessionDir, int channel)
+        { return MultitrackRecorder::takeIsMultiPart (sessionDir, channel); }
         // The loop region from SessionPlayer doubles as the punch window
         // -- there's only ever one 'do this between A and B' selection.
 

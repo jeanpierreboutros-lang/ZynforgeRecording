@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Added (punch-in recording — 2026-06-14)
+- **Punch-in recording** — drop in and re-record a *section* of an existing take while keeping the audio **before the punch-in and after the punch-out**. Arm PUNCH, set the punch region (the loop region), arm the tracks to overdub, and play through it: each armed track records fresh audio that's spliced into its take at the punch point. It's capture-safe by construction — the recorder still writes a clean fresh file, the existing take is moved aside first, and the splice happens on stop via a temp file + atomic swap, so a failure reverts to the original take instead of corrupting it. **Every copy stays identical** — the primary, backup, and all mirror drives are spliced together. (Auto-split/RF64-multipart takes are refused for now; pre-roll monitoring of the existing track is a later pass.)
+
 ### Added (mixer density + views — 2026-06-14)
 - **GRID view** — a new toolbar toggle (beside XS/S/M/L) lays the strips out **12 per row in 2 rows = 24 faders on one page**, scrolling vertically for more. A table-style overview for big channel counts; persisted across launches.
 - **Compact, Pro-Tools-style strips** — the dB ruler and meter now **hug the fader** (no wide empty gutter), and the ruler+fader+meter cluster centres in the strip, so far more strips fit per page. The width presets were retuned: **M** caps compact (≈70–120px) so a normal window fits its full 12-per-page without scrolling; **XS/S** tighter; **L** (8/page) shows the **full channel name on its own row**.

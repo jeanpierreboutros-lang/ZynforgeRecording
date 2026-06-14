@@ -49,6 +49,28 @@ namespace zynforge
         void stopRecording();
         bool isRecording() const noexcept { return recording.load (std::memory_order_acquire); }
 
+        // ── Punch-in (overdub a region of an existing take) ────────────────
+        // Arm the NEXT startRecording as a punch-in at `punchInSample` on the
+        // session's existing take. The real-time capture path is unchanged: we
+        // still record a clean fresh Track_NN file from 0. The punch is an
+        // OFFLINE splice on stop -- each armed track's existing primary/backup/
+        // mirror copy is moved aside to a sidecar before the writer truncates,
+        // then on stop spliced back as base[0,punchIn) + newTake + base[after],
+        // via a temp file + atomic swap, so a failure can't corrupt the take.
+        // Cleared automatically after each stopRecording(). The CALLER must
+        // ensure the existing take is single-file (not RF64/ceiling-split) --
+        // a multi-part base isn't spliced and would be silently lost.
+        void armPunchIn (juce::int64 punchInSample) noexcept
+        {
+            punchInActive = true;
+            punchInPos    = juce::jmax ((juce::int64) 0, punchInSample);
+        }
+        bool isPunchInArmed() const noexcept { return punchInActive; }
+
+        // True if the session's take for `trackIndex` was auto-split into
+        // multiple parts (Track_NN_partXX) -- punch-in must refuse these.
+        static bool takeIsMultiPart (const juce::File& sessionDir, int trackIndex);
+
         // Capture format & pre-roll are settings -- only changeable while not recording.
         void setCaptureFormat (CaptureFormat f) noexcept     { if (! isRecording()) captureFormat = f; }
         CaptureFormat getCaptureFormat() const noexcept       { return captureFormat; }
@@ -454,6 +476,20 @@ namespace zynforge
         std::vector<MirrorConfig> mirrorConfigs;
 
         std::vector<float> scratch;
+
+        // Punch-in state for the active take (set by armPunchIn, cleared in
+        // stopRecording). punchInPos is the timeline sample the freshly-recorded
+        // audio is spliced in at.
+        bool        punchInActive { false };
+        juce::int64 punchInPos    { 0 };
+
+        // Sidecar path that holds an existing take while a punch records over
+        // it: "Audio Files/Track_01.wav" -> "Audio Files/Track_01.punchbase.wav".
+        static juce::File punchSidecar (const juce::File& take)
+        {
+            return take.getParentDirectory().getChildFile (
+                take.getFileNameWithoutExtension() + ".punchbase" + take.getFileExtension());
+        }
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MultitrackRecorder)
     };

@@ -1,5 +1,6 @@
 #include "MultitrackRecorder.h"
 #include "FastHash.h"
+#include "PunchSplice.h"
 
 #include <juce_cryptography/juce_cryptography.h>
 #include <limits>
@@ -413,6 +414,15 @@ namespace zynforge
             samplesSinceStart.fetch_add (numSamples, std::memory_order_relaxed);
     }
 
+    bool MultitrackRecorder::takeIsMultiPart (const juce::File& sessionDir, int trackIndex)
+    {
+        const auto audioFiles = sessionDir.getChildFile ("Audio Files");
+        const auto base = audioFiles.isDirectory() ? audioFiles : sessionDir;
+        const auto stem = juce::String::formatted ("Track_%02d", trackIndex + 1);
+        // A take is multi-part if any Track_NN_partXX.* sibling exists.
+        return ! base.findChildFiles (juce::File::findFiles, false, stem + "_part*").isEmpty();
+    }
+
     bool MultitrackRecorder::startRecording (const juce::File& sessionDir)
     {
         if (recording.load()) return false;
@@ -467,6 +477,17 @@ namespace zynforge
                    &&  tracks[k]->armed.load (std::memory_order_relaxed);
         };
 
+        // Punch-in: move an existing take aside to its sidecar BEFORE the
+        // writer truncates the target, so the base survives to be spliced back
+        // on stop. No-op when not punching or no take exists.
+        auto stashForPunch = [this] (const juce::File& target)
+        {
+            if (! punchInActive || ! target.existsAsFile()) return;
+            const auto sidecar = punchSidecar (target);
+            sidecar.deleteFile();
+            target.moveFileTo (sidecar);
+        };
+
         for (std::size_t i = 0; i < tracks.size(); ++i)
         {
             WriterChannel w;
@@ -516,6 +537,7 @@ namespace zynforge
 
             // Primary writer -- under <session>/Audio Files/Track_NN.<ext>.
             const auto primaryFile = audioFilesDir.getChildFile (trackName + primary.ext);
+            stashForPunch (primaryFile);
             w.writer.reset (openWriterAtPath (primaryFile, primary.container, primary.bitDepth, chans));
             w.primaryBaseFile       = audioFilesDir.getChildFile (trackName);
             w.primaryExt            = primary.ext;
@@ -536,6 +558,7 @@ namespace zynforge
                                               .getChildFile ("Audio Files");
                 backupSession.createDirectory();
                 const auto backupFile = backupSession.getChildFile (trackName + backup.ext);
+                stashForPunch (backupFile);
                 w.backupWriter.reset (openWriterAtPath (backupFile, backup.container, backup.bitDepth, chans));
                 w.backupBaseFile       = backupSession.getChildFile (trackName);
                 w.backupExt            = backup.ext;
@@ -560,6 +583,7 @@ namespace zynforge
                 mirrorSession.createDirectory();
                 const auto mFmt = resolve (mc.format);
                 const auto mFile = mirrorSession.getChildFile (trackName + mFmt.ext);
+                stashForPunch (mFile);
                 WriterChannel::Mirror m;
                 m.writer.reset (openWriterAtPath (mFile, mFmt.container, mFmt.bitDepth, chans));
                 m.baseFile       = mirrorSession.getChildFile (trackName);
@@ -797,6 +821,12 @@ namespace zynforge
         };
         std::vector<WriterReport> writerSnapshots;
         writerSnapshots.reserve (writers.size());
+        // Punch-in: the final on-disk paths of every copy (primary/backup/each
+        // mirror), aligned with writerSnapshots, so we can splice each after the
+        // writers close. Captured here while `writers` still exists.
+        struct PunchWriterFiles { juce::File primary, backup; std::vector<juce::File> mirrors; };
+        std::vector<PunchWriterFiles> punchFiles;
+        const bool doPunch = punchInActive;
         for (auto& wc : writers)
         {
             WriterReport wr { wc.totalSamplesPrimary, wc.totalSamplesBackup,
@@ -810,6 +840,17 @@ namespace zynforge
                 wr.mirrors.push_back ({ root, m.totalSamples, m.partFiles, m.failed });
             }
             writerSnapshots.push_back (std::move (wr));
+
+            PunchWriterFiles pf;
+            if (doPunch)
+            {
+                pf.primary = wc.primaryBaseFile.withFileExtension (wc.primaryExt);
+                if (wc.backupBaseFile.getFullPathName().isNotEmpty())
+                    pf.backup = wc.backupBaseFile.withFileExtension (wc.backupExt);
+                for (auto& m : wc.mirrors)
+                    pf.mirrors.push_back (m.baseFile.withFileExtension (m.ext));
+            }
+            punchFiles.push_back (std::move (pf));
         }
 
         closeWriters();
@@ -819,6 +860,58 @@ namespace zynforge
         // take drains again (we detached them above to flush + close
         // single-threaded).
         rebuildShards();
+
+        // ── Punch-in splice ────────────────────────────────────────────────
+        // Each punched track recorded a clean fresh file; its existing take was
+        // stashed to a sidecar in startRecording. Splice base[0,punchIn) +
+        // freshTake + base[after] over each copy (temp + atomic swap). Runs
+        // synchronously here -- AFTER the writers close, BEFORE the async SHA
+        // thread below -- so the report hashes + lengths describe the spliced
+        // files. On the rare splice failure the take reverts to its pre-punch
+        // base (the original is never lost). Cleared so the next take is normal.
+        if (doPunch)
+        {
+            juce::AudioFormatManager fm; fm.registerBasicFormats();
+            const auto punchPos = punchInPos;
+            auto spliceCopy = [&] (const juce::File& fresh) -> juce::int64
+            {
+                if (fresh.getFullPathName().isEmpty()) return -1;
+                const auto sidecar = punchSidecar (fresh);
+                if (! sidecar.existsAsFile()) return -1;     // this copy wasn't stashed
+                const auto tmp = fresh.getSiblingFile (
+                    fresh.getFileNameWithoutExtension() + ".punchtmp" + fresh.getFileExtension());
+                juce::int64 len = -1;
+                if (splicePunchFile (fm, sidecar, fresh, punchPos, tmp))
+                {
+                    fresh.deleteFile();
+                    tmp.moveFileTo (fresh);
+                    sidecar.deleteFile();
+                }
+                else
+                {
+                    // Failed: restore the original take so nothing is lost.
+                    tmp.deleteFile();
+                    fresh.deleteFile();
+                    sidecar.moveFileTo (fresh);
+                }
+                if (auto* r = fm.createReaderFor (fresh)) { len = r->lengthInSamples; delete r; }
+                return len;
+            };
+
+            for (size_t i = 0; i < punchFiles.size() && i < writerSnapshots.size(); ++i)
+            {
+                const auto len = spliceCopy (punchFiles[i].primary);
+                if (len <= 0) continue;                        // not a punched track
+                writerSnapshots[i].totalSamplesPrimary = len;  // spliced length (samples)
+                if (spliceCopy (punchFiles[i].backup) > 0)
+                    writerSnapshots[i].totalSamplesBackup = len;
+                for (size_t mi = 0; mi < punchFiles[i].mirrors.size()
+                                    && mi < writerSnapshots[i].mirrors.size(); ++mi)
+                    if (spliceCopy (punchFiles[i].mirrors[mi]) > 0)
+                        writerSnapshots[i].mirrors[mi].totalSamples = len;
+            }
+        }
+        punchInActive = false;
 
         // Post-show JSON report -- one file per session that captures every
         // datum a mix engineer / producer needs after the gig: total time,

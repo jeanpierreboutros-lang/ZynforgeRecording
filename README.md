@@ -38,6 +38,7 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Ap
 - **Stereo tracks capture as ONE interleaved stereo file** (`Track_NN.wav`, 2 channels) — not two mono stems; drag it straight into your DAW. Backup + mirror copies are stereo too; legacy two-mono-file sessions still open
 - BWF (`bext`) metadata + ~5 s periodic header flush — crashes leave playable files
 - Pre-roll buffer (0 / 5 / 10 / 30 s) — last N seconds dumped into every track when RECORD is pressed
+- **Punch-in recording** — re-record a *section* of a take, keeping the audio before the punch-in and after the punch-out. Arm PUNCH, set the punch region, arm the tracks to overdub, and play through it. Capture-safe: the recorder writes a clean fresh file and the section is spliced into the take on stop (temp + atomic swap, original moved aside first), so a failure reverts to the original rather than corrupting it. Primary + backup + every mirror are spliced together so all drives stay identical
 - Formats: WAV / AIFF (16 / 24 / 32-float), FLAC (16 / 24)
 - **Multi-format simultaneous capture** — primary in one format, parallel backup writer in another
 - Auto-recover orphan sessions on next launch; `session.report.json` written on clean stop

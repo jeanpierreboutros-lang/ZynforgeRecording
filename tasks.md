@@ -32,16 +32,7 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## In Progress
 
-- [~] **Punch-in recording (record into a region, keep before + after)** — JP-requested 2026-06-14; chosen behaviour = *punch-in at the cursor* (replace the punched region, preserve audio before the punch-in and after the punch-out).
-  - **DONE — capture-safe splice core** (`Source/Audio/PunchSplice.h` + `PunchSpliceTests`, 5 cases): `splicePunchFile()` writes a NEW file = `base[0,punchIn) ++ insert ++ base[punchIn+insertLen,end)`, never mutates inputs, refuses channel/SR mismatch. Atomic-swap-on-success is the caller's job.
-  - **REMAINING — wiring (capture-critical, do carefully):**
-    1. `servicePunch` (`MainComponentTools.cpp`) currently records into a **new** session from sample 0 (`startRecording(makeNewSessionDir())`) — it neither punches the existing take nor keeps before/after. Rework to: at punch-in (loopStart), **stash** each punch-armed track's existing `Track_NN.<ext>` → sidecar, record the new audio into the **current** session's `Track_NN.<ext>`, and remember `punchInSample = loopStart`.
-    2. On punch-out / stop: `splicePunchFile(sidecar, newTrackNN, punchIn)` → temp → **atomic swap** over `Track_NN.<ext>` → delete sidecar. Do it post-`stopRecording` (offline, zero RT-path risk).
-    3. **Report consistency:** re-hash each spliced primary + update its `sha256` / `totalSamplesPrimary` in `session.report.json` (else `verify_take.sh` false-flags a clean punch).
-    4. **Backup/mirror:** DECIDED (JP, 2026-06-14) = **splice every copy** so all drives stay byte-identical. On stop, run `splicePunchFile` over the primary AND each backup/mirror copy (stash each, splice, swap), and update their SHAs/lengths in the report. Slightly more I/O on stop; no out-of-sync copies.
-    5. Reload waveforms after the swap (the envelope-hold + sharded scan already handle the repaint).
-    6. Headless integration test: record base take, punch a mid region, assert the on-disk `Track_NN.wav` == before+new+after and the report SHA matches.
-  - **Injection point found (keeps the report self-consistent, no JSON surgery):** stash existing primary/backup/mirror copies → sidecars in `startRecording` (before the writers truncate). In `stopRecording`, splice each copy in the gap **after `closeWriters()` (files closed) but before the async SHA thread (`MultitrackRecorder.cpp` ~995)** — that thread then hashes the SPLICED files, so `sha256` is correct automatically; just overwrite `writerSnapshots[i].totalSamples*` with the spliced length so the report's length matches too. Real-time capture path stays untouched. v1 limitation to note: a multi-part (RF64/ceiling-split) BASE take isn't handled by the single-file splice — guard/skip punch when the existing take is multi-part.
+- *(none — close out a session by moving items here back into the appropriate list.)*
 
 ## Backlog
 
@@ -76,6 +67,13 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 - [ ] ~~Per-track plugin slots / AU / VST hosting~~ — explicitly rejected. See `decisions.md` *No plugin hosting*. Recorded here so future contributors don't relitigate.
 
 ## Recently Completed
+
+### 2026-06-14 (later) — punch-in recording + cold-load parallel scan + EDIT fixes
+- [x] **Punch-in recording** (L) — record into a region and **keep the audio before the punch-in and after the punch-out**, replacing only the punched middle. Capture-safe by design: the real-time recorder is unchanged (records a clean fresh `Track_NN`), the existing take is stashed to a sidecar before the writer truncates, and on stop an **offline splice** (`Source/Audio/PunchSplice.h`) rebuilds `base[0,punchIn) + newTake + base[after]` via temp + atomic swap — a failure reverts to the pre-punch take, never corrupts it. **Every copy is spliced** (primary + backup + each mirror) so all drives stay byte-identical (JP decision); the splice runs after `closeWriters()` but before the async SHA thread, so the session report's length + SHA describe the spliced file with no JSON surgery. Multi-part (auto-split) bases are refused. `servicePunch` now punches into the **current** session (was: recorded a throwaway new session from 0). Tested: `PunchSpliceTests` (5) + `PunchRecordTests` (2 — on-disk before+new+after, report length+SHA match). 252/0. **v1 UX:** triggered by the existing PUNCH mode + loop/punch region + play-through; **deferred:** pre-roll monitoring of the existing track, a dedicated one-button "punch at cursor".
+- [x] **Waveforms no longer vanish when recording other tracks** (S) — arming + rolling kept only the armed rows on the live envelope; the rest keep their existing waveform.
+- [x] **Faster cold session LOAD** (M) — waveform cache sharded across 4 parallel scan threads (`Track_NN % 4`); ~up to 4× faster first-paint on an un-cached multitrack session. `WaveCache.wfm` rev 3 (one section per shard).
+- [x] **Instant waveform on record-stop** (S) — the live capture envelope is held as a provisional waveform until the real thumbnail scans in.
+- [x] **EDIT selection readout legible + New Session dialog overlap/badge + BigClock crisp** (S) — see CHANGELOG.
 
 ### 2026-06-14 — mixer density + view modes + click-drag faders + design re-tone + audit fixes + crash fix
 - [x] **Compact channel strips + GRID view** (M) — per-preset floor/ceil widths (XS 48/78, S 58/100, M 70/120, L 150/280; targetPerPage 24/16/12/8), Pro-Tools-tight fader cluster (dB ruler + 30px fader + 16/26px meter centred, name room preserved), inter-strip gap trimmed to 4px. New toolbar **GRID** toggle shows 24 faders as a 12-col × 2-row table (vertical scroll), persisted in appProps. L preset shows the full channel name at 8/page.

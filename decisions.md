@@ -6,6 +6,16 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Punch-in is an offline splice on stop, not a real-time write into the take — 2026-06-14
+
+**Context.** JP asked to re-record a section of an existing take and keep the audio before/after (classic punch-in). The naive implementation — have the recorder seek into the existing file and overwrite the punched region in real time — would put destructive, position-offset writes on the audio thread, against the file the player may be reading, with RF64/backup/mirror finalisation all needing to stay consistent. That is the single most dangerous thing this app could do; a glitch loses or corrupts a take.
+
+**Decision.** The real-time capture path is **unchanged**: a punch records a clean fresh `Track_NN` from sample 0, exactly like any take. The punch is an **offline splice on stop**. In `startRecording`, each punch-armed track's existing copy (primary + backup + every mirror) is moved aside to a `.punchbase` sidecar *before* the writer truncates. In `stopRecording`, after the writers close but before the async SHA thread, `splicePunchFile` (`Source/Audio/PunchSplice.h`) writes `base[0,punchIn) + freshTake + base[after]` to a temp file and atomically swaps it over the take. The sidecar is the original; on any splice failure the take reverts to it. The splice runs for every copy, so all drives stay byte-identical (JP decision). Because it lands before the SHA hashing + report build, the report's `sha256` + `totalSamples` describe the spliced files with no JSON surgery. `servicePunch` punches into the **current** session (it used to record a throwaway new session from 0). Multi-part (auto-split) bases are refused — the single-file splice can't represent them.
+
+**Rationale.** Keeping the audio thread out of it means punch-in cannot regress capture integrity — the worst case is a clean fresh take plus an untouched original. The splice is ordinary read-only offline DSP (same class as Consolidate/Bounce), unit-tested in isolation (`PunchSpliceTests`) and end-to-end (`PunchRecordTests`). Splicing every copy honours the redundancy guarantee the backup/mirror feature exists for.
+
+**Consequences.** Stop does a synchronous splice (copies the base once) — sub-second for song-length takes; noticeable only on very long bases, which are also the multi-part case we refuse. v1 has no pre-roll monitoring of the existing track (you hear your input, not the old take, across the punch) and no dedicated one-button "punch at cursor" — both are additive later. See *Read-only offline DSP is allowed; real-time signal-modifying DSP is not* (punch fits the offline rule).
+
 ## Waveform scanning is sharded across N parallel caches — 2026-06-14
 
 **Context.** Opening a freshly-imported (un-cached) multitrack session felt slow: JUCE's `AudioThumbnailCache` scans on a single internal `TimeSliceThread`, so every WAV's min/max reduction ran serially on one core. For a 32–55-track session that's a multi-second first-paint, even on a fast SSD (the bottleneck is the single-threaded read+reduce, not raw I/O). Record-stop was already made instant via the held live envelope; this is the *load* counterpart.
