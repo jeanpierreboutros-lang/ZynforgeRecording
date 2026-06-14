@@ -283,16 +283,43 @@ void MainComponent::servicePunch()
             for (int i = 0; i < rec.getNumTracks(); ++i)
                 rec.getTrack (i).armed.store (engine.isTrackPunchArmed (i),
                                               std::memory_order_relaxed);
-            engine.armPunchIn (player.getLoopStart());   // splice point = punch-in
+            // Splice at the ACTUAL playhead where recording begins (one timer
+            // tick past loopStart), so the captured audio lands at the right
+            // timeline position instead of being nudged earlier to loopStart.
+            engine.armPunchIn (player.getPositionSamples());
             engine.startRecording (sessionDir);
         }
     }
     else if (! inside && wasInsidePunch && engine.isRecording())
     {
-        // Crossed out -- stop recording cleanly.
+        // Crossed out -- stop recording cleanly (the splice replaces the
+        // punched region; audio after the punch-out is preserved).
         engine.stopRecording();
     }
     wasInsidePunch = inside;
+}
+
+void MainComponent::servicePunchSession()
+{
+    // Drives a RECORD-button-triggered selection punch through its tail.
+    // servicePunch() above does the actual in/out record; this just ends the
+    // session: once recording has stopped (punched out) and the post-roll has
+    // played, OR the take reached its end, OR the user stopped, stop the
+    // transport and tear the punch arming down.
+    auto& player = engine.getPlayer();
+    const auto pos = player.getPositionSamples();
+    const bool punchedOut = ! engine.isRecording();
+    const bool done = (! player.isPlaying())
+                   || (punchedOut && pos >= punchPostRollEnd)
+                   || (pos >= player.getTotalLengthSamples());
+    if (! done) return;
+
+    if (engine.isRecording()) engine.stopRecording();   // safety net
+    engine.stopPlayback();
+    engine.setPunchModeOn (false);
+    punchSessionActive = false;
+    recordButton.setButtonText ("RECORD");
+    showStatus ("Punch complete");
 }
 
 void MainComponent::runNoiseAnalysis()

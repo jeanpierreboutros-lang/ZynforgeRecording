@@ -42,6 +42,21 @@ void MainComponent::updateMixerPlaceholder()
 
 void MainComponent::onRecordClicked()
 {
+    // A RECORD-triggered selection punch is in flight (pre-roll / recording /
+    // post-roll) -- pressing RECORD again ends it: punch out if recording
+    // (splices the take), then stop the transport and tear down.
+    if (punchSessionActive)
+    {
+        if (engine.isRecording()) engine.stopRecording();
+        engine.stopPlayback();
+        engine.setPunchModeOn (false);
+        punchSessionActive = false;
+        recordButton.setButtonText ("RECORD");
+        statusLabel.setText (engine.isRecording() ? "Idle" : "Punch ended",
+                             juce::dontSendNotification);
+        return;
+    }
+
     // Phase 1d: a rolling daemon take stops over the wire.
     if (daemonModeActive() && captureSupervisor.isDaemonRecording())
     {
@@ -213,6 +228,45 @@ void MainComponent::onRecordClicked()
             statusLabel.setText ("Daemon record failed -- check Session > Capture daemon.",
                                  juce::dontSendNotification);
         return;
+    }
+
+    // ── Pro Tools-style SELECTION punch in/out ─────────────────────────────
+    // If there's a selection (loop region) on a loaded take, RECORD does a
+    // proper punch in AND out: roll the transport from a PRE-ROLL lead-in
+    // (you hear the existing track), auto punch-IN at the selection start,
+    // auto punch-OUT at its end, then play a POST-ROLL tail and stop. The
+    // position-windowed record + splice is servicePunch(); this just rolls the
+    // transport into it. No selection -> fall through to the cursor/append
+    // continue below.
+    {
+        auto& player = engine.getPlayer();
+        const bool haveSelection = continueTake && player.hasLoopRegion()
+                                && player.getLoopEnd() > player.getLoopStart();
+        if (haveSelection)
+        {
+            const double sr  = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
+            const auto   in  = player.getLoopStart();
+            const auto   out = player.getLoopEnd();
+            const int    preRollSec  = juce::jmax (2, engine.getRecorder().getPreRollSeconds());
+            const juce::int64 preRollS  = (juce::int64) (preRollSec * sr);
+            const juce::int64 postRollS = (juce::int64) (2.0 * sr);
+
+            for (int i = 0; i < numTracks; ++i)
+                engine.setTrackPunchArmed (i, recorder.getTrack (i).armed.load (std::memory_order_relaxed));
+            engine.setPunchModeOn (true);
+            punchOutSample    = out;
+            punchPostRollEnd  = out + postRollS;
+            punchSessionActive = true;
+            wasInsidePunch    = false;   // let servicePunch see the crossing
+            player.setPositionSamples (juce::jmax ((juce::int64) 0, in - preRollS));
+            engine.startPlayback();
+            recordButton.setButtonText ("STOP");
+            statusLabel.setText ("Punch-in armed -- in " + juce::String (in / sr, 1)
+                                 + "s, out " + juce::String (out / sr, 1)
+                                 + "s, pre-roll " + juce::String (preRollSec) + "s",
+                                 juce::dontSendNotification);
+            return;
+        }
     }
 
     // Punch-in continues into the loaded take(s) at `punchAt`; armed for the

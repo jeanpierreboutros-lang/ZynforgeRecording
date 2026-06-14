@@ -110,6 +110,8 @@ void MainComponent::timerCallback()
 
     if (engine.isPunchModeOn() && engine.getPlayer().hasLoopRegion())
         servicePunch();
+    if (punchSessionActive)
+        servicePunchSession();
 
     // Keep each strip's input/output combos in sync with engine state --
     // the PATCH page can mutate routing behind the strip's back. Also

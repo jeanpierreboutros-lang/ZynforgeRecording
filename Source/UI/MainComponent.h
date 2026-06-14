@@ -182,6 +182,14 @@ private:
     void togglePunchMode();
     void servicePunch();        // called each timerCallback tick
     bool wasInsidePunch { false };
+    // Pro Tools-style selection punch driven by the RECORD button: play from a
+    // pre-roll lead-in, auto punch-in at the selection start and punch-out at
+    // its end, then play a post-roll tail before stopping. servicePunch does
+    // the in/out record; servicePunchSession() runs the post-roll + teardown.
+    void servicePunchSession();
+    bool        punchSessionActive { false };
+    juce::int64 punchOutSample     { 0 };
+    juce::int64 punchPostRollEnd   { 0 };
 
     // Snap modes -- cycled by the '4' key (also surfaced in the
     // Edit menu). Off / Markers / Bars; Bars uses the engine's
