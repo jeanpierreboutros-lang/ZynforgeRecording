@@ -632,7 +632,14 @@ namespace zynforge
         // and rolling no longer blanks the tracks you captured earlier. The
         // armed rows' real waveforms scan in once, cleanly, on stop.
         if (engine.isRecording())
-            list->setWaveformsFromSession (sessionDir, /*skipArmedRows*/ true);
+        {
+            // A normal take is being WRITTEN to its file -> skip the armed rows
+            // (scanning a growing file paints garbage; the live envelope owns
+            // them). A CONTINUE writes a separate new part, so the armed track's
+            // existing file is stable -- keep showing its waveform.
+            const bool isContinue = engine.getRecorder().getRecordBaseSamples() > 0;
+            list->setWaveformsFromSession (sessionDir, /*skipArmedRows*/ ! isContinue);
+        }
         else
             list->setWaveformsFromSession (sessionDir);
 
@@ -684,15 +691,13 @@ namespace zynforge
         // (before the post-stop disk re-scan swaps in the real waveform).
         if (recJustStarted && list != nullptr)
         {
-            // Continue take: seed the envelope with silent columns for the
-            // existing take so the live waveform draws AFTER it (at the base),
-            // matching the playhead. The EDIT timer ticks at 24 Hz, so the
-            // envelope grows ~24 columns/sec -- prefill the same density.
-            const auto base = engine.getRecorder().getRecordBaseSamples();
-            const double sr = engine.getPlayer().getSampleRate() > 0.0
-                                  ? engine.getPlayer().getSampleRate() : 48000.0;
-            const int prefill = base > 0 ? (int) ((double) base / sr * 24.0) : 0;
-            list->setLiveRecording (true, prefill);
+            // CONTINUE take (base > 0): keep the existing take's waveform on
+            // screen and let the playhead roll past it into the new part (which
+            // fills in on stop). NO live envelope -- it would hide the existing
+            // take and read as "started over". A NORMAL take uses the live
+            // envelope as before (its file is being written, not appended-to).
+            const bool isContinue = engine.getRecorder().getRecordBaseSamples() > 0;
+            list->setLiveRecording (! isContinue);
         }
         // On stop, HOLD the live envelope (don't clear it) until the real disk
         // thumbnail scans in -- the lane shows the just-captured waveform

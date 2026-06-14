@@ -1,6 +1,7 @@
 #include "MultitrackRecorder.h"
 #include "FastHash.h"
 #include "PunchSplice.h"
+#include "MultiPartReader.h"
 
 #include <juce_cryptography/juce_cryptography.h>
 #include <limits>
@@ -511,6 +512,29 @@ namespace zynforge
             sidecar.deleteFile();
             target.moveFileTo (sidecar);
         };
+
+        // Continue: the timeline base is the EXISTING take's length, measured
+        // from the files on disk (the longest armed take's Track_NN + its parts)
+        // -- authoritative, so the clock / playhead continue correctly even if
+        // the caller's hint was stale. Read before the writers open new parts.
+        if (continueAsPart)
+        {
+            juce::AudioFormatManager fm; fm.registerBasicFormats();
+            juce::int64 takeLen = 0;
+            for (std::size_t i = 0; i < tracks.size(); ++i)
+            {
+                if (tracks[i]->isBus .load (std::memory_order_relaxed)) continue;
+                if (! tracks[i]->armed.load (std::memory_order_relaxed)) continue;
+                const auto name = juce::String::formatted ("Track_%02d", (int) i + 1);
+                const auto mainFile = audioFilesDir.getChildFile (name + primary.ext);
+                juce::int64 len = 0;
+                for (auto& pf : findTakeParts (mainFile))
+                    if (std::unique_ptr<juce::AudioFormatReader> r { fm.createReaderFor (pf) })
+                        len += r->lengthInSamples;
+                takeLen = juce::jmax (takeLen, len);
+            }
+            recordBaseSamples = takeLen;
+        }
 
         for (std::size_t i = 0; i < tracks.size(); ++i)
         {
