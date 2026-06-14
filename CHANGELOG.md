@@ -32,6 +32,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ### Changed (performance — 2026-06-14)
 - **Waveforms appear instantly when a take stops** — recording builds a live envelope for free during the take; instead of throwing it away on stop (which left the lane blank/coarse while the file re-scanned), the EDIT lane now **holds that envelope as a provisional waveform until the real thumbnail finishes scanning**, then snaps to full resolution. It dims from hot-orange to ember during the hand-off to read as "finalising". No extra disk read; the perceived "waveform build" delay is gone.
+- **Faster session LOAD on a cold cache** — opening a freshly-imported (un-cached) multitrack session used to scan every WAV serially on one thread. The waveform cache is now **sharded across 4 parallel scan threads**, so the files scan concurrently (≈ up to 4× faster first-paint on a multicore SSD). Reopen stays instant (the on-disk `WaveCache.wfm` now stores one section per shard; old caches are transparently re-scanned once and re-saved in the new layout).
 - **BigClock timer is brighter / hotter** in record mode and crisper to read.
 
 ### Fixed (correctness + stability — 2026-06-14)

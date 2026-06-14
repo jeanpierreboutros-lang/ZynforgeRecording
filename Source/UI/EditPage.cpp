@@ -22,8 +22,8 @@ namespace zynforge
     public:
         TrackList (AudioEngine& eng,
                    juce::AudioFormatManager& fm,
-                   juce::AudioThumbnailCache& cache)
-            : engine (eng), formats (fm), thumbCache (cache) {}
+                   std::vector<std::unique_ptr<juce::AudioThumbnailCache>>& caches)
+            : engine (eng), formats (fm), thumbCaches (caches) {}
 
         // Zoom gestures (DAW-standard): Cmd/Ctrl + wheel zooms the timeline
         // horizontally; add Shift for vertical (amplitude) zoom. A plain
@@ -126,7 +126,11 @@ namespace zynforge
             {
                 auto& tL = engine.getRecorder().getTrack (i);
                 const bool stereo = tL.isStereo.load() && (i + 1 < numTracks);
-                auto r = std::make_unique<TrackRow> (i, stereo, engine, formats, thumbCache);
+                // Shard by physical track index so each WAV always lands in the
+                // same cache (stable cache hits) and adjacent tracks spread
+                // across the parallel scan threads.
+                auto& shard = *thumbCaches[(size_t) (i % (int) thumbCaches.size())];
+                auto r = std::make_unique<TrackRow> (i, stereo, engine, formats, shard);
                 r->onSizeChosen = [this] (TrackRow&, TrackRow::Size) { resized(); };
                 r->onTabRename  = [this] (TrackRow& from, bool shift) { tabRename (from, shift); };
                 r->onApplyToAllRows = [this] (TrackRow::Size s, int customPx) { applySizeToAll (s, customPx); };
@@ -323,7 +327,7 @@ namespace zynforge
     private:
         AudioEngine&                              engine;
         juce::AudioFormatManager&                 formats;
-        juce::AudioThumbnailCache&                thumbCache;
+        std::vector<std::unique_ptr<juce::AudioThumbnailCache>>& thumbCaches;
         std::vector<std::unique_ptr<TrackRow>>    rows;
         int                                       viewportHeight { 480 };
     };
@@ -343,16 +347,20 @@ namespace zynforge
         autoToolbar = std::make_unique<AutomationToolbar>();
 
         // Gig-one field report: waveform builds felt slow after record/load.
-        // The AudioThumbnailCache scans on its own TimeSliceThread at default
-        // priority, competing with everything; re-start it high so freshly
-        // recorded takes paint their waveforms as fast as the disk allows.
+        // Two levers: (1) each scan thread runs at high priority so it paints
+        // as fast as the disk allows; (2) the caches are SHARDED so several
+        // WAVs scan in PARALLEL instead of serially on one thread -- the cost
+        // that dominated first-opening an un-cached multitrack session.
+        for (int s = 0; s < kNumScanShards; ++s)
         {
-            auto& scanThread = thumbnailCache.getTimeSliceThread();
+            auto cache = std::make_unique<juce::AudioThumbnailCache> (256);
+            auto& scanThread = cache->getTimeSliceThread();
             scanThread.stopThread (2000);
             scanThread.startThread (juce::Thread::Priority::high);
+            thumbnailCaches.push_back (std::move (cache));
         }
 
-        list = std::make_unique<TrackList> (engine, formatManager, thumbnailCache);
+        list = std::make_unique<TrackList> (engine, formatManager, thumbnailCaches);
         list->sharedToolsBar = toolsBar.get();
         viewport.setViewedComponent (list.get(), false);
         // Vertical scrollbar visible; horizontal scrollbar hidden BUT
@@ -449,15 +457,26 @@ namespace zynforge
             juce::FileInputStream in (cacheFile);
             if (! in.openedOk()) return;
 
-            const int magic = in.readInt();
-            const int ver   = in.readInt();
-            if (magic != kWaveCacheMagic || ver != kWaveCacheVersion)
+            const int magic  = in.readInt();
+            const int ver    = in.readInt();
+            const int shards = in.readInt();
+            if (magic != kWaveCacheMagic || ver != kWaveCacheVersion
+                || shards != (int) thumbnailCaches.size())
                 stale = true;
             else
-                // Best-effort: readFromStream returns false on a corrupt /
-                // wrong-JUCE-version body, in which case the thumbnails just
-                // re-scan -- worst case 'slow first paint', never wrong audio.
-                thumbnailCache.readFromStream (in);
+                // One length-prefixed section per shard cache. Best-effort:
+                // readFromStream returns false on a corrupt / wrong-JUCE-version
+                // body, in which case those thumbnails just re-scan -- worst
+                // case 'slow first paint', never wrong audio.
+                for (auto& cache : thumbnailCaches)
+                {
+                    const int len = in.readInt();
+                    if (len <= 0) continue;
+                    juce::MemoryBlock mb;
+                    in.readIntoMemoryBlock (mb, len);
+                    juce::MemoryInputStream mis (mb, false);
+                    cache->readFromStream (mis);
+                }
         }
         if (stale)
             cacheFile.deleteFile();
@@ -473,9 +492,18 @@ namespace zynforge
         {
             juce::FileOutputStream out (tmpFile);
             if (! out.openedOk()) return;
-            out.writeInt (kWaveCacheMagic);     // header: tag the resolution
-            out.writeInt (kWaveCacheVersion);   // so a later res change drops it
-            thumbnailCache.writeToStream (out);
+            out.writeInt (kWaveCacheMagic);              // header: tag the resolution
+            out.writeInt (kWaveCacheVersion);            // so a later res change drops it
+            out.writeInt ((int) thumbnailCaches.size()); // shard count
+            // One length-prefixed section per shard cache so each loads back
+            // into the same shard on reopen.
+            for (auto& cache : thumbnailCaches)
+            {
+                juce::MemoryOutputStream mos;
+                cache->writeToStream (mos);
+                out.writeInt ((int) mos.getDataSize());
+                out.write (mos.getData(), mos.getDataSize());
+            }
             out.flush();
         }
         if (tmpFile.getSize() > 0)

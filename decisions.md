@@ -6,6 +6,16 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Waveform scanning is sharded across N parallel caches — 2026-06-14
+
+**Context.** Opening a freshly-imported (un-cached) multitrack session felt slow: JUCE's `AudioThumbnailCache` scans on a single internal `TimeSliceThread`, so every WAV's min/max reduction ran serially on one core. For a 32–55-track session that's a multi-second first-paint, even on a fast SSD (the bottleneck is the single-threaded read+reduce, not raw I/O). Record-stop was already made instant via the held live envelope; this is the *load* counterpart.
+
+**Decision.** `EditPage` owns **N=4 `AudioThumbnailCache` shards** (each with its own high-priority scan thread) instead of one. A track is assigned to a shard by its **physical index** (`Track_NN % N`), so files scan in parallel and each file always lands in the same shard (stable cache hits on reopen). N is a fixed constant, not CPU-derived, so the on-disk cache is portable between machines. `WaveCache.wfm` gains a shard-count header + one length-prefixed section per shard; the version revision bumped to 3 so pre-shard single-blob caches are dropped and re-scanned once.
+
+**Rationale.** Sharding reuses JUCE's proven scanner and thread plumbing — no bespoke DSP/reader, no cross-thread writes into one cache (each cache fully owns its thumbnails + thread). Failure is graceful: a corrupt or mismatched cache section just re-scans that shard ("slow first paint, never wrong audio"). Fixed N keeps caches portable, which matters because sessions move between machines without their `WaveCache.wfm`.
+
+**Consequences.** First-open of a cold session is ≈ up to 4× faster (multicore SSD); reopen stays instant. 4 high-priority reader threads can't preempt the CoreAudio callback (RT priority is higher), so capture integrity is untouched; load also typically happens pre-show, not mid-take. If profiling later shows disk-seek thrash on spinning media, N can drop to 2 without a format change (the shard-count header already guards mismatches). See *Waveforms appear instantly when a take stops* (the record-side counterpart) in CHANGELOG.
+
 ## Tints route through `brand::lift()/sink()`; raw `brighter()/darker()` is gate-banned — 2026-06-14
 
 **Context.** A design-system audit found the token infrastructure strong (generated, in-sync, gated) but with two last-mile leaks the gate couldn't see: 60+ raw `juce::Colour::brighter()/darker()` tint calls with ad-hoc amounts, and 53% of `withAlpha(...)` values bypassing the named alpha scale. Tints were the single largest source of *uncontrolled* visual variance — and completely invisible to `design_audit.sh`.

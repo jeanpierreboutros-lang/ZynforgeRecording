@@ -33,10 +33,11 @@ namespace zynforge
     static constexpr int kThumbResolution = 128;
     static constexpr int kWaveCacheMagic   = 0x5A574332; // 'ZWC2'
     // Low byte is a revision: bump it to discard previously-saved caches even
-    // when the resolution is unchanged. rev 2 drops caches written by the
-    // build that froze thumbnails at a fraction of a second (a partial read
-    // taken mid-capture got cached as 'complete'); those files are re-scanned.
-    static constexpr int kWaveCacheVersion = (kThumbResolution << 8) | 2;
+    // when the resolution is unchanged. rev 2 dropped caches written by the
+    // build that froze thumbnails at a fraction of a second. rev 3 (2026-06-14)
+    // changes the on-disk layout to N length-prefixed shard sections (parallel
+    // scan caches), so pre-rev-3 single-blob caches are dropped + re-scanned.
+    static constexpr int kWaveCacheVersion = (kThumbResolution << 8) | 3;
 
     // Single home for the timeline<->pixel mapping that the EDIT lanes do
     // ~a dozen times. Build one per paint/event from the lane's inner

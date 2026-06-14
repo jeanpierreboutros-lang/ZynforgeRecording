@@ -252,7 +252,16 @@ namespace zynforge
 
         AudioEngine&                       engine;
         juce::AudioFormatManager           formatManager;
-        juce::AudioThumbnailCache          thumbnailCache { 256 };
+        // Waveform scanning is sharded across N AudioThumbnailCaches, each with
+        // its OWN TimeSliceThread, so an un-cached session's WAVs scan in
+        // PARALLEL (N cores) instead of serially on one thread -- the dominant
+        // cost of first-opening a freshly-imported multitrack session. A track
+        // is assigned to a shard by its physical index (Track_NN), so the
+        // assignment is stable across reopen and WaveCache hits land. Fixed N
+        // (not CPU-derived) keeps the on-disk cache layout portable between
+        // machines. WaveCache.wfm stores one length-prefixed section per shard.
+        static constexpr int               kNumScanShards = 4;
+        std::vector<std::unique_ptr<juce::AudioThumbnailCache>> thumbnailCaches;
         ScrollViewport                     viewport;
         std::unique_ptr<TrackList>         list;
         PlaceholderView                    placeholder;
