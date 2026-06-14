@@ -32,7 +32,15 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## In Progress
 
-- *(none — close out a session by moving items here back into the appropriate list.)*
+- [~] **Punch-in recording (record into a region, keep before + after)** — JP-requested 2026-06-14; chosen behaviour = *punch-in at the cursor* (replace the punched region, preserve audio before the punch-in and after the punch-out).
+  - **DONE — capture-safe splice core** (`Source/Audio/PunchSplice.h` + `PunchSpliceTests`, 5 cases): `splicePunchFile()` writes a NEW file = `base[0,punchIn) ++ insert ++ base[punchIn+insertLen,end)`, never mutates inputs, refuses channel/SR mismatch. Atomic-swap-on-success is the caller's job.
+  - **REMAINING — wiring (capture-critical, do carefully):**
+    1. `servicePunch` (`MainComponentTools.cpp`) currently records into a **new** session from sample 0 (`startRecording(makeNewSessionDir())`) — it neither punches the existing take nor keeps before/after. Rework to: at punch-in (loopStart), **stash** each punch-armed track's existing `Track_NN.<ext>` → sidecar, record the new audio into the **current** session's `Track_NN.<ext>`, and remember `punchInSample = loopStart`.
+    2. On punch-out / stop: `splicePunchFile(sidecar, newTrackNN, punchIn)` → temp → **atomic swap** over `Track_NN.<ext>` → delete sidecar. Do it post-`stopRecording` (offline, zero RT-path risk).
+    3. **Report consistency:** re-hash each spliced primary + update its `sha256` / `totalSamplesPrimary` in `session.report.json` (else `verify_take.sh` false-flags a clean punch).
+    4. **Backup/mirror:** v1 either splices the backup/mirror copies too, or refuses punch when a backup/mirror is running (don't leave copies silently out of sync — surface it). Decide + document.
+    5. Reload waveforms after the swap (the envelope-hold + sharded scan already handle the repaint).
+    6. Headless integration test: record base take, punch a mid region, assert the on-disk `Track_NN.wav` == before+new+after and the report SHA matches.
 
 ## Backlog
 
