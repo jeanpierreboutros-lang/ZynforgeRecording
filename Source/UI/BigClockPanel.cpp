@@ -284,16 +284,26 @@ namespace zynforge
                      tpHot ? brand::accentRecord : brand::textPrimary);
         }
 
-        // Centre: huge timer
-        g.setColour (mode == Mode::Recording ? brand::meterWhiteHot
-                   : mode == Mode::Playing   ? brand::accentPlay
-                                             : brand::accentStatus);
-        // Tabular numerals -- the timer string can't shift width as
-        // seconds tick. Hero scale (h_hero=44) pinned via brand::type
-        // so the timer's visual weight is system-managed, not bespoke.
-        g.setFont (brand::type::mono (juce::jmin (inner.getHeight() * 0.95f,
-                                                  brand::type::h_hero + 12.0f),
-                                      true));
+        // Centre: huge timer. Tabular numerals -- the timer string can't
+        // shift width as seconds tick. Hero scale (h_hero=44) pinned via
+        // brand::type so the timer's weight is system-managed, not bespoke.
+        const float timerPt = juce::jmin (inner.getHeight() * 0.95f,
+                                          brand::type::h_hero + 12.0f);
+        const auto timerCol = mode == Mode::Recording ? brand::accentRecord
+                            : mode == Mode::Playing   ? brand::accentPlay
+                                                      : brand::accentStatus;
+        // Recording: the mockup's timer reads as INCANDESCENT red-orange,
+        // not white. Lay a soft hot-orange bloom behind the digits (a larger
+        // semi-transparent pass) so they glow like worked metal, then stamp
+        // the crisp red-orange face on top.
+        if (mode == Mode::Recording)
+        {
+            g.setColour (brand::meterHot.withAlpha (0.32f));
+            g.setFont (brand::type::mono (timerPt * 1.06f, true));
+            g.drawText (elapsedText, inner, juce::Justification::centred, false);
+        }
+        g.setColour (timerCol);
+        g.setFont (brand::type::mono (timerPt, true));
         g.drawText (elapsedText, inner, juce::Justification::centred, false);
     }
 }

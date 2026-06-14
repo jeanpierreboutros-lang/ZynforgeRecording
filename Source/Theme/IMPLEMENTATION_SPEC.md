@@ -62,8 +62,8 @@ are positioned (the mixer viewport), not the strip itself — see §4.
 | Centre | timer **JetBrains Mono Bold 52px** |
 | Right | 7-row stat grid, label Inter 10px tertiary / value mono bold 10.5px secondary, 240px wide |
 
-Corner brackets are the one piece not yet in your build — add four 2px
-`brandOrange` L-strokes at the panel corners (the target shows the exact inset).
+✅ **DONE** (2026-06-14) — corner brackets are in `BigClockPanel::paint` (top-left +
+top-right 2px `brandOrange` L-strokes, ~20px, inside the inset orange frame).
 
 ---
 
@@ -77,22 +77,37 @@ Corner brackets are the one piece not yet in your build — add four 2px
 
 ---
 
-## 4. Mixer layout / strip gap — `MainComponentLayout.cpp` 🔶⚠️
+## 4. Mixer layout / strip gap — `MainComponentLayout.cpp` ✅ DONE
 
-The target shows **carded strips with an 8px gap**. Whether your build shows the
-gap depends on how strips are laid out in the mixer viewport. Find the strip
-loop in `resized()` (the section after the toolbar rows) and ensure each strip
-gets `width = stripW` with an **8px gap** between (`r.removeFromLeft(8)` between
-strips), and the master separated by a 1px `edge` divider + 8px.
-Strip width per preset (S/M/L/XS) stays as-is; only the **gap** + the master
-divider need to match. *I couldn't fully read this loop blind — send me the
-strip-layout block of `resized()` and I'll write the exact edit.*
+The strip loop in `resized()` uses `const int gap = 8` and lays strips at
+`x += stripW + gap`, with the strip-width formula reserving the gaps
+(`(pageW - (perPage-1)*gap)/perPage`). The fixed master strip now also gets a
+**1px `brand::edge` divider** painted in its left gap (`MainComponent::paint`,
+mock-parity §4, 2026-06-14). Strip width per preset (S/M/L/XS) unchanged.
 
 ---
 
-## 5. Toolbar layout + button colours — `MainComponentLayout.cpp` + `MainComponent` 🔶⚠️
+## 5. Toolbar layout + button colours — `MainComponentLayout.cpp` + `MainComponent` ✅ mostly DONE
 
-This is the biggest parity gap and the riskiest blind. The target toolbar is:
+**Resolved (2026-06-14, with the real files in view):**
+- **Title un-hidden** — `resized()` gives row1 a 248px slot and `paint()` draws the
+  forge-mark badge + two-tone `ZYNFORGE`/`RECORDING` wordmark in it. ✅
+- **Neutral pills** — every header button uses `brand::bgElevated` backgrounds;
+  only **LOCK** text (`accentRecord`) and **VSC** text (`accentVS`) carry colour,
+  exactly the mock. ✅
+- **DEVICE / WAV24 / PATCH / VSC / LOCK** are all surfaced. ✅
+
+**Open — a PRODUCT decision, not a parity bug:** the mock hides
+METERS/BACKUP/S/M/L/MIXER/EDIT/VCA to a slimmer set. Those are *functional*
+controls, so removing/overflowing them is a UX call, deliberately **not** done
+blind. Decide if you want them moved to a `…` overflow; until then they stay
+visible (full function > pixel-exact toolbar).
+
+---
+
+### (original blind notes, kept for reference)
+
+The target toolbar is:
 
 ```
 [forge-mark] ZYNFORGE RECORDING        … DEVICE  WAV 24  PATCH  •VSC   LOCK

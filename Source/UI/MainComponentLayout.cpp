@@ -112,6 +112,17 @@ void MainComponent::paint (juce::Graphics& g)
 
     // (The MIXER empty state is now the reusable mixerPlaceholder overlay,
     // shown/hidden by updateMixerPlaceholder() -- no painted hint here.)
+
+    // Master separator (mock parity §4): a 1px edge rule in the gap between
+    // the scrolling strip wall and the fixed master strip, so the master
+    // reads as a distinct fixed pane and not just another carded strip.
+    if (currentView == View::Mix && masterStrip != nullptr && masterStrip->isVisible())
+    {
+        const int mx = masterStrip->getX() - brand::space::md / 2;   // mid-gap
+        g.setColour (brand::edge);
+        g.drawVerticalLine (mx, (float) masterStrip->getY(),
+                                (float) masterStrip->getBottom());
+    }
 }
 
 void MainComponent::resized()
