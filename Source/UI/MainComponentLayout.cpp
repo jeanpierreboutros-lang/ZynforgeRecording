@@ -208,11 +208,14 @@ void MainComponent::resized()
     stripMButton .setBounds (row2.removeFromRight (30).reduced (0, 2));
     stripSButton .setBounds (row2.removeFromRight (30).reduced (0, 2));
     stripXsButton.setBounds (row2.removeFromRight (32).reduced (0, 2));
+    row2.removeFromRight (brand::space::sm);
+    gridButton   .setBounds (row2.removeFromRight (50).reduced (0, 2));
 
     stripXsButton.setToggleState (stripWidthPreset == StripWidth::XS, juce::dontSendNotification);
     stripSButton .setToggleState (stripWidthPreset == StripWidth::S,  juce::dontSendNotification);
     stripMButton .setToggleState (stripWidthPreset == StripWidth::M,  juce::dontSendNotification);
     stripLButton .setToggleState (stripWidthPreset == StripWidth::L,  juce::dontSendNotification);
+    gridButton   .setToggleState (mixerGridView, juce::dontSendNotification);
     row2.removeFromRight (brand::space::lg);
     transportLabel.setBounds (row2.removeFromLeft (140));
     sessionLabel  .setBounds (row2);
@@ -321,21 +324,50 @@ void MainComponent::resized()
     if (editPage != nullptr)
         editPage->setBounds (viewportArea);
 
-    const int pageW  = viewportArea.getWidth();
-    const int stripW = juce::jlimit (kMinStripW, kMaxStripW,
-                                     (pageW - (kStripsPerPage - 1) * gap) / kStripsPerPage);
+    const int pageW = viewportArea.getWidth();
 
-    const int containerW = total > 0
-                            ? total * stripW + (total - 1) * gap
-                            : pageW;
-    stripsContainer.setSize (juce::jmax (containerW, pageW),
-                              viewportArea.getHeight());
-
-    int x = 0;
-    for (int i = 0; i < total; ++i)
+    if (mixerGridView && total > 0)
     {
-        strips[(std::size_t) i]->setBounds (x, 0, stripW,
-                                            stripsContainer.getHeight());
-        x += stripW + gap;
+        // ── Grid / table view ────────────────────────────────────────────
+        // 12 strips per row, 2 rows visible at a time (24 faders on a page);
+        // more than 24 strips scroll VERTICALLY. Each strip fills 1/12 of the
+        // width and half the viewport height.
+        const int cols  = 12;
+        const int rows  = (total + cols - 1) / cols;
+        const int gridW = (pageW - (cols - 1) * gap) / cols;
+        const int rowH  = juce::jmax (200, (viewportArea.getHeight() - gap) / 2);
+        const int containerH = rows * rowH + (rows - 1) * gap;
+
+        stripsViewport.setScrollBarsShown (true, false);   // vertical scroll
+        stripsContainer.setSize (pageW, juce::jmax (containerH, viewportArea.getHeight()));
+
+        for (int i = 0; i < total; ++i)
+        {
+            const int rr = i / cols, cc = i % cols;
+            strips[(std::size_t) i]->setBounds (cc * (gridW + gap),
+                                                rr * (rowH + gap),
+                                                gridW, rowH);
+        }
+    }
+    else
+    {
+        // ── Single horizontal row (width-preset driven) ──────────────────
+        stripsViewport.setScrollBarsShown (false, true);   // horizontal scroll
+        const int stripW = juce::jlimit (kMinStripW, kMaxStripW,
+                                         (pageW - (kStripsPerPage - 1) * gap) / kStripsPerPage);
+
+        const int containerW = total > 0
+                                ? total * stripW + (total - 1) * gap
+                                : pageW;
+        stripsContainer.setSize (juce::jmax (containerW, pageW),
+                                  viewportArea.getHeight());
+
+        int x = 0;
+        for (int i = 0; i < total; ++i)
+        {
+            strips[(std::size_t) i]->setBounds (x, 0, stripW,
+                                                stripsContainer.getHeight());
+            x += stripW + gap;
+        }
     }
 }

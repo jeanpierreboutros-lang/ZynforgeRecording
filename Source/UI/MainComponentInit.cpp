@@ -195,6 +195,22 @@ MainComponent::MainComponent()
     addAndMakeVisible (stripMButton);
     addAndMakeVisible (stripLButton);
 
+    // Grid / table view toggle -- 24 faders on a page (12 per row, 2 rows).
+    styleStripBtn (gridButton, "Grid view -- 24 channel faders on one page "
+                               "(12 per row, 2 rows; scroll for more)");
+    gridButton.onClick = [this]
+    {
+        mixerGridView = ! mixerGridView;
+        if (auto* props = engine.getAppProps())
+        {
+            props->setValue ("mixerGridView", mixerGridView);
+            props->saveIfNeeded();
+        }
+        lastTrackCount = -1;   // force a strip relayout on the next tick
+        resized();
+    };
+    addAndMakeVisible (gridButton);
+
     // Restore the engineer's preferred width from prefs.
     if (auto* props = engine.getAppProps())
     {
@@ -203,6 +219,7 @@ MainComponent::MainComponent()
         else if (saved == "S")  stripWidthPreset = StripWidth::S;
         else if (saved == "L")  stripWidthPreset = StripWidth::L;
         else                    stripWidthPreset = StripWidth::M;
+        mixerGridView = props->getBoolValue ("mixerGridView", false);
     }
 
     addChannelButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);

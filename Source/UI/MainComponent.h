@@ -379,6 +379,11 @@ private:
     juce::TextButton stripSButton  { "S"  };
     juce::TextButton stripMButton  { "M"  };
     juce::TextButton stripLButton  { "L"  };
+    // Grid / table view: lay the strips out 12-per-row in 2 visible rows
+    // (24 faders on one page, scroll vertically for more) instead of a
+    // single horizontal row. Overrides the width preset while active.
+    juce::TextButton gridButton    { "GRID" };
+    bool             mixerGridView { false };
 
     bool sessionLocked { false };
 
