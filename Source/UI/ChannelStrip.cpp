@@ -1321,14 +1321,25 @@ namespace zynforge
         auto bottom = r.removeFromBottom (brand::space::xl);
         dbLabel.setBounds (bottom);
 
-        // Ruler is now on the LEFT (matches the reference: numbers
-        // 12/6/0/5/10/.../60/∞ to the left of the fader cap).
-        const int meterW = (pairState != nullptr) ? 38 : 30;
-        const int rulerW = 24;
+        // Ruler is on the LEFT (numbers 12/6/0/5/.../60/∞ left of the fader).
+        // On NARROW strips (compact presets, 12+/page) the dB ruler is hidden:
+        // the meter's own scale carries the levels, and dropping the ruler's
+        // ~26px gives the fader a usable width instead of a sliver. The meter
+        // also slims a touch so the fader keeps its room.
+        const bool showRuler = getWidth() >= 100;
+        const int  meterW    = (pairState != nullptr) ? (showRuler ? 38 : 30)
+                                                       : (showRuler ? 30 : 24);
+        const int  rulerW    = 22;
 
         if (dbRuler != nullptr)
-            dbRuler->setBounds (r.removeFromLeft (rulerW));
-        r.removeFromLeft (2);
+        {
+            dbRuler->setVisible (showRuler);
+            if (showRuler)
+            {
+                dbRuler->setBounds (r.removeFromLeft (rulerW));
+                r.removeFromLeft (2);
+            }
+        }
         meter.setBounds (r.removeFromRight (meterW));
         r.removeFromRight (2);
         gainFader.setBounds (r);

@@ -238,18 +238,25 @@ void MainComponent::resized()
     if (timeline != nullptr)
         timeline->setBounds ({});
 
+    // Per-preset strip sizing. floorW = minimum width (so the strip stays
+    // readable); ceilW = MAXIMUM width so strips don't stretch wastefully wide
+    // on a big window -- M now stays compact (≤140) so a normal window fits
+    // its full 12 per page without scrolling. The channel strip hides its dB
+    // ruler below ~100px (the meter scale suffices) to keep the fader usable
+    // at these narrow widths while still leaving room for the name.
     int targetPerPage = 12;
-    int floorW = 90;
+    int floorW = 78;
+    int ceilW  = 140;
     switch (stripWidthPreset)
     {
-        case StripWidth::XS: targetPerPage = 24; floorW = 56;  break;
-        case StripWidth::S:  targetPerPage = 16; floorW = 72;  break;
-        case StripWidth::M:  targetPerPage = 12; floorW = 90;  break;
-        case StripWidth::L:  targetPerPage = 8;  floorW = 130; break;
+        case StripWidth::XS: targetPerPage = 24; floorW = 52;  ceilW = 84;  break;
+        case StripWidth::S:  targetPerPage = 16; floorW = 64;  ceilW = 110; break;
+        case StripWidth::M:  targetPerPage = 12; floorW = 78;  ceilW = 140; break;
+        case StripWidth::L:  targetPerPage = 8;  floorW = 120; ceilW = 220; break;
     }
     const int kStripsPerPage = targetPerPage;
     const int kMinStripW     = floorW;
-    const int kMaxStripW     = 220;
+    const int kMaxStripW     = ceilW;
     const int margin = 12;
     const int gap    = 8;   // mock parity: carded strips with an 8px gap
     const int total  = (int) strips.size();
