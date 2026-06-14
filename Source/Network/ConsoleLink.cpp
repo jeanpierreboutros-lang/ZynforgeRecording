@@ -88,6 +88,8 @@ namespace zynforge
         for (int b = 0; b < profile.numInBlocks; ++b)
             sendMessage (juce::OSCMessage (juce::OSCAddressPattern (inBlockAddress (b))));
         if (onStatus) onStatus ("Reading console patch...");
+        ++opGen;
+        startTimer (1200);   // abort if a routing reply is lost
     }
 
     void ConsoleLink::exitSoundcheck()
@@ -119,6 +121,8 @@ namespace zynforge
             sendMessage (juce::OSCMessage (juce::OSCAddressPattern (headampAddress (i))));
         if (onStatus) onStatus ("Capturing " + juce::String (expectedGainReplies)
                                 + " head-amp gains...");
+        ++opGen;
+        startTimer (1500);   // abort if a head-amp reply is lost
     }
 
     void ConsoleLink::restoreGains()
@@ -150,6 +154,7 @@ namespace zynforge
                 stagePatch[b] = (int) m[0].getInt32();
                 if (--pendingPatchQueries == 0)
                 {
+                    stopTimer();   // all replies in -- cancel the watchdog
                     // Phase 2: full show patch stashed -> flip to card.
                     for (int blk = 0; blk < profile.numInBlocks; ++blk)
                         sendMessage (juce::OSCMessage (
@@ -171,10 +176,32 @@ namespace zynforge
             gains[idx] = m[0].getFloat32();
             if (expectedGainReplies > 0 && (int) gains.size() >= expectedGainReplies)
             {
+                stopTimer();   // all replies in -- cancel the watchdog
                 expectedGainReplies = 0;
                 if (onStatus) onStatus (juce::String ((int) gains.size())
                                         + " head-amp gains captured.");
             }
+        }
+    }
+
+    void ConsoleLink::timerCallback()
+    {
+        // Reply-timeout watchdog (see header). A query is still outstanding ->
+        // a UDP reply was lost; abort cleanly so the UI doesn't sit forever on
+        // "Reading console patch..." / "Capturing head-amp gains...".
+        stopTimer();
+        if (pendingPatchQueries > 0)
+        {
+            pendingPatchQueries = 0;
+            stagePatch.clear();
+            if (onStatus) onStatus ("Console patch read timed out (lost reply) -- try again.");
+        }
+        if (expectedGainReplies > 0)
+        {
+            const int got = (int) gains.size();
+            expectedGainReplies = 0;
+            if (onStatus) onStatus ("Head-amp capture timed out (" + juce::String (got)
+                                    + " of expected received) -- try again.");
         }
     }
 

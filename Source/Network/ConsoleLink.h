@@ -39,7 +39,8 @@ namespace zynforge
     // request's source port). Message-thread only, like the rest of the
     // OSC layer.
     class ConsoleLink final : private juce::OSCReceiver::Listener<
-                                  juce::OSCReceiver::MessageLoopCallback>
+                                  juce::OSCReceiver::MessageLoopCallback>,
+                              private juce::Timer
     {
     public:
         ConsoleLink();
@@ -92,6 +93,13 @@ namespace zynforge
 
     private:
         void oscMessageReceived (const juce::OSCMessage&) override;
+        // Reply-timeout watchdog: a query (enterSoundcheck / captureGains) waits
+        // for N UDP replies; if one is lost the op would hang forever ("Reading
+        // console patch..."). This one-shot fires ~1.2 s after a query and
+        // aborts cleanly if replies are still outstanding. opGen invalidates a
+        // stale timer when a new query starts.
+        void timerCallback() override;
+        int  opGen { 0 };
         void sendMessage (const juce::OSCMessage&);
         juce::String inBlockAddress (int blockIdx) const;      // via active profile
         juce::String headampAddress (int headampIdx) const;    // via active profile
