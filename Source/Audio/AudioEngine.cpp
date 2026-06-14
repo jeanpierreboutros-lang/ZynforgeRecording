@@ -72,7 +72,7 @@ namespace zynforge
 
             // Live atomics so the UI flips back immediately.
             auto& t = recorder.getTrack (i);
-            t.name = juce::String (i + 1);
+            t.setNameThreadSafe (juce::String (i + 1));
             t.colourARGB.store (0, std::memory_order_relaxed);
             t.armed   .store (false, std::memory_order_relaxed);
             t.muted   .store (false, std::memory_order_relaxed);
@@ -572,7 +572,7 @@ namespace zynforge
         {
             auto& t = recorder.getTrack (i);
             TrackStatus ts;
-            ts.name       = t.name;
+            ts.name       = t.getNameThreadSafe();   // cross-thread (companion server)
             ts.peak       = t.peak  .load (std::memory_order_relaxed);
             ts.rms        = t.rms   .load (std::memory_order_relaxed);
             ts.armed      = t.armed .load (std::memory_order_relaxed);
@@ -1062,7 +1062,7 @@ namespace zynforge
                 t.colourARGB.store (stripColours.getColour (i).getARGB(),
                                     std::memory_order_relaxed);
             if (stripNames.hasName (i))
-                t.name = stripNames.getName (i);
+                t.setNameThreadSafe (stripNames.getName (i));
             if (stripGains.hasGain (i))
                 t.gainDb.store (stripGains.getGainDb (i), std::memory_order_relaxed);
             if (stripGains.hasPan (i))
@@ -1251,7 +1251,8 @@ namespace zynforge
         auto& ta = recorder.getTrack (a);
         auto& tb = recorder.getTrack (b);
 
-        std::swap (ta.name, tb.name);
+        { const auto an = ta.getNameThreadSafe(), bn = tb.getNameThreadSafe();
+          ta.setNameThreadSafe (bn); tb.setNameThreadSafe (an); }
         const auto cA = ta.colourARGB.load();
         const auto cB = tb.colourARGB.load();
         ta.colourARGB.store (cB); tb.colourARGB.store (cA);
@@ -1935,12 +1936,12 @@ namespace zynforge
         if (name.isEmpty())
         {
             stripNames.clearName (channelIndex);
-            recorder.getTrack (channelIndex).name = juce::String (channelIndex + 1);
+            recorder.getTrack (channelIndex).setNameThreadSafe (juce::String (channelIndex + 1));
         }
         else
         {
             stripNames.setName (channelIndex, name);
-            recorder.getTrack (channelIndex).name = name;
+            recorder.getTrack (channelIndex).setNameThreadSafe (name);
         }
     }
 

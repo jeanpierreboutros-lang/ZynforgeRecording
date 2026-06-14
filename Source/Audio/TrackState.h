@@ -116,6 +116,23 @@ namespace zynforge
         std::atomic<bool>           fftBlockReady { false };
 
         juce::String       name;
+        // `name` is written on the message thread but ALSO copied by
+        // captureStatus() from the companion-server's detached thread -- reading
+        // a juce::String mid-reassignment is a data race (torn / freed buffer).
+        // This SpinLock guards the cross-thread read + every write; pure
+        // message-thread reads (the UI) can keep touching `name` directly since
+        // they can't race the (also-message-thread) writers.
+        mutable juce::SpinLock nameLock;
+        juce::String getNameThreadSafe() const
+        {
+            const juce::SpinLock::ScopedLockType l (nameLock);
+            return name;
+        }
+        void setNameThreadSafe (const juce::String& n)
+        {
+            const juce::SpinLock::ScopedLockType l (nameLock);
+            name = n;
+        }
         // Stable identity that survives a strip reorder. Generated
         // once on strip creation, persisted in appProps under
         // strip_uid_<n>, and referenced by cue snapshots so a cue
