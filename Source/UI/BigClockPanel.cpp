@@ -293,17 +293,21 @@ namespace zynforge
                             : mode == Mode::Playing   ? brand::accentPlay
                                                       : brand::accentStatus;
         // Recording: the mockup's timer reads as INCANDESCENT red-orange,
-        // not white. Lay a soft hot-orange bloom behind the digits (a larger
-        // semi-transparent pass) so they glow like worked metal, then stamp
-        // the crisp red-orange face on top.
+        // not white. Halo the digits with a SAME-SIZE hot-orange glow drawn
+        // at small offsets (NOT a larger font -- that mis-aligns and reads as
+        // a doubled layer), then stamp the crisp red-orange face on top.
+        g.setFont (brand::type::mono (timerPt, true));
         if (mode == Mode::Recording)
         {
-            g.setColour (brand::meterHot.withAlpha (0.32f));
-            g.setFont (brand::type::mono (timerPt * 1.06f, true));
-            g.drawText (elapsedText, inner, juce::Justification::centred, false);
+            g.setColour (brand::meterHot.withAlpha (0.16f));
+            const float o = 1.5f;
+            for (auto d : { juce::Point<float> (-o, 0.0f), {  o, 0.0f },
+                            {  0.0f, -o },                 {  0.0f, o },
+                            { -o, -o }, { o, -o }, { -o, o }, { o, o } })
+                g.drawText (elapsedText, inner.translated (d.x, d.y),
+                            juce::Justification::centred, false);
         }
         g.setColour (timerCol);
-        g.setFont (brand::type::mono (timerPt, true));
         g.drawText (elapsedText, inner, juce::Justification::centred, false);
     }
 }
