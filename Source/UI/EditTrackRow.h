@@ -679,28 +679,32 @@ namespace zynforge
             auto drawLane = [&]()
             {
 
-            // ── Waveform fill ───────────────────────────────────────────────
-            // A CLEAN, readable waveform in the channel's OWN colour: a near-solid
-            // body with a soft vertical sheen -- the loud peaks (top/bottom
-            // extremes of the lane) lift just a touch brighter for dimension, the
-            // quiet body sits at the channel colour. The old forge-heat gradient
-            // (ember → orange → white-hot toward the peaks) read as a harsh orange
-            // barcode that was hard on the eyes; the dynamic forge-heat glow lives
-            // on the METERS, where it belongs. A whisper of warmth still kisses
-            // the very loudest peaks so the brand identity reads, subtly. Set as
-            // the fill before drawChannels (which fills each column with it).
-            auto setHeatWaveFill = [this, &g, waveColour] (juce::Rectangle<int> lane)
+            // ── Waveform fill (Pro Tools-style: COLOURED clip bg + DARK wave) ──
+            // The "alive", easy-on-the-eyes look is the clip filled with the
+            // channel's COLOUR, and the waveform drawn DARK on top of it: loud
+            // sections fill dark, quiet sections let the colour show through. This
+            // is the INVERSE of a bright wave on a near-black lane (which glowed
+            // like a noisy barcode). The dark wave is a deep shade of the same
+            // channel hue, so colour identity carries. A thin LIGHTER rim along
+            // the envelope (drawn first, full height; dark body inset 1px over it)
+            // gives the contour definition PT has.
+            const auto waveBg   = brand::lift (getStripColour(), 0.52f);  // LIGHT coloured clip background
+            const auto waveDark = brand::sink (waveBg, 0.74f);           // much DARKER waveform = high contrast
+            const auto waveRim  = brand::sink (waveBg, 0.46f);           // mid-tone contour rim
+            auto drawWaveOutlined = [&g, waveBg, waveDark, waveRim]
+                (juce::AudioThumbnail& thumb, juce::Rectangle<int> area,
+                 bool wholeFile, int chan, double t0, double t1, float zoom)
             {
-                const float cx   = (float) lane.getCentreX();
-                const auto  body = waveColour;                                  // quiet body = channel colour
-                const auto  peak = brand::lift (waveColour, 0.22f)             // loud peaks: brighter…
-                                       .interpolatedWith (brand::meterEmber, 0.18f); // …with a faint warm kiss
-                juce::ColourGradient grad (peak, cx, (float) lane.getY(),
-                                           peak, cx, (float) lane.getBottom(), false);
-                grad.addColour (0.34, body);
-                grad.addColour (0.50, body);
-                grad.addColour (0.66, body);
-                g.setGradientFill (grad);
+                g.setColour (waveBg);
+                g.fillRect (area);                      // coloured clip background ("alive")
+                auto pass = [&] (juce::Rectangle<int> a, juce::Colour c)
+                {
+                    g.setColour (c);
+                    if (wholeFile) thumb.drawChannels (g, a, t0, t1, zoom);
+                    else           thumb.drawChannel  (g, a, t0, t1, chan, zoom);
+                };
+                pass (area, waveRim);                   // lighter contour rim (full height)
+                pass (area.reduced (0, 1), waveDark);   // dark body inset 1px -> rim survives
             };
 
             // ─── Timeline grid ─────────────────────────────────────────
@@ -736,14 +740,14 @@ namespace zynforge
                 }
             }
 
-            // Waveform vertical scale = a GENTLE auto-gain (so a quiet but
-            // real take is still readable) multiplied by the user's vertical
-            // zoom. The auto-gain caps at 4x -- the old 64x cap turned every
-            // idle/unused input on a big session into a solid bar of amplified
-            // hiss. Anything below ~-48 dBFS is treated as silent and left at
-            // true level, so unused channels read as a clean flat line, not
-            // noise. vZoom (V+/V- / Shift+wheel) then scales on top, so those
-            // controls always have a visible, consistent effect.
+            // Waveform vertical scale: nearly HONEST levels, Pro Tools-style --
+            // loud takes fill the lane, quiet takes read small and clean. Only a
+            // GENTLE auto-gain (cap 1.6x) lifts a genuinely quiet-but-real take so
+            // it's not invisible. The old 4x cap blew a quiet recording's noise
+            // floor up into a fuzzy "noisy" band (a -37 dBFS RMS take × 4 made the
+            // hiss between transients prominent); honest scaling keeps it a thin,
+            // clean line. Below ~-48 dBFS is treated as silent (true level, flat
+            // line). vZoom (V+/V- / Shift+wheel) then scales on top for detail.
             float vz = 1.0f;
             if (auto* page = findParentComponentOfClass<EditPage>())
                 vz = page->getVerticalZoom();
@@ -752,7 +756,7 @@ namespace zynforge
                 if (tn.getTotalLength() <= 0.0) return vz;
                 const float peak = tn.getApproximatePeak();
                 const float fit  = peak > 0.004f
-                                     ? juce::jlimit (1.0f, 4.0f, 0.85f / peak)
+                                     ? juce::jlimit (1.0f, 2.5f, 0.9f / peak)
                                      : 1.0f;
                 return fit * vz;
             };
@@ -1373,15 +1377,11 @@ namespace zynforge
                 auto laneR = inner.withTrimmedTop (laneH);
 
                 if (! showLive && thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
-                {
-                    setHeatWaveFill (laneL);
-                    drawLaneL (g, laneL, 0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
-                }
+                    drawWaveOutlined (thumbnailL, laneL, ! stereoOneFile, 0,
+                                      0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
                 if (! showLive && thumbnailR.getTotalLength() > 0.0 && ! arrangementEmptied)
-                {
-                    setHeatWaveFill (laneR);
-                    drawLaneR (g, laneR, 0.0, thumbnailR.getTotalLength(), waveZoom (thumbnailR));
-                }
+                    drawWaveOutlined (thumbnailR, laneR, ! stereoOneFile, 1,
+                                      0.0, thumbnailR.getTotalLength(), waveZoom (thumbnailR));
                 // Live capture envelope -- grows L→R during the take, glowing
                 // forge-orange so the engineer sees the take is HOT / rolling.
                 // After stop (liveHold) it dims to ember -- a provisional
@@ -1421,10 +1421,8 @@ namespace zynforge
                 drawRecEnvelope (g, confineLive (inner), recPeakL, vz);
             }
             else if (thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
-            {
-                setHeatWaveFill (inner);
-                thumbnailL.drawChannels (g, inner, 0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
-            }
+                drawWaveOutlined (thumbnailL, inner, true, 0,
+                                  0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
             }   // end "! haveClipBlocks" continuous-waveform fallback
 
             // ─── Clip region blocks (waveform mode) ─────────────────
@@ -1497,23 +1495,35 @@ namespace zynforge
                                 // Non-muted clips glow with the forge-heat fill
                                 // (loud = hot); a muted clip stays a dim, cool
                                 // tint so it visibly drops below the rest.
-                                const auto setClipFill = [&] (juce::Rectangle<int> lane)
-                                {
-                                    if (c.muted) g.setColour (brand::lift (clipTint, 0.20f).withAlpha (brand::alpha::muted));
-                                    else         setHeatWaveFill (lane);
-                                };
+                                // A muted clip draws a single dim, cool tint so it
+                                // drops below the rest; a live clip gets the same
+                                // solid-body + lighter-outline look as the main
+                                // waveform (drawWaveOutlined) so it reads cleanly.
+                                const auto mutedCol = brand::lift (clipTint, 0.20f).withAlpha (brand::alpha::muted);
                                 if (stereo && thumbnailR.getTotalLength() > 0.0)
                                 {
                                     const int half = waveArea.getHeight() / 2;
                                     auto la = waveArea.withHeight (half);
                                     auto ra = waveArea.withTrimmedTop (half);
-                                    setClipFill (la); drawLaneL (g, la, t0, t1, waveZoom (thumbnailL) * gz);
-                                    setClipFill (ra); drawLaneR (g, ra, t0, t1, waveZoom (thumbnailR) * gz);
+                                    if (c.muted)
+                                    {
+                                        g.setColour (mutedCol); drawLaneL (g, la, t0, t1, waveZoom (thumbnailL) * gz);
+                                        g.setColour (mutedCol); drawLaneR (g, ra, t0, t1, waveZoom (thumbnailR) * gz);
+                                    }
+                                    else
+                                    {
+                                        drawWaveOutlined (thumbnailL, la, ! stereoOneFile, 0, t0, t1, waveZoom (thumbnailL) * gz);
+                                        drawWaveOutlined (thumbnailR, ra, ! stereoOneFile, 1, t0, t1, waveZoom (thumbnailR) * gz);
+                                    }
+                                }
+                                else if (c.muted)
+                                {
+                                    g.setColour (mutedCol);
+                                    thumbnailL.drawChannels (g, waveArea, t0, t1, waveZoom (thumbnailL) * gz);
                                 }
                                 else
                                 {
-                                    setClipFill (waveArea);
-                                    thumbnailL.drawChannels (g, waveArea, t0, t1, waveZoom (thumbnailL) * gz);
+                                    drawWaveOutlined (thumbnailL, waveArea, true, 0, t0, t1, waveZoom (thumbnailL) * gz);
                                 }
                             }
                         }
