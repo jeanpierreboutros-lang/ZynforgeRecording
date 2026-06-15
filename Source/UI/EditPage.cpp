@@ -291,11 +291,17 @@ namespace zynforge
                 const int idx = r->getTrackIndex();
                 if (idx < 0 || idx >= nTracks) continue;
                 if (! rec.getTrack (idx).armed.load (std::memory_order_relaxed)) continue;
-                const float l = rec.getTrack (idx).peak.load (std::memory_order_relaxed);
-                float rr = 0.0f;
+                // Drain the recorder's fine live-wave overview (min/max pairs
+                // captured on the audio thread) -- one peak column per pair, so
+                // the lane builds a DETAILED waveform as it records, not a
+                // 1-per-tick coarse envelope.
+                bool grew = false;
+                rec.getTrack (idx).liveWaveDrain ([&] (float mn, float mx)
+                    { r->appendLivePeakL (juce::jmax (-mn, mx)); grew = true; });
                 if (r->isStereoPair() && idx + 1 < nTracks)
-                    rr = rec.getTrack (idx + 1).peak.load (std::memory_order_relaxed);
-                r->pushRecLevel (l, rr);
+                    rec.getTrack (idx + 1).liveWaveDrain ([&] (float mn, float mx)
+                        { r->appendLivePeakR (juce::jmax (-mn, mx)); });
+                if (grew) r->repaint();   // one repaint per tick after the batch
             }
         }
 
@@ -691,16 +697,14 @@ namespace zynforge
         // (before the post-stop disk re-scan swaps in the real waveform).
         if (recJustStarted && list != nullptr)
         {
-            // The live capture envelope grows L->R so you can SEE the take
-            // working while it records (not just after stop). On a CONTINUE,
-            // seed it with silent columns for the existing take so the live
-            // waveform draws AFTER it, at the base -- matching the playhead --
-            // and the existing take stays on screen underneath. 24 Hz timer ->
-            // ~24 columns/sec, so prefill the same density.
+            // The live waveform builds L->R so you can SEE the take working
+            // while it records. On a CONTINUE, seed it with silent columns for
+            // the existing take so the new audio draws AFTER it, at the base --
+            // matching the playhead -- with the existing take underneath. The
+            // overview emits one column per TrackState::kLiveBinSamples samples,
+            // so the existing take occupies base / kLiveBinSamples columns.
             const auto base = engine.getRecorder().getRecordBaseSamples();
-            const double sr = engine.getPlayer().getSampleRate() > 0.0
-                                  ? engine.getPlayer().getSampleRate() : 48000.0;
-            const int prefill = base > 0 ? (int) ((double) base / sr * 24.0) : 0;
+            const int prefill = base > 0 ? (int) (base / TrackState::kLiveBinSamples) : 0;
             list->setLiveRecording (true, prefill);
         }
         // On stop, HOLD the live envelope (don't clear it) until the real disk

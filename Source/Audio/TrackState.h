@@ -95,6 +95,55 @@ namespace zynforge
         // Stream bus send (post-fader, post-mute/solo).
         std::atomic<bool> streamSend  { false };
 
+        // ── Live recording waveform overview (RT-safe, lock-free SPSC) ──────
+        // While armed + recording, the audio thread bins the captured input
+        // into min/max pairs (one per kLiveBinSamples) and pushes them through
+        // liveFifo; the UI drains them to draw the waveform AS it records --
+        // detailed, identical to the final one, the way Reaper / Pro Tools do
+        // (no coarse envelope, no post-stop re-scan). AbstractFifo + fixed
+        // arrays => no allocation, no lock on the audio thread.
+        static constexpr int kLiveBinSamples = 256;      // ~5.3 ms @ 48k per pair
+        static constexpr int kLiveWaveCap    = 1 << 10;  // 1024 pairs of backlog
+        std::array<float, kLiveWaveCap> liveMin {};
+        std::array<float, kLiveWaveCap> liveMax {};
+        juce::AbstractFifo liveFifo { kLiveWaveCap };
+        float liveBinMin   { 1.0e9f };   // audio-thread-only bin accumulator
+        float liveBinMax   { -1.0e9f };
+        int   liveBinCount { 0 };
+
+        // Audio thread: feed captured samples; emits a min/max pair per bin.
+        void liveWavePush (const float* data, int numSamples) noexcept
+        {
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float s = data[i];
+                if (s < liveBinMin) liveBinMin = s;
+                if (s > liveBinMax) liveBinMax = s;
+                if (++liveBinCount >= kLiveBinSamples)
+                {
+                    int s1, n1, s2, n2;
+                    liveFifo.prepareToWrite (1, s1, n1, s2, n2);
+                    if (n1 > 0) { liveMin[(size_t) s1] = liveBinMin; liveMax[(size_t) s1] = liveBinMax; liveFifo.finishedWrite (1); }
+                    liveBinMin = 1.0e9f; liveBinMax = -1.0e9f; liveBinCount = 0;
+                }
+            }
+        }
+        void liveWaveReset() noexcept
+        {
+            liveFifo.reset();
+            liveBinMin = 1.0e9f; liveBinMax = -1.0e9f; liveBinCount = 0;
+        }
+        // UI thread: drain every ready pair (min, max) into `fn`.
+        template <typename Fn>
+        void liveWaveDrain (Fn&& fn)
+        {
+            int s1, n1, s2, n2;
+            liveFifo.prepareToRead (liveFifo.getNumReady(), s1, n1, s2, n2);
+            for (int i = 0; i < n1; ++i) fn (liveMin[(size_t) (s1 + i)], liveMax[(size_t) (s1 + i)]);
+            for (int i = 0; i < n2; ++i) fn (liveMin[(size_t) (s2 + i)], liveMax[(size_t) (s2 + i)]);
+            liveFifo.finishedRead (n1 + n2);
+        }
+
         // True if this track is the LEFT half of a logical stereo strip.
         // The RIGHT half is at trackIndex + 1. The UI uses this flag to
         // render a single ChannelStrip controlling both underlying tracks

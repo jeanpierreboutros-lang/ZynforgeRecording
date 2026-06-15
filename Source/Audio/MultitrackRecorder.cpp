@@ -393,6 +393,11 @@ namespace zynforge
             // Push to ring buffer when recording
             if (rec && t.armed.load (std::memory_order_relaxed))
             {
+                // Live waveform overview: bin the captured input into min/max
+                // pairs so the EDIT lane draws the detailed waveform AS it
+                // records (lock-free; see TrackState::liveWavePush).
+                t.liveWavePush (src, numSamples);
+
                 auto& cf = *fifos[(std::size_t) ch];
                 const auto scope = cf.fifo.write (numSamples);
                 const int wrote = scope.blockSize1 + scope.blockSize2;
@@ -689,6 +694,9 @@ namespace zynforge
         samplesSinceStart.store (0, std::memory_order_relaxed);
         missedSamples    .store (0, std::memory_order_relaxed);
         samplesSinceFlush = 0;
+        // Clear each track's live waveform overview so a new take draws fresh
+        // (done before the audio thread starts pushing into it).
+        for (auto& t : tracks) t->liveWaveReset();
 
         // Pre-roll: dump history into each writer BEFORE enabling live capture.
         dumpPreRollToWriters();

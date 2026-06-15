@@ -603,18 +603,22 @@ namespace zynforge
         // and max-pools down by 2 when it overflows so a long take can't
         // grow the vector without bound (the lane only has ~1 px per entry
         // to draw anyway).
-        void pushRecLevel (float l, float r)
+        // Append one fine peak column drained from the recorder's live-wave
+        // overview (TrackState::liveWaveDrain). No repaint here -- EditPage
+        // repaints the row once per tick after draining a batch.
+        void appendLivePeakL (float p)
         {
             if (! liveRecording) return;
-            constexpr size_t kMaxPoints = 8192;
+            constexpr size_t kMaxPoints = 1 << 15;
             if (recPeakL.size() >= kMaxPoints) decimateInPlace (recPeakL);
+            recPeakL.push_back (juce::jlimit (0.0f, 1.0f, p));
+        }
+        void appendLivePeakR (float p)
+        {
+            if (! liveRecording || ! stereo) return;
+            constexpr size_t kMaxPoints = 1 << 15;
             if (recPeakR.size() >= kMaxPoints) decimateInPlace (recPeakR);
-            recPeakL.push_back (juce::jlimit (0.0f, 1.0f, l));
-            if (stereo) recPeakR.push_back (juce::jlimit (0.0f, 1.0f, r));
-            // Redraw so the engineer SEES the envelope grow live. The playhead
-            // sits pinned at the right edge during a grow-to-fit take, so
-            // setPlayheadX is a no-op and won't trigger this repaint for us.
-            repaint();
+            recPeakR.push_back (juce::jlimit (0.0f, 1.0f, p));
         }
 
         void mouseEnter (const juce::MouseEvent&) override

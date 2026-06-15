@@ -17,6 +17,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Added (detailed live waveform while recording — 2026-06-15)
+- **The waveform builds in detail AS you record, from the actual captured audio** — like Reaper / Pro Tools, not a coarse meter envelope that gets replaced on stop. The audio thread bins each armed track's captured input into min/max pairs (~5 ms each) and pushes them through a lock-free ring; the EDIT lane drains them and draws the waveform live, repainting every tick. So you can confirm a take is capturing in real time, and when you stop there's no coarse-then-detailed swap. (Capture-safe: the ring is pre-allocated and lock-free, so the audio thread never allocates or locks.)
+- Fixed the EDIT lane not repainting as the live waveform grew (the playhead is pinned to the right edge on a grow-to-fit take, so the change-gated playhead update never triggered a redraw).
+
 ### Fixed (New Session is truly empty — 2026-06-14)
 - **A new session no longer inherits the previous session's audio.** File ▸ New Session reset the strips but never unloaded the *player*, so the old session's tracks + clips lingered — a freshly-added channel drew the previous session's waveform (and RECORD thought there was a take to continue). New Session now unloads the player, and `SessionPlayer::unload()` clears the clip state too (it was only clearing cross-track readers). The Welcome-dialog new-session path got the same fix.
 
