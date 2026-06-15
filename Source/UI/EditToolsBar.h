@@ -166,9 +166,7 @@ namespace zynforge
                 const auto accent = brand::toolActive();
                 if (active)
                 {
-                    g.setGradientFill (juce::ColourGradient (
-                        brand::lift (accent, 0.18f), rect.getCentreX(), rect.getY(),
-                        accent.darker  (0.20f), rect.getCentreX(), rect.getBottom(), false));
+                    g.setColour (accent);   // FLAT: solid active-tool fill (no gradient)
                     g.fillRoundedRectangle (rect, brand::radius::md);
                     g.setColour (brand::lift (accent, 0.30f));
                     g.drawRoundedRectangle (rect.reduced (0.5f), brand::radius::md, 1.0f);

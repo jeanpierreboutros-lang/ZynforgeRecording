@@ -75,9 +75,7 @@ namespace zynforge
                 {
                     auto inner = getLocalBounds().reduced (12);
                     auto band  = juce::Rectangle<int> (inner.getX(), inner.getY(), inner.getWidth(), 20);
-                    g.setGradientFill (juce::ColourGradient (
-                        brand::steelHeaderHi, (float) band.getCentreX(), (float) band.getY(),
-                        brand::steelHeaderLo, (float) band.getCentreX(), (float) band.getBottom(), false));
+                    g.setColour (brand::steelHeaderHi);   // FLAT: solid header band (no gradient)
                     g.fillRect (band);
                     g.setColour (brand::brandOrange.withAlpha (brand::alpha::muted));
                     g.fillRect (band.getX(), band.getBottom(), band.getWidth(), 1);

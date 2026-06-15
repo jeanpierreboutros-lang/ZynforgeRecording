@@ -160,9 +160,7 @@ namespace zynforge
 
                         juce::Rectangle<int> head (colX, 0, L.colW, L.colorBandH);
                         auto inner = head.reduced (3, 3);
-                        juce::ColourGradient grad (brand::lift (stripCol, 0.10f), inner.getX(), inner.getY(),
-                                                   stripCol.darker  (0.10f), inner.getX(), inner.getBottom(), false);
-                        g.setGradientFill (grad);
+                        g.setColour (stripCol);   // FLAT: solid colour band (no gradient)
                         g.fillRoundedRectangle (inner.toFloat(), brand::radius::lg);
                         g.setColour (brand::lift (stripCol, 0.30f).withAlpha (brand::alpha::muted));
                         g.drawRoundedRectangle (inner.toFloat(), brand::radius::lg, 1.0f);

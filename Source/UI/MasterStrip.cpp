@@ -32,8 +32,7 @@ namespace
         }
         inline void drawSteelHeader (juce::Graphics& g, juce::Rectangle<float> r)
         {
-            g.setGradientFill (juce::ColourGradient (zynforge::brand::steelMasterHi, r.getCentreX(), r.getY(),
-                                                     zynforge::brand::steelMasterLo, r.getCentreX(), r.getBottom(), false));
+            g.setColour (zynforge::brand::steelMasterHi);   // FLAT: solid plate (no gradient)
             g.fillRect (r);
             g.setColour (zynforge::brand::gloss (0.14f)); g.fillRect (r.withHeight (1.0f));
             g.setColour (zynforge::brand::structuralForge().withAlpha (0.60f));            // structural seam (subdued)

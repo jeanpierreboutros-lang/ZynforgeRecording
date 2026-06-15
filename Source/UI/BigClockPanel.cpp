@@ -153,32 +153,15 @@ namespace zynforge
             bg = brand::meterEmber.withAlpha ((0.14f + 0.10f * pulse) * ignite); // ember, breathing + igniting
         else if (mode == Mode::Playing) bg = brand::accentPlay.withAlpha (0.14f);
         auto bgRect = r.reduced (2.0f);
-        g.setGradientFill (juce::ColourGradient (
-            brand::lift (bg, 0.12f), bgRect.getCentreX(), bgRect.getY(),
-            bg.darker   (0.18f), bgRect.getCentreX(), bgRect.getBottom(),
-            false));
+        g.setColour (bg);   // FLAT: solid plate (bg already breathes via pulse); no gradient
         g.fillRoundedRectangle (bgRect, brand::radius::lg);
 
-        // Forge ember-underglow -- while recording, heat rises from the base of
-        // the plate behind the timecode (breathing at 1 Hz), so the centrepiece
-        // reads as metal being worked, not just a red lamp.
+        // Forge ember while recording -- a flat, breathing wash, not a glow gradient.
         if (mode == Mode::Recording)
         {
-            g.setGradientFill (juce::ColourGradient (
-                brand::meterHot.withAlpha (0.0f),                                bgRect.getCentreX(), bgRect.getCentreY(),
-                brand::meterHot.withAlpha ((0.16f + 0.12f * pulse) * ignite), bgRect.getCentreX(), bgRect.getBottom(),
-                false));
+            g.setColour (brand::meterHot.withAlpha ((0.08f + 0.06f * pulse) * ignite));
             g.fillRoundedRectangle (bgRect, brand::radius::lg);
         }
-
-        // Soft top highlight -- reinforces the glass / depth feel and
-        // makes the timer read as raised metal under stage lights.
-        auto hi = bgRect.withTrimmedBottom (bgRect.getHeight() * 0.60f);
-        g.setGradientFill (juce::ColourGradient (
-            brand::gloss (0.06f), hi.getCentreX(), hi.getY(),
-            brand::gloss (0.0f),  hi.getCentreX(), hi.getBottom(),
-            false));
-        g.fillRoundedRectangle (hi, brand::radius::lg);
 
         // Armed-but-not-rolling border. Uses signalArmedReady
         // (engagedAmber -- the BYPASS / LIVE / LOCK token) so the

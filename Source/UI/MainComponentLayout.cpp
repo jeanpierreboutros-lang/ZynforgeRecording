@@ -17,10 +17,7 @@ void MainComponent::paint (juce::Graphics& g)
     // feeling like a flat sheet of paint.
     {
         auto fullBounds = getLocalBounds().toFloat();
-        g.setGradientFill (juce::ColourGradient (
-            brand::lift (brand::bgDeep, 0.06f), fullBounds.getCentreX(), fullBounds.getY(),
-            brand::bgDeep.darker   (0.04f), fullBounds.getCentreX(), fullBounds.getBottom(),
-            false));
+        g.setColour (brand::bgDeep);   // FLAT: solid background (no gradient)
         g.fillRect (fullBounds);
     }
 

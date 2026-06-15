@@ -310,15 +310,18 @@ namespace zynforge::brand
     inline bool reduceMotion() noexcept { return reduceMotionFlag().load (std::memory_order_relaxed); }
     inline void setReduceMotion (bool on) noexcept { reduceMotionFlag().store (on, std::memory_order_relaxed); }
 
-    // ── Gradient helpers -- every painted surface should use these ─────────
-    // Top-to-bottom vertical gradient for buttons / pills / strip backs.
+    // ── Surface fill helper ────────────────────────────────────────────────
+    // FLAT design: returns a degenerate "gradient" whose two stops are the SAME
+    // base colour, so every `setGradientFill (verticalGradient (...))` call site
+    // renders a SOLID fill -- no glossy top-to-bottom ramp. lift / shadow are
+    // accepted (so callers don't change) but intentionally ignored.
     inline juce::ColourGradient verticalGradient (juce::Colour base,
                                                   juce::Rectangle<float> r,
                                                   float lift   = 0.10f,
                                                   float shadow = 0.20f) noexcept
     {
-        return juce::ColourGradient (base.brighter (lift),   r.getX(), r.getY(),
-                                     base.darker  (shadow),  r.getX(), r.getBottom(),
-                                     false);
+        juce::ignoreUnused (lift, shadow);
+        return juce::ColourGradient (base, r.getX(), r.getY(),
+                                     base, r.getX(), r.getBottom(), false);
     }
 }

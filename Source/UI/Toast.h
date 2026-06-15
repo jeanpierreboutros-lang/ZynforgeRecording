@@ -53,11 +53,8 @@ namespace zynforge
             g.setColour (brand::shadow::elev3());
             g.fillRoundedRectangle (r.translated (0.0f, 2.0f).expanded (1.0f), brand::radius::lg);
 
-            // Body -- gradient pill in the kind-tinted colour.
-            g.setGradientFill (juce::ColourGradient (
-                brand::lift (base, 0.25f), r.getCentreX(), r.getY(),
-                base.darker   (0.20f), r.getCentreX(), r.getBottom(),
-                false));
+            // Body -- FLAT solid pill in the kind-tinted colour (no gradient).
+            g.setColour (base);
             g.fillRoundedRectangle (r, brand::radius::lg);
 
             // 6 px accent stripe down the left edge -- colour-coded by Kind.

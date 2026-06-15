@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Changed (FLAT design — every surface is solid, no gradients — 2026-06-16)
+- **The whole UI is now flat: every fill is a solid colour, no top-to-bottom gradients or glossy sheens.** The shared `verticalGradient` helper now returns a solid fill, and every direct gradient (buttons, toggles, faders, the rotary knob, channel/master steel headers, the big clock plate, the window background, setlist / tool / patch bars, toasts, the splash, the clip-gain cap, the armed-channel wash, the input-level bar) was converted to a solid colour. The LED meter ladder was already solid segments; its tiny-meter fallback now picks a solid forge-heat colour by level instead of a gradient. Cleaner, calmer, modern.
+
 ### Fixed (Cmd+A selection shows immediately in EDIT — 2026-06-15)
 - **Select All (Cmd+A) now highlights the channels right away in the EDIT view.** The selection state updated but the row headers weren't repainted, so the highlight only appeared once you moved the mouse near a channel. Select-all and clear-selection now repaint the EDIT rows immediately (the mixer strips already did).
 

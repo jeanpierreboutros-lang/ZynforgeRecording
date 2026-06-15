@@ -1569,9 +1569,7 @@ namespace zynforge
                                 const auto  cap  = juce::Rectangle<float> (cx - capW * 0.5f, ty - capH * 0.5f, capW, capH);
                                 g.setColour (brand::shadow::elev2());
                                 g.fillRoundedRectangle (cap.translated (0.0f, 1.5f), brand::radius::sm);
-                                g.setGradientFill (juce::ColourGradient (
-                                    brand::lift (brand::controlBg, 0.16f), cap.getCentreX(), cap.getY(),
-                                    brand::controlBg.darker   (0.22f), cap.getCentreX(), cap.getBottom(), false));
+                                g.setColour (brand::controlBg);   // FLAT: solid cap (no gradient)
                                 g.fillRoundedRectangle (cap, brand::radius::sm);
                                 g.setColour (active ? brand::lift (col, 0.30f) : brand::edge);
                                 g.drawRoundedRectangle (cap, brand::radius::sm, 1.0f);

@@ -120,26 +120,9 @@ namespace zynforge
         if (down) base = base.brighter (0.15f);
         else if (over) base = base.brighter (0.07f);
 
-        // Pronounced top-to-bottom gradient -- top is noticeably lighter
-        // and bottom darker than the base so the button reads as a
-        // glossy pill rather than a flat tinted rectangle.
-        const auto top = base.brighter (down ? 0.08f : 0.16f);
-        const auto bot = base.darker   (down ? 0.05f : 0.18f);
-        g.setGradientFill (juce::ColourGradient (
-            top, r.getCentreX(), r.getY(),
-            bot, r.getCentreX(), r.getBottom(),
-            false));
+        // FLAT: a solid fill, no top-to-bottom gradient and no glossy sheen.
+        g.setColour (base);
         g.fillRoundedRectangle (r, brand::radius::md);
-
-        // Faint top sheen -- matte pill, like the mock (not glossy).
-        auto hi = r.withTrimmedBottom (r.getHeight() * 0.55f);
-        g.setGradientFill (juce::ColourGradient (
-            juce::Colours::white.withAlpha (down ? 0.04f : 0.06f),
-                hi.getCentreX(), hi.getY(),
-            juce::Colours::white.withAlpha (0.0f),
-                hi.getCentreX(), hi.getBottom(),
-            false));
-        g.fillRoundedRectangle (hi, brand::radius::md);
 
         g.setColour (brand::edge);
         g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
@@ -160,20 +143,9 @@ namespace zynforge
             // tickColourId (already set per button: R red, I green,
             // M red, S yellow) as the active fill source.
             const auto base = b.findColour (juce::ToggleButton::tickColourId);
-            const auto top  = base.brighter (down ? 0.50f : 0.30f);
-            const auto bot  = base.darker   (down ? 0.10f : 0.30f);
-            g.setGradientFill (juce::ColourGradient (top, r.getCentreX(), r.getY(),
-                                                     bot, r.getCentreX(), r.getBottom(),
-                                                     false));
+            // FLAT: a solid fill, no gradient or sheen.
+            g.setColour (down ? base.brighter (0.12f) : base);
             g.fillRoundedRectangle (r, brand::radius::md);
-
-            // Soft inner highlight at the top so the pill has depth.
-            auto hi = r.withTrimmedBottom (r.getHeight() * 0.55f);
-            g.setGradientFill (juce::ColourGradient (
-                juce::Colours::white.withAlpha (0.20f), hi.getCentreX(), hi.getY(),
-                juce::Colours::white.withAlpha (0.0f),  hi.getCentreX(), hi.getBottom(),
-                false));
-            g.fillRoundedRectangle (hi, brand::radius::md);
 
             g.setColour (base.darker (0.55f));
             g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
@@ -336,10 +308,7 @@ namespace zynforge
         // channel's colour (taken from the slider's thumbColourId).
         const float thumbY  = juce::jlimit (trackY, trackB, sliderPos);
         const auto  baseCol = s.findColour (juce::Slider::thumbColourId);
-        g.setGradientFill (juce::ColourGradient (
-            baseCol.brighter (0.25f), trackX, thumbY,
-            baseCol.darker  (0.30f), trackX, trackB,
-            false));
+        g.setColour (baseCol);   // FLAT: solid channel-colour fill
         g.fillRoundedRectangle (trackX, thumbY, trackW, trackB - thumbY, 2.0f);
 
         g.setColour (brand::edge);
@@ -361,11 +330,8 @@ namespace zynforge
         g.setColour (brand::shadow::elev2());
         g.fillRoundedRectangle (thumb.translated (0.0f, 2.0f).expanded (1.0f, 1.0f), capR);
 
-        // Steel body -- vertical gradient, lighter at the top.
-        g.setGradientFill (juce::ColourGradient (
-            brand::faderThumbHi.brighter (0.06f), thumb.getCentreX(), thumb.getY(),
-            brand::faderThumbLo,                  thumb.getCentreX(), thumb.getBottom(),
-            false));
+        // Steel body -- FLAT solid fill (no gradient).
+        g.setColour (brand::faderThumbHi);
         g.fillRoundedRectangle (thumb, capR);
 
         // Inner top highlight + outer edge -- the bevel.
@@ -413,12 +379,8 @@ namespace zynforge
         g.setColour (brand::shadow::elev2());
         g.fillEllipse (juce::Rectangle<float> (d + 3.0f, d + 3.0f).withCentre (centre.translated (0.0f, 1.5f)));
 
-        // Machined-steel knob body -- radial gradient lit from top-left.
-        juce::ColourGradient body (brand::faderThumbHi.brighter (0.10f),
-                                   centre.x - radius * 0.4f, centre.y - radius * 0.5f,
-                                   brand::faderThumbLo.darker (0.20f),
-                                   centre.x + radius * 0.4f, centre.y + radius * 0.6f, true);
-        g.setGradientFill (body);
+        // Machined-steel knob body -- FLAT solid fill (no radial gradient).
+        g.setColour (brand::faderThumbHi);
         g.fillEllipse (juce::Rectangle<float> (d, d).withCentre (centre));
 
         // Rim.

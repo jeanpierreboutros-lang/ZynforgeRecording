@@ -53,8 +53,7 @@ namespace
         {
             // Pixel target: near-pure-black plate so it reads as a distinct
             // band even on an uncoloured (grey) strip; bright orange under-seam.
-            g.setGradientFill (juce::ColourGradient (zynforge::brand::steelHeaderHi, r.getCentreX(), r.getY(),
-                                                     zynforge::brand::steelHeaderLo, r.getCentreX(), r.getBottom(), false));
+            g.setColour (zynforge::brand::steelHeaderHi);   // FLAT: solid plate (no gradient)
             g.fillRect (r);
             g.setColour (zynforge::brand::gloss (0.18f));                 // top bevel highlight
             g.fillRect (r.withHeight (1.0f));
@@ -1032,11 +1031,8 @@ namespace zynforge
         const bool isArmed = state.armed.load (std::memory_order_relaxed);
         if (isArmed)
         {
-            juce::ColourGradient bloom (brand::meterEmber.withAlpha (brand::alpha::wash),
-                                        r.getCentreX(), r.getY(),
-                                        brand::meterEmber.withAlpha (0.0f),
-                                        r.getCentreX(), r.getY() + r.getHeight() * 0.55f, false);
-            g.setGradientFill (bloom);
+            // FLAT: a solid, subtle ember wash marks the armed channel (no glow gradient).
+            g.setColour (brand::meterEmber.withAlpha (brand::alpha::faint));
             g.fillRoundedRectangle (r, brand::radius::xl);
         }
 

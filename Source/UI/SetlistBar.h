@@ -125,10 +125,7 @@ namespace zynforge
                 const auto base = down ? brand::controlBgDown
                                        : over ? brand::controlBgHover
                                               : brand::bgElevated;
-                g.setGradientFill (juce::ColourGradient (
-                    brand::lift (base, down ? 0.10f : 0.30f), r.getCentreX(), r.getY(),
-                    brand::sink (base, down ? 0.05f : 0.28f), r.getCentreX(), r.getBottom(),
-                    false));
+                g.setColour (base);   // FLAT: solid fill (no gradient)
                 g.fillRoundedRectangle (r, brand::radius::md);
                 g.setColour (brand::edge);
                 g.drawRoundedRectangle (r, brand::radius::md, 1.0f);

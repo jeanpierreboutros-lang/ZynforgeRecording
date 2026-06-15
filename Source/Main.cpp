@@ -32,9 +32,7 @@ public:
         auto r = getLocalBounds().toFloat().reduced (1.0f);
         const float rad = 20.0f;
 
-        g.setGradientFill (juce::ColourGradient (
-            zynforge::brand::bgPanel.brighter (0.10f), r.getCentreX(), r.getY(),
-            zynforge::brand::bgDeep,                   r.getCentreX(), r.getBottom(), false));
+        g.setColour (zynforge::brand::bgPanel);   // FLAT: solid panel (no gradient)
         g.fillRoundedRectangle (r, rad);
         g.setColour (zynforge::brand::gloss (0.12f));
         g.drawRoundedRectangle (r, rad, 1.0f);

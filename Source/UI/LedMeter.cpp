@@ -115,25 +115,21 @@ namespace zynforge
 
         if (h < 24.0f)
         {
-            // Smooth gradient bar -- forge heat: green safe zone at the bottom,
-            // climbing through ember + forge-orange to white-hot at the top.
-            juce::ColourGradient grad (brand::meterGreen,    r.getX(), r.getBottom(),
-                                       brand::meterWhiteHot, r.getX(), r.getY(), false);
-            grad.addColour (0.70, brand::meterEmber);
-            grad.addColour (0.88, brand::meterHot);
-
+            // FLAT: solid forge-heat colour picked by LEVEL (no gradient) -- the
+            // fill is green in the safe zone and climbs to forge-orange / white-hot
+            // as the level rises, but each region is a solid colour.
             // Background -- idle bar.
             g.setColour (brand::meterIdle);
             g.fillRoundedRectangle (r.reduced (1.0f), brand::radius::sm);
 
-            // RMS region: solid, peak above it: half-alpha.
+            // RMS region: solid, peak above it: dimmed.
             const float rmsH  = h * litRms;
             const float peakH = h * litPeak;
             if (peakH > rmsH)
             {
                 auto peakRect = juce::Rectangle<float> (
                     r.getX(), r.getBottom() - peakH, r.getWidth(), peakH - rmsH);
-                g.setGradientFill (grad);
+                g.setColour (colourAt (litPeak));
                 g.fillRect (peakRect.reduced (1.0f, 0.0f));
                 g.setColour (brand::shadow::elev3());
                 g.fillRect (peakRect.reduced (1.0f, 0.0f));
@@ -142,7 +138,7 @@ namespace zynforge
             {
                 auto rmsRect = juce::Rectangle<float> (
                     r.getX(), r.getBottom() - rmsH, r.getWidth(), rmsH);
-                g.setGradientFill (grad);
+                g.setColour (colourAt (litRms));
                 g.fillRect (rmsRect.reduced (1.0f, 0.0f));
             }
             return;

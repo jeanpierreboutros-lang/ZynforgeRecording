@@ -75,10 +75,7 @@ namespace zynforge
                 }
                 const float lit = juce::jlimit (0.0f, 1.0f, level);
                 auto bar = r.withWidth (r.getWidth() * lit);
-                g.setGradientFill (juce::ColourGradient (
-                    brand::meterGreen, bar.getX(), bar.getY(),
-                    lit > 0.85f ? brand::meterRed : brand::meterAmber,
-                    bar.getRight(), bar.getY(), false));
+                g.setColour (lit > 0.85f ? brand::meterRed : brand::meterGreen);   // FLAT: solid, coloured by level
                 g.fillRoundedRectangle (bar, brand::radius::sm);
 
                 g.setColour (brand::edge);
