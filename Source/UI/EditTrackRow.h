@@ -611,6 +611,10 @@ namespace zynforge
             if (recPeakR.size() >= kMaxPoints) decimateInPlace (recPeakR);
             recPeakL.push_back (juce::jlimit (0.0f, 1.0f, l));
             if (stereo) recPeakR.push_back (juce::jlimit (0.0f, 1.0f, r));
+            // Redraw so the engineer SEES the envelope grow live. The playhead
+            // sits pinned at the right edge during a grow-to-fit take, so
+            // setPlayheadX is a no-op and won't trigger this repaint for us.
+            repaint();
         }
 
         void mouseEnter (const juce::MouseEvent&) override
