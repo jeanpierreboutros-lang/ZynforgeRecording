@@ -76,7 +76,7 @@ namespace zynforge
                 removeBtn.setButtonText ("x");
                 dialog::styleSecondary (removeBtn);
                 removeBtn.setColour (juce::TextButton::buttonColourId,
-                                     brand::accentRecord.withAlpha (brand::alpha::dimmed));
+                                     brand::accentRecord.withAlpha (zynforge::brand::alpha::dimmed));
                 removeBtn.onClick = [this] { if (removeCb) removeCb (index); };
                 addAndMakeVisible (removeBtn);
             }

@@ -91,7 +91,7 @@ namespace
             chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
             chv.startNewSubPath (0.36f, 0.73f); chv.lineTo (0.50f, 0.58f); chv.lineTo (0.64f, 0.73f);
             hex.applyTransform (xf); chv.applyTransform (xf);
-            g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::chrome) : zynforge::brand::debossInk.withAlpha (0.28f));
+            g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::chrome) : zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::wash));
             g.fillPath (hex);
             g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::muted) : zynforge::brand::gloss (0.10f));
             g.strokePath (hex, juce::PathStrokeType (1.0f));
@@ -192,7 +192,7 @@ namespace zynforge
             auto r = getLocalBounds().toFloat().reduced (1.5f);
             g.setColour (displayColour);
             g.fillRoundedRectangle (r, brand::radius::sm);
-            g.setColour (brand::gloss (brand::alpha::dimmed));
+            g.setColour (brand::gloss (zynforge::brand::alpha::dimmed));
             g.drawRoundedRectangle (r, brand::radius::sm, 1.0f);
         }
 
@@ -779,7 +779,7 @@ namespace zynforge
 
         // Live-value readout -- tabular mono so peaks don't visually
         // wobble while the meter is moving.
-        dbLabel.setFont (brand::type::mono (11.0f, true));
+        dbLabel.setFont (zynforge::brand::type::monoStamp());
         dbLabel.setColour (juce::Label::textColourId, brand::textPrimary);
         dbLabel.setJustificationType (juce::Justification::centred);
         addAndMakeVisible (dbLabel);
@@ -883,7 +883,7 @@ namespace zynforge
         addAndMakeVisible (panSlider);
 
         // Pan label below the knob(s).
-        panLabel.setFont (brand::type::mono (11.0f, true));
+        panLabel.setFont (zynforge::brand::type::monoStamp());
         panLabel.setColour (juce::Label::textColourId, brand::accentStatus);
         panLabel.setJustificationType (juce::Justification::centred);
         panLabel.setText (formatPanText (s.pan.load(), pairState != nullptr), juce::dontSendNotification);
@@ -908,7 +908,7 @@ namespace zynforge
             };
             addAndMakeVisible (panSliderR);
 
-            panLabelR.setFont (brand::type::mono (11.0f, true));
+            panLabelR.setFont (zynforge::brand::type::monoStamp());
             panLabelR.setColour (juce::Label::textColourId, brand::accentStatus);
             panLabelR.setJustificationType (juce::Justification::centred);
             panLabelR.setText (formatPanText (pairState->pan.load(), true), juce::dontSendNotification);
@@ -936,7 +936,7 @@ namespace zynforge
         gainFader.setColour (juce::Slider::textBoxTextColourId,  brand::textPrimary);
         gainFader.setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
         gainFader.setColour (juce::Slider::textBoxBackgroundColourId,
-                             brand::bgDeep.withAlpha (brand::alpha::ghost));
+                             brand::bgDeep.withAlpha (zynforge::brand::alpha::ghost));
         // Same reasoning as the pan knob: scroll-wheel / trackpad
         // gestures should NEVER move the gain. The fader changes only
         // on a direct click+drag interaction.
@@ -1000,7 +1000,7 @@ namespace zynforge
             juce::Graphics::ScopedSaveState clip (g);
             g.reduceClipRegion (bodyClip);
             steel::drawHammered    (g, r, 0.38f);              // ③ hammered steel
-            g.setColour (zynforge::brand::debossInk.withAlpha (brand::alpha::edgeSoft));  // light forged scrim -- lets colour show
+            g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::edgeSoft));  // light forged scrim -- lets colour show
             g.fillRect (r);
             steel::drawSteelHeader (g, r.withHeight (30.0f));  // taller near-black stamped plate
             // Heated Steel: the spine breathes at ~1 Hz while record-armed.
@@ -1032,7 +1032,7 @@ namespace zynforge
         if (isArmed)
         {
             // FLAT: a solid, subtle ember wash marks the armed channel (no glow gradient).
-            g.setColour (brand::meterEmber.withAlpha (brand::alpha::faint));
+            g.setColour (brand::meterEmber.withAlpha (zynforge::brand::alpha::faint));
             g.fillRoundedRectangle (r, brand::radius::xl);
         }
 
@@ -1046,7 +1046,7 @@ namespace zynforge
         // border so "this channel is live to disk" reads instantly.
         if (isArmed)
         {
-            g.setColour (brand::meterHot.withAlpha (0.65f));
+            g.setColour (brand::meterHot.withAlpha (zynforge::brand::alpha::muted));
             g.drawRoundedRectangle (r.reduced (0.5f), brand::radius::xl, 1.5f);
         }
 
@@ -1072,7 +1072,7 @@ namespace zynforge
             // strip reads unmistakably at a glance. The old chip used a
             // dimmed fill + caption font and was easy to miss.
             const float topY = r.getY() + 1.0f;
-            g.setColour (brand::featureEngaged.withAlpha (brand::alpha::bold));
+            g.setColour (brand::featureEngaged.withAlpha (zynforge::brand::alpha::bold));
             g.fillRoundedRectangle (r.getX() + 4.0f, topY, r.getWidth() - 8.0f, 3.0f,
                                     brand::radius::sm);
 
@@ -1135,7 +1135,7 @@ namespace zynforge
         {
             const auto led = juce::Rectangle<float> (r.getX() + 4.0f, r.getY() + 20.0f, 6.0f, 6.0f);
             const auto c   = autoSafeOn ? brand::engagedAmber : brand::accentRecord;
-            g.setColour (c.withAlpha (brand::alpha::bold));
+            g.setColour (c.withAlpha (zynforge::brand::alpha::bold));
             g.fillEllipse (led);
             g.setColour (brand::lift (c, 0.45f));
             g.drawEllipse (led, 0.6f);

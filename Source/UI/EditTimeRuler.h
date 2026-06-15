@@ -226,7 +226,7 @@ namespace zynforge
             g.setColour (brand::edge);
             g.drawHorizontalLine (totalH - 1, 0.0f, (float) getWidth());
             // Separator between the two strips.
-            g.setColour (brand::edge.withAlpha (brand::alpha::muted));
+            g.setColour (brand::edge.withAlpha (zynforge::brand::alpha::muted));
             g.drawHorizontalLine (markerStripH, 0.0f, (float) getWidth());
 
             // Left header column -- two stacked labels matching the
@@ -302,9 +302,9 @@ namespace zynforge
                 const int xB = juce::jmin (getWidth(), secToX ((double) player.getLoopEnd()   / sr));
                 if (xB > xA)
                 {
-                    g.setColour (brand::accentEdit.withAlpha (brand::alpha::subtle));
+                    g.setColour (brand::accentEdit.withAlpha (zynforge::brand::alpha::subtle));
                     g.fillRect (juce::Rectangle<int> (xA, rulerTop, xB - xA, rulerH));
-                    g.setColour (brand::accentEdit.withAlpha (0.75f));
+                    g.setColour (brand::accentEdit.withAlpha (zynforge::brand::alpha::strong));
                     g.drawVerticalLine (xA,     (float) rulerTop, (float) rulerBottom);
                     g.drawVerticalLine (xB - 1, (float) rulerTop, (float) rulerBottom);
                 }
@@ -329,9 +329,9 @@ namespace zynforge
                                                 juce::jmax (headerW + 4, getWidth() - tw - 4),
                                                 xA + 3);
                 juce::Rectangle<int> pill (tx, 2, tw, juce::jmax (12, markerStripH - 4));
-                g.setColour (brand::bgDeep.withAlpha (0.92f));
+                g.setColour (brand::bgDeep.withAlpha (zynforge::brand::alpha::bold));
                 g.fillRoundedRectangle (pill.toFloat(), brand::radius::sm);
-                g.setColour (brand::accentEdit.withAlpha (0.45f));
+                g.setColour (brand::accentEdit.withAlpha (zynforge::brand::alpha::scrim));
                 g.drawRoundedRectangle (pill.toFloat().reduced (0.5f), brand::radius::sm, 1.0f);
                 g.setColour (brand::lift (brand::accentEdit, 0.35f));
                 g.setFont (font);
@@ -378,7 +378,7 @@ namespace zynforge
                 const int  hPx   = major ? majorTickH : (mid ? midTickH : minorTickH);
                 g.setColour (major ? brand::textSecondary
                                    : (mid ? brand::textMuted
-                                          : brand::edge.withAlpha (brand::alpha::prominent)));
+                                          : brand::edge.withAlpha (zynforge::brand::alpha::prominent)));
                 g.drawVerticalLine (x, (float) (rulerBottom - hPx), (float) rulerBottom);
 
                 if (major)
@@ -401,7 +401,7 @@ namespace zynforge
                 const int cx = secToX ((double) cursorSample / sr);
                 if (cx >= headerW && cx < getWidth())
                 {
-                    g.setColour (brand::textPrimary.withAlpha (brand::alpha::bold));
+                    g.setColour (brand::textPrimary.withAlpha (zynforge::brand::alpha::bold));
                     g.drawVerticalLine (cx, (float) rulerTop, (float) rulerBottom);
                 }
             }
@@ -421,7 +421,7 @@ namespace zynforge
                 const int px = secToX ((double) headSample / sr);
                 if (px >= headerW && px <= getWidth())
                 {
-                    g.setColour (headCol.withAlpha (brand::alpha::prominent));
+                    g.setColour (headCol.withAlpha (zynforge::brand::alpha::prominent));
                     g.fillRect (juce::Rectangle<int> (px - 1, rulerTop, 2, rulerH));
 
                     const auto label = formatTime ((double) headSample / sr,

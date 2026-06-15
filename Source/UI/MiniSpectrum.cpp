@@ -116,7 +116,7 @@ namespace zynforge
             const auto base = (t < 0.6f ? brand::meterGreen
                               : t < 0.85f ? brand::meterAmber
                                           : brand::meterRed);
-            g.setColour (base.withAlpha (brand::alpha::prominent));
+            g.setColour (base.withAlpha (zynforge::brand::alpha::prominent));
             g.fillRect (bar);
         }
     }

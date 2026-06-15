@@ -93,7 +93,7 @@ MainComponent::MainComponent()
     // but don't paint it in the header.
     recordButton.setVisible (false);
 
-    playButton.setColour (juce::TextButton::buttonColourId, brand::accentPlay.withAlpha (brand::alpha::subtle));
+    playButton.setColour (juce::TextButton::buttonColourId, brand::accentPlay.withAlpha (zynforge::brand::alpha::subtle));
     playButton.setColour (juce::TextButton::textColourOffId, brand::accentPlay);
     playButton.onClick = [this] { onPlayClicked(); };
     addAndMakeVisible (playButton);
@@ -101,7 +101,7 @@ MainComponent::MainComponent()
     stopButton.onClick = [this] { onStopClicked(); };
     addAndMakeVisible (stopButton);
 
-    loadButton.setColour (juce::TextButton::buttonColourId, brand::accentVS.withAlpha (brand::alpha::subtle));
+    loadButton.setColour (juce::TextButton::buttonColourId, brand::accentVS.withAlpha (zynforge::brand::alpha::subtle));
     loadButton.setColour (juce::TextButton::textColourOffId, brand::accentVS);
     loadButton.onClick = [this] { onFileMenuClicked(); };
     addAndMakeVisible (loadButton);
@@ -827,7 +827,7 @@ void MainComponent::switchView (View v)
     auto colour = [] (juce::TextButton& b, bool engaged)
     {
         b.setColour (juce::TextButton::buttonColourId,
-                     engaged ? brand::accentStatus.withAlpha (0.32f)
+                     engaged ? brand::accentStatus.withAlpha (zynforge::brand::alpha::wash)
                              : brand::bgElevated);
         b.setColour (juce::TextButton::textColourOffId,
                      engaged ? brand::accentStatus : brand::textSecondary);

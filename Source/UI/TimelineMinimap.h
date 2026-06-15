@@ -60,7 +60,7 @@ namespace zynforge
             auto box = juce::Rectangle<float> (xL, 1.0f,
                                                juce::jmax (3.0f, xR - xL),
                                                (float) getHeight() - 2.0f);
-            g.setColour (brand::toolActive().withAlpha (brand::alpha::subtle));
+            g.setColour (brand::toolActive().withAlpha (zynforge::brand::alpha::subtle));
             g.fillRoundedRectangle (box, brand::radius::sm);
             g.setColour (brand::toolActive());
             g.drawRoundedRectangle (box.reduced (0.5f), brand::radius::sm, 1.2f);

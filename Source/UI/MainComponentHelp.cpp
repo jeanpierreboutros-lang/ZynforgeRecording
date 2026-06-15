@@ -137,7 +137,7 @@ namespace
                         // so the eye can track across the row.
                         if (zebra)
                         {
-                            g.setColour (brand::bgDeep.withAlpha (brand::alpha::scrim));
+                            g.setColour (brand::bgDeep.withAlpha (zynforge::brand::alpha::scrim));
                             g.fillRect (row);
                         }
                         zebra = ! zebra;

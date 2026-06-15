@@ -80,7 +80,7 @@ namespace zynforge
 
         // Progress fill (0 → playhead)
         const int px = xForSample (cachedPos);
-        g.setColour (brand::accentPlay.withAlpha (0.25f));
+        g.setColour (brand::accentPlay.withAlpha (zynforge::brand::alpha::soft));
         g.fillRect (juce::Rectangle<float> ((float) kHMargin, trackY - 4.0f,
                                             (float) (px - kHMargin), 8.0f));
 
@@ -90,7 +90,7 @@ namespace zynforge
         {
             const int x0 = xForSample (player.getLoopStart());
             const int x1 = xForSample (player.getLoopEnd());
-            g.setColour (brand::accentVS.withAlpha (brand::alpha::dimmed));
+            g.setColour (brand::accentVS.withAlpha (zynforge::brand::alpha::dimmed));
             g.fillRect (juce::Rectangle<float> ((float) x0, trackY - 8.0f,
                                                 (float) (x1 - x0), 16.0f));
             g.setColour (brand::accentVS);

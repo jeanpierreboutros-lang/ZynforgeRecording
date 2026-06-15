@@ -75,7 +75,7 @@ void MainComponent::paint (juce::Graphics& g)
             juce::Path chv;
             chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
             hex.applyTransform (xf); chv.applyTransform (xf);
-            g.setColour (brand::brandOrange.withAlpha (brand::alpha::edgeSoft)); g.fillPath (hex);
+            g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::edgeSoft)); g.fillPath (hex);
             g.setColour (brand::brandOrange);
             g.strokePath (hex, juce::PathStrokeType (1.4f));
             g.strokePath (chv, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved,

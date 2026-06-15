@@ -53,7 +53,7 @@ namespace zynforge
             g.drawText ("VCA GROUPS", getLocalBounds().removeFromTop (brand::space::ctrlH),
                         juce::Justification::centred, false);
             // Heated Steel: orange seam under the panel title.
-            g.setColour (brand::brandOrange.withAlpha (0.50f));
+            g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::half));
             g.fillRect (getLocalBounds().withTop (brand::space::ctrlH).withHeight (1).reduced (8, 0));
         }
 
@@ -156,7 +156,7 @@ namespace zynforge
                 g.setColour (bg);
                 g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (1), brand::radius::md);
                 // Heated Steel: structural orange spine on the left edge.
-                g.setColour (brand::brandOrange.withAlpha (brand::alpha::prominent));
+                g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::prominent));
                 g.fillRect (1, 1, 3, getHeight() - 2);
                 const juce::uint32 c = engine.getVca (index).colourARGB.load (std::memory_order_relaxed);
                 const auto swatch = c != 0 ? juce::Colour (c) : brand::stripColour (index);

@@ -63,7 +63,7 @@ namespace zynforge
             g.fillRoundedRectangle (juce::Rectangle<float> (r.getX(), r.getY(), 4.0f, r.getHeight()),
                                     brand::radius::sm);
 
-            g.setColour (brand::lift (base, 0.45f).withAlpha (0.45f));
+            g.setColour (brand::lift (base, 0.45f).withAlpha (zynforge::brand::alpha::scrim));
             g.drawRoundedRectangle (r, brand::radius::lg, 1.0f);
 
             // Message text.

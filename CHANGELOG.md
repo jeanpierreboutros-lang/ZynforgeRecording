@@ -17,6 +17,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Changed (design-system audit follow-through — 2026-06-16)
+- **Opacity is fully tokenised + enforced.** Added `alpha::soft/half/strong`, migrated every raw `withAlpha(0.NN)` literal in app code to a named `brand::alpha::` token, and removed the ad-hoc "catalogue" escape-hatch from `design_audit.sh` — a raw alpha float now FAILS the gate.
+- **Spacing ratchet.** `design_audit.sh` now counts raw-integer `reduced()` calls and FAILS if the count grows past the baseline (169), so new layout uses `brand::space::` while the existing tail migrates incrementally.
+- **Mono type scale.** Added `type::monoStamp` / `type::monoCounter` and migrated the repeated raw `type::mono(NN)` sizes to them. (Motion was already tokenised via `brand::motion::` — the audit under-counted it.)
+
 ### Fixed (About dialog: © artifact + forge icon — 2026-06-16)
 - **The About box now shows a clean © and the forge icon.** `©` (and the user-guide `×`) were rendering as mojibake ("Â©", "Ã—") because the implicit `const char*`→`String` conversion decoded the multi-byte UTF-8 as Latin-1; the strings are now built with `String::fromUTF8`. The About dialog also switched from `NoIcon` to `InfoIcon`, so the ZynForge forge-mark badge is stamped on it like the other prompts. Separators are proper `·` middots now.
 

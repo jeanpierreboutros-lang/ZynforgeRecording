@@ -161,7 +161,7 @@ namespace zynforge
         g.setColour (brand::edge);
         g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
         // Heated Steel: hairline orange seam on the left edge ties the bar in.
-        g.setColour (brand::brandOrange.withAlpha (0.45f));
+        g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::scrim));
         g.fillRect (r.getX(), r.getY() + 3.0f, 2.0f, r.getHeight() - 6.0f);
 
         // Beat LED on the right edge.

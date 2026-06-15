@@ -60,7 +60,7 @@ namespace zynforge
             // fully opaque while rolling or on a blink-lit frame.
             if (isRec)
             {
-                const float a = (recOn || blinkOn) ? 1.0f : brand::alpha::prominent;
+                const float a = (recOn || blinkOn) ? 1.0f : zynforge::brand::alpha::prominent;
                 g.setColour (brand::accentRecord.withAlpha (a));
                 g.drawRoundedRectangle (r.reduced (1.0f), rad, 2.0f);
             }

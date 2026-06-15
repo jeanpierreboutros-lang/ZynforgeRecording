@@ -197,7 +197,7 @@ namespace zynforge
                 addAndMakeVisible (inputMeter);
 
                 testButton.setTooltip ("Play a short 440 Hz tone through the selected output.");
-                testButton.setColour (juce::TextButton::buttonColourId, brand::featureEngaged.withAlpha (0.25f));
+                testButton.setColour (juce::TextButton::buttonColourId, brand::featureEngaged.withAlpha (zynforge::brand::alpha::soft));
                 testButton.setColour (juce::TextButton::textColourOffId, brand::featureEngaged);
                 testButton.onClick = [this] { engine.getDeviceManager().playTestSound(); };
                 addAndMakeVisible (testButton);
@@ -210,7 +210,7 @@ namespace zynforge
                 addAndMakeVisible (statusLabel);
 
                 applyButton.setColour (juce::TextButton::buttonColourId,
-                                       brand::accentStatus.withAlpha (brand::alpha::prominent));
+                                       brand::accentStatus.withAlpha (zynforge::brand::alpha::prominent));
                 applyButton.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
                 applyButton.onClick = [this] { applyAndClose(); };
                 addAndMakeVisible (applyButton);

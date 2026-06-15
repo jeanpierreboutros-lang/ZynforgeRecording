@@ -18,7 +18,7 @@ namespace
             chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
             chv.startNewSubPath (0.36f, 0.73f); chv.lineTo (0.50f, 0.58f); chv.lineTo (0.64f, 0.73f);
             hex.applyTransform (xf); chv.applyTransform (xf);
-            g.setColour (hot ? orange.withAlpha (zynforge::brand::alpha::chrome) : zynforge::brand::debossInk.withAlpha (0.28f)); g.fillPath (hex);
+            g.setColour (hot ? orange.withAlpha (zynforge::brand::alpha::chrome) : zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::wash)); g.fillPath (hex);
             g.setColour (hot ? orange.withAlpha (zynforge::brand::alpha::muted) : zynforge::brand::gloss (0.10f)); g.strokePath (hex, juce::PathStrokeType (1.0f));
             g.setColour (hot ? orange : zynforge::brand::gloss (0.24f));
             g.strokePath (chv, juce::PathStrokeType (juce::jmax (1.0f, r.getWidth() * 0.07f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
@@ -151,7 +151,7 @@ namespace zynforge
         const float ignite = rm ? 1.0f : igniteLevel;                          // full heat, no ramp
         if (mode == Mode::Recording)
             bg = brand::meterEmber.withAlpha ((0.14f + 0.10f * pulse) * ignite); // ember, breathing + igniting
-        else if (mode == Mode::Playing) bg = brand::accentPlay.withAlpha (0.14f);
+        else if (mode == Mode::Playing) bg = brand::accentPlay.withAlpha (zynforge::brand::alpha::edgeSoft);
         auto bgRect = r.reduced (2.0f);
         g.setColour (bg);   // FLAT: solid plate (bg already breathes via pulse); no gradient
         g.fillRoundedRectangle (bgRect, brand::radius::lg);
@@ -182,12 +182,12 @@ namespace zynforge
         }
 
         // ── Heated Steel: structural orange frame + forge-mark ─────────────
-        g.setColour (brand::brandOrange.withAlpha (brand::alpha::muted));
+        g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::muted));
         g.drawRoundedRectangle (r.reduced (3.0f), brand::radius::lg, 2.0f);
         // Orange corner brackets (top-left / top-right) -- target detail.
         {
             const float br = 20.0f, bw = 2.0f, off = 8.0f;
-            g.setColour (brand::brandOrange.withAlpha (brand::alpha::prominent));
+            g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::prominent));
             // top-left
             g.fillRect (r.getX() + off, r.getY() + off, br, bw);
             g.fillRect (r.getX() + off, r.getY() + off, bw, br);
@@ -234,7 +234,7 @@ namespace zynforge
                 g.setFont (brand::type::caption());
                 g.drawText (label, line, juce::Justification::topLeft, false);
                 g.setColour (valueCol);
-                g.setFont (brand::type::mono (11.0f, true));
+                g.setFont (zynforge::brand::type::monoStamp());
                 g.drawText (value, line, juce::Justification::topRight, false);
             };
 
@@ -284,7 +284,7 @@ namespace zynforge
         // panel's ember underglow, not from blurring the numerals.
         g.setFont (brand::type::mono (timerPt, true));
         {
-            g.setColour (brand::debossInk.withAlpha (brand::alpha::muted));
+            g.setColour (brand::debossInk.withAlpha (zynforge::brand::alpha::muted));
             const float o = 1.0f;
             for (auto d : { juce::Point<float> (-o, 0.0f), {  o, 0.0f },
                             {  0.0f, -o },                 {  0.0f, o },

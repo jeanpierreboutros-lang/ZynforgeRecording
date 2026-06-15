@@ -165,6 +165,8 @@ namespace zynforge::brand
         inline juce::Font micro()        { return ui   (h_micro);          }
         inline juce::Font label()        { return ui   (h_label);          }
         inline juce::Font ledLabel()     { return mono (9.0f, true);       }
+        inline juce::Font monoStamp()    { return mono (11.0f, true);      }  // column numbers, small bold mono stamps
+        inline juce::Font monoCounter()  { return mono (15.0f);            }  // mid mono readouts / counters
         inline juce::Font hint()         { return ui   (h_label);          }
         inline juce::Font statusBar()    { return ui   (h_caption);        }
         inline juce::Font uiLabel()      { return ui   (h_caption, true);  }

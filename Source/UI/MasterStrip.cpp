@@ -35,9 +35,9 @@ namespace
             g.setColour (zynforge::brand::steelMasterHi);   // FLAT: solid plate (no gradient)
             g.fillRect (r);
             g.setColour (zynforge::brand::gloss (0.14f)); g.fillRect (r.withHeight (1.0f));
-            g.setColour (zynforge::brand::structuralForge().withAlpha (0.60f));            // structural seam (subdued)
+            g.setColour (zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::muted));            // structural seam (subdued)
             g.fillRect (r.getX(), r.getBottom() - 3.0f, r.getWidth(), 2.0f);
-            g.setColour (zynforge::brand::debossInk.withAlpha (0.75f)); g.fillRect (r.removeFromBottom (1.0f));
+            g.setColour (zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::strong)); g.fillRect (r.removeFromBottom (1.0f));
         }
         inline void drawSpine (juce::Graphics& g, juce::Rectangle<float> r, bool armed)
         {
@@ -56,7 +56,7 @@ namespace
             chv.startNewSubPath (0.28f, 0.64f); chv.lineTo (0.50f, 0.41f); chv.lineTo (0.72f, 0.64f);
             chv.startNewSubPath (0.36f, 0.73f); chv.lineTo (0.50f, 0.58f); chv.lineTo (0.64f, 0.73f);
             hex.applyTransform (xf); chv.applyTransform (xf);
-            g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::chrome) : zynforge::brand::debossInk.withAlpha (0.28f)); g.fillPath (hex);
+            g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::chrome) : zynforge::brand::debossInk.withAlpha (zynforge::brand::alpha::wash)); g.fillPath (hex);
             g.setColour (hot ? zynforge::brand::structuralForge().withAlpha (zynforge::brand::alpha::muted) : zynforge::brand::gloss (0.10f)); g.strokePath (hex, juce::PathStrokeType (1.0f));
             g.setColour (hot ? structuralForge() : zynforge::brand::gloss (0.24f));
             g.strokePath (chv, juce::PathStrokeType (juce::jmax (1.0f, r.getWidth() * 0.07f), juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
@@ -248,7 +248,7 @@ namespace zynforge
         auto r = getLocalBounds().toFloat().reduced (2.0f);
         g.setGradientFill (brand::verticalGradient (brand::bgElevated, r, 0.05f, 0.30f));
         g.fillRoundedRectangle (r, brand::radius::xl);
-        g.setColour (brand::brandOrange.withAlpha (brand::alpha::ghost));
+        g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::ghost));
         g.drawRoundedRectangle (r, brand::radius::xl, 1.5f);
 
         // ── Heated Steel: forged finish (Direction C) ────────────────────

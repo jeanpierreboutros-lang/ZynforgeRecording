@@ -162,7 +162,7 @@ namespace zynforge
                         auto inner = head.reduced (3, 3);
                         g.setColour (stripCol);   // FLAT: solid colour band (no gradient)
                         g.fillRoundedRectangle (inner.toFloat(), brand::radius::lg);
-                        g.setColour (brand::lift (stripCol, 0.30f).withAlpha (brand::alpha::muted));
+                        g.setColour (brand::lift (stripCol, 0.30f).withAlpha (zynforge::brand::alpha::muted));
                         g.drawRoundedRectangle (inner.toFloat(), brand::radius::lg, 1.0f);
 
                         g.setColour (brand::onSignal (stripCol));
@@ -191,7 +191,7 @@ namespace zynforge
                         {
                             g.setColour (brand::bgElevated);
                             g.fillRoundedRectangle (pill.toFloat(), pill.getHeight() * 0.5f);
-                            g.setColour (brand::lift (stripCol, 0.20f).withAlpha (brand::alpha::muted));
+                            g.setColour (brand::lift (stripCol, 0.20f).withAlpha (zynforge::brand::alpha::muted));
                             g.drawRoundedRectangle (pill.toFloat(), pill.getHeight() * 0.5f, 1.0f);
                             g.setColour (brand::textSecondary);
                         }
@@ -210,7 +210,7 @@ namespace zynforge
                         if (y + L.rowH <= bodyY || y >= bodyY + bodyH) continue;
                         if (row % 2 == 0)
                         {
-                            g.setColour (brand::bgStrip.withAlpha (brand::alpha::scrim));
+                            g.setColour (brand::bgStrip.withAlpha (zynforge::brand::alpha::scrim));
                             g.fillRect (juce::Rectangle<int> (0, y, L.rowHeaderW, L.rowH));
                         }
                         const bool isActiveRow = isRowRoutedToAnyStrip (row, logical);
@@ -224,7 +224,7 @@ namespace zynforge
 
                 // ─── Heated Steel: orange seams framing the frozen panes,
                 // mirroring the mixer-strip spine/seam identity.
-                g.setColour (brand::brandOrange.withAlpha (0.50f));
+                g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::half));
                 g.fillRect (0, bodyY - 1, getWidth(), 1);   // under the column-header band
                 g.fillRect (bodyX - 1, 0, 1, getHeight());  // right of the row-header column
 
@@ -238,7 +238,7 @@ namespace zynforge
                         if (y + L.rowH <= bodyY || y >= bodyY + bodyH) continue;
                         if (row % 2 == 0)
                         {
-                            g.setColour (brand::bgStrip.withAlpha (brand::alpha::scrim));
+                            g.setColour (brand::bgStrip.withAlpha (zynforge::brand::alpha::scrim));
                             g.fillRect (juce::Rectangle<int> (bodyX, y, bodyW, L.rowH));
                         }
                         for (int c = 0; c < numStrips; ++c)
@@ -263,7 +263,7 @@ namespace zynforge
                             }
                             else
                             {
-                                g.setColour (brand::textTertiary.withAlpha (brand::alpha::muted));
+                                g.setColour (brand::textTertiary.withAlpha (zynforge::brand::alpha::muted));
                                 g.drawEllipse (dot, 1.6f);
                             }
                         }

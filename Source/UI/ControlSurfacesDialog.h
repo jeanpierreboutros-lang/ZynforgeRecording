@@ -437,7 +437,7 @@ namespace zynforge
             {
                 if (row < 0 || row >= getNumRows()) return;
                 const auto& pi = protocols()[(size_t) row];
-                if (selected) { g.setColour (brand::brandOrange.withAlpha (brand::alpha::subtle)); g.fillRect (0, 0, w, h); }
+                if (selected) { g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::subtle)); g.fillRect (0, 0, w, h); }
 
                 const auto box = juce::Rectangle<float> (12.0f, h * 0.5f - 8.0f, 16.0f, 16.0f);
                 g.setColour (brand::edge); g.drawRoundedRectangle (box, brand::radius::md, 1.2f);

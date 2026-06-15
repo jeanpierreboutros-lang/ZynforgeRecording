@@ -329,7 +329,7 @@ namespace zynforge
             // Input + output routing combos -- same wiring as the mixer.
             auto styleCombo = [] (juce::ComboBox& c)
             {
-                c.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep.withAlpha (brand::alpha::muted));
+                c.setColour (juce::ComboBox::backgroundColourId, brand::bgDeep.withAlpha (zynforge::brand::alpha::muted));
                 c.setColour (juce::ComboBox::outlineColourId,    brand::edge);
                 c.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
                 c.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
@@ -579,7 +579,7 @@ namespace zynforge
             if (existingFrac <= 0.0 || thumb.getTotalLength() <= 0.0) return;
             auto existing = area.withWidth ((int) (area.getWidth() * juce::jlimit (0.0, 1.0, existingFrac)));
             if (existing.getWidth() <= 0) return;
-            g.setColour (brand::accentPlay.withAlpha (brand::alpha::muted));   // existing take = dim context
+            g.setColour (brand::accentPlay.withAlpha (zynforge::brand::alpha::muted));   // existing take = dim context
             if (wholeFile) thumb.drawChannels (g, existing, 0.0, thumb.getTotalLength(), zoom);
             else           thumb.drawChannel  (g, existing, 0.0, thumb.getTotalLength(), chan, zoom);
         }
@@ -729,11 +729,11 @@ namespace zynforge
                     const auto secToX = [&] (double s)
                     { return inner.getX() + (int) (s / totalSec * inner.getWidth()); };
                     // Minor ticks (very faint), then majors (a touch stronger).
-                    g.setColour (brand::edge.withAlpha (brand::alpha::ghost));
+                    g.setColour (brand::edge.withAlpha (zynforge::brand::alpha::ghost));
                     for (int i = 1; i * minorSec < totalSec; ++i)
                         g.drawVerticalLine (secToX (i * minorSec),
                                             (float) inner.getY(), (float) inner.getBottom());
-                    g.setColour (brand::lift (brand::edge, 0.18f).withAlpha (brand::alpha::muted));
+                    g.setColour (brand::lift (brand::edge, 0.18f).withAlpha (zynforge::brand::alpha::muted));
                     for (int i = 1; i * majorSec < totalSec; ++i)
                         g.drawVerticalLine (secToX (i * majorSec),
                                             (float) inner.getY(), (float) inner.getBottom());
@@ -778,20 +778,20 @@ namespace zynforge
                     auto laneR = inner.withTrimmedTop (laneH);
                     if (thumbnailL.getTotalLength() > 0.0)
                     {
-                        g.setColour (waveColour.withAlpha (brand::alpha::muted));
+                        g.setColour (waveColour.withAlpha (zynforge::brand::alpha::muted));
                         drawLaneL (g, laneL, 0.0,
                                    thumbnailL.getTotalLength(), waveZoom (thumbnailL));
                     }
                     if (thumbnailR.getTotalLength() > 0.0)
                     {
-                        g.setColour (waveColour.withAlpha (brand::alpha::muted));
+                        g.setColour (waveColour.withAlpha (zynforge::brand::alpha::muted));
                         drawLaneR (g, laneR, 0.0,
                                    thumbnailR.getTotalLength(), waveZoom (thumbnailR));
                     }
                 }
                 else if (thumbnailL.getTotalLength() > 0.0)
                 {
-                    g.setColour (waveColour.withAlpha (brand::alpha::muted));
+                    g.setColour (waveColour.withAlpha (zynforge::brand::alpha::muted));
                     thumbnailL.drawChannels (g, inner, 0.0,
                                              thumbnailL.getTotalLength(), waveZoom (thumbnailL));
                 }
@@ -813,7 +813,7 @@ namespace zynforge
                 g.drawRect (inner, 1);
 
                 // Centre line for reference (zero / unity).
-                g.setColour (brand::lift (brand::edge, 0.2f).withAlpha (brand::alpha::muted));
+                g.setColour (brand::lift (brand::edge, 0.2f).withAlpha (zynforge::brand::alpha::muted));
                 g.drawHorizontalLine (inner.getCentreY(),
                                       (float) inner.getX(), (float) inner.getRight());
 
@@ -911,7 +911,7 @@ namespace zynforge
                                 const int beatsPerBar = juce::jmax (1, engine.getTimeSignatureNumerator());
                                 const bool downbeat = (beat % beatsPerBar) == 0;
                                 g.setColour (downbeat ? brand::brandOrange
-                                                       : brand::accentStatus.withAlpha (brand::alpha::muted));
+                                                       : brand::accentStatus.withAlpha (zynforge::brand::alpha::muted));
                                 g.drawVerticalLine (x,
                                                     (float) inner.getY(),
                                                     (float) inner.getBottom());
@@ -924,7 +924,7 @@ namespace zynforge
                                     juce::Justification::topLeft, false);
                         if (playheadX >= 0 && playheadX < wavePane.getWidth())
                         {
-                            g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (brand::alpha::prominent));
+                            g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (zynforge::brand::alpha::prominent));
                             g.fillRect (juce::Rectangle<int> (headerW + playheadX,
                                                               0, 2, getHeight()));
                         }
@@ -991,7 +991,7 @@ namespace zynforge
                                     juce::Justification::topLeft, false);
                         if (playheadX >= 0 && playheadX < wavePane.getWidth())
                         {
-                            g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (brand::alpha::prominent));
+                            g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (zynforge::brand::alpha::prominent));
                             g.fillRect (juce::Rectangle<int> (headerW + playheadX,
                                                               0, 2, getHeight()));
                         }
@@ -1038,7 +1038,7 @@ namespace zynforge
                         // Playhead overlay still applies below.
                         if (playheadX >= 0 && playheadX < wavePane.getWidth())
                         {
-                            g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (brand::alpha::prominent));
+                            g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (zynforge::brand::alpha::prominent));
                             g.fillRect (juce::Rectangle<int> (headerW + playheadX,
                                                               0, 2, getHeight()));
                         }
@@ -1189,7 +1189,7 @@ namespace zynforge
                                           + shapedMid * (double) (next.value - prev.value);
                         const int xMid = (xPrev + xNext) / 2;
                         const int yMid = valueToY ((float) vMid);
-                        g.setColour (handleCol.withAlpha (brand::alpha::prominent));
+                        g.setColour (handleCol.withAlpha (zynforge::brand::alpha::prominent));
                         g.fillEllipse ((float) xMid - 2.8f, (float) yMid - 2.8f, 5.6f, 5.6f);
                         g.setColour (brand::bgPanel);
                         g.drawEllipse ((float) xMid - 2.8f, (float) yMid - 2.8f, 5.6f, 5.6f, 1.0f);
@@ -1243,7 +1243,7 @@ namespace zynforge
                                                  labelRight - labelX, inner.getHeight());
                 // Translucent backing pill so the value stays legible
                 // even when it overlaps automation curve / waveform.
-                g.setColour (brand::bgDeep.withAlpha (0.78f));
+                g.setColour (brand::bgDeep.withAlpha (zynforge::brand::alpha::strong));
                 g.fillRoundedRectangle (labelRect.reduced (2, 2).toFloat(),
                                         brand::radius::sm);
                 g.setColour (brand::textPrimary);
@@ -1254,7 +1254,7 @@ namespace zynforge
 
                 if (playheadX >= 0 && playheadX < wavePane.getWidth())
                 {
-                    g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (brand::alpha::prominent));
+                    g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (zynforge::brand::alpha::prominent));
                     g.fillRect (juce::Rectangle<int> (headerW + playheadX,
                                                       0, 2, getHeight()));
                 }
@@ -1285,7 +1285,7 @@ namespace zynforge
                         g.fillRect (laneR);
 
                         const auto wc = isActive ? brand::lift (getStripColour(), 0.25f)
-                                                 : getStripColour().withAlpha (brand::alpha::muted);
+                                                 : getStripColour().withAlpha (zynforge::brand::alpha::muted);
                         g.setColour (wc);
                         for (const auto& c : engine.getTakeClips (index, tk))
                         {
@@ -1301,7 +1301,7 @@ namespace zynforge
                         {
                             const int a = juce::jmin (compDragStartX, compDragCurX);
                             const int b = juce::jmax (compDragStartX, compDragCurX);
-                            g.setColour (brand::toolActive().withAlpha (brand::alpha::subtle));
+                            g.setColour (brand::toolActive().withAlpha (zynforge::brand::alpha::subtle));
                             g.fillRect (juce::Rectangle<int> (a, laneR.getY(), b - a, laneR.getHeight()));
                         }
                         g.setColour (isActive ? brand::accentSolo : brand::textMuted);
@@ -1309,12 +1309,12 @@ namespace zynforge
                         g.drawText ((isActive ? juce::String ("COMP  ") : juce::String())
                                         + engine.getTakeName (index, tk),
                                     laneR.reduced (3, 0), juce::Justification::topLeft, false);
-                        g.setColour (brand::edge.withAlpha (brand::alpha::muted));
+                        g.setColour (brand::edge.withAlpha (zynforge::brand::alpha::muted));
                         g.drawHorizontalLine (laneR.getBottom(), (float) laneR.getX(), (float) laneR.getRight());
                     }
                     if (playheadX >= 0 && playheadX < wavePane.getWidth())
                     {
-                        g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (brand::alpha::prominent));
+                        g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (zynforge::brand::alpha::prominent));
                         g.fillRect (juce::Rectangle<int> (headerW + playheadX, 0, 2, getHeight()));
                     }
                     return;   // comp lanes replace the normal waveform view
@@ -1499,7 +1499,7 @@ namespace zynforge
                                 // drops below the rest; a live clip gets the same
                                 // solid-body + lighter-outline look as the main
                                 // waveform (drawWaveOutlined) so it reads cleanly.
-                                const auto mutedCol = brand::lift (clipTint, 0.20f).withAlpha (brand::alpha::muted);
+                                const auto mutedCol = brand::lift (clipTint, 0.20f).withAlpha (zynforge::brand::alpha::muted);
                                 if (stereo && thumbnailR.getTotalLength() > 0.0)
                                 {
                                     const int half = waveArea.getHeight() / 2;
@@ -1552,10 +1552,10 @@ namespace zynforge
                             {
                                 const float g12 = juce::jlimit (-12.0f, 12.0f, c.gainDb);
                                 const auto col = active ? brand::accentStatus
-                                                        : brand::accentStatus.withAlpha (brand::alpha::prominent);
+                                                        : brand::accentStatus.withAlpha (zynforge::brand::alpha::prominent);
                                 const float cx = (float) hr.getX() + 10.0f;
                                 // Fader track -- wider + clearer than the old hairline.
-                                g.setColour (brand::bgDeep.withAlpha (brand::alpha::scrim));
+                                g.setColour (brand::bgDeep.withAlpha (zynforge::brand::alpha::scrim));
                                 g.fillRoundedRectangle (juce::Rectangle<float> (cx - 6.0f, (float) hr.getY(), 12.0f, (float) hr.getHeight()), 2.0f);
                                 g.setColour (col.withAlpha (active ? 0.95f : 0.55f));
                                 g.drawVerticalLine ((int) cx, (float) hr.getY() + 1.0f, (float) hr.getBottom() - 1.0f);
@@ -1584,7 +1584,7 @@ namespace zynforge
                                     const bool      touched = active || std::abs (c.gainDb) > 0.05f;
                                     const juce::Rectangle<int> pill (hr.getX() + 13, hr.getCentreY() - 9,
                                                                      juce::jmin (104, hr.getRight() - (hr.getX() + 13)), 18);
-                                    g.setColour (brand::bgDeep.withAlpha (brand::alpha::bold));
+                                    g.setColour (brand::bgDeep.withAlpha (zynforge::brand::alpha::bold));
                                     g.fillRoundedRectangle (pill.toFloat(), brand::radius::sm);
                                     g.setColour (touched ? brand::lift (col, 0.5f) : brand::textSecondary);
                                     g.setFont (brand::type::caption().boldened());
@@ -1612,7 +1612,7 @@ namespace zynforge
                                             juce::Justification::centredLeft, false);
                             }
                         }
-                        g.setColour (brand::lift (clipTint, 0.30f).withAlpha (brand::alpha::prominent));
+                        g.setColour (brand::lift (clipTint, 0.30f).withAlpha (zynforge::brand::alpha::prominent));
                         g.drawRect (block, 1);
 
                         // Selected-clip highlight -- the clip you're working
@@ -1624,16 +1624,16 @@ namespace zynforge
                             const juce::Rectangle<int> sel (xL_, inner2.getY(),
                                                             juce::jmax (1, xR_ - xL_),
                                                             inner2.getHeight());
-                            g.setColour (brand::meterEmber.withAlpha (brand::alpha::subtle));
+                            g.setColour (brand::meterEmber.withAlpha (zynforge::brand::alpha::subtle));
                             g.fillRect (sel);
-                            g.setColour (brand::meterHot.withAlpha (brand::alpha::bold));
+                            g.setColour (brand::meterHot.withAlpha (zynforge::brand::alpha::bold));
                             g.drawRect (sel, 2);
                         }
                         if (c.muted)
                         {
                             // Wash the muted clip's lane span with a soft
                             // mute scrim so it visibly drops below the rest.
-                            g.setColour (brand::signalMute().withAlpha (0.22f));
+                            g.setColour (brand::signalMute().withAlpha (zynforge::brand::alpha::soft));
                             g.fillRect (juce::Rectangle<int> (xL_, inner2.getY(),
                                                               juce::jmax (1, xR_ - xL_),
                                                               inner2.getHeight()));
@@ -1644,7 +1644,7 @@ namespace zynforge
                             // shackle dot) so a held clip reads at a glance.
                             const int lx = juce::jmax (xL_, xR_ - 9);
                             const int ly = inner2.getY() + 2;
-                            g.setColour (brand::textPrimary.withAlpha (brand::alpha::prominent));
+                            g.setColour (brand::textPrimary.withAlpha (zynforge::brand::alpha::prominent));
                             g.fillRect (juce::Rectangle<int> (lx,     ly + 2, 6, 4));
                             g.drawRect (juce::Rectangle<int> (lx + 1, ly,     4, 4), 1);
                         }
@@ -1659,7 +1659,7 @@ namespace zynforge
                             const int xF = sampleToX (c.timelineStartSamples + c.fadeInSamples);
                             if (c.fadeInSamples > 0)
                             {
-                                g.setColour (brand::accentStatus.withAlpha (brand::alpha::ghost));
+                                g.setColour (brand::accentStatus.withAlpha (zynforge::brand::alpha::ghost));
                                 juce::Path p;
                                 p.startNewSubPath ((float) xL, (float) inner2.getBottom());
                                 p.lineTo ((float) xF, (float) inner2.getY());
@@ -1682,7 +1682,7 @@ namespace zynforge
                             const int xF = sampleToX (c.timelineStartSamples + c.fileLengthSamples - c.fadeOutSamples);
                             if (c.fadeOutSamples > 0)
                             {
-                                g.setColour (brand::accentStatus.withAlpha (brand::alpha::ghost));
+                                g.setColour (brand::accentStatus.withAlpha (zynforge::brand::alpha::ghost));
                                 juce::Path p;
                                 p.startNewSubPath ((float) xF, (float) inner2.getY());
                                 p.lineTo ((float) xR, (float) inner2.getBottom());
@@ -1724,9 +1724,9 @@ namespace zynforge
                         const auto band = juce::Rectangle<int> (xL, inner2.getY(),
                                                                 xR - xL,
                                                                 inner2.getHeight());
-                        g.setColour (brand::accentStatus.withAlpha (brand::alpha::faint));
+                        g.setColour (brand::accentStatus.withAlpha (zynforge::brand::alpha::faint));
                         g.fillRect (band);
-                        g.setColour (brand::accentStatus.withAlpha (brand::alpha::prominent));
+                        g.setColour (brand::accentStatus.withAlpha (zynforge::brand::alpha::prominent));
                         // Outgoing (a) -- top-left to bottom-right.
                         g.drawLine ((float) xL, (float) inner2.getY(),
                                     (float) xR, (float) inner2.getBottom(), 1.4f);
@@ -1772,9 +1772,9 @@ namespace zynforge
                         {
                             const juce::Rectangle<int> band (
                                 headerW + xA, 0, xB - xA, getHeight());
-                            g.setColour (brand::accentEdit.withAlpha (brand::alpha::subtle));
+                            g.setColour (brand::accentEdit.withAlpha (zynforge::brand::alpha::subtle));
                             g.fillRect (band);
-                            g.setColour (brand::accentEdit.withAlpha (0.75f));
+                            g.setColour (brand::accentEdit.withAlpha (zynforge::brand::alpha::strong));
                             g.drawVerticalLine (band.getX(),     0.0f, (float) getHeight());
                             g.drawVerticalLine (band.getRight(), 0.0f, (float) getHeight());
                         }
@@ -1813,7 +1813,7 @@ namespace zynforge
                     const double prop = juce::jlimit (0.0, 1.0,
                         (double) cursorSample / (double) totalSamples2);
                     const int cx = juce::roundToInt (prop * (wavePane.getWidth() - 8)) + 4;
-                    g.setColour (brand::textPrimary.withAlpha (brand::alpha::bold));
+                    g.setColour (brand::textPrimary.withAlpha (zynforge::brand::alpha::bold));
                     g.fillRect (juce::Rectangle<int> (headerW + cx, 0, 2, getHeight()));
                 }
             }
@@ -1821,7 +1821,7 @@ namespace zynforge
             // ─── Playhead overlay
             if (playheadX >= 0 && playheadX < wavePane.getWidth())
             {
-                g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (brand::alpha::prominent));
+                g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (zynforge::brand::alpha::prominent));
                 g.fillRect (juce::Rectangle<int> (headerW + playheadX, 0, 2, getHeight()));
             }
 
@@ -1907,7 +1907,7 @@ namespace zynforge
 
             // ── Heated Steel: orange spine + stamped number + orange seam ──
             // Mirrors the mixer strip header identity on the EDIT track rows.
-            g.setColour (brand::brandOrange.withAlpha (brand::alpha::wash));               // spine glow
+            g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::wash));               // spine glow
             g.fillRect (juce::Rectangle<float> ((float) hx, 0.0f, 7.0f, (float) getHeight()));
             g.setColour (brand::brandOrange);                                 // spine
             g.fillRect (juce::Rectangle<float> ((float) hx, 0.0f, 3.0f, (float) getHeight()));
@@ -1915,7 +1915,7 @@ namespace zynforge
                 const auto num = juce::String (index + 1).paddedLeft ('0', 2);
                 auto numBox = juce::Rectangle<int> (hx + swatchW + 7, 3, 24, 18);
                 g.setFont (brand::type::mono (15.0f, true));
-                g.setColour (brand::debossInk.withAlpha (brand::alpha::prominent));            // engraved shadow
+                g.setColour (brand::debossInk.withAlpha (zynforge::brand::alpha::prominent));            // engraved shadow
                 g.drawText (num, numBox.translated (0, 1), juce::Justification::centredLeft, false);
                 g.setColour (brand::debossFace);                             // raised steel face
                 g.drawText (num, numBox, juce::Justification::centredLeft, false);
@@ -1923,13 +1923,13 @@ namespace zynforge
 
             g.setColour (brand::edge);
             g.drawVerticalLine (hx + headerW - 1, 0.0f, (float) getHeight());
-            g.setColour (brand::brandOrange.withAlpha (0.50f));               // orange seam
+            g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::half));               // orange seam
             g.drawVerticalLine (hx + headerW - 2, 0.0f, (float) getHeight());
 
             if (auto* page = findParentComponentOfClass<EditPage>())
                 if (page->isTrackSelected && page->isTrackSelected (index))
                 {
-                    g.setColour (brand::brandOrange.withAlpha (brand::alpha::subtle));
+                    g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::subtle));
                     g.fillRect (header);
                     g.setColour (brand::brandOrange);
                     g.fillRect (juce::Rectangle<int> (hx + swatchW, 0, 3, getHeight()));

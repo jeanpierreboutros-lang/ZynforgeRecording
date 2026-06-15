@@ -77,17 +77,17 @@ namespace zynforge
                     auto band  = juce::Rectangle<int> (inner.getX(), inner.getY(), inner.getWidth(), 20);
                     g.setColour (brand::steelHeaderHi);   // FLAT: solid header band (no gradient)
                     g.fillRect (band);
-                    g.setColour (brand::brandOrange.withAlpha (brand::alpha::muted));
+                    g.setColour (brand::brandOrange.withAlpha (zynforge::brand::alpha::muted));
                     g.fillRect (band.getX(), band.getBottom(), band.getWidth(), 1);
 
                     // Stamped column numbers, aligned to the resized() columns.
                     const int colW = juce::jmax (28, inner.getWidth() / (int) meters.size());
-                    g.setFont (brand::type::mono (11.0f, true));
+                    g.setFont (zynforge::brand::type::monoStamp());
                     for (std::size_t i = 0; i < meters.size(); ++i)
                     {
                         auto numBox = juce::Rectangle<int> (inner.getX() + (int) i * colW + 3,
                                                             inner.getY() + 2, 22, 14);
-                        g.setColour (brand::debossFace.withAlpha (brand::alpha::prominent));
+                        g.setColour (brand::debossFace.withAlpha (zynforge::brand::alpha::prominent));
                         g.drawText (juce::String ((int) i + 1).paddedLeft ('0', 2),
                                     numBox, juce::Justification::centredLeft, false);
                     }

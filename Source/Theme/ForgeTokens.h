@@ -66,11 +66,14 @@ namespace zynforge::forge
     inline constexpr float alpha_chrome = 0.12f;
     inline constexpr float alpha_edgeSoft = 0.16f;
     inline constexpr float alpha_subtle = 0.18f;
+    inline constexpr float alpha_soft = 0.25f;
     inline constexpr float alpha_wash = 0.3f;
     inline constexpr float alpha_dimmed = 0.35f;
     inline constexpr float alpha_ghost = 0.4f;
     inline constexpr float alpha_scrim = 0.45f;
+    inline constexpr float alpha_half = 0.5f;
     inline constexpr float alpha_muted = 0.55f;
+    inline constexpr float alpha_strong = 0.75f;
     inline constexpr float alpha_prominent = 0.85f;
     inline constexpr float alpha_bold = 0.95f;
 

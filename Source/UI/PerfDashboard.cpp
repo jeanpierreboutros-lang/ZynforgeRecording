@@ -131,7 +131,7 @@ namespace zynforge
                 if (i < lit)
                 {
                     const float p = (float) (i + 1) / segments * 100.0f;
-                    g.setColour (ledColour (p).withAlpha (brand::alpha::bold));
+                    g.setColour (ledColour (p).withAlpha (zynforge::brand::alpha::bold));
                 }
                 else
                 {

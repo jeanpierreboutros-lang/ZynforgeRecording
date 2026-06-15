@@ -166,7 +166,7 @@ namespace zynforge
             const auto base = brand::meterHeatAt (frac);
 
             if (litByRms)        g.setColour (base);
-            else if (litByPeak)  g.setColour (base.withAlpha (0.45f));
+            else if (litByPeak)  g.setColour (base.withAlpha (zynforge::brand::alpha::scrim));
             else                 g.setColour (brand::meterIdle);
             g.fillRoundedRectangle (seg, 1.5f);
         }

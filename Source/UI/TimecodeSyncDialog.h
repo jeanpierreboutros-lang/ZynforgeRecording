@@ -42,8 +42,8 @@ namespace zynforge
                 label (ltcType, "LTC", brand::textPrimary, 14.0f, true);
                 label (mtcStatus, "-- idle", brand::textMuted, 14.0f, false);
                 label (ltcStatus, "-- idle", brand::textMuted, 14.0f, false);
-                mtcStatus.setFont (brand::type::mono (15.0f));
-                ltcStatus.setFont (brand::type::mono (15.0f));
+                mtcStatus.setFont (brand::type::monoCounter());
+                ltcStatus.setFont (brand::type::monoCounter());
 
                 // Master radios (which source drives the transport).
                 for (auto* r : { &mtcSel, &ltcSel })

@@ -141,11 +141,14 @@ namespace zynforge::brand
         inline constexpr float chrome    = forge::alpha_chrome;  // forge-mark glyph fill, faint structural tint
         inline constexpr float edgeSoft    = forge::alpha_edgeSoft;  // hammered-steel scrim, soft edge wash
         inline constexpr float subtle    = forge::alpha_subtle;  // grid lines, off-beat ticks
+        inline constexpr float soft    = forge::alpha_soft;  // light tints (selection wash, dim handles)
         inline constexpr float wash    = forge::alpha_wash;  // mid value-pill backing, structural seam wash
         inline constexpr float dimmed    = forge::alpha_dimmed;  // background washes, mute scrim edges
         inline constexpr float ghost    = forge::alpha_ghost;  // downbeats, secondary cues
         inline constexpr float scrim    = forge::alpha_scrim;  // zebra-row tints, surface-dimming washes
+        inline constexpr float half    = forge::alpha_half;  // 50% overlays / dividers
         inline constexpr float muted    = forge::alpha_muted;  // mid-contrast overlays
+        inline constexpr float strong    = forge::alpha_strong;  // emphatic overlays, active rims
         inline constexpr float prominent    = forge::alpha_prominent;  // playhead, focus highlight
         inline constexpr float bold    = forge::alpha_bold;  // near-opaque text on translucent bg
 
