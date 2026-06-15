@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (lane VIEW lines no longer bleed over the channel header — 2026-06-15)
+- **Switching a row's VIEW to volume / pan / markers / click / tempo no longer draws the lane line across the channel name and I/O combos.** Those lane modes drew their content and then returned early — skipping the pinned row header that's painted last — so when the timeline was scrolled the automation line/curve showed straight over the header (the name, the In/Out pickers). The header is now always repainted on top in every VIEW mode, so the line stays on the waveform where it belongs. **waveform** view shows just the waveform (no line); **volume / pan / markers / …** overlay their line on the (dimmed) waveform — and only there.
+
 ### Fixed (punch-in shows in the right place, waveform refreshes on stop — 2026-06-15)
 - **A punch now visually builds AT the punch point**, not at the end of the take. The growing forge-orange capture envelope was being stretched across the whole lane to the right edge, so a drop-in looked like it was recording at the *end* even though it landed correctly at the cursor. The live envelope is now confined to its real slice of the timeline: the new audio grows from where you punched, with the whole existing take drawn dim underneath. (A continue still fills to the end as before — same code, the punch case just stops mis-scaling.)
 - **The recorded waveform now appears the moment you stop** — no more having to wiggle the mouse to make it show up. After a take stops, the EDIT lane repaints each tick while the file re-scans in the background, so the final waveform draws itself in as it loads instead of waiting for the next mouse move.

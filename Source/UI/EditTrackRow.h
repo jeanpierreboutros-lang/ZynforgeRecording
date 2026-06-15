@@ -669,6 +669,16 @@ namespace zynforge
             const auto waveColour = brand::lift (getStripColour(), 0.25f);
             const auto inner = wavePane.reduced (brand::space::xs, brand::space::sm);
 
+            // All lane-content drawing runs inside this lambda. The non-waveform
+            // lane modes (Click / Tempo / Markers / Volume·Pan·Mute automation /
+            // comp lanes) early-`return` once they've drawn their lane -- by
+            // doing so from the lambda (not paint()), they no longer SKIP the
+            // pinned header painted LAST below. Skipping it left the header
+            // un-redrawn, so the automation line/curve bled over the channel name
+            // + I/O combos (the bug). paintHeader now runs in every lane mode.
+            auto drawLane = [&]()
+            {
+
             // ── Forge-heat waveform fill (brand signature) ──────────────────
             // The waveform body stays the channel's own colour in the quiet
             // centre band, but glows ember → forge-orange → white-hot toward
@@ -1794,8 +1804,14 @@ namespace zynforge
                 g.fillRect (juce::Rectangle<int> (headerW + playheadX, 0, 2, getHeight()));
             }
 
+            };   // end drawLane
+            drawLane();
+
             // ─── Pinned header, drawn LAST so it floats over the waveform at
             // the scrolled-left edge instead of scrolling off with the row.
+            // ALWAYS painted -- never skipped by a lane mode's early return --
+            // so no lane mode can leave the automation line drawn over the
+            // header (name + combos).
             paintHeader (g, headerOriginX(), headerBg, fillColour);
         }
 
