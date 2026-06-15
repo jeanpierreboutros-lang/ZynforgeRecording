@@ -42,6 +42,9 @@ EDIT-view specifics in `Source/UI/EditTrackRow.h` (was `EditPage.cpp`): the `Tra
 
 ## Critical universal rules
 
+### std::sort comparators must be a STRICT WEAK ORDERING
+- The hardened `std::sort` (newer Xcode/libc++) **aborts (SIGABRT)** when the comparator isn't a strict weak ordering — a real crash, not a warning. The classic trap: reversing a sort with `return forwards ? lt : ! lt;`. `! lt` reports *equal* elements as each `< ` the other (and `cmp(a,a) == true`), which is invalid. **Reverse by swapping the operands**, never by negating: build the comparison from `rows[forwards ? a : b]` vs `rows[forwards ? b : a]`. Also map non-finite floats (NaN) to a floor so the key is total. The sortable table dialogs (`SessionRecoveryDialog`, `QcReportDialog`, `NoiseReportDialog`) all follow this; copy that pattern in any new one. This crashed the app on relaunch-after-crash (the recovery dialog) — `SessionRecoverySortTests` guards it.
+
 ### Real-time discipline (audio thread)
 
 - The audio callback never allocates, locks, opens files, calls `Logger`, or touches the message thread.
