@@ -688,23 +688,23 @@ namespace zynforge
             // channel hue, so colour identity carries. A thin LIGHTER rim along
             // the envelope (drawn first, full height; dark body inset 1px over it)
             // gives the contour definition PT has.
-            const auto waveBg   = brand::lift (getStripColour(), 0.52f);  // LIGHT coloured clip background
-            const auto waveDark = brand::sink (waveBg, 0.74f);           // much DARKER waveform = high contrast
-            const auto waveRim  = brand::sink (waveBg, 0.46f);           // mid-tone contour rim
-            auto drawWaveOutlined = [&g, waveBg, waveDark, waveRim]
+            // The DARK waveform is the BOLD, dominant element (like Pro Tools);
+            // the coloured clip is the lighter backdrop. Derive the wave by
+            // SINKing the channel colour directly (keeps its saturation -> a deep,
+            // bold navy/hue), NOT by sinking the lightened bg (that came out muddy
+            // + washed, so the bg looked more alive than the wave). The bg is the
+            // channel colour LIFTed light. Solid wave (no rim) so it reads bold.
+            const auto waveBg   = brand::lift (getStripColour(), 0.48f);  // light coloured clip backdrop
+            const auto waveDark = brand::sink (getStripColour(), 0.68f);  // BOLD deep wave = the focal point
+            auto drawWaveOutlined = [&g, waveBg, waveDark]
                 (juce::AudioThumbnail& thumb, juce::Rectangle<int> area,
                  bool wholeFile, int chan, double t0, double t1, float zoom)
             {
                 g.setColour (waveBg);
-                g.fillRect (area);                      // coloured clip background ("alive")
-                auto pass = [&] (juce::Rectangle<int> a, juce::Colour c)
-                {
-                    g.setColour (c);
-                    if (wholeFile) thumb.drawChannels (g, a, t0, t1, zoom);
-                    else           thumb.drawChannel  (g, a, t0, t1, chan, zoom);
-                };
-                pass (area, waveRim);                   // lighter contour rim (full height)
-                pass (area.reduced (0, 1), waveDark);   // dark body inset 1px -> rim survives
+                g.fillRect (area);                      // light coloured clip backdrop
+                g.setColour (waveDark);                 // solid BOLD dark waveform on top
+                if (wholeFile) thumb.drawChannels (g, area, t0, t1, zoom);
+                else           thumb.drawChannel  (g, area, t0, t1, chan, zoom);
             };
 
             // ─── Timeline grid ─────────────────────────────────────────
@@ -756,7 +756,7 @@ namespace zynforge
                 if (tn.getTotalLength() <= 0.0) return vz;
                 const float peak = tn.getApproximatePeak();
                 const float fit  = peak > 0.004f
-                                     ? juce::jlimit (1.0f, 2.5f, 0.9f / peak)
+                                     ? juce::jlimit (1.0f, 1.5f, 0.9f / peak)
                                      : 1.0f;
                 return fit * vz;
             };
@@ -1533,19 +1533,22 @@ namespace zynforge
                         // corner (the grab target). 0 dB = centre; ±12 dB maps
                         // to the inner band.
                         {
-                            auto gArea = block.withTrimmedTop (headH).reduced (3, 4);
                             const bool active = (draggingClipModeInt == 7 && draggingClipIdx == clipIdx_);
-                            if (gArea.getHeight() > 6 && block.getWidth() > 8)
-                            {
-                                const int gy = clipGainLineY (c.gainDb, gArea);
-                                g.setColour (brand::accentStatus.withAlpha (active ? 0.85f : 0.32f));
-                                g.drawHorizontalLine (gy, (float) gArea.getX(), (float) gArea.getRight());
-                            }
+                            // NO gain line across the clip. Pro Tools-style: clip
+                            // gain shows ONLY as the WAVEFORM getting bigger /
+                            // smaller (waveZoom * gz, above) -- never a line. The
+                            // corner fader handle below stays as the drag target +
+                            // dB readout.
                             // Corner handle: a fader track + a triangular thumb
                             // whose height tracks the gain, then the dB readout
                             // on a dark pill so it stays legible over audio.
+                            // Clean clip at rest: the gain handle + dB pill only
+                            // appear while hovering the row, dragging the gain, or
+                            // when gain is actually applied -- so an untouched clip
+                            // is just the coloured waveform (Pro Tools-style).
                             auto hr = clipGainHandleRect (block, headH);
-                            if (block.getWidth() > 22 && hr.getHeight() >= 12)
+                            if (block.getWidth() > 22 && hr.getHeight() >= 12
+                                && (hovered || active || std::abs (c.gainDb) > 0.05f))
                             {
                                 const float g12 = juce::jlimit (-12.0f, 12.0f, c.gainDb);
                                 const auto col = active ? brand::accentStatus
