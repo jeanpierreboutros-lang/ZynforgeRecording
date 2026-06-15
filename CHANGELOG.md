@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Changed (calmer, cleaner EDIT waveform — 2026-06-15)
+- **The recorded waveform now draws in the channel's own colour, not a harsh orange "forge-heat" gradient.** The old fill went ember → forge-orange → white-hot toward the loud peaks, which on dense audio read as a hard-on-the-eyes orange barcode (dark centre band + bright orange/white edges). The waveform is now a clean, near-solid fill in the channel colour, with the loud peaks lifted just a touch brighter (and a whisper of warmth) for dimension — so it reads as one cohesive shape. The dynamic forge-heat glow stays on the **meters**, where it belongs. The post-stop "held" envelope also dims to the channel colour now, so stopping no longer flashes an orange barcode before the clean waveform scans in.
+
 ### Fixed (lane VIEW lines no longer bleed over the channel header — 2026-06-15)
 - **Switching a row's VIEW to volume / pan / markers / click / tempo no longer draws the lane line across the channel name and I/O combos.** Those lane modes drew their content and then returned early — skipping the pinned row header that's painted last — so when the timeline was scrolled the automation line/curve showed straight over the header (the name, the In/Out pickers). The header is now always repainted on top in every VIEW mode, so the line stays on the waveform where it belongs. **waveform** view shows just the waveform (no line); **volume / pan / markers / …** overlay their line on the (dimmed) waveform — and only there.
 

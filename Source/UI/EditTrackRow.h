@@ -679,23 +679,27 @@ namespace zynforge
             auto drawLane = [&]()
             {
 
-            // ── Forge-heat waveform fill (brand signature) ──────────────────
-            // The waveform body stays the channel's own colour in the quiet
-            // centre band, but glows ember → forge-orange → white-hot toward
-            // the loud peaks (the top/bottom extremes of the lane). Loud
-            // sections read as heated metal at a glance -- the EDIT-tab analog
-            // of the forge-heat meter. Set this as the fill before drawChannels
-            // (which fills each waveform column with the current fill type).
+            // ── Waveform fill ───────────────────────────────────────────────
+            // A CLEAN, readable waveform in the channel's OWN colour: a near-solid
+            // body with a soft vertical sheen -- the loud peaks (top/bottom
+            // extremes of the lane) lift just a touch brighter for dimension, the
+            // quiet body sits at the channel colour. The old forge-heat gradient
+            // (ember → orange → white-hot toward the peaks) read as a harsh orange
+            // barcode that was hard on the eyes; the dynamic forge-heat glow lives
+            // on the METERS, where it belongs. A whisper of warmth still kisses
+            // the very loudest peaks so the brand identity reads, subtly. Set as
+            // the fill before drawChannels (which fills each column with it).
             auto setHeatWaveFill = [this, &g, waveColour] (juce::Rectangle<int> lane)
             {
-                const float cx  = (float) lane.getCentreX();
-                juce::ColourGradient grad (brand::meterWhiteHot, cx, (float) lane.getY(),
-                                           brand::meterWhiteHot, cx, (float) lane.getBottom(), false);
-                grad.addColour (0.14, brand::meterHot);
-                grad.addColour (0.32, brand::meterEmber);
-                grad.addColour (0.50, waveColour);          // quiet body = channel colour
-                grad.addColour (0.68, brand::meterEmber);
-                grad.addColour (0.86, brand::meterHot);
+                const float cx   = (float) lane.getCentreX();
+                const auto  body = waveColour;                                  // quiet body = channel colour
+                const auto  peak = brand::lift (waveColour, 0.22f)             // loud peaks: brighter…
+                                       .interpolatedWith (brand::meterEmber, 0.18f); // …with a faint warm kiss
+                juce::ColourGradient grad (peak, cx, (float) lane.getY(),
+                                           peak, cx, (float) lane.getBottom(), false);
+                grad.addColour (0.34, body);
+                grad.addColour (0.50, body);
+                grad.addColour (0.66, body);
                 g.setGradientFill (grad);
             };
 
@@ -1388,7 +1392,10 @@ namespace zynforge
                     // timeline fraction so a punch lands at the punch point.
                     drawContinueExisting (g, laneL, thumbnailL, ! stereoOneFile, 0, waveZoom (thumbnailL), existingFrac);
                     drawContinueExisting (g, laneR, thumbnailR, ! stereoOneFile, 1, waveZoom (thumbnailR), existingFrac);
-                    g.setColour (liveRecording ? brand::meterHot : brand::meterEmber);
+                    // Live capture glows hot (recording NOW); the post-stop hold dims
+                // to the channel colour so it matches the clean thumbnail that
+                // replaces it (no flash of orange barcode on stop).
+                g.setColour (liveRecording ? brand::meterHot : waveColour);
                     drawRecEnvelope (g, confineLive (laneL), recPeakL, vz);
                     drawRecEnvelope (g, confineLive (laneR), recPeakR, vz);
                 }
@@ -1407,7 +1414,10 @@ namespace zynforge
                 // growing capture. After stop it dims to ember and holds until
                 // the real thumbnail finishes scanning (no blank gap).
                 drawContinueExisting (g, inner, thumbnailL, true, 0, waveZoom (thumbnailL), existingFrac);
-                g.setColour (liveRecording ? brand::meterHot : brand::meterEmber);
+                // Live capture glows hot (recording NOW); the post-stop hold dims
+                // to the channel colour so it matches the clean thumbnail that
+                // replaces it (no flash of orange barcode on stop).
+                g.setColour (liveRecording ? brand::meterHot : waveColour);
                 drawRecEnvelope (g, confineLive (inner), recPeakL, vz);
             }
             else if (thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
