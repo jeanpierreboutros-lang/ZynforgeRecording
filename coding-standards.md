@@ -72,8 +72,8 @@ g.fillRect (r);
 g.setFont (juce::Font (juce::FontOptions().withHeight (13.5f).withStyle ("Bold")));
 g.setColour (juce::Colours::black.withAlpha (0.35f));
 
-// ✓  same surface via the design system.
-g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.05f, 0.15f));
+// ✓  same surface via the design system (FLAT — solid fill, no gradient).
+g.setColour (brand::bgPanel);
 g.fillRect (r);
 g.setFont (brand::type::ui (13.5f, true));
 g.setColour (brand::shadow::elev2());

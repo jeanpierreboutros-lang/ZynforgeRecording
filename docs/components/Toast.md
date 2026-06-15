@@ -51,7 +51,7 @@ Multiple `push()` calls during a single display cycle queue up. The next message
 ## Visual
 
 - Rounded pill (`brand::radius::xl`)
-- `brand::bgElevated` background with subtle gradient
+- `brand::bgElevated` background — flat solid fill (no gradient)
 - 4 px left edge in the `Kind` colour (`accentStatus` for Info, `alertAmber` for Warning)
 - `brand::type::uiBody()` text, centred vertically
 

@@ -24,7 +24,7 @@ void setShowLabels (bool on);          // dB gutter on the left
 |---|---|---|---|
 | Mixer mono | ~16 px | auto (off when < 30 px) | 8–20, scaled to height |
 | Mixer stereo | ~26 px | auto | two bars, half-width each |
-| EDIT row | narrow | off | adaptive; smooth gradient under ~24 px tall |
+| EDIT row | narrow | off | adaptive; single solid heat colour by level under ~24 px tall (flat, not a gradient) |
 
 ## States
 

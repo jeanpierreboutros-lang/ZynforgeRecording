@@ -47,8 +47,8 @@ colors:
 # Each channel strip's chrome is washed with a muted, low-saturation
 # version of its personality colour — not a thin top band, the whole
 # strip. The wash is dark enough that white text remains readable.
-# A subtle top-light → bottom-dark vertical gradient lives inside the
-# wash. 8-colour rotation; channel N picks personality[N % 8].
+# The wash is a FLAT solid fill (2026-06-16 flat-design pass — no
+# gradient). 8-colour rotation; channel N picks personality[N % 8].
 personality:
   - { name: dusty-blue, value: "#3a5063" }
   - { name: moss,       value: "#395646" }
@@ -157,7 +157,7 @@ motion:
 
 components:
   channel-strip:
-    bg:                "{personality[N].value}"   # personality wash, gradient top→bottom
+    bg:                "{personality[N].value}"   # personality wash (flat solid fill)
     bg-neutral:        "{colors.bg-strip}"
     edge:              "{colors.edge}"
     header-typography: "{typography.channel-name}"
@@ -267,13 +267,13 @@ personality rotation** for per-strip identity.
 - **Personality rotation (8 muted colours):** each strip's chrome is
   washed with a low-saturation tint from `personality[]` based on the
   strip's index. The wash is dark enough that `text-primary` stays
-  readable. A subtle top-light → bottom-dark gradient lives inside the
-  wash. The defining trait of the ZynForge family.
+  readable. The wash is a FLAT solid fill (no gradient since the
+  2026-06-16 flat-design pass). The defining trait of the ZynForge family.
   - **Recording app override (2026-06-04):** at the user's request, new
     channels in **ZynForge Recording** default to a neutral grey
     (`stripDefaultGrey`), not the per-index personality wash — engineers
     colour the channels that matter from the `StripColourPicker` (a hue×shade
-    gradient with the strip's current colour pinned + an OK button). The
+    swatch grid with the strip's current colour pinned + an OK button). The
     `personality[]` palette stays defined for reference and for ZynForge
     **Live**, which is unchanged. See `decisions.md`.
 
@@ -371,8 +371,8 @@ Five composite tokens exposed in the front matter, defined to be
 universal across ZynForge apps:
 
 - **`channel-strip`** — vertical column for one signal source/sink.
-  Chrome is washed with `personality[index % 8]`, with a subtle
-  top-light → bottom-dark gradient inside the wash. Header uses
+  Chrome is washed with `personality[index % 8]` as a FLAT solid fill
+  (no gradient since the flat-design pass). Header uses
   `channel-name` typography on a darker variant of the wash.
 - **`panel`** — bordered container for grouped controls (header bands,
   big-clock background, transport area). `bg-panel` background,
@@ -396,15 +396,26 @@ universal across ZynForge apps:
   convention), but the hot zone climbs like heated metal — **ember**
   (`meter-ember`) → **forge-orange** (`meter-hot`) → **white-hot**
   (`meter-white-hot`) at clip. Loud literally glows like steel in a forge.
-  One ramp helper, `brand::meterHeatAt(frac)`, drives both the segmented
-  and gradient paths. The clip pip is white-hot.
+  One ramp helper, `brand::meterHeatAt(frac)`, drives every segment; tiny
+  meters (EDIT rows) fall back to a single SOLID heat colour by level (flat,
+  not a gradient). The clip pip is white-hot.
 
 ## Brand thesis — "the forge"
 
 ZynForge's visual identity is a **forge**: cold dark steel that runs HOT
 where the signal and the action live. This is functional, not decorative
 (hot = loud / armed / recording), and it's what separates the app from a
-generic dark-grey DAW. The signature surfaces:
+generic dark-grey DAW.
+
+**Rendered FLAT (2026-06-16 flat-design pass):** every surface is a solid
+fill. The ember blooms, hot rims and underglows below are **flat breathing
+washes + 1 px `gloss` bevels**, NOT two-colour gradients or blurred sheen
+overlays (`brand::verticalGradient` is kept but returns a degenerate
+same-stop gradient → renders solid; don't restore a lift/shadow ramp).
+Depth comes from `brand::lift`/`sink` solids + 1 px edges. Bright
+`meter-hot` / orange stays reserved for STATE (armed / peaking), never
+permanent chrome — enforced by `Tools/design_audit.sh`. The signature
+surfaces:
 - **Forge-heat meters** (above) — the most-looked-at element.
 - **Ember armed-glow** — a record-armed channel strip gets a warm ember
   bloom from the top + a hot forge-orange rim (`ChannelStrip::paint`), so a
@@ -419,12 +430,18 @@ generic dark-grey DAW. The signature surfaces:
 - **BigClock ember-underglow** — while recording, the hero timecode plate
   breathes an ember tint + a hot underglow rising from its base
   (`BigClockPanel::paint`), so the centrepiece reads as metal being worked.
-- **Forge-heat waveform (EDIT)** — the EDIT-tab analog of the heat meter:
-  the waveform body stays the channel colour in the quiet centre band but
-  glows ember → forge-orange → white-hot toward the loud peaks
-  (`EditPage` `setHeatWaveFill`, applied to the continuous waveform + clip
-  regions). The live recording envelope is forge-orange. Loud sections read
-  as heated metal at a glance.
+- **Pro Tools-style EDIT waveform** — replaced the old forge-heat
+  `setHeatWaveFill` (an always-on orange that read as a noisy barcode and
+  broke the "orange = STATE" rule) on 2026-06-15. Each clip is a light,
+  **channel-coloured block** (`waveBg = lift(stripColour)`) with the
+  waveform drawn **DARK on top** (`waveDark = sink(waveBg)`): loud fills
+  dark, quiet lets the colour show, at honest levels (a gentle 1.5×
+  auto-gain cap, `jlimit(1.0, 1.5, 0.9/peak)` — no over-amplified hiss;
+  V+/V−/Shift-wheel magnifies a quiet take on demand). Clip gain just SCALES the
+  waveform (no gain line; the handle appears on hover). Dynamic
+  forge-orange survives only for the *live-capture* envelope (recording =
+  STATE — and it builds while continuing or punching a take), dimming to
+  the channel colour on stop. (`EditTrackRow::drawWaveOutlined`.)
 
 **Restraint rule:** bright `meter-hot` is reserved for *live signal /
 armed / recording*; resting chrome stays cold steel (e.g. the fader-cap
@@ -447,7 +464,7 @@ ComboBox) or the component's own `paint()` (ChannelStrip, Toast, Meter).
 ### Button  (`ZynForgeLookAndFeel::drawButtonBackground`, `IconButton.h`)
 | Variant | Fill (default) | Use when |
 |---------|----------------|----------|
-| Quiet (default) | `control-bg` gradient | Most actions — the app stays calm |
+| Quiet (default) | `control-bg` (flat solid) | Most actions — the app stays calm |
 | Record / danger | `accent-record` translucent | Arm, delete, destructive |
 | Transport-active | `accent-play` translucent | Play / rolling |
 | Virtual-soundcheck | `accent-vs` translucent | VSC macro engaged |

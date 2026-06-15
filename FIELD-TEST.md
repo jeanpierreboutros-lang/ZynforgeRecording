@@ -91,7 +91,7 @@ Run this with a real audio interface plugged in. 20 minutes if nothing breaks. T
 | ☐ 7.1 | Hover over a channel strip. | ~6 % brightness lift on the strip wash + brighter edge. | No hover state. |
 | ☐ 7.2 | At XS strip width (24 per page), look at the REC/MON/MUTE/SOLO buttons. | Stacked vertically as a 1×4 column. | Cramped 2×2 grid = touch targets too small. |
 | ☐ 7.3 | Clip a meter (drive a hot input). | Top PEAK tally bar pulses brand-red. Click clears it. | Tally doesn't latch / doesn't clear on click. |
-| ☐ 7.4 | Open every dialog: New Session, Add Tracks, Session Format & Recording, Session Info & Notes, Click Settings, Audio Device, Markers list, Noise Report (after Tools → Noise scan), Session Recovery. | All have the same orange-stripe DialogChrome top + gradient body + footer divider. | Any dialog looks "raw JUCE" = chrome regression. |
+| ☐ 7.4 | Open every dialog: New Session, Add Tracks, Session Format & Recording, Session Info & Notes, Click Settings, Audio Device, Markers list, Noise Report (after Tools → Noise scan), Session Recovery. | All have the same orange-stripe DialogChrome top + flat solid body + footer divider. | Any dialog looks "raw JUCE" = chrome regression. |
 | ☐ 7.5 | Look at any saturated chip (VCA badge, BUS badge, TAKE chip, PatchPage strip number, active routing dot, active EditTools icon). | Text on coloured background reads cleanly (dark on bright, light on dark — `onSignal` does the right thing). | White-on-yellow or similar low-contrast pairs. |
 
 ---

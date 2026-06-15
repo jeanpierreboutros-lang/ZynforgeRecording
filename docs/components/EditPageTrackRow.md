@@ -86,7 +86,7 @@ Only one drag-in-progress at a time:
 
 ## Tokens used
 
-- **Colours**: `brand::stripColour(index)` for the row's personality wash; `brand::accentStatus` for fade lines + edit cursor; `brand::accentSolo` for split markers + selection edges; `brand::engagedAmber` for transient ticks; `brand::brandOrange` for marker ticks; `brand::shadow::elev3` for the automation point border
+- **Colours**: `brand::stripColour(index)` for the row's personality wash; the same colour `lift`ed → `waveBg` (the light Pro Tools-style clip-fill) and `sink`ed → `waveDark` (the DARK waveform body drawn on top); `brand::meterHot` for the live-capture record envelope (dims to the channel colour on stop); `brand::accentStatus` for fade lines + edit cursor; `brand::accentSolo` for split markers + selection edges; `brand::engagedAmber` for transient ticks; `brand::brandOrange` for marker ticks; `brand::shadow::elev3` for the automation point border
 - **Typography**: `brand::type::caption()` for lane labels; `brand::type::sectionTitle()` for the row's strip name; `brand::type::mono(10.5f, true)` for the cursor time readout
 - **Alpha**: `brand::alpha::dimmed` for the waveform-base under non-Waveform lane modes; `brand::alpha::prominent` for playhead overlay; `brand::alpha::muted` for crossfade band fill
 
@@ -94,6 +94,8 @@ Only one drag-in-progress at a time:
 
 | What | Where | When |
 |---|---|---|
+| Pro Tools-style clip waveform | Wave pane | Waveform lane mode — light `waveBg = lift(stripColour)` clip block + DARK `waveDark = sink(waveBg)` thumbnail on top, honest levels (1.5× auto-gain cap); clip gain just scales the waveform (no gain line) |
+| Live-capture envelope | Wave pane, `meterHot` | While the row is armed + recording (incl. continue / punch) — placed by timeline fraction; dims to the channel colour on stop |
 | Detected transient ticks | Top of wave pane, 6 px engagedAmber strokes | When `engine.getTransientsForTrack(index+1)` returns non-empty |
 | Crossfade visualisation | Overlap between adjacent clips, paints X-shape | Always when two clips overlap |
 | Curve-aware automation path | Lane area | When points are present, walks segments + applies curve interpolation matching `automationValueAt` |

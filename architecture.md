@@ -147,7 +147,7 @@ Message-thread only. `MainComponent` runs a 24 Hz `juce::Timer` that pulls atomi
 The old "Settings" + "Properties" labels were ambiguous; relabelled 2026-05-24 to surface what each dialog actually owns. The two dialogs deliberately have separate concerns (edit vs inspect) — collapsing them would put irreversible Format/SR changes one click away from an informational view.
 
 ### Theme (`Source/Theme/`)
-Single source of truth for visual identity. `ZynForgeLookAndFeel` overrides buttons, toggles, faders, and alert boxes. `DialogChrome` wraps every modal so prompts and dialogs share the AudioDevice dialog's look (orange title stripe + gradient `bgPanel` + footer divider).
+Single source of truth for visual identity. `ZynForgeLookAndFeel` overrides buttons, toggles, faders, and alert boxes. `DialogChrome` wraps every modal so prompts and dialogs share the AudioDevice dialog's look (orange title stripe + flat solid `bgPanel` + footer divider).
 
 ### Network (`Source/Network/`)
 `CompanionServer` exposes `/`, `/state.json`, `/cmd`, and `/stream.wav` for a tablet client. `OscRemote` parses five **inbound** console dialects with feature parity (Generic, DiGiCo, A&H SQ, SSL Live, Yamaha / RIVAGE).

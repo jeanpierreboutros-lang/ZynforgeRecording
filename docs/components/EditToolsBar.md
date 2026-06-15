@@ -53,7 +53,7 @@ Tool buttons use `brand::toolActive()` (cool-teal `featureEngaged`) as the activ
 |---|---|---|
 | Inactive | Bg `bgPanel`, glyph `textSecondary` | Click to select; radio group ensures one active |
 | Hovered | Bg `controlBgHover` | `mouseEnter` flag set; reverts on `mouseExit` |
-| Active | Bg gradient on `toolActive()`, glyph via `onSignal(toolActive())` | Other tools deselect |
+| Active | Solid `toolActive()` fill, glyph via `onSignal(toolActive())` | Other tools deselect |
 | Disabled | Bg `controlBg` faded, glyph at 30 % | Not yet wired — all tools always enabled |
 
 ## Zoom controls

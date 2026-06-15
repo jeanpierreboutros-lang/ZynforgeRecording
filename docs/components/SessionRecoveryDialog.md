@@ -62,7 +62,7 @@ The static `launch` instantiates the dialog and wires async modal behaviour. `on
 - **Colours**: `brand::accentStatus` (Recover button accent), `brand::accentRecord` (Delete button + size column for empty dirs), `brand::bgPanel` (table background), `brand::controlBgHover` (selected row), `brand::textPrimary` / `textSecondary` / `textMuted` for cells
 - **Typography**: `brand::type::caption()` for the help text, `brand::fonts::body()` for cells (via the deprecated alias — TODO: migrate to `brand::type::uiBody()`)
 - **Spacing**: `brand::space::md` outer padding
-- **Chrome**: `dialog::paintChrome (g, host, "SESSION RECOVERY")` — same orange title stripe + gradient body as every other dialog
+- **Chrome**: `dialog::paintChrome (g, host, "SESSION RECOVERY")` — same orange title stripe + flat solid body as every other dialog
 
 ## States
 

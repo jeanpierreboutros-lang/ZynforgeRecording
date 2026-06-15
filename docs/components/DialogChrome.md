@@ -44,7 +44,7 @@ A dialog that lays its body out from `y = 0` (instead of below `titleH`) collide
 
 ## Tokens used
 
-- **Colours**: `brand::bgElevated` (body gradient), `brand::brandOrange` (stripe), `brand::controlBg` (badge plate), `brand::structuralForge()` (badge glyph at `alpha::chrome` / `0.55f`), `brand::bgDeep` / `edge` (fields), `brand::accentStatus` (focus + primary), `brand::textPrimary` / `textSecondary`
+- **Colours**: `brand::bgElevated` (flat solid body), `brand::brandOrange` (stripe), `brand::controlBg` (badge plate), `brand::structuralForge()` (badge glyph at `alpha::chrome` / `0.55f`), `brand::bgDeep` / `edge` (fields), `brand::accentStatus` (focus + primary), `brand::textPrimary` / `textSecondary`
 - **Typography**: `brand::type::sectionTitle()` (title), `brand::type::uiBody()` (field labels)
 - **Spacing**: `brand::space::md` / `sm`
 - **Radius**: `brand::radius::md` (badge)
