@@ -194,6 +194,13 @@ namespace zynforge
     void AudioEngine::stopRecording()
     {
         const auto sessionDir = recorder.getActiveSessionDir();
+        // Where the take actually ends, captured BEFORE stopRecording()
+        // resets the recorder's base offset to 0. Live multitrack recorders
+        // (unlike a DAW, whose Stop snaps the edit cursor back to where the
+        // pass began) leave the transport parked at the END of what was just
+        // captured, so the next RECORD continues the take from here instead
+        // of looking like it starts over from the beginning.
+        const auto recordEnd = recorder.getRecordTimelineSamples();
         recorder.stopRecording();
         // Fresh audio on disk -- the transient cache from the last
         // session is now stale.
@@ -210,6 +217,12 @@ namespace zynforge
             player.loadSession (sessionDir);
             setActiveSessionDir (sessionDir);
             seedDefaultClips();
+            // loadSession() rewinds the player to 0; park the playhead back
+            // at the take's end so the engineer can hit RECORD again and
+            // continue seamlessly (or PLAY to review from this point).
+            player.setPositionSamples (juce::jlimit ((juce::int64) 0,
+                                                     player.getTotalLengthSamples(),
+                                                     recordEnd));
         }
     }
 

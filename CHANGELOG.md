@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (STOP leaves the playhead at the take's end — 2026-06-15)
+- **Stopping a recording no longer rewinds to the beginning.** When you stopped, the player reloaded the session and snapped the playhead to 0 — so hitting RECORD again *looked* like it started over, even though the audio was appending correctly. ZynForge now parks the transport at the **end of what you just captured** (the live-recorder convention), so RECORD continues the take seamlessly from there, and PLAY reviews from that point. This is the opposite of a DAW like Reaper, whose Stop snaps the edit cursor back to where the pass began; live multitrack recorders keep rolling forward, and so does ZynForge. With the playhead at the take's end, RECORD takes the "append a new part" path (not a mid-take punch), which is exactly the seamless continue.
+
 ### Added (detailed live waveform while recording — 2026-06-15)
 - **The waveform builds in detail AS you record, from the actual captured audio** — like Reaper / Pro Tools, not a coarse meter envelope that gets replaced on stop. The audio thread bins each armed track's captured input into min/max pairs (~5 ms each) and pushes them through a lock-free ring; the EDIT lane drains them and draws the waveform live, repainting every tick. So you can confirm a take is capturing in real time, and when you stop there's no coarse-then-detailed swap. (Capture-safe: the ring is pre-allocated and lock-free, so the audio thread never allocates or locks.)
 - Fixed the EDIT lane not repainting as the live waveform grew (the playhead is pinned to the right edge on a grow-to-fit take, so the change-gated playhead update never triggered a redraw).
