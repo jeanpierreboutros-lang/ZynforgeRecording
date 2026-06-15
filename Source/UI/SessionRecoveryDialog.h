@@ -271,22 +271,22 @@ namespace zynforge
 
         void sortIndicesBy (int col, bool forwards)
         {
+            // Descending sort = compare with the operands SWAPPED, never `! lt`:
+            // `! lt` returns true for equal elements (and for cmp(a,a)), which
+            // violates strict weak ordering and aborts under libc++'s hardened
+            // std::sort. Swapping keeps a valid ordering for the reverse.
             auto cmp = [this, col, forwards] (int a, int b) -> bool
             {
-                const auto& ra = rows[(size_t) a];
-                const auto& rb = rows[(size_t) b];
-                auto lt = [&]() -> bool
+                const auto& ra = rows[(size_t) (forwards ? a : b)];
+                const auto& rb = rows[(size_t) (forwards ? b : a)];
+                switch (col)
                 {
-                    switch (col)
-                    {
-                        case 1: return ra.name.compareNatural (rb.name) < 0;
-                        case 2: return ra.trackCount < rb.trackCount;
-                        case 3: return ra.sizeBytes  < rb.sizeBytes;
-                        case 4: return ra.modifiedMs < rb.modifiedMs;
-                    }
-                    return false;
-                }();
-                return forwards ? lt : ! lt;
+                    case 1: return ra.name.compareNatural (rb.name) < 0;
+                    case 2: return ra.trackCount < rb.trackCount;
+                    case 3: return ra.sizeBytes  < rb.sizeBytes;
+                    case 4: return ra.modifiedMs < rb.modifiedMs;
+                }
+                return false;
             };
             std::sort (sortedIndices.begin(), sortedIndices.end(), cmp);
         }

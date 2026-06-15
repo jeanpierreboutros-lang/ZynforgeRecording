@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (crash on relaunch after an unclean shutdown — 2026-06-15)
+- **The app no longer crashes when it reopens after a crash / force-quit.** On launch ZynForge offers to recover any sessions that didn't shut down cleanly, in a sortable list. The list's descending-sort comparator returned `! less-than`, which reports *equal* sessions as each being "less than" the other — an invalid ordering that the C++ standard library's hardened `std::sort` now aborts on (`SIGABRT`). With several recoverable sessions of equal size it aborted immediately — exactly when you most need recovery, right after a crash. The comparator now reverses correctly (it compares with the operands swapped), so the recovery list sorts cleanly by any column, either direction. Locked with a regression test that sorts an all-equal-keyed list. (The sibling QC and noise report tables already used the correct pattern; this one was missed.)
+
 ### Changed (calmer, cleaner EDIT waveform — 2026-06-15)
 - **The recorded waveform now draws in the channel's own colour, not a harsh orange "forge-heat" gradient.** The old fill went ember → forge-orange → white-hot toward the loud peaks, which on dense audio read as a hard-on-the-eyes orange barcode (dark centre band + bright orange/white edges). The waveform is now a clean, near-solid fill in the channel colour, with the loud peaks lifted just a touch brighter (and a whisper of warmth) for dimension — so it reads as one cohesive shape. The dynamic forge-heat glow stays on the **meters**, where it belongs. The post-stop "held" envelope also dims to the channel colour now, so stopping no longer flashes an orange barcode before the clean waveform scans in.
 
