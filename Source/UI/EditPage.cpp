@@ -286,11 +286,27 @@ namespace zynforge
         {
             auto& rec = engine.getRecorder();
             const int nTracks = rec.getNumTracks();
+            // Where the new audio anchors: a CONTINUE seeds the live envelope
+            // with the existing take's length (in overview columns) so the
+            // capture draws AFTER the take, not from the left edge. Stable for
+            // the whole pass (recordBaseSamples doesn't move mid-take).
+            const auto base    = rec.getRecordBaseSamples();
+            const int  prefill = base > 0 ? (int) (base / TrackState::kLiveBinSamples) : 0;
             for (auto& r : rows)
             {
                 const int idx = r->getTrackIndex();
                 if (idx < 0 || idx >= nTracks) continue;
                 if (! rec.getTrack (idx).armed.load (std::memory_order_relaxed)) continue;
+                // SELF-ARM the live draw from the current recording+armed state,
+                // every tick -- never a one-shot "record just started" event.
+                // setLiveRecording only resets on the off->on edge, so this is
+                // idempotent after the first tick; but if that first edge was
+                // ever missed or clobbered (e.g. a refresh between ticks), the
+                // armed lane still enters live mode here instead of silently
+                // discarding the drained peaks for the rest of the take. This
+                // is what makes the waveform build live on a CONTINUE, matching
+                // a fresh take.
+                r->setLiveRecording (true, prefill);
                 // Drain the recorder's fine live-wave overview (min/max pairs
                 // captured on the audio thread) -- one peak column per pair, so
                 // the lane builds a DETAILED waveform as it records, not a
@@ -691,22 +707,16 @@ namespace zynforge
         const bool loaded = engine.getPlayer().isLoaded();
         const bool rec    = engine.isRecording();
         const bool recJustStopped = (! rec && lastRecording);
-        const bool recJustStarted = (rec && ! lastRecording);
 
-        // Live capture envelope: clear + arm on take start, disarm on stop
-        // (before the post-stop disk re-scan swaps in the real waveform).
-        if (recJustStarted && list != nullptr)
-        {
-            // The live waveform builds L->R so you can SEE the take working
-            // while it records. On a CONTINUE, seed it with silent columns for
-            // the existing take so the new audio draws AFTER it, at the base --
-            // matching the playhead -- with the existing take underneath. The
-            // overview emits one column per TrackState::kLiveBinSamples samples,
-            // so the existing take occupies base / kLiveBinSamples columns.
-            const auto base = engine.getRecorder().getRecordBaseSamples();
-            const int prefill = base > 0 ? (int) (base / TrackState::kLiveBinSamples) : 0;
-            list->setLiveRecording (true, prefill);
-        }
+        // Live capture envelope: arming is now SELF-DRIVEN per row inside
+        // pushRecLevels (below), every tick, from the live recording+armed
+        // state -- not a one-shot "record just started" event that could be
+        // missed or clobbered by a refresh between ticks. Crucially it arms
+        // ONLY the ARMED rows: a blanket arm here put every row into live mode,
+        // so non-armed rows (which never capture) drew an empty envelope and
+        // their existing waveform vanished while another track recorded. The
+        // armed lane seeds its envelope with the existing take's length on a
+        // CONTINUE so the new audio draws AFTER it (see pushRecLevels).
         // On stop, HOLD the live envelope (don't clear it) until the real disk
         // thumbnail scans in -- the lane shows the just-captured waveform
         // instantly instead of blanking for the duration of the scan.
