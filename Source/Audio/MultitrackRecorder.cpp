@@ -507,15 +507,19 @@ namespace zynforge
                    &&  tracks[k]->armed.load (std::memory_order_relaxed);
         };
 
-        // Punch-in: move an existing take aside to its sidecar BEFORE the
-        // writer truncates the target, so the base survives to be spliced back
-        // on stop. No-op when not punching or no take exists.
+        // Punch-in: move the existing take -- AND its continuation parts -- aside
+        // to sidecars BEFORE the writer truncates the target, so the WHOLE base
+        // (a take built up by continue-recording is multi-part) survives to be
+        // spliced + flattened back on stop. No-op when not punching or no take.
         auto stashForPunch = [this] (const juce::File& target)
         {
-            if (! punchInActive || ! target.existsAsFile()) return;
-            const auto sidecar = punchSidecar (target);
-            sidecar.deleteFile();
-            target.moveFileTo (sidecar);
+            if (! punchInActive) return;
+            for (auto& part : findTakeParts (target))   // [Track_NN, _part02, ...]
+            {
+                const auto sidecar = punchSidecar (part);
+                sidecar.deleteFile();
+                part.moveFileTo (sidecar);
+            }
         };
 
         // Continue: the timeline base is the EXISTING take's length, measured
@@ -951,26 +955,54 @@ namespace zynforge
         {
             juce::AudioFormatManager fm; fm.registerBasicFormats();
             const auto punchPos = punchInPos;
+            // Map a stashed sidecar back to its real take file:
+            //   Track_NN.punchbase.ext      -> Track_NN.ext
+            //   Track_NN_part02.punchbase.ext -> Track_NN_part02.ext
+            auto sidecarToTake = [] (const juce::File& s) -> juce::File
+            {
+                const auto realStem = s.getFileNameWithoutExtension()
+                                       .upToLastOccurrenceOf (".punchbase", false, false);
+                return s.getParentDirectory().getChildFile (realStem + s.getFileExtension());
+            };
             auto spliceCopy = [&] (const juce::File& fresh) -> juce::int64
             {
                 if (fresh.getFullPathName().isEmpty()) return -1;
-                const auto sidecar = punchSidecar (fresh);
-                if (! sidecar.existsAsFile()) return -1;     // this copy wasn't stashed
+                // Gather every stashed base part for this copy, in order:
+                // Track_NN.punchbase + Track_NN_partXX.punchbase (continue takes
+                // are multi-part). The splice reads them as one seamless base.
+                std::vector<juce::File> baseParts;
+                const auto sidecar0 = punchSidecar (fresh);
+                if (! sidecar0.existsAsFile()) return -1;    // this copy wasn't stashed
+                baseParts.push_back (sidecar0);
+                {
+                    const auto dir  = fresh.getParentDirectory();
+                    const auto stem = fresh.getFileNameWithoutExtension();   // "Track_07"
+                    const auto ext  = fresh.getFileExtension();
+                    for (int p = 2; ; ++p)
+                    {
+                        const auto part = dir.getChildFile (stem + "_part"
+                                            + juce::String::formatted ("%02d", p) + ext);
+                        const auto ps = punchSidecar (part);
+                        if (ps.existsAsFile()) baseParts.push_back (ps); else break;
+                    }
+                }
                 const auto tmp = fresh.getSiblingFile (
                     fresh.getFileNameWithoutExtension() + ".punchtmp" + fresh.getFileExtension());
                 juce::int64 len = -1;
-                if (splicePunchFile (fm, sidecar, fresh, punchPos, tmp))
+                if (splicePunchParts (fm, baseParts, fresh, punchPos, tmp))
                 {
+                    // Success: the spliced tmp holds the WHOLE flattened take.
                     fresh.deleteFile();
                     tmp.moveFileTo (fresh);
-                    sidecar.deleteFile();
+                    for (auto& s : baseParts) s.deleteFile();   // parts folded into `fresh`
                 }
                 else
                 {
-                    // Failed: restore the original take so nothing is lost.
+                    // Failed: restore the original (possibly multi-part) take so
+                    // nothing is lost -- each sidecar back to its real name.
                     tmp.deleteFile();
                     fresh.deleteFile();
-                    sidecar.moveFileTo (fresh);
+                    for (auto& s : baseParts) s.moveFileTo (sidecarToTake (s));
                 }
                 if (auto* r = fm.createReaderFor (fresh)) { len = r->lengthInSamples; delete r; }
                 return len;

@@ -64,6 +64,12 @@ namespace zynforge
         {
             punchInActive = true;
             punchInPos    = juce::jmax ((juce::int64) 0, punchInSample);
+            // The fresh punch file records from sample 0, but on the TIMELINE
+            // the take resumes at the punch point: anchor the clock / playhead /
+            // live-capture waveform there so the new audio builds AT the punch
+            // position (with the existing take under it), not from 0. Cleared in
+            // stopRecording like the rest of the punch state.
+            recordBaseSamples = punchInPos;
         }
         bool isPunchInArmed() const noexcept { return punchInActive; }
 

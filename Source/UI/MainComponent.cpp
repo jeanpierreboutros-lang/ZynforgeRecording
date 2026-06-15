@@ -176,16 +176,11 @@ void MainComponent::onRecordClicked()
         const auto total = juce::jmax ((juce::int64) 0, engine.getPlayer().getTotalLengthSamples());
         if (pos > 0 && pos < total)
         {
-            // Mid-take "record over this part" -- the splice can't represent a
-            // multi-part base, so a split take continues as a new part instead
-            // (still non-destructive).
-            bool multiPart = false;
-            for (int i = 0; i < numTracks; ++i)
-                if (recorder.getTrack (i).armed.load (std::memory_order_relaxed)
-                    && AudioEngine::punchTakeMultiPart (activeDir, i))
-                { multiPart = true; break; }
-            if (multiPart) continueAppend = true;
-            else           { punchAt = pos; continueAppend = false; }
+            // Mid-take "record OVER from here" -- punch-in at the cursor/playhead.
+            // Works on MULTI-PART takes too: the splice reads the whole take
+            // (Track_NN + its parts) via ConcatReader and flattens it, so a take
+            // built up by continue-recording can still be punched anywhere.
+            punchAt = pos; continueAppend = false;
         }
         else
         {

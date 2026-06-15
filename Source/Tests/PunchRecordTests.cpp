@@ -181,6 +181,69 @@ namespace zynforge
             }
 
             cdir.deleteRecursively();
+
+            // ── Punch into a MULTI-PART take: flatten + splice ───────────────
+            // Build a take with a continuation part, then punch INSIDE the first
+            // part. The splice must read the whole take (part1 ++ part2) as the
+            // base, drop the punch in, and FLATTEN to a single Track_01.wav with
+            // the part deleted -- so you can punch anywhere on a continued take.
+            auto mdir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getChildFile ("zf-mppunch-" + juce::Uuid().toString());
+            mdir.deleteRecursively();
+            auto mTrack = mdir.getChildFile ("Audio Files").getChildFile ("Track_01.wav");
+            auto mPart2 = mdir.getChildFile ("Audio Files").getChildFile ("Track_01_part02.wav");
+
+            beginTest ("punch into a multi-part take flattens to one spliced file");
+            {
+                const float contVal = 0.20f;
+                // Part 1: baseBlocks of baseVal.
+                recordDc (mdir, baseVal, baseBlocks, block, sr, /*punchIn*/ -1);
+                // Part 2: continuation of contVal -> Track_01_part02.wav.
+                {
+                    MultitrackRecorder rec;
+                    rec.prepare (sr, block, 1);
+                    rec.getTrack (0).armed.store (true, std::memory_order_relaxed);
+                    rec.armContinue ((juce::int64) baseLen);
+                    rec.startRecording (mdir);
+                    std::vector<float> buf ((size_t) block, contVal);
+                    const float* p = buf.data();
+                    for (int b = 0; b < contBlocks; ++b) rec.processBlock (&p, 1, block);
+                    rec.stopRecording();
+                }
+                expect (mPart2.existsAsFile(), "continuation part missing before punch");
+                const int fullLen = baseLen + contLen;   // whole take, both parts
+
+                // Punch INSIDE part 1, recording punchVal.
+                recordDc (mdir, punchVal, punchBlocks, block, sr, /*punchIn*/ punchIn);
+
+                // Flattened: one file, no part02, length == the whole take.
+                expect (mTrack.existsAsFile(), "flattened take missing");
+                expect (! mPart2.existsAsFile(), "part02 should be folded into the flattened take");
+                expect (! mTrack.getSiblingFile ("Track_01.punchbase.wav").existsAsFile(),
+                        "punch sidecar leaked");
+                expect (! mPart2.getSiblingFile ("Track_01_part02.punchbase.wav").existsAsFile(),
+                        "part sidecar leaked");
+                std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (mTrack));
+                expect (r != nullptr);
+                expectEquals ((int) r->lengthInSamples, fullLen, "flattened length wrong");
+                r.reset();
+
+                // Three regions: base before the punch, punch, then the
+                // CONTINUATION audio after the punch-out (the splice reached into
+                // part 2 of the base).
+                expectWithinAbsoluteError (regionMean (fm, mTrack, 0, punchIn - 64), baseVal, 0.02f);
+                expectWithinAbsoluteError (regionMean (fm, mTrack, punchIn + 64, punchLen - 128), punchVal, 0.02f);
+                expectWithinAbsoluteError (regionMean (fm, mTrack, baseLen + 64, contLen - 128), contVal, 0.02f);
+
+                // Loads back as ONE track of the full length.
+                AudioEngine::setTestModeSkipAudioInit (true);
+                AudioEngine eng;
+                expectEquals (eng.loadSession (mdir), 1, "flattened take should load as one track");
+                expectEquals ((int) eng.getPlayer().getTotalLengthSamples(), fullLen,
+                              "flattened take length wrong on load");
+            }
+
+            mdir.deleteRecursively();
         }
     };
 

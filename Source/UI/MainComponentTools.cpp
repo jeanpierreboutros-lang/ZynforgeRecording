@@ -267,17 +267,10 @@ void MainComponent::servicePunch()
                 wasInsidePunch = inside;
                 return;
             }
-            // Refuse if any punch-armed take was auto-split (the single-file
-            // splice can't represent a multi-part base) -- never corrupt it.
+            // Multi-part takes (auto-split, or built up by continue-recording)
+            // are fine now: the splice reads the whole take via ConcatReader and
+            // flattens it on stop, so no refusal here.
             auto& rec = engine.getRecorder();
-            for (int i = 0; i < rec.getNumTracks(); ++i)
-                if (engine.isTrackPunchArmed (i)
-                    && AudioEngine::punchTakeMultiPart (sessionDir, i))
-                {
-                    showStatus ("Punch-in needs single-file takes (this one was auto-split)");
-                    wasInsidePunch = inside;
-                    return;
-                }
 
             // Force-arm only the punch-armed tracks for the punch.
             for (int i = 0; i < rec.getNumTracks(); ++i)
