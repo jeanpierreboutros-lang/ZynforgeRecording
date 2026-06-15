@@ -558,9 +558,30 @@ namespace zynforge
             {
                 recPeakL.assign ((size_t) juce::jmax (0, prefillSilentPoints), 0.0f);
                 recPeakR.assign ((size_t) juce::jmax (0, prefillSilentPoints), 0.0f);
+                liveRecPrefill = juce::jmax (0, prefillSilentPoints);  // continue base, in env columns
                 liveHold = false;           // a new take supersedes any held envelope
             }
             liveRecording = on;
+        }
+
+        // While a CONTINUE take records, the existing take occupies the first
+        // `liveRecPrefill / recPeakL.size()` of the lane (silent envelope columns
+        // sit over it); draw its waveform there so the lane reads as "take + new
+        // audio growing", under the live envelope. Returns the x splitting the
+        // existing take from the new recording, or area.getX() when not a
+        // continue (no existing-take region).
+        void drawContinueExisting (juce::Graphics& g, juce::Rectangle<int> area,
+                                   juce::AudioThumbnail& thumb, bool wholeFile, int chan, float zoom)
+        {
+            if (liveRecPrefill <= 0 || recPeakL.empty() || thumb.getTotalLength() <= 0.0)
+                return;
+            const double frac = juce::jlimit (0.0, 1.0,
+                                    (double) liveRecPrefill / (double) recPeakL.size());
+            auto existing = area.withWidth ((int) (area.getWidth() * frac));
+            if (existing.getWidth() <= 0) return;
+            g.setColour (brand::accentPlay.withAlpha (brand::alpha::muted));   // existing take = dim context
+            if (wholeFile) thumb.drawChannels (g, existing, 0.0, thumb.getTotalLength(), zoom);
+            else           thumb.drawChannel  (g, existing, 0.0, thumb.getTotalLength(), chan, zoom);
         }
 
         // Take stopped: stop appending, but KEEP the envelope drawn as a
@@ -1319,6 +1340,9 @@ namespace zynforge
                 // waveform that sits there until the real thumbnail scans in.
                 if (showLive)
                 {
+                    // Continue: existing take under the [0, base) region of each lane.
+                    drawContinueExisting (g, laneL, thumbnailL, ! stereoOneFile, 0, waveZoom (thumbnailL));
+                    drawContinueExisting (g, laneR, thumbnailR, ! stereoOneFile, 1, waveZoom (thumbnailR));
                     g.setColour (liveRecording ? brand::meterHot : brand::meterEmber);
                     drawRecEnvelope (g, laneL, recPeakL, vz);
                     drawRecEnvelope (g, laneR, recPeakR, vz);
@@ -1337,6 +1361,7 @@ namespace zynforge
                 // thumbnail, or the lane shows blocky garbage instead of the
                 // growing capture. After stop it dims to ember and holds until
                 // the real thumbnail finishes scanning (no blank gap).
+                drawContinueExisting (g, inner, thumbnailL, true, 0, waveZoom (thumbnailL));
                 g.setColour (liveRecording ? brand::meterHot : brand::meterEmber);
                 drawRecEnvelope (g, inner, recPeakL, vz);
             }
@@ -3885,6 +3910,7 @@ namespace zynforge
         // costs nothing against capture integrity. recPeakR carries the
         // R partner on a stereo pair.
         std::vector<float>        recPeakL, recPeakR;
+        int                       liveRecPrefill        { 0 };   // continue: existing-take columns
         bool                      liveRecording         { false };
         // Provisional hand-off: when a take stops, keep the just-built live
         // envelope on screen as a coarse waveform until the real file

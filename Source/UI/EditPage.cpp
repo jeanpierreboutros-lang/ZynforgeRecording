@@ -691,13 +691,17 @@ namespace zynforge
         // (before the post-stop disk re-scan swaps in the real waveform).
         if (recJustStarted && list != nullptr)
         {
-            // CONTINUE take (base > 0): keep the existing take's waveform on
-            // screen and let the playhead roll past it into the new part (which
-            // fills in on stop). NO live envelope -- it would hide the existing
-            // take and read as "started over". A NORMAL take uses the live
-            // envelope as before (its file is being written, not appended-to).
-            const bool isContinue = engine.getRecorder().getRecordBaseSamples() > 0;
-            list->setLiveRecording (! isContinue);
+            // The live capture envelope grows L->R so you can SEE the take
+            // working while it records (not just after stop). On a CONTINUE,
+            // seed it with silent columns for the existing take so the live
+            // waveform draws AFTER it, at the base -- matching the playhead --
+            // and the existing take stays on screen underneath. 24 Hz timer ->
+            // ~24 columns/sec, so prefill the same density.
+            const auto base = engine.getRecorder().getRecordBaseSamples();
+            const double sr = engine.getPlayer().getSampleRate() > 0.0
+                                  ? engine.getPlayer().getSampleRate() : 48000.0;
+            const int prefill = base > 0 ? (int) ((double) base / sr * 24.0) : 0;
+            list->setLiveRecording (true, prefill);
         }
         // On stop, HOLD the live envelope (don't clear it) until the real disk
         // thumbnail scans in -- the lane shows the just-captured waveform
