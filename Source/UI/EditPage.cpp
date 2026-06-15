@@ -326,6 +326,14 @@ namespace zynforge
             for (auto& r : rows) r->setPlayheadX (px);
         }
 
+        // Repaint every row unconditionally -- used while a background waveform
+        // scan is running so the freshly-recorded take draws in AS it loads,
+        // without needing a mouse move to trigger a repaint.
+        void repaintRows()
+        {
+            for (auto& r : rows) r->repaint();
+        }
+
         void pollMixerState()
         {
             for (auto& r : rows) r->updatePollState();
@@ -759,6 +767,17 @@ namespace zynforge
         // when hidden so peaks stay current for the flip back to EDIT.
         if (! isVisible() && ! rec)
             return;
+
+        // While a background waveform scan is running -- notably the post-stop
+        // re-scan -- repaint the rows each tick so the freshly-recorded take
+        // draws in AS it loads. Without this nothing triggers a repaint once
+        // recording stops (the playhead is parked, pushRecLevels isn't running),
+        // so the lane sat on the held envelope until the engineer moved the
+        // mouse. Bounded: stops the moment every thumbnail is fully loaded.
+        if (! rec && list != nullptr && list->rowCount() > 0
+            && engine.getActiveSessionDir().isDirectory()
+            && ! list->allWaveformsLoaded())
+            list->repaintRows();
 
         // Append this tick's input peaks to the live capture envelope so
         // every armed lane grows a red waveform during the take. Kept
