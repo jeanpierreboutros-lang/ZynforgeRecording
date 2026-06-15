@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (About dialog: © artifact + forge icon — 2026-06-16)
+- **The About box now shows a clean © and the forge icon.** `©` (and the user-guide `×`) were rendering as mojibake ("Â©", "Ã—") because the implicit `const char*`→`String` conversion decoded the multi-byte UTF-8 as Latin-1; the strings are now built with `String::fromUTF8`. The About dialog also switched from `NoIcon` to `InfoIcon`, so the ZynForge forge-mark badge is stamped on it like the other prompts. Separators are proper `·` middots now.
+
 ### Changed (FLAT design — every surface is solid, no gradients — 2026-06-16)
 - **The whole UI is now flat: every fill is a solid colour, no top-to-bottom gradients or glossy sheens.** The shared `verticalGradient` helper now returns a solid fill, and every direct gradient (buttons, toggles, faders, the rotary knob, channel/master steel headers, the big clock plate, the window background, setlist / tool / patch bars, toasts, the splash, the clip-gain cap, the armed-channel wash, the input-level bar) was converted to a solid colour. The LED meter ladder was already solid segments; its tiny-meter fallback now picks a solid forge-heat colour by level instead of a gradient. Cleaner, calmer, modern.
 

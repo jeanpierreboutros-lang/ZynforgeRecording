@@ -280,7 +280,8 @@ void MainComponent::showKeyboardShortcuts()
 
 void MainComponent::showUserGuide()
 {
-    const juce::String body =
+    // fromUTF8 so the "×" (64×64) renders as itself, not Latin-1 mojibake.
+    const juce::String body = juce::String::fromUTF8 (
         "MIXER VIEW\n"
         "  Channel strips run left-to-right; each has R / I / M / S "
         "buttons, a pan knob, and a fader. Right-click for rename, "
@@ -327,7 +328,7 @@ void MainComponent::showUserGuide()
         "  Session > NDI broadcast pushes the master mix onto your "
         "LAN as an NDI Audio source. Any NDI receiver (NDI Tools, OBS, "
         "TouchDesigner) on the same network can monitor your live "
-        "stream. Requires NDI runtime from ndi.tv--free.";
+        "stream. Requires NDI runtime from ndi.tv--free.");
 
     auto* aw = new juce::AlertWindow ("Zynforge user guide", body,
                                       juce::MessageBoxIconType::NoIcon);
@@ -339,12 +340,17 @@ void MainComponent::showUserGuide()
 
 void MainComponent::showAboutDialog()
 {
+    // InfoIcon -> the ZynForge LAF stamps the forge badge (drawAlertBox draws
+    // the badge for any non-NoIcon alert). fromUTF8 so the © and · render as
+    // themselves -- the implicit const char* -> String conversion decodes the
+    // multi-byte UTF-8 as Latin-1 and shows mojibake ("Â©").
     juce::AlertWindow::showMessageBoxAsync (
-        juce::MessageBoxIconType::NoIcon,
+        juce::MessageBoxIconType::InfoIcon,
         "Zynforge Recording",
-        "Live multitrack recording + virtual soundcheck.\n\n"
-        "JUCE 8 * C++20 * macOS Universal\n"
-        "\xC2\xA9 Zynforge",
+        juce::String::fromUTF8 (
+            "Live multitrack recording + virtual soundcheck.\n\n"
+            "JUCE 8 \xC2\xB7 C++20 \xC2\xB7 macOS Universal\n"
+            "\xC2\xA9 Zynforge"),
         "OK");
 }
 
