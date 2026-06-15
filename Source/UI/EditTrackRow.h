@@ -1323,7 +1323,14 @@ namespace zynforge
             // is never blank while the background scan runs.
             if (liveHold && waveformsLoaded()) liveHold = false;
             const bool showLive = liveRecording || liveHold;
-            if (! haveClipBlocks)
+            // While CAPTURING (or holding the just-captured envelope), the live
+            // forge-orange overlay OWNS the lane -- even on a take that already
+            // has clip blocks. A CONTINUE records onto a take whose existing
+            // audio is a seeded clip (so haveClipBlocks is true), and we must
+            // still show the NEW audio building live instead of only the static
+            // clips. The clip-block renderer below is suppressed while showLive
+            // for the same reason, then takes over on stop once the file scans.
+            if (! haveClipBlocks || showLive)
             {
             if (stereo)
             {
@@ -1384,8 +1391,11 @@ namespace zynforge
             // After Edit ▸ Split / Separate, the track grows a clip list.
             // Paint each clip boundary as a 1 px vertical cut + a small
             // ⌐ marker at the top of the lane so the engineer can see
-            // where the split landed.
-            if (auto* clips = engine.tryClipsFor (index))
+            // where the split landed. Skipped while showLive -- the live
+            // capture envelope above owns the lane during a take (incl. a
+            // CONTINUE), so the static clips don't paint over the growing
+            // forge-orange waveform.
+            if (auto* clips = showLive ? nullptr : engine.tryClipsFor (index))
             {
                 const auto& player = engine.getPlayer();
                 const juce::int64 totalSamples = player.isLoaded()

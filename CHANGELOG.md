@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (live waveform now builds while CONTINUING a take — 2026-06-15)
+- **When you continue a recording, the new audio now builds live in the EDIT lane** — the growing forge-orange waveform — instead of only appearing after you stop. The live capture envelope was being suppressed on a continue because the existing take already had a *clip block* (every stop seeds a default clip over the take), and the clip renderer owned the lane — so the in-progress capture wasn't drawn until the post-stop re-scan. The live envelope now takes precedence over the static clip blocks while a take is rolling (the existing take draws dim underneath, the new audio grows hot on top), then the clips take back over on stop once the file re-scans. This makes continue match a fresh take: you watch it capture in real time.
+
 ### Fixed (STOP leaves the playhead at the take's end — 2026-06-15)
 - **Stopping a recording no longer rewinds to the beginning.** When you stopped, the player reloaded the session and snapped the playhead to 0 — so hitting RECORD again *looked* like it started over, even though the audio was appending correctly. ZynForge now parks the transport at the **end of what you just captured** (the live-recorder convention), so RECORD continues the take seamlessly from there, and PLAY reviews from that point. This is the opposite of a DAW like Reaper, whose Stop snaps the edit cursor back to where the pass began; live multitrack recorders keep rolling forward, and so does ZynForge. With the playhead at the take's end, RECORD takes the "append a new part" path (not a mid-take punch), which is exactly the seamless continue.
 
