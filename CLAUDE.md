@@ -71,11 +71,11 @@ EDIT-view specifics in `Source/UI/EditTrackRow.h` (was `EditPage.cpp`): the `Tra
 - Dialog modals use `Source/Theme/DialogChrome.h::dialog::paintChrome(...)`. Custom dialog `paint()` is a smell.
 - Shadows: `brand::shadow::elev1/elev2/elev3`. Never inline `Colours::black.withAlpha(...)`.
 - Specular gloss / light scrim (the one sanctioned white): `brand::gloss(alpha)`. Never inline `Colours::white.withAlpha(...)`.
-- Alpha: `brand::alpha::{faint,chrome,edgeSoft,subtle,wash,dimmed,ghost,scrim,muted,prominent,bold}`. Never inline `withAlpha(0.xx)`; if no step fits, catalog it in `BrandColors.h`.
+- Alpha: the 14-step `brand::alpha::{faint,chrome,edgeSoft,subtle,soft,wash,dimmed,ghost,scrim,half,muted,strong,prominent,bold}` scale (0.10→0.95). **Never inline `withAlpha(0.xx)` — a raw float literal now FAILS the gate** (the old ad-hoc catalogue was retired 2026-06-16; every literal was folded into a named step). If no step fits, add one to `tokens.json` → regenerate `ForgeTokens.h` → surface it in `BrandColors.h`. Computed/animated opacities use `withAlpha((expr))` and are exempt.
 - Tints (lighten/darken): `brand::lift(c, amt)` / `brand::sink(c, amt)`, with named amounts in `brand::tint::{faint,hover,edge,deep}`. **Never call raw `juce::Colour::brighter()/darker()` outside `Theme/`** — the gate bans it.
 - Corner radius: `brand::radius::{sm,md,lg,xl}`. Never pass a raw float (sub-2 px meter/icon micro-radii excepted).
 - Text on a saturated accent: `brand::onSignal(bg)`. Never hardcode black or white.
-- `tools/design_audit.sh` is the CI gate enforcing all of the above (6 rules) — must stay CLEAN.
+- `Tools/design_audit.sh` is the CI gate (pre-commit hook) enforcing all of the above — **7 rules**, must stay CLEAN. Scope = `Source/{UI,Audio,Network,Capture}`, excludes `Theme/` + `Tests/`. The rules: (1) no raw `juce::Colour(0x..)`/`fromRGB`; (2) no bare `Colours::white`/`black`; (3) no raw `juce::Font`/`FontOptions`; (4) **withAlpha opacities must be `brand::alpha::` tokens — raw floats now FAIL** (stricter since the catalogue retirement); (5) rounded-rect radii are `brand::radius::` tokens (≤2px micro exempt); (6) no raw `.brighter()`/`.darker()` (use `brand::lift`/`sink`); (7) **spacing ratchet** — raw-int `reduced(N)` count must not grow past `SPACE_CEIL` (new spacing must use `brand::space::`; lower the ceiling as the tail migrates).
 
 ### Stereo + view linkage
 
