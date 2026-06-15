@@ -679,7 +679,11 @@ namespace zynforge
 
     void EditPage::repaintLanes()
     {
-        if (list != nullptr) list->repaint();   // rows read engine automation in paint()
+        // Explicit per-row repaint -- the selection highlight + automation are
+        // drawn inside each row's paint(), and repainting only the parent list
+        // doesn't reliably redraw the (header-pinned) children. Used after a
+        // selection change (Cmd+A / clear) or a cue recall changes automation.
+        if (list != nullptr) list->repaintRows();
         repaint();
     }
 

@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (Cmd+A selection shows immediately in EDIT — 2026-06-15)
+- **Select All (Cmd+A) now highlights the channels right away in the EDIT view.** The selection state updated but the row headers weren't repainted, so the highlight only appeared once you moved the mouse near a channel. Select-all and clear-selection now repaint the EDIT rows immediately (the mixer strips already did).
+
 ### Fixed (crash on relaunch after an unclean shutdown — 2026-06-15)
 - **The app no longer crashes when it reopens after a crash / force-quit.** On launch ZynForge offers to recover any sessions that didn't shut down cleanly, in a sortable list. The list's descending-sort comparator returned `! less-than`, which reports *equal* sessions as each being "less than" the other — an invalid ordering that the C++ standard library's hardened `std::sort` now aborts on (`SIGABRT`). With several recoverable sessions of equal size it aborted immediately — exactly when you most need recovery, right after a crash. The comparator now reverses correctly (it compares with the operands swapped), so the recovery list sorts cleanly by any column, either direction. Locked with a regression test that sorts an all-equal-keyed list. (The sibling QC and noise report tables already used the correct pattern; this one was missed.)
 

@@ -283,6 +283,9 @@ void MainComponent::clearStripSelection()
     if (selectedLogical.empty()) return;
     selectedLogical.clear();
     for (auto& s : strips) s->setSelected (false);
+    // The EDIT row headers read the selection in paint() -- repaint them too,
+    // or the highlight lingers until a mouse move dirties the rows.
+    if (editPage != nullptr) editPage->repaintLanes();
     showStatus ("Selection cleared");
 }
 
@@ -295,6 +298,9 @@ void MainComponent::selectAllStrips()
         selectedLogical.insert (i);
         if (strips[(size_t) i] != nullptr) strips[(size_t) i]->setSelected (true);
     }
+    // Cmd+A from the EDIT view: repaint the rows so their headers show selected
+    // immediately, not only after the mouse moves over a channel.
+    if (editPage != nullptr) editPage->repaintLanes();
     showStatus (juce::String ((int) strips.size()) + " strip(s) selected");
 }
 
