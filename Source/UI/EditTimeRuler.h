@@ -42,6 +42,17 @@ namespace zynforge
         // zoomed in. Tells the ruler how many pixels correspond to
         // the full session length.
         void setContentWidth (int w) { contentW = juce::jmax (1, w); repaint(); }
+        // Horizontal scroll offset of the wave viewport
+        // (viewport.getViewPositionX()). The ruler is a FIXED-width sibling
+        // ABOVE the scrolling wave lanes -- it does not live inside the
+        // viewport -- so it must subtract the same scroll the lanes apply, or
+        // every tick / label / playhead / marker drifts right of the audio it
+        // labels by exactly this many pixels once zoomed in and scrolled.
+        void setScrollOffsetX (int x)
+        {
+            x = juce::jmax (0, x);
+            if (x != scrollOffsetX) { scrollOffsetX = x; repaint(); }
+        }
 
         // Sample/second <-> screen-x mapping. The wave LANES inset their clip
         // content by brand::space::xs on each side (TrackRow paints into
@@ -49,6 +60,11 @@ namespace zynforge
         // `headerW + xs + frac*(waveW - 2*xs)`). The ruler MUST use the exact
         // same mapping or its ticks / markers / playhead drift a few px from
         // the audio they label. Route every ruler mapping through these.
+        // The lanes also SCROLL (they live in the viewport; the ruler does not),
+        // so the forward map subtracts scrollOffsetX and the inverse adds it --
+        // otherwise the ruler drifts right of the wave by the scroll amount when
+        // zoomed in. Ticks/playhead with x < headerW are then culled (they
+        // scrolled under the pinned header), exactly like the lanes.
         static constexpr int kWaveInset = brand::space::editWaveInset;
         double rulerPxPerSec (double totalSec) const noexcept
         {
@@ -57,11 +73,11 @@ namespace zynforge
         }
         int rulerTimeToX (double sec, double pxPerSec) const noexcept
         {
-            return headerW + kWaveInset + (int) (sec * pxPerSec);
+            return headerW + kWaveInset + (int) (sec * pxPerSec) - scrollOffsetX;
         }
         double rulerXToTime (int xPx, double pxPerSec) const noexcept
         {
-            return juce::jmax (0.0, (double) (xPx - headerW - kWaveInset)
+            return juce::jmax (0.0, (double) (xPx - headerW - kWaveInset + scrollOffsetX)
                                         / juce::jmax (1.0, pxPerSec));
         }
 
@@ -365,8 +381,14 @@ namespace zynforge
             // Draw minors first (short, dim), then majors on top (tall +
             // labelled), with a mid tier so the spacing reads at a glance.
             const int lastTick = (int) std::floor (totalSec / minorSec) + 1;
+            // Start at the first tick scrolled into view so a deep zoom+scroll
+            // doesn't walk thousands of culled indices each paint. Back up two
+            // so a partially-visible major label still draws. (secToX already
+            // culls x < headerW / breaks past the right edge.)
+            const int firstTick = juce::jmax (0,
+                (int) ((double) scrollOffsetX / juce::jmax (1.0, minorSec * pxPerSec)) - 2);
             g.setFont (brand::type::mono (10.5f, true));
-            for (int k = 0; k <= lastTick; ++k)
+            for (int k = firstTick; k <= lastTick; ++k)
             {
                 const double tSec = (double) k * minorSec;
                 const int x = secToX (tSec);
@@ -513,8 +535,9 @@ namespace zynforge
         }
 
         AudioEngine& engine;
-        int headerW   { 380 };   // matches TrackRow::headerW
-        int contentW  { 1024 };
+        int headerW      { 380 };   // matches TrackRow::headerW
+        int contentW     { 1024 };
+        int scrollOffsetX { 0 };    // viewport.getViewPositionX(), pushed by EditPage
         juce::int64 punchDragInSample  { -1 };
         juce::int64 punchDragOutSample { -1 };
 

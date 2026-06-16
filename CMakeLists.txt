@@ -94,6 +94,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/VcaPanelAccessibilityTests.cpp
     Source/Tests/AutomationToolbarAccessibilityTests.cpp
     Source/Tests/EditPageAccessibilityTests.cpp
+    Source/Tests/EditRulerScrollTests.cpp
     Source/Tests/CompanionServerTests.cpp
     Source/Tests/CompoundFileTests.cpp
     Source/Tests/AafTests.cpp

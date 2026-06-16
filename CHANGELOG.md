@@ -17,6 +17,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (EDIT time-ruler drifts from the wave when zoomed in — 2026-06-16)
+- **The EDIT ruler now lines up with the audio again when you're zoomed in and scrolled.** The time ruler is a fixed strip above the wave lanes, but the lanes scroll horizontally underneath it — and the ruler wasn't following that scroll, so its tick labels, playhead and edit-cursor sat shifted to the right of the waveform they were marking (by exactly the scroll amount). Now the ruler subtracts the wave's scroll position from its mapping, so ticks / playhead / markers stay glued to the audio at any zoom or scroll. Marker double-click and the shift-drag punch range follow the same corrected mapping. Locked with a regression test (`EditRulerScrollTests`) that asserts the ruler playhead lands on the same pixel as the lane playhead under scroll.
+
 ### Changed (design-system audit follow-through — 2026-06-16)
 - **Opacity is fully tokenised + enforced.** Added `alpha::soft/half/strong`, migrated every raw `withAlpha(0.NN)` literal in app code to a named `brand::alpha::` token, and removed the ad-hoc "catalogue" escape-hatch from `design_audit.sh` — a raw alpha float now FAILS the gate.
 - **Spacing ratchet.** `design_audit.sh` now counts raw-integer `reduced()` calls and FAILS if the count grows past the baseline (169), so new layout uses `brand::space::` while the existing tail migrates incrementally.

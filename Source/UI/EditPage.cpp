@@ -425,7 +425,16 @@ namespace zynforge
                                      /*allowHorizWithoutBar*/ true);
         // Re-pin every row's header column to the left edge on horizontal
         // scroll so the meter / routing / R-I-S-M controls never slide away.
-        viewport.onScroll = [this] { if (list != nullptr) list->relayoutHeaders(); };
+        viewport.onScroll = [this]
+        {
+            if (list != nullptr) list->relayoutHeaders();
+            // Keep the fixed-width ruler aligned with the scrolling wave lanes.
+            // visibleAreaChanged fires for manual AND programmatic scrolls
+            // (auto-scroll while playing, zoom-to-selection), so this one hook
+            // covers them all -- without it the ruler ticks/playhead drift right
+            // of the audio by the scroll amount when zoomed in.
+            if (ruler != nullptr) ruler->setScrollOffsetX (viewport.getViewPositionX());
+        };
         addAndMakeVisible (viewport);
 
         // Overview navigator -- hidden until zoomed in (resized() shows it).
@@ -899,9 +908,14 @@ namespace zynforge
         list->resized();
 
         // Push the same content width into the ruler so its
-        // pixels-per-second matches the wave pane below it.
+        // pixels-per-second matches the wave pane below it, and the current
+        // horizontal scroll so its ticks line up with the (possibly scrolled)
+        // lanes after a relayout / zoom.
         if (ruler != nullptr)
+        {
             ruler->setContentWidth (contentW);
+            ruler->setScrollOffsetX (viewport.getViewPositionX());
+        }
 
         // Edge zoom clusters, overlaid in the bottom-right corner:
         //   V+        (vertical / amplitude, stacked)
