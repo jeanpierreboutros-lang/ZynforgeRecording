@@ -99,13 +99,18 @@ namespace zynforge
         if (armedReady != ready) { armedReady = ready; syncPulseTimer(); repaint(); }
     }
 
+    // Breathe animation tick rate. 15 Hz is plenty for a 1 Hz sine (still
+    // visually smooth) and halves the idle repaint cost while a track is armed
+    // — the pulse timer runs the whole time the rig sits armed-and-waiting.
+    static constexpr int kPulseHz = 15;
+
     void BigClockPanel::syncPulseTimer()
     {
         const bool wantPulse = ! brand::reduceMotion() && ((mode == Mode::Recording) || armedReady);
         if (wantPulse)
         {
             if (! isTimerRunning())
-                startTimerHz (30);
+                startTimerHz (kPulseHz);
         }
         else
         {
@@ -116,15 +121,35 @@ namespace zynforge
 
     void BigClockPanel::timerCallback()
     {
-        // 1 Hz breathe: a full sine cycle every second. Phase wraps at
-        // 2π so the float stays bounded over a long recording session.
+        // 1 Hz breathe: a full sine cycle every second, so the phase step is
+        // tied to the tick rate (2π / kPulseHz). Phase wraps at 2π so the
+        // float stays bounded over a long recording session.
         constexpr float twoPi = juce::MathConstants<float>::twoPi;
-        pulsePhase += twoPi / 30.0f;
+        pulsePhase += twoPi / (float) kPulseHz;
         if (pulsePhase > twoPi) pulsePhase -= twoPi;
-        // Heat ignite: ramp 0→1 over ~9 frames (300ms) at record start.
+        // Heat ignite: ramp 0→1 over ~300 ms at record start (rate-independent).
         igniteLevel = juce::jlimit (0.0f, 1.0f,
-                                    igniteLevel + (mode == Mode::Recording ? 1.0f : -1.0f) / 9.0f);
-        repaint();
+                                    igniteLevel + (mode == Mode::Recording ? 1.0f : -1.0f)
+                                                      / (0.3f * (float) kPulseHz));
+
+        // Scope the invalidation: while recording the whole plate breathes, but
+        // when merely armed-and-ready only the 2px border pulses — the big
+        // timecode / forge-mark centre is static. Repainting just an outer band
+        // there avoids re-rasterising the centre AND (since the panel is
+        // non-opaque) re-drawing the MainComponent slice behind it 15×/s.
+        if (mode == Mode::Recording)
+        {
+            repaint();
+        }
+        else
+        {
+            const auto b = getLocalBounds();
+            constexpr int band = 12;   // covers the reduced(2/3) borders + brackets
+            repaint (b.getX(),               b.getY(),                b.getWidth(), band);              // top
+            repaint (b.getX(),               b.getBottom() - band,    b.getWidth(), band);              // bottom
+            repaint (b.getX(),               b.getY(),                band,         b.getHeight());     // left
+            repaint (b.getRight() - band,    b.getY(),                band,         b.getHeight());     // right
+        }
     }
 
     static juce::String formatRemaining (double seconds)
