@@ -43,6 +43,7 @@ namespace zynforge
             prevSample  = 0.0f;
             samplesSinceLastCrossing = 0;
             halfBitMean = 0.0f;
+            bootstrapCount = 0;
             haveHalfBit = false;
             pendingHalf = false;
             bitWindow   = 0;
@@ -278,6 +279,10 @@ namespace zynforge
             const juce::uint8 sc = (juce::uint8) (st * 10 + su);
             const juce::uint8 mn = (juce::uint8) (mt * 10 + mu);
             const juce::uint8 hr = (juce::uint8) (ht * 10 + hu);
+
+            // ht is 2 bits + hu 0-9 can encode hours 24-29 (e.g. ht=2,hu=9);
+            // a real SMPTE hour is 0-23, so drop the impossible ones.
+            if (hr > 23) return;
 
             ltcHours    .store (hr, std::memory_order_relaxed);
             ltcMinutes  .store (mn, std::memory_order_relaxed);

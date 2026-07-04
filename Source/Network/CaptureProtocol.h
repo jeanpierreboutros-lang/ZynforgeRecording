@@ -82,6 +82,7 @@ namespace zynforge::capture
         bool         boolValue  { false };
         int          intValue   { 0 };
         int          version    { kProtocolVersion };   // meaningful for Hello
+        int          id         { 0 };   // request-correlation id (0 = none)
 
         juce::var toJson() const
         {
@@ -93,6 +94,7 @@ namespace zynforge::capture
             o->setProperty ("boolValue", boolValue);
             o->setProperty ("intValue",  intValue);
             if (action == Action::Hello) o->setProperty ("version", version);
+            if (id > 0)                  o->setProperty ("id", id);
             return juce::var (o);
         }
 
@@ -109,6 +111,7 @@ namespace zynforge::capture
             c.boolValue  = (bool) v.getProperty ("boolValue", false);
             c.intValue   = (int) v.getProperty ("intValue", 0);
             c.version    = (int) v.getProperty ("version", kProtocolVersion);
+            c.id         = (int) v.getProperty ("id", 0);
             ok = true;
             return c;
         }
@@ -120,6 +123,7 @@ namespace zynforge::capture
         bool         ok       { false };
         int          version  { kProtocolVersion };
         juce::String error;
+        int          id       { 0 };   // echoes the Command::id this replies to
 
         juce::var toJson() const
         {
@@ -128,6 +132,7 @@ namespace zynforge::capture
             o->setProperty ("ok",      ok);
             o->setProperty ("version", version);
             if (error.isNotEmpty()) o->setProperty ("error", error);
+            if (id > 0)             o->setProperty ("id", id);
             return juce::var (o);
         }
 
@@ -137,6 +142,7 @@ namespace zynforge::capture
             r.ok      = (bool) v.getProperty ("ok", false);
             r.version = (int) v.getProperty ("version", kProtocolVersion);
             r.error   = v.getProperty ("error", "").toString();
+            r.id      = (int) v.getProperty ("id", 0);
             return r;
         }
     };
@@ -155,6 +161,18 @@ namespace zynforge::capture
         return v;
     }
     inline EngineStatus decodeStatus (const juce::var& v) { return EngineStatus::fromJson (v); }
+
+    // "bye": the daemon tells a client its socket is being closed on PURPOSE
+    // (superseded by a newer connection), so the client can distinguish an
+    // intentional kick from an actual daemon death and not raise a false
+    // mid-take "daemon died" alarm.
+    inline juce::var encodeBye (const juce::String& reason)
+    {
+        auto* o = new juce::DynamicObject();
+        o->setProperty ("type", "bye");
+        if (reason.isNotEmpty()) o->setProperty ("reason", reason);
+        return juce::var (o);
+    }
 
     // Framing: one compact JSON object per line.
     inline juce::String frame (const juce::var& v) { return juce::JSON::toString (v, true) + "\n"; }

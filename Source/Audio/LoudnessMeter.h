@@ -180,7 +180,12 @@ namespace zynforge
         std::array<double, 30> ring3s {};   // last 30 x 100 ms = 3 s
         int ring3sFill { 0 }, ring3sPos { 0 };
 
-        static constexpr int kBins = 740;   // -73.0 .. +1.0 LUFS, 0.1 LU bins
+        // -73.0 .. +30.0 LUFS in 0.1 LU bins. The top must sit well above any
+        // real momentary level: a value louder than the highest bin clamps INTO
+        // it (lufsToBin's jlimit), and getIntegratedLufs then counts that block
+        // at the bin's capped energy — biasing hot masters low. +30 LUFS is
+        // unreachable in practice, so nothing under-counts.
+        static constexpr int kBins = 1031;  // (-73.0 + 0.1*1030) = +30.0 LUFS top
         std::array<std::atomic<std::uint32_t>, kBins> hist {};
 
         static double binToLufs (int b) noexcept { return -73.0 + 0.1 * (double) b; }

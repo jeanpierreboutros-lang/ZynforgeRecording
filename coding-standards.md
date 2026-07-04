@@ -7,6 +7,7 @@ The goal of this document is to keep the codebase consistent enough that any con
 - **Clarity over cleverness.** Code is read many more times than it is written. Prefer the obvious form.
 - **Real-time discipline is mechanical, not best-effort.** See `decisions.md`. The audio callback obeys hard rules; the rest of the codebase obeys taste.
 - **Persistence is part of the feature.** A user-editable field that does not round-trip to disk is incomplete, not a follow-up.
+- **Shared `PropertiesFile` reloads REPLACE, never merge.** `appProps` and the four `Strip*` modules point five separate `juce::PropertiesFile` instances at one `.settings` file. Before a mutate+save, reload to pick up other writers' changes — but with `clear()` + `reload()` (replace), not a bare `reload()` (merge). A merge keeps in-memory keys that are gone from disk, so the next whole-file save resurrects a key another module just deleted. Use `reloadReplace(*props)` / `reloadAppPropsBeforeWrite()`, guarded on the file existing.
 - **The design system is the truth.** Colours, fonts, spacing, shadows come from `Source/Theme/`. Inline literals are a smell.
 
 ## Naming Conventions

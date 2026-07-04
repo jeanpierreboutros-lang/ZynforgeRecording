@@ -68,6 +68,25 @@ void MainComponent::onRecordClicked()
 
     if (engine.isRecording())
     {
+        // Two-tap "protect the take" guard -- same pattern onStopClicked uses.
+        // While recording the RECORD button reads "STOP"; a stray press must
+        // not end a live take. First tap arms (toast); a second tap within 2 s
+        // actually stops. Shares stopArmedAtMs with onStopClicked so the two
+        // stop surfaces stay consistent. Unlike onStopClicked this does NOT
+        // rewind -- it keeps the take parked at its end so a subsequent RECORD
+        // continues/appends (the live-recorder convention).
+        const auto now = juce::Time::getMillisecondCounter();
+        constexpr juce::uint32 kArmWindowMs = 2000;
+        if (stopArmedAtMs == 0 || (now - stopArmedAtMs) > kArmWindowMs)
+        {
+            stopArmedAtMs = now;
+            toast.show ("Tap STOP again to end the recording", Toast::Kind::Warning);
+            statusLabel.setText ("STOP armed -- tap again within 2 s to end the take",
+                                 juce::dontSendNotification);
+            return;
+        }
+        stopArmedAtMs = 0;
+
         engine.stopRecording();
         statusLabel.setText ("Idle", juce::dontSendNotification);
         recordButton.setButtonText ("RECORD");
@@ -322,6 +341,18 @@ void MainComponent::onRecordClicked()
 
 void MainComponent::onPlayClicked()
 {
+    // During a continue / punch record the player is LOADED, so without this
+    // guard clicking PLAY (or transportBar->onRequestPlay) would start
+    // playback concurrently with the live recording. The spacebar handler
+    // checks isRecording() first; match that here so PLAY is inert while
+    // recording -- STOP / RECORD end the take.
+    if (engine.isRecording())
+    {
+        statusLabel.setText ("Recording -- press STOP to end the take before playing.",
+                             juce::dontSendNotification);
+        return;
+    }
+
     auto& player = engine.getPlayer();
     if (! player.isLoaded())
     {

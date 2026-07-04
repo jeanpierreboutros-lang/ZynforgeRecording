@@ -1,5 +1,7 @@
 #include "Markers.h"
 
+#include <algorithm>
+
 namespace zynforge
 {
     static juce::File markersFileFor (const juce::File& dir)
@@ -21,13 +23,40 @@ namespace zynforge
         markers.clear();
     }
 
+    void MarkersManager::sortByPosition()
+    {
+        std::stable_sort (markers.begin(), markers.end(),
+                          [] (const Marker& a, const Marker& b)
+                          { return a.sampleOffset < b.sampleOffset; });
+    }
+
     void MarkersManager::drop (juce::int64 sampleOffset, const juce::String& name)
     {
         Marker m;
         m.sampleOffset = sampleOffset;
-        m.name = name.isNotEmpty() ? name
-                                   : "Marker " + juce::String (markers.size() + 1);
+
+        if (name.isNotEmpty())
+        {
+            m.name = name;
+        }
+        else
+        {
+            // Monotonic counter, then bump past any collision (e.g. after a
+            // removeMarker left an existing "Marker N") so auto-names stay unique.
+            auto nameInUse = [this] (const juce::String& n)
+            {
+                for (const auto& existing : markers)
+                    if (existing.name == n) return true;
+                return false;
+            };
+            juce::String candidate;
+            do { candidate = "Marker " + juce::String (++markerCounter); }
+            while (nameInUse (candidate));
+            m.name = candidate;
+        }
+
         markers.push_back (std::move (m));
+        sortByPosition();
         save();
     }
 
@@ -67,6 +96,7 @@ namespace zynforge
     {
         if (i < 0 || i >= (int) markers.size()) return;
         markers[(std::size_t) i].sampleOffset = sample;
+        sortByPosition();
         save();
     }
 
@@ -139,6 +169,7 @@ namespace zynforge
                 }
             }
         }
+        sortByPosition();
         return true;
     }
 }

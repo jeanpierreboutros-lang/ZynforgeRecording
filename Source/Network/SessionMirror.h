@@ -3,6 +3,10 @@
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 
+#include <atomic>
+#include <mutex>
+#include <thread>
+
 namespace zynforge
 {
     class AudioEngine;
@@ -45,11 +49,30 @@ namespace zynforge
     private:
         void timerCallback() override;
         void applyState (const juce::var& state);
+        // Runs on a short-lived background thread: bounded, time-budgeted GET
+        // so a slow/rogue host can't freeze the UI or exhaust memory. Publishes
+        // the result for the next timerCallback to apply on the message thread.
+        void fetchOnce (juce::String host, int port);
 
         AudioEngine&  engine;
         juce::String  host;
         int           port { 9000 };
         juce::int64   lastSyncMs { 0 };
         juce::String  lastError;
+
+        // Background fetch (finding #5). The network read is done off the
+        // message thread; only the message thread parses + applies the result
+        // and touches the engine.
+        std::thread        fetchThread;
+        std::atomic<bool>  fetchActive { false };   // a background fetch is running
+        std::atomic<bool>  resultReady { false };   // a fetched payload awaits apply
+        std::atomic<bool>  abortFetch  { false };   // shutdown signal to the read loop
+        std::mutex         resultLock;
+        juce::String       resultPayload;           // guarded by resultLock
+        juce::String       resultError;             // guarded by resultLock
+
+        // Read caps so a rogue host can't wedge us.
+        static constexpr int kMaxPayloadBytes = 256 * 1024;   // hard read ceiling
+        static constexpr int kFetchBudgetMs   = 800;          // total read time budget
     };
 }

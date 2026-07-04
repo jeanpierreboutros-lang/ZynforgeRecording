@@ -70,6 +70,21 @@ namespace zynforge
         std::unique_ptr<juce::StreamingSocket> listener;
         std::thread acceptThread;
 
+        // Per-connection worker threads (finding #1). Each accepted client is
+        // handled on its own thread; we OWN those threads (no more detach) so
+        // stop()/the destructor can join them before this object dies -- a
+        // detached /stream.wav worker would otherwise keep touching streamRing
+        // + `this` after they were freed. Finished workers are reaped from the
+        // accept loop so the vector doesn't grow across a long session.
+        struct Worker
+        {
+            std::thread       thread;
+            std::atomic<bool> done { false };
+        };
+        std::mutex                            workersLock;
+        std::vector<std::unique_ptr<Worker>>  workers;
+        void reapFinishedWorkers();
+
         // Ring buffer for the streaming WAV endpoint. Single producer
         // (audio thread), single consumer (per-stream worker thread).
         struct StreamRing

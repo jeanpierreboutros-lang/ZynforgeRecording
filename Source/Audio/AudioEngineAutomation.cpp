@@ -552,6 +552,10 @@ namespace zynforge
 
     void AudioEngine::clearAutomationForTrack (int track, AutomationParam p)
     {
+        // findLane can resize automationData; take automationLock like every
+        // sibling mutator so the audio-thread reader (automationValueAt, under
+        // a try-lock) never observes a reallocating vector.
+        const juce::ScopedLock sl (automationLock);
         if (auto* lane = findLane (track, p)) lane->clear();
     }
 }

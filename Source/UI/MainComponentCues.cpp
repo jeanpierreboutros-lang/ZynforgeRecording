@@ -478,35 +478,55 @@ void MainComponent::startCueRampTo (const zynforge::SetlistBar::Cue& cue)
     const int n = rec.getNumTracks();
     cueRamp.gainStartTarget.clear();
     cueRamp.panStartTarget .clear();
-    cueRamp.gainStartTarget.reserve ((size_t) n);
-    cueRamp.panStartTarget .reserve ((size_t) n);
+    cueRamp.targetTrack    .clear();
+    cueRamp.gainStartTarget.reserve (cue.strips.size());
+    cueRamp.panStartTarget .reserve (cue.strips.size());
+    cueRamp.targetTrack    .reserve (cue.strips.size());
 
     auto& player = engine.getPlayer();
     player.setPositionSamples (cue.samplePos);
 
-    for (int i = 0; i < n; ++i)
+    // Resolve each snapshot to a live track by stripId (matching the Snap
+    // path in jumpToCue) so a Fade recall after a reorder / delete ramps the
+    // right strips. Pre-v2 cues without a stripId fall back to array index.
+    auto resolveTarget = [&] (const zynforge::SetlistBar::StripSnapshot& s,
+                              int fallbackIdx) -> int
     {
-        const auto curG = rec.getTrack (i).gainDb.load (std::memory_order_relaxed);
-        const auto curP = rec.getTrack (i).pan   .load (std::memory_order_relaxed);
-        float tgtG = curG, tgtP = curP;
-        if (i < (int) cue.strips.size())
+        if (s.stripId.isNotEmpty())
         {
-            tgtG = cue.strips[(size_t) i].gainDb;
-            tgtP = cue.strips[(size_t) i].pan;
+            for (int j = 0; j < n; ++j)
+                if (rec.getTrack (j).stripId == s.stripId)
+                    return j;
+            return -1;   // strip was deleted since the cue was saved
         }
-        cueRamp.gainStartTarget.push_back ({ curG, tgtG });
-        cueRamp.panStartTarget .push_back ({ curP, tgtP });
+        return fallbackIdx < n ? fallbackIdx : -1;
+    };
+
+    const int snapN = (int) cue.strips.size();
+    for (int i = 0; i < snapN; ++i)
+    {
+        const auto& s = cue.strips[(size_t) i];
+        const int target = resolveTarget (s, i);
+        if (target < 0) continue;
+
+        const auto curG = rec.getTrack (target).gainDb.load (std::memory_order_relaxed);
+        const auto curP = rec.getTrack (target).pan   .load (std::memory_order_relaxed);
+        cueRamp.gainStartTarget.push_back ({ curG, s.gainDb });
+        cueRamp.panStartTarget .push_back ({ curP, s.pan });
+        cueRamp.targetTrack    .push_back (target);
     }
 
     // Other state (mute / solo / mon / arm / routing / tempo) snaps
     // immediately -- only continuous parameters interpolate.
     if (cue.tempoBpm > 0.0f) { engine.setSessionTempoBpm (cue.tempoBpm); tempoBar.setBpm (cue.tempoBpm); }
-    for (int i = 0; i < (int) cue.strips.size() && i < n; ++i)
+    for (int i = 0; i < snapN; ++i)
     {
         const auto& s = cue.strips[(size_t) i];
-        engine.setTrackInputRouting (i, s.inputRouting);
-        engine.setTrackOutputRouting(i, s.outputRouting);
-        auto& t = rec.getTrack (i);
+        const int target = resolveTarget (s, i);
+        if (target < 0) continue;
+        engine.setTrackInputRouting (target, s.inputRouting);
+        engine.setTrackOutputRouting(target, s.outputRouting);
+        auto& t = rec.getTrack (target);
         t.muted  .store (s.muted,   std::memory_order_relaxed);
         t.soloed .store (s.soloed,  std::memory_order_relaxed);
         t.monitor.store (s.monitor, std::memory_order_relaxed);
@@ -527,13 +547,18 @@ void MainComponent::updateCueRamp()
     const double t   = juce::jlimit (0.0, 1.0,
                                      (now - cueRamp.startMs) / juce::jmax (1.0, cueRamp.durationMs));
     auto& rec = engine.getRecorder();
-    const int n = juce::jmin ((int) cueRamp.gainStartTarget.size(), rec.getNumTracks());
+    const int total = rec.getNumTracks();
+    const int n = (int) cueRamp.gainStartTarget.size();
     for (int i = 0; i < n; ++i)
     {
+        // targetTrack was resolved by stripId in startCueRampTo -- apply to
+        // that live track, not the raw entry index.
+        const int target = cueRamp.targetTrack[(size_t) i];
+        if (target < 0 || target >= total) continue;
         const auto [gA, gB] = cueRamp.gainStartTarget[(size_t) i];
         const auto [pA, pB] = cueRamp.panStartTarget [(size_t) i];
-        engine.setTrackGainDb (i, (float) (gA + (gB - gA) * t));
-        engine.setTrackPan    (i, (float) (pA + (pB - pA) * t));
+        engine.setTrackGainDb (target, (float) (gA + (gB - gA) * t));
+        engine.setTrackPan    (target, (float) (pA + (pB - pA) * t));
     }
     if (t >= 1.0)
         cueRamp.active = false;

@@ -48,8 +48,10 @@ namespace zynforge
             if (samples == nullptr || sampleRate <= 0.0 || numSamples < 1024)
                 return onsets;
 
-            const auto shortN = (juce::int64) (p.shortWinSec * sampleRate);
-            const auto longN  = (juce::int64) (p.longWinSec  * sampleRate);
+            // Window lengths must be >= 1 or rms() divides by zero (NaN) at
+            // pathologically low sample rates (e.g. sr < 100 → shortN == 0).
+            const auto shortN = std::max ((juce::int64) 1, (juce::int64) (p.shortWinSec * sampleRate));
+            const auto longN  = std::max ((juce::int64) 1, (juce::int64) (p.longWinSec  * sampleRate));
             const auto hopN   = (juce::int64) std::max ((juce::int64) 1, (juce::int64) (p.hopSec * sampleRate));
             const auto refractoryN = (juce::int64) (p.minSeparationSec * sampleRate);
 
@@ -57,7 +59,7 @@ namespace zynforge
 
             auto rms = [samples, numSamples] (juce::int64 start, juce::int64 n) -> double
             {
-                if (start < 0 || start + n > numSamples) return 0.0;
+                if (n <= 0 || start < 0 || start + n > numSamples) return 0.0;
                 double acc = 0.0;
                 for (juce::int64 i = 0; i < n; ++i)
                     acc += (double) samples[start + i] * (double) samples[start + i];

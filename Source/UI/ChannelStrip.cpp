@@ -205,6 +205,11 @@ namespace zynforge
         explicit StripTimer (ChannelStrip& s) : strip (s) { startTimerHz (10); }
         void timerCallback() override
         {
+            // The strip's backing TrackState is destroyed when the strip is
+            // deleted in-place (invalidate() stops this timer first, but bail
+            // defensively so a queued callback can't touch freed memory).
+            if (! strip.stripValid) { stopTimer(); return; }
+
             const float peakLin = strip.state.peak.load (std::memory_order_relaxed);
             const float dB      = juce::Decibels::gainToDecibels (peakLin, -80.0f);
             // Only push text into the label when it actually changed -- an
@@ -250,6 +255,16 @@ namespace zynforge
     };
 
     ChannelStrip::~ChannelStrip() = default;
+
+    void ChannelStrip::invalidate()
+    {
+        stripValid = false;
+        // stopTimer() guarantees no further StripTimer::timerCallback after it
+        // returns (message-thread timer), so the freed TrackState& can't be
+        // read once the caller destroys it.
+        if (stripTimer != nullptr)
+            stripTimer->stopTimer();
+    }
 
     void ChannelStrip::setAvailableInputs (int n)
     {
@@ -575,7 +590,16 @@ namespace zynforge
                                                            std::memory_order_relaxed);
                         break;
                 case 10: if (addCb)        addCb();        break;
-                case 11: if (deleteCb)     deleteCb();     break;
+                case 11: if (deleteCb)
+                         {
+                             // deleteCb() runs engine.removeStripAt, freeing
+                             // this strip's TrackState synchronously. Stop the
+                             // StripTimer BEFORE that so it can't dereference
+                             // the dangling reference before the next rebuild.
+                             invalidate();
+                             deleteCb();
+                         }
+                         break;
                 case 12: if (linkStereoCb) linkStereoCb(); break;
                 case 20:
                     {

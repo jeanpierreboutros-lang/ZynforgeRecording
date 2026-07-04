@@ -75,9 +75,18 @@ namespace zynforge::capture
         bool isConnected() const noexcept { return connected.load(); }
 
         bool send (const Command&);              // false if not connected / write failed
+        // Send a command with a fresh correlation id and BLOCK for the daemon's
+        // matching reply. Returns the reply; reply.ok == false on timeout, write
+        // failure, or a dropped link. A late/stray reply for a different request
+        // can never satisfy this one (id-correlated).
+        Reply request (const Command&, int timeoutMs = 1000);
         // Send Hello and block for the daemon's reply (version negotiation).
         // Returns the reply; reply.ok == false on timeout or version mismatch.
         Reply hello (int timeoutMs = 1000);
+
+        // True once the daemon told us (via a "bye") that our connection was
+        // intentionally superseded by a newer client -- NOT a daemon death.
+        bool wasSuperseded() const noexcept { return superseded.load(); }
 
         std::function<void (const EngineStatus&)> onStatus;
         std::function<void (const Reply&)>        onReply;
@@ -89,14 +98,17 @@ namespace zynforge::capture
         std::unique_ptr<juce::StreamingSocket> socket;
         std::mutex        writeLock;
         std::thread       readThread;
-        std::atomic<bool> connected { false };
+        std::atomic<bool> connected  { false };
+        std::atomic<bool> superseded { false };
 
-        // Hello round-trip sync.
-        std::mutex              helloLock;
-        std::condition_variable helloCv;
-        bool                    helloPending { false };
-        bool                    helloGot     { false };
-        Reply                   helloReply;
+        // Request/reply correlation: one outstanding request at a time (all
+        // GUI calls are synchronous message-thread round-trips).
+        std::mutex              replyLock;
+        std::condition_variable replyCv;
+        std::atomic<int>        nextId       { 1 };
+        int                     pendingId    { 0 };     // 0 = nothing awaited
+        bool                    replyGot     { false };
+        Reply                   pendingReply;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CaptureClient)
     };

@@ -6,6 +6,18 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Shared `.settings` writers reload-to-REPLACE, not merge — 2026-07-05
+
+**Context.** `appProps` and the four `Strip*` persistence modules (`StripColours`/`StripNames`/`StripGains`/`StripRouting`) each open their own `juce::PropertiesFile` pointing at the *same* on-disk `.settings` file. A `PropertiesFile` save rewrites the whole in-memory key map. During a 2026-07-05 audit this was found to lose updates: module A saved, module B (holding a stale snapshot) later saved and clobbered A's key. The first fix — reload before each save — used a bare `PropertiesFile::reload()`, which **merges** (it adds/updates keys from disk but never *removes* in-memory keys that are absent from disk). That introduced a worse bug: `clearAllStripOverrides` had `StripGains` delete `strip_pan_0`, but `StripNames` still held it in memory (merged in earlier), and its next whole-file save **resurrected** the deleted pan — so a cleared hard-pan came back on the next `setStripCount`, exactly the gig-prep "why is this panned?" class of bug.
+
+**Decision.** Every shared-file writer reloads with **replace** semantics before a mutate+save: `clear()` + `reload()`, guarded on the file existing (so a first run with no file doesn't blank in-memory state). Implemented as `reloadReplace(*props)` in each `Strip*.cpp` and `AudioEngine::reloadAppPropsBeforeWrite()`.
+
+**Rationale.** Replace both fixes the original lost-update (still picks up others' changes) and honours deletions (drops keys others removed), so no module can resurrect a just-deleted key. A single shared `PropertiesFile` instance would be cleaner still, but is a larger refactor across five modules; the replace-reload is the minimal correct fix. The residual risk — a genuinely corrupt on-disk file failing to parse would blank in-memory state — is no worse than a corrupt settings file already is, and these writes are all synchronous on the message thread so there's no partial-write window.
+
+**Consequences.** Never use a bare `reload()` on these shared files before a save (see `coding-standards.md`). Locked by the `EngineStateTests` "clearAllStripOverrides wipes per-strip state" test (now asserts pan **and** gain stay wiped after clear + grow-back). If the modules are ever unified onto one `PropertiesFile`, this dance goes away.
+
+---
+
 ## Punch-in is an offline splice on stop, not a real-time write into the take — 2026-06-14
 
 **Context.** JP asked to re-record a section of an existing take and keep the audio before/after (classic punch-in). The naive implementation — have the recorder seek into the existing file and overwrite the punched region in real time — would put destructive, position-offset writes on the audio thread, against the file the player may be reading, with RF64/backup/mirror finalisation all needing to stay consistent. That is the single most dangerous thing this app could do; a glitch loses or corrupts a take.

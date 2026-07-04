@@ -279,6 +279,11 @@ namespace zynforge
             // write. Owned by the shard so a steady take never reallocates.
             std::vector<float> stageL, stageR;
 
+            // Reused all-zero buffer for the overflow silence-pad path (see
+            // drainShard). Grows once to the chunk cap then stays all zeros --
+            // never written into, so it needs no per-use clearing.
+            std::vector<float> silence;
+
             int useTimeSlice() override;
         };
 
@@ -287,11 +292,20 @@ namespace zynforge
             juce::AbstractFifo fifo { 1 };
             std::vector<float> data;
 
+            // Samples the audio thread had to DROP because this channel's FIFO
+            // was full (disk fell behind). Bumped on the audio thread (push),
+            // consumed on the drain thread which compensates by writing that
+            // many silence samples so every track's file advances by the same
+            // total sample count -- otherwise per-channel drop counts diverge
+            // and the take gains permanent inter-track sync drift.
+            std::atomic<juce::int64> droppedSamples { 0 };
+
             void resize (int size)
             {
                 data.assign ((std::size_t) size, 0.0f);
                 fifo.setTotalSize (size);
                 fifo.reset();
+                droppedSamples.store (0, std::memory_order_relaxed);
             }
         };
 
@@ -372,9 +386,14 @@ namespace zynforge
             int          numChannels { 1 };
         };
 
-        // Per-channel rolling history used for pre-roll. Audio thread is the
-        // only writer; UI thread reads only via dumpPreRollToWriters() before
-        // setting recording=true, so no lock is needed.
+        // Per-channel rolling history used for pre-roll. The audio thread is
+        // the only writer (push, continuously -- NOT gated on recording); the
+        // message thread reads once via dumpPreRollToWriters() at record start.
+        // No lock: push publishes its data writes with a release store on
+        // totalWritten that readHistory pairs with an acquire load, and the
+        // ring is over-allocated by kPreRollSafetySec seconds BEYOND the
+        // requested pre-roll so an in-flight push during the (sub-millisecond)
+        // read can never wrap around and overwrite the window being copied.
         struct PreRollBuffer
         {
             std::vector<float>       data;
@@ -474,7 +493,9 @@ namespace zynforge
         std::atomic<juce::int64> samplesSinceStart  { 0 };
         std::atomic<juce::int64> missedSamples      { 0 };
         std::atomic<int>         lastWriteMs        { 0 };
-        juce::int64              samplesSinceFlush  { 0 };
+        // Read-modify-written on the drain thread and reset on the message
+        // thread at record start; atomic so those accesses never tear.
+        std::atomic<juce::int64> samplesSinceFlush  { 0 };
 
         // (Disk throughput + ring-fill accumulators now live per-shard in
         // ShardClient. The public getters in this class sum / max across

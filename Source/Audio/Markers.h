@@ -51,8 +51,17 @@ namespace zynforge
         bool load();
 
     private:
+        // Keep `markers` ascending by sampleOffset (stable, so equal-position
+        // markers preserve insertion order). Consumers — next/previous nav,
+        // timeline draw order — assume ascending.
+        void sortByPosition();
+
         juce::File   sessionDir;
         double       sampleRate { 48000.0 };
         std::vector<Marker> markers;
+        // Monotonic within a session; drives the default "Marker N" name so a
+        // removeMarker() can't make the next auto-name collide with an existing
+        // one (which the old markers.size()+1 scheme did).
+        int          markerCounter { 0 };
     };
 }

@@ -10,12 +10,21 @@ namespace zynforge
     {
         // Read one HTTP request from the socket -- naive parser, enough
         // for browser-issued GET/POST. Returns empty string on error.
+        // Bound the request so a rogue/oversized client can't grow us without
+        // limit (finding #8a). Headers + body are each capped.
+        constexpr int kMaxHeaderBytes = 64 * 1024;
+        constexpr int kMaxBodyBytes   = 1 * 1024 * 1024;
+
         juce::String readRequest (juce::StreamingSocket& s, juce::String& bodyOut)
         {
             juce::MemoryBlock head;
             char buf[1024];
             // 5 s overall deadline so a half-open client doesn't wedge us.
             const auto deadline = juce::Time::getMillisecondCounter() + 5000;
+            // Bytes of `head` already scanned for the CRLFCRLF terminator, so
+            // each read only scans the fresh region (avoids the O(n^2) full
+            // re-decode-and-rescan on every read).
+            int scanned = 0;
             for (;;)
             {
                 if (juce::Time::getMillisecondCounter() >= deadline) return {};
@@ -26,20 +35,30 @@ namespace zynforge
                 const int got = s.read (buf, sizeof (buf), false);
                 if (got <= 0) return {};
                 head.append (buf, (std::size_t) got);
+                if ((int) head.getSize() > kMaxHeaderBytes) return {};   // header too large
 
-                const auto str = juce::String::fromUTF8 ((const char*) head.getData(),
-                                                          (int) head.getSize());
-                const int hdrEnd = str.indexOf ("\r\n\r\n");
+                // Scan only the new bytes (with a 3-byte overlap so a
+                // terminator straddling a read boundary is still found).
+                const char* data = (const char*) head.getData();
+                const int   size = (int) head.getSize();
+                int hdrEnd = -1;
+                for (int i = juce::jmax (0, scanned - 3); i + 3 < size; ++i)
+                    if (data[i] == '\r' && data[i + 1] == '\n'
+                        && data[i + 2] == '\r' && data[i + 3] == '\n')
+                    { hdrEnd = i; break; }
+                scanned = size;
                 if (hdrEnd < 0) continue;
 
-                const auto headers = str.substring (0, hdrEnd);
+                // Decode only the header region (not the whole buffer).
+                const auto headers = juce::String::fromUTF8 (data, hdrEnd);
                 int contentLength = 0;
                 for (auto& line : juce::StringArray::fromLines (headers))
                     if (line.startsWithIgnoreCase ("Content-Length:"))
                         contentLength = line.fromFirstOccurrenceOf (":", false, false).trim().getIntValue();
+                contentLength = juce::jlimit (0, kMaxBodyBytes, contentLength);   // clamp attacker-large lengths
 
-                int bodyHave = (int) head.getSize() - (hdrEnd + 4);
-                bodyOut = str.substring (hdrEnd + 4);
+                int bodyHave = size - (hdrEnd + 4);
+                bodyOut = juce::String::fromUTF8 (data + hdrEnd + 4, juce::jmax (0, bodyHave));
                 while (bodyHave < contentLength
                        && juce::Time::getMillisecondCounter() < deadline)
                 {
@@ -206,16 +225,14 @@ setInterval(tick, 500); tick();
         // token is the only thing keeping someone else on the same
         // Wi-Fi from arming tracks when bound to 0.0.0.0 -- mint a
         // new one per server lifetime so an old token from a prior
-        // session doesn't grant access to a fresh one.
+        // session doesn't grant access to a fresh one. Sourced from
+        // juce::Uuid (OS entropy / high-res + MAC mixing) rather than a
+        // wall-clock-seeded juce::Random, whose output an attacker who
+        // knows roughly when the server started could brute-force
+        // (finding #8c). Two UUIDs give 64 hex chars of unguessable token.
         {
             std::lock_guard<std::mutex> g (tokenLock);
-            juce::Random rng (juce::Time::currentTimeMillis());
-            accessToken.clear();
-            for (int i = 0; i < 32; ++i)
-            {
-                const int v = rng.nextInt (16);
-                accessToken += juce::String::toHexString (v);
-            }
+            accessToken = juce::Uuid().toString() + juce::Uuid().toString();
         }
 
         listener = std::make_unique<juce::StreamingSocket>();
@@ -237,9 +254,23 @@ setInterval(tick, 500); tick();
 
     void CompanionServer::stop()
     {
+        // running=false FIRST (finding #1) so the accept loop exits and every
+        // /stream.wav worker's `while (running.load())` drain loop unwinds.
         if (! running.exchange (false)) return;
         if (listener != nullptr) listener->close();
         if (acceptThread.joinable()) acceptThread.join();
+
+        // The accept loop has exited, so no new workers can be spawned. Join
+        // every outstanding client worker before we free anything they touch
+        // (streamRing / this). Without this, a detached worker was a
+        // use-after-free on shutdown.
+        {
+            std::lock_guard<std::mutex> g (workersLock);
+            for (auto& w : workers)
+                if (w->thread.joinable()) w->thread.join();
+            workers.clear();
+        }
+
         listener.reset();
         listenPort.store (-1);
         {
@@ -290,13 +321,43 @@ setInterval(tick, 500); tick();
         {
             auto client = std::unique_ptr<juce::StreamingSocket> (listener->waitForNextConnection());
             if (client == nullptr) break;
-            // Detach a thread per client. Connections are short -- clients
-            // re-poll every 500 ms -- except the /stream.wav reader which
-            // holds the socket open for the duration of audition.
-            std::thread ([this, c = std::move (client)] () mutable
+
+            // Reap any finished workers so the vector doesn't accumulate across
+            // a long session (clients re-poll every 500 ms = a new connection
+            // each time).
+            reapFinishedWorkers();
+
+            // Own the worker thread (no detach) so stop() can join it. The
+            // worker flags `done` when handleClient returns; the reaper above
+            // (and stop()) joins on that. Connections are short -- except the
+            // /stream.wav reader, which holds its socket open until running
+            // goes false or the audition ends.
+            auto w   = std::make_unique<Worker>();
+            Worker* wp = w.get();
+            w->thread = std::thread ([this, wp, c = std::move (client)] () mutable
             {
                 handleClient (std::move (c));
-            }).detach();
+                wp->done.store (true, std::memory_order_release);
+            });
+            {
+                std::lock_guard<std::mutex> g (workersLock);
+                workers.push_back (std::move (w));
+            }
+        }
+    }
+
+    void CompanionServer::reapFinishedWorkers()
+    {
+        std::lock_guard<std::mutex> g (workersLock);
+        for (auto it = workers.begin(); it != workers.end();)
+        {
+            if ((*it)->done.load (std::memory_order_acquire))
+            {
+                if ((*it)->thread.joinable()) (*it)->thread.join();   // already finished -> returns at once
+                it = workers.erase (it);
+            }
+            else
+                ++it;
         }
     }
 
@@ -390,9 +451,27 @@ setInterval(tick, 500); tick();
             setter (engine.getRecorder().getTrack (idx), value);
         };
 
-        if      (action == "play")   { if (engine.getPlayer().isPlaying()) engine.stopPlayback();  else engine.startPlayback(); }
-        else if (action == "stop")   { engine.stopPlayback(); if (engine.isRecording()) engine.stopRecording(); engine.getPlayer().rewind(); }
-        else if (action == "record") { if (engine.isRecording()) engine.stopRecording(); }
+        // Transport touches non-atomic engine state (startRecording opens
+        // files + mutates vectors, playback (re)loads the session) -- marshal
+        // it to the message thread, exactly like MidiControlSurface does for
+        // MCU Play/Stop (finding #2). Capture the engine pointer + action by
+        // value; never `this` (the worker outlives nothing, but the lambda may
+        // run after the worker returns). The atomic mute/solo/arm stores below
+        // stay inline -- they're safe off-thread.
+        if (action == "play" || action == "stop" || action == "record")
+        {
+            auto* eng = &engine;
+            const auto act = action;
+            juce::MessageManager::callAsync ([eng, act]
+            {
+                if (act == "play")
+                { if (eng->getPlayer().isPlaying()) eng->stopPlayback(); else eng->startPlayback(); }
+                else if (act == "stop")
+                { eng->stopPlayback(); if (eng->isRecording()) eng->stopRecording(); eng->getPlayer().rewind(); }
+                else if (act == "record")
+                { if (eng->isRecording()) eng->stopRecording(); }
+            });
+        }
         else if (action == "mute")   setBoolOnTrack ([] (auto& t, bool v) { t.muted .store (v); });
         else if (action == "solo")   setBoolOnTrack ([] (auto& t, bool v) { t.soloed.store (v); });
         else if (action == "arm")    setBoolOnTrack ([] (auto& t, bool v) { t.armed .store (v); });

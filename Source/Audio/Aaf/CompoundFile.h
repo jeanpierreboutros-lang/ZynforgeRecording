@@ -23,6 +23,7 @@ namespace zynforge::cfb
     constexpr juce::uint32 FREESECT   = 0xFFFFFFFFu;
     constexpr juce::uint32 ENDOFCHAIN = 0xFFFFFFFEu;
     constexpr juce::uint32 FATSECT    = 0xFFFFFFFDu;
+    constexpr juce::uint32 DIFSECT    = 0xFFFFFFFCu;   // sector holds part of the DIFAT chain
     constexpr juce::uint32 NOSTREAM   = 0xFFFFFFFFu;
 
     constexpr int    kSectorSize     = 512;
@@ -30,6 +31,11 @@ namespace zynforge::cfb
     constexpr juce::uint32 kMiniCutoff = 4096;   // streams smaller than this go in the mini stream
     constexpr int    kDirEntrySize   = 128;
     constexpr int    kDirPerSector   = kSectorSize / kDirEntrySize;   // 4
+
+    // Header DIFAT array holds the first 109 FAT-sector locations; each extra
+    // DIFAT sector holds 127 FAT-sector locations + a next-DIFAT pointer.
+    constexpr int kHeaderDifatEntries = 109;
+    constexpr int kDifatPerSector     = (kSectorSize / 4) - 1;   // 127
 
     enum class NodeType { Storage, Stream };
 
@@ -110,21 +116,34 @@ namespace zynforge::cfb
             // Directory as a big stream (pad final sector with FREE entries).
             const juce::uint32 firstDirSector = allocChain (serialiseDirectory (dir));
 
-            // ── FAT (describes ALL sectors, including itself) ───────────────
+            // ── FAT + DIFAT (the FAT describes ALL sectors, including the FAT
+            //    and DIFAT sectors themselves). Solve F (FAT sectors) and
+            //    G (DIFAT sectors) jointly, since each adds real sectors that
+            //    the FAT must in turn cover:
+            //        F = ceil((data + F + G) / 128)
+            //        G = ceil(max(0, F - 109) / 127)
             const juce::uint32 dataSectors = (juce::uint32) sectors.size();
-            juce::uint32 fatSectors = 1;
-            for (;;)   // F = ceil((data + F) * 4 / sectorSize), solved iteratively
+            juce::uint32 fatSectors   = 1;
+            juce::uint32 difatSectors = 0;
+            for (;;)
             {
-                const juce::uint32 entries = dataSectors + fatSectors;
-                const juce::uint32 need = (entries * 4 + kSectorSize - 1) / kSectorSize;
-                if (need == fatSectors) break;
-                fatSectors = need;
+                const juce::uint32 total = dataSectors + fatSectors + difatSectors;
+                const juce::uint32 needFat = (total * 4 + kSectorSize - 1) / kSectorSize;
+                const juce::uint32 needDifat = needFat > (juce::uint32) kHeaderDifatEntries
+                    ? (needFat - kHeaderDifatEntries + (juce::uint32) kDifatPerSector - 1)
+                          / (juce::uint32) kDifatPerSector
+                    : 0;
+                if (needFat == fatSectors && needDifat == difatSectors) break;
+                fatSectors   = needFat;
+                difatSectors = needDifat;
             }
-            jassert (fatSectors <= 109);   // >109 FAT sectors would need a DIFAT chain (not hit at session scale)
 
+            // FAT sectors first (keeps the ≤109 / no-DIFAT layout byte-identical),
+            // then any DIFAT sectors after them.
             const juce::uint32 firstFatSector = (juce::uint32) sectors.size();
             for (juce::uint32 i = 0; i < fatSectors; ++i) { sectors.emplace_back(); fat.push_back (FATSECT); }
-            for (juce::uint32 i = 0; i < fatSectors; ++i) fat[firstFatSector + i] = FATSECT;
+            const juce::uint32 firstDifatSector = (juce::uint32) sectors.size();
+            for (juce::uint32 i = 0; i < difatSectors; ++i) { sectors.emplace_back(); fat.push_back (DIFSECT); }
 
             // Pad FAT to a whole number of sectors with FREESECT, then emit.
             const juce::uint32 fatCapacity = fatSectors * (kSectorSize / 4);
@@ -135,6 +154,21 @@ namespace zynforge::cfb
                 auto& s = sectors[firstFatSector + i];
                 for (int j = 0; j < kSectorSize / 4; ++j)
                     putU32 (s.data() + j * 4, fatOut[i * (kSectorSize / 4) + j]);
+            }
+
+            // ── DIFAT sector chain: FAT-sector locations 109.. spill here, 127
+            //    per sector, with the last uint32 of each pointing to the next.
+            for (juce::uint32 d = 0; d < difatSectors; ++d)
+            {
+                auto& s = sectors[firstDifatSector + d];
+                for (int j = 0; j < kDifatPerSector; ++j)
+                {
+                    const juce::uint32 fatIdx = (juce::uint32) kHeaderDifatEntries
+                                              + d * (juce::uint32) kDifatPerSector + (juce::uint32) j;
+                    putU32 (s.data() + j * 4, fatIdx < fatSectors ? firstFatSector + fatIdx : FREESECT);
+                }
+                const juce::uint32 next = (d + 1 < difatSectors) ? firstDifatSector + d + 1 : ENDOFCHAIN;
+                putU32 (s.data() + kDifatPerSector * 4, next);
             }
 
             // ── Header ──────────────────────────────────────────────────────
@@ -151,10 +185,12 @@ namespace zynforge::cfb
             putU32 (header.data() + 56, kMiniCutoff);
             putU32 (header.data() + 60, firstMiniFat);
             putU32 (header.data() + 64, numMiniFatSectors);
-            putU32 (header.data() + 68, ENDOFCHAIN);   // first DIFAT sector (none)
-            putU32 (header.data() + 72, 0);            // DIFAT sector count
-            for (int i = 0; i < 109; ++i)
-                putU32 (header.data() + 76 + i * 4, i < (int) fatSectors ? firstFatSector + i : FREESECT);
+            putU32 (header.data() + 68, difatSectors > 0 ? firstDifatSector : ENDOFCHAIN);   // first DIFAT sector
+            putU32 (header.data() + 72, difatSectors);                                       // DIFAT sector count
+            // Header DIFAT array: the first 109 FAT-sector locations (rest spill
+            // into the DIFAT sector chain written above).
+            for (int i = 0; i < kHeaderDifatEntries; ++i)
+                putU32 (header.data() + 76 + i * 4, i < (int) fatSectors ? firstFatSector + (juce::uint32) i : FREESECT);
 
             // ── Assemble ────────────────────────────────────────────────────
             juce::MemoryBlock out;
@@ -187,11 +223,36 @@ namespace zynforge::cfb
         static void putU64 (juce::uint8* p, juce::uint64 v)
         { for (int i=0;i<8;++i) p[i]=(juce::uint8)(v>>(8*i)); }
 
-        // CFB name order: shorter UTF-16 name first, else upper-cased ordinal.
+        // Encode a string as a sequence of UTF-16 code UNITS (surrogate pairs for
+        // non-BMP code points). ASCII maps 1:1 to a single unit, unchanged.
+        static std::vector<juce::uint16> toUtf16Units (const juce::String& s)
+        {
+            std::vector<juce::uint16> u;
+            for (auto cp : s)   // juce::String range-for yields full code points
+            {
+                auto c = (juce::uint32) cp;
+                if (c >= 0x10000 && c <= 0x10FFFF)
+                {
+                    c -= 0x10000;
+                    u.push_back ((juce::uint16) (0xD800 + (c >> 10)));     // high surrogate
+                    u.push_back ((juce::uint16) (0xDC00 + (c & 0x3FF)));   // low surrogate
+                }
+                else
+                {
+                    u.push_back ((juce::uint16) c);                        // BMP
+                }
+            }
+            return u;
+        }
+
+        // CFB name order: shorter UTF-16 name first (in code UNITS), else the
+        // upper-cased name compared as UTF-16 code units.
         static bool nameLess (const juce::String& a, const juce::String& b)
         {
-            if (a.length() != b.length()) return a.length() < b.length();
-            return a.toUpperCase().compare (b.toUpperCase()) < 0;
+            const auto la = toUtf16Units (a).size();
+            const auto lb = toUtf16Units (b).size();
+            if (la != lb) return la < lb;
+            return toUtf16Units (a.toUpperCase()) < toUtf16Units (b.toUpperCase());
         }
 
         // DFS the caller's tree, appending DirEntries and linking each storage's
@@ -267,7 +328,9 @@ namespace zynforge::cfb
         juce::uint32 allocChain (const juce::MemoryBlock& data)
         {
             const auto total = data.getSize();
-            const auto n = (juce::uint32) ((total + kSectorSize - 1) / kSectorSize);
+            const auto sectorCount = (total + kSectorSize - 1) / kSectorSize;
+            jassert (sectorCount <= 0xFFFFFFFFull);   // > 4 GiB of sectors is unreachable at session scale
+            const auto n = (juce::uint32) sectorCount;
             const auto first = (juce::uint32) sectors.size();
             for (juce::uint32 i = 0; i < n; ++i)
             {
@@ -293,22 +356,30 @@ namespace zynforge::cfb
                 auto* p = base + i * kDirEntrySize;
                 if (i >= dir.size()) { putU32 (p + 68, NOSTREAM); putU32 (p + 72, NOSTREAM); putU32 (p + 76, NOSTREAM); continue; }
                 const auto& e = dir[i];
-                // Name as UTF-16LE incl. terminator.
-                const auto utf16len = juce::jmin (31, e.name.length());
-                for (int c = 0; c < utf16len; ++c)
-                {
-                    const auto ch = (juce::uint16) e.name[c];
-                    putU16 (p + c * 2, ch);
-                }
-                putU16 (p + utf16len * 2, 0);                       // null terminator
-                putU16 (p + 64, (juce::uint16) ((utf16len + 1) * 2));
+                // Name as UTF-16LE incl. terminator. The 64-byte field holds at
+                // most 32 UTF-16 code units INCLUDING the null, so cap the name at
+                // 31 units (not code points). Never split a trailing surrogate pair.
+                const auto units = toUtf16Units (e.name);
+                int nUnits = juce::jmin (31, (int) units.size());
+                if (nUnits > 0 && (int) units.size() > nUnits
+                    && units[(size_t) nUnits - 1] >= 0xD800 && units[(size_t) nUnits - 1] <= 0xDBFF)
+                    --nUnits;                                       // drop a dangling high surrogate
+                for (int c = 0; c < nUnits; ++c)
+                    putU16 (p + c * 2, units[(size_t) c]);
+                putU16 (p + nUnits * 2, 0);                         // null terminator
+                putU16 (p + 64, (juce::uint16) ((nUnits + 1) * 2)); // length in bytes, code units
                 p[66] = (juce::uint8) e.type;
                 p[67] = 1;                                          // colour = black
                 putU32 (p + 68, e.left);
                 putU32 (p + 72, e.right);
                 putU32 (p + 76, e.child);
                 putU32 (p + 116, e.start);
-                putU64 (p + 120, e.size);
+                // v3 (512-byte) container: the stream-size field is effectively
+                // 32-bit; its high dword MUST be 0 (sizes are unreachable > 4 GiB
+                // at session scale, but keep the field spec-clean).
+                jassert (e.size <= 0xFFFFFFFFull);
+                putU32 (p + 120, (juce::uint32) e.size);
+                putU32 (p + 124, 0);
             }
             return mb;
         }

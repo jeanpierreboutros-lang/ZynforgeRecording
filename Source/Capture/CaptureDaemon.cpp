@@ -104,7 +104,7 @@ namespace zynforge::capture
 
             case Action::StartRecording:
             {
-                Reply r;
+                Reply r; r.id = c.id;
                 const juce::File dir (c.sessionDir);
                 if (c.sessionDir.isEmpty())             { r.error = "no sessionDir"; }
                 else
@@ -120,7 +120,7 @@ namespace zynforge::capture
             case Action::StopRecording:
             {
                 recorder.stopRecording();
-                Reply r; r.ok = true;
+                Reply r; r.ok = true; r.id = c.id;
                 server.sendReply (r);
                 break;
             }
@@ -148,25 +148,29 @@ namespace zynforge::capture
             case Action::StopPlayback:
             {
                 // Capture-only daemon: playback lives in the GUI process.
-                Reply r; r.error = "daemon is capture-only; playback is GUI-side";
+                Reply r; r.id = c.id; r.error = "daemon is capture-only; playback is GUI-side";
                 server.sendReply (r);
                 break;
             }
 
             case Action::Quit:
             {
-                Reply r;
+                Reply r; r.id = c.id;
                 if (recorder.isRecording())
                 {
                     // Protect the take: a Quit can't stop a rolling record.
                     r.error = "refusing to quit mid-take; StopRecording first";
+                    server.sendReply (r);
                 }
                 else
                 {
                     r.ok = true;
+                    // Send the ack BEFORE tripping the quit flag, so the reply
+                    // is guaranteed on the wire before the main loop can tear
+                    // the server down (which would otherwise race the reply).
+                    server.sendReply (r);
                     if (onQuitRequest) onQuitRequest();
                 }
-                server.sendReply (r);
                 break;
             }
         }

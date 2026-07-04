@@ -80,6 +80,7 @@ namespace zynforge::capture
         juce::File         binaryPath;
         int                port      { 0 };
         bool               launched  { false };
+        bool               everAttached  { false };   // a link was established at least once
         bool               deathReported { false };
 
         mutable std::mutex statusLock;

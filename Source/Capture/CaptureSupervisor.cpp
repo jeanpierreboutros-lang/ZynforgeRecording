@@ -47,6 +47,7 @@ namespace zynforge::capture
             if (client.hello (1500).ok)
             {
                 launched      = false;   // pre-existing daemon, not ours to kill
+                everAttached  = true;
                 deathReported = false;
                 return true;
             }
@@ -70,7 +71,17 @@ namespace zynforge::capture
             juce::Thread::sleep (100);
             if (client.connect ("127.0.0.1", port))
             {
-                if (client.hello (1500).ok) { deathReported = false; return true; }
+                if (client.hello (1500).ok)
+                {
+                    // Twin-launch race: if our spawned process already exited it
+                    // lost the port bind and we actually attached to a
+                    // pre-existing daemon -- don't claim ownership (we must not
+                    // later kill a daemon we didn't spawn).
+                    if (! process.isRunning()) launched = false;
+                    everAttached  = true;
+                    deathReported = false;
+                    return true;
+                }
                 client.disconnect();
                 break;
             }
@@ -85,32 +96,53 @@ namespace zynforge::capture
     {
         client.disconnect();
         statusSeen.store (false);
+        everAttached = false;   // an intentional detach must not read as a death
     }
 
     bool CaptureSupervisor::requestQuit()
     {
         if (! isAttached()) return false;
         Command q; q.action = Action::Quit;
-        return client.send (q);
+        // Await the daemon's ack: ok == true means it accepted (was idle) and
+        // is exiting; ok == false means it REFUSED (mid-take) -- so the caller
+        // must never force-kill on a false.
+        return client.request (q, 1500).ok;
     }
 
     void CaptureSupervisor::shutdown()
     {
-        // A ROLLING take must survive the GUI: never stop a recording
-        // daemon. An idle daemon we spawned is asked to exit cleanly over
-        // the wire (Quit is refused mid-take by the daemon itself, so this
-        // is double-safe); kill() is only the unresponsive-process fallback.
-        const bool recording = isDaemonRecording();
-        if (launched && ! recording)
+        // A ROLLING take must survive the GUI: NEVER kill a daemon unless we
+        // POSITIVELY know it is idle. Before the first status push arrives we
+        // do NOT know its state (lastStatus().recording defaults to false), so
+        // hasStatus() must gate any assumption of idleness -- otherwise a fast
+        // Record-then-quit force-kills a take mid-roll.
+        if (launched)
         {
-            requestQuit();
-            for (int i = 0; i < 20 && process.isRunning(); ++i)
-                juce::Thread::sleep (50);
+            const bool positivelyIdle = hasStatus() && ! isDaemonRecording();
+
+            // Ask the daemon to quit. It accepts only when idle (ack ok) and
+            // refuses mid-take (ok == false), so a rolling take survives even
+            // if our local status was stale.
+            const bool quitAccepted = requestQuit();
+
+            if (positivelyIdle || quitAccepted)
+                for (int i = 0; i < 20 && process.isRunning(); ++i)
+                    juce::Thread::sleep (50);
+
+            client.disconnect();
+
+            // Kill fallback fires ONLY when we know the daemon is idle -- either
+            // a fresh status said so, or the daemon acked the quit. It can never
+            // fire on a default/unknown status.
+            if ((positivelyIdle || quitAccepted) && process.isRunning())
+                process.kill();
         }
-        client.disconnect();
-        if (launched && ! recording && process.isRunning())
-            process.kill();
-        launched = false;
+        else
+        {
+            client.disconnect();
+        }
+        launched     = false;
+        everAttached = false;
     }
 
     EngineStatus CaptureSupervisor::lastStatus() const
@@ -135,14 +167,21 @@ namespace zynforge::capture
         }
         Command rec; rec.action = Action::StartRecording;
         rec.sessionDir = sessionDir.getFullPathName();
-        return client.send (rec);
+        // Await the daemon's reply (bounded): true ONLY when the daemon
+        // confirms the recorder actually started. A socket-write success is
+        // NOT proof the take is rolling, so we no longer light Record on it.
+        const auto reply = client.request (rec, 5000);
+        return reply.ok;
     }
 
     bool CaptureSupervisor::stopRecording()
     {
         if (! isAttached()) return false;
         Command stop; stop.action = Action::StopRecording;
-        return client.send (stop);
+        // Await the daemon's ack (bounded). Closing files + manifest can take a
+        // moment, so allow a generous timeout.
+        const auto reply = client.request (stop, 10000);
+        return reply.ok;
     }
 
     void CaptureSupervisor::tick()
@@ -150,9 +189,14 @@ namespace zynforge::capture
         if (deathReported) return;
 
         // Dead = we launched it and the process is gone, OR the link we had
-        // dropped (daemon-side close / crash of an attached daemon).
+        // dropped for a reason OTHER than an intentional supersede. Gating on
+        // everAttached (not statusSeen) means the death of an ATTACHED daemon
+        // that dropped BEFORE its first status push is still detected; gating
+        // out wasSuperseded() means a newer connection kicking our socket does
+        // NOT read as a daemon death.
         const bool processDead = launched && ! process.isRunning();
-        const bool linkDropped = ! client.isConnected() && statusSeen.load();
+        const bool linkDropped = everAttached && ! client.isConnected()
+                                    && ! client.wasSuperseded();
         if (! processDead && ! linkDropped) return;
 
         deathReported = true;

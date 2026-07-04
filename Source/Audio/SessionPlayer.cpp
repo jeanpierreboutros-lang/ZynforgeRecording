@@ -4,7 +4,11 @@
 namespace zynforge
 {
     static constexpr int  kReaderBufferSeconds = 2;
-    static constexpr int  kStopSettleMs        = 40;  // > one audio buffer @ any sane size
+    // Ceiling on the callback-drain handshake (see waitForCallbackDrain). A
+    // large block (4096 @ 48k ≈ 85 ms) exceeds any short fixed sleep, so we
+    // instead wait on a per-block generation counter and only fall back to
+    // this ceiling if the device never advances it (e.g. stopped device).
+    static constexpr int  kDrainCeilingMs      = 250;
 
     SessionPlayer::SessionPlayer()
     {
@@ -34,9 +38,10 @@ namespace zynforge
 
     int SessionPlayer::loadSession (const juce::File& sessionDir)
     {
-        // Stop playback and wait for any in-flight audio callback to drain.
+        // Stop playback and wait for any in-flight audio callback to drain
+        // before we free the readers below.
         playing.store (false, std::memory_order_release);
-        juce::Thread::sleep (kStopSettleMs);
+        waitForCallbackDrain();
 
         tracks.clear();
         readerCount.store (0, std::memory_order_release);
@@ -48,6 +53,7 @@ namespace zynforge
             const juce::ScopedLock sl (clipsLock);
             activeClips.clear();
             clipsAuthoritative.clear();
+            for (auto& f : authoritativeFlags) f.store (0, std::memory_order_release);
             extraReaders.clear();   // cross-track clip readers belong to the old session
         }
 
@@ -165,7 +171,7 @@ namespace zynforge
     void SessionPlayer::unload()
     {
         playing.store (false, std::memory_order_release);
-        juce::Thread::sleep (kStopSettleMs);
+        waitForCallbackDrain();
 
         {
             const juce::ScopedLock sl (clipsLock);
@@ -175,6 +181,7 @@ namespace zynforge
             extraReaders.clear();
             activeClips.clear();
             clipsAuthoritative.clear();
+            for (auto& f : authoritativeFlags) f.store (0, std::memory_order_release);
         }
         tracks.clear();
         readerCount.store (0, std::memory_order_release);
@@ -183,6 +190,34 @@ namespace zynforge
         sessionDir = juce::File();
         totalLength.store (0, std::memory_order_release);
         position   .store (0, std::memory_order_release);
+    }
+
+    void SessionPlayer::waitForCallbackDrain() noexcept
+    {
+        // Called on the message/background thread AFTER playing has been
+        // cleared, BEFORE loaded is cleared and the readers are freed. If
+        // nothing was loaded there are no readers for an in-flight callback to
+        // touch, so there's nothing to drain -- return at once (this also keeps
+        // no-device teardown instant).
+        if (! loaded.load (std::memory_order_acquire)) return;
+
+        // processBlock bumps callbackGeneration once per block at its very top
+        // (before it reads `tracks`), so once the counter has advanced by >=2
+        // any block that was in-flight when we cleared `playing` has certainly
+        // completed and it's safe to free the readers. Short 1 ms naps keep it
+        // responsive; the ceiling guards a stopped device that never advances
+        // the counter (fall through after kDrainCeilingMs).
+        const juce::uint32 start   = callbackGeneration.load (std::memory_order_acquire);
+        const auto         endTime = juce::Time::getMillisecondCounter()
+                                       + (juce::uint32) kDrainCeilingMs;
+        for (;;)
+        {
+            if ((juce::uint32) (callbackGeneration.load (std::memory_order_acquire) - start) >= 2)
+                return;
+            if (juce::Time::getMillisecondCounter() >= endTime)
+                return;
+            juce::Thread::sleep (1);
+        }
     }
 
     void SessionPlayer::start()
@@ -265,6 +300,10 @@ namespace zynforge
             if (trackIdx >= (int) clipsAuthoritative.size()) clipsAuthoritative.resize ((size_t) trackIdx + 1, 0);
             activeClips[(size_t) trackIdx]        = std::move (clips);
             clipsAuthoritative[(size_t) trackIdx] = 1;   // explicit list (even if empty)
+            // Mirror into the lock-free flag the audio thread reads on
+            // clipsLock contention (see processBlock).
+            if (trackIdx < kMaxAuthoritativeTracks)
+                authoritativeFlags[(size_t) trackIdx].store (1, std::memory_order_release);
 
             // Prune cross-track readers nothing references across ANY
             // track -- otherwise every consolidate / cross-track paste
@@ -290,10 +329,15 @@ namespace zynforge
         const juce::ScopedLock sl (clipsLock);
         activeClips.clear();
         clipsAuthoritative.clear();
+        for (auto& f : authoritativeFlags) f.store (0, std::memory_order_release);
     }
 
     void SessionPlayer::processBlock (float* const* outputs, int numOutputs, int numSamples) noexcept
     {
+        // Bump the generation FIRST (even on the early-out below) so the
+        // load/unload drain handshake advances every block the device runs.
+        callbackGeneration.fetch_add (1, std::memory_order_acq_rel);
+
         if (! playing.load (std::memory_order_acquire)) return;
 
         const auto numTracks = readerCount.load (std::memory_order_acquire);
@@ -410,16 +454,21 @@ namespace zynforge
                     const juce::int64 fOut = c.fadeOutSamples;
                     const juce::int64 fOutStart = c.fileLengthSamples - fOut;
                     const float clipGain = juce::Decibels::decibelsToGain (c.gainDb, -60.0f);
+                    // ACCUMULATE into dst (out was cleared once before the clip
+                    // loop). For non-overlapping clips the destination span is
+                    // silent so += is identical to =, leaving normal playback
+                    // unchanged; where clips OVERLAP this sums them, matching
+                    // the offline bounce (AudioEngineClips.cpp: d[i] += s[i]*g)
+                    // so monitor == render.
                     if (fIn == 0 && fOut == 0)
                     {
                         if (std::abs (clipGain - 1.0f) < 0.001f)
                         {
-                            juce::FloatVectorOperations::copy (dst, src, spanLen);
+                            juce::FloatVectorOperations::add (dst, src, spanLen);
                         }
                         else
                         {
-                            for (int i = 0; i < spanLen; ++i)
-                                dst[i] = src[i] * clipGain;
+                            juce::FloatVectorOperations::addWithMultiply (dst, src, clipGain, spanLen);
                         }
                     }
                     else
@@ -439,13 +488,27 @@ namespace zynforge
                                 const float t = (float) (c.fileLengthSamples - clipPos) / (float) fOut;
                                 gain *= equalPower ? std::sin (t * 1.57079633f) : t;
                             }
-                            dst[i] = src[i] * gain;
+                            dst[i] += src[i] * gain;
                         }
                     }
                 }
                 if (playableThisBlock < numSamples)
                     juce::FloatVectorOperations::clear (out + playableThisBlock,
                                                         numSamples - playableThisBlock);
+                continue;
+            }
+
+            // No clip list resolved above. If this track is clip-authoritative
+            // (has an explicit arrangement) but we couldn't read it -- the
+            // try-lock was contended (UI mid-edit) -- render SILENCE for this
+            // block instead of the legacy whole-file path. Otherwise a track
+            // the engineer has arranged into clips (or emptied) would briefly
+            // leak its full underlying Track_NN.wav during the contention
+            // window. Genuinely non-clip tracks (flag 0) still fall through.
+            if (i < kMaxAuthoritativeTracks
+                && authoritativeFlags[(size_t) i].load (std::memory_order_acquire))
+            {
+                juce::FloatVectorOperations::clear (out, numSamples);
                 continue;
             }
 

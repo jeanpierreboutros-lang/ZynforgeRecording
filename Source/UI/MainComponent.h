@@ -428,8 +428,12 @@ private:
         bool        active { false };
         double      startMs { 0.0 };
         double      durationMs { 0.0 };
-        std::vector<std::pair<float, float>> gainStartTarget; // per-track
-        std::vector<std::pair<float, float>> panStartTarget;  // per-track
+        std::vector<std::pair<float, float>> gainStartTarget; // per snapshot entry
+        std::vector<std::pair<float, float>> panStartTarget;  // per snapshot entry
+        // Resolved destination track index for each entry above (matched by
+        // stripId, like the Snap path), so a Fade recall after a reorder /
+        // delete ramps the correct strips rather than raw array positions.
+        std::vector<int>                     targetTrack;
     };
     RampState cueRamp;
     void startCueRampTo (const zynforge::SetlistBar::Cue&);

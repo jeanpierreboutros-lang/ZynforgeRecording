@@ -328,11 +328,23 @@ int MainComponent::exportTracksTo (const juce::File& destDir,
         if (stereo)
         {
             const auto srcL = findTrackFile (i + 1);
-            const auto srcR = findTrackFile (i + 2);
+            const auto srcR = findTrackFile (i + 2);   // legacy: separate R mono file
             if (srcL.existsAsFile() && srcR.existsAsFile())
+            {
+                // LEGACY layout -- two mono files -> interleave into stereo.
                 ok = exporter.exportStereoPair (srcL, srcR, destStem, opts, err);
-            else if (srcL.existsAsFile())          // R missing -> mono fallback
+            }
+            else if (srcL.existsAsFile())
+            {
+                // NATIVE layout (2026-06-13): the pair is ONE interleaved
+                // 2-channel file at the L slot with no Track_(N+2). exportTrack
+                // faithfully preserves the source's channel count, so exporting
+                // the 2-channel file directly yields a correct STEREO file.
+                // Do NOT route this to exportStereoPair -- that helper expects
+                // two MONO sources and reads only channel 0 of each, so it
+                // would collapse a native pair to dual-mono of the left channel.
                 ok = exporter.exportTrack (srcL, destStem, opts, err);
+            }
         }
         else
         {

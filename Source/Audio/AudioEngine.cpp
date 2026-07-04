@@ -24,6 +24,7 @@ namespace zynforge
         entries.insert (0, path);
         while (entries.size() > kMaxRecent) entries.remove (entries.size() - 1);
 
+        reloadAppPropsBeforeWrite();
         for (int i = 0; i < kMaxRecent; ++i)
             appProps->setValue ("recentSession_" + juce::String (i),
                                 i < entries.size() ? entries[i] : juce::String());
@@ -50,6 +51,7 @@ namespace zynforge
     void AudioEngine::clearRecentSessions()
     {
         if (appProps == nullptr) return;
+        reloadAppPropsBeforeWrite();
         for (int i = 0; i < kMaxRecent; ++i)
             appProps->setValue ("recentSession_" + juce::String (i), juce::String());
         appProps->saveIfNeeded();
@@ -61,6 +63,8 @@ namespace zynforge
         for (int i = 0; i < n; ++i)
         {
             // Clear persistent overrides -- name, colour, gain, pan, routing.
+            // (Each of these Strip* setters reloads + rewrites the shared
+            // .settings file.)
             stripNames  .clearName   (i);
             stripColours.clearColour (i);
             // Gains has no clear-by-index helper; just reset to defaults
@@ -79,10 +83,16 @@ namespace zynforge
             t.soloed  .store (false, std::memory_order_relaxed);
             t.monitor .store (false, std::memory_order_relaxed);
             t.isStereo.store (false, std::memory_order_relaxed);
-            if (appProps != nullptr)
-                appProps->setValue (juce::String ("strip_stereo_") + juce::String (i), false);
         }
-        if (appProps != nullptr) appProps->saveIfNeeded();
+        // Reload AFTER the Strip* writes above so our whole-file save doesn't
+        // undo them, THEN apply the appProps-owned stereo flags and save once.
+        reloadAppPropsBeforeWrite();
+        if (appProps != nullptr)
+        {
+            for (int i = 0; i < n; ++i)
+                appProps->setValue (juce::String ("strip_stereo_") + juce::String (i), false);
+            appProps->saveIfNeeded();
+        }
     }
 
     bool AudioEngine::isSampleRateMismatched() const noexcept
@@ -206,8 +216,13 @@ namespace zynforge
         // session is now stale.
         invalidateTransientCache();
         // Drop the threaded writer -- its destructor flushes the queue and
-        // closes the underlying AudioFormatWriter cleanly.
-        stereoMixWriter.reset();
+        // closes the underlying AudioFormatWriter cleanly. Hold stereoMixLock
+        // so the audio thread can't be mid check-and-write against the writer
+        // we're destroying (it uses a ScopedTryLock around that region).
+        {
+            const juce::ScopedLock sl (stereoMixLock);
+            stereoMixWriter.reset();
+        }
 
         // Auto-load the just-recorded session into the SessionPlayer so
         // PLAY / spacebar can play back immediately without an explicit
@@ -267,6 +282,7 @@ namespace zynforge
         masterState.gainDb.store (dB, std::memory_order_relaxed);
         if (appProps != nullptr)
         {
+            reloadAppPropsBeforeWrite();
             appProps->setValue ("masterGainDb", (double) dB);
             appProps->saveIfNeeded();
         }
@@ -276,6 +292,7 @@ namespace zynforge
         masterState.muted.store (m, std::memory_order_relaxed);
         if (appProps != nullptr)
         {
+            reloadAppPropsBeforeWrite();
             appProps->setValue ("masterMuted", m);
             appProps->saveIfNeeded();
         }
@@ -286,6 +303,7 @@ namespace zynforge
         masterOutR.store (r, std::memory_order_relaxed);
         if (appProps != nullptr)
         {
+            reloadAppPropsBeforeWrite();
             appProps->setValue ("masterOutL", l);
             appProps->setValue ("masterOutR", r);
             appProps->saveIfNeeded();
@@ -296,6 +314,7 @@ namespace zynforge
         masterStereo.store (s, std::memory_order_release);
         if (appProps != nullptr)
         {
+            reloadAppPropsBeforeWrite();
             appProps->setValue ("masterStereo", s);
             appProps->saveIfNeeded();
         }
@@ -307,6 +326,7 @@ namespace zynforge
         if (oneBasedIndex <= 0) timecodeChase.reset();
         if (appProps != nullptr)
         {
+            reloadAppPropsBeforeWrite();
             appProps->setValue ("ltcSourceStrip", oneBasedIndex);
             appProps->saveIfNeeded();
         }
@@ -471,6 +491,7 @@ namespace zynforge
         recordStereoMixFlag.store (enabled, std::memory_order_release);
         if (appProps != nullptr)
         {
+            reloadAppPropsBeforeWrite();
             appProps->setValue ("recordStereoMix", enabled);
             appProps->saveIfNeeded();
         }
@@ -482,6 +503,7 @@ namespace zynforge
         if (! on) std::fill (autoArmStreaks.begin(), autoArmStreaks.end(), 0);
         if (appProps != nullptr)
         {
+            reloadAppPropsBeforeWrite();
             appProps->setValue ("autoArmOnInput", on);
             appProps->saveIfNeeded();
         }
@@ -521,6 +543,7 @@ namespace zynforge
         recorder.setMirrors (configs);
         if (appProps == nullptr) return;
 
+        reloadAppPropsBeforeWrite();
         // Wipe any prior persisted mirror slots so we don't leave a
         // stale entry behind when the engineer reduces the count.
         for (int i = 0; i < 16; ++i)
@@ -908,6 +931,9 @@ namespace zynforge
         }
         if (appProps != nullptr)
         {
+            // Reload AFTER the Strip* clears above (they rewrote the shared
+            // .settings file) so our save here doesn't undo them.
+            reloadAppPropsBeforeWrite();
             for (int i = 0; i < 256; ++i)
             {
                 const auto suffix = juce::String (i);
@@ -962,8 +988,14 @@ namespace zynforge
             stripNames  .clearName   (i);
             stripRouting.clearInput  (i);
             stripRouting.clearOutput (i);
-
-            if (appProps != nullptr)
+        }
+        // Reload AFTER the Strip* clears above (they rewrote the shared
+        // .settings file) so our appProps save doesn't undo them, THEN wipe
+        // the appProps-owned per-strip keys and save once.
+        if (appProps != nullptr)
+        {
+            reloadAppPropsBeforeWrite();
+            for (int i = firstIndex; i < lastIndexExclusive; ++i)
             {
                 const auto suffix = juce::String (i);
                 appProps->removeValue ("strip_stereo_"    + suffix);
@@ -980,8 +1012,8 @@ namespace zynforge
                     appProps->removeValue (key + "_post");
                 }
             }
+            appProps->saveIfNeeded();
         }
-        if (appProps != nullptr) appProps->saveIfNeeded();
     }
 
     void AudioEngine::setStripCount (int n)
@@ -993,6 +1025,7 @@ namespace zynforge
 
         if (appProps != nullptr)
         {
+            reloadAppPropsBeforeWrite();
             appProps->setValue ("stripCount", n);
             appProps->saveIfNeeded();
         }
@@ -1067,6 +1100,9 @@ namespace zynforge
 
         if (appProps != nullptr)
         {
+            // Reload after the per-slot Strip* shifts above so our save keeps
+            // their rewrites, then update the count.
+            reloadAppPropsBeforeWrite();
             appProps->setValue ("stripCount", recorder.getNumTracks());
             appProps->saveIfNeeded();
         }
@@ -1100,8 +1136,12 @@ namespace zynforge
                 if (uid.isEmpty())
                 {
                     uid = juce::Uuid().toString();
-                    appProps->setValue (key, uid);
-                    appProps->saveIfNeeded();
+                    reloadAppPropsBeforeWrite();
+                    // reload() may have populated the key from disk (another
+                    // path wrote it); re-read before committing a fresh one.
+                    auto existing = appProps->getValue (key, juce::String());
+                    if (existing.isNotEmpty()) uid = existing;
+                    else { appProps->setValue (key, uid); appProps->saveIfNeeded(); }
                 }
                 t.stripId = uid;
             }
@@ -1153,6 +1193,7 @@ namespace zynforge
                                                           std::memory_order_release);
         if (appProps != nullptr)
         {
+            reloadAppPropsBeforeWrite();
             const auto key = juce::String ("strip_stereo_") + juce::String (channelIndex);
             appProps->setValue (key, isStereoPair);
             appProps->saveIfNeeded();
@@ -1248,6 +1289,9 @@ namespace zynforge
         }
 
         // ── Swap persisted overrides (PropertiesFile keys are 1-based) ──
+        // Reload first so the swap reads the latest on-disk values (the Strip*
+        // modules share this file) and our save doesn't clobber their keys.
+        reloadAppPropsBeforeWrite();
         const int oneA = a + 1, oneB = b + 1;
         auto swapProp = [&] (const juce::String& keyA, const juce::String& keyB)
         {
@@ -1324,7 +1368,8 @@ namespace zynforge
         player  .prepare (sr, blockSize);
         stereoMixScratch.setSize (2, blockSize, false, true, true);
         monitorAccum    .setSize (2, blockSize, false, true, true);
-        outputAccum     .setSize (64, blockSize, false, true, true);
+        outputAccum     .setSize (256, blockSize, false, true, true);
+        playerScratch   .setSize (256, blockSize, false, true, true);
         applyPersistedStripState();
     }
 
@@ -1405,6 +1450,7 @@ namespace zynforge
                     activeSession = f;
                 else
                 {
+                    reloadAppPropsBeforeWrite();
                     appProps->removeValue ("activeSessionDir");   // tidy the stale key
                     appProps->saveIfNeeded();                     // flush so it's gone on disk too
                 }
@@ -1486,10 +1532,13 @@ namespace zynforge
         // size so the audio thread never allocates when mix capture is on.
         stereoMixScratch.setSize (2, blockSize, false, true, true);
         monitorAccum    .setSize (2, blockSize, false, true, true);
-        // 64-bit output accumulator -- sized large enough for typical
-        // device output channel counts. Resized lazily inside the
-        // callback if a wider device shows up.
-        outputAccum     .setSize (64, blockSize, false, true, true);
+        // 64-bit output accumulator -- sized to the max supported channel
+        // count (kMaxStrips) so a wide device (>64 outs) never forces an
+        // allocation inside the callback.
+        outputAccum     .setSize (256, blockSize, false, true, true);
+        // Per-track playback scratch -- pre-size to the max supported strip
+        // count so a >32-track session never grows it inside the callback.
+        playerScratch   .setSize (256, blockSize, false, true, true);
 
         applyPersistedStripState();
     }
@@ -1527,6 +1576,7 @@ namespace zynforge
         activeSession = (dir.isDirectory() ? dir : juce::File());
         if (appProps != nullptr)
         {
+            reloadAppPropsBeforeWrite();
             appProps->setValue ("activeSessionDir", activeSession.getFullPathName());
             appProps->saveIfNeeded();
         }
@@ -1545,6 +1595,7 @@ namespace zynforge
         click.setBeatsPerBar (numerator);
         if (appProps != nullptr)
         {
+            reloadAppPropsBeforeWrite();
             appProps->setValue ("timeSigNumerator",   numerator);
             appProps->setValue ("timeSigDenominator", denominator);
             appProps->saveIfNeeded();
@@ -1561,6 +1612,7 @@ namespace zynforge
         midiClockOut.setTempoBpm (bpm);
         if (appProps != nullptr)
         {
+            reloadAppPropsBeforeWrite();
             appProps->setValue ("sessionTempoBpm", (double) bpm);
             appProps->saveIfNeeded();
         }
@@ -1570,12 +1622,14 @@ namespace zynforge
     {
         std::sort (newMap.begin(), newMap.end(),
                    [] (const auto& a, const auto& b) { return a.samplePos < b.samplePos; });
+        const juce::ScopedLock sl (tempoLock);
         tempoMap = std::move (newMap);
     }
 
     void AudioEngine::addTempoChange (juce::int64 samplePos, float bpm)
     {
         bpm = juce::jlimit (20.0f, 999.0f, bpm);
+        const juce::ScopedLock sl (tempoLock);
         // Replace if a change already exists within a small tolerance
         // (one block at 48k = ~10ms) so duplicate drops don't pile up.
         constexpr juce::int64 kSnap = 256;
@@ -1594,6 +1648,7 @@ namespace zynforge
 
     void AudioEngine::removeTempoChangeNear (juce::int64 samplePos, juce::int64 tolerance)
     {
+        const juce::ScopedLock sl (tempoLock);
         if (tempoMap.empty()) return;
         auto best = tempoMap.end();
         juce::int64 bestDist = tolerance + 1;
@@ -1607,6 +1662,7 @@ namespace zynforge
 
     void AudioEngine::clearTempoMap()
     {
+        const juce::ScopedLock sl (tempoLock);
         tempoMap.clear();
     }
 
@@ -1776,6 +1832,7 @@ namespace zynforge
         vcas[(size_t) idx].name = name;
         if (appProps != nullptr)
         {
+            reloadAppPropsBeforeWrite();
             appProps->setValue ("vca_" + juce::String (idx) + "_name", name);
             appProps->saveIfNeeded();
         }
@@ -1787,6 +1844,7 @@ namespace zynforge
         vcas[(size_t) idx].colourARGB.store (c.getARGB(), std::memory_order_relaxed);
         if (appProps != nullptr)
         {
+            reloadAppPropsBeforeWrite();
             appProps->setValue ("vca_" + juce::String (idx) + "_colour",
                                 (juce::int64) c.getARGB());
             appProps->saveIfNeeded();
@@ -2226,9 +2284,17 @@ namespace zynforge
         // streamSend into the configured outputs with their gain+pan.
         // Also captured to StereoMix.wav when recordStereoMix is on, so
         // the bounce hits disk alongside the per-channel multitrack.
+        {
         const int sL = streamOutL.load (std::memory_order_relaxed);
         const int sR = streamOutR.load (std::memory_order_relaxed);
-        const bool wantMixCapture = (stereoMixWriter != nullptr);
+        // Try-lock the mix-capture writer: stopRecording() resets it on the
+        // message thread while holding stereoMixLock. If we can't acquire it,
+        // treat capture as off for this block (the stream bus into outputAccum
+        // is unaffected -- only the archive StereoMix.wav write is skipped).
+        // Held to the end of this scope so the writer stays valid through the
+        // accumulate + write below.
+        const juce::ScopedTryLock mixStl (stereoMixLock);
+        const bool wantMixCapture = mixStl.isLocked() && (stereoMixWriter != nullptr);
 
         if (wantMixCapture)
         {
@@ -2278,6 +2344,7 @@ namespace zynforge
                                       stereoMixScratch.getReadPointer (1) };
             stereoMixWriter->write (chans, numSamples);
         }
+        }   // release stereoMixLock
 
         // LTC presence detection -- analyzes the input of a designated
         // strip every block. Engineer routes the desk's timecode line
@@ -2534,7 +2601,12 @@ namespace zynforge
             // up the BPM at the current playhead and feed it to the
             // click engine for THIS block. Tempo changes ride along
             // with the audio without any file regenerate.
-            if (! tempoMap.empty() && player.isPlaying())
+            // Try-lock the tempo map: if the message thread is mid-edit we
+            // simply skip the per-block lookup and leave the click at its
+            // last resolved bpm (currentTempoBpm) rather than block or read
+            // a mutating vector.
+            const juce::ScopedTryLock tempoStl (tempoLock);
+            if (tempoStl.isLocked() && ! tempoMap.empty() && player.isPlaying())
             {
                 const auto playPosNow = player.getPositionSamples();
                 float bpm = currentTempoBpm.load (std::memory_order_relaxed);

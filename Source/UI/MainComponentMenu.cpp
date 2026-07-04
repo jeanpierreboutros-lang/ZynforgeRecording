@@ -262,8 +262,11 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // ── Cloud & Mirror ───────────────────────────────────────────────
         {
             juce::PopupMenu m;
-            m.addItem (260, "Upload session to cloud...", ! engine.isRecording());
-            m.addItem (261, "Configure cloud upload command...");
+            // ids 959/960 -- outside every menuItemSelected dispatch range.
+            // (260/261 collided with the File template-default submenu, which
+            //  meant Upload silently ran setDefaultTemplate({}) instead.)
+            m.addItem (959, "Upload session to cloud...", ! engine.isRecording());
+            m.addItem (960, "Configure cloud upload command...");
             m.addSeparator();
             m.addItem (290, sessionMirror.isMirroring()
                                ? "Stop mirroring " + sessionMirror.getPrimary()
@@ -420,7 +423,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
             showStatus ("MIDI clock -> " + outs[idx]);
         }
     }
-    else if (id == 260)
+    else if (id == 959)
     {
         // Run the configured cloud-upload command with {SESSION} expanded.
         const auto sessionDir = engine.getActiveSessionDir();
@@ -471,7 +474,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
             showStatus ("Companion failed to bind port 9000 -- try a different port");
         }
     }
-    else if (id == 261)
+    else if (id == 960)
     {
         // Edit the upload command template.
         auto* aw = new juce::AlertWindow ("Cloud upload command",
@@ -793,7 +796,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 302)  editCutSelected (true);
     else if (id == 303)  editCutSelected (false);
     else if (id == 304)  editPasteSelected();
-    else if (id == 305)  deleteSelectedStrips();
+    else if (id == 305)  confirmDeleteChannels ([this] { deleteSelectedStrips(); });
     else if (id == 306)  editCropToLoopRange();
     else if (id == 307)  editSoloSelection();
     else if (id == 308)  editSetRangeToLoopRange();
@@ -816,7 +819,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 330)  moveSelectedStrips (-1);
     else if (id == 331)  moveSelectedStrips ( 1);
     else if (id == 332)  colourSelectedStrips();
-    else if (id == 333)  deleteSelectedStrips();
+    else if (id == 333)  confirmDeleteChannels ([this] { deleteSelectedStrips(); });
     else if (id == 334)  clearStripSelection();
     else if (id == 335)  selectAllStrips();
 }

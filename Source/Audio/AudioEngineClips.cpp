@@ -377,9 +377,19 @@ namespace zynforge
         c.audioFile            = trackFile;
         c.timelineStartSamples = 0;
         c.fileStartSamples     = 0;
-        c.fileLengthSamples    = trackFile.getSize() > 0
-            ? (juce::int64) (trackFile.getSize() / 4)  // 24-bit WAV mono ≈ 3 B/sample, rough
-            : player.getTotalLengthSamples();
+        // Sample count from the actual reader -- the old getSize()/4 estimate
+        // assumed 4 bytes/sample and under-counted a 24-bit mono file (3 B/frame
+        // + WAV header) by ~25%. Open the file and read the real length; fall
+        // back to the player's loaded length only if it won't open.
+        juce::int64 lengthSamples = 0;
+        {
+            juce::AudioFormatManager fm;
+            fm.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> rd (fm.createReaderFor (trackFile));
+            if (rd != nullptr) lengthSamples = (juce::int64) rd->lengthInSamples;
+        }
+        c.fileLengthSamples = lengthSamples > 0 ? lengthSamples
+                                                : player.getTotalLengthSamples();
         if (c.fileLengthSamples <= 0) return false;
         list.push_back (c);
         return true;

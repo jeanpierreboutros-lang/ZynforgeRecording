@@ -86,41 +86,55 @@ namespace zynforge
         {
             const juce::ScopedLock sl (lock);
             if (output != nullptr) output->sendMessageNow (juce::MidiMessage::midiStart());
-            running = true;
-            msAtLastPulse = (double) juce::Time::getMillisecondCounterHiRes();
+            // Finding #6: publish the fresh timestamp BEFORE flipping running
+            // true (release). The timer reads running with acquire, so once it
+            // observes running it also sees this timestamp -- never a stale one
+            // from a prior transport that would trigger a catch-up 0xF8 burst.
+            msAtLastPulse.store ((double) juce::Time::getMillisecondCounterHiRes(),
+                                 std::memory_order_relaxed);
+            running.store (true, std::memory_order_release);
         }
         void sendContinue()
         {
             const juce::ScopedLock sl (lock);
             if (output != nullptr) output->sendMessageNow (juce::MidiMessage::midiContinue());
-            running = true;
-            msAtLastPulse = (double) juce::Time::getMillisecondCounterHiRes();
+            msAtLastPulse.store ((double) juce::Time::getMillisecondCounterHiRes(),
+                                 std::memory_order_relaxed);
+            running.store (true, std::memory_order_release);
         }
         void sendStop()
         {
             const juce::ScopedLock sl (lock);
             if (output != nullptr) output->sendMessageNow (juce::MidiMessage::midiStop());
-            running = false;
+            running.store (false, std::memory_order_release);
         }
 
     private:
         void hiResTimerCallback() override
         {
-            if (! enabled.load (std::memory_order_acquire) || ! running) return;
+            // Acquire on running pairs with the release store in sendStart/
+            // sendContinue: if we observe running, we also observe the fresh
+            // msAtLastPulse published just before it (finding #6).
+            if (! enabled.load (std::memory_order_acquire)
+                || ! running.load (std::memory_order_acquire)) return;
 
             const float bpm     = tempoBpm.load (std::memory_order_relaxed);
             const double pulseMs = 60000.0 / (double) (bpm * 24.0f);
 
             const double now = (double) juce::Time::getMillisecondCounterHiRes();
-            while (now - msAtLastPulse >= pulseMs)
+            // Only this timer thread mutates msAtLastPulse while running, so a
+            // local read-modify-write is race-free vs the acquire above.
+            double last = msAtLastPulse.load (std::memory_order_relaxed);
+            while (now - last >= pulseMs)
             {
                 {
                     const juce::ScopedLock sl (lock);
                     if (output != nullptr)
                         output->sendMessageNow (juce::MidiMessage::midiClock());
                 }
-                msAtLastPulse += pulseMs;
+                last += pulseMs;
             }
+            msAtLastPulse.store (last, std::memory_order_relaxed);
         }
 
         void stop()
@@ -132,10 +146,10 @@ namespace zynforge
 
         mutable juce::CriticalSection       lock;
         std::unique_ptr<juce::MidiOutput>   output;
-        std::atomic<float> tempoBpm { 120.0f };
-        std::atomic<bool>  enabled  { false };
-        bool   running        { false };
-        double msAtLastPulse  { 0.0 };
+        std::atomic<float>  tempoBpm { 120.0f };
+        std::atomic<bool>   enabled  { false };
+        std::atomic<bool>   running        { false };
+        std::atomic<double> msAtLastPulse  { 0.0 };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MidiClockOut)
     };

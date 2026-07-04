@@ -562,6 +562,7 @@ namespace zynforge
                 // offset; drawRecEnvelope confines the whole thing to its share.
                 recPeakL.assign ((size_t) juce::jmax (0, prefillSilentPoints), 0.0f);
                 recPeakR.assign ((size_t) juce::jmax (0, prefillSilentPoints), 0.0f);
+                recBinSamples = TrackState::kLiveBinSamples;   // reset resolution for the new take
                 liveHold = false;           // a new take supersedes any held envelope
             }
             liveRecording = on;
@@ -610,7 +611,11 @@ namespace zynforge
         {
             if (! liveRecording) return;
             constexpr size_t kMaxPoints = 1 << 15;
-            if (recPeakL.size() >= kMaxPoints) decimateInPlace (recPeakL);
+            if (recPeakL.size() >= kMaxPoints)
+            {
+                decimateInPlace (recPeakL);
+                recBinSamples *= 2;   // each entry now spans twice as many samples
+            }
             recPeakL.push_back (juce::jlimit (0.0f, 1.0f, p));
         }
         void appendLivePeakR (float p)
@@ -1073,9 +1078,7 @@ namespace zynforge
                     return inner.getY() + juce::roundToInt (yp * inner.getHeight());
                 };
 
-                const auto& player = engine.getPlayer();
-                const juce::int64 totalSamples = player.isLoaded() ? player.getTotalLengthSamples()
-                                                                   : (juce::int64) (48000.0 * 60.0);
+                const juce::int64 totalSamples = laneTimelineSamples();
                 auto sampleToX = [&] (juce::int64 sp) -> int
                 { return TimelineMapper::forLane (inner, totalSamples).toX (sp); };
 
@@ -1349,7 +1352,7 @@ namespace zynforge
             // clips. The clip-block renderer below is suppressed while showLive
             // for the same reason, then takes over on stop once the file scans.
             // Live-capture placement on the timeline. The envelope (recPeakL)
-            // covers [0, recPos] where recPos = recPeakL.size() * kLiveBinSamples;
+            // covers [0, recPos] where recPos = recPeakL.size() * recBinSamples;
             // the lane covers [0, total] = max(existing take length, recPos).
             //   CONTINUE: total == recPos -> liveFrac 1 (envelope fills the lane,
             //             existing take is the [0, takeEnd) prefix).
@@ -1357,7 +1360,10 @@ namespace zynforge
             //             liveFrac so the drop-in sits AT the punch point instead
             //             of stretching to the lane's right edge (which looked
             //             like it recorded at the END), existing take fills [0,W].
-            const juce::int64 liveRecSamples = (juce::int64) recPeakL.size() * TrackState::kLiveBinSamples;
+            // recBinSamples (not the fixed kLiveBinSamples) is the true samples
+            // per entry -- it doubles on each decimation, so this stays correct
+            // for takes past the ~2.9 min first-overflow point.
+            const juce::int64 liveRecSamples = (juce::int64) recPeakL.size() * recBinSamples;
             const juce::int64 playerTotalS   = engine.getPlayer().getTotalLengthSamples();
             const juce::int64 timelineTotalS = juce::jmax (playerTotalS, liveRecSamples);
             const double liveFrac     = timelineTotalS > 0
@@ -2061,6 +2067,22 @@ namespace zynforge
             }
         }
 
+        // Single source of truth for the lane's sample<->x timeline span.
+        // When a session is loaded it's the take length; otherwise a fixed
+        // default. paint(), laneCoordAt(), and every hit-test MUST use this
+        // same value -- a mismatch (e.g. paint at 60 s but hit-test at 300 s)
+        // makes freshly-placed automation points un-clickable.
+        juce::int64 laneTimelineSamples() const
+        {
+            const auto& player = engine.getPlayer();
+            if (player.isLoaded() && player.getTotalLengthSamples() > 0)
+                return player.getTotalLengthSamples();
+            const double sr = engine.getDeviceManager().getCurrentAudioDevice() != nullptr
+                ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
+                : 48000.0;
+            return (juce::int64) (sr * 60.0);
+        }
+
         // Map an (x,y) inside the lane area to (samplePos, value) so
         // mouse interactions can place / move automation points.
         struct LaneCoord { juce::int64 samplePos; float value; };
@@ -2068,11 +2090,7 @@ namespace zynforge
         {
             const auto inner = getLocalBounds().withTrimmedLeft (headerW)
                                                 .reduced (brand::space::xs, brand::space::sm);
-            const auto& player = engine.getPlayer();
-            const juce::int64 total = player.isLoaded() ? player.getTotalLengthSamples()
-                                                        : (juce::int64) (engine.getDeviceManager().getCurrentAudioDevice() != nullptr
-                                                            ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate() * 60.0
-                                                            : 48000.0 * 60.0);
+            const juce::int64 total = laneTimelineSamples();
             const double prop = (double) (p.x - inner.getX()) / juce::jmax (1, inner.getWidth());
             const juce::int64 samplePos = (juce::int64) (juce::jlimit (0.0, 1.0, prop) * (double) total);
 
@@ -2455,9 +2473,19 @@ namespace zynforge
                                 }
                             }
 
+                            // Only grab a fade handle where it's actually
+                            // DRAWN -- i.e. a fade already exists on this edge,
+                            // or the Fade tool is active. This mirrors the
+                            // paint condition (c.fadeXxxSamples > 0 ||
+                            // showFadeGrips); otherwise an invisible handle was
+                            // grabbable in every tool, so a plain click near a
+                            // clip's top edge silently began a fade drag.
+                            const bool fadeToolActive = (activeTool == EditToolsBar::Tool::Fade);
+
                             // Fade-in handle -- top-edge band, near
                             // (start + fadeIn).
-                            if (e.y - laneTop < fadeHandleZone
+                            if ((c.fadeInSamples > 0 || fadeToolActive)
+                                && e.y - laneTop < fadeHandleZone
                                 && std::abs (e.x - xFadeIn) <= fadeHandleZone)
                             {
                                 draggingClipIdx     = i;
@@ -2469,7 +2497,8 @@ namespace zynforge
                                 return;
                             }
                             // Fade-out handle.
-                            if (e.y - laneTop < fadeHandleZone
+                            if ((c.fadeOutSamples > 0 || fadeToolActive)
+                                && e.y - laneTop < fadeHandleZone
                                 && std::abs (e.x - xFadeOut) <= fadeHandleZone)
                             {
                                 draggingClipIdx     = i;
@@ -2553,6 +2582,15 @@ namespace zynforge
                 const auto coord = laneCoordAt (e.getPosition());
                 const auto p     = toEngineParam (toolbar->getParam());
 
+                // The Click lane is a playback-only metronome overview, NOT a
+                // per-track automation lane. toEngineParam() folds Click onto
+                // Volume, so without this guard an Add/Delete here would
+                // silently write/erase the real Volume automation. Ignore
+                // lane edits on the Click lane (Tempo is handled separately
+                // just below).
+                if (toolbar->getParam() == AutomationToolbar::Param::Click)
+                    return;
+
                 // Special case: Tempo param edits the engine's shared
                 // tempo map instead of the per-track point store.
                 if (toolbar->getParam() == AutomationToolbar::Param::Tempo)
@@ -2607,9 +2645,7 @@ namespace zynforge
                         return;
                     case AutomationToolbar::Tool::DeletePoint:
                     {
-                        const auto& player = engine.getPlayer();
-                        const juce::int64 totalSamples = player.isLoaded() ? player.getTotalLengthSamples()
-                                                                           : (juce::int64) (48000.0 * 60.0);
+                        const juce::int64 totalSamples = laneTimelineSamples();
                         const juce::int64 tol = juce::jmax<juce::int64> (1, totalSamples / juce::jmax (1, getWidth() - headerW) * 8);
                         editWrapped ("Delete automation point",
                                      [this, p, coord, tol]
@@ -2632,9 +2668,7 @@ namespace zynforge
                         // Try to grab the nearest point -- drag will move
                         // it if mouseDrag fires after this.
                         const auto& lane = engine.getAutomation (index, p);
-                        const auto& player = engine.getPlayer();
-                        const juce::int64 totalSamples = player.isLoaded() ? player.getTotalLengthSamples()
-                                                                           : (juce::int64) (48000.0 * 60.0);
+                        const juce::int64 totalSamples = laneTimelineSamples();
                         const juce::int64 tol = juce::jmax<juce::int64> (1, totalSamples / juce::jmax (1, getWidth() - headerW) * 6);
                         draggingPointIdx = -1;
                         for (size_t i = 0; i < lane.size(); ++i)
@@ -3425,11 +3459,10 @@ namespace zynforge
             const auto& lane = engine.getAutomation (index, engineParam);
             if (lane.empty()) return -1;
 
-            const auto& player = engine.getPlayer();
-            const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
-            const juce::int64 loadedSamples = player.isLoaded() ? player.getTotalLengthSamples() : 0;
-            const juce::int64 totalSamples  = loadedSamples > 0 ? loadedSamples
-                                                                : (juce::int64) (sr * 300.0);
+            // Must match paint()'s span exactly (was sr*300 -> 5x off paint's
+            // 60 s default, which made points un-clickable on a not-yet-loaded
+            // session).
+            const juce::int64 totalSamples = laneTimelineSamples();
             const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
             auto sampleToX = [&] (juce::int64 sp) -> int
             { return TimelineMapper::forLane (inner, totalSamples).toX (sp); };
@@ -3483,11 +3516,8 @@ namespace zynforge
             const auto& lane = engine.getAutomation (index, engineParam);
             if (lane.size() < 2) return -1;
 
-            const auto& player = engine.getPlayer();
-            const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
-            const juce::int64 loadedSamples = player.isLoaded() ? player.getTotalLengthSamples() : 0;
-            const juce::int64 totalSamples  = loadedSamples > 0 ? loadedSamples
-                                                                : (juce::int64) (sr * 300.0);
+            // Same shared span as paint() / hitTestAutomationPoint (was sr*300).
+            const juce::int64 totalSamples = laneTimelineSamples();
             const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
             auto sampleToX = [&] (juce::int64 sp) -> int
             { return TimelineMapper::forLane (inner, totalSamples).toX (sp); };
@@ -3985,6 +4015,12 @@ namespace zynforge
         // costs nothing against capture integrity. recPeakR carries the
         // R partner on a stereo pair.
         std::vector<float>        recPeakL, recPeakR;
+        // Effective number of captured samples each recPeakL entry represents.
+        // Starts at kLiveBinSamples; DOUBLES every time the envelope overflows
+        // and is decimated in place (max-pooled by 2). Timeline placement uses
+        // this instead of a fixed kLiveBinSamples, so a continue/punch take
+        // past the first decimation (~2.9 min @48k) stays correctly positioned.
+        int                       recBinSamples         { TrackState::kLiveBinSamples };
         bool                      liveRecording         { false };
         // Provisional hand-off: when a take stops, keep the just-built live
         // envelope on screen as a coarse waveform until the real file

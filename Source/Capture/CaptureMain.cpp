@@ -17,8 +17,9 @@
 
 namespace
 {
-    std::atomic<bool> shouldQuit { false };
-    void onSignal (int) { shouldQuit.store (true); }
+    std::atomic<bool> shouldQuit  { false };
+    std::atomic<int>  signalCount { 0 };
+    void onSignal (int) { shouldQuit.store (true); signalCount.fetch_add (1); }
 }
 
 int main (int argc, char* argv[])
@@ -55,6 +56,15 @@ int main (int argc, char* argv[])
                               + ", " + juce::String (inputs) + " inputs");
 
     while (! shouldQuit.load())
+        juce::Thread::sleep (100);
+
+    // Take-safety: a SIGTERM/SIGINT must not truncate a rolling take, matching
+    // the daemon's "Quit refused mid-take" rule. Wait for the take to finish
+    // (a StopRecording from the GUI) before tearing down. A Quit command only
+    // ever sets the flag while idle, so it exits this wait immediately. A
+    // SECOND signal (operator insists) forces the stop -- which still finalises
+    // the take cleanly (files + manifest), so it is never data loss.
+    while (daemon.isRecording() && signalCount.load() < 2)
         juce::Thread::sleep (100);
 
     // Clean stop: closes the take (files + manifest) before comms/device.

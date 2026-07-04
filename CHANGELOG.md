@@ -17,6 +17,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (whole-codebase bug-hunt + hardening pass — 2026-07-05)
+
+A full audit found and fixed 72 defects. Build green, 264 test groups / 0 failures. Highlights by area:
+
+- **Take-safety (recorder).** `startRecording` now **fails closed** — a writer-open or directory-create failure (full/unmounted/read-only volume) returns false and refuses to enter the recording state instead of silently reporting success while capturing nothing. Pre-roll is now written to **every** destination (backup + mirrors, not just primary) and counted, so copies stay sample-identical. FIFO overflow now length-pads with silence per channel so a disk stall can't drift tracks out of sync. Punch-splice is atomic across copies (all-or-nothing). `ConcatReader` refuses (rather than silently time-shifts) when a middle take-part is missing. Report/recovery-marker writes are crash-atomic (temp + rename).
+- **Capture daemon.** Start/Stop now await the daemon's actual reply (request-id correlated) — the GUI can no longer light Record when the daemon failed to open writers. A fast Record-then-quit no longer force-kills a rolling take (stale-status kill removed). Byte-level UTF-8 framing (non-ASCII session names no longer corrupt). A superseded connection no longer raises a false "daemon died" mid-take. SIGTERM/SIGINT now respect the mid-take protection.
+- **Audio-thread races (engine).** Locked the tempo-map lookup, `clearAutomationForTrack`, and the stereo-mix-writer teardown against the audio callback (try-lock in the reader, full lock in the writer — no blocking on the RT thread). Session load/unload now waits on a callback-generation handshake instead of a fixed 40 ms sleep, closing a use-after-free at large buffer sizes. `playerScratch`/`outputAccum` are pre-sized so a >32-track / >64-output session no longer allocates in the callback.
+- **Network / MIDI.** Companion server joins its per-client worker threads on shutdown (no use-after-free on quit) and marshals transport commands to the message thread. NDI teardown can no longer race the audio thread into an unloaded dylib, and no longer allocates in `pushStereo`. Session-mirror fetch moved off the message thread with a bounded read. MIDI-clock start no longer bursts. Control-surface fader/pan/jog moves marshal to the message thread (no TOCTOU on a shrinking track list).
+- **UI / EDIT.** "Upload to cloud" / "Configure cloud command" work again (menu-id 260/261 collision that silently cleared your default template — moved to 959/960). Deleting a strip via its own right-click no longer risks a use-after-free in its meter timer. Cue **Fade** recall now resolves strips by `stripId` (correct after a reorder), matching Snap. PLAY is ignored during a take (was allowed to start playback mid-record). Automation points are clickable on a not-yet-loaded session (paint/hit-test timeline mismatch). Adding an automation point on the Click lane no longer corrupts the Volume lane.
+- **Analyzers / AAF.** Marker list stays position-sorted with collision-free default names. Guarded NaN/divide-by-zero edges in the transient detector, timecode decode (rejects hours >23), spectral classifier, QC/noise analyzers, and extended the loudness histogram so hot masters don't under-read. AAF/MS-CFB writer gained a real DIFAT chain (containers >~7 MB no longer corrupt) and fails loudly instead of silently truncating oversized values / non-UTF-16 names.
+
+### Changed (behaviour-sensitive — flagged for review)
+
+- Overlapping clips on a track now **sum** on realtime playback (was: last clip wins), matching the offline bounce so the monitored mix equals the rendered file. Non-overlapping playback is unchanged.
+- The transport RECORD button's stop-while-recording now uses the same two-tap "protect the take" guard as STOP/space; menu **Delete Selected Strip(s)** now routes through the same confirmation as the Delete key. Go-to-start / go-to-end are inert during a take.
+
+### Security
+
+- Companion access token is now generated from `juce::Uuid` instead of a wall-clock-seeded PRNG.
+
 ### Fixed (EDIT time-ruler drifts from the wave when zoomed in — 2026-06-16)
 - **The EDIT ruler now lines up with the audio again when you're zoomed in and scrolled.** The time ruler is a fixed strip above the wave lanes, but the lanes scroll horizontally underneath it — and the ruler wasn't following that scroll, so its tick labels, playhead and edit-cursor sat shifted to the right of the waveform they were marking (by exactly the scroll amount). Now the ruler subtracts the wave's scroll position from its mapping, so ticks / playhead / markers stay glued to the audio at any zoom or scroll. Marker double-click and the shift-drag punch range follow the same corrected mapping. Locked with a regression test (`EditRulerScrollTests`) that asserts the ruler playhead lands on the same pixel as the lane playhead under scroll.
 

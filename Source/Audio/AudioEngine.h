@@ -950,6 +950,11 @@ namespace zynforge
         juce::TimeSliceThread                                   mixWriterThread { "ZF Mix Writer" };
         std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> stereoMixWriter;
         juce::AudioBuffer<float>                                stereoMixScratch;
+        // Guards the audio-thread stereo-mix capture (check-and-write) against
+        // the message-thread stereoMixWriter.reset() in stopRecording. The
+        // writer holds a ScopedLock around reset(); the audio thread uses a
+        // ScopedTryLock and skips the mix write for a block it can't acquire.
+        juce::CriticalSection                                   stereoMixLock;
 
         // Double-precision accumulator for the master sum so summing N
         // hot channels can't overshoot float headroom on the way to the
@@ -1037,7 +1042,12 @@ namespace zynforge
         // Pro Tools-style edit cursor. -1 = unset (drop-marker /
         // split / paste use the playhead as the fallback).
         std::atomic<juce::int64> editCursorSample { -1 };
-        std::vector<TempoChange> tempoMap;   // sorted by samplePos; UI/message-thread only
+        std::vector<TempoChange> tempoMap;   // sorted by samplePos
+        // Guards tempoMap against the audio-thread reader (click tempo-map
+        // lookup) racing the message-thread mutators. Writers take a
+        // ScopedLock; the audio thread uses a ScopedTryLock and, if it can't
+        // acquire, keeps the click at its last resolved bpm for that block.
+        mutable juce::CriticalSection tempoLock;
         // Active snap grid. Read by snapSampleToGrid + by the
         // splitTrackAtPlayhead path. Default Off.
         std::atomic<int> snapMode { 0 };
@@ -1170,6 +1180,27 @@ namespace zynforge
     private:
 
         void applyPersistedStripState();
+
+        // appProps shares ONE on-disk .settings file with the four Strip*
+        // modules (each its own juce::PropertiesFile). A whole-file save
+        // rewrites every in-memory key, so a save here would clobber keys a
+        // Strip* module wrote since appProps last loaded (and vice-versa).
+        // Call this before mutating+saving appProps keys so it first picks up
+        // the other writers' changes. No-op when appProps is null (tests).
+        void reloadAppPropsBeforeWrite() noexcept
+        {
+            // REPLACE (not merge): reload() alone merges the on-disk file into
+            // the in-memory set without dropping keys another writer deleted,
+            // so appProps would resurrect a Strip* key it had merged when it
+            // rewrites the shared file. clear()+reload() picks up others'
+            // changes AND honours their deletions. Guarded on the file existing
+            // so a first-run (no file yet) doesn't blank current in-memory state.
+            if (appProps != nullptr && appProps->getFile().existsAsFile())
+            {
+                appProps->clear();
+                appProps->reload();
+            }
+        }
 
         // Wipe every persisted per-strip override (name, colour, gain, pan,
         // routing, stereo, edit group, VCA, sends, bus flag, UUID) for the

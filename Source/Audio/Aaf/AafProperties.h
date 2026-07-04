@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AafTypes.h"
+#include <stdexcept>
 #include <vector>
 
 // ── AAF object `properties` stream codec ─────────────────────────────────────
@@ -49,7 +50,13 @@ namespace zynforge::aaf
 
         juce::MemoryBlock serialise() const
         {
-            jassert (props.size() <= 0xFFFF);
+            // entryCount is a 16-bit field: refuse rather than silently wrap it
+            // (a wrapped count would desync the index from the value bytes).
+            if (props.size() > 0xFFFF)
+            {
+                jassertfalse;
+                throw std::length_error ("AAF PropertySet: property count exceeds the 16-bit entryCount field (max 65535)");
+            }
             juce::MemoryBlock out;
             const juce::uint8 hdr[2] { kByteOrderLE, kFormatVersion };
             out.append (hdr, 2);
@@ -59,7 +66,14 @@ namespace zynforge::aaf
             {
                 appendU16 (out, p.pid);
                 appendU16 (out, p.storedForm);
-                jassert (p.value.getSize() <= 0xFFFF);
+                // The length field is 16-bit; the full value bytes are appended
+                // below. Truncating the field (while writing all bytes) would
+                // misalign every later property, so refuse instead.
+                if (p.value.getSize() > 0xFFFF)
+                {
+                    jassertfalse;
+                    throw std::length_error ("AAF PropertySet: property value exceeds the 16-bit length field (max 65535 bytes)");
+                }
                 appendU16 (out, (juce::uint16) p.value.getSize());
             }
             for (const auto& p : props)            // values, in index order

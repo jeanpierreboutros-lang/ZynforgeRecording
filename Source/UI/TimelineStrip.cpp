@@ -176,7 +176,9 @@ namespace zynforge
             {
                 const auto e = markers.getMarker (idx).sampleOffset;
                 const auto s = player.hasLoopRegion() ? player.getLoopStart() : 0;
-                player.setLoopRegion (juce::jmin (s, e - 1), e);
+                // Clamp the start to >= 0 so a marker at sample 0 (e-1 == -1)
+                // doesn't set a negative loop start.
+                player.setLoopRegion (juce::jmax ((juce::int64) 0, juce::jmin (s, e - 1)), e);
             }
             else if (chosen == 5) player.clearLoopRegion();
             repaint();

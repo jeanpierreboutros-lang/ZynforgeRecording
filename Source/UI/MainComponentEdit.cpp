@@ -1102,7 +1102,10 @@ void MainComponent::editStartRange()
     auto& player = engine.getPlayer();
     const auto end = player.hasLoopRegion() ? player.getLoopEnd()
                                             : pos + (juce::int64) (player.getSampleRate() * 2.0);
-    player.setLoopRegion (pos, end);
+    // Ordering guard (same as TimelineStrip's "Set as Loop In"): if the
+    // playhead is at/past the existing loop end, keep end > start instead of
+    // passing an inverted range that setLoopRegion treats as "clear".
+    player.setLoopRegion (pos, juce::jmax (end, pos + 1));
     engine.getMarkers().drop (pos, "Range In");
     showStatus ("Range In set at playhead");
 }
@@ -1112,7 +1115,10 @@ void MainComponent::editFinishRange()
     const auto pos = currentPlayheadSamples (engine);
     auto& player = engine.getPlayer();
     const auto start = player.hasLoopRegion() ? player.getLoopStart() : juce::int64 (0);
-    player.setLoopRegion (start, pos);
+    // Ordering guard (same as TimelineStrip's "Set as Loop Out"): if the
+    // playhead is at/before the existing loop start, keep start < end instead
+    // of passing an inverted range that setLoopRegion treats as "clear".
+    player.setLoopRegion (juce::jmin (start, pos - 1), pos);
     engine.getMarkers().drop (pos, "Range Out");
     showStatus ("Range Out set at playhead");
 }

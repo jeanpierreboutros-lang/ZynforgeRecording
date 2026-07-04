@@ -238,9 +238,18 @@ namespace zynforge
             b->setWantsKeyboardFocus (true);   // reachable via Tab / VO
         }
 
-        gotoStart->onClick = [this] { engine.getPlayer().setPositionSamples (0); };
+        // Jumping the playhead mid-record would desync the live-capture
+        // waveform placement and can trip the punch-out crossing detector, so
+        // both go-to buttons are inert while recording (consistent with the
+        // transport's protect-the-take posture).
+        gotoStart->onClick = [this]
+        {
+            if (engine.isRecording()) return;
+            engine.getPlayer().setPositionSamples (0);
+        };
         gotoEnd  ->onClick = [this]
         {
+            if (engine.isRecording()) return;
             auto& p = engine.getPlayer();
             p.setPositionSamples (p.getTotalLengthSamples());
         };

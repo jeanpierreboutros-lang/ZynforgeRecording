@@ -38,30 +38,50 @@ namespace zynforge
     {
         auto& rec = engine.getRecorder();
         const int bank = bankOffset.load (std::memory_order_relaxed);
+        auto* eng = &engine;   // captured by value into marshaled lambdas (not `this`)
 
-        // Motor fader move -> channel gain (atomic store; safe off this thread).
+        // Any operation that indexes a TrackState is marshaled to the message
+        // thread (finding #7a). setTrackCount() shrinks the track vector on the
+        // message thread; reading getNumTracks() then getTrack(ch) off-thread is
+        // a TOCTOU that can dereference a freed TrackState mid-shrink. Running
+        // the bounds-check + access together on the message thread serialises
+        // them against setTrackCount. Latency is one message-loop tick --
+        // imperceptible on a control surface. Lambdas capture `eng` + values,
+        // never `this`, so they stay safe if the surface is destroyed.
+
+        // Motor fader move -> channel gain.
         if (m.isPitchWheel())
         {
-            // The 9th fader (MIDI channel 9) is the master / monitor level.
+            // The 9th fader (MIDI channel 9) is the master / monitor level
+            // (not track-indexed -- setMasterGainDbFast is a plain atomic).
             if (mcu::isMasterFader (m.getChannel()))
             { engine.setMasterGainDbFast (mcu::faderToDb (m.getPitchWheelValue())); return; }
 
             const int ch = bank + (m.getChannel() - 1);   // MCU channel 1..8 -> strip + bank
-            if (ch >= 0 && ch < rec.getNumTracks())
-                rec.getTrack (ch).gainDb.store (mcu::faderToDb (m.getPitchWheelValue()),
-                                                std::memory_order_relaxed);
+            const float db = mcu::faderToDb (m.getPitchWheelValue());
+            juce::MessageManager::callAsync ([eng, ch, db]
+            {
+                auto& r = eng->getRecorder();
+                if (ch >= 0 && ch < r.getNumTracks())
+                    r.getTrack (ch).gainDb.store (db, std::memory_order_relaxed);
+            });
             return;
         }
 
         // Jog wheel -> scrub the transport position (relative encoder). One
-        // tick ~ 1/30 s; the player position store is atomic + clamped.
+        // tick ~ 1/30 s. Marshaled (finding #7b): the read-modify-write of the
+        // player position runs entirely on the message thread, so it can't
+        // interleave with other transport ops or a shrink.
         if (m.isController() && mcu::isJogCc (m.getControllerNumber()))
         {
-            auto& player = engine.getPlayer();
-            const double sr = juce::jmax (1.0, player.getSampleRate());
-            const auto step = (juce::int64) std::lround (sr / 30.0)
-                              * (juce::int64) mcu::decodeJogDelta (m.getControllerValue());
-            player.setPositionSamples (player.getPositionSamples() + step);
+            const int delta = mcu::decodeJogDelta (m.getControllerValue());
+            juce::MessageManager::callAsync ([eng, delta]
+            {
+                auto& player = eng->getPlayer();
+                const double sr = juce::jmax (1.0, player.getSampleRate());
+                const auto step = (juce::int64) std::lround (sr / 30.0) * (juce::int64) delta;
+                player.setPositionSamples (player.getPositionSamples() + step);
+            });
             return;
         }
 
@@ -69,14 +89,18 @@ namespace zynforge
         if (m.isController() && mcu::isVpotCc (m.getControllerNumber()))
         {
             const int ch = bank + mcu::vpotStrip (m.getControllerNumber());
-            if (ch >= 0 && ch < rec.getNumTracks())
+            const int delta = mcu::decodeVpotDelta (m.getControllerValue());
+            juce::MessageManager::callAsync ([eng, ch, delta]
             {
-                auto& t = rec.getTrack (ch);
-                const float pan = juce::jlimit (-1.0f, 1.0f,
-                    t.pan.load (std::memory_order_relaxed)
-                    + (float) mcu::decodeVpotDelta (m.getControllerValue()) * 0.05f);
-                t.pan.store (pan, std::memory_order_relaxed);
-            }
+                auto& r = eng->getRecorder();
+                if (ch >= 0 && ch < r.getNumTracks())
+                {
+                    auto& t = r.getTrack (ch);
+                    const float pan = juce::jlimit (-1.0f, 1.0f,
+                        t.pan.load (std::memory_order_relaxed) + (float) delta * 0.05f);
+                    t.pan.store (pan, std::memory_order_relaxed);
+                }
+            });
             return;
         }
 
@@ -104,23 +128,34 @@ namespace zynforge
                 return;
             }
             case mcu::Action::Mute:
-                if (ch < rec.getNumTracks())
-                { auto& t = rec.getTrack (ch); t.muted.store (! t.muted.load (std::memory_order_relaxed), std::memory_order_relaxed); }
+                juce::MessageManager::callAsync ([eng, ch]
+                {
+                    auto& r = eng->getRecorder();
+                    if (ch >= 0 && ch < r.getNumTracks())
+                    { auto& t = r.getTrack (ch); t.muted.store (! t.muted.load (std::memory_order_relaxed), std::memory_order_relaxed); }
+                });
                 return;
             case mcu::Action::Solo:
-                if (ch < rec.getNumTracks())
-                { auto& t = rec.getTrack (ch); t.soloed.store (! t.soloed.load (std::memory_order_relaxed), std::memory_order_relaxed); }
+                juce::MessageManager::callAsync ([eng, ch]
+                {
+                    auto& r = eng->getRecorder();
+                    if (ch >= 0 && ch < r.getNumTracks())
+                    { auto& t = r.getTrack (ch); t.soloed.store (! t.soloed.load (std::memory_order_relaxed), std::memory_order_relaxed); }
+                });
                 return;
             case mcu::Action::Arm:
-                if (ch < rec.getNumTracks())
-                { auto& t = rec.getTrack (ch); t.armed.store (! t.armed.load (std::memory_order_relaxed), std::memory_order_relaxed); }
+                juce::MessageManager::callAsync ([eng, ch]
+                {
+                    auto& r = eng->getRecorder();
+                    if (ch >= 0 && ch < r.getNumTracks())
+                    { auto& t = r.getTrack (ch); t.armed.store (! t.armed.load (std::memory_order_relaxed), std::memory_order_relaxed); }
+                });
                 return;
             case mcu::Action::Play:
             case mcu::Action::Stop:
             case mcu::Action::Record:
             {
                 // Transport touches the player -> marshal to the message thread.
-                auto* eng = &engine;
                 const auto a = hit.action;
                 juce::MessageManager::callAsync ([eng, a]
                 {

@@ -54,7 +54,7 @@ namespace zynforge
             juce::AudioFormatManager fm;
             fm.registerBasicFormats();
             std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (wavFile));
-            if (reader == nullptr) return nf;
+            if (reader == nullptr || reader->numChannels < 1) return nf;   // guard OOB read on malformed file
 
             const double sr     = reader->sampleRate;
             const auto   total  = (juce::int64) reader->lengthInSamples;

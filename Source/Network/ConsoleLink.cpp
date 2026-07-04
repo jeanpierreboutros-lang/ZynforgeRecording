@@ -88,7 +88,6 @@ namespace zynforge
         for (int b = 0; b < profile.numInBlocks; ++b)
             sendMessage (juce::OSCMessage (juce::OSCAddressPattern (inBlockAddress (b))));
         if (onStatus) onStatus ("Reading console patch...");
-        ++opGen;
         startTimer (1200);   // abort if a routing reply is lost
     }
 
@@ -121,7 +120,6 @@ namespace zynforge
             sendMessage (juce::OSCMessage (juce::OSCAddressPattern (headampAddress (i))));
         if (onStatus) onStatus ("Capturing " + juce::String (expectedGainReplies)
                                 + " head-amp gains...");
-        ++opGen;
         startTimer (1500);   // abort if a head-amp reply is lost
     }
 
@@ -173,6 +171,12 @@ namespace zynforge
         {
             const int idx = addr.fromFirstOccurrenceOf ("/headamp/", false, false)
                                 .upToFirstOccurrenceOf ("/", false, false).getIntValue();
+            // The index comes straight off the wire -- range-check it before
+            // using it as a map key so a malformed / spoofed reply can't seed
+            // the gains map with a garbage (e.g. huge or negative) head-amp
+            // number that we'd later blindly write back to the desk (finding
+            // #8b). captureGains only ever polls [0, 128).
+            if (idx < 0 || idx >= 128) return;
             gains[idx] = m[0].getFloat32();
             if (expectedGainReplies > 0 && (int) gains.size() >= expectedGainReplies)
             {

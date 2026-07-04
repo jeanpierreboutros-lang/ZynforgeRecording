@@ -163,7 +163,13 @@ namespace zynforge
             void commit()
             {
                 SessionPropertiesDialog::Fields out = initialFields;
-                out.name        = nameEditor  .getText().trim();
+                // Never accept an empty session name -- keep the existing name
+                // if the field was cleared, else fall back to a default the
+                // same way NewSessionDialog does ("Untitled-1").
+                const auto trimmedName = nameEditor.getText().trim();
+                out.name        = trimmedName.isNotEmpty() ? trimmedName
+                                : initialFields.name.trim().isNotEmpty() ? initialFields.name.trim()
+                                : juce::String ("Untitled-1");
                 out.artist      = artistEditor.getText().trim();
                 out.venue       = venueEditor .getText().trim();
                 out.fohEngineer = fohEditor   .getText().trim();

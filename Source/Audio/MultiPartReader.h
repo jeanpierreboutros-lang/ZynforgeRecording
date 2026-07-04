@@ -14,16 +14,32 @@ namespace zynforge
     {
         std::vector<juce::File> parts;
         if (! mainFile.existsAsFile()) return parts;
-        parts.push_back (mainFile);
         const auto dir  = mainFile.getParentDirectory();
         const auto stem = mainFile.getFileNameWithoutExtension();   // "Track_07"
         const auto ext  = mainFile.getFileExtension();
-        for (int p = 2; ; ++p)
+
+        // Highest part index that exists. Scan the WHOLE set on disk rather
+        // than stopping at the first numbering gap: an orphaned later part
+        // (e.g. _part04 present while _part03 is missing) must still be
+        // accounted for, or (a) a fresh continuation could be numbered into
+        // the hole and shadow/overwrite the orphan, and (b) every part after
+        // the hole would silently shift earlier in the take. Missing
+        // intermediate parts are included below as their EXPECTED paths so
+        // the reader (ConcatReader::create) sees the hole and refuses instead
+        // of seamlessly concatenating the survivors.
+        int highest = 1;
+        for (const auto& f : dir.findChildFiles (juce::File::findFiles, false,
+                                                 stem + "_part*" + ext))
         {
-            auto f = dir.getChildFile (stem + "_part"
-                        + juce::String::formatted ("%02d", p) + ext);
-            if (f.existsAsFile()) parts.push_back (f); else break;
+            const int pn = f.getFileNameWithoutExtension()
+                            .fromLastOccurrenceOf ("_part", false, false).getIntValue();
+            if (pn > highest) highest = pn;
         }
+
+        parts.push_back (mainFile);
+        for (int p = 2; p <= highest; ++p)
+            parts.push_back (dir.getChildFile (stem + "_part"
+                                + juce::String::formatted ("%02d", p) + ext));
         return parts;
     }
 
@@ -59,10 +75,37 @@ namespace zynforge
             juce::AudioFormatManager& fm, const std::vector<juce::File>& files)
         {
             std::vector<std::unique_ptr<juce::AudioFormatReader>> rs;
-            for (auto& f : files)
-                if (std::unique_ptr<juce::AudioFormatReader> r { fm.createReaderFor (f) })
+            int  firstOpened = -1, lastOpened = -1;
+            bool holeBetween = false;
+            for (int i = 0; i < (int) files.size(); ++i)
+            {
+                if (std::unique_ptr<juce::AudioFormatReader> r { fm.createReaderFor (files[(size_t) i]) })
+                {
+                    // A part opened AFTER a hole -> that hole is a MISSING /
+                    // unreadable MIDDLE part; concatenating past it would shift
+                    // this part and every later one earlier in the take.
+                    if (lastOpened >= 0 && i != lastOpened + 1) holeBetween = true;
+                    if (firstOpened < 0) firstOpened = i;
+                    lastOpened = i;
                     rs.push_back (std::move (r));
-            if (rs.empty())      return nullptr;
+                }
+            }
+            if (rs.empty()) return nullptr;
+
+            // Refuse loudly when a MIDDLE part (a hole between survivors) or a
+            // LEADING part (files before the first that opened) is missing /
+            // unreadable: its length is unknowable, so we cannot insert a
+            // correctly-sized silent gap, and silently dropping it would
+            // time-shift the rest of the take. A missing TRAILING part only
+            // truncates the tail (no shift), so the contiguous survivors from
+            // part 1 are used as-is -- preserving the all-parts-present path
+            // exactly.
+            if (holeBetween || firstOpened > 0)
+            {
+                jassertfalse;
+                return nullptr;
+            }
+
             if (rs.size() == 1)  return std::move (rs.front());
             return std::make_unique<ConcatReader> (std::move (rs));
         }

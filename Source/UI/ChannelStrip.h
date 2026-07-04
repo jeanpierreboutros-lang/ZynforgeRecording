@@ -129,6 +129,14 @@ namespace zynforge
 
         juce::Colour getResolvedColour() const;
 
+        // Called just before the strip's backing TrackState is destroyed
+        // (an in-strip right-click Delete runs engine.removeStripAt, which
+        // frees the TrackState while this ChannelStrip + its 10 Hz StripTimer
+        // live on until the next rebuild ~100 ms later). Stops the timer and
+        // marks the strip invalid so StripTimer::timerCallback can never
+        // dereference the freed TrackState&.
+        void invalidate();
+
         void paint (juce::Graphics&) override;
         void resized() override;
         void mouseEnter (const juce::MouseEvent&) override;
@@ -193,6 +201,9 @@ namespace zynforge
         std::unique_ptr<StripTimer> stripTimer;
 
         bool selected { false };
+        // False once invalidate() has run (the backing TrackState is being
+        // destroyed). Guards StripTimer::timerCallback against a dangling ref.
+        bool stripValid { true };
         // Automation LED state -- painted as a tiny 6 px badge in the
         // strip header. writeArmed lights brand-red; safeOn lights
         // amber. Both together = safe overrides (writes are blocked).

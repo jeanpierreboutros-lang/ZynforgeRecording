@@ -96,10 +96,11 @@ namespace zynforge
         // Reply-timeout watchdog: a query (enterSoundcheck / captureGains) waits
         // for N UDP replies; if one is lost the op would hang forever ("Reading
         // console patch..."). This one-shot fires ~1.2 s after a query and
-        // aborts cleanly if replies are still outstanding. opGen invalidates a
-        // stale timer when a new query starts.
+        // aborts cleanly if replies are still outstanding. Only one query is
+        // ever outstanding at a time (startTimer replaces any prior timer,
+        // stopTimer cancels it on completion), so no generation counter is
+        // needed to invalidate a stale timer.
         void timerCallback() override;
-        int  opGen { 0 };
         void sendMessage (const juce::OSCMessage&);
         juce::String inBlockAddress (int blockIdx) const;      // via active profile
         juce::String headampAddress (int headampIdx) const;    // via active profile

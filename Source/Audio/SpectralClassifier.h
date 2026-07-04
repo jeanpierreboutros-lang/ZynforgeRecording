@@ -28,6 +28,12 @@ namespace zynforge
         // strip, given its FFT snapshot + the device sample rate.
         static Result classify (const TrackState& t, double sampleRate)
         {
+            // Before the device starts sampleRate is 0; binHz would collapse
+            // every bin to 0 Hz, dumping all energy into b.sub and forcing a
+            // bogus Kick/Bass guess. Return a neutral "other" instead.
+            if (sampleRate <= 0.0)
+                return { "other", {} };
+
             // Window + FFT in place using a temp buffer (kFftSize is 1024).
             constexpr int kSize = TrackState::kFftSize;
             const int order = 10;   // 2^10 = 1024

@@ -51,7 +51,8 @@ namespace zynforge::qc
         juce::AudioFormatManager fm;
         fm.registerBasicFormats();
         std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (f));
-        if (reader == nullptr || reader->lengthInSamples <= 0 || reader->sampleRate <= 0.0)
+        if (reader == nullptr || reader->lengthInSamples <= 0 || reader->sampleRate <= 0.0
+            || reader->numChannels < 1)   // 0-channel/malformed file: getReadPointer(0) would be OOB
             return qc;
 
         qc.sampleRate    = reader->sampleRate;

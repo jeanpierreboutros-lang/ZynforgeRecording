@@ -6,6 +6,7 @@
 
 #include "ClipModel.h"
 
+#include <array>
 #include <atomic>
 #include <map>
 #include <memory>
@@ -91,6 +92,12 @@ namespace zynforge
         void clearAllClips();
 
     private:
+        // Bounded handshake used by loadSession/unload after clearing
+        // `playing`: waits until two full audio callbacks have completed
+        // (via callbackGeneration) so no in-flight block is still reading
+        // `tracks`, then returns. Ceiling-capped for a stalled device.
+        void waitForCallbackDrain() noexcept;
+
         struct Track
         {
             // shared_ptr because the two halves of an interleaved stereo
@@ -119,6 +126,17 @@ namespace zynforge
         std::vector<char>              clipsAuthoritative;
         mutable juce::CriticalSection  clipsLock;
 
+        // Lock-free mirror of clipsAuthoritative, readable by the audio thread
+        // WITHOUT clipsLock. When the processBlock try-lock is contended we
+        // can't read the (resizable) clipsAuthoritative vector safely, so we
+        // consult this instead: a track flagged here has an explicit clip
+        // arrangement and must render SILENCE for the block rather than leak
+        // its underlying whole file. Indices at/above the array size are
+        // treated as non-authoritative (legacy whole-file). 512 comfortably
+        // covers the 256-strip ceiling.
+        static constexpr int kMaxAuthoritativeTracks = 512;
+        std::array<std::atomic<char>, kMaxAuthoritativeTracks> authoritativeFlags {};
+
         // Per-clip readers for clips that reference a file OTHER than their
         // track's own Track_NN.wav (cross-track paste). Keyed by absolute
         // path. Built on the message thread in setTrackClips (file open is
@@ -129,6 +147,12 @@ namespace zynforge
 
         std::atomic<bool>        loaded      { false };
         std::atomic<bool>        playing     { false };
+        // Incremented once at the top of every processBlock (even when not
+        // playing). loadSession/unload snapshot it after clearing `playing`
+        // and wait for it to advance by >=2 before freeing readers, so no
+        // in-flight callback is still reading `tracks`. Bounded by a ceiling
+        // so a stopped device can't hang the caller.
+        std::atomic<juce::uint32> callbackGeneration { 0 };
         std::atomic<int>         readerCount { 0 };
         std::atomic<juce::int64> position    { 0 };
         std::atomic<juce::int64> totalLength { 0 };

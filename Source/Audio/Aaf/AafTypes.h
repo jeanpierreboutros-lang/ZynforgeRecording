@@ -119,11 +119,27 @@ namespace zynforge::aaf
     inline juce::MemoryBlock encAuid (const Auid& a)   { auto b = a.toBytes();  return { b.data(), b.size() }; }
     inline juce::MemoryBlock encMobID (const MobID& m) { return { m.bytes.data(), m.bytes.size() }; }
 
-    // AAF strings are UTF-16LE, null-terminated.
+    // AAF strings are UTF-16LE, null-terminated. Non-BMP code points are encoded
+    // as surrogate pairs (two UTF-16 code units); ASCII maps 1:1, unchanged.
     inline juce::MemoryBlock encString (const juce::String& s)
     {
         juce::MemoryBlock mb;
-        for (auto c : s)            { const auto u = (juce::uint16) c; juce::uint8 b[2]{ (juce::uint8) u, (juce::uint8)(u>>8) }; mb.append (b, 2); }
+        auto appendUnit = [&mb] (juce::uint16 u)
+        { const juce::uint8 b[2] { (juce::uint8) u, (juce::uint8) (u >> 8) }; mb.append (b, 2); };
+        for (auto cp : s)   // juce::String range-for yields full code points
+        {
+            auto c = (juce::uint32) cp;
+            if (c >= 0x10000 && c <= 0x10FFFF)
+            {
+                c -= 0x10000;
+                appendUnit ((juce::uint16) (0xD800 + (c >> 10)));     // high surrogate
+                appendUnit ((juce::uint16) (0xDC00 + (c & 0x3FF)));   // low surrogate
+            }
+            else
+            {
+                appendUnit ((juce::uint16) c);                        // BMP
+            }
+        }
         const juce::uint8 nul[2] { 0, 0 }; mb.append (nul, 2);
         return mb;
     }

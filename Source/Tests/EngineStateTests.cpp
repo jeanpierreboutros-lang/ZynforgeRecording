@@ -96,8 +96,15 @@ namespace zynforge
                 eng.clearAllStripOverrides();
                 // After a wipe + fresh setStripCount, the engineer
                 // shouldn't see last session's hard-pan port over.
+                // Regression: the shared-.settings writers reload+rewrite the
+                // whole file, so a sibling module (names) could resurrect a key
+                // (pan) another module (gains) had just cleared, and grow-back
+                // would re-apply it. Both persisted overrides must stay wiped
+                // (each is zeroed live on clear, then re-applied from persistence
+                // on grow -- a non-zero here means the key resurrected).
                 eng.setStripCount (2);
-                expectWithinAbsoluteError (eng.getRecorder().getTrack (0).pan.load(), 0.0f, 0.001f);
+                expectWithinAbsoluteError (eng.getRecorder().getTrack (0).pan.load(),    0.0f, 0.001f);
+                expectWithinAbsoluteError (eng.getRecorder().getTrack (0).gainDb.load(), 0.0f, 0.001f);
             }
 
             beginTest ("freshly-grown strips don't inherit a previous layout's edit group / VCA");
