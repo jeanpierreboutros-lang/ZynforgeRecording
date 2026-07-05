@@ -31,7 +31,13 @@ namespace
 
 namespace zynforge
 {
-    BigClockPanel::BigClockPanel() = default;
+    BigClockPanel::BigClockPanel()
+    {
+        // Opaque: sits over MainComponent's flat bgDeep body (paint() fills its
+        // full bounds with bgDeep first), so the breathe-pulse repaint no longer
+        // forces MainComponent to repaint the slice behind it.
+        setOpaque (true);
+    }
 
     void BigClockPanel::setMode (Mode m)
     {
@@ -163,6 +169,11 @@ namespace zynforge
 
     void BigClockPanel::paint (juce::Graphics& g)
     {
+        // Opaque base: cover every pixel with the body background (the 2px
+        // margin around the plate showed bgDeep through it before). Required
+        // for setOpaque(true) to be valid; visually identical.
+        g.fillAll (brand::bgDeep);
+
         auto r = getLocalBounds().toFloat();
 
         // Background -- gradient fill in the state-tinted colour so the

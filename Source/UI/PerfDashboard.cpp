@@ -6,7 +6,12 @@ namespace zynforge
 {
     PerfDashboard::PerfDashboard()
     {
-        setOpaque (false);
+        // Opaque: the dashboard sits over MainComponent's flat bgDeep body, so
+        // paint() fills its full bounds with bgDeep before the rounded plate.
+        // Being opaque means a value-change repaint no longer forces
+        // MainComponent to repaint the slice behind it (it repaints ~24x/s as
+        // the live AUDIO load jitters).
+        setOpaque (true);
     }
 
     void PerfDashboard::setMetrics (float cpuPct,
@@ -58,6 +63,12 @@ namespace zynforge
 
     void PerfDashboard::paint (juce::Graphics& g)
     {
+        // Opaque base: fill every pixel with the body background the panel sits
+        // on (MainComponent's flat bgDeep), so the 4px margin + rounded corners
+        // read identically to the old non-opaque version. Required for
+        // setOpaque(true) to be valid.
+        g.fillAll (brand::bgDeep);
+
         auto r = getLocalBounds().toFloat().reduced (4.0f);
 
         // Panel background.
