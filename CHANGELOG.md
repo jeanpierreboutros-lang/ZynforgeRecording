@@ -17,6 +17,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Changed (idle repaint cost — 2026-07-05)
+
+- The BigClockPanel "breathe" pulse (armed-ready / recording) now runs at 15 Hz instead of 30 Hz and, when merely armed, repaints only its outer border band rather than the whole panel — the big timecode / forge-mark centre is static. The 1 Hz breathe and record-start ignite are unchanged.
+- BigClockPanel and PerfDashboard are now `setOpaque(true)` (they fill their full bounds with the body `bgDeep` first), so a value-change / pulse repaint no longer forces the window background behind them to redraw. Visually identical.
+- Scope note: these are real repaint cleanups but do **not** move steady-state idle CPU (~5% with the audio device running) — profiling showed that cost is diffuse (the CoreAudio device callback + the per-strip meter/UI-timer swarm), not these panels. Materially lowering idle would need a UI-refresh/meter-timer consolidation, deferred (see `tasks.md`).
+
 ### Fixed (whole-codebase bug-hunt + hardening pass — 2026-07-05)
 
 A full audit found and fixed 72 defects. Build green, 264 test groups / 0 failures. Highlights by area:

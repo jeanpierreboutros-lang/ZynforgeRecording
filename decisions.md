@@ -6,6 +6,18 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Idle CPU left at ~5%; hero panels made opaque, real floor is the timer swarm — 2026-07-05
+
+**Context.** After the hardening pass, a smoke test showed ~5–7% CPU while "idle" (documented baseline is <1%). Profiling: the message thread was repainting `MainComponent` continuously because `BigClockPanel` (a 30 Hz armed-ready "breathe" pulse) and `PerfDashboard` (repaints as the live AUDIO% jitters) were **non-opaque** — every child repaint forced the parent's slice to redraw too.
+
+**Decision.** Made both panels `setOpaque(true)` (they fill their full bounds with the body `bgDeep` first, so the look is identical) and dropped the pulse to 15 Hz + scoped its repaint to the border band. **Idle CPU is left at ~5% for now** (JP) rather than pursuing more.
+
+**Rationale.** The opaque + pulse changes are correct and profile the two panels down to ~1 sample each — but they did **not** move the steady-state idle number. With the audio device actually running, the ~5% is diffuse: the CoreAudio device callback (on the dev machine an Avid **proxy** device, since no RME is connected — a native device should be lighter) plus the per-strip UI-timer swarm (LedMeter 30 Hz, VcaPanel 20 Hz, MasterStrip/transport/MainComponent 10 Hz), each waking briefly. No single hot spot. A transient "5%→0.2%" reading during the investigation was a measurement artifact — that instance had no session loaded and the device not started (Welcome screen + a pending mic-permission prompt).
+
+**Consequences.** Keep `BigClockPanel`/`PerfDashboard` (and any hero panel over the flat `bgDeep` body) opaque — a non-opaque panel that repaints on a timer drags the parent. The real lever for idle CPU is a UI-refresh/meter-timer consolidation (one coalesced timer, signal-gated meter repaints); it's deferred in `tasks.md` and only worth doing if idle becomes a real constraint on the target rig.
+
+---
+
 ## Shared `.settings` writers reload-to-REPLACE, not merge — 2026-07-05
 
 **Context.** `appProps` and the four `Strip*` persistence modules (`StripColours`/`StripNames`/`StripGains`/`StripRouting`) each open their own `juce::PropertiesFile` pointing at the *same* on-disk `.settings` file. A `PropertiesFile` save rewrites the whole in-memory key map. During a 2026-07-05 audit this was found to lose updates: module A saved, module B (holding a stale snapshot) later saved and clobbered A's key. The first fix — reload before each save — used a bare `PropertiesFile::reload()`, which **merges** (it adds/updates keys from disk but never *removes* in-memory keys that are absent from disk). That introduced a worse bug: `clearAllStripOverrides` had `StripGains` delete `strip_pan_0`, but `StripNames` still held it in memory (merged in earlier), and its next whole-file save **resurrected** the deleted pan — so a cleared hard-pan came back on the next `setStripCount`, exactly the gig-prep "why is this panned?" class of bug.
