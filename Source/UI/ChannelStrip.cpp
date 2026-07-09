@@ -264,6 +264,11 @@ namespace zynforge
         // read once the caller destroys it.
         if (stripTimer != nullptr)
             stripTimer->stopTimer();
+        // The strip's meter + spectrum run their OWN timers against the same
+        // TrackState& -- stopping just stripTimer left them reading freed
+        // memory for up to a rebuild interval after the strip was condemned.
+        meter.detach();
+        spectrum.detach();
     }
 
     void ChannelStrip::setAvailableInputs (int n)

@@ -229,7 +229,13 @@ namespace zynforge
                 engine.getDeviceManager().removeChangeListener (this);
 
                 if (! applied && snapshot != nullptr)
-                    engine.getDeviceManager().initialise (0, 256, snapshot.get(), true);
+                    // Restore with the SAME channel counts the app boots with
+                    // (AudioEngine: 256 in / 64 out). Passing 0 inputs here
+                    // made JUCE enable "the first 0" input channels when the
+                    // snapshot XML carried no explicit mask (it never does),
+                    // so a Cancel/ESC on the DEVICE panel killed every input
+                    // until relaunch -- dead meters, silent recordings.
+                    engine.getDeviceManager().initialise (256, 64, snapshot.get(), true);
             }
 
             void paint (juce::Graphics& g) override

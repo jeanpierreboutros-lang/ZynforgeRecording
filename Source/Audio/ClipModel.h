@@ -67,14 +67,22 @@ namespace zynforge
 
         Clip right = src;
         const juce::int64 splitOffset = sampleInFile - src.fileStartSamples;
-        // Left half keeps its start, shrinks to splitOffset.
+        // Left half keeps its start, shrinks to splitOffset, and ends on a
+        // HARD cut at the split -- NOT a fade-out into the boundary (that
+        // would audibly fade to silence then jump to full at the seam). Its
+        // fade-in is clamped in case the split lands inside it.
         src.fileLengthSamples = splitOffset;
-        src.fadeOutSamples    = juce::jmin (src.fadeOutSamples, splitOffset);
-        // Right half starts where left ended, on the same timeline.
+        src.fadeInSamples     = juce::jmin (src.fadeInSamples, src.fileLengthSamples);
+        src.fadeOutSamples    = 0;
+        // Right half starts where left ended, on the same timeline, with a
+        // hard cut in. It inherits the ORIGINAL fade-out (which belonged to
+        // the clip's end), clamped to its new length so the fade never
+        // exceeds the clip (a negative fade-start plays gain-reduced).
         right.fileStartSamples     = sampleInFile;
         right.fileLengthSamples    = right.fileLengthSamples - splitOffset;
         right.timelineStartSamples = src.timelineStartSamples + splitOffset;
         right.fadeInSamples        = 0;   // a fresh edit has a hard cut at the split
+        right.fadeOutSamples       = juce::jmin (right.fadeOutSamples, right.fileLengthSamples);
         right.name                 = src.name + " (b)";
         src.name                   = src.name + " (a)";
 

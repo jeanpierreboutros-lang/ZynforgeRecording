@@ -284,7 +284,10 @@ namespace zynforge
         for (std::size_t i = 0; i < writers.size() && i < preRoll.size(); ++i)
         {
             auto& w = writers[i];
-            if (w.writer == nullptr) continue;
+            // Participation gate, not `writer != nullptr` -- a channel whose
+            // primary failed to open but whose backup/mirror opened still gets
+            // its pre-roll history (see WriterChannel::active + the live drain).
+            if (! w.active) continue;
 
             // Fan the SAME pre-roll history out to every destination (primary
             // + backup + all mirrors) exactly like the live drain does, so all
@@ -295,7 +298,7 @@ namespace zynforge
             // short).
             auto fanOut = [&w] (const float* const* arr, int chans, int got) noexcept
             {
-                if (w.writer->writeFromFloatArrays (arr, chans, got))
+                if (w.writer != nullptr && w.writer->writeFromFloatArrays (arr, chans, got))
                 {
                     w.bytesWrittenPrimary += (juce::int64) got * chans * w.bytesPerSamplePrimary;
                     w.totalSamplesPrimary += got;
@@ -770,6 +773,12 @@ namespace zynforge
                     m.partFiles.add (mFile.getFileName());
                 w.mirrors.push_back (std::move (m));
             }
+
+            // This channel opened (or attempted) real destinations, so it
+            // participates in the take and MUST keep draining even if its
+            // primary later fails -- see WriterChannel::active. Empty R slots
+            // and unarmed/bus channels `continue`d above and stay inactive.
+            w.active = true;
 
             writers.push_back (std::move (w));
 
@@ -1600,7 +1609,12 @@ namespace zynforge
         {
             auto& cf = *fifos[i];
             auto& w  = writers[i];
-            if (w.writer == nullptr) continue;
+            // Skip only channels that don't participate in the take (empty
+            // stereo-R slots, unarmed/bus). A participating channel with a
+            // failed (nulled) primary MUST still drain so its backup + mirrors
+            // keep capturing and its FIFO doesn't overflow -- the failover
+            // guarantee. Each write below is already individually null-guarded.
+            if (! w.active) continue;
 
             // Track FIFO occupancy so the dashboard can warn the engineer
             // BEFORE samples are dropped -- at 80%+ the disk is falling
@@ -1642,6 +1656,8 @@ namespace zynforge
                         wc.bytesWrittenPrimary = 0;
                         if (wc.writer != nullptr)
                             wc.partFilesPrimary.add (nextFile.getFileName());
+                        else
+                            primaryFailed.store (true, std::memory_order_relaxed);   // next part wouldn't open (disk full at ceiling)
                     }
                 }
                 if (wc.backupWriter != nullptr)
@@ -1662,6 +1678,8 @@ namespace zynforge
                         wc.bytesWrittenBackup = 0;
                         if (wc.backupWriter != nullptr)
                             wc.partFilesBackup.add (nextFile.getFileName());
+                        else
+                            backupFailed.store (true, std::memory_order_relaxed);
                     }
                 }
                 // Mirror writers -- same per-destination roll logic.
@@ -1683,6 +1701,8 @@ namespace zynforge
                         m.bytesWritten = 0;
                         if (m.writer != nullptr)
                             m.partFiles.add (nextFile.getFileName());
+                        else
+                            m.failed = true;   // next mirror part wouldn't open
                     }
                 }
             };

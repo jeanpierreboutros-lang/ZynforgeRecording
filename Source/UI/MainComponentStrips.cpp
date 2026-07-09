@@ -308,6 +308,14 @@ void MainComponent::deleteSelectedStrips()
 {
     if (selectedLogical.empty() || engine.isRecording()) return;
 
+    // Every strip is rebuilt after this multi-remove, and removeStripAt frees
+    // TrackStates + shifts indices as it goes. Condemn ALL current strips now
+    // (stop their strip/meter/spectrum timers) so none samples a TrackState
+    // that's about to be freed -- the single-delete path does the same via
+    // invalidate(), but the bulk path skipped it (a meter UAF).
+    for (auto& s : strips)
+        if (s != nullptr) s->invalidate();
+
     // Delete from the highest index down so earlier indices stay valid.
     std::vector<int> sorted (selectedLogical.begin(), selectedLogical.end());
     std::sort (sorted.rbegin(), sorted.rend());

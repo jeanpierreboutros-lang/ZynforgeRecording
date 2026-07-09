@@ -9,13 +9,33 @@ namespace zynforge
 {
     namespace
     {
-        class MeterbridgeContent final : public juce::Component
+        class MeterbridgeContent final : public juce::Component,
+                                         private juce::Timer
         {
         public:
             explicit MeterbridgeContent (AudioEngine& eng) : engine (eng)
             {
                 rebuild();
+                lastGen = engine.getRecorder().getTrackGeneration();
                 setSize (juce::jmax (640, (int) meters.size() * 60 + 24), 380);
+                // Watch for track-set changes. Each meter holds a TrackState&
+                // that removeStripAt/setStripCount frees; without this rebuild
+                // the bridge polled freed memory for the life of the window
+                // (garbage meters or a crash). This is a floating window with
+                // two launch paths, one of which stores no pointer, so it must
+                // self-heal rather than rely on the owner to reap it.
+                startTimerHz (12);
+            }
+
+            void timerCallback() override
+            {
+                const int gen = engine.getRecorder().getTrackGeneration();
+                if (gen != lastGen)
+                {
+                    lastGen = gen;
+                    rebuild();      // drop stale meters, rebind to live TrackStates
+                    repaint();
+                }
             }
 
             void rebuild()
@@ -96,6 +116,7 @@ namespace zynforge
 
         private:
             AudioEngine& engine;
+            int          lastGen { 0 };
             std::vector<std::unique_ptr<LedMeter>>    meters;
             std::vector<std::unique_ptr<juce::Label>> names;
             // Click anywhere outside the meterbridge → it closes itself.

@@ -41,6 +41,17 @@ int MainComponent::openSessionFolder (const juce::File& dir)
     // come back.
     if (n > 0 && engine.getRecorder().getNumTracks() < n)
         engine.setStripCount (n);
+    // The click strip's index is SESSION-scoped. Reset it and re-detect from
+    // the just-loaded session, so a stale index carried over from a previous
+    // session can never deleteFile()/overwrite THIS session's Track_NN.wav on
+    // a tempo change -- and so tempo refresh keeps working when reopening a
+    // session that already contains a "Click" strip.
+    clickTrackIndex = -1;
+    {
+        auto& rec = engine.getRecorder();
+        for (int i = 0; i < rec.getNumTracks(); ++i)
+            if (rec.getTrack (i).getNameThreadSafe() == "Click") { clickTrackIndex = i; break; }
+    }
     lastTrackCount = -1;                      // force a strip rebuild on the next tick
     undoManager.clearUndoHistory();           // a fresh session starts with a clean undo stack
     rebaselineMixerUndo();                    // don't record the load itself as a mixer undo step
@@ -105,6 +116,7 @@ void MainComponent::closeSession()
 
             self->cues.clear();
             self->currentCueIndex = -1;
+            self->clickTrackIndex = -1;           // session-scoped; must not survive a close
             self->undoManager.clearUndoHistory();
             self->lastTrackCount = -1;            // force a strip rebuild (now empty)
             self->updateTransportLabels();
@@ -296,6 +308,7 @@ int MainComponent::exportTracksTo (const juce::File& destDir,
 
     zynforge::TrackExporter exporter;
     int succeeded = 0;
+    int attempted = 0;
     juce::String firstError;
 
     auto findTrackFile = [&] (int index1Based) -> juce::File
@@ -318,8 +331,13 @@ int MainComponent::exportTracksTo (const juce::File& destDir,
 
         auto& trackState = rec.getTrack (i);
         const bool stereo = trackState.isStereo.load (std::memory_order_relaxed);
+        // Replace '.' too: the exporter appends the extension via
+        // withFileExtension, which treats a name like "Out 2.1" as if ".1"
+        // were the extension -- so "Out 2.1" and "Out 2.2" both collapsed to
+        // "...Out 2.wav" and the second export silently overwrote the first.
         const auto safeName = trackState.name.replaceCharacter ('/', '_')
-                                              .replaceCharacter ('\\', '_');
+                                              .replaceCharacter ('\\', '_')
+                                              .replaceCharacter ('.', '_');
         const auto baseName = juce::String::formatted ("Track_%02d - ", i + 1) + safeName;
         const auto destStem = destDir.getChildFile (baseName);
 
@@ -353,12 +371,22 @@ int MainComponent::exportTracksTo (const juce::File& destDir,
                 ok = exporter.exportTrack (src, destStem, opts, err);
         }
 
+        ++attempted;
         if (ok) ++succeeded;
         else if (firstError.isEmpty() && err.isNotEmpty()) firstError = err;
     }
 
+    // Surface PARTIAL failures too -- e.g. the destination runs out of space
+    // mid-batch. Previously only an all-tracks-failed run reported anything, so
+    // a run that wrote 10 of 32 files still read as success and shipped an
+    // incomplete deliverable. Callers read lastExportFailures to warn.
+    lastExportFailures = juce::jmax (0, attempted - succeeded);
     if (succeeded == 0 && firstError.isNotEmpty())
         showStatus ("Export failed: " + firstError);
+    else if (lastExportFailures > 0)
+        showStatus ("Export INCOMPLETE: " + juce::String (lastExportFailures)
+                    + " of " + juce::String (attempted) + " failed"
+                    + (firstError.isNotEmpty() ? " (" + firstError + ")" : ""));
 
     return succeeded;
 }
@@ -773,7 +801,8 @@ void MainComponent::onExportAllTracks()
 
             showStatus ("Exporting " + juce::String ((int) all.size()) + " tracks...");
             const int n = exportTracksTo (dest, all, chosenOpts);
-            showStatus ("Exported " + juce::String (n) + " tracks -> " + dest.getFileName());
+            if (lastExportFailures == 0)   // else exportTracksTo already showed the INCOMPLETE warning
+                showStatus ("Exported " + juce::String (n) + " tracks -> " + dest.getFileName());
         });
     });
 }
@@ -885,9 +914,10 @@ void MainComponent::onExportIndividualTracks()
                 showStatus ("Exporting " + juce::String ((int) chosenTracks.size())
                             + " track(s)...");
                 const int done = exportTracksTo (dest, chosenTracks, chosenOpts);
-                showStatus (done > 0
-                            ? "Exported " + juce::String (done) + " track(s) -> " + dest.getFileName()
-                            : "Export failed");
+                if (lastExportFailures == 0)   // else exportTracksTo showed the INCOMPLETE warning
+                    showStatus (done > 0
+                                ? "Exported " + juce::String (done) + " track(s) -> " + dest.getFileName()
+                                : "Export failed");
             });
         });
     });
@@ -1322,6 +1352,11 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
     // flags, VCA assignments). Without this, a hard-pan from last
     // weekend's show silently ports over to a new band.
     engine.clearAllStripOverrides();
+
+    // A brand-new session has no click strip yet; drop any index carried
+    // over from the previous session so a tempo change can't delete/overwrite
+    // this session's Track_NN.wav (the stale-clickTrackIndex data-loss bug).
+    clickTrackIndex = -1;
 
     // Resolve a safe folder name even if the engineer typed something
     // with slashes / colons in the picker.

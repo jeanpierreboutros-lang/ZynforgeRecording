@@ -19,26 +19,79 @@
 
 namespace zynforge
 {
-    void AudioEngine::seedDefaultClips()
+    void AudioEngine::seedDefaultClips (bool preserveEdits)
     {
         // Give every track a single full-range clip so the EDIT tools
         // (Trim / Grabber / Fade / Selector / Scrubber) have something
         // to grab. Without an active clip list, TrackRow's clip-edit
         // hit-test short-circuits and the tools feel dead.
+        //
+        // preserveEdits guards against silently wiping comp takes / splits /
+        // fades on a SAME-session reload (stop-recording, strip reorder). Only
+        // the true session-OPEN path passes false, and its .zfproj restore
+        // overwrites these seeds anyway. See the seedDefaultClips ADR.
         const int n = player.getNumTracks();
-        if (n <= 0) return;
-        trackClips.clear();
-        trackClips.resize ((size_t) n);
-        trackPlaylists.clear();
+        if (n <= 0)
+        {
+            if (! preserveEdits) { trackClips.clear(); trackPlaylists.clear(); }
+            return;
+        }
+
+        // A track is "edited" (must be preserved) when it has been comped
+        // (>1 take) or its single clip has been shaped away from the plain
+        // full-range default (split, trimmed, faded, gained, muted, moved,
+        // or repointed at a cross-track file).
+        const auto isPlainDefault = [this] (const Clip& c, int i)
+        {
+            const auto fileLen = player.getTrackLengthSamples (i);
+            return c.timelineStartSamples == 0
+                && c.fileStartSamples     == 0
+                && c.fadeInSamples        == 0
+                && c.fadeOutSamples       == 0
+                && ! c.muted
+                && std::abs (c.gainDb) < 0.001f
+                && c.audioFile == juce::File()
+                && (fileLen <= 0 || c.fileLengthSamples == fileLen);
+        };
+        const auto trackIsEdited = [&] (int i) -> bool
+        {
+            if (i >= (int) trackPlaylists.size() || i >= (int) trackClips.size()) return false;
+            if (trackPlaylists[(size_t) i].takes.size() > 1) return true;
+            const auto& list = trackClips[(size_t) i];
+            if (list.empty())    return false;   // nothing worth preserving
+            if (list.size() > 1) return true;    // split into multiple clips
+            return ! isPlainDefault (list[0], i);
+        };
+
+        if (! preserveEdits)
+        {
+            trackClips.clear();
+            trackPlaylists.clear();
+        }
+        trackClips.resize    ((size_t) n);
         trackPlaylists.resize ((size_t) n);
+
         for (int i = 0; i < n; ++i)
         {
+            if (preserveEdits && trackIsEdited (i))
+            {
+                // Keep the engineer's edits verbatim. player.loadSession
+                // cleared the player-side clip lists, so republish what we
+                // already hold rather than reseeding a default over them.
+                player.setTrackClips (i, trackClips[(size_t) i]);
+                continue;
+            }
+
             Clip c;
             c.name                 = juce::String::formatted ("Track_%02d", i + 1);
             c.timelineStartSamples = 0;
             c.fileStartSamples     = 0;
             c.fileLengthSamples    = player.getTrackLengthSamples (i);
-            if (c.fileLengthSamples <= 0) continue;
+
+            trackClips[(size_t) i].clear();
+            trackPlaylists[(size_t) i] = {};
+            if (c.fileLengthSamples <= 0) continue;   // no audio -> whole-file fallback
+
             trackClips[(size_t) i].push_back (c);
             player.setTrackClips (i, trackClips[(size_t) i]);
 

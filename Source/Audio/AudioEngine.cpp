@@ -203,6 +203,14 @@ namespace zynforge
 
     void AudioEngine::stopRecording()
     {
+        // Fail closed when not recording. Otherwise a stray transport-stop
+        // from a network source (OSC/console recordStop, a tablet double-tap)
+        // would still run the whole tail below -- reload the last-recorded
+        // session, reseed clips, yank the playhead -- destroying clip/comp
+        // edits on a session that is merely idle or playing back. The UI STOP
+        // button is already gated, but the engine entry point was not.
+        if (! recorder.isRecording()) return;
+
         const auto sessionDir = recorder.getActiveSessionDir();
         // Where the take actually ends, captured BEFORE stopRecording()
         // resets the recorder's base offset to 0. Live multitrack recorders
@@ -231,7 +239,11 @@ namespace zynforge
         {
             player.loadSession (sessionDir);
             setActiveSessionDir (sessionDir);
-            seedDefaultClips();
+            // Preserve every comp take / split / fade the engineer made
+            // during soundcheck. A stop after a punch or continue must not
+            // wipe edits on OTHER tracks; only the just-captured track's
+            // plain default clip is refreshed to the new take length.
+            seedDefaultClips (/*preserveEdits*/ true);
             // loadSession() rewinds the player to 0; park the playhead back
             // at the take's end so the engineer can hit RECORD again and
             // continue seamlessly (or PLAY to review from this point).
@@ -562,14 +574,14 @@ namespace zynforge
         appProps->saveIfNeeded();
     }
 
-    int AudioEngine::loadSession (const juce::File& sessionDir)
+    int AudioEngine::loadSession (const juce::File& sessionDir, bool preserveEdits)
     {
         const auto n = player.loadSession (sessionDir);
         if (n > 0)
         {
             markers.setContext (sessionDir, player.getSampleRate());
             rememberRecentSession (sessionDir);
-            seedDefaultClips();
+            seedDefaultClips (preserveEdits);
             invalidateTransientCache();   // different session = different audio
             // (Background transient-cache warmup was attempted here
             // earlier but launched a detached lambda capturing
@@ -1340,8 +1352,26 @@ namespace zynforge
         const auto arA = ta.armed .load(),   arB = tb.armed .load();
         ta.armed .store (arB); tb.armed .store (arA);
 
-        // ── Re-load player so it picks up the renamed audio files ───
-        if (sessionDir.isDirectory()) loadSession (sessionDir);
+        // ── Swap the engine-side clip lists + comp playlists so every
+        //    split / fade / take follows its audio to the new index. ──
+        {
+            const int hi = juce::jmax (a, b);
+            if (hi >= (int) trackClips.size())     trackClips.resize     ((size_t) hi + 1);
+            if (hi >= (int) trackPlaylists.size()) trackPlaylists.resize ((size_t) hi + 1);
+            std::swap (trackClips[(size_t) a],     trackClips[(size_t) b]);
+            std::swap (trackPlaylists[(size_t) a], trackPlaylists[(size_t) b]);
+        }
+
+        // ── Re-load player so it picks up the renamed audio files, then
+        //    republish clips PRESERVING edits. Never the wiping session-open
+        //    loadSession() here -- that reseeded defaults over every track's
+        //    comps/splits/fades (the reorder-wipe blocker). ──
+        if (sessionDir.isDirectory())
+        {
+            player.loadSession (sessionDir);
+            invalidateTransientCache();
+            seedDefaultClips (/*preserveEdits*/ true);
+        }
         return true;
     }
 
@@ -2148,8 +2178,21 @@ namespace zynforge
             const float* srcAudio = playerScratch.getReadPointer (i);
             if (srcAudio == nullptr) continue;
 
-            // Strip's effective gain for post-fader sends.
+            // Strip's effective gain for post-fader sends. A POST-fader send
+            // follows the channel mute (static + drawn mute lane) like a real
+            // console -- a muted strip's post-fader send is silent. PRE-fader
+            // sends stay independent (the point of a pre-fader monitor send).
+            // channelAudible is defined further down, so evaluate the mute
+            // inline here; default 0 so this reflects only the lane.
             const float stripGain = juce::Decibels::decibelsToGain (effectiveGainDb (i), -60.0f);
+            bool stripMuted = src.muted.load (std::memory_order_relaxed);
+            if (! stripMuted && autoPlayPos >= 0)
+            {
+                const int autoCh = (i > 0 && recorder.getTrack (i - 1).isStereo.load (std::memory_order_relaxed))
+                                     ? i - 1 : i;
+                stripMuted = automationValueAt (autoCh, AutomationParam::Mute, autoPlayPos, 0.0f) > 0.5f;
+            }
+            const float postGain = stripMuted ? 0.0f : stripGain;
 
             for (int s = 0; s < TrackState::kNumSends; ++s)
             {
@@ -2159,7 +2202,7 @@ namespace zynforge
                 if (! recorder.getTrack (bus).isBus.load (std::memory_order_relaxed)) continue;
 
                 const float sendDb = snd.levelDb.load (std::memory_order_relaxed);
-                const float post   = snd.postFader.load (std::memory_order_relaxed) ? stripGain : 1.0f;
+                const float post   = snd.postFader.load (std::memory_order_relaxed) ? postGain : 1.0f;
                 const float gain = juce::Decibels::decibelsToGain (sendDb, -60.0f) * post;
                 if (gain < 0.00001f) continue;
 
@@ -2224,6 +2267,20 @@ namespace zynforge
         auto channelAudible = [&] (int i) -> bool
         {
             auto& t = recorder.getTrack (i);
+            // Drawn mute-automation silences the strip EVERYWHERE during
+            // playback -- routed hardware outputs, aux sends, and the stream
+            // bus, not just the monitor mix (which checked the lane separately).
+            // Previously effectiveGainDb folded in only Volume automation, so a
+            // mute lane did nothing on a session routed straight to console
+            // channels. Stereo pairs read the L track's lane. Default 0 so this
+            // reflects only the lane; the static mute is handled below.
+            if (autoPlayPos >= 0)
+            {
+                const int autoCh = (i > 0 && recorder.getTrack (i - 1).isStereo.load (std::memory_order_relaxed))
+                                     ? i - 1 : i;
+                if (automationValueAt (autoCh, AutomationParam::Mute, autoPlayPos, 0.0f) > 0.5f)
+                    return false;
+            }
             const int g = t.vcaGroup.load (std::memory_order_relaxed);
             if (g >= 0 && g < kNumVcas)
             {
@@ -2312,7 +2369,13 @@ namespace zynforge
 
                 const float dB   = effectiveGainDb (i);
                 const double gain = (double) juce::Decibels::decibelsToGain (dB, -60.0f);
-                const float pan  = juce::jlimit (-1.0f, 1.0f, t.pan.load (std::memory_order_relaxed));
+                // Honour the Pan automation lane on the stream bus too (it read
+                // the static pan only, so a drawn pan move didn't reach the
+                // stream/broadcast feed the way it reached the monitor mix).
+                float panV = t.pan.load (std::memory_order_relaxed);
+                if (autoPlayPos >= 0)
+                    panV = automationValueAt (i, AutomationParam::Pan, autoPlayPos, panV);
+                const float pan  = juce::jlimit (-1.0f, 1.0f, panV);
                 const double panNorm = ((double) pan + 1.0) * 0.5;
                 const double gL = gain * std::cos (panNorm * juce::MathConstants<double>::halfPi);
                 const double gR = gain * std::sin (panNorm * juce::MathConstants<double>::halfPi);

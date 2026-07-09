@@ -182,6 +182,11 @@ namespace zynforge
         bool reorderArmed  { false };
         bool reorderActive { false };
         int  reorderStartY { 0 };
+        // The dragged content's CURRENT physical index -- it walks with the
+        // audio as each swap moves it, so a multi-row drag keeps stepping in
+        // one direction instead of oscillating around the origin row.
+        int         reorderLiveIndex { -1 };
+        juce::int64 reorderStartPos  { 0 };
 
         TrackRow (int trackIdx,
                   bool isStereoPair,
@@ -2301,9 +2306,11 @@ namespace zynforge
             // picker (preserves the legacy 'click swatch = colour').
             if (inSwatch (e.x))
             {
-                reorderArmed  = true;
-                reorderActive = false;
-                reorderStartY = e.y;
+                reorderArmed     = true;
+                reorderActive    = false;
+                reorderStartY    = e.y;
+                reorderLiveIndex = index;
+                reorderStartPos  = engine.getPlayer().getPositionSamples();
                 return;
             }
 
@@ -2771,26 +2778,33 @@ namespace zynforge
                     const int dir = delta > 0 ? +1 : -1;
                     // engine.swapTracks does an ADJACENT swap. For a
                     // stereo strip, swap both halves together so the
-                    // logical pair stays linked.
-                    const auto& t = engine.getRecorder().getTrack (index);
-                    const bool s  = t.isStereo.load() && (index + 1 < engine.getRecorder().getNumTracks());
+                    // logical pair stays linked. Walk from the dragged
+                    // content's CURRENT index (reorderLiveIndex), not the
+                    // row's fixed `index` -- otherwise the second crossing
+                    // swaps the same pair straight back (the oscillation bug).
+                    if (reorderLiveIndex < 0) reorderLiveIndex = index;
+                    const int cur = reorderLiveIndex;
+                    const auto& t = engine.getRecorder().getTrack (cur);
+                    const bool s  = t.isStereo.load() && (cur + 1 < engine.getRecorder().getNumTracks());
                     const int step = s ? 2 : 1;
-                    const int other = index + dir * step;
+                    const int other = cur + dir * step;
                     if (other >= 0 && other + (s ? 1 : 0) < engine.getRecorder().getNumTracks())
                     {
                         if (dir > 0)
                         {
-                            engine.swapTracks (index, other);
-                            if (s) engine.swapTracks (index + 1, other + 1);
+                            engine.swapTracks (cur, other);
+                            if (s) engine.swapTracks (cur + 1, other + 1);
                         }
                         else
                         {
-                            engine.swapTracks (other, index);
-                            if (s) engine.swapTracks (other + 1, index + 1);
+                            engine.swapTracks (other, cur);
+                            if (s) engine.swapTracks (other + 1, cur + 1);
                         }
-                        // Stay armed; reset origin so the next row
-                        // crossing fires again.
-                        reorderStartY = e.y;
+                        // The dragged content now lives at `other`; keep
+                        // following it. Stay armed; reset origin so the next
+                        // row crossing fires again.
+                        reorderLiveIndex = other;
+                        reorderStartY    = e.y;
                     }
                 }
                 return;
@@ -3058,20 +3072,17 @@ namespace zynforge
             }
             else if (reorderActive)
             {
-                // Swap renamed the on-disk Track_NN.wav files; reload
-                // the session so the SessionPlayer's open readers map
-                // to the new file order. Refusal-during-playback is
-                // checked above, so this is always safe to call here.
-                const auto dir = engine.getActiveSessionDir();
-                if (dir.isDirectory())
-                {
-                    const auto pos = engine.getPlayer().getPositionSamples();
-                    engine.loadSession (dir);
-                    engine.getPlayer().setPositionSamples (pos);
-                }
+                // engine.swapTracks already renamed the Track_NN.wav files
+                // AND reloaded the player readers into the new order while
+                // PRESERVING every clip/comp edit -- do NOT call the wiping
+                // loadSession() here again (that was the reorder-wipe blocker
+                // and a redundant second reload). Each swap rewound the
+                // player to 0; restore the pre-drag playhead.
+                engine.getPlayer().setPositionSamples (reorderStartPos);
             }
-            reorderArmed  = false;
-            reorderActive = false;
+            reorderArmed     = false;
+            reorderActive    = false;
+            reorderLiveIndex = -1;
 
             // Click (no drag) on a clip body selects it so Delete /
             // Duplicate / Nudge can act on it. Shift+click toggles the clip

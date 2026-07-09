@@ -27,6 +27,13 @@ namespace zynforge
         void paint (juce::Graphics&) override;
         void mouseDown (const juce::MouseEvent&) override;
 
+        // Stop reading the (about-to-be-freed) TrackState. Called from
+        // ChannelStrip::invalidate() when the owning strip is condemned but
+        // not yet destroyed -- the meter's own timer would otherwise keep
+        // sampling freed memory for up to a rebuild interval. paint() reads
+        // only smoothed member copies, so it stays safe after detach.
+        void detach() noexcept { detached = true; stopTimer(); }
+
     private:
         void timerCallback() override;
         void paintBar (juce::Graphics& g, juce::Rectangle<float> r,
@@ -40,5 +47,6 @@ namespace zynforge
         float displayPeakR      { 0.0f };
         float displayRmsR       { 0.0f };
         bool  showClip          { false };
+        bool  detached          { false };
     };
 }

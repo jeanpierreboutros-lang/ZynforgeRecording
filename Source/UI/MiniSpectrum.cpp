@@ -13,6 +13,7 @@ namespace zynforge
 
     void MiniSpectrum::timerCallback()
     {
+        if (detached) return;   // owning strip condemned -- state is freed
         // Throttle to ~8 Hz when the transport is stopped and this strip
         // isn't armed/monitored -- matches the LED meter so the per-strip
         // refresh load drops while idle, snapping back to 24 Hz on

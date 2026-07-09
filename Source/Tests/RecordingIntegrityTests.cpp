@@ -253,6 +253,64 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
+            beginTest ("swapTracks PRESERVES clip edits -- they follow the audio, never wiped");
+            {
+                // Reproduces the reorder-wipe blocker (B2): reordering strips
+                // used to reload the session via the wiping seedDefaultClips
+                // path, silently destroying every split/fade/comp on ALL tracks.
+                auto dir = recordSession (numCh, numBlocks, block);
+                AudioEngine eng;
+                eng.setSnapMode (AudioEngine::SnapMode::Off);
+                expect (eng.loadSession (dir) > 0, "session failed to load");
+                eng.setStripCount (numCh);       // size the recorder (openSessionFolder does this in-app)
+                eng.setActiveSessionDir (dir);   // swapTracks needs the dir to rename + reload
+
+                // Split track 0 -> two clips; track 1 stays the default single clip.
+                eng.getPlayer().setPositionSamples (total / 2);
+                expect (eng.splitTrackAtPlayhead (0), "split failed");
+                expectEquals ((int) eng.clipsFor (0).size(), 2, "precondition: track 0 split");
+                expectEquals ((int) eng.clipsFor (1).size(), 1, "precondition: track 1 unedited");
+
+                // Reorder 0<->1. The split MUST follow the audio to index 1.
+                expect (eng.swapTracks (0, 1), "swapTracks failed");
+                expectEquals ((int) eng.clipsFor (1).size(), 2,
+                              "clip edit was WIPED by the reorder (B2 regression)");
+                expectEquals ((int) eng.clipsFor (0).size(), 1,
+                              "swapped-in unedited track should be a single default clip");
+
+                dir.deleteRecursively();
+            }
+
+            beginTest ("splitClipAt: hard cut at the seam, right half inherits + clamps fades");
+            {
+                // ClipModel.h splitClipAt fade correctness (High): the left half
+                // must NOT fade to silence into the cut, and the right half must
+                // inherit the ORIGINAL fade-out clamped to its new length.
+                std::vector<Clip> list;
+                Clip c;
+                c.fileLengthSamples = 1000;
+                c.fadeInSamples     = 100;
+                c.fadeOutSamples    = 200;   // belongs to the ORIGINAL clip end
+                list.push_back (c);
+
+                expect (splitClipAt (list, 0, 600), "split should land inside the clip");
+                expectEquals ((int) list.size(), 2);
+                expectEquals (list[0].fileLengthSamples, (juce::int64) 600);
+                expectEquals (list[0].fadeInSamples,  (juce::int64) 100, "left keeps its fade-in");
+                expectEquals (list[0].fadeOutSamples, (juce::int64) 0,   "left must hard-cut at the seam");
+                expectEquals (list[1].fileLengthSamples, (juce::int64) 400);
+                expectEquals (list[1].fadeInSamples,  (juce::int64) 0,   "right must hard-cut in");
+                expectEquals (list[1].fadeOutSamples, (juce::int64) 200, "right inherits the end fade-out");
+
+                // Fade-out longer than the right half must clamp (no negative start).
+                std::vector<Clip> list2;
+                Clip c2; c2.fileLengthSamples = 1000; c2.fadeOutSamples = 500;
+                list2.push_back (c2);
+                expect (splitClipAt (list2, 0, 800), "split should land inside");
+                expectEquals (list2[1].fadeOutSamples, (juce::int64) 200,
+                              "right fade-out must clamp to its new length");
+            }
+
             beginTest ("Crop to range -> keeps only the range, shifted to t=0, undoable");
             {
                 auto dir = recordSession (numCh, numBlocks, block);

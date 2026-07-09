@@ -245,7 +245,13 @@ void MainComponent::jumpToCue (int index)
         // Click track is tempo-locked -- regenerate on tempo change so
         // the metronome lines up with the recalled cue.
         if (clickTrackIndex >= 0 && std::abs (oldBpm - cue.tempoBpm) > 0.05f)
+        {
             generateOrRefreshClickTrack();
+            // generateOrRefreshClickTrack reloads the session, which rewinds
+            // the player to 0 -- re-seek so the cue jump lands ON the cue and
+            // not back at 0:00.
+            player.setPositionSamples (cue.samplePos);
+        }
     }
 
     // Per-cue tempo curve -- install the cue's tempo map (offsets
@@ -299,6 +305,11 @@ void MainComponent::jumpToCue (int index)
         return;
     }
 
+    // Cancel any in-flight fade ramp from a previous Fade cue -- otherwise
+    // updateCueRamp keeps interpolating this snap's tracks back toward the
+    // OLD cue's targets every tick, and the snap we're about to apply loses.
+    cueRamp.active = false;
+
     // Recall the mixer state captured with this cue: gain / pan /
     // input + output routing / mute / solo / mon / arm -- for every
     // strip the cue knows about. Strips beyond the snapshot length
@@ -326,6 +337,12 @@ void MainComponent::jumpToCue (int index)
         return fallbackIdx < total ? fallbackIdx : -1;
     };
 
+    // Arm state + input routing decide what is being CAPTURED. A cue recall
+    // must never change them mid-record -- a cue saved with a track disarmed
+    // (or pointed at a different input) would silently stop / re-source capture
+    // on that track for the rest of the take. Mix state (gain/pan/mute/solo/
+    // monitor/output) is always safe to move.
+    const bool recording = engine.isRecording();
     const int n = (int) cue.strips.size();
     for (int i = 0; i < n; ++i)
     {
@@ -335,21 +352,24 @@ void MainComponent::jumpToCue (int index)
 
         engine.setTrackGainDbRamped (target, s.gainDb, kCueRecallSeconds);
         engine.setTrackPanRamped    (target, s.pan,    kCueRecallSeconds);
-        engine.setTrackInputRouting (target, s.inputRouting);
         engine.setTrackOutputRouting(target, s.outputRouting);
+        if (! recording)
+            engine.setTrackInputRouting (target, s.inputRouting);
 
         auto& t = rec.getTrack (target);
         t.muted  .store (s.muted,   std::memory_order_relaxed);
         t.soloed .store (s.soloed,  std::memory_order_relaxed);
         t.monitor.store (s.monitor, std::memory_order_relaxed);
-        t.armed  .store (s.armed,   std::memory_order_relaxed);
+        if (! recording)
+            t.armed.store (s.armed, std::memory_order_relaxed);
     }
     lastTrackCount = -1;   // force strip refresh so combos + buttons redraw
 
     updateTransportLabels();
     showStatus ("Cue " + juce::String (index + 1) + " '" + cue.name + "' recalled -- "
                 + juce::String (n) + " strips, " + juce::String (autoPts) + " automation pts"
-                + (autoPts > 0 ? " (plays during transport)" : ""));
+                + (autoPts > 0 ? " (plays during transport)" : "")
+                + (recording ? " (arm + input held -- recording)" : ""));
 }
 
 void MainComponent::promptCueName (const juce::String& title,
@@ -517,20 +537,24 @@ void MainComponent::startCueRampTo (const zynforge::SetlistBar::Cue& cue)
     }
 
     // Other state (mute / solo / mon / arm / routing / tempo) snaps
-    // immediately -- only continuous parameters interpolate.
+    // immediately -- only continuous parameters interpolate. Arm + input
+    // routing are held while recording (they define what is captured).
+    const bool recording = engine.isRecording();
     if (cue.tempoBpm > 0.0f) { engine.setSessionTempoBpm (cue.tempoBpm); tempoBar.setBpm (cue.tempoBpm); }
     for (int i = 0; i < snapN; ++i)
     {
         const auto& s = cue.strips[(size_t) i];
         const int target = resolveTarget (s, i);
         if (target < 0) continue;
-        engine.setTrackInputRouting (target, s.inputRouting);
         engine.setTrackOutputRouting(target, s.outputRouting);
+        if (! recording)
+            engine.setTrackInputRouting (target, s.inputRouting);
         auto& t = rec.getTrack (target);
         t.muted  .store (s.muted,   std::memory_order_relaxed);
         t.soloed .store (s.soloed,  std::memory_order_relaxed);
         t.monitor.store (s.monitor, std::memory_order_relaxed);
-        t.armed  .store (s.armed,   std::memory_order_relaxed);
+        if (! recording)
+            t.armed.store (s.armed, std::memory_order_relaxed);
     }
 
     const float bpm = engine.getSessionTempoBpm();

@@ -458,6 +458,7 @@ private:
     // overwrites it in place rather than piling up tracks.
     void generateOrRefreshClickTrack();
     int  clickTrackIndex { -1 };   // -1 = not yet created in this session
+    int  lastExportFailures { 0 }; // tracks failed in the last exportTracksTo (partial-failure warning)
     void promptCueName (const juce::String& title,
                         const juce::String& initial,
                         std::function<void (const juce::String&)> onAccept);

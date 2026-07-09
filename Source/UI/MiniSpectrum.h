@@ -22,6 +22,12 @@ namespace zynforge
 
         void paint (juce::Graphics&) override;
 
+        // Stop reading the (about-to-be-freed) TrackState + its FFT snapshot.
+        // Called from ChannelStrip::invalidate() when the owning strip is
+        // condemned but not yet destroyed. paint() reads only `bins`, so it
+        // stays safe after detach.
+        void detach() noexcept { detached = true; stopTimer(); }
+
     private:
         void timerCallback() override;
 
@@ -40,5 +46,6 @@ namespace zynforge
         // idle (no FFT, no repaint) once the bars have decayed to zero on a
         // silent strip -- this is the per-strip idle-CPU saver.
         bool displayActive { false };
+        bool detached      { false };
     };
 }

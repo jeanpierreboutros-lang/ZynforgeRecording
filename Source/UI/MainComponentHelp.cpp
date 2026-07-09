@@ -575,9 +575,14 @@ void MainComponent::offerSessionRecovery()
         [self] (const juce::File& dir)
         {
             if (self == nullptr) return;
-            self->engine.loadSession (dir);
+            // Route through the CANONICAL session-open funnel, not bare
+            // engine.loadSession: openSessionFolder pins the active dir and
+            // restores the mixer / setlist / UI for the RECOVERED session.
+            // Bare loadSession left the previous session's mixer + cues in
+            // place, so the next Save/autosave wrote them into the recovered
+            // session's files -- corrupting exactly what we recovered.
+            self->openSessionFolder (dir);
             self->showStatus ("Recovered: " + dir.getFileName());
             self->updateTransportLabels();
-            self->lastTrackCount = -1;
         });
 }

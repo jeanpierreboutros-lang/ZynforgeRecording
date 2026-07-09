@@ -145,7 +145,11 @@ namespace zynforge
         void setRecordStereoMix (bool enabled);
         bool getRecordStereoMix() const noexcept           { return recordStereoMixFlag.load(); }
 
-        int  loadSession (const juce::File& sessionDir);
+        // Load a session's audio into the player + seed clips. preserveEdits
+        // is false for a genuine session OPEN (wipe stale clips; the caller's
+        // .zfproj playlist restore repopulates) and true for a SAME-session
+        // reload (click-track regen) that must keep the engineer's comps.
+        int  loadSession (const juce::File& sessionDir, bool preserveEdits = false);
 
         // Per-SESSION strip mix state: name, colour, gain, pan, mute, solo,
         // monitor, arm, input/output routing, stereo flag, VCA + edit group.
@@ -159,6 +163,12 @@ namespace zynforge
         void loadSessionMixFrom (const juce::File& sessionDir);
         void startPlayback()
         {
+            // Never play back on top of a live take. This is a recorder, not
+            // a DAW -- summing the previous take into the monitor/master mid-
+            // record is always wrong. The UI PLAY button guards this, but
+            // network/remote entry points (OSC play, MCU Play) and timecode
+            // chase reach here directly, so the guard belongs at the engine.
+            if (recorder.isRecording()) return;
             const bool wasPlaying = player.isPlaying();
             player.start();
             if (! wasPlaying) midiClockOut.sendStart();
@@ -647,7 +657,14 @@ namespace zynforge
         // Populate every track with a single full-range clip so the EDIT
         // tools have something to grab. Called after loadSession() or
         // when stopRecording() auto-loads the just-captured files.
-        void seedDefaultClips();
+        //   preserveEdits == false (session OPEN): wipe every track's clips
+        //     + comp takes and reseed defaults. The .zfproj playlist restore
+        //     that follows a real session open overwrites these anyway.
+        //   preserveEdits == true  (SAME-session reload: stop-recording,
+        //     strip reorder): keep every edited track's splits/fades/comps
+        //     verbatim and only (re)seed tracks that are still the plain
+        //     full-range default -- never silently discard edits.
+        void seedDefaultClips (bool preserveEdits = false);
         // Lazy single-track bootstrap of the above: ensure `track` has at
         // least a full-range clip. Returns false if no audio backs it.
         bool ensureClipList (int track);

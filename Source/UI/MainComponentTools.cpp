@@ -83,10 +83,21 @@ void MainComponent::generateOrRefreshClickTrack()
         return bpm;
     };
 
+    // Defence in depth: NEVER deleteFile() a slot that isn't actually the
+    // click strip. clickTrackIndex is reset per session, but if any future
+    // path leaves it stale, refuse rather than destroy a recorded take.
+    if (clickTrackIndex < 0 || clickTrackIndex >= recorder.getNumTracks()
+        || recorder.getTrack (clickTrackIndex).getNameThreadSafe() != "Click")
+    {
+        showStatus ("Click slot isn't a Click strip -- aborted to protect recordings");
+        return;
+    }
+
     const auto trackName = juce::String::formatted ("Track_%02d", clickTrackIndex + 1);
     auto dest = audioFiles.getChildFile (trackName + ".wav");
     dest.deleteFile();
 
+    bool rendered = false;
     if (auto* out = dest.createOutputStream().release())
     {
         juce::WavAudioFormat wav;
@@ -194,6 +205,17 @@ void MainComponent::generateOrRefreshClickTrack()
             writer->writeFromFloatArrays (buf.getArrayOfReadPointers(), 1, thisChunk);
             written += thisChunk;
         }
+        rendered = true;
+    }
+
+    // The output stream couldn't be opened (disk full / read-only session
+    // folder). Report the failure instead of falsely claiming success and
+    // leaving an empty click strip; the strip already exists from the
+    // first-press branch, so nothing further to undo.
+    if (! rendered)
+    {
+        showStatus ("Click track NOT generated -- couldn't write to the session folder");
+        return;
     }
 
     // Default the click track to hardware output 1 so it's audible
@@ -208,7 +230,9 @@ void MainComponent::generateOrRefreshClickTrack()
     }
     engine.setTrackInputRouting (clickTrackIndex, -1);   // no input -- playback only
 
-    engine.loadSession (sessionDir);
+    // Same-session reload to pick up the new click file -- PRESERVE every
+    // comp/split/fade edit (the default wiping open would discard them).
+    engine.loadSession (sessionDir, /*preserveEdits*/ true);
     lastTrackCount = -1;
 
     showStatus ("Click track generated at "

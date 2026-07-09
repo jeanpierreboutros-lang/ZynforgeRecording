@@ -1,4 +1,5 @@
 #include "TrackExporter.h"
+#include "MultiPartReader.h"
 
 namespace zynforge
 {
@@ -88,7 +89,15 @@ namespace zynforge
 
         if (! source.existsAsFile()) { outError = "Source not found"; return false; }
 
-        std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (source));
+        // A take can be split across continuation parts (Track_NN_partXX from
+        // continue-recording or auto-split). Stitch them so the export contains
+        // the WHOLE take, not just part 1 -- the raw export used to silently
+        // drop everything after the first stop. Falls back to the single file
+        // if the parts have a hole (create refuses) so we still export part 1.
+        const auto parts = findTakeParts (source);
+        std::unique_ptr<juce::AudioFormatReader> reader (
+            ConcatReader::create (formatManager, parts));
+        if (reader == nullptr) reader.reset (formatManager.createReaderFor (source));
         if (reader == nullptr) { outError = "Cannot read source"; return false; }
 
         const auto channels  = (int) reader->numChannels;
@@ -157,8 +166,14 @@ namespace zynforge
         if (! sourceL.existsAsFile() || ! sourceR.existsAsFile())
         { outError = "Source not found"; return false; }
 
-        std::unique_ptr<juce::AudioFormatReader> readerL (formatManager.createReaderFor (sourceL));
-        std::unique_ptr<juce::AudioFormatReader> readerR (formatManager.createReaderFor (sourceR));
+        // Stitch each side's continuation parts (legacy two-mono-file stereo
+        // can also be multi-part), falling back to the single file on a hole.
+        std::unique_ptr<juce::AudioFormatReader> readerL (
+            ConcatReader::create (formatManager, findTakeParts (sourceL)));
+        if (readerL == nullptr) readerL.reset (formatManager.createReaderFor (sourceL));
+        std::unique_ptr<juce::AudioFormatReader> readerR (
+            ConcatReader::create (formatManager, findTakeParts (sourceR)));
+        if (readerR == nullptr) readerR.reset (formatManager.createReaderFor (sourceR));
         if (readerL == nullptr || readerR == nullptr) { outError = "Cannot read source"; return false; }
 
         const auto srcSR   = readerL->sampleRate;

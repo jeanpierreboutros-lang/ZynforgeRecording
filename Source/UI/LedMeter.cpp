@@ -22,6 +22,7 @@ namespace zynforge
 
     void LedMeter::timerCallback()
     {
+        if (detached) return;   // owning strip condemned -- state is freed
         // Throttle to ~8 Hz when the transport is stopped and this strip
         // isn't being actively watched (armed / monitored) -- the meter still
         // moves so signal-present is visible, but at a fraction of the idle
@@ -76,9 +77,17 @@ namespace zynforge
 
     void LedMeter::mouseDown (const juce::MouseEvent&)
     {
+        if (detached) return;   // owning strip condemned -- state is freed
         showClip = false;
         state.clipped  .store (false, std::memory_order_relaxed);
         state.clipCount.store (0,     std::memory_order_relaxed);
+        // Clear the stereo partner too, else the next timer tick re-latches
+        // showClip from stereoR->clipped and the clip pip can never be cleared.
+        if (stereoR != nullptr)
+        {
+            stereoR->clipped  .store (false, std::memory_order_relaxed);
+            stereoR->clipCount.store (0,     std::memory_order_relaxed);
+        }
         repaint();
     }
 

@@ -384,6 +384,16 @@ namespace zynforge
             // count, so one field governs the whole WriterChannel. 1 = mono
             // (the default, every non-stereo track), 2 = interleaved stereo.
             int          numChannels { 1 };
+
+            // Does this channel PARTICIPATE in the take (a writer was opened
+            // for it at record start)? The drain loop keys on this, NOT on
+            // `writer != nullptr`. Otherwise a primary write-failure (which
+            // nulls `writer`) is indistinguishable from a deliberately-empty
+            // stereo-R slot, and the whole channel -- backup, mirrors, FIFO
+            // drain -- is skipped for the rest of the take, silently freezing
+            // the backup the failover promise says keeps rolling. Empty R
+            // slots + unarmed/bus channels stay false and are skipped.
+            bool         active { false };
         };
 
         // Per-channel rolling history used for pre-roll. The audio thread is

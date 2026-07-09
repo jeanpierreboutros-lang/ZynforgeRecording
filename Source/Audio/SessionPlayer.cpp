@@ -63,12 +63,26 @@ namespace zynforge
         // sessions written before the named-folder refactor kept them at
         // the root, so fall back to the root scan when the subfolder is
         // empty / absent.
+        // Match every SUPPORTED audio container, not just .wav -- takes can be
+        // captured as FLAC or AIFF (user-selectable), and a .wav-only glob left
+        // those sessions loading zero tracks (no playback, no VSC, no waveforms).
+        // The extension filter also excludes .punchbase / other Track_* sidecars.
+        const auto collect = [] (const juce::File& dir) -> juce::Array<juce::File>
+        {
+            juce::Array<juce::File> out;
+            if (! dir.isDirectory()) return out;
+            for (const auto& f : dir.findChildFiles (juce::File::findFiles, false, "Track_*"))
+            {
+                const auto ext = f.getFileExtension().toLowerCase();
+                if (ext == ".wav" || ext == ".flac" || ext == ".aif" || ext == ".aiff")
+                    out.add (f);
+            }
+            return out;
+        };
         const auto audioFiles = sessionDir.getChildFile ("Audio Files");
-        auto files = audioFiles.isDirectory()
-                       ? audioFiles.findChildFiles (juce::File::findFiles, false, "Track_*.wav")
-                       : juce::Array<juce::File>();
+        auto files = collect (audioFiles);
         if (files.isEmpty())
-            files = sessionDir.findChildFiles (juce::File::findFiles, false, "Track_*.wav");
+            files = collect (sessionDir);
         files.sort();
 
         juce::int64 maxLen = 0;
@@ -384,15 +398,14 @@ namespace zynforge
             if (out == nullptr) continue;
 
             auto& t = tracks[(std::size_t) i];
-            if (t.reader == nullptr || startPos >= t.length)
-            {
-                juce::FloatVectorOperations::clear (out, numSamples);
-                continue;
-            }
 
-            // Clip-aware path: if this track has an active clip list,
-            // render only the time spans inside clips; silence elsewhere.
-            // Otherwise fall through to the legacy 'whole file' read.
+            // Resolve the authoritative clip list FIRST. A clip-authoritative
+            // track can legitimately place audio PAST its own file length (a
+            // clip dragged there, or a cross-track clip on a never-recorded
+            // strip that reads a different file), so the whole-file
+            // reader/length short-circuit below must NOT pre-silence it --
+            // doing so made the live monitor go silent exactly where the
+            // offline bounce still rendered the clip (monitor != render).
             const std::vector<Clip>* clips = nullptr;
             if (stl.isLocked()
                 && i < (int) clipsAuthoritative.size()
@@ -402,6 +415,15 @@ namespace zynforge
                 // Authoritative list -- honour it even when empty (every
                 // clip deleted => the track is silent, not whole-file).
                 clips = &activeClips[(size_t) i];
+            }
+
+            // Legacy whole-file path with nothing to play here -> silence.
+            // Applies ONLY when there is no authoritative clip list; the clip
+            // path renders its own spans and zero-fills past-EOF reads.
+            if (clips == nullptr && (t.reader == nullptr || startPos >= t.length))
+            {
+                juce::FloatVectorOperations::clear (out, numSamples);
+                continue;
             }
 
             if (clips != nullptr)
