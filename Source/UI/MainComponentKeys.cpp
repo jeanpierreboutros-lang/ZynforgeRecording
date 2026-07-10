@@ -9,6 +9,14 @@ using namespace zynforge;
 
 bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
 {
+    // Session LOCK is a "don't touch" safety for a running show. It disables
+    // the on-screen controls, but keyboard shortcuts bypassed it entirely --
+    // a stray Spacebar could stop the take, digits could recall cues, Delete
+    // could delete a clip/channel, Cmd+Z could undo. Swallow every shortcut
+    // while locked; UNLOCK is a button click, so it stays reachable.
+    if (sessionLocked)
+        return true;
+
     // Escape clears the multi-strip selection so the engineer can
     // bail out of a half-built bulk action without clicking each
     // selected strip again.

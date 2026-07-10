@@ -35,8 +35,9 @@ namespace zynforge
         using OpenCallback = std::function<void (const juce::File&)>;
 
         SessionRecoveryDialog (juce::Array<juce::File> orphans,
-                               OpenCallback onOpen)
-            : openCb (std::move (onOpen))
+                               OpenCallback onOpen,
+                               std::function<void()> onClosedCb = {})
+            : openCb (std::move (onOpen)), onClosed (std::move (onClosedCb))
         {
             rows.reserve ((size_t) orphans.size());
             for (auto& d : orphans)
@@ -127,10 +128,14 @@ namespace zynforge
             recoverButton.setBounds (footer.removeFromRight (160));
         }
 
-        static void launch (juce::Array<juce::File> orphans, OpenCallback onOpen)
+        ~SessionRecoveryDialog() override { if (onClosed) onClosed(); }
+
+        static void launch (juce::Array<juce::File> orphans, OpenCallback onOpen,
+                            std::function<void()> onClosed = {})
         {
-            if (orphans.isEmpty()) return;
-            auto* content = new SessionRecoveryDialog (std::move (orphans), std::move (onOpen));
+            if (orphans.isEmpty()) return;   // no dialog -> onClosed only fires on an actual close
+            auto* content = new SessionRecoveryDialog (std::move (orphans), std::move (onOpen),
+                                                       std::move (onClosed));
             juce::DialogWindow::LaunchOptions opts;
             opts.content.setOwned (content);
             opts.dialogTitle                  = "Recover sessions";
@@ -299,6 +304,10 @@ namespace zynforge
         juce::TextButton      dismissButton;
         juce::Label           help;
         OpenCallback          openCb;
+        // Fires from the destructor when the window closes by ANY path
+        // (Recover, Delete-empties, Skip, Escape, red X) so the launch flow
+        // can defer the Welcome/auto-reopen until AFTER recovery is resolved.
+        std::function<void()> onClosed;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SessionRecoveryDialog)
     };

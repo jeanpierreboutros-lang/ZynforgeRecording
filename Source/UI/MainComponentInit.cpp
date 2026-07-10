@@ -731,24 +731,33 @@ MainComponent::MainComponent()
 
     juce::Timer::callAfterDelay (brand::motion::launchDelayMs, [this, firstRun]
     {
-        offerSessionRecovery();
-        juce::Timer::callAfterDelay (450, [this, firstRun]
+        juce::Component::SafePointer<MainComponent> self (this);
+        // The tutorial + Welcome/auto-reopen step. It MUST run only after any
+        // recovery dialog closes -- running it underneath auto-reopened the
+        // orphan being recovered, so "Delete" then nuked the loaded session.
+        auto proceed = [self, firstRun]
         {
+            if (self == nullptr) return;
             if (firstRun)
             {
-                showFirstRunTutorial();
-                if (auto* p = engine.getAppProps())
+                self->showFirstRunTutorial();
+                if (auto* p = self->engine.getAppProps())
                 {
                     p->setValue ("tutorialShown", true);
                     p->saveIfNeeded();
                 }
-                juce::Timer::callAfterDelay (350, [this] { showStartupWelcome(); });
+                juce::Timer::callAfterDelay (350, [self] { if (self != nullptr) self->showStartupWelcome(); });
             }
             else
             {
-                showStartupWelcome();
+                self->showStartupWelcome();
             }
-        });
+        };
+
+        // If the recovery dialog opens, defer `proceed` to its onClosed hook;
+        // otherwise run it after the usual short delay.
+        if (! offerSessionRecovery (proceed))
+            juce::Timer::callAfterDelay (450, proceed);
     });
 
    #if JUCE_MAC
@@ -758,6 +767,11 @@ MainComponent::MainComponent()
 
 MainComponent::~MainComponent()
 {
+    // Cancel + join any in-flight offline bounce BEFORE members (the engine)
+    // are torn down -- the bounce thread dereferences engine, so it must finish
+    // while engine is still alive (a detached thread used to UAF on quit).
+    joinBounceThread();
+
    #if JUCE_MAC
     juce::MenuBarModel::setMacMainMenu (nullptr);
    #endif

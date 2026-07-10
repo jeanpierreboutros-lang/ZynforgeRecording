@@ -17,6 +17,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (10-area deep audit — batch 2: record-safety, transport, network, 2026-07-10)
+
+Second batch of the deep audit — the remaining record-safety, transport, sync, and network **High**s plus related **Medium**s. Build green, 266 test groups / 0 failures.
+
+- **Nothing perturbs a live take from a side door anymore.** Session LOCK now gates the keyboard too (a stray Spacebar / digit / Delete / Cmd+Z used to slip past it). File ▸ Open Session and the whole Export/Bounce submenu are disabled while recording (opening a session mid-take applied another session's routing to the strips being captured; export read half-written files and froze the UI). Timecode chase is inert while recording (it was re-seeking the player mid-take).
+- **Timecode chase can be stopped again.** MTC sync-loss is now detected via a freewheel timeout — when the MTC master parks, the chase goes un-live so STOP works and "keep rolling if sync is lost" is honoured (before, `running` never cleared for MTC, so the transport re-seeked to a frozen target forever and was unstoppable).
+- **Crash recovery no longer corrupts the recovered session.** The launch flow waits for the recovery dialog to close before auto-reopening / showing Welcome — it used to reopen the orphan *under* the dialog, so "Delete" nuked the just-loaded session. Recovery also routes through the canonical open funnel (mixer/cues restored).
+- **Quitting during an offline bounce is safe.** Stem/mix bounces run on an owned, cancellable thread that the app joins on quit — a detached thread used to dereference a freed engine (crash) and truncate the file.
+- **Companion server won't beachball the app.** The `/stream.wav` worker polls writability with a timeout, so an iPad that walks out of Wi-Fi (full TCP send buffer) no longer wedges "Stop companion"/quit for minutes. Multiple stream consumers are refcounted (a page reload no longer starves the surviving stream). The companion RECORD button now actually records (into a fresh session) instead of being a dead control.
+- **Session mirror applies state again.** It parsed a schema (`channels`/int-colour/`bpm`) the primary never emits; it now reads the real `tracks`/`#RRGGBB` schema via the canonical `EngineStatus::fromJson`. (Cross-machine transport still needs the LAN-companion wiring, tracked separately.)
+- **MIDI clock follows the tempo map** mid-song (it only updated the click before, so outboard gear drifted). Help ▸ Quick Start replays the tutorial instead of reloading the session and discarding unsaved changes. A re-sent record-start no longer re-baselines trim-follow mid-take. An OSC/console "drop marker + name" now names the marker it just dropped, not the timeline-last one.
+
 ### Fixed (10-area deep audit — data-loss + audio-correctness pass, 2026-07-10)
 
 A ten-area parallel re-audit of the whole codebase found a fresh set of defects. This entry covers the first shipped batch: every **Blocker** plus the audio-correctness and export **High**s. Build green, 266 test groups / 0 failures (two new regression tests: swapTracks preserves clip edits, splitClipAt fade geometry).

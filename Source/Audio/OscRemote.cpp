@@ -73,9 +73,10 @@ namespace zynforge
 
     void OscRemote::dropMarker (const juce::String& name)
     {
-        const int n = engine.dropMarkerAtCurrentPosition();
-        if (n > 0 && name.isNotEmpty())
-            engine.getMarkers().renameMarker (n - 1, name);
+        // Pass the name INTO the drop so it names the just-dropped marker
+        // atomically. The old drop-then-rename(count-1) hit the timeline-LAST
+        // marker instead, because MarkersManager::drop re-sorts by position.
+        engine.dropMarkerAtCurrentPosition (name);
     }
 
     void OscRemote::dropSceneMarker (int scene)

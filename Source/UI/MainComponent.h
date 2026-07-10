@@ -2,6 +2,9 @@
 
 #include <juce_gui_extra/juce_gui_extra.h>
 
+#include <atomic>
+#include <thread>
+
 #include "../Audio/AudioEngine.h"
 #include "../Audio/TrackExporter.h"
 #include "../Capture/CaptureSupervisor.h"
@@ -79,7 +82,11 @@ private:
     void onBackupClicked();
     void onVscClicked();
     void applyLockState();
-    void offerSessionRecovery();
+    // Returns true if the recovery dialog was shown (and onClosed is deferred
+    // to its close). Returns false if there was nothing to recover, in which
+    // case onClosed is NOT called -- the caller runs its own continuation. This
+    // lets the launch flow avoid auto-reopening a session under the dialog.
+    bool offerSessionRecovery (std::function<void()> onClosed = {});
     void showStartupWelcome();
     void showKeyboardShortcuts();
     void showAboutDialog();
@@ -459,6 +466,20 @@ private:
     void generateOrRefreshClickTrack();
     int  clickTrackIndex { -1 };   // -1 = not yet created in this session
     int  lastExportFailures { 0 }; // tracks failed in the last exportTracksTo (partial-failure warning)
+
+    // Offline stem/mix bounce runs on this OWNED thread (not a detached
+    // juce::Thread::launch) so the destructor can cancel + join it before the
+    // engine is torn down -- a quit mid-bounce used to leave the detached
+    // thread dereferencing a freed engine. bounceCancel lets a long bounce
+    // abort promptly instead of blocking quit.
+    std::thread       bounceThread;
+    std::atomic<bool> bounceCancel { false };
+    void joinBounceThread() noexcept
+    {
+        bounceCancel.store (true, std::memory_order_relaxed);
+        if (bounceThread.joinable()) bounceThread.join();
+        bounceCancel.store (false, std::memory_order_relaxed);
+    }
     void promptCueName (const juce::String& title,
                         const juce::String& initial,
                         std::function<void (const juce::String&)> onAccept);

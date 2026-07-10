@@ -918,9 +918,11 @@ namespace zynforge
         int  getPhaseRightChannel() const noexcept { return phaseRight.load (std::memory_order_relaxed) + 1; }
         float getPhaseCorrelation() const noexcept { return phaseCorrelation.load (std::memory_order_relaxed); }
 
-        // Drops a marker at the current record or playback position.
-        // Returns the new marker count, or -1 if no session active.
-        int dropMarkerAtCurrentPosition();
+        // Drops a marker at the current record or playback position. Pass a
+        // name to set it atomically (drop re-sorts by position, so a separate
+        // rename-by-index afterwards can hit the wrong marker). Returns the new
+        // marker count, or -1 if no session active.
+        int dropMarkerAtCurrentPosition (const juce::String& name = {});
 
         // AudioIODeviceCallback
         void audioDeviceAboutToStart (juce::AudioIODevice*) override;

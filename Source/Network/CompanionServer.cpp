@@ -303,7 +303,7 @@ setInterval(tick, 500); tick();
 
     void CompanionServer::feedStreamSamples (const float* L, const float* R, int n) noexcept
     {
-        if (! streamRing.active.load (std::memory_order_relaxed) || streamRing.capacity() == 0)
+        if (streamRing.active.load (std::memory_order_relaxed) <= 0 || streamRing.capacity() == 0)
             return;
         const auto cap = streamRing.capacity();
         for (int i = 0; i < n; ++i)
@@ -469,7 +469,25 @@ setInterval(tick, 500); tick();
                 else if (act == "stop")
                 { eng->stopPlayback(); if (eng->isRecording()) eng->stopRecording(); eng->getPlayer().rewind(); }
                 else if (act == "record")
-                { if (eng->isRecording()) eng->stopRecording(); }
+                {
+                    if (eng->isRecording())
+                    {
+                        eng->stopRecording();
+                    }
+                    else
+                    {
+                        // Start a FRESH timestamped session (never start into
+                        // the open session -- the companion has no access to the
+                        // UI's continue/append logic, so a plain startRecording
+                        // there would TRUNCATE existing takes). Matches the OSC
+                        // remote-start path. This makes the RECORD button real
+                        // instead of a dead control that reports success.
+                        const auto root = juce::File::getSpecialLocation (juce::File::userMusicDirectory)
+                                              .getChildFile ("Zynforge Sessions");
+                        const auto stamp = juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S");
+                        eng->startRecording (root.getChildFile ("Session_" + stamp));
+                    }
+                }
             });
         }
         else if (action == "mute")   setBoolOnTrack ([] (auto& t, bool v) { t.muted .store (v); });
@@ -481,8 +499,9 @@ setInterval(tick, 500); tick();
 
     void CompanionServer::writeStreamWav (juce::StreamingSocket& s)
     {
-        // Mark the ring as active so the audio thread starts pushing.
-        streamRing.active.store (true);
+        // Register this consumer so the audio thread pushes while ANY stream
+        // is attached (refcount, not a single bool -- see StreamRing::active).
+        streamRing.active.fetch_add (1, std::memory_order_relaxed);
 
         // Long-living HTTP response with a WAV header claiming ~24 h of
         // audio. Browsers / iOS Safari treat this as a streaming source
@@ -547,11 +566,19 @@ setInterval(tick, 500); tick();
                 outChunk[i * 2 + 1] = (juce::int16) juce::jlimit (-32768, 32767, (int) (r * 32767.0f));
             }
             const auto bytes = (int) (outChunk.size() * sizeof (juce::int16));
+            // Don't block indefinitely inside write() when the peer has gone
+            // away and the TCP send buffer is full (iPad out of Wi-Fi / asleep).
+            // Poll writability with a short timeout so the loop re-checks
+            // `running` and unwinds promptly on stop()/quit -- otherwise stop()
+            // joined a wedged worker and beachballed the app mid-show.
+            const int ready = s.waitUntilReady (false, 200);
+            if (ready < 0) break;                       // socket error / closed
+            if (ready == 0) continue;                   // buffer full -> re-check running
             if (s.write (outChunk.data(), bytes) != bytes) break;
             readIdx += take;
         }
 
-        streamRing.active.store (false);
+        streamRing.active.fetch_sub (1, std::memory_order_relaxed);
     }
 
     void CompanionServer::writeRaw (juce::StreamingSocket& s,

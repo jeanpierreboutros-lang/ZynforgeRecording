@@ -414,17 +414,18 @@ void MainComponent::onBounceStems()
         if (arrLen <= 0) { showStatus ("Nothing to bounce -- record or load a session first"); return; }
 
         showStatus ("Bouncing " + juce::String (nTracks) + " edited stems...");
-        // Offline render on a background thread. The engineer shouldn't be
-        // editing clips mid-bounce (a deliberate, one-shot action), so the
-        // read of the clip lists here is safe in practice.
+        // Offline render on an OWNED background thread (joined + cancellable in
+        // the destructor) so a quit mid-bounce can't leave it dereferencing a
+        // freed engine. The engineer shouldn't be editing clips mid-bounce.
+        joinBounceThread();   // finish any prior bounce first (one at a time)
         juce::Component::SafePointer<MainComponent> self (this);
-        juce::Thread::launch ([self, dest, nTracks, arrLen, sr]
+        bounceThread = std::thread ([this, self, dest, nTracks, arrLen, sr]
         {
             int written = 0;
             for (int t = 0; t < nTracks; ++t)
             {
-                if (self == nullptr) return;
-                auto& rec = self->engine.getRecorder();
+                if (bounceCancel.load (std::memory_order_relaxed)) return;
+                auto& rec = engine.getRecorder();
                 // A stereo pair bounces as ONE interleaved stereo stem from
                 // its L half; skip the R half (already written).
                 if (t > 0 && rec.getTrack (t - 1).isStereo.load (std::memory_order_relaxed))
@@ -437,8 +438,8 @@ void MainComponent::onBounceStems()
                 // disk, so a multi-hour stem never needs a whole-track buffer.
                 const bool stereo = ts.isStereo.load (std::memory_order_relaxed);
                 const bool okBounce = stereo
-                    ? self->engine.bounceStereoPairToWav (t, outFile, arrLen, sr)
-                    : self->engine.bounceTrackArrangementToWav (t, outFile, arrLen, sr);
+                    ? engine.bounceStereoPairToWav (t, outFile, arrLen, sr)
+                    : engine.bounceTrackArrangementToWav (t, outFile, arrLen, sr);
                 if (okBounce) ++written;
             }
             juce::MessageManager::callAsync ([self, written, dest]
@@ -475,12 +476,15 @@ void MainComponent::onBounceStereoMix()
         if (arrLen <= 0) { showStatus ("Nothing to bounce -- record or load a session first"); return; }
 
         showStatus ("Bouncing stereo mix...");
+        // Owned + joinable thread (see onBounceStems) -- never a detached
+        // juce::Thread::launch that can outlive the engine on quit.
+        joinBounceThread();
         juce::Component::SafePointer<MainComponent> self (this);
-        juce::Thread::launch ([self, dest, arrLen, sr]
+        bounceThread = std::thread ([this, self, dest, arrLen, sr]
         {
-            if (self == nullptr) return;
+            if (bounceCancel.load (std::memory_order_relaxed)) return;
             // Streams the summed mix window-by-window straight to disk.
-            const bool ok = self->engine.bounceStereoMixToWav (dest, arrLen, sr);
+            const bool ok = engine.bounceStereoMixToWav (dest, arrLen, sr);
             juce::MessageManager::callAsync ([self, ok, dest]
             {
                 if (self != nullptr)

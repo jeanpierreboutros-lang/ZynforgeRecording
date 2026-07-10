@@ -1,5 +1,6 @@
 #include "SessionMirror.h"
 #include "../Audio/AudioEngine.h"
+#include "../Audio/EngineStatus.h"
 #include <juce_core/juce_core.h>
 
 namespace zynforge
@@ -118,28 +119,21 @@ namespace zynforge
 
     void SessionMirror::applyState (const juce::var& v)
     {
-        auto* obj = v.getDynamicObject();
-        if (obj == nullptr) return;
+        if (v.getDynamicObject() == nullptr) return;
 
-        // Tempo + transport indicators (read-only -- the mirror UI shows
-        // what the primary is doing but doesn't drive its own audio).
-        if (obj->hasProperty ("bpm"))
-            engine.setSessionTempoBpm ((float) (double) obj->getProperty ("bpm"));
-
-        // Per-channel name / colour mirror. The primary's CompanionServer
-        // already includes a 'channels' array in its state.json.
-        const auto chArr = obj->getProperty ("channels");
-        if (auto* arr = chArr.getArray())
+        // Parse the EXACT schema the primary's CompanionServer emits
+        // (EngineStatus::toJson): a "tracks" array whose colours are "#RRGGBB"
+        // strings. The old code read a "channels" array + an int "colour" + a
+        // "bpm" field that state.json never emits, so getProperty returned void
+        // and the mirror applied NOTHING end to end. Reuse the canonical parser.
+        const auto st = EngineStatus::fromJson (v);
+        const int n = juce::jmin ((int) st.tracks.size(), engine.getRecorder().getNumTracks());
+        for (int i = 0; i < n; ++i)
         {
-            for (int i = 0; i < arr->size() && i < engine.getRecorder().getNumTracks(); ++i)
-            {
-                auto* ch = (*arr)[i].getDynamicObject();
-                if (ch == nullptr) continue;
-                const auto name   = ch->getProperty ("name").toString();
-                const auto colour = (int) ch->getProperty ("colour");
-                if (name.isNotEmpty()) engine.setTrackName (i, name);
-                if (colour != 0)       engine.setTrackColour (i, juce::Colour ((juce::uint32) colour));
-            }
+            const auto& t = st.tracks[(std::size_t) i];
+            if (t.name.isNotEmpty()) engine.setTrackName (i, t.name);
+            if ((t.colourARGB & 0x00ffffffu) != 0)   // 0 == "use default", don't force black
+                engine.setTrackColour (i, juce::Colour (t.colourARGB));
         }
     }
 }

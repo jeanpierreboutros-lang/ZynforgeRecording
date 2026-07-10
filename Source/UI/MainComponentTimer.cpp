@@ -380,6 +380,17 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
 // the master parks/stops, we stop the playback we started.
 void MainComponent::serviceTimecodeChase()
 {
+    // Never chase during a live take. startPlayback is already guarded, but the
+    // playhead re-seek below (setPositionSamples every tick) would still yank
+    // the transport mid-record -- summing the old take into the monitor and
+    // desyncing capture. House timecode often runs all night, so a chase left
+    // enabled must stay inert while recording.
+    if (engine.isRecording())
+    {
+        chaseWasLive = false;
+        return;
+    }
+
     if (engine.getChaseMode() == zynforge::AudioEngine::ChaseMode::Off)
     {
         chaseWasLive = false;

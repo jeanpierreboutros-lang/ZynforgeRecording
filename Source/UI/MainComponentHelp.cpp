@@ -560,10 +560,12 @@ void MainComponent::launchNewSessionDialog()
     });
 }
 
-void MainComponent::offerSessionRecovery()
+bool MainComponent::offerSessionRecovery (std::function<void()> onClosed)
 {
     const auto incomplete = zynforge::AudioEngine::findIncompleteSessions (getSessionsRoot());
-    if (incomplete.isEmpty()) return;
+    // Nothing to recover -> no dialog, no onClosed; the caller runs its
+    // continuation itself (return false means "I didn't show a dialog").
+    if (incomplete.isEmpty()) return false;
 
     // Proper modal dialog (DialogChrome-styled) with a sortable
     // table + Recover / Delete / Skip actions. Replaces the popup
@@ -584,5 +586,7 @@ void MainComponent::offerSessionRecovery()
             self->openSessionFolder (dir);
             self->showStatus ("Recovered: " + dir.getFileName());
             self->updateTransportLabels();
-        });
+        },
+        std::move (onClosed));
+    return true;
 }

@@ -32,7 +32,10 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
     if (topLevelIndex == 0)  // File
     {
         menu.addItem (5, "New Session...",         ! engine.isRecording());
-        menu.addItem (1, "Open Session...");
+        // Opening another session mid-take re-pins the active dir + applies the
+        // new session's mixer/routing onto the strips being recorded, then STOP
+        // re-pins back -- corrupting the capture. Gate it like New/Import/Close.
+        menu.addItem (1, "Open Session...",        ! engine.isRecording());
         menu.addItem (4, "Import Audio Files...",  ! engine.isRecording());
         menu.addSeparator();
         // Save / Save As are always enabled: if there's no active
@@ -50,17 +53,23 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addSeparator();
 
         juce::PopupMenu exportMenu;
+        // Export/bounce read the Track_NN files synchronously on the message
+        // thread. During a take those headers aren't finalised (truncated
+        // exports) and the read I/O competes with the recorder + freezes the
+        // UI, so gate the whole submenu on not-recording. CSV timeline export
+        // is metadata-only but gated too for a consistent "not mid-take" rule.
         const bool hasActive = engine.getActiveSessionDir().isDirectory();
-        exportMenu.addItem (10, "Export All Tracks...", hasActive);
+        const bool canExport = hasActive && ! engine.isRecording();
+        exportMenu.addItem (10, "Export All Tracks...", canExport);
 
         const int n = engine.getRecorder().getNumTracks();
         // Opens a tick-box picker of the session's tracks → format → folder.
-        exportMenu.addItem (11, "Export Individual Tracks...", hasActive && n > 0);
+        exportMenu.addItem (11, "Export Individual Tracks...", canExport && n > 0);
         exportMenu.addSeparator();
-        exportMenu.addItem (12, "Bounce Edited Tracks (Stems)...", hasActive && n > 0);
-        exportMenu.addItem (13, "Bounce Stereo Mix...",            hasActive && n > 0);
+        exportMenu.addItem (12, "Bounce Edited Tracks (Stems)...", canExport && n > 0);
+        exportMenu.addItem (13, "Bounce Stereo Mix...",            canExport && n > 0);
         exportMenu.addSeparator();
-        exportMenu.addItem (14, "Export Timeline (markers/cues/tracks) as CSV...", hasActive && n > 0);
+        exportMenu.addItem (14, "Export Timeline (markers/cues/tracks) as CSV...", canExport && n > 0);
         menu.addSubMenu ("Export", exportMenu);
         menu.addSeparator();
 
@@ -383,7 +392,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
         if (idx >= 0 && idx < list.size()) setDefaultTemplate (list[idx]);
     }
     else if (id == 900)  showKeyboardShortcuts();
-    else if (id == 901)  showStartupWelcome();
+    else if (id == 901)  showFirstRunTutorial();   // the tour -- NOT showStartupWelcome (which reloads the session + discards unsaved changes)
     else if (id == 902)  showAboutDialog();
     else if (id == 903)  showUserGuide();
     else if (id == 99)   confirmAndQuit();

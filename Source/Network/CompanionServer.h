@@ -92,7 +92,11 @@ namespace zynforge
             std::vector<float> dataL;
             std::vector<float> dataR;
             std::atomic<std::size_t> writeIdx { 0 };
-            std::atomic<bool>        active   { false };
+            // Number of live /stream.wav consumers. A single bool broke with >1
+            // consumer (a page reload / Safari's probe request): the ending
+            // connection cleared it and starved the surviving stream. Refcount
+            // so the audio thread keeps feeding while ANY consumer is attached.
+            std::atomic<int>         active   { 0 };
 
             void allocate (std::size_t cap) { dataL.assign (cap, 0.0f); dataR.assign (cap, 0.0f); }
             std::size_t capacity() const    { return dataL.size(); }

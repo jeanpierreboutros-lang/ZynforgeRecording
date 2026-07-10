@@ -130,16 +130,6 @@ namespace zynforge
 
     bool AudioEngine::startRecording (const juce::File& sessionDir)
     {
-        // Trim-follow: snapshot each channel's current console input gain as the
-        // capture reference, so the delta applied during soundcheck is measured
-        // from the gain the take was actually printed at.
-        for (int i = 0; i < recorder.getNumTracks(); ++i)
-        {
-            auto& t = recorder.getTrack (i);
-            t.captureInputGainDb.store (t.liveInputGainDb.load (std::memory_order_relaxed),
-                                        std::memory_order_relaxed);
-        }
-
         // Bypass-proof guard: refuse to capture if the device clock disagrees
         // with the session rate (silent wrong-speed/pitch take). Covers every
         // caller -- record button, transport bar, punch auto-record, companion.
@@ -153,6 +143,20 @@ namespace zynforge
         }
 
         if (! recorder.startRecording (sessionDir)) return false;
+
+        // Trim-follow: snapshot each channel's current console input gain as the
+        // capture reference AFTER the take actually starts. Doing it before the
+        // guards above meant a refused start (sample-rate mismatch, or a double
+        // record-start from a re-sent OSC/tablet command) still re-baselined the
+        // references mid-take, so trim-follow deltas were measured wrong for the
+        // rest of the session.
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+        {
+            auto& t = recorder.getTrack (i);
+            t.captureInputGainDb.store (t.liveInputGainDb.load (std::memory_order_relaxed),
+                                        std::memory_order_relaxed);
+        }
+
         rememberRecentSession (sessionDir);
         double sr = 48000.0;
         if (auto* device = deviceManager.getCurrentAudioDevice())
@@ -896,7 +900,7 @@ namespace zynforge
         return *it;
     }
 
-    int AudioEngine::dropMarkerAtCurrentPosition()
+    int AudioEngine::dropMarkerAtCurrentPosition (const juce::String& name)
     {
         if (! markers.hasContext()) return -1;
 
@@ -916,7 +920,7 @@ namespace zynforge
         else
             return -1;
 
-        markers.drop (pos);
+        markers.drop (pos, name);
         return markers.getCount();
     }
 
@@ -2658,16 +2662,15 @@ namespace zynforge
         // Routed through the master output pair (masterOutL / masterOutR)
         // so it follows the engineer's monitor-bus choice instead of
         // pinning to hardware outs 0+1.
-        if (click.isEnabled())
+        // Per-block tempo-map lookup. If a tempo map exists and the player is
+        // rolling, resolve the BPM at the playhead and feed it to BOTH the
+        // click AND MIDI clock out -- run OUTSIDE the click-enabled gate so
+        // outboard gear (drum machine / synth) follows a tempo-map change even
+        // when the click is muted (previously only the click updated, so the
+        // MIDI clock kept pulsing at the old BPM and drifted). Try-lock the map:
+        // if the message thread is mid-edit, leave both at their last bpm
+        // rather than block or read a mutating vector.
         {
-            // If a tempo map exists and the player is rolling, look
-            // up the BPM at the current playhead and feed it to the
-            // click engine for THIS block. Tempo changes ride along
-            // with the audio without any file regenerate.
-            // Try-lock the tempo map: if the message thread is mid-edit we
-            // simply skip the per-block lookup and leave the click at its
-            // last resolved bpm (currentTempoBpm) rather than block or read
-            // a mutating vector.
             const juce::ScopedTryLock tempoStl (tempoLock);
             if (tempoStl.isLocked() && ! tempoMap.empty() && player.isPlaying())
             {
@@ -2679,7 +2682,12 @@ namespace zynforge
                     else break;
                 }
                 click.setTempoBpm (bpm);
+                midiClockOut.setTempoBpm (bpm);   // outboard gear follows the map too
             }
+        }
+
+        if (click.isEnabled())
+        {
             const int cOutL = juce::jlimit (0, numOutputs - 1,
                                             masterOutL.load (std::memory_order_relaxed));
             const int cOutR = juce::jlimit (0, numOutputs - 1,

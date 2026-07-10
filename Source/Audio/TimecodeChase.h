@@ -38,6 +38,7 @@ namespace zynforge
             ltcFrames     .store (0, std::memory_order_relaxed);
             ltcFps        .store (0.0f, std::memory_order_relaxed);
             ltcDropFrame  .store (false, std::memory_order_relaxed);
+            lastMtcTickMs .store (0, std::memory_order_relaxed);
             crossings   = 0;
             samplesAcc  = 0;
             prevSample  = 0.0f;
@@ -137,7 +138,7 @@ namespace zynforge
                 ltcDropFrame.store (rateCode == 2, std::memory_order_relaxed);
                 mtcAcc.seen = 0;
             }
-            lastMtcTickMs = juce::Time::getMillisecondCounter();
+            lastMtcTickMs.store (juce::Time::getMillisecondCounter(), std::memory_order_relaxed);
         }
 
         // Full-frame MTC message (F0 7F cc 01 01 hr mn sc fr F7). The
@@ -151,10 +152,26 @@ namespace zynforge
             ltcFrames .store (fr, std::memory_order_relaxed);
             running   .store (true, std::memory_order_relaxed);
             mtcAcc = MtcAcc{};   // restart the QF accumulator
-            lastMtcTickMs = juce::Time::getMillisecondCounter();
+            lastMtcTickMs.store (juce::Time::getMillisecondCounter(), std::memory_order_relaxed);
         }
 
-        bool isRunning() const noexcept { return running.load (std::memory_order_relaxed); }
+        bool isRunning() const noexcept
+        {
+            if (! running.load (std::memory_order_relaxed)) return false;
+            // MTC freewheel/timeout. An MTC master streams quarter-frames
+            // continuously (~every 8-10 ms); `running` is set true on each but
+            // was NEVER cleared when the master stopped (only the LTC path
+            // clears it), so the chase stayed "live" forever and the transport
+            // became unstoppable (re-seeking to the frozen target every tick).
+            // Honour the last-tick time: no MTC for kMtcTimeoutMs => stopped.
+            // lastMtcTickMs == 0 means the LTC path is driving `running`, which
+            // manages its own liveness, so skip the MTC timeout there.
+            const juce::uint32 last = lastMtcTickMs.load (std::memory_order_relaxed);
+            if (last != 0
+                && (juce::uint32) (juce::Time::getMillisecondCounter() - last) > kMtcTimeoutMs)
+                return false;
+            return true;
+        }
         juce::uint8 getHours()   const noexcept { return ltcHours  .load (std::memory_order_relaxed); }
         juce::uint8 getMinutes() const noexcept { return ltcMinutes.load (std::memory_order_relaxed); }
         juce::uint8 getSeconds() const noexcept { return ltcSeconds.load (std::memory_order_relaxed); }
@@ -326,7 +343,12 @@ namespace zynforge
         std::atomic<juce::uint8> ltcFrames  { 0 };
         std::atomic<float>       ltcFps     { 0.0f };
         std::atomic<bool>        ltcDropFrame { false };
-        juce::uint32 lastMtcTickMs { 0 };
+        // Wall-clock ms of the last MTC tick (0 = LTC path / never). Read on the
+        // message thread (isRunning), written on the MIDI thread -> atomic.
+        std::atomic<juce::uint32> lastMtcTickMs { 0 };
+        // No MTC for this long => the master stopped (quarter-frames arrive
+        // ~every 8-10 ms; 250 ms is ~7-8 frames, well clear of jitter).
+        static constexpr juce::uint32 kMtcTimeoutMs = 250;
 
         // MTC quarter-frame accumulator.
         MtcAcc mtcAcc;
