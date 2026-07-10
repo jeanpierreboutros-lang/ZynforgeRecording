@@ -144,6 +144,10 @@ namespace zynforge
 
         if (! recorder.startRecording (sessionDir)) return false;
 
+        // A take makes the live capture position authoritative -- drop any
+        // sticky EDIT cursor left from soundcheck so markers land at the take.
+        clearEditCursor();
+
         // Trim-follow: snapshot each channel's current console input gain as the
         // capture reference AFTER the take actually starts. Doing it before the
         // guards above meant a refused start (sample-rate mismatch, or a double
@@ -909,12 +913,17 @@ namespace zynforge
         // fall back to the live transport position (recorder while
         // recording, player otherwise) so the M-key shortcut still
         // works during a take.
+        // While RECORDING the live capture position wins over any EDIT cursor.
+        // The edit cursor is sticky (set by a wave-pane click, e.g. during
+        // soundcheck) and was preferred unconditionally, so every marker dropped
+        // during the take piled onto that frozen soundcheck position instead of
+        // where the recording actually is. Record start also clears it below.
         juce::int64 pos = -1;
         const auto cursor = editCursorSample.load (std::memory_order_acquire);
-        if (cursor >= 0)
-            pos = cursor;
-        else if (recorder.isRecording())
+        if (recorder.isRecording())
             pos = recorder.getSamplesSinceStart();
+        else if (cursor >= 0)
+            pos = cursor;
         else if (player.isLoaded())
             pos = player.getPositionSamples();
         else

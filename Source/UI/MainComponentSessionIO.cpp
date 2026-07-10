@@ -48,9 +48,18 @@ int MainComponent::openSessionFolder (const juce::File& dir)
     // session that already contains a "Click" strip.
     clickTrackIndex = -1;
     {
+        // Identify the generated click strip by name AND its playback-only
+        // routing (inputRouting < 0). A recorded console "Click"/metronome-
+        // return channel has a real input, so it is never adopted -- otherwise
+        // a tempo change would deleteFile()/overwrite that recorded take.
         auto& rec = engine.getRecorder();
         for (int i = 0; i < rec.getNumTracks(); ++i)
-            if (rec.getTrack (i).getNameThreadSafe() == "Click") { clickTrackIndex = i; break; }
+        {
+            auto& t = rec.getTrack (i);
+            if (t.getNameThreadSafe() == "Click"
+                && t.inputRouting.load (std::memory_order_relaxed) < 0)
+            { clickTrackIndex = i; break; }
+        }
     }
     lastTrackCount = -1;                      // force a strip rebuild on the next tick
     undoManager.clearUndoHistory();           // a fresh session starts with a clean undo stack

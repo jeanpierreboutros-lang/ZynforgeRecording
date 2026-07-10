@@ -22,6 +22,18 @@ using namespace zynforge;
 
 void MainComponent::generateOrRefreshClickTrack()
 {
+    // NEVER regenerate during a take. This deleteFile()s + synchronously renders
+    // a session-length WAV and then engine.loadSession() -- which frees/reopens
+    // readers on the files the recorder is actively writing (disk contention,
+    // dropout risk, multi-second UI freeze). Reachable mid-record via a cue
+    // recall with a differing tempo (digit keys) or a TempoBar BPM nudge; the
+    // click refreshes to the new tempo after the take instead.
+    if (engine.isRecording())
+    {
+        showStatus ("Click track refreshes after recording stops");
+        return;
+    }
+
     const auto sessionDir = engine.getActiveSessionDir();
     if (! sessionDir.isDirectory())
     {
@@ -84,10 +96,12 @@ void MainComponent::generateOrRefreshClickTrack()
     };
 
     // Defence in depth: NEVER deleteFile() a slot that isn't actually the
-    // click strip. clickTrackIndex is reset per session, but if any future
-    // path leaves it stale, refuse rather than destroy a recorded take.
+    // click strip. Require both the name AND the playback-only routing
+    // (inputRouting < 0) so a recorded channel that merely happens to be named
+    // "Click" (a console metronome return) can't be overwritten.
     if (clickTrackIndex < 0 || clickTrackIndex >= recorder.getNumTracks()
-        || recorder.getTrack (clickTrackIndex).getNameThreadSafe() != "Click")
+        || recorder.getTrack (clickTrackIndex).getNameThreadSafe() != "Click"
+        || recorder.getTrack (clickTrackIndex).inputRouting.load (std::memory_order_relaxed) >= 0)
     {
         showStatus ("Click slot isn't a Click strip -- aborted to protect recordings");
         return;
@@ -445,12 +459,18 @@ void MainComponent::runQcAnalysis()
         std::vector<zynforge::qc::TrackQc> results;
         for (const auto& f : files)
         {
+            const auto stem = f.getFileNameWithoutExtension();          // "Track_NN" or "Track_NN_partXX"
+            // Skip continuation parts: analyzeFile scans one file at a time, so
+            // a _part would produce a phantom mislabeled row (getIntValue on the
+            // last "_" segment -> 0 -> track 1) and miss the later audio. Parse
+            // the index from the Track_NN PREFIX, matching NoiseAnalyzer/song
+            // detect (the fix pass fixed those two analyzers but not this one).
+            if (stem.containsIgnoreCase ("_part")) continue;
+            const int idx = stem.fromFirstOccurrenceOf ("Track_", false, false).getIntValue() - 1;
+            if (idx < 0) continue;
             auto q = zynforge::qc::analyzeFile (f);
-            const auto stem = f.getFileNameWithoutExtension();          // Track_NN
-            const int idx = stem.fromLastOccurrenceOf ("_", false, false).getIntValue() - 1;
-            q.trackIndex = juce::jmax (0, idx);
-            q.name = (idx >= 0 && idx < names.size() && names[idx].isNotEmpty())
-                       ? names[idx] : stem;
+            q.trackIndex = idx;
+            q.name = (idx < names.size() && names[idx].isNotEmpty()) ? names[idx] : stem;
             results.push_back (std::move (q));
         }
 

@@ -39,19 +39,28 @@ namespace zynforge
 
         // A track is "edited" (must be preserved) when it has been comped
         // (>1 take) or its single clip has been shaped away from the plain
-        // full-range default (split, trimmed, faded, gained, muted, moved,
-        // or repointed at a cross-track file).
-        const auto isPlainDefault = [this] (const Clip& c, int i)
+        // full-range default (split, front-trimmed, faded, gained, muted,
+        // moved, or repointed at a cross-track file).
+        //
+        // NOTE: do NOT require the clip length to equal the current file length
+        // here. A continue-record / length-changing punch GROWS the file, so an
+        // unedited default clip left at the OLD length would then be classified
+        // "edited" and preserved short -- silencing the appended audio (a real
+        // regression this comment guards against). Treating a plain full-from-
+        // zero clip as refreshable reseeds it to the new length. The only cost
+        // is that a pure END-trim (single clip, fs=0, ts=0, no fades) reloaded
+        // in place is refreshed back to full -- the recorded audio is never
+        // lost, and an end-trim is trivially redoable, so for a live recorder
+        // that is the correct trade vs. dropping captured audio.
+        const auto isPlainDefault = [] (const Clip& c)
         {
-            const auto fileLen = player.getTrackLengthSamples (i);
             return c.timelineStartSamples == 0
                 && c.fileStartSamples     == 0
                 && c.fadeInSamples        == 0
                 && c.fadeOutSamples       == 0
                 && ! c.muted
                 && std::abs (c.gainDb) < 0.001f
-                && c.audioFile == juce::File()
-                && (fileLen <= 0 || c.fileLengthSamples == fileLen);
+                && c.audioFile == juce::File();
         };
         const auto trackIsEdited = [&] (int i) -> bool
         {
@@ -60,7 +69,7 @@ namespace zynforge
             const auto& list = trackClips[(size_t) i];
             if (list.empty())    return false;   // nothing worth preserving
             if (list.size() > 1) return true;    // split into multiple clips
-            return ! isPlainDefault (list[0], i);
+            return ! isPlainDefault (list[0]);
         };
 
         if (! preserveEdits)

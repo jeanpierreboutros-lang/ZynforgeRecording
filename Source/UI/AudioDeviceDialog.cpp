@@ -114,6 +114,10 @@ namespace zynforge
                                     private juce::ChangeListener
         {
         public:
+            // Modal launchAsync (selfOwned) vs tracked launchFloating: governs
+            // how closeWindow() dismisses the window (exitModalState vs hide).
+            void setSelfOwned (bool b) noexcept { selfOwned = b; }
+
             explicit DialogContent (AudioEngine& eng)
                 : engine (eng),
                   outputCard  ("Output",       brand::accentPlay),
@@ -516,21 +520,24 @@ namespace zynforge
                 dm.setAudioDeviceSetup (setup, true);
             }
 
-            void applyAndClose()
+            // Close correctly for BOTH launch modes. The tracked floating
+            // dialog (launchFloating) is NOT modal: exitModalState is a no-op,
+            // so we hide it and MainComponent's 10 Hz reaper (syncTab) deletes
+            // it + clears the DEVICE tab light. The selfOwned dialog is
+            // application-MODAL (launchAsync) and self-deleting on dismiss:
+            // setVisible(false) would hide it WITHOUT exiting modal state,
+            // freezing the whole app behind an invisible modal window, so it
+            // must exitModalState (which also runs the dtor snapshot restore).
+            void closeWindow()
             {
-                applied = true;
-                // This panel is non-modal (launchFloating), so exitModalState
-                // is a no-op -- hide the window instead and let MainComponent's
-                // 10 Hz reaper (syncTab) delete it + clear the DEVICE tab light.
                 if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
-                    dw->setVisible (false);
+                {
+                    if (selfOwned) dw->exitModalState (0);   // dismiss + self-delete
+                    else           dw->setVisible (false);   // reaper deletes it
+                }
             }
-            void cancelAndClose()
-            {
-                applied = false;
-                if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
-                    dw->setVisible (false);
-            }
+            void applyAndClose()  { applied = true;  closeWindow(); }
+            void cancelAndClose() { applied = false; closeWindow(); }
 
             AudioEngine& engine;
 
@@ -544,6 +551,7 @@ namespace zynforge
             juce::TextButton applyButton  { "Apply" };
             juce::TextButton cancelButton { "Cancel" };
             juce::Label      statusLabel;
+            bool             selfOwned { false };   // true => modal launchAsync (close via exitModalState)
             std::unique_ptr<juce::XmlElement> snapshot;
             // Monitor-bus routing is applied + persisted LIVE on change, but the
             // Cancel path only reverted the device snapshot -- so a test flip of
@@ -558,6 +566,7 @@ namespace zynforge
     juce::DialogWindow* AudioDeviceDialog::launch (AudioEngine& engine, bool selfOwned)
     {
         auto content = std::make_unique<DialogContent> (engine);
+        content->setSelfOwned (selfOwned);   // so its close path exitModalStates the modal launchAsync window
 
         juce::DialogWindow::LaunchOptions opts;
         opts.dialogTitle                  = "Audio Device";

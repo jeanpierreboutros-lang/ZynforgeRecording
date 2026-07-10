@@ -311,6 +311,37 @@ namespace zynforge
                               "right fade-out must clamp to its new length");
             }
 
+            beginTest ("Continue-grows the take -> default clip refreshes to full length (not a silent tail)");
+            {
+                // B1 regression guard: after a continue-record / length-changing
+                // punch the file GROWS; an unedited default clip left at the old
+                // length would be misclassified "edited", preserved short, and
+                // the appended audio would play SILENT + hide in EDIT. The plain
+                // default clip must instead refresh to the new file length.
+                const int block = 512;
+                auto dir = recordSession (1, 200, block);            // L1 = 102400
+                const juce::int64 L1 = (juce::int64) 200 * block;
+
+                AudioEngine eng;
+                eng.setSnapMode (AudioEngine::SnapMode::Off);
+                expect (eng.loadSession (dir) > 0, "L1 load failed");
+                expectEquals ((int) eng.clipsFor (0).size(), 1);
+                expectEquals (eng.clipsFor (0)[0].fileLengthSamples, L1, "seed should match L1");
+
+                // Grow the take in place (a continue overwrites/extends the file),
+                // then reload PRESERVING edits exactly as stopRecording does.
+                eng.getPlayer().unload();                            // release the L1 handle
+                recordSession (1, 400, block);                      // same dir path -> L2 = 204800
+                const juce::int64 L2 = (juce::int64) 400 * block;
+
+                expect (eng.loadSession (dir, /*preserveEdits*/ true) > 0, "L2 reload failed");
+                expectEquals ((int) eng.clipsFor (0).size(), 1, "should stay a single clip");
+                expectEquals (eng.clipsFor (0)[0].fileLengthSamples, L2,
+                              "default clip must refresh to the grown length -- else the continued audio is silent");
+
+                dir.deleteRecursively();
+            }
+
             beginTest ("Crop to range -> keeps only the range, shifted to t=0, undoable");
             {
                 auto dir = recordSession (numCh, numBlocks, block);
