@@ -68,8 +68,8 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Ap
 ### Export / deliver
 - **Bounce edited tracks (stems)** — renders each track's clip arrangement (positions, fades, clip gain, mutes, active take) to flat 24-bit WAVs, so the edits actually reach the deliverable
 - **Bounce stereo mix** — sums the whole edited arrangement through gain / pan / mute / solo + volume/pan/mute automation + VCA + master to a 24-bit stereo WAV
-- Both render offline on a worker thread (no real-time risk) and **stream to disk in fixed windows** — a multi-hour show bounces in a few MB of RAM; cross-track clips render from their own source file
-- Per-track / per-format export (WAV / AIFF / FLAC) with sample-rate conversion — **stereo-pair tracks export as one interleaved stereo file**, not two mono stems
+- Both render offline on a worker thread (no real-time risk) and **stream to disk in fixed windows** — a multi-hour show bounces in a few MB of RAM; cross-track clips render from their own source file; the bounce cancels + joins cleanly if you quit mid-render
+- Per-track / per-format export (WAV / AIFF / FLAC) with sample-rate conversion — **stereo-pair tracks export as one interleaved stereo file**, not two mono stems; **continue-recorded takes export whole** (all `Track_NN_partXX` continuations are stitched, not just the first part); a partial-export failure (e.g. disk full mid-batch) reports *INCOMPLETE* rather than success
 - **Imported stereo files stay one stereo track** — collapsed to a single strip with one stereo meter, persisted across reopen, and bounced/exported as one stereo file
 - **Post-show QC report** — one click scans every track for peak / integrated LUFS / clipping events (with timecode) / noise floor, pops a sortable table and writes a text report next to the exports
 - **Detect songs → markers** — multi-track quorum scan (crowd noise on ambient mics doesn't fool it) drops a named marker at every song start for instant next-day navigation

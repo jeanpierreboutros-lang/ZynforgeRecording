@@ -6,6 +6,26 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Record-safety + data-loss decisions from the 10-area deep audit — 2026-07-10
+
+**Context.** A ten-area re-audit of the whole codebase surfaced a cluster of defects whose fixes were load-bearing enough to record the *why*, not just the *what*. They share two themes: (a) same-session reloads and remote entry points were silently destroying edits or capture, and (b) one flag was doing double duty.
+
+**Decisions.**
+
+- **`seedDefaultClips` preserves edits on a same-session reload.** It now takes `preserveEdits`: `false` for a genuine session OPEN (wipe stale clips; the caller's `.zfproj` playlist restore repopulates), `true` for a same-session reload. `AudioEngine::loadSession` gained a `preserveEdits` param (default false); `stopRecording` and the click-track regen pass `true`; `swapTracks` now **swaps the engine's clip lists + comp playlists** for the two indices and republishes preserving edits, instead of reloading through the wiping path. A track counts as "edited" (untouchable) when it has >1 take or its single clip is shaped away from the plain full-range default. *Why:* stop-recording, strip reorder, and a stray OSC/console stop were all reloading through the wiping path and discarding every split/fade/comp on every track, then autosave persisted the loss.
+
+- **`WriterChannel::active` gates the drain, not `writer != nullptr`.** A per-channel `active` flag (set when any destination opens at record start) decides whether the drain loop services a channel. *Why:* a failed primary writer nulls `writer`, which was indistinguishable from a deliberately-empty stereo-R slot, so the whole channel — backup, mirrors, FIFO drain — was skipped for the rest of the take while the report still read "backup OK". This directly contradicted the failover guarantee the backup/mirror feature exists for.
+
+- **Record-safety guards live at the ENGINE, not just the UI.** `startPlayback` refuses while recording; `stopRecording` fails closed when not recording; `setTrackStereo` refuses while recording (and bumps the track generation so every view re-collapses the pair). *Why:* the UI buttons were guarded, but network/remote entry points (OSC, MCU, companion, timecode chase) reached the engine directly and bypassed them — starting playback over a live take, reload-wiping an idle session, or flipping the writer layout mid-take. Guarding at the engine covers every caller.
+
+- **The recovery dialog owns the next launch step.** `offerSessionRecovery` returns whether it showed a dialog and defers the Welcome/auto-reopen to the dialog's close (a destructor `onClosed` hook). *Why:* the auto-reopen ran *underneath* the recovery dialog and loaded the orphan being recovered, so "Delete" then `deleteRecursively`'d the currently-loaded session.
+
+- **Offline bounce runs on an owned, cancellable thread.** Stem/mix bounces use a `std::thread` member joined (with a cancel flag) in the destructor, not a detached `juce::Thread::launch`. *Why:* a detached thread dereferenced a freed engine when the app quit mid-bounce.
+
+**Consequences.** `loadSession(dir, preserveEdits)` is the single knob for "reload same session vs open a different one" — pass `true` for any in-place reload. The failover fix means a channel keeps draining after a primary failure even if all destinations are dead (read-and-discard), so the FIFO can't overflow-cascade. New regression tests lock the two riskiest changes: *swapTracks preserves clip edits* and *splitClipAt fade geometry* (`RecordingIntegrityTests`). Deferred with reasons in `tasks.md`: X32 AES50 head-amp capture (needs hardware), noise-report semantics (analyzer redesign), SessionMirror LAN wiring (a feature). Full per-fix list in `CHANGELOG.md` (three *10-area deep audit* entries).
+
+---
+
 ## Idle CPU left at ~5%; hero panels made opaque, real floor is the timer swarm — 2026-07-05
 
 **Context.** After the hardening pass, a smoke test showed ~5–7% CPU while "idle" (documented baseline is <1%). Profiling: the message thread was repainting `MainComponent` continuously because `BigClockPanel` (a 30 Hz armed-ready "breathe" pulse) and `PerfDashboard` (repaints as the live AUDIO% jitters) were **non-opaque** — every child repaint forced the parent's slice to redraw too.
