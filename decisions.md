@@ -6,6 +6,22 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Re-audit after the fix pass — regressions + the incomplete-fix lesson — 2026-07-10
+
+**Context.** After the 10-area fix pass, an 11-agent re-audit (the 10 areas + a cross-cutting concurrency slot) re-read the whole codebase specifically to catch regressions the pass introduced. It found **2 Blockers, both regressions of my own fixes**, plus a run of Highs/Mediums that were mostly *incomplete* fixes — the pass fixed a bug on one path and missed its siblings.
+
+**What the re-audit caught (and we fixed):**
+
+- **Two Blocker regressions.** (1) `seedDefaultClips`'s "edited" test compared clip length to file length, so a continue-record (file grows) misclassified an unedited default clip as edited and preserved it SHORT — the appended audio played silent. Fixed by dropping the length clause (a plain full-from-zero clip is always refreshable). (2) The PatchPage "Audio settings…" device dialog used `launchAsync` (modal) but closed via `setVisible(false)`, leaving an invisible modal that froze the app. Fixed by branching the close on a `selfOwned` flag → `exitModalState`.
+
+- **The incomplete-fix pattern.** The pass repeatedly fixed one path and missed a sibling: the multi-part `_part` skip reached the noise + song analyzers but not QC; the meter-UAF `detach()` reached the per-strip delete paths but not `setStripCount`-shrink / console rebuild (fixed with `condemnAllStrips()`); LOCK gated the keyboard but not the menu bar; the disk-headroom `bytesPerSample` fix reached the display but not the RECORD-time guard; the FLAC/`.wav` glob fix reached session load but not QC / the recovery + new-session dialogs; the `SessionMirror` schema fix made it apply state but with no change-detection (settings-file thrash); the `ConsoleLink` gain clamp used the wrong domain (dB on a 0..1 value); the companion beachball fix polled writability but didn't close worker sockets on stop.
+
+**Decision / rule.** When a fix targets a *class* of bug (a glob, a guard, a lifetime hazard, a clamp), **grep for every sibling call site and apply it to all of them in the same change** — a partial fix reads as "handled" and hides the rest from the next reviewer. And **re-audit after a large fast fix pass**: the two Blockers here were both introduced by that pass and would not have surfaced without a second read. New regression tests lock the two riskiest engine changes (*Continue-record grows the take*, *swapTracks preserves clip edits*).
+
+**Consequences.** A few genuinely deep, pre-existing, or intentional items are DEFERRED with reasons in `tasks.md`: the capture-daemon `SetTrackCount` resize under the live audio callback and the companion worker's `getTrack` race vs `setStripCount` (both need a recorder-vector lock/snapshot; one is behind the experimental daemon flag), the reorder-across-a-mono/stereo-boundary *block rotation* (we refuse the pair-splitting step for now rather than corrupt the layout), and a couple of intentional-behaviour Lows (remote RECORD → fresh session, lossy audition stream).
+
+---
+
 ## Record-safety + data-loss decisions from the 10-area deep audit — 2026-07-10
 
 **Context.** A ten-area re-audit of the whole codebase surfaced a cluster of defects whose fixes were load-bearing enough to record the *why*, not just the *what*. They share two themes: (a) same-session reloads and remote entry points were silently destroying edits or capture, and (b) one flag was doing double duty.

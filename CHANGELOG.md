@@ -17,6 +17,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (re-audit after the fix pass — regressions + incomplete fixes, 2026-07-10)
+
+An 11-agent re-audit re-read the whole codebase to catch anything the fix pass broke or half-fixed. Build green, 267 test groups / 0 failures (new regression test: *Continue-record grows the take*).
+
+- **Continue-recording keeps its audio (Blocker regression).** A continue / length-changing punch used to leave the appended audio playing silent + hidden in EDIT (the "edited-clip" test wrongly treated a grown file as an edit and preserved the old short clip). It now refreshes the default clip to the full take length.
+- **The PatchPage "Audio settings…" button no longer freezes the app (Blocker regression).** That self-owned device dialog is modal; it now closes via `exitModalState` instead of hiding an invisible modal that blocked all input.
+- **Post-show QC covers continue-recorded takes** (it still had the multi-part bug fixed elsewhere — phantom rows + missed audio). **Session LOCK now also disables the File menu bar** (New/Open/Close/Import/Export), not just the buttons/keyboard. **The click track can't be deleted by tempo changes** even if a recorded channel is named "Click" (identified by name + playback-only routing now). **Timecode chase recovers after switching MTC→LTC** (the MTC freewheel timeout no longer poisons LTC). **Markers dropped during a take** land at the live position, not a sticky soundcheck EDIT cursor. **`generateOrRefreshClickTrack` is refused mid-record** (it reloaded the session under the recorder).
+- **Meters + strips never read freed memory on New Session / Close / a smaller session open / a console rebuild** (the earlier fix only covered per-strip delete). **Reordering across a mono/stereo boundary** refuses the pair-splitting step instead of orphaning the R half. **EDIT re-collapses a PATCH stereo toggle** and **re-scans waveforms after a reorder** (were stale). **The companion server won't hang quit** (stop() closes the wedged worker's socket). **Offline bounces are cancellable** (quit / a second bounce aborts a long render). **Session mirror** stopped thrashing the settings file (change-detection). **Console gain restore** clamps in the real 0..1 domain. **Export errors instead of silently truncating** a take with a missing middle part. **The RECORD disk-space guard** uses the real bytes-per-sample. Plus a set of Lows (consolidate-sidecar mis-stitch, a no-curve cue inheriting the previous tempo map, an armed bus overflowing its FIFO, FLAC-32f in NewSession, FLAC/AIFF counts in recovery, MTC full-frame rate, a tutorial-closure leak, a ConsoleLink socket-teardown order).
+
 ### Fixed (10-area deep audit — batch 3: linked views, analysis, dialogs, 2026-07-10)
 
 Third batch — the PatchPage/stereo linked-view **High** plus a broad set of analysis and dialog **Medium**s/**Low**s. Build green, 266 test groups / 0 failures.

@@ -39,6 +39,8 @@ The goal of this document is to keep the codebase consistent enough that any con
 - Use `dialog::paintChrome(...)` for modal `paint()`. Never hand-roll a dialog background.
 - Make `juce::Component`s `final` unless inheritance is intended.
 - Use `juce::Component::SafePointer` when a lambda captured by an async callback (timer, modal, message) refers back to a parent that might outlive it.
+- Before anything frees the recorder's `TrackState` vector (`setStripCount` shrink, `removeStripAt`, a console-session rebuild — New Session, Close, opening a smaller session), call `condemnAllStrips()` so the live `ChannelStrip`s' strip/meter/spectrum timers stop before the rebuild. The strips are rebuilt on the 10 Hz timer AFTER the free, so a strip that still holds a freed `TrackState&` is a UAF. `ChannelStrip::paint` also guards on `stripValid` for the external-repaint case.
+- A dialog launched **modal** (`LaunchOptions::launchAsync()` / `enterModalState`) must close via `dw->exitModalState(...)`, never `dw->setVisible(false)` — hiding a modal window leaves it blocking all input (invisible app freeze). `setVisible(false)` + the `syncTab` reaper is ONLY for the non-modal tracked `launchFloating` path. `AudioDeviceDialog` carries a `selfOwned` flag and branches its close on it.
 - Use `std::atomic` for any value crossed between the audio thread and any other thread.
 - Pass `juce::String` by const reference. Pass small POD by value.
 - Wrap external commands (`lame`, `rclone`) in `juce::ChildProcess` and check the exit code.
