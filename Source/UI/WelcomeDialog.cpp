@@ -144,7 +144,12 @@ namespace zynforge
                 nameEditor.setText ("Untitled", juce::dontSendNotification);
                 nameEditor.setFont (brand::type::ui (16.0f, false));
                 nameEditor.setSelectAllWhenFocused (true);
-                nameEditor.grabKeyboardFocus();
+                // Defer the focus grab -- grabbing in the ctor (before the
+                // component is on screen) is a no-op, so the Name field came up
+                // unfocused and the engineer's first keystrokes went nowhere.
+                juce::MessageManager::callAsync (
+                    [sp = juce::Component::SafePointer<juce::TextEditor> (&nameEditor)]
+                    { if (sp != nullptr) sp->grabKeyboardFocus(); });
 
                 addAndMakeVisible (localRadio);
                 localRadio.setButtonText ("Local Storage:");
@@ -194,6 +199,22 @@ namespace zynforge
                 bitDepthCombo.addItem ("24-bit",       2);
                 bitDepthCombo.addItem ("32-bit float", 3);
                 bitDepthCombo.setSelectedId (bitDepthIdFromFormat (lastFmt), juce::dontSendNotification);
+
+                // FLAC has no 32-bit float. Drop that option when FLAC is
+                // picked so the engineer can't select FLAC + 32f, which
+                // formatFromUi silently downgraded to Flac24. Enforced on init.
+                fileTypeCombo.onChange = [this]
+                {
+                    const bool isFlac = (fileTypeCombo.getSelectedId() == 3);
+                    const int  prev   = bitDepthCombo.getSelectedId();
+                    bitDepthCombo.clear (juce::dontSendNotification);
+                    bitDepthCombo.addItem ("16-bit", 1);
+                    bitDepthCombo.addItem ("24-bit", 2);
+                    if (! isFlac) bitDepthCombo.addItem ("32-bit float", 3);
+                    const bool valid = prev == 1 || prev == 2 || (prev == 3 && ! isFlac);
+                    bitDepthCombo.setSelectedId (valid ? prev : 2, juce::dontSendNotification);
+                };
+                fileTypeCombo.onChange();
 
                 addAndMakeVisible (ioLabel);
                 ioLabel.setText ("I/O Settings", juce::dontSendNotification);

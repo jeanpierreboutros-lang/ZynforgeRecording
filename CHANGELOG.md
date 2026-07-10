@@ -17,6 +17,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (10-area deep audit — batch 3: linked views, analysis, dialogs, 2026-07-10)
+
+Third batch — the PatchPage/stereo linked-view **High** plus a broad set of analysis and dialog **Medium**s/**Low**s. Build green, 266 test groups / 0 failures.
+
+- **Linking a stereo pair updates every view.** A stereo link/unlink from the PATCH page now bumps the track generation, so MIXER, EDIT, and the meterbridge all re-collapse the pair immediately (they used to keep showing two mono strips until an unrelated add/delete). Stereo link is also refused while recording (the on-disk writer layout is fixed at record start). A PATCH column rename now repaints the open PATCH window, and a stereo strip patched to the last hardware row leaves its R half unrouted instead of pointing at a nonexistent channel.
+- **Post-show QC covers the whole take.** QC reads every channel (a native stereo pair is one 2-ch file — the right side was never analysed), and is now NaN/Inf-safe (a foreign 32-float file with NaNs used to crash the sort; +Inf now registers as the clip it is instead of reporting −120 dB). Noise analysis no longer drops continuation-recorded takes or emits phantom rows for `.punchbase` sidecars, and reads FLAC. Song detection no longer folds continuation parts onto the timeline start (which scattered song markers).
+- **Pre-flight headroom is honest.** The "minutes remaining" estimate uses the real bytes-per-sample for the format (it hardcoded 24-bit, so a 32-float session read ~33% too optimistic).
+- **Dialogs behave.** Cancelling the Audio Device panel now also reverts a live monitor-bus change. The Mirror Drives "+ Add" row is genuinely blank (it defaulted to ~/Music and armed a mirror there); an unmounted mirror drive is kept (arms when reconnected) instead of being silently dropped. Reopening Click Settings shows the live voice/level/subdivision instead of resetting them. The PatchPage "Audio settings…" button no longer leaks a device dialog. Export preserves the chosen bit depth across a format switch. The Welcome dialog focuses the Name field and no longer offers FLAC + 32-bit float (which silently recorded FLAC/24).
+- **Misc:** companion web page escapes track names (XSS), the printable setlist escapes the session name, the Tab-to-transient readout uses the real sample rate, and the EDIT input-monitor button reflects MIXER changes.
+
 ### Fixed (10-area deep audit — batch 2: record-safety, transport, network, 2026-07-10)
 
 Second batch of the deep audit — the remaining record-safety, transport, sync, and network **High**s plus related **Medium**s. Build green, 266 test groups / 0 failures.

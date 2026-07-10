@@ -657,7 +657,11 @@ void MainComponent::printSetlist()
               .getChildFile ("zynforge_setlist.html");
 
     const auto sr = engine.getPlayer().getSampleRate();
-    const auto sessName = dir.isDirectory() ? dir.getFileName() : juce::String ("Session");
+    const auto sessNameRaw = dir.isDirectory() ? dir.getFileName() : juce::String ("Session");
+    // Escape like the cue names below -- a folder named "Fest <Main> & Co"
+    // otherwise broke/truncated the <title>/<h1>.
+    const auto sessName = sessNameRaw.replace ("&", "&amp;")
+                                     .replace ("<", "&lt;").replace (">", "&gt;");
 
     juce::String html;
     html << "<!doctype html><html><head><meta charset=\"utf-8\"><title>"

@@ -389,6 +389,7 @@ namespace zynforge
             if (armButton .getToggleState() != s.armed .load()) armButton .setToggleState (s.armed .load(), juce::dontSendNotification);
             if (muteButton.getToggleState() != s.muted .load()) muteButton.setToggleState (s.muted .load(), juce::dontSendNotification);
             if (soloButton.getToggleState() != s.soloed.load()) soloButton.setToggleState (s.soloed.load(), juce::dontSendNotification);
+            if (monButton .getToggleState() != s.monitor.load()) monButton .setToggleState (s.monitor.load(), juce::dontSendNotification);  // input-monitor changed in MIXER must reflect here
             const auto curName = nameLabel.getText();
             if (curName != s.name) nameLabel.setText (s.name, juce::dontSendNotification);
 

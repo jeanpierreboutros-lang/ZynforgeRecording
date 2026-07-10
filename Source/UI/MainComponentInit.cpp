@@ -539,13 +539,17 @@ MainComponent::MainComponent()
         // ever stopping playback.
         auto& cl = engine.getClickEngine();
         zynforge::ClickSettings init;
+        // Seed the dialog from the LIVE click engine, not fabricated defaults.
+        // The engine DOES expose getters (used by the offline click render), so
+        // reopening to just toggle ON no longer resets the engineer's cowbell /
+        // level / subdivision back to Click / 0 dB / quarter.
         init.on              = cl.isEnabled();
-        init.click1.volumeDb = 0.0f;     // engine doesn't currently round-trip these values back
-        init.click1.voice    = zynforge::ClickSettings::Voice::Click;
-        init.click1.sub      = zynforge::ClickSettings::Subdivision::Quarter;
-        init.click2.volumeDb = -3.0f;
-        init.click2.voice    = zynforge::ClickSettings::Voice::Click;
-        init.click2.sub      = zynforge::ClickSettings::Subdivision::Quarter;
+        init.click1.volumeDb = cl.getVol1Db();
+        init.click1.voice    = (zynforge::ClickSettings::Voice) cl.getVoice1();
+        init.click1.sub      = (zynforge::ClickSettings::Subdivision) cl.getSub1();
+        init.click2.volumeDb = cl.getVol2Db();
+        init.click2.voice    = (zynforge::ClickSettings::Voice) cl.getVoice2();
+        init.click2.sub      = (zynforge::ClickSettings::Subdivision) cl.getSub2();
 
         zynforge::ClickSettingsDialog::launch (init, engine.getSessionTempoBpm(),
             [this] (const zynforge::ClickSettings& s)

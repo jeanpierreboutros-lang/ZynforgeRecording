@@ -117,13 +117,19 @@ namespace zynforge
                 bitsBox  .setEnabled (! isMp3);
 
                 // FLAC: only 16-bit or 24-bit valid.
-                // Disable the 32-bit-float item by rebuilding the combo state.
+                // Disable the 32-bit-float item by rebuilding the combo state,
+                // but PRESERVE the engineer's current bit-depth across the
+                // rebuild -- clear() wiped it, so flipping WAV->FLAC (both do
+                // 16-bit) silently jumped a chosen 16-bit back to 24-bit.
+                const int prevId = bitsBox.getSelectedId();
                 bitsBox.clear (juce::dontSendNotification);
                 bitsBox.addItem ("16-bit PCM",   1);
                 bitsBox.addItem ("24-bit PCM",   2);
                 if (! isFlac && ! isMp3)
                     bitsBox.addItem ("32-bit float", 3);
-                if (bitsBox.getSelectedId() == 0) bitsBox.setSelectedId (2);
+                const bool prevStillValid = prevId == 1 || prevId == 2
+                                            || (prevId == 3 && ! isFlac && ! isMp3);
+                bitsBox.setSelectedId (prevStillValid ? prevId : 2, juce::dontSendNotification);
 
                 bitrateLabel.setEnabled (isMp3);
                 bitrateBox  .setEnabled (isMp3);

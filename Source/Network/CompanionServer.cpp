@@ -168,8 +168,8 @@ function renderStrips(state) {
             const card = document.createElement("div");
             card.className = "strip";
             card.innerHTML = `
-                <div class="swatch" style="background:${t.colour}"></div>
-                <div class="name">${t.name}</div>
+                <div class="swatch" style="background:${String(t.colour).replace(/[^#0-9a-fA-F]/g,"")}"></div>
+                <div class="name">${String(t.name).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}</div>
                 <div class="btns">
                   <button class="rec  ${t.armed?"on":""}"  data-i="${i}" data-a="arm" >REC</button>
                   <button class="mute ${t.muted?"on":""}"  data-i="${i}" data-a="mute">MUTE</button>

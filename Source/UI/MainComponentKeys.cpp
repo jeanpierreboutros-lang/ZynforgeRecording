@@ -109,11 +109,13 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         if (target >= 0)
         {
             engine.getPlayer().setPositionSamples (target);
+            const double tsr = engine.getPlayer().getSampleRate() > 0.0
+                                 ? engine.getPlayer().getSampleRate() : 48000.0;
             showStatus ((key.getModifiers().isShiftDown() ? "Prev transient" : "Next transient")
                         + juce::String (restrict > 0 ? " (track " + juce::String (restrict) + ")"
                                                       : " (all)")
                         + " -> "
-                        + juce::String ((double) target / 48000.0, 2) + "s");
+                        + juce::String ((double) target / tsr, 2) + "s");   // real SR, not hardcoded 48k
         }
         else
         {

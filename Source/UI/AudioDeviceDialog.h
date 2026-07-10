@@ -18,6 +18,10 @@ namespace zynforge
     public:
         // Returns the live DialogWindow so the caller can keep a SafePointer
         // and close it on a second click of the launching button.
-        static juce::DialogWindow* launch (AudioEngine& engine);
+        // selfOwned == true launches a self-deleting async dialog (returns
+        // nullptr) for callers that can't track + reap the window -- e.g. the
+        // PatchPage empty-state button, which otherwise LEAKED the dialog (its
+        // Cancel/dtor restore never fired and a second dialog could stack).
+        static juce::DialogWindow* launch (AudioEngine& engine, bool selfOwned = false);
     };
 }

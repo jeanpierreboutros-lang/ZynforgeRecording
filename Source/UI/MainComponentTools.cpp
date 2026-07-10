@@ -754,6 +754,12 @@ void MainComponent::detectSongsToMarkers()
         double sr = 48000.0;
         for (const auto& f : files)
         {
+            // Skip continuation parts: envelopeFlags treats every file as
+            // starting at t=0, so a Track_NN_partXX would fold set-2 audio onto
+            // the timeline START and add a phantom voice to the quorum, landing
+            // song markers all over the session. Scan main files only.
+            if (f.getFileNameWithoutExtension().containsIgnoreCase ("_part"))
+                continue;
             double fileSr = 0.0;
             auto fl = zynforge::songs::envelopeFlags (f, params.thresholdDb,
                                                       params.windowSec, fileSr);

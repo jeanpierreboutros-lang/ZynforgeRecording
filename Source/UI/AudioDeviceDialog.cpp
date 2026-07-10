@@ -125,6 +125,8 @@ namespace zynforge
             {
                 auto& dm = engine.getDeviceManager();
                 snapshot = dm.createStateXml();
+                origMasterL = engine.getMasterOutputL();
+                origMasterR = engine.getMasterOutputR();
                 dm.addChangeListener (this);
 
                 auto styleCombo = [] (juce::ComboBox& c)
@@ -227,6 +229,10 @@ namespace zynforge
             ~DialogContent() override
             {
                 engine.getDeviceManager().removeChangeListener (this);
+
+                // Cancel/ESC/close -> also revert the LIVE-applied monitor bus.
+                if (! applied)
+                    engine.setMasterOutputs (origMasterL, origMasterR);
 
                 if (! applied && snapshot != nullptr)
                     // Restore with the SAME channel counts the app boots with
@@ -539,12 +545,17 @@ namespace zynforge
             juce::TextButton cancelButton { "Cancel" };
             juce::Label      statusLabel;
             std::unique_ptr<juce::XmlElement> snapshot;
+            // Monitor-bus routing is applied + persisted LIVE on change, but the
+            // Cancel path only reverted the device snapshot -- so a test flip of
+            // the monitor output survived Cancel (and relaunch). Capture it at
+            // open and restore on Cancel too.
+            int origMasterL { 0 }, origMasterR { 1 };
             bool applied    { false };
             bool refreshing { false };
         };
     }
 
-    juce::DialogWindow* AudioDeviceDialog::launch (AudioEngine& engine)
+    juce::DialogWindow* AudioDeviceDialog::launch (AudioEngine& engine, bool selfOwned)
     {
         auto content = std::make_unique<DialogContent> (engine);
 
@@ -555,6 +566,13 @@ namespace zynforge
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar            = true;
         opts.resizable                    = true;
+        if (selfOwned)
+        {
+            // Self-deleting on close (dtor -> snapshot + monitor-bus restore).
+            // For callers with no way to track/reap the window.
+            opts.launchAsync();
+            return nullptr;
+        }
         return launchFloating (opts);   // non-modal so the DEVICE tab can toggle it
     }
 }

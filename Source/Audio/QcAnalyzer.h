@@ -88,13 +88,29 @@ namespace zynforge::qc
         for (juce::int64 pos = 0; pos < qc.lengthSamples; pos += block)
         {
             const int n = (int) juce::jmin ((juce::int64) block, qc.lengthSamples - pos);
-            if (! reader->read (&buf, 0, n, pos, true, false)) break;
-            const float* s = buf.getReadPointer (0);     // track files are mono; ch 0 for safety
+            if (! reader->read (&buf, 0, n, pos, true, true)) break;   // ALL channels (native stereo = one 2-ch file)
+            const int nch = juce::jmin (buf.getNumChannels(), 8);
 
             for (int i = 0; i < n; ++i)
             {
-                const float v  = s[i];
-                const float av = std::abs (v);
+                // Peak / clip / noise-RMS across EVERY channel -- a native
+                // stereo pair is one 2-channel file, so ch-0-only silently
+                // skipped a clipped RIGHT side. Sanitise per sample: NaN -> 0
+                // (a foreign/glitched 32f file otherwise poisons winAcc and the
+                // std::sort of windowsDb -> UB/crash); +/-Inf -> full-scale so
+                // it registers as the clip it is instead of flooring peak to -120.
+                float  av    = 0.0f;
+                double sumSq = 0.0;
+                float  ch0 = 0.0f, ch1 = 0.0f;
+                for (int c = 0; c < nch; ++c)
+                {
+                    float v = buf.getReadPointer (c)[i];
+                    if (std::isnan (v))      v = 0.0f;
+                    else if (std::isinf (v)) v = (v > 0.0f ? 1.0f : -1.0f);
+                    if (c == 0) ch0 = v; else if (c == 1) ch1 = v;
+                    av = juce::jmax (av, std::abs (v));
+                    sumSq += (double) v * (double) v;
+                }
                 peak = juce::jmax (peak, av);
 
                 if (av >= kClipThreshold)
@@ -105,7 +121,7 @@ namespace zynforge::qc
                 else
                     endClipRun();
 
-                winAcc += (double) v * (double) v;
+                winAcc += sumSq / (double) juce::jmax (1, nch);   // mean-square across channels
                 if (++winFill == winLen)
                 {
                     windowsDb.push_back (juce::Decibels::gainToDecibels (
@@ -113,7 +129,8 @@ namespace zynforge::qc
                     winAcc = 0.0; winFill = 0;
                 }
 
-                dL[(size_t) i] = (double) v;
+                dL[(size_t) i] = (double) ch0;
+                dR[(size_t) i] = (nch > 1) ? (double) ch1 : 0.0;
             }
             loudness.processMasterDouble (dL.data(), dR.data(), 1.0, n);
         }

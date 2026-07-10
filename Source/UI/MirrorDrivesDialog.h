@@ -210,7 +210,12 @@ namespace zynforge
             void addBlankRow()
             {
                 MultitrackRecorder::MirrorConfig c;
-                c.root = juce::File::getSpecialLocation (juce::File::userMusicDirectory);
+                // Genuinely BLANK root (not ~/Music). Defaulting to ~/Music made
+                // an un-configured row pass the applyAndClose filter (~/Music
+                // always exists), so a forgotten row armed a mirror that strewed
+                // Track_NN files into the Music folder. The picker still opens at
+                // ~/Music via its own default.
+                c.root = juce::File();
                 c.format = CaptureFormat::Wav24;
                 working.push_back (c);
                 rebuildRows();
@@ -227,12 +232,18 @@ namespace zynforge
 
             void applyAndClose()
             {
-                // Filter out blank-rooted rows (engineer added a row
-                // then never picked a folder).
+                // Keep every row the engineer actually pointed at a folder --
+                // even one whose drive isn't mounted RIGHT NOW. The old filter
+                // silently DROPPED an unmounted mirror, so a show recorded with
+                // no redundancy while the engineer believed the mirror was armed.
+                // The recorder re-creates the dir at record start when the drive
+                // returns; only genuinely blank rows (no folder ever picked) go.
                 std::vector<MultitrackRecorder::MirrorConfig> cleaned;
                 for (const auto& m : working)
-                    if (m.root.exists() || m.root.createDirectory().wasOk())
-                        cleaned.push_back (m);
+                {
+                    if (m.root == juce::File()) continue;     // never picked a folder -> drop
+                    cleaned.push_back (m);                    // keep even if not mounted now
+                }
                 engine.setMirrors (cleaned);
                 close (true);
             }

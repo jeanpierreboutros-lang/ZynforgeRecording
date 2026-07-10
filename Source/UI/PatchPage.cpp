@@ -57,6 +57,9 @@ namespace zynforge
                     h = h * 1315423911u ^ (std::size_t) (r + 7);
                     h = h * 1315423911u ^ (std::size_t) (s + 11);
                     h = h * 1315423911u ^ c;
+                    // Include the NAME too -- the column headers draw t.name, so
+                    // a rename in MIXER/EDIT must repaint the open PATCH window.
+                    h = h * 1315423911u ^ (std::size_t) t.getNameThreadSafe().hashCode();
                 }
                 if (h != lastHash)
                 {
@@ -298,7 +301,7 @@ namespace zynforge
                     placeholder.showEmpty ("No audio device",
                         "Select an input/output device to patch hardware channels.",
                         "Audio settings…",
-                        [this] { AudioDeviceDialog::launch (engine); });
+                        [this] { AudioDeviceDialog::launch (engine, /*selfOwned*/ true); });
                 else if (kind == 2)
                     placeholder.showEmpty ("No channels to patch",
                         "Add tracks or open a session first.");
@@ -493,8 +496,15 @@ namespace zynforge
                 // For stereo: L → hwChannel, R → hwChannel + 1.
                 engine.setTrackLinkedRouting (ls.trackIndex, hwChannel);
                 if (ls.stereo)
-                    engine.setTrackLinkedRouting (ls.trackIndex + 1,
-                                                  (hwChannel < 0) ? -1 : hwChannel + 1);
+                {
+                    // R goes to hwChannel+1. If that's past the device's channel
+                    // count (L patched to the LAST row), leave R UNROUTED (-1)
+                    // instead of silently pointing it at a nonexistent channel.
+                    const int numHw = isInput ? engine.getCurrentDeviceInputCount()
+                                              : engine.getCurrentDeviceOutputCount();
+                    const int rHw = (hwChannel < 0 || hwChannel + 1 >= numHw) ? -1 : hwChannel + 1;
+                    engine.setTrackLinkedRouting (ls.trackIndex + 1, rHw);
+                }
             }
 
             AudioEngine& engine;

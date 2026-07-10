@@ -53,6 +53,7 @@ namespace zynforge
 
             juce::AudioFormatManager fm;
             fm.registerBasicFormats();
+            fm.registerFormat (new juce::FlacAudioFormat(), false);   // FLAC takes are analysable too
             std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (wavFile));
             if (reader == nullptr || reader->numChannels < 1) return nf;   // guard OOB read on malformed file
 
@@ -189,8 +190,18 @@ namespace zynforge
             const auto base = audioFiles.isDirectory() ? audioFiles : sessionDir;
             for (const auto& f : base.findChildFiles (juce::File::findFiles, false, "Track_*"))
             {
-                const auto stem = f.getFileNameWithoutExtension();   // Track_NN
-                const int idx = stem.fromLastOccurrenceOf ("_", false, false).getIntValue() - 1;
+                // Audio only -- exclude .wav.punchbase and other Track_* sidecars
+                // that produced phantom "clean" rows in the report.
+                const auto ext = f.getFileExtension().toLowerCase();
+                if (ext != ".wav" && ext != ".flac" && ext != ".aif" && ext != ".aiff")
+                    continue;
+                const auto stem = f.getFileNameWithoutExtension();   // "Track_04" or "Track_04_part02"
+                if (stem.containsIgnoreCase ("_part"))
+                    continue;   // continuation parts belong to their main file, not a separate row
+                // Index from the Track_NN PREFIX. The old last-"_" parse turned
+                // "Track_04_part02" into "part02" -> 0 -> idx -1 and silently
+                // dropped continuation-recorded takes from the report.
+                const int idx = stem.fromFirstOccurrenceOf ("Track_", false, false).getIntValue() - 1;
                 if (idx < 0) continue;
                 const auto nm = trackNameOf ? trackNameOf (idx) : stem;
                 findings.push_back (analyseFile (f, idx, nm));

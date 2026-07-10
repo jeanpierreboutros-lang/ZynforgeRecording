@@ -140,6 +140,11 @@ namespace zynforge
         // TrackState objects were replaced -- otherwise a cached
         // TrackState& dangles and crashes on the next paint/timer.
         int          getTrackGeneration() const noexcept { return trackGen.load (std::memory_order_relaxed); }
+        // Bump the generation without changing the track COUNT -- e.g. a stereo
+        // link/unlink changes how every view collapses the pair, so the MIXER /
+        // EDIT rebuild + the meterbridge (which both watch this counter) must
+        // re-run even though the count is unchanged.
+        void         bumpTrackGeneration() noexcept { trackGen.fetch_add (1, std::memory_order_relaxed); }
         TrackState&  getTrack (int i) noexcept     { return *tracks[(std::size_t) i]; }
 
         // Health + position counters -- all RT-safe to read.

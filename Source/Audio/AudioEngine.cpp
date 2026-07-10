@@ -1205,8 +1205,18 @@ namespace zynforge
     void AudioEngine::setTrackStereo (int channelIndex, bool isStereoPair)
     {
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
+        // The recorder's writer layout (mono vs one interleaved 2-ch file) is
+        // fixed at record start, and the capture feed gates on isStereo per
+        // block, so flipping this mid-take desyncs the on-disk layout from the
+        // flag. Refuse while recording -- like setStripCount / removeStripAt.
+        if (recorder.isRecording()) return;
         recorder.getTrack (channelIndex).isStereo.store (isStereoPair,
                                                           std::memory_order_release);
+        // Bump the track generation so EVERY view (MIXER, EDIT, and the
+        // meterbridge) rebuilds and re-collapses the pair -- a stereo link from
+        // the PATCH page changed the engine but left the other views showing two
+        // mono strips until some unrelated add/delete forced a rebuild.
+        recorder.bumpTrackGeneration();
         if (appProps != nullptr)
         {
             reloadAppPropsBeforeWrite();

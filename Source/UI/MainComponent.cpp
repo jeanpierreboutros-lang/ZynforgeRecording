@@ -819,8 +819,16 @@ void MainComponent::showPreflightChecklist()
         : fmt == zynforge::CaptureFormat::Flac16     ? "FLAC/16"
                                                       : "?";
 
-    // 30-minute headroom estimate at the active configuration.
-    const juce::int64 bytesPerSec = (juce::int64) (sr * juce::jmax (1, armed) * 3);
+    // 30-minute headroom estimate at the active configuration. Derive the real
+    // bytes-per-sample from the format (was hardcoded to 3 = 24-bit, so a 32f
+    // session read ~33% too optimistic and could hit disk-full mid-set). FLAC
+    // uses its uncompressed size, which is conservative (it compresses).
+    const int bytesPerSample =
+          (fmt == zynforge::CaptureFormat::Wav16 || fmt == zynforge::CaptureFormat::Aiff16
+           || fmt == zynforge::CaptureFormat::Flac16)                                       ? 2
+        : (fmt == zynforge::CaptureFormat::Wav32Float || fmt == zynforge::CaptureFormat::Aiff32Float) ? 4
+        : 3;   // 24-bit WAV / AIFF / FLAC
+    const juce::int64 bytesPerSec = (juce::int64) (sr * juce::jmax (1, armed) * bytesPerSample);
     const double minHeadroom = bytesPerSec > 0 ? (freeGB * 1.0e9 / (double) bytesPerSec) / 60.0
                                                 : 0.0;
 
@@ -908,12 +916,8 @@ void MainComponent::showPreflightChecklist()
 
     // Measured write speed of the session volume vs what the armed
     // configuration demands (uncompressed worst case, with 1.5x margin
-    // for filesystem jitter mid-show).
-    const int bytesPerSample =
-          (fmt == zynforge::CaptureFormat::Wav16      || fmt == zynforge::CaptureFormat::Aiff16
-        || fmt == zynforge::CaptureFormat::Flac16)     ? 2
-        : (fmt == zynforge::CaptureFormat::Wav32Float || fmt == zynforge::CaptureFormat::Aiff32Float) ? 4
-                                                       : 3;
+    // for filesystem jitter mid-show). Reuses the format-derived
+    // bytesPerSample computed for the headroom estimate above.
     const double needMBps = zynforge::preflight::requiredWriteMBps (sr, juce::jmax (1, armed), bytesPerSample);
     if (hasSes || root.isDirectory())
     {
