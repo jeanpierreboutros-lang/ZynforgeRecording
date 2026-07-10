@@ -28,6 +28,9 @@ int MainComponent::openSessionFolder (const juce::File& dir)
 {
     if (! dir.isDirectory()) return 0;
 
+    // Condemn the current strips before loading -- a smaller session shrinks
+    // the recorder vector and frees TrackStates the live strips still point at.
+    condemnAllStrips();
     engine.stopPlayback();
     engine.setActiveSessionDir (dir);        // pin so Save / Save As / Export stay lit
     loadSetlistFromActiveSession();
@@ -121,6 +124,7 @@ void MainComponent::closeSession()
             engine.clearAutomation (AudioEngine::AutomationParam::Pan);
             engine.clearAutomation (AudioEngine::AutomationParam::Mute);
             engine.clearAllStripOverrides();
+            self->condemnAllStrips();   // stop strip timers before setStripCount(0) frees the TrackStates
             engine.setStripCount (0);
 
             self->cues.clear();
@@ -440,15 +444,17 @@ void MainComponent::onBounceStems()
                 if (t > 0 && rec.getTrack (t - 1).isStereo.load (std::memory_order_relaxed))
                     continue;
                 const auto& ts = rec.getTrack (t);
-                const auto safe = ts.name.replaceCharacter ('/', '_').replaceCharacter ('\\', '_');
+                // getNameThreadSafe() -- this runs on the bounce thread; a raw
+                // ts.name read races setTrackName's locked reassignment (torn String).
+                const auto safe = ts.getNameThreadSafe().replaceCharacter ('/', '_').replaceCharacter ('\\', '_');
                 const auto outFile = dest.getChildFile (
                     juce::String::formatted ("Track_%02d - ", t + 1) + safe + ".wav");
                 // Streams the edited arrangement window-by-window straight to
                 // disk, so a multi-hour stem never needs a whole-track buffer.
                 const bool stereo = ts.isStereo.load (std::memory_order_relaxed);
                 const bool okBounce = stereo
-                    ? engine.bounceStereoPairToWav (t, outFile, arrLen, sr)
-                    : engine.bounceTrackArrangementToWav (t, outFile, arrLen, sr);
+                    ? engine.bounceStereoPairToWav (t, outFile, arrLen, sr, &bounceCancel)
+                    : engine.bounceTrackArrangementToWav (t, outFile, arrLen, sr, &bounceCancel);
                 if (okBounce) ++written;
             }
             juce::MessageManager::callAsync ([self, written, dest]
@@ -493,7 +499,7 @@ void MainComponent::onBounceStereoMix()
         {
             if (bounceCancel.load (std::memory_order_relaxed)) return;
             // Streams the summed mix window-by-window straight to disk.
-            const bool ok = engine.bounceStereoMixToWav (dest, arrLen, sr);
+            const bool ok = engine.bounceStereoMixToWav (dest, arrLen, sr, &bounceCancel);
             juce::MessageManager::callAsync ([self, ok, dest]
             {
                 if (self != nullptr)

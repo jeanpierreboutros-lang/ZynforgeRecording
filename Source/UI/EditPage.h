@@ -268,6 +268,7 @@ namespace zynforge
         TimelineMinimap                    minimap;   // overview navigator (zoomed)
 
         int        lastTrackCount  { -1 };
+        int        lastTrackGen    { -1 };   // rebuild on a stereo link/unlink (count unchanged, generation bumps)
         bool       lastLoaded      { false };
         bool       lastRecording   { false };
         bool       waveCacheSaved  { false };   // WaveCache.wfm written for this session yet?

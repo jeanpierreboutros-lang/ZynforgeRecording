@@ -259,7 +259,11 @@ namespace zynforge
                     // clamps; this path did not.
                     const int ha = (int) g.getProperty ("headamp", 0);
                     if (ha < 0 || ha >= 128) continue;
-                    gains[ha] = juce::jlimit (-12.0f, 60.0f,
+                    // gains hold the RAW normalised 0..1 wire value (sent back
+                    // verbatim by restoreGains), so clamp in THAT domain -- a
+                    // dB-range clamp (-12..60) was a no-op that passed
+                    // dB-looking garbage (e.g. 24) straight to the desk.
+                    gains[ha] = juce::jlimit (0.0f, 1.0f,
                                               (float) (double) g.getProperty ("gain", 0.0));
                 }
         }

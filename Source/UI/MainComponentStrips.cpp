@@ -304,17 +304,25 @@ void MainComponent::selectAllStrips()
     showStatus (juce::String ((int) strips.size()) + " strip(s) selected");
 }
 
+void MainComponent::condemnAllStrips()
+{
+    // Stop every strip's strip/meter/spectrum timers so none samples a
+    // TrackState that a recorder-vector shrink (New Session, close, opening a
+    // smaller session, a console-session rebuild) is about to free. The strips
+    // are rebuilt on the 10 Hz timer AFTER the free, so without this there is a
+    // ~100 ms freed-memory read window (the meter-lifetime fix covered the
+    // per-strip delete paths but not the whole-set shrinks).
+    for (auto& s : strips)
+        if (s != nullptr) s->invalidate();
+}
+
 void MainComponent::deleteSelectedStrips()
 {
     if (selectedLogical.empty() || engine.isRecording()) return;
 
-    // Every strip is rebuilt after this multi-remove, and removeStripAt frees
-    // TrackStates + shifts indices as it goes. Condemn ALL current strips now
-    // (stop their strip/meter/spectrum timers) so none samples a TrackState
-    // that's about to be freed -- the single-delete path does the same via
-    // invalidate(), but the bulk path skipped it (a meter UAF).
-    for (auto& s : strips)
-        if (s != nullptr) s->invalidate();
+    // removeStripAt frees TrackStates + shifts indices as it goes; condemn all
+    // strips first (the single-delete path does the same via invalidate()).
+    condemnAllStrips();
 
     // Delete from the highest index down so earlier indices stay valid.
     std::vector<int> sorted (selectedLogical.begin(), selectedLogical.end());
@@ -641,6 +649,7 @@ void MainComponent::createSessionFromConsole()
 
         self->engine.setActiveSessionDir (dir);
         self->engine.clearAllStripOverrides();
+        self->condemnAllStrips();   // console-session rebuild resizes the recorder vector; stop strip timers first
         self->engine.setStripCount (maxCh);
         for (const auto& kv : names)
         {

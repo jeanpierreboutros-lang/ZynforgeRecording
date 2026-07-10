@@ -661,13 +661,15 @@ namespace zynforge
     }
 
     bool AudioEngine::bounceTrackArrangementToWav (int track, const juce::File& dest,
-                                                   juce::int64 totalSamples, double sampleRate)
+                                                   juce::int64 totalSamples, double sampleRate,
+                                                   const std::atomic<bool>* cancel)
     {
         auto writer = createWav24Writer (dest, sampleRate, 1);
         if (writer == nullptr) return false;
         const bool ok = forEachArrangementWindow (track, 0, totalSamples,
             [&] (const float* data, juce::int64, int winLen)
             {
+                if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return false;
                 const float* chans[1] = { data };
                 return writer->writeFromFloatArrays (chans, 1, winLen);
             });
@@ -804,20 +806,25 @@ namespace zynforge
     }
 
     bool AudioEngine::bounceStereoMixToWav (const juce::File& dest,
-                                            juce::int64 totalSamples, double sampleRate)
+                                            juce::int64 totalSamples, double sampleRate,
+                                            const std::atomic<bool>* cancel)
     {
         auto writer = createWav24Writer (dest, sampleRate, 2);
         if (writer == nullptr) return false;
         const bool ok = forEachStereoMixWindow (totalSamples,
             [&] (const juce::AudioBuffer<float>& w, juce::int64, int winLen)
-            { return writer->writeFromAudioSampleBuffer (w, 0, winLen); });
+            {
+                if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return false;
+                return writer->writeFromAudioSampleBuffer (w, 0, winLen);
+            });
         writer.reset();
         if (! ok) dest.deleteFile();
         return ok;
     }
 
     bool AudioEngine::bounceStereoPairToWav (int trackL, const juce::File& dest,
-                                             juce::int64 totalSamples, double sampleRate)
+                                             juce::int64 totalSamples, double sampleRate,
+                                             const std::atomic<bool>* cancel)
     {
         if (totalSamples <= 0) return false;
         const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
@@ -842,6 +849,7 @@ namespace zynforge
         bool ok = true;
         for (juce::int64 winStart = 0; winStart < len && ok; winStart += kRenderWindowSamples)
         {
+            if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) { ok = false; break; }
             const int winLen = (int) juce::jmin<juce::int64> (kRenderWindowSamples, len - winStart);
             stereo.clear (0, 0, winLen);
             stereo.clear (1, 0, winLen);

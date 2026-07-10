@@ -268,6 +268,14 @@ void MainComponent::jumpToCue (int index)
             map.push_back ({ cue.samplePos + p.offsetSamples, p.bpm });
         engine.setTempoMap (std::move (map));
     }
+    else
+    {
+        // No curve on this cue -> CLEAR any map left by a previous cue, else a
+        // single-BPM song inherits the last song's accelerando (click + MIDI
+        // clock run the wrong ramp). Same clear-first rule as the automation
+        // lanes below.
+        engine.setTempoMap ({});
+    }
 
     // Reinstall this cue's automation lanes so the song plays back with its
     // own volume / pan / mute moves. Applied for BOTH Snap and Fade recalls

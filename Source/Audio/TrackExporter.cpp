@@ -97,6 +97,15 @@ namespace zynforge
         const auto parts = findTakeParts (source);
         std::unique_ptr<juce::AudioFormatReader> reader (
             ConcatReader::create (formatManager, parts));
+        if (reader == nullptr && parts.size() > 1)
+        {
+            // create() refused a multi-part take because a MIDDLE part is
+            // missing/unreadable -- do NOT silently fall back to exporting part
+            // 1 (which drops the later parts and reports success on a "never
+            // lose audio" tool). Fail loudly so the engineer knows.
+            outError = "Take has a missing/unreadable part -- export would be truncated";
+            return false;
+        }
         if (reader == nullptr) reader.reset (formatManager.createReaderFor (source));
         if (reader == nullptr) { outError = "Cannot read source"; return false; }
 

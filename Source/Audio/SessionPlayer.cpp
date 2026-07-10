@@ -74,8 +74,19 @@ namespace zynforge
             for (const auto& f : dir.findChildFiles (juce::File::findFiles, false, "Track_*"))
             {
                 const auto ext = f.getFileExtension().toLowerCase();
-                if (ext == ".wav" || ext == ".flac" || ext == ".aif" || ext == ".aiff")
-                    out.add (f);
+                if (ext != ".wav" && ext != ".flac" && ext != ".aif" && ext != ".aiff")
+                    continue;
+                // Only the take's OWN files: Track_NN or Track_NN_partXX. Exclude
+                // consolidate/swap sidecars (Track_NN_consolidated_K, Track_NN_swap)
+                // that live in Audio Files/ but are referenced only by a clip's
+                // audioFile -- byIndex would otherwise stitch them onto the take
+                // as a phantom continuation, inflating its length / mis-ordering it.
+                const auto rest = f.getFileNameWithoutExtension()
+                                    .fromFirstOccurrenceOf ("Track_", false, false);  // "04" / "04_part02" / "04_consolidated_1"
+                const int usc = rest.indexOfChar ('_');
+                if (usc >= 0 && ! rest.substring (usc + 1).startsWithIgnoreCase ("part"))
+                    continue;
+                out.add (f);
             }
             return out;
         };

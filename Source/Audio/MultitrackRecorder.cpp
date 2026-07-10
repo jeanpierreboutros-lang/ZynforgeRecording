@@ -461,8 +461,12 @@ namespace zynforge
 
             // Push to ring buffer when recording. Armed channels push; the
             // R half of an armed stereo pair also pushes (pairArmed) so both
-            // sides of the interleaved file advance together.
-            if (rec && (t.armed.load (std::memory_order_relaxed) || pairArmed))
+            // sides of the interleaved file advance together. A BUS never pushes
+            // -- it has no input + gets no writer (active stays false), so an
+            // armed bus (e.g. armed over OSC/MCU) would feed an undrained FIFO
+            // that overflows into a false "samples dropped" alarm.
+            if (rec && ! t.isBus.load (std::memory_order_relaxed)
+                    && (t.armed.load (std::memory_order_relaxed) || pairArmed))
             {
                 // Live waveform overview: bin the captured input into min/max
                 // pairs so the EDIT lane draws the detailed waveform AS it

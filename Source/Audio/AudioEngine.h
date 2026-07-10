@@ -711,10 +711,15 @@ namespace zynforge
         // accumulating in RAM. Use these for File ▸ Bounce on real
         // sessions; the buffer-returning renders are for tests / short
         // material. On failure the partial file is deleted.
+        // `cancel` (optional) is polled per render window so a quit / a new
+        // bounce can abort a multi-hour render promptly instead of hanging the
+        // join. On cancel the partial file is deleted and false is returned.
         bool bounceTrackArrangementToWav (int track, const juce::File& dest,
-                                          juce::int64 totalSamples, double sampleRate);
+                                          juce::int64 totalSamples, double sampleRate,
+                                          const std::atomic<bool>* cancel = nullptr);
         bool bounceStereoMixToWav (const juce::File& dest,
-                                   juce::int64 totalSamples, double sampleRate);
+                                   juce::int64 totalSamples, double sampleRate,
+                                   const std::atomic<bool>* cancel = nullptr);
 
         // Bounce a stereo-pair track (L = trackL, R = trackL+1) to ONE
         // interleaved 24-bit stereo WAV -- each side's edited clip
@@ -722,7 +727,8 @@ namespace zynforge
         // paired/imported stereo strip exports as a single stereo stem.
         // Streamed window-by-window like the other bounces.
         bool bounceStereoPairToWav (int trackL, const juce::File& dest,
-                                    juce::int64 totalSamples, double sampleRate);
+                                    juce::int64 totalSamples, double sampleRate,
+                                    const std::atomic<bool>* cancel = nullptr);
 
         // ── Comp playlists (Take swap) ─────────────────────────────
         // Each track gets a Playlist (vector<Take>). The active Take's

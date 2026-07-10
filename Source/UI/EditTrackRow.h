@@ -2785,11 +2785,31 @@ namespace zynforge
                     // swaps the same pair straight back (the oscillation bug).
                     if (reorderLiveIndex < 0) reorderLiveIndex = index;
                     const int cur = reorderLiveIndex;
-                    const auto& t = engine.getRecorder().getTrack (cur);
-                    const bool s  = t.isStereo.load() && (cur + 1 < engine.getRecorder().getNumTracks());
+                    auto& rec = engine.getRecorder();
+                    const int n = rec.getNumTracks();
+                    const bool s  = rec.getTrack (cur).isStereo.load() && (cur + 1 < n);
                     const int step = s ? 2 : 1;
+                    // Size of the ADJACENT logical strip we'd swap with, in the
+                    // drag direction. A stereo pair is 2 physical tracks.
+                    int tStep = 1;
+                    if (dir > 0)
+                    {
+                        const int tStart = cur + step;
+                        tStep = (tStart < n && rec.getTrack (tStart).isStereo.load() && tStart + 1 < n) ? 2 : 1;
+                    }
+                    else
+                    {
+                        tStep = (cur - 2 >= 0 && rec.getTrack (cur - 2).isStereo.load()) ? 2 : 1;
+                    }
                     const int other = cur + dir * step;
-                    if (other >= 0 && other + (s ? 1 : 0) < engine.getRecorder().getNumTracks())
+                    const bool inRange = (dir > 0) ? (cur + step < n) : (other >= 0);
+                    // Only swap EQUAL-size logical blocks (mono<->mono,
+                    // stereo<->stereo). A mono<->stereo step derived `step` from
+                    // the dragged strip alone and would SPLIT the target pair --
+                    // orphaning its R half and corrupting the persisted layout.
+                    // Refuse that step (the reorder just won't cross a pair
+                    // boundary) rather than scramble the pairing.
+                    if (inRange && tStep == step)
                     {
                         if (dir > 0)
                         {

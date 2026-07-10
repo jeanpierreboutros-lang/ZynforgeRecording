@@ -719,9 +719,16 @@ namespace zynforge
         // just invisible components; the actual file read happens on the
         // thumbnail cache's background thread. Only the per-tick visual work
         // further down is gated on visibility.
-        const int n = engine.getRecorder().getNumTracks();
-        if (n != lastTrackCount)
+        const int n   = engine.getRecorder().getNumTracks();
+        const int gen = engine.getRecorder().getTrackGeneration();
+        // Rebuild on a track-count change OR a generation bump. A stereo
+        // link/unlink (e.g. from the PATCH page) changes no count but bumps the
+        // generation, and EDIT must re-collapse the pair like MIXER + PATCH do.
+        if (n != lastTrackCount || gen != lastTrackGen)
+        {
+            lastTrackGen = gen;
             refresh();
+        }
 
         // Pick up session swaps -- recording starts, recording stops,
         // session loaded, session changed, ...

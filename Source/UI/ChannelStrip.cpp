@@ -1009,6 +1009,13 @@ namespace zynforge
 
     void ChannelStrip::paint (juce::Graphics& g)
     {
+        // Condemned strip (invalidate() called, TrackState about to be / already
+        // freed) -- paint reads state.armed / vcaGroup / colourARGB etc, so don't
+        // touch it. detach() only made the meter/spectrum paint safe; this covers
+        // the strip's own paint on an external repaint (hover) in the pre-rebuild
+        // window. Just fill the body so it isn't a visual hole.
+        if (! stripValid) { g.fillAll (brand::bgPanel); return; }
+
         auto r = getLocalBounds().toFloat().reduced (4.0f);
         auto stripColour = getResolvedColour();
 

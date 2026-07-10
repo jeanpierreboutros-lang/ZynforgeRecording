@@ -135,6 +135,10 @@ private:
     void showBatchColourDialog();
     void showSelectionMenu();
     void deleteSelectedStrips();
+    // Stop every live strip's timers before a recorder-vector shrink frees the
+    // TrackStates they reference (New Session / close / smaller open / console
+    // rebuild). Prevents a freed-memory read in the window before the rebuild.
+    void condemnAllStrips();
     void colourSelectedStrips();
     void moveSelectedStrips (int delta);
     void clearStripSelection();

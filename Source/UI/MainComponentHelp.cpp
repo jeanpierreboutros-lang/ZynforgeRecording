@@ -439,6 +439,7 @@ void MainComponent::showStartupWelcome()
         // clicking the empty EDIT pane. Matches the legacy
         // launchNewSessionDialog path.
         self->engine.clearAllStripOverrides();
+        self->condemnAllStrips();   // stop strip timers before setStripCount(0) frees the TrackStates
         self->engine.setStripCount (0);
         self->lastTrackCount = -1;
         // Unload the previous session's audio + clips, or the new empty session

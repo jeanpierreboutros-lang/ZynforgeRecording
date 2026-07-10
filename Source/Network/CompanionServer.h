@@ -80,6 +80,11 @@ namespace zynforge
         {
             std::thread       thread;
             std::atomic<bool> done { false };
+            // The Worker OWNS the client socket so stop() can close it to
+            // interrupt a wedged blocking send() on a dead /stream.wav peer
+            // (otherwise stop()/quit hangs joining that worker). Set once in
+            // acceptLoop, read-only for the worker's life, destroyed after join.
+            std::unique_ptr<juce::StreamingSocket> socket;
         };
         std::mutex                            workersLock;
         std::vector<std::unique_ptr<Worker>>  workers;
@@ -104,7 +109,7 @@ namespace zynforge
         StreamRing streamRing;
 
         void acceptLoop();
-        void handleClient (std::unique_ptr<juce::StreamingSocket>);
+        void handleClient (juce::StreamingSocket& client);
         void writeStreamWav (juce::StreamingSocket&);
         void writeStateJson (juce::StreamingSocket&);
         void handleCommand  (juce::StreamingSocket&, const juce::String& body);

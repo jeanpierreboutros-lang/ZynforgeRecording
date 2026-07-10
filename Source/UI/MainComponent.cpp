@@ -215,7 +215,16 @@ void MainComponent::onRecordClicked()
     // knows what to clear.
     {
         const double sr = device->getCurrentSampleRate();
-        const int    bytesPerSample = 3;   // 24-bit ≈ worst-case PCM
+        // Derive bytes-per-sample from the capture format -- hardcoding 24-bit
+        // let a 32-float session start on a drive with < 30 min real headroom
+        // (~33% optimistic), the exact disk-full-mid-set case this guard exists
+        // to prevent. FLAC uses its uncompressed size (conservative).
+        const auto fmt = engine.getRecorder().getCaptureFormat();
+        const int  bytesPerSample =
+              (fmt == zynforge::CaptureFormat::Wav16 || fmt == zynforge::CaptureFormat::Aiff16
+               || fmt == zynforge::CaptureFormat::Flac16)                                            ? 2
+            : (fmt == zynforge::CaptureFormat::Wav32Float || fmt == zynforge::CaptureFormat::Aiff32Float) ? 4
+            : 3;
         const juce::int64 bytesPerSec    = (juce::int64) (sr * armed * bytesPerSample);
         const juce::int64 wantBytes      = bytesPerSec * 60 * 30;  // 30 min headroom
         const juce::int64 freeBytes      = dir.getParentDirectory().getBytesFreeOnVolume();

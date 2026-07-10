@@ -266,6 +266,15 @@ setInterval(tick, 500); tick();
         // use-after-free on shutdown.
         {
             std::lock_guard<std::mutex> g (workersLock);
+            // Close each worker's socket FIRST -- a /stream.wav worker wedged
+            // in a blocking send() on a dead peer (iPad asleep / out of range,
+            // TCP send buffer full) only checks `running` between writes, so
+            // closing the socket makes the in-flight send() error out and the
+            // worker unwinds. Without this, join() below hangs the message
+            // thread (quit beachball). close() from this thread while the worker
+            // is mid-send is the standard interrupt (see CaptureServer::stop()).
+            for (auto& w : workers)
+                if (w->socket != nullptr) w->socket->close();
             for (auto& w : workers)
                 if (w->thread.joinable()) w->thread.join();
             workers.clear();
@@ -334,9 +343,10 @@ setInterval(tick, 500); tick();
             // goes false or the audition ends.
             auto w   = std::make_unique<Worker>();
             Worker* wp = w.get();
-            w->thread = std::thread ([this, wp, c = std::move (client)] () mutable
+            wp->socket = std::move (client);   // Worker owns it so stop() can close it to unblock a wedged send
+            wp->thread = std::thread ([this, wp] ()
             {
-                handleClient (std::move (c));
+                handleClient (*wp->socket);
                 wp->done.store (true, std::memory_order_release);
             });
             {
@@ -361,11 +371,10 @@ setInterval(tick, 500); tick();
         }
     }
 
-    void CompanionServer::handleClient (std::unique_ptr<juce::StreamingSocket> client)
+    void CompanionServer::handleClient (juce::StreamingSocket& client)
     {
-        if (client == nullptr) return;
         juce::String body;
-        const auto headers = readRequest (*client, body);
+        const auto headers = readRequest (client, body);
         if (headers.isEmpty()) return;
 
         // First line is the request line: METHOD PATH HTTP/1.1
@@ -386,7 +395,7 @@ setInterval(tick, 500); tick();
         const auto expected = getAccessToken();
         if (expected.isEmpty())
         {
-            writeRaw (*client, "503 Service Unavailable", "text/plain",
+            writeRaw (client, "503 Service Unavailable", "text/plain",
                       "companion server starting");
             return;
         }
@@ -404,21 +413,21 @@ setInterval(tick, 500); tick();
         }
         if (provided != expected)
         {
-            writeRaw (*client, "401 Unauthorized", "text/plain",
+            writeRaw (client, "401 Unauthorized", "text/plain",
                       "missing or invalid access token (?t=<token>)");
             return;
         }
 
         if (method == "GET" && (path == "/" || path == "/index.html"))
-            return writeHtmlPage (*client);
+            return writeHtmlPage (client);
         if (method == "GET" && path == "/state.json")
-            return writeStateJson (*client);
+            return writeStateJson (client);
         if (method == "GET" && path == "/stream.wav")
-            return writeStreamWav (*client);
+            return writeStreamWav (client);
         if (method == "POST" && path == "/cmd")
-            return handleCommand (*client, body);
+            return handleCommand (client, body);
 
-        writeRaw (*client, "404 Not Found", "text/plain", "not found");
+        writeRaw (client, "404 Not Found", "text/plain", "not found");
     }
 
     void CompanionServer::writeHtmlPage (juce::StreamingSocket& s)

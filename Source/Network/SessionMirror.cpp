@@ -127,12 +127,20 @@ namespace zynforge
         // "bpm" field that state.json never emits, so getProperty returned void
         // and the mirror applied NOTHING end to end. Reuse the canonical parser.
         const auto st = EngineStatus::fromJson (v);
-        const int n = juce::jmin ((int) st.tracks.size(), engine.getRecorder().getNumTracks());
+        auto& rec = engine.getRecorder();
+        const int n = juce::jmin ((int) st.tracks.size(), rec.getNumTracks());
         for (int i = 0; i < n; ++i)
         {
-            const auto& t = st.tracks[(std::size_t) i];
-            if (t.name.isNotEmpty()) engine.setTrackName (i, t.name);
-            if ((t.colourARGB & 0x00ffffffu) != 0)   // 0 == "use default", don't force black
+            const auto& t   = st.tracks[(std::size_t) i];
+            auto&       cur = rec.getTrack (i);
+            // Change-detect BEFORE writing. setTrackName/setTrackColour each do
+            // a synchronous shared-.settings reload+parse on the message thread;
+            // applying every track every 500 ms poll thrashed that file (~2N
+            // reads/sec) for the whole show even when nothing changed.
+            if (t.name.isNotEmpty() && cur.getNameThreadSafe() != t.name)
+                engine.setTrackName (i, t.name);
+            if ((t.colourARGB & 0x00ffffffu) != 0
+                && cur.colourARGB.load (std::memory_order_relaxed) != t.colourARGB)
                 engine.setTrackColour (i, juce::Colour (t.colourARGB));
         }
     }
