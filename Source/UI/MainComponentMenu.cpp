@@ -31,12 +31,16 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
 
     if (topLevelIndex == 0)  // File
     {
-        menu.addItem (5, "New Session...",         ! engine.isRecording());
+        // Session LOCK also disables these -- LOCK is a "don't touch" safety for
+        // a running show, but only the buttons + keyboard were gated, so the
+        // menu bar still let a locked show New/Open/Close/Import/Export.
+        const bool sessionEditable = ! engine.isRecording() && ! sessionLocked;
+        menu.addItem (5, "New Session...",         sessionEditable);
         // Opening another session mid-take re-pins the active dir + applies the
         // new session's mixer/routing onto the strips being recorded, then STOP
         // re-pins back -- corrupting the capture. Gate it like New/Import/Close.
-        menu.addItem (1, "Open Session...",        ! engine.isRecording());
-        menu.addItem (4, "Import Audio Files...",  ! engine.isRecording());
+        menu.addItem (1, "Open Session...",        sessionEditable);
+        menu.addItem (4, "Import Audio Files...",  sessionEditable);
         menu.addSeparator();
         // Save / Save As are always enabled: if there's no active
         // session yet, Save falls through to Save As (picker), and
@@ -49,7 +53,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // Close the session back to the Welcome screen WITHOUT quitting --
         // so the engineer can start/open another session between sets.
         menu.addItem (6, "Close Session", engine.getActiveSessionDir().isDirectory()
-                                          && ! engine.isRecording());
+                                          && sessionEditable);
         menu.addSeparator();
 
         juce::PopupMenu exportMenu;
@@ -59,7 +63,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // UI, so gate the whole submenu on not-recording. CSV timeline export
         // is metadata-only but gated too for a consistent "not mid-take" rule.
         const bool hasActive = engine.getActiveSessionDir().isDirectory();
-        const bool canExport = hasActive && ! engine.isRecording();
+        const bool canExport = hasActive && sessionEditable;   // also blocked while LOCKED
         exportMenu.addItem (10, "Export All Tracks...", canExport);
 
         const int n = engine.getRecorder().getNumTracks();
@@ -327,6 +331,7 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << engine.getRecorder().getNumTracks()
         << '|' << (int) selectedLogical.size()
         << '|' << (int) engine.isRecording()
+        << '|' << (int) sessionLocked
         << '|' << (int) player.hasLoopRegion()
         << '|' << (int) engine.getActiveSessionDir().isDirectory()
         << '|' << (int) engine.isPunchModeOn()

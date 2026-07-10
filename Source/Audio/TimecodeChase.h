@@ -144,8 +144,18 @@ namespace zynforge
         // Full-frame MTC message (F0 7F cc 01 01 hr mn sc fr F7). The
         // MIDI driver pre-extracts the 4 bytes and hands them in.
         void feedMtcFullFrame (juce::uint8 hr, juce::uint8 mn,
-                               juce::uint8 sc, juce::uint8 fr) noexcept
+                               juce::uint8 sc, juce::uint8 fr,
+                               float fps = 0.0f, bool dropFrame = false) noexcept
         {
+            // Honour the full-frame's SMPTE rate (from the message's timecode
+            // type) so a 24/25 fps locate seeks to the right sample immediately,
+            // not the 30fps default until quarter-frames start. fps<=0 => keep
+            // whatever the last frame rate was.
+            if (fps > 0.0f)
+            {
+                ltcFps.store (fps, std::memory_order_relaxed);
+                ltcDropFrame.store (dropFrame, std::memory_order_relaxed);
+            }
             ltcHours  .store (hr, std::memory_order_relaxed);
             ltcMinutes.store (mn, std::memory_order_relaxed);
             ltcSeconds.store (sc, std::memory_order_relaxed);

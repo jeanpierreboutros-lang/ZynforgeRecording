@@ -47,7 +47,11 @@ namespace zynforge
                 r.name       = d.getFileName();
                 r.sizeBytes  = computeDirSize (d);
                 r.modifiedMs = d.getLastModificationTime().toMilliseconds();
-                r.trackCount = d.findChildFiles (juce::File::findFiles, false, "Track_*.wav").size();
+                // Count every container (FLAC/AIFF too, main files not _part),
+                // else a FLAC/AIFF session shows "0 tracks" and looks worthless.
+                r.trackCount = d.findChildFiles (juce::File::findFiles, false,
+                                                 "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff")
+                                .size();
                 rows.push_back (std::move (r));
             }
             sortedIndices.resize (rows.size());

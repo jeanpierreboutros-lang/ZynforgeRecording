@@ -255,7 +255,11 @@ void MainComponent::showFirstRunTutorial()
             [aw, runner, idx, last] (int result)
         {
             std::unique_ptr<juce::AlertWindow> dispose (aw);
-            if (result == 1 && ! last && runner) (*runner) (idx + 1);
+            if (result == 1 && ! last && runner)
+                (*runner) (idx + 1);
+            else if (runner)
+                *runner = nullptr;   // tour ended -> break the runner's self-capture, else the
+                                     // closure leaks (now repeatable via Help > Quick Start)
         }));
     };
     (*runner) (0);

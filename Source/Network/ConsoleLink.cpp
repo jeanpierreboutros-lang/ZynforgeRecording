@@ -34,7 +34,15 @@ namespace zynforge
         socket = std::make_unique<juce::DatagramSocket> (false);
         if (! socket->bindToPort (0))                       { socket.reset(); return false; }
         if (! receiver.connectToSocket (*socket))           { socket.reset(); return false; }
-        if (! sender.connectToSocket (*socket, targetHost, usePort)) { socket.reset(); return false; }
+        if (! sender.connectToSocket (*socket, targetHost, usePort))
+        {
+            // The receiver's reader thread references `socket`; disconnect it
+            // BEFORE freeing the socket (disconnect() orders it this way too),
+            // else socket.reset() frees a socket the reader thread still uses.
+            receiver.disconnect();
+            socket.reset();
+            return false;
+        }
         host      = targetHost;
         connected = true;
         patch     = Patch::Unknown;

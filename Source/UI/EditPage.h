@@ -228,6 +228,7 @@ namespace zynforge
         void refresh();
         void repaintLanes();        // force every track row to repaint (e.g. after a cue recall changes automation)
         void updatePlaceholder();   // show/hide the empty-state overlay by channel count
+        void rescanWaveforms();     // drop cached peaks + re-scan every row (e.g. after a strip reorder renamed files)
 
         void paint (juce::Graphics&) override;
         void resized() override;

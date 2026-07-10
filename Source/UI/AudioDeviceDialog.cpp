@@ -129,6 +129,10 @@ namespace zynforge
             {
                 auto& dm = engine.getDeviceManager();
                 snapshot = dm.createStateXml();
+                // createStateXml() is null until an explicit setAudioDeviceSetup
+                // has run since boot, so on FIRST use of this panel Cancel had no
+                // snapshot to revert to. Capture the live setup as a fallback.
+                origSetup = dm.getAudioDeviceSetup();
                 origMasterL = engine.getMasterOutputL();
                 origMasterR = engine.getMasterOutputR();
                 dm.addChangeListener (this);
@@ -238,14 +242,21 @@ namespace zynforge
                 if (! applied)
                     engine.setMasterOutputs (origMasterL, origMasterR);
 
-                if (! applied && snapshot != nullptr)
-                    // Restore with the SAME channel counts the app boots with
-                    // (AudioEngine: 256 in / 64 out). Passing 0 inputs here
-                    // made JUCE enable "the first 0" input channels when the
-                    // snapshot XML carried no explicit mask (it never does),
-                    // so a Cancel/ESC on the DEVICE panel killed every input
-                    // until relaunch -- dead meters, silent recordings.
-                    engine.getDeviceManager().initialise (256, 64, snapshot.get(), true);
+                if (! applied)
+                {
+                    if (snapshot != nullptr)
+                        // Restore with the SAME channel counts the app boots with
+                        // (AudioEngine: 256 in / 64 out). Passing 0 inputs here
+                        // made JUCE enable "the first 0" input channels when the
+                        // snapshot XML carried no explicit mask (it never does),
+                        // so a Cancel/ESC on the DEVICE panel killed every input
+                        // until relaunch -- dead meters, silent recordings.
+                        engine.getDeviceManager().initialise (256, 64, snapshot.get(), true);
+                    else
+                        // No snapshot (first use since boot): revert the live
+                        // device/rate/buffer change via the captured setup.
+                        engine.getDeviceManager().setAudioDeviceSetup (origSetup, true);
+                }
             }
 
             void paint (juce::Graphics& g) override
@@ -553,6 +564,7 @@ namespace zynforge
             juce::Label      statusLabel;
             bool             selfOwned { false };   // true => modal launchAsync (close via exitModalState)
             std::unique_ptr<juce::XmlElement> snapshot;
+            juce::AudioDeviceManager::AudioDeviceSetup origSetup;   // Cancel fallback when snapshot is null (first boot)
             // Monitor-bus routing is applied + persisted LIVE on change, but the
             // Cancel path only reverted the device snapshot -- so a test flip of
             // the monitor output survived Cancel (and relaunch). Capture it at

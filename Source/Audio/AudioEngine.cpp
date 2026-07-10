@@ -480,8 +480,12 @@ namespace zynforge
             int h, mn, s, f;
             juce::MidiMessage::SmpteTimecodeType tc;
             m.getFullFrameParameters (h, mn, s, f, tc);
+            const float fps = (tc == juce::MidiMessage::fps24)     ? 24.0f
+                            : (tc == juce::MidiMessage::fps25)     ? 25.0f
+                            : (tc == juce::MidiMessage::fps30drop) ? 29.97f : 30.0f;
             timecodeChase.feedMtcFullFrame ((juce::uint8) h, (juce::uint8) mn,
-                                            (juce::uint8) s, (juce::uint8) f);
+                                            (juce::uint8) s, (juce::uint8) f,
+                                            fps, tc == juce::MidiMessage::fps30drop);
         }
     }
 

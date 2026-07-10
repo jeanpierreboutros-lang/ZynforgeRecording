@@ -696,6 +696,16 @@ namespace zynforge
         repaint();
     }
 
+    void EditPage::rescanWaveforms()
+    {
+        // A strip reorder renames Track_NN.wav on disk but each row's file PATH
+        // is unchanged, so the path-keyed thumbnail cache would keep the old
+        // peaks (row shows the swapped name/colour over the previous track's
+        // waveform). forceRefreshWaveforms drops each row's cached hash and
+        // re-scans, so the lanes pick up the swapped content.
+        if (list != nullptr) list->forceRefreshWaveforms();
+    }
+
     void EditPage::updatePlaceholder()
     {
         // Show the empty-state placeholder only when there are NO channels.

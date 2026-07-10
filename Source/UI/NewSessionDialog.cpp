@@ -292,9 +292,18 @@ namespace zynforge
 
             void syncBitDepthForFormat()
             {
-                // FLAC doesn't support 32-bit float -- silently fall back to 24-bit.
-                if (fileTypeCombo.getSelectedId() == 3 && bitDepthCombo.getSelectedId() == 3)
-                    bitDepthCombo.setSelectedId (2, juce::sendNotification);
+                // FLAC has no 32-bit float. REMOVE the item when FLAC is picked
+                // (the old down-correct only ran on the file-type change, so
+                // selecting 32-float AFTER FLAC left the UI showing 32f while
+                // formatFrom mapped it to Flac24). Rebuilding is robust either way.
+                const bool isFlac = (fileTypeCombo.getSelectedId() == 3);
+                const int  prev   = bitDepthCombo.getSelectedId();
+                bitDepthCombo.clear (juce::dontSendNotification);
+                bitDepthCombo.addItem ("16-bit", 1);
+                bitDepthCombo.addItem ("24-bit", 2);
+                if (! isFlac) bitDepthCombo.addItem ("32-bit float", 3);
+                const bool valid = prev == 1 || prev == 2 || (prev == 3 && ! isFlac);
+                bitDepthCombo.setSelectedId (valid ? prev : 2, juce::dontSendNotification);
             }
 
             void pickFolder()

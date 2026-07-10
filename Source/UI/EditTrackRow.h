@@ -3100,6 +3100,11 @@ namespace zynforge
                 // and a redundant second reload). Each swap rewound the
                 // player to 0; restore the pre-drag playhead.
                 engine.getPlayer().setPositionSamples (reorderStartPos);
+                // The swap renamed the on-disk files but the rows' file PATHS
+                // are unchanged, so force a waveform re-scan or each lane keeps
+                // showing the previous track's cached peaks.
+                if (auto* page = findParentComponentOfClass<EditPage>())
+                    page->rescanWaveforms();
             }
             reorderArmed     = false;
             reorderActive    = false;
