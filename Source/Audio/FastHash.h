@@ -28,7 +28,12 @@ namespace zynforge::hashing
         for (;;)
         {
             const int n = in.read (buf.getData(), bufBytes);
-            if (n <= 0) break;
+            if (n < 0) return {};                      // read error -> fail, don't hash a partial prefix
+            if (n == 0)
+            {
+                if (! in.isExhausted()) return {};     // 0 bytes but not at EOF -> mid-file I/O error
+                break;                                 // clean EOF
+            }
             CC_SHA256_Update (&ctx, buf.getData(), (CC_LONG) n);
         }
         unsigned char out[CC_SHA256_DIGEST_LENGTH];

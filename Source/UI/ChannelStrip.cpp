@@ -571,8 +571,9 @@ namespace zynforge
         }
 
         menu.showMenuAsync (juce::PopupMenu::Options(),
-                            [this] (int chosen)
+                            [this, safe = juce::Component::SafePointer<ChannelStrip> (this)] (int chosen)
         {
+            if (safe == nullptr) return;   // strip rebuilt (cue recall / console session / device restart) while the menu was open
             switch (chosen)
             {
                 case 1: openRenameDialog();           break;
@@ -668,8 +669,9 @@ namespace zynforge
 
         auto picker = std::make_unique<StripColourPicker> (
             current,
-            [this] (juce::Colour chosen)
+            [this, safe = juce::Component::SafePointer<ChannelStrip> (this)] (juce::Colour chosen)
             {
+                if (safe == nullptr) return;   // strip rebuilt while the colour picker was open
                 if (colourCb) colourCb (chosen);
                 if (swatch != nullptr)
                 {

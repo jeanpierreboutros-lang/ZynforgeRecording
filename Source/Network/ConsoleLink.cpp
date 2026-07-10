@@ -253,8 +253,15 @@ namespace zynforge
             gains.clear();
             for (const auto& g : *gainArr)
                 if (g.hasProperty ("headamp") && g.hasProperty ("gain"))
-                    gains[(int) g.getProperty ("headamp", 0)] =
-                        (float) (double) g.getProperty ("gain", 0.0);
+                {
+                    // Range-check a hand-edited / corrupted state file before it
+                    // ever reaches restoreGains -> the desk. The wire path already
+                    // clamps; this path did not.
+                    const int ha = (int) g.getProperty ("headamp", 0);
+                    if (ha < 0 || ha >= 128) continue;
+                    gains[ha] = juce::jlimit (-12.0f, 60.0f,
+                                              (float) (double) g.getProperty ("gain", 0.0));
+                }
         }
         return true;
     }
