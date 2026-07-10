@@ -281,6 +281,47 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
+            beginTest ("swapTracks renames ALL of a take's files -- _partXX continuations, not just Track_NN.wav");
+            {
+                // Pre-fix HIGH: swapTracks renamed only Track_NN.wav, stranding a
+                // continued take's _partXX parts (and FLAC/AIFF files) at the old
+                // index -> a reorder permanently stitched them onto the wrong
+                // channel. This drives the on-disk rename directly.
+                auto dir = recordSession (numCh, /*numBlocks*/ 40, block);   // Track_01/02.wav
+                auto audioDir = dir.getChildFile ("Audio Files");
+                auto t1main = audioDir.getChildFile ("Track_01.wav");
+                expect (t1main.existsAsFile(), "precondition: Track_01.wav exists");
+
+                // Simulate a continued take on track 0: a _part02 continuation.
+                auto t1part = audioDir.getChildFile ("Track_01_part02.wav");
+                expect (t1main.copyFileTo (t1part), "could not stage a _part file");
+
+                AudioEngine eng;
+                eng.setSnapMode (AudioEngine::SnapMode::Off);
+                expect (eng.loadSession (dir) > 0, "session load failed");
+                eng.setStripCount (numCh);
+                eng.setActiveSessionDir (dir);
+
+                expect (eng.swapTracks (0, 1), "swapTracks failed");
+
+                // Track 0's take (main + part) must have moved to index 1...
+                expect (audioDir.getChildFile ("Track_02.wav").existsAsFile(),
+                        "main did not move to the new index");
+                expect (audioDir.getChildFile ("Track_02_part02.wav").existsAsFile(),
+                        "the _part continuation was STRANDED at the old index (the bug)");
+                // ...track 1's main must have moved to index 0...
+                expect (audioDir.getChildFile ("Track_01.wav").existsAsFile(),
+                        "the other take's main did not move");
+                // ...and no continuation is left orphaned at the old index.
+                expect (! audioDir.getChildFile ("Track_01_part02.wav").existsAsFile(),
+                        "a _part file was left behind at the old index");
+                // No temp scaffolding leaked.
+                expect (audioDir.findChildFiles (juce::File::findFiles, false, "Track_swap_*").isEmpty(),
+                        "a swap temp file was left behind");
+
+                dir.deleteRecursively();
+            }
+
             beginTest ("splitClipAt: hard cut at the seam, right half inherits + clamps fades");
             {
                 // ClipModel.h splitClipAt fade correctness (High): the left half
@@ -577,6 +618,63 @@ namespace zynforge
                 expect (peakAt (total * 3 / 4) < 1.0e-6f, "undo left the duplicate playing");
 
                 player.stop();
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Marker during a CONTINUE lands on the timeline (base+offset), not at the file start");
+            {
+                // Regression (HIGH): dropMarkerAtCurrentPosition used
+                // getSamplesSinceStart() (the new part's 0-based length) instead
+                // of getRecordTimelineSamples() (recordBaseSamples + offset), so
+                // every marker dropped during a continue/punch take landed
+                // recordBaseSamples too early -- on top of the pre-continue audio.
+                auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                               .getChildFile ("zf_marker_continue");
+                dir.deleteRecursively();
+                dir.createDirectory();
+
+                AudioEngine eng;
+                eng.getMarkers().setContext (dir, 48000.0);
+
+                auto& rec = eng.getRecorder();
+                rec.prepare (48000.0, block, 1);
+                rec.getTrack (0).armed.store (true, std::memory_order_relaxed);
+
+                std::vector<float> silent ((size_t) block, 0.0f);
+                const float* ptrs[1] = { silent.data() };
+
+                // Record a REAL first take so a Track_01.wav exists on disk --
+                // startRecording derives recordBaseSamples by scanning the take
+                // (armContinue's arg is advisory), so without a real take the
+                // base would be 0 and there'd be nothing to distinguish.
+                expect (rec.startRecording (dir), "first take startRecording failed");
+                for (int b = 0; b < 40; ++b) rec.processBlock (ptrs, 1, block);
+                rec.stopRecording();
+
+                // Continue: startRecording rescans the take -> recordBaseSamples
+                // = the first take's length; the new part records from 0.
+                rec.armContinue (0);
+                expect (rec.startRecording (dir), "continue startRecording failed");
+                eng.clearEditCursor();               // the live position must win
+                const juce::int64 base = rec.getRecordBaseSamples();
+                expect (base > 0, "continue did not pick up the existing take length");
+
+                // Advance the new part past 0 so base+offset is unambiguous.
+                for (int b = 0; b < 4; ++b) rec.processBlock (ptrs, 1, block);
+                const juce::int64 sinceStart = rec.getSamplesSinceStart();
+                expect (sinceStart > 0, "the new part did not advance");
+
+                const int count = eng.dropMarkerAtCurrentPosition ("continue");
+                expect (count > 0, "marker was not dropped");
+                const auto m = eng.getMarkers().getLast();
+                expect (m.sampleOffset >= base,
+                        "marker landed at " + juce::String (m.sampleOffset)
+                        + ", before the take base " + juce::String (base)
+                        + " -- used getSamplesSinceStart (the bug)");
+                expectEquals (m.sampleOffset, base + sinceStart,
+                              "marker must land at recordBaseSamples + samplesSinceStart");
+
+                rec.stopRecording();
                 dir.deleteRecursively();
             }
         }

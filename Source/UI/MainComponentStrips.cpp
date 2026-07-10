@@ -586,6 +586,11 @@ void MainComponent::createSessionFromCsv()
             const auto dir  = createSessionFolderStructure (r);
 
             engine.setActiveSessionDir (dir);
+            // Stop the live strips' meter/spectrum timers before setStripCount
+            // frees any TrackState they reference (a CSV with fewer names than
+            // the current count shrinks the recorder vector); strips rebuild on
+            // the next 10 Hz tick.
+            condemnAllStrips();
             engine.clearAllStripOverrides();
             engine.setStripCount (names.size());
             for (int i = 0; i < names.size(); ++i)

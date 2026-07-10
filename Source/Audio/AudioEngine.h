@@ -64,13 +64,16 @@ namespace zynforge
         enum class ChaseMode { Off = 0, Ltc = 1, Mtc = 2 };
         void      setChaseMode (ChaseMode m) noexcept
         {
-            // Reset the chase on an actual mode change so a stale MTC freewheel
-            // timestamp can't poison the new source. Without this, using MTC
-            // then switching the master to LTC left isRunning() permanently
-            // false (lastMtcTickMs stayed nonzero + aged past the timeout), so
-            // LTC never chased for the rest of the run.
+            // Clear the freewheel state on an actual mode change so a stale MTC
+            // freewheel timestamp can't poison the new source. Without this,
+            // using MTC then switching the master to LTC left isRunning()
+            // permanently false (lastMtcTickMs stayed nonzero + aged past the
+            // timeout), so LTC never chased for the rest of the run.
+            // clearFreewheel() (not reset()) because the audio/MIDI feed threads
+            // may still be running -- reset() writes non-atomic decoder members
+            // they own, which is a data race on a live mode switch.
             if ((ChaseMode) chaseMode.exchange ((int) m, std::memory_order_relaxed) != m)
-                timecodeChase.reset();
+                timecodeChase.clearFreewheel();
         }
         ChaseMode getChaseMode() const noexcept       { return (ChaseMode) chaseMode.load (std::memory_order_relaxed); }
         // MTC input device (MIDI). "" = none / close. Returns success.

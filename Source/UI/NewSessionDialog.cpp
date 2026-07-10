@@ -144,6 +144,12 @@ namespace zynforge
                 createButton.setColour (juce::TextButton::textColourOffId, brand::onSignal (brand::accentStatus));
                 createButton.onClick = [this] { dismiss (true); };
 
+                // Reconcile the bit-depth list with the INITIAL file type too --
+                // onChange only fires on a later edit, so a dialog seeded from a
+                // FLAC session would otherwise open still listing "32-bit float"
+                // (which formatFrom maps to Flac24: UI says 32f, records 24).
+                syncBitDepthForFormat();
+
                 setSize (520, 460);
             }
 

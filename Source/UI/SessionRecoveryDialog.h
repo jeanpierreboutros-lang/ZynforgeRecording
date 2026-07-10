@@ -47,11 +47,16 @@ namespace zynforge
                 r.name       = d.getFileName();
                 r.sizeBytes  = computeDirSize (d);
                 r.modifiedMs = d.getLastModificationTime().toMilliseconds();
-                // Count every container (FLAC/AIFF too, main files not _part),
-                // else a FLAC/AIFF session shows "0 tracks" and looks worthless.
-                r.trackCount = d.findChildFiles (juce::File::findFiles, false,
-                                                 "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff")
-                                .size();
+                // Count every container (FLAC/AIFF too), but only MAIN take
+                // files -- a _partXX continuation / auto-split shares its take's
+                // index, so counting them inflated a split session's track count
+                // (a 4-track session split into 2 parts each read as "8 tracks").
+                int takes = 0;
+                for (const auto& f : d.findChildFiles (juce::File::findFiles, false,
+                                        "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff"))
+                    if (! f.getFileNameWithoutExtension().containsIgnoreCase ("_part"))
+                        ++takes;
+                r.trackCount = takes;
                 rows.push_back (std::move (r));
             }
             sortedIndices.resize (rows.size());

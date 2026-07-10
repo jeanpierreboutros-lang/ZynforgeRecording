@@ -546,7 +546,10 @@ void MainComponent::launchNewSessionDialog()
 
         // Start clean: clear every per-strip persisted override and
         // reset the strip count so the engineer dials in their own
-        // channels with +CH.
+        // channels with +CH. Stop the live strips' meter/spectrum timers
+        // FIRST -- setStripCount(0) frees every TrackState the strips still
+        // reference, and the 10 Hz rebuild only happens on the next tick.
+        self->condemnAllStrips();
         self->engine.resetAllStripState();
         self->engine.setStripCount (0);
         self->lastTrackCount = -1;

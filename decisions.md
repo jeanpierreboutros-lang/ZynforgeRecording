@@ -6,6 +6,22 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Third re-audit — the fix passes keep regressing; the discipline that held — 2026-07-10
+
+**Context.** The re-audit below itself landed regressions, so a third, focused six-agent pass re-read *only the diff the second pass produced*. The pattern held for a third time: the fix pass introduced new regressions AND left one of its own fixes incomplete.
+
+**What it caught (and we fixed):**
+
+- **Two fresh regressions from the second pass.** (1) The marker-position fix read `getSamplesSinceStart()` (the new file's 0-based length) instead of `getRecordTimelineSamples()` (`recordBaseSamples + offset`), so a marker dropped during a continue/punch landed `recordBaseSamples` too early. (2) The click-track "defence in depth" guard required the click strip to be playback-only *before* the code that marks it playback-only ran, so **Generate Click Track aborted on the first press** for a freshly-created strip. Both fixed; the marker fix is locked by *marker during a continue lands on the timeline*.
+- **A pre-existing HIGH the second pass made visible.** `swapTracks` renamed only `Track_NN.wav`, stranding a continued/FLAC/AIFF take's `_partXX` parts at the old index — a reorder stitched them onto the wrong channel. The second pass's waveform re-scan surfaced it. Fixed to move every file of each take (all parts, all containers) via collision-safe temp staging; locked by *swapTracks renames continuation parts*.
+- **The `condemnAllStrips()` fix was itself incomplete.** The second pass added it to some TrackState-freeing sites but missed three: File ▸ New Session (`launchNewSessionDialog`), New from Template (`applySessionTemplate`), and New from CSV (`createSessionFromCsv`) all `setStripCount`-shrink without a preceding condemn — the exact ~100 ms meter/spectrum-timer UAF window the fix set out to close. Added the condemn to all three. (A dedicated agent verified the *new* strip-lifetime code is otherwise correct and that every growth-only `setStripCount` site correctly needs no condemn.)
+
+**Decision / rule.** Two reinforcements of the existing rule. (1) **A regression test must be proven to fail on the pre-fix code, and its setup must actually reproduce the bug's precondition.** The marker test first went red because its synthetic setup produced `recordBaseSamples == 0` (a fresh dir has no take to continue, so `startRecording` scans length 0) — it needed a *real* prior take on disk for the base to be nonzero. A test that can't reach the buggy state proves nothing. (2) **When a fix introduces a helper for a class of hazard (here `condemnAllStrips`), grep for EVERY site in that class and wire them all in the same change** — the three missed free-sites are the same lesson a third time.
+
+**Consequences.** After three passes the regression rate is finally what forces the discipline: design the fix, grep all siblings, add a test that reproduces the precondition and fails pre-fix, then re-audit the diff. The two documented trade-offs are unchanged and intentional: the end-trim-reloads-to-full behaviour (correct for a recorder — audio is never lost) and the reorder-across-a-mono/stereo-boundary refusal.
+
+---
+
 ## Re-audit after the fix pass — regressions + the incomplete-fix lesson — 2026-07-10
 
 **Context.** After the 10-area fix pass, an 11-agent re-audit (the 10 areas + a cross-cutting concurrency slot) re-read the whole codebase specifically to catch regressions the pass introduced. It found **2 Blockers, both regressions of my own fixes**, plus a run of Highs/Mediums that were mostly *incomplete* fixes — the pass fixed a bug on one path and missed its siblings.

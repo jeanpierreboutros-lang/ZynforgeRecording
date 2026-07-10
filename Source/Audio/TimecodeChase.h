@@ -53,6 +53,18 @@ namespace zynforge
             mtcAcc = MtcAcc{};
         }
 
+        // Race-free subset of reset() that is safe to call from the message
+        // thread WHILE the audio (feedLtc) / MIDI (feedMtc*) threads keep
+        // feeding. It clears only the atomics that gate isRunning()/freewheel;
+        // the non-atomic decoder scratch (mtcAcc, crossings, frameBits, ...) is
+        // self-healing and must NOT be written from another thread. Use this,
+        // not reset(), for a live mode switch.
+        void clearFreewheel() noexcept
+        {
+            running      .store (false, std::memory_order_relaxed);
+            lastMtcTickMs.store (0,     std::memory_order_relaxed);
+        }
+
         // Audio-thread feed. Counts zero crossings AND tracks the
         // interval (in samples) between consecutive crossings. Long
         // intervals = full bit cell ('0'); two consecutive short

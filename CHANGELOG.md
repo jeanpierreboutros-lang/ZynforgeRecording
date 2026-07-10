@@ -17,6 +17,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (third re-audit — regressions the last fix pass introduced, 2026-07-10)
+
+A focused six-agent re-audit re-read the diff the previous re-audit landed, because this project's fix passes keep carrying regressions. It found three **High**s (two of them freshly introduced by the last pass, one pre-existing that the last pass made visible) plus a **Medium** and a few **Low**s. Build green, all test groups / 0 failures (two new regression tests: *swapTracks renames continuation parts*, *marker during a continue lands on the timeline*).
+
+- **Markers dropped mid-take land in the right place on a continue/punch (High regression).** The last pass's marker fix read the new file's 0-based length instead of the take's timeline position, so every marker dropped during a continue or punch landed `recordBaseSamples` too early — piled onto the pre-continue audio. It now uses the timeline position (`getRecordTimelineSamples`).
+- **Reordering a continued or FLAC/AIFF take no longer corrupts it (High, pre-existing).** `swapTracks` renamed only `Track_NN.wav` — a take's `_partXX` continuations (and any FLAC/AIFF file) were stranded at the old index and permanently stitched onto the wrong channel after a reorder. It now moves *every* file of each take across all containers, collision-safe via temp staging. (The last pass's waveform re-scan made the old corruption visible, which is how it surfaced.)
+- **The "Generate Click Track" button works again on first press (High regression).** The last pass added a defence-in-depth guard requiring the click strip to be playback-only, but a freshly-created click strip isn't marked playback-only until *after* the guard — so Generate aborted on the very first press ("Click slot isn't a Click strip"). The new strip is now marked playback-only at creation.
+- **Meters + strips never read freed memory on New Session / New-from-Template / New-from-CSV (High, incomplete-fix completion).** The earlier meter-lifetime fix (`condemnAllStrips`) covered strip delete + session open + console rebuild but missed these three "start a blank/new session" paths, which free every TrackState while the live strips' meter/spectrum timers are still sampling it (~100 ms window). All three now stop those timers first.
+- **File ▸ New Session no longer shows "32-bit float" for a FLAC session (Medium).** The bit-depth list reconciled with the file type only on a later edit, so a dialog opened on a FLAC session still listed 32-float (which silently records Flac24). It now reconciles on open too.
+- **Lows:** switching the timecode master mid-stream (MTC↔LTC) clears only the atomic freewheel state, not the decoder scratch the audio/MIDI threads own (was a benign data race); a bounce that's superseded by another (or by quit) no longer flashes a spurious "bounce failed"; the crash-recovery dialog's track count no longer double-counts a split take's `_partXX` parts.
+
 ### Fixed (re-audit after the fix pass — regressions + incomplete fixes, 2026-07-10)
 
 An 11-agent re-audit re-read the whole codebase to catch anything the fix pass broke or half-fixed. Build green, 267 test groups / 0 failures (new regression test: *Continue-record grows the take*).

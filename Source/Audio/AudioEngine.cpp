@@ -925,7 +925,11 @@ namespace zynforge
         juce::int64 pos = -1;
         const auto cursor = editCursorSample.load (std::memory_order_acquire);
         if (recorder.isRecording())
-            pos = recorder.getSamplesSinceStart();
+            // Timeline position (recordBaseSamples + samplesSinceStart), NOT the
+            // 0-based getSamplesSinceStart(): on a continue/punch the take starts
+            // at recordBaseSamples, so the raw offset would drop every marker
+            // recordBaseSamples too early. See MultitrackRecorder.h.
+            pos = recorder.getRecordTimelineSamples();
         else if (cursor >= 0)
             pos = cursor;
         else if (player.isLoaded())
@@ -1304,27 +1308,55 @@ namespace zynforge
         {
             auto audioDir = sessionDir.getChildFile ("Audio Files");
             if (! audioDir.isDirectory()) audioDir = sessionDir;
-            const auto nameOf = [] (int idx) {
-                return juce::String::formatted ("Track_%02d.wav", idx + 1);
+
+            // Swap EVERY on-disk file of each take -- the main Track_NN.<ext>
+            // AND its _partXX continuations, across all supported containers
+            // (.wav/.flac/.aif/.aiff). Renaming only Track_NN.wav stranded a
+            // continued or FLAC/AIFF take's parts at the old index, so a reorder
+            // permanently stitched them onto the wrong channel. Excludes
+            // .punchbase sidecars (a swap can't run mid-record, so any stray one
+            // stays associated with its take anyway).
+            const auto filesForTrack = [&audioDir] (int idx) -> juce::Array<juce::File>
+            {
+                juce::Array<juce::File> out;
+                const auto prefix = juce::String::formatted ("Track_%02d", idx + 1);
+                for (const auto& f : audioDir.findChildFiles (juce::File::findFiles, false,
+                         prefix + ".*;" + prefix + "_part*"))
+                {
+                    const auto ext  = f.getFileExtension().toLowerCase();
+                    const auto rest = f.getFileName().substring (prefix.length());
+                    const bool audioExt = ext == ".wav" || ext == ".flac"
+                                       || ext == ".aif" || ext == ".aiff";
+                    if (audioExt && (rest.startsWith (".") || rest.startsWith ("_part")))
+                        out.add (f);
+                }
+                return out;
             };
-            auto fA  = audioDir.getChildFile (nameOf (a));
-            auto fB  = audioDir.getChildFile (nameOf (b));
-            auto tmp = audioDir.getChildFile (juce::String::formatted ("Track_%02d_swap.wav", a + 1));
-            // 3-step rename so the OS never sees a name collision.
-            if (fA.existsAsFile() && fB.existsAsFile())
+            // Map a file belonging to track `from` onto track `to`, keeping its
+            // _partXX suffix + extension (only the Track_NN prefix changes).
+            const auto renamedTo = [&audioDir] (const juce::File& f, int from, int to)
             {
-                fA .moveFileTo (tmp);
-                fB .moveFileTo (fA);
-                tmp.moveFileTo (fB);
-            }
-            else if (fA.existsAsFile())
+                const auto fromPrefix = juce::String::formatted ("Track_%02d", from + 1);
+                const auto toPrefix   = juce::String::formatted ("Track_%02d", to + 1);
+                return audioDir.getChildFile (toPrefix + f.getFileName().substring (fromPrefix.length()));
+            };
+
+            const auto aFiles = filesForTrack (a);
+            const auto bFiles = filesForTrack (b);
+            // Two-phase via temp names so the OS never sees a collision even when
+            // A and B have identically-suffixed parts: stage A -> temp, move B ->
+            // A's names, then temp (former A) -> B's names.
+            juce::Array<std::pair<juce::File, juce::File>> staged; // { temp, finalDest }
+            for (const auto& f : aFiles)
             {
-                fA.moveFileTo (fB);
+                auto finalDest = renamedTo (f, a, b);
+                auto tmp = audioDir.getChildFile ("Track_swap_" + finalDest.getFileName());
+                if (f.moveFileTo (tmp)) staged.add ({ tmp, finalDest });
             }
-            else if (fB.existsAsFile())
-            {
-                fB.moveFileTo (fA);
-            }
+            for (const auto& f : bFiles)
+                f.moveFileTo (renamedTo (f, b, a));
+            for (const auto& pr : staged)
+                pr.first.moveFileTo (pr.second);
         }
 
         // ── Swap persisted overrides (PropertiesFile keys are 1-based) ──

@@ -457,9 +457,12 @@ void MainComponent::onBounceStems()
                     : engine.bounceTrackArrangementToWav (t, outFile, arrLen, sr, &bounceCancel);
                 if (okBounce) ++written;
             }
-            juce::MessageManager::callAsync ([self, written, dest]
+            // A superseding bounce (or app quit) sets bounceCancel and joins us;
+            // don't post a stale "Bounced 0 stem(s)" over the new bounce's status.
+            const bool cancelled = bounceCancel.load (std::memory_order_relaxed);
+            juce::MessageManager::callAsync ([self, written, cancelled, dest]
             {
-                if (self != nullptr)
+                if (self != nullptr && ! cancelled)
                     self->showStatus ("Bounced " + juce::String (written)
                                       + " edited stem(s) -> " + dest.getFileName());
             });
@@ -500,9 +503,13 @@ void MainComponent::onBounceStereoMix()
             if (bounceCancel.load (std::memory_order_relaxed)) return;
             // Streams the summed mix window-by-window straight to disk.
             const bool ok = engine.bounceStereoMixToWav (dest, arrLen, sr, &bounceCancel);
-            juce::MessageManager::callAsync ([self, ok, dest]
+            // A superseding bounce (or app quit) sets bounceCancel and joins us;
+            // that returns false but is NOT a failure -- don't post a spurious
+            // "bounce failed" over the new bounce's status.
+            const bool cancelled = bounceCancel.load (std::memory_order_relaxed);
+            juce::MessageManager::callAsync ([self, ok, cancelled, dest]
             {
-                if (self != nullptr)
+                if (self != nullptr && ! cancelled)
                     self->showStatus (ok ? "Bounced stereo mix -> " + dest.getFileName()
                                          : juce::String ("Stereo mix bounce failed"));
             });
@@ -1235,6 +1242,10 @@ void MainComponent::applySessionTemplate (const juce::File& templateFile)
     const int n = (int) obj->getProperty ("trackCount");
     if (n <= 0) { showStatus ("Template has no strips"); return; }
 
+    // Stop the live strips' meter/spectrum timers before setStripCount frees
+    // the TrackStates they reference (a template with fewer strips shrinks the
+    // recorder vector); the strips rebuild on the next 10 Hz tick.
+    condemnAllStrips();
     engine.resetAllStripState();
     engine.setStripCount (n);
 

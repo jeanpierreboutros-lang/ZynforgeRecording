@@ -51,6 +51,11 @@ void MainComponent::generateOrRefreshClickTrack()
         clickTrackIndex = recorder.getNumTracks();
         engine.setStripCount (clickTrackIndex + 1);
         engine.setTrackName  (clickTrackIndex, "Click");
+        // Mark it playback-only NOW. setStripCount seeds inputRouting >= 0, but
+        // the defence-in-depth guard below requires inputRouting < 0 to confirm
+        // this really is a click strip -- without this, a freshly-created click
+        // strip trips the guard and Generate aborts on the very first press.
+        engine.setTrackInputRouting (clickTrackIndex, -1);
     }
 
     const double sr      = juce::jmax (8000.0, [this]
