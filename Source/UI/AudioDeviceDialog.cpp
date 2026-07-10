@@ -575,10 +575,32 @@ namespace zynforge
         };
     }
 
+    // The single live device dialog, if any. Two entry points can open this
+    // panel -- the toolbar DEVICE button (tracked floating) and the PatchPage
+    // "no audio device" placeholder (self-owned modal) -- and each DialogContent
+    // snapshots the device state + registers a ChangeListener in its ctor.
+    // Two live at once means Cancel on each double-restores the device (they
+    // fight over initialise(256,64,...)), so we allow only ONE. Auto-nulls when
+    // the dialog is destroyed (SafePointer), covering both close paths.
+    static juce::Component::SafePointer<DialogContent> s_liveDeviceDialog;
+
     juce::DialogWindow* AudioDeviceDialog::launch (AudioEngine& engine, bool selfOwned)
     {
+        // Single-instance: if a device dialog is already up, surface it instead
+        // of stacking a second (whichever path asked). Return nullptr so no
+        // caller starts tracking a dialog it didn't create -- the floating
+        // toolbar path only launches when its own SafePointer is null, and the
+        // self-owned path discards the return anyway.
+        if (auto* live = s_liveDeviceDialog.getComponent())
+        {
+            if (auto* dw = live->findParentComponentOfClass<juce::DialogWindow>())
+                dw->toFront (true);
+            return nullptr;
+        }
+
         auto content = std::make_unique<DialogContent> (engine);
         content->setSelfOwned (selfOwned);   // so its close path exitModalStates the modal launchAsync window
+        s_liveDeviceDialog = content.get();  // track the one live instance
 
         juce::DialogWindow::LaunchOptions opts;
         opts.dialogTitle                  = "Audio Device";

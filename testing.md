@@ -24,6 +24,8 @@ The strategy is **build + unit + smoke + field**. The unit-test harness is in pl
 
 **Click-track generation smoke check (device-manager + file I/O, not unit-tested).** In a fresh session, set a tempo and press Generate Click Track: it must create a "Click" strip and write its `Track_NN.wav` on the **first** press (a regression once made the guard abort the first press with "Click slot isn't a Click strip"). Press again to regenerate — it must overwrite the same strip, never a recorded channel that merely happens to be named "Click".
 
+**Audio Device panel single-instance smoke check (message thread + modal, not unit-tested).** With no audio device present, both the toolbar DEVICE button and the PATCH tab's "Audio settings…" placeholder open the device panel. Open one, then trigger the other — it must surface the existing panel, not stack a second (two live panels each snapshot the device state, so cancelling both would double-restore and fight over the channel counts). Cancelling the single panel must still restore the boot channel counts (meters/recording keep working).
+
 ## Frameworks and Tools in Use
 
 - **CMake / Xcode** — build orchestration.
