@@ -409,7 +409,36 @@ namespace zynforge
             }
 
             const float* src = inputs[ch];
-            if (src == nullptr) continue;
+            if (src == nullptr)
+            {
+                // The RIGHT half of an armed stereo pair MUST keep its FIFO fed
+                // even with no input routed to it. The pair writes ONE
+                // interleaved file and the drain consumes min(L,R) frames, so a
+                // starved R side pinned `avail` at 0 forever: L overflowed, the
+                // 2-ch write never fired, and the whole pair came back as
+                // silence padding. Push zeros so the pair stays in lockstep and
+                // the take is L-plus-silence instead of nothing.
+                if (! (rec && pairArmed)) continue;
+                if (t.isBus.load (std::memory_order_relaxed)) continue;
+                const int  n0  = juce::jmin (numSamples, (int) scratch.size());
+                if (n0 <= 0) continue;
+                auto& cfz = *fifos[(std::size_t) ch];
+                const auto zs = cfz.fifo.write (n0);
+                if (zs.blockSize1 > 0)
+                    std::memcpy (cfz.data.data() + zs.startIndex1, scratch.data(),
+                                 (std::size_t) zs.blockSize1 * sizeof (float));
+                if (zs.blockSize2 > 0)
+                    std::memcpy (cfz.data.data() + zs.startIndex2, scratch.data(),
+                                 (std::size_t) zs.blockSize2 * sizeof (float));
+                const int wroteZ = zs.blockSize1 + zs.blockSize2;
+                if (wroteZ < numSamples)
+                {
+                    const int deficit = numSamples - wroteZ;
+                    missedSamples     .fetch_add (deficit, std::memory_order_relaxed);
+                    cfz.droppedSamples.fetch_add (deficit, std::memory_order_relaxed);
+                }
+                continue;
+            }
 
             // Meter (peak + simple block RMS)
             float peak = 0.0f, sumSq = 0.0f;
@@ -514,8 +543,19 @@ namespace zynforge
         const auto audioFiles = sessionDir.getChildFile ("Audio Files");
         const auto base = audioFiles.isDirectory() ? audioFiles : sessionDir;
         const auto stem = juce::String::formatted ("Track_%02d", trackIndex + 1);
-        // A take is multi-part if any Track_NN_partXX.* sibling exists.
-        return ! base.findChildFiles (juce::File::findFiles, false, stem + "_part*").isEmpty();
+        // A take is multi-part if any Track_NN_partXX.<audio ext> sibling
+        // exists. The bare "_part*" glob also matched leftover
+        // Track_NN_partXX.punchbase.<ext> sidecars from an aborted punch, so a
+        // single-file take could be misreported as multi-part.
+        for (const auto& f : base.findChildFiles (juce::File::findFiles, false, stem + "_part*"))
+        {
+            const auto name = f.getFileName();
+            if (name.containsIgnoreCase (".punchbase")) continue;
+            const auto ext = f.getFileExtension().toLowerCase();
+            if (ext == ".wav" || ext == ".flac" || ext == ".aif" || ext == ".aiff")
+                return true;
+        }
+        return false;
     }
 
     std::pair<juce::File, int> MultitrackRecorder::nextContinuationPart (
@@ -592,7 +632,7 @@ namespace zynforge
             }
             return { 0, 24, ".wav" };
         };
-        const auto primary = resolve (captureFormat);
+        auto       primary = resolve (captureFormat);
         const auto backup  = resolve (backupCaptureFormat);
 
         // True when track k is one we open a writer for: not a bus, and armed.
@@ -624,6 +664,40 @@ namespace zynforge
         if (continueAsPart)
         {
             juce::AudioFormatManager fm; fm.registerBasicFormats();
+
+            // A CONTINUE must extend the take in the container it's already in.
+            // The scan below used to look only for `primary.ext`, so if the
+            // engineer changed the capture format between takes (WAV -> FLAC,
+            // say) it found nothing: recordBaseSamples stayed 0 and the
+            // "continuation" was written as Track_NN.flac PART 1 alongside the
+            // existing Track_NN.wav -- two files claiming the same track index,
+            // which SessionPlayer then globs as one confused take. Adopt the
+            // existing take's container + bit depth for this take instead.
+            static const char* kContainerExts[] = { ".wav", ".aif", ".aiff", ".flac" };
+            for (std::size_t i = 0; i < tracks.size() && continueAsPart; ++i)
+            {
+                if (tracks[i]->isBus .load (std::memory_order_relaxed)) continue;
+                if (! tracks[i]->armed.load (std::memory_order_relaxed)) continue;
+                const auto name = juce::String::formatted ("Track_%02d", (int) i + 1);
+                if (audioFilesDir.getChildFile (name + primary.ext).existsAsFile())
+                    break;                       // already the right container
+                for (auto* ext : kContainerExts)
+                {
+                    const auto f = audioFilesDir.getChildFile (name + ext);
+                    if (! f.existsAsFile()) continue;
+                    if (std::unique_ptr<juce::AudioFormatReader> r { fm.createReaderFor (f) })
+                    {
+                        const juce::String e (ext);
+                        primary.container = e == ".flac" ? 2 : (e == ".wav" ? 0 : 1);
+                        primary.ext       = ext;
+                        primary.bitDepth  = r->usesFloatingPointData
+                                              ? 32 : (int) r->bitsPerSample;
+                    }
+                    break;
+                }
+                break;   // one armed take is enough to pin the container
+            }
+
             juce::int64 takeLen = 0;
             for (std::size_t i = 0; i < tracks.size(); ++i)
             {
@@ -860,8 +934,21 @@ namespace zynforge
         const juce::StringArray cmd { "/usr/sbin/diskutil", "info",
                                        mountPoint.getFullPathName() };
         if (! proc.start (cmd, juce::ChildProcess::wantStdOut)) return SmartStatus::Unknown;
+
+        // WAIT FIRST, THEN READ -- and kill on timeout. readAllProcessOutput()
+        // loops on a BLOCKING pipe read until the child closes it, so it has no
+        // timeout of its own; calling it first made the waitForProcessToFinish
+        // below dead code and let an unresponsive volume (network mount,
+        // spun-down USB, a wedged diskutil) block the caller indefinitely.
+        // `diskutil info` emits a couple of KB -- far under the 64 KiB pipe
+        // buffer -- so the child can always run to completion without us
+        // draining it, which makes wait-then-read safe here.
+        if (! proc.waitForProcessToFinish (2000))
+        {
+            proc.kill();
+            return SmartStatus::Unknown;
+        }
         const auto out = proc.readAllProcessOutput();
-        proc.waitForProcessToFinish (2000);
 
         for (const auto& line : juce::StringArray::fromLines (out))
         {
@@ -1534,6 +1621,15 @@ namespace zynforge
                 && ! t->isBus.load (std::memory_order_relaxed))
                 ++armedCount;
 
+        // Every configured MIRROR is another full parallel copy of every armed
+        // track, in its own format. Omitting them under-reported the real write
+        // rate by the whole mirror count -- which made "minutes remaining"
+        // optimistic and raised the bar isDiskStruggling compares against, so
+        // the disk warning fired late (or not at all) on a mirrored rig.
+        int bytesPerSampMirrors = 0;
+        for (const auto& mc : mirrorConfigs)
+            bytesPerSampMirrors += bitsFor (mc.format) / 8;
+
         // FLAC compresses ~50% typical; treat its byte rate as the
         // worst case (uncompressed equivalent) to keep the estimate
         // pessimistic. Engineers don't want a "you have 6 h" estimate
@@ -1541,7 +1637,8 @@ namespace zynforge
         return (juce::int64) (sampleRate
                               * (juce::int64) armedCount
                               * (bytesPerSampPrimary
-                                 + (backupOn ? bytesPerSampBackup : 0)));
+                                 + (backupOn ? bytesPerSampBackup : 0)
+                                 + bytesPerSampMirrors));
     }
 
     int MultitrackRecorder::estimateMinutesRemaining (const juce::File& primaryVolume,
@@ -2026,20 +2123,12 @@ namespace zynforge
         {
             const auto elapsed = juce::Time::getMillisecondCounterHiRes() - t0;
             lastWriteMs.store ((int) elapsed, std::memory_order_relaxed);
-
-            const auto ssf = samplesSinceFlush.fetch_add (totalWritten, std::memory_order_relaxed)
-                             + totalWritten;
-            // Flush WAV headers every ~5 s of audio so a crash mid-record
-            // still leaves a playable file with current data sizes.
-            if (ssf >= (juce::int64) (sampleRate * 5.0))
-            {
-                for (auto& w : writers)
-                {
-                    if (w.writer       != nullptr) w.writer      ->flush();
-                    if (w.backupWriter != nullptr) w.backupWriter->flush();
-                }
-                samplesSinceFlush.store (0, std::memory_order_relaxed);
-            }
         }
+        // NOTE: the periodic header flush is the wall-clock block ABOVE
+        // (lastWriterFlushMs). A second, audio-time flush used to live here
+        // doing the same job on the same ~5 s cadence -- and it iterated EVERY
+        // writer rather than this shard's range, so with more than one shard
+        // each thread flushed other shards' writers behind their backs. One
+        // timer, scoped to the shard, is the whole job.
     }
 }

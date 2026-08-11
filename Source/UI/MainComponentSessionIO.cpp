@@ -296,12 +296,12 @@ void MainComponent::saveUILayoutToActiveSession()
     proj.replaceWithText (juce::JSON::toString (juce::var (obj.get())));
 }
 
-int MainComponent::exportTracksTo (const juce::File& destDir,
-                                   const std::vector<int>& channelIndices,
-                                   const zynforge::ExportOptions& opts)
+void MainComponent::startExportTracksTo (const juce::File& destDir,
+                                         const std::vector<int>& channelIndices,
+                                         const zynforge::ExportOptions& opts)
 {
     auto sourceDir = engine.getActiveSessionDir();
-    if (! sourceDir.isDirectory() || ! destDir.isDirectory()) return 0;
+    if (! sourceDir.isDirectory() || ! destDir.isDirectory()) return;
 
     destDir.createDirectory();
 
@@ -319,17 +319,24 @@ int MainComponent::exportTracksTo (const juce::File& destDir,
         return base == suffix;
     };
 
-    zynforge::TrackExporter exporter;
-    int succeeded = 0;
-    int attempted = 0;
-    juce::String firstError;
-
     auto findTrackFile = [&] (int index1Based) -> juce::File
     {
         for (auto& src : allFiles)
             if (matchesIndex (src, index1Based)) return src;
         return {};
     };
+
+    // ── Phase 1 (MESSAGE THREAD): resolve every job ────────────────────────
+    // Reading TrackStates (name / isStereo) and globbing the session folder
+    // must happen here; the worker below then touches nothing but plain values.
+    struct ExportJob
+    {
+        juce::File srcL, srcR;     // srcR set only for the LEGACY two-mono-file pair
+        juce::File destStem;
+        bool       stereoPair { false };   // true => interleave srcL + srcR
+    };
+    std::vector<ExportJob> jobs;
+    jobs.reserve (channelIndices.size());
 
     auto& rec = engine.getRecorder();
     for (int i : channelIndices)
@@ -352,10 +359,9 @@ int MainComponent::exportTracksTo (const juce::File& destDir,
                                               .replaceCharacter ('\\', '_')
                                               .replaceCharacter ('.', '_');
         const auto baseName = juce::String::formatted ("Track_%02d - ", i + 1) + safeName;
-        const auto destStem = destDir.getChildFile (baseName);
 
-        juce::String err;
-        bool ok = false;
+        ExportJob job;
+        job.destStem = destDir.getChildFile (baseName);
         if (stereo)
         {
             const auto srcL = findTrackFile (i + 1);
@@ -363,7 +369,7 @@ int MainComponent::exportTracksTo (const juce::File& destDir,
             if (srcL.existsAsFile() && srcR.existsAsFile())
             {
                 // LEGACY layout -- two mono files -> interleave into stereo.
-                ok = exporter.exportStereoPair (srcL, srcR, destStem, opts, err);
+                job.srcL = srcL; job.srcR = srcR; job.stereoPair = true;
             }
             else if (srcL.existsAsFile())
             {
@@ -374,34 +380,65 @@ int MainComponent::exportTracksTo (const juce::File& destDir,
                 // Do NOT route this to exportStereoPair -- that helper expects
                 // two MONO sources and reads only channel 0 of each, so it
                 // would collapse a native pair to dual-mono of the left channel.
-                ok = exporter.exportTrack (srcL, destStem, opts, err);
+                job.srcL = srcL;
             }
         }
         else
         {
-            const auto src = findTrackFile (i + 1);
-            if (src.existsAsFile())
-                ok = exporter.exportTrack (src, destStem, opts, err);
+            job.srcL = findTrackFile (i + 1);
         }
-
-        ++attempted;
-        if (ok) ++succeeded;
-        else if (firstError.isEmpty() && err.isNotEmpty()) firstError = err;
+        if (job.srcL.existsAsFile()) jobs.push_back (std::move (job));
     }
 
-    // Surface PARTIAL failures too -- e.g. the destination runs out of space
-    // mid-batch. Previously only an all-tracks-failed run reported anything, so
-    // a run that wrote 10 of 32 files still read as success and shipped an
-    // incomplete deliverable. Callers read lastExportFailures to warn.
-    lastExportFailures = juce::jmax (0, attempted - succeeded);
-    if (succeeded == 0 && firstError.isNotEmpty())
-        showStatus ("Export failed: " + firstError);
-    else if (lastExportFailures > 0)
-        showStatus ("Export INCOMPLETE: " + juce::String (lastExportFailures)
-                    + " of " + juce::String (attempted) + " failed"
-                    + (firstError.isNotEmpty() ? " (" + firstError + ")" : ""));
+    if (jobs.empty()) { showStatus ("Export failed: no matching take files"); return; }
 
-    return succeeded;
+    // ── Phase 2 (BACKGROUND): decode / resample / encode ───────────────────
+    // Owned + joinable thread (same pattern as the bounce) so a quit mid-export
+    // can't leave a detached worker running against freed state.
+    joinExportThread();   // one export at a time
+    showStatus ("Exporting " + juce::String ((int) jobs.size()) + " track(s)...");
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    const auto destName = destDir.getFileName();
+    exportThread = std::thread ([this, self, jobs, opts, destName]
+    {
+        zynforge::TrackExporter exporter;
+        int succeeded = 0, attempted = 0;
+        juce::String firstError;
+
+        for (const auto& j : jobs)
+        {
+            if (exportCancel.load (std::memory_order_relaxed)) return;
+            juce::String err;
+            const bool ok = j.stereoPair
+                ? exporter.exportStereoPair (j.srcL, j.srcR, j.destStem, opts, err)
+                : exporter.exportTrack      (j.srcL,         j.destStem, opts, err);
+            ++attempted;
+            if (ok) ++succeeded;
+            else if (firstError.isEmpty() && err.isNotEmpty()) firstError = err;
+        }
+
+        const bool cancelled = exportCancel.load (std::memory_order_relaxed);
+        juce::MessageManager::callAsync (
+            [self, succeeded, attempted, firstError, destName, cancelled]
+        {
+            if (self == nullptr || cancelled) return;
+            // Surface PARTIAL failures too -- e.g. the destination runs out of
+            // space mid-batch. A run that wrote 10 of 32 files must not read as
+            // success and ship an incomplete deliverable.
+            self->lastExportFailures = juce::jmax (0, attempted - succeeded);
+            if (succeeded == 0)
+                self->showStatus ("Export failed"
+                                  + (firstError.isNotEmpty() ? ": " + firstError : juce::String()));
+            else if (self->lastExportFailures > 0)
+                self->showStatus ("Export INCOMPLETE: " + juce::String (self->lastExportFailures)
+                                  + " of " + juce::String (attempted) + " failed"
+                                  + (firstError.isNotEmpty() ? " (" + firstError + ")" : ""));
+            else
+                self->showStatus ("Exported " + juce::String (succeeded)
+                                  + " track(s) -> " + destName);
+        });
+    });
 }
 
 void MainComponent::onBounceStems()
@@ -589,67 +626,95 @@ void MainComponent::onImportAudioFiles()
         int nextTrack = engine.getRecorder().getNumTracks();
         int failed    = 0;
 
-        auto writeMono = [] (juce::AudioFormatReader& reader, int channelIndex,
-                             const juce::File& dst, double sr) -> bool
+        // Every imported file is written at the SESSION's sample rate, not its
+        // own. Writing each source at `reader->sampleRate` left a session with
+        // mixed rates on disk; SessionPlayer doesn't resample and takes the
+        // LAST loaded file's rate as the session rate, so importing a 44.1 k
+        // file into a 48 k session played it (or everything else) at the wrong
+        // speed with no warning. Convert on the way in instead.
+        const double targetSr = [this]
+        {
+            if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())
+                if (d->getCurrentSampleRate() > 0.0) return d->getCurrentSampleRate();
+            return pendingSampleRate > 0.0 ? pendingSampleRate : 48000.0;
+        }();
+        int converted = 0;
+
+        // Write `reader` to dst as a 24-bit WAV at targetSr.
+        //   outChannels 1 = mono (takes monoSourceChannel), 2 = interleaved stereo.
+        // A same-rate source takes the straight copy path so an import that
+        // needs no conversion stays sample-exact (no resampler in the way).
+        auto writeConverted = [] (juce::AudioFormatReader& reader,
+                                  const juce::File& dst, double targetRate,
+                                  int outChannels, int monoSourceChannel) -> bool
         {
             dst.deleteFile();
+            const int    srcChans = juce::jmax (1, (int) reader.numChannels);
+            const double srcSr    = reader.sampleRate > 0.0 ? reader.sampleRate : targetRate;
+
             juce::WavAudioFormat wav;
             std::unique_ptr<juce::FileOutputStream> out (dst.createOutputStream());
             if (out == nullptr) return false;
             juce::StringPairArray meta;
             std::unique_ptr<juce::AudioFormatWriter> writer (
-                wav.createWriterFor (out.get(), sr, 1, 24, meta, 0));
+                wav.createWriterFor (out.get(), targetRate,
+                                     (unsigned int) outChannels, 24, meta, 0));
             if (writer == nullptr) return false;
             out.release();
 
-            // Stream samples in chunks so we don't allocate a huge buffer.
+            // Stream in chunks so we never allocate a whole-file buffer.
             constexpr int chunk = 16384;
-            juce::AudioBuffer<float> buf ((int) reader.numChannels, chunk);
-            juce::int64 pos = 0;
-            while (pos < reader.lengthInSamples)
-            {
-                const int n = (int) juce::jmin ((juce::int64) chunk,
-                                                reader.lengthInSamples - pos);
-                if (! reader.read (&buf, 0, n, pos, true, true)) return false;
-                const float* mono[1] = { buf.getReadPointer (channelIndex) };
-                if (! writer->writeFromFloatArrays (mono, 1, n)) return false;
-                pos += n;
-            }
-            return true;
-        };
+            juce::AudioBuffer<float> buf (srcChans, chunk);
 
-        // Write an imported stereo file as ONE interleaved 2-channel
-        // Track_NN.wav -- matching how a stereo pair is now NATIVELY
-        // recorded (one file, not two mono splits). The pair still occupies
-        // two logical strips; only the L slot has a file on disk.
-        auto writeStereo = [] (juce::AudioFormatReader& reader,
-                               const juce::File& dst, double sr) -> bool
-        {
-            dst.deleteFile();
-            juce::WavAudioFormat wav;
-            std::unique_ptr<juce::FileOutputStream> out (dst.createOutputStream());
-            if (out == nullptr) return false;
-            juce::StringPairArray meta;
-            std::unique_ptr<juce::AudioFormatWriter> writer (
-                wav.createWriterFor (out.get(), sr, 2, 24, meta, 0));
-            if (writer == nullptr) return false;
-            out.release();
-
-            constexpr int chunk = 16384;
-            juce::AudioBuffer<float> buf ((int) reader.numChannels, chunk);
-            const int srcR = juce::jmin (1, (int) reader.numChannels - 1);
-            juce::int64 pos = 0;
-            while (pos < reader.lengthInSamples)
+            auto writeBlock = [&] (int n) -> bool
             {
-                const int n = (int) juce::jmin ((juce::int64) chunk,
-                                                reader.lengthInSamples - pos);
-                if (! reader.read (&buf, 0, n, pos, true, true)) return false;
-                const float* chans[2] = { buf.getReadPointer (0),
-                                          buf.getReadPointer (srcR) };
-                if (! writer->writeFromFloatArrays (chans, 2, n)) return false;
-                pos += n;
+                if (outChannels == 2)
+                {
+                    const int srcR = juce::jmin (1, srcChans - 1);
+                    const float* chans[2] = { buf.getReadPointer (0),
+                                              buf.getReadPointer (srcR) };
+                    return writer->writeFromFloatArrays (chans, 2, n);
+                }
+                const float* mono[1] = {
+                    buf.getReadPointer (juce::jlimit (0, srcChans - 1, monoSourceChannel)) };
+                return writer->writeFromFloatArrays (mono, 1, n);
+            };
+
+            if (juce::approximatelyEqual (srcSr, targetRate))
+            {
+                juce::int64 pos = 0;
+                while (pos < reader.lengthInSamples)
+                {
+                    const int n = (int) juce::jmin ((juce::int64) chunk,
+                                                    reader.lengthInSamples - pos);
+                    if (! reader.read (&buf, 0, n, pos, true, true)) return false;
+                    if (! writeBlock (n)) return false;
+                    pos += n;
+                }
+                return true;
             }
-            return true;
+
+            // Rate conversion -- same pipeline TrackExporter uses on the way out.
+            juce::AudioFormatReaderSource src (&reader, false);
+            juce::ResamplingAudioSource   res (&src, false, srcChans);
+            res.setResamplingRatio (srcSr / targetRate);
+            res.prepareToPlay (chunk, targetRate);
+
+            const juce::int64 destLen =
+                (juce::int64) ((double) reader.lengthInSamples * targetRate / srcSr);
+            juce::int64 written = 0;
+            bool ok = true;
+            while (written < destLen && ok)
+            {
+                const int n = (int) juce::jmin ((juce::int64) chunk, destLen - written);
+                buf.clear();
+                juce::AudioSourceChannelInfo info (&buf, 0, n);
+                res.getNextAudioBlock (info);
+                ok = writeBlock (n);
+                written += n;
+            }
+            res.releaseResources();
+            return ok;
         };
 
         for (int i = 0; i < picks.size(); ++i)
@@ -668,9 +733,12 @@ void MainComponent::onImportAudioFiles()
             // Stereo source -> ONE interleaved 2-ch file in the L slot (no
             // separate R file). Mono source -> one mono file. Both reserve
             // their strip count below so the pair still spans two strips.
-            const bool ok = isStereoFile
-                              ? writeStereo (*reader, lDst, reader->sampleRate)
-                              : writeMono   (*reader, 0, lDst, reader->sampleRate);
+            // Everything is written at the session rate (see writeConverted).
+            if (reader->sampleRate > 0.0
+                && ! juce::approximatelyEqual (reader->sampleRate, targetSr))
+                ++converted;
+            const bool ok = writeConverted (*reader, lDst, targetSr,
+                                            isStereoFile ? 2 : 1, /*monoSourceChannel*/ 0);
 
             if (! ok) { ++failed; continue; }
 
@@ -735,6 +803,9 @@ void MainComponent::onImportAudioFiles()
         showStatus ("Imported " + juce::String ((int) records.size())
                     + " file(s), " + juce::String (stereoCount) + " stereo, "
                     + juce::String ((int) records.size() - stereoCount) + " mono"
+                    + (converted > 0 ? " (" + juce::String (converted) + " resampled to "
+                                       + juce::String (targetSr / 1000.0, 1) + " kHz)"
+                                     : juce::String())
                     + (failed > 0 ? " (skipped " + juce::String (failed) + ")"
                                   : juce::String())
                     + " -- loaded " + juce::String (loaded) + " for playback");
@@ -768,28 +839,53 @@ void MainComponent::onSaveSessionAs()
         if (! dest.exists()) dest.createDirectory();
         if (! dest.isDirectory()) { showStatus ("Save As destination invalid"); return; }
 
+        // Refuse a destination INSIDE the source: copyDirectoryTo would copy
+        // the growing destination into itself.
+        if (source.isDirectory() && dest.isAChildOf (source))
+        {
+            showStatus ("Save As failed -- pick a folder outside the current session");
+            return;
+        }
+
         // Seed the Pro Tools-style subfolder layout in the new spot.
         dest.getChildFile ("Audio Files")         .createDirectory();
         dest.getChildFile ("Export Files")       .createDirectory();
         dest.getChildFile ("Session File Backups").createDirectory();
 
-        if (source.isDirectory() && source != dest)
+        const bool needsCopy = source.isDirectory() && source != dest;
+        if (! needsCopy)
         {
-            // Copy every file inside the source session dir (audio + markers + settings).
-            if (! source.copyDirectoryTo (dest))
-            {
-                showStatus ("Save As failed");
-                return;
-            }
+            // Nothing to copy -- just pin + write the state files.
+            engine.setActiveSessionDir (dest);
+            saveSessionStateTo (dest);
+            showStatus ("Saved As -> " + dest.getFileName());
+            return;
         }
 
-        // Pin the new folder as the active session FIRST so the parts of the
-        // save that target getActiveSessionDir() (setlist / playlists /
-        // automation / UI layout) land in the new location, then write
-        // everything (settings + full mix state + .zfproj).
-        engine.setActiveSessionDir (dest);
-        saveSessionStateTo (dest);
-        showStatus ("Saved As -> " + dest.getFileName());
+        // The folder copy carries the AUDIO -- gigabytes on a real show -- so it
+        // runs on the owned export thread instead of freezing the message
+        // thread for the duration. The state files are written afterwards, back
+        // on the message thread, because saveSessionStateTo touches engine state.
+        joinExportThread();
+        showStatus ("Saving As -> " + dest.getFileName() + " (copying session)...");
+
+        juce::Component::SafePointer<MainComponent> self (this);
+        exportThread = std::thread ([self, source, dest]
+        {
+            const bool ok = source.copyDirectoryTo (dest);
+            juce::MessageManager::callAsync ([self, ok, dest]
+            {
+                if (self == nullptr) return;
+                if (! ok) { self->showStatus ("Save As failed -- check permissions / free space"); return; }
+                // Pin the new folder as the active session FIRST so the parts of
+                // the save that target getActiveSessionDir() (setlist /
+                // playlists / automation / UI layout) land in the new location,
+                // then write everything (settings + full mix state + .zfproj).
+                self->engine.setActiveSessionDir (dest);
+                self->saveSessionStateTo (dest);
+                self->showStatus ("Saved As -> " + dest.getFileName());
+            });
+        });
     });
 }
 
@@ -825,10 +921,9 @@ void MainComponent::onExportAllTracks()
             std::vector<int> all;
             for (int i = 0; i < engine.getRecorder().getNumTracks(); ++i) all.push_back (i);
 
-            showStatus ("Exporting " + juce::String ((int) all.size()) + " tracks...");
-            const int n = exportTracksTo (dest, all, chosenOpts);
-            if (lastExportFailures == 0)   // else exportTracksTo already showed the INCOMPLETE warning
-                showStatus ("Exported " + juce::String (n) + " tracks -> " + dest.getFileName());
+            // Async: reports its own progress + completion (or the INCOMPLETE
+            // / failed warning) when the worker finishes.
+            startExportTracksTo (dest, all, chosenOpts);
         });
     });
 }
@@ -862,12 +957,7 @@ void MainComponent::onExportIndividualTrack (int channelIndex)
             if (dest.getFullPathName().isEmpty()) return;
             if (! dest.exists()) dest.createDirectory();
 
-            showStatus ("Exporting track " + juce::String (channelIndex + 1) + "...");
-            const int n = exportTracksTo (dest, { channelIndex }, chosenOpts);
-            showStatus (n > 0
-                        ? "Exported track " + juce::String (channelIndex + 1)
-                           + " -> " + dest.getFileName()
-                        : "Export failed");
+            startExportTracksTo (dest, { channelIndex }, chosenOpts);
         });
     });
 }
@@ -937,13 +1027,7 @@ void MainComponent::onExportIndividualTracks()
                 if (dest.getFullPathName().isEmpty()) return;
                 if (! dest.exists()) dest.createDirectory();
 
-                showStatus ("Exporting " + juce::String ((int) chosenTracks.size())
-                            + " track(s)...");
-                const int done = exportTracksTo (dest, chosenTracks, chosenOpts);
-                if (lastExportFailures == 0)   // else exportTracksTo showed the INCOMPLETE warning
-                    showStatus (done > 0
-                                ? "Exported " + juce::String (done) + " track(s) -> " + dest.getFileName()
-                                : "Export failed");
+                startExportTracksTo (dest, chosenTracks, chosenOpts);
             });
         });
     });
@@ -1013,9 +1097,21 @@ void MainComponent::exportTimelineCsv()
     namespace tx = zynforge::timelineexport;
     std::vector<tx::TrackEntry> tracks;
     auto& rec = engine.getRecorder();
+    // Name the file that's ACTUALLY on disk. This hardcoded ".wav", so the CSV
+    // handed to the mix engineer referenced files that don't exist in a FLAC or
+    // AIFF session. Resolve the real container per track; fall back to the
+    // current capture format's extension when the track was never recorded.
+    const auto audioDir = dir.getChildFile ("Audio Files").isDirectory()
+                            ? dir.getChildFile ("Audio Files") : dir;
     for (int i = 0; i < rec.getNumTracks(); ++i)
-        tracks.push_back ({ i + 1, rec.getTrack (i).name,
-                            "Track_" + juce::String (i + 1).paddedLeft ('0', 2) + ".wav" });
+    {
+        const auto stem = "Track_" + juce::String (i + 1).paddedLeft ('0', 2);
+        juce::String fileName = stem + ".wav";
+        for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
+            if (audioDir.getChildFile (stem + ext).existsAsFile())
+            { fileName = stem + ext; break; }
+        tracks.push_back ({ i + 1, rec.getTrack (i).name, fileName });
+    }
 
     std::vector<tx::MarkEntry> markers;
     auto& mk = engine.getMarkers();
@@ -1145,21 +1241,12 @@ void MainComponent::onLoadSessionClicked()
 
 juce::File MainComponent::getSessionsRoot() const
 {
-    // Engineer can override via New Session... dialog ("Local Storage:")
-    // -- stored in appProps as 'sessionsRoot'. Falls back to the canonical
-    // ~/Music/Zynforge Sessions when unset.
-    if (auto* props = engine.getAppProps())
-    {
-        const auto override_ = props->getValue ("sessionsRoot", {});
-        if (override_.isNotEmpty())
-        {
-            juce::File f (override_);
-            if (f.isDirectory() || f.createDirectory().wasOk())
-                return f;
-        }
-    }
-    return juce::File::getSpecialLocation (juce::File::userMusicDirectory)
-                .getChildFile ("Zynforge Sessions");
+    // Engineer can override via the New Session / Welcome dialog ("Local
+    // Storage:") -- stored in appProps as 'sessionsRoot', falling back to
+    // ~/Music/Zynforge Sessions. The resolution lives on the ENGINE so the
+    // network remote-record paths (OSC, companion) share it instead of
+    // hardcoding the Music folder.
+    return engine.getSessionsRoot();
 }
 
 // ── Session templates ───────────────────────────────────────────────
@@ -1241,6 +1328,14 @@ void MainComponent::applySessionTemplate (const juce::File& templateFile)
 
     const int n = (int) obj->getProperty ("trackCount");
     if (n <= 0) { showStatus ("Template has no strips"); return; }
+
+    // The click strip is SESSION-scoped and a template replaces the whole strip
+    // layout, so any index carried over is stale. Leaving it set made the
+    // "is this really a Click strip?" guard in generateOrRefreshClickTrack fail
+    // forever after ("Click slot isn't a Click strip"), permanently disabling
+    // Generate Click Track for the rest of the session -- every other
+    // session-boundary path (open / close / new) already resets it.
+    clickTrackIndex = -1;
 
     // Stop the live strips' meter/spectrum timers before setStripCount frees
     // the TrackStates they reference (a template with fewer strips shrinks the

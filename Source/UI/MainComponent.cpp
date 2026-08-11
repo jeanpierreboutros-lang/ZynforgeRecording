@@ -48,6 +48,7 @@ void MainComponent::onRecordClicked()
     if (punchSessionActive)
     {
         if (engine.isRecording()) engine.stopRecording();
+        restoreArmStateAfterPunch();   // put the pre-punch arm layout back
         engine.stopPlayback();
         engine.setPunchModeOn (false);
         punchSessionActive = false;
@@ -620,15 +621,31 @@ void MainComponent::showStatus (const juce::String& msg)
     //   Info    (grey)  -- neutral feedback.
     if (msg.isNotEmpty())
     {
-        const bool hardFail = msg.containsIgnoreCase ("error")
+        // The live-warning strings ("! SAMPLE-RATE MISMATCH", "! PRIMARY WRITE
+        // FAILED", ...) all start with '!', and several hard failures used
+        // wording none of the old substrings matched -- "Recording blocked ...",
+        // "Export INCOMPLETE", "PARTIAL capture NOT saved" all rendered as
+        // neutral grey Info, which is exactly backwards for the messages the
+        // engineer most needs to catch mid-show.
+        const bool bang     = msg.trimStart().startsWithChar ('!');
+        const bool hardFail = bang
+                           || msg.containsIgnoreCase ("error")
                            || msg.containsIgnoreCase ("disk full")
                            || msg.containsIgnoreCase ("out of space")
                            || msg.containsIgnoreCase ("device lost")
                            || msg.containsIgnoreCase ("lost the audio")
                            || msg.containsIgnoreCase ("could not")
-                           || msg.containsIgnoreCase ("unable to");
+                           || msg.containsIgnoreCase ("couldn't")
+                           || msg.containsIgnoreCase ("unable to")
+                           || msg.containsIgnoreCase ("blocked")
+                           || msg.containsIgnoreCase ("failed")
+                           || msg.containsIgnoreCase ("incomplete")
+                           || msg.containsIgnoreCase ("not saved");
         const bool warn     = msg.containsIgnoreCase ("can't")
                            || msg.containsIgnoreCase ("fail")
+                           || msg.containsIgnoreCase ("mismatch")
+                           || msg.containsIgnoreCase ("timed out")
+                           || msg.containsIgnoreCase ("partial")
                            || msg.containsIgnoreCase ("stop record");
         const auto kind = hardFail ? Toast::Kind::Error
                         : warn     ? Toast::Kind::Warning
@@ -644,12 +661,23 @@ void MainComponent::removeLastCapture()
     const auto root = getSessionsRoot();
     if (! root.isDirectory()) { showStatus ("No sessions to remove"); return; }
 
-    auto dirs = root.findChildFiles (juce::File::findDirectories, false, "Session_*");
+    // Every session folder, not just the auto-stamped "Session_*" ones -- a
+    // session created via New Session with a custom name was invisible here, so
+    // "Remove last capture" silently deleted an OLDER auto-named session
+    // instead of the take the engineer had just made.
+    juce::Array<juce::File> dirs;
+    for (const auto& d : root.findChildFiles (juce::File::findDirectories, false))
+        if (d.getChildFile ("Audio Files").isDirectory()
+            || ! d.findChildFiles (juce::File::findFiles, false, "*.zfproj").isEmpty())
+            dirs.add (d);
     if (dirs.isEmpty()) { showStatus ("No sessions to remove"); return; }
 
-    // Find the most-recently-modified session folder.
-    dirs.sort();   // alphabetical; our naming is ISO-style so this is chronological
-    const auto target = dirs.getLast();
+    // Most recently MODIFIED wins -- names no longer sort chronologically once
+    // user-named sessions are in the mix.
+    juce::File target = dirs.getFirst();
+    for (const auto& d : dirs)
+        if (d.getLastModificationTime() > target.getLastModificationTime())
+            target = d;
 
     juce::AlertWindow::showAsync (
         juce::MessageBoxOptions()
@@ -928,7 +956,19 @@ void MainComponent::showPreflightChecklist()
     // for filesystem jitter mid-show). Reuses the format-derived
     // bytesPerSample computed for the headroom estimate above.
     const double needMBps = zynforge::preflight::requiredWriteMBps (sr, juce::jmax (1, armed), bytesPerSample);
-    if (hasSes || root.isDirectory())
+    if (engine.isRecording())
+    {
+        // NEVER probe mid-take. measureWriteSpeedMBps writes 16 MB
+        // synchronously, on the message thread, into the volume the take is
+        // streaming to -- it steals write bandwidth from the capture (a real
+        // dropout risk) and freezes the UI for the duration. Pre-flight is a
+        // pre-show tool; while rolling we report the requirement only.
+        body << "[!]  Disk write speed: not measured while recording (the probe "
+                "would write 16 MB to the take's volume)  --  need "
+             << juce::String (needMBps, 1) << " MB/s for "
+             << juce::jmax (1, armed) << " ch\n";
+    }
+    else if (hasSes || root.isDirectory())
     {
         const auto speedDir = hasSes ? sess : root;
         const double gotMBps = zynforge::preflight::measureWriteSpeedMBps (speedDir);

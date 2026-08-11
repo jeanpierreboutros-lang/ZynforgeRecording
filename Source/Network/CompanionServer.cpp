@@ -336,6 +336,28 @@ setInterval(tick, 500); tick();
             // each time).
             reapFinishedWorkers();
 
+            // Hard cap on concurrent workers. A thread was spawned per
+            // connection BEFORE the token check, so anyone on the LAN could
+            // open sockets and sit on them (each worker holds its thread for
+            // the 5 s request deadline) until the process ran out of threads --
+            // an unauthenticated DoS against the opt-in LAN mode. Refuse past
+            // the cap: legitimate use is one poller + one audition stream.
+            {
+                std::size_t liveWorkers = 0;
+                {
+                    std::lock_guard<std::mutex> g (workersLock);
+                    liveWorkers = workers.size();
+                }
+                if (liveWorkers >= kMaxConcurrentWorkers)
+                {
+                    // Answer on THIS thread (cheap, no new worker) and drop it.
+                    writeRaw (*client, "503 Service Unavailable", "text/plain",
+                              "too many concurrent connections");
+                    client->close();
+                    continue;
+                }
+            }
+
             // Own the worker thread (no detach) so stop() can join it. The
             // worker flags `done` when handleClient returns; the reaper above
             // (and stop()) joins on that. Connections are short -- except the
@@ -411,7 +433,23 @@ setInterval(tick, 500); tick();
             if (authLine.startsWithIgnoreCase ("Bearer "))
                 provided = authLine.substring (7).trim();
         }
-        if (provided != expected)
+        // Constant-time compare. juce::String's operator!= short-circuits on the
+        // first differing byte, which leaks the shared prefix length through
+        // response timing -- enough, over many requests, to walk the token out
+        // byte by byte. Compare every byte of the longer string either way.
+        const auto constantTimeEquals = [] (const juce::String& a, const juce::String& b)
+        {
+            const auto ua = a.toRawUTF8();
+            const auto ub = b.toRawUTF8();
+            const auto la = (int) std::strlen (ua);
+            const auto lb = (int) std::strlen (ub);
+            const int  n  = juce::jmax (la, lb);
+            unsigned int diff = (unsigned int) (la ^ lb);
+            for (int i = 0; i < n; ++i)
+                diff |= (unsigned int) ((i < la ? ua[i] : 0) ^ (i < lb ? ub[i] : 0));
+            return diff == 0;
+        };
+        if (! constantTimeEquals (provided, expected))
         {
             writeRaw (client, "401 Unauthorized", "text/plain",
                       "missing or invalid access token (?t=<token>)");
@@ -491,10 +529,10 @@ setInterval(tick, 500); tick();
                         // there would TRUNCATE existing takes). Matches the OSC
                         // remote-start path. This makes the RECORD button real
                         // instead of a dead control that reports success.
-                        const auto root = juce::File::getSpecialLocation (juce::File::userMusicDirectory)
-                                              .getChildFile ("Zynforge Sessions");
-                        const auto stamp = juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S");
-                        eng->startRecording (root.getChildFile ("Session_" + stamp));
+                        // makeTimestampedSessionDir honours the engineer's
+                        // "Local Storage" override; hardcoding the Music folder
+                        // put remote-started takes on the wrong drive.
+                        eng->startRecording (eng->makeTimestampedSessionDir());
                     }
                 }
             });
@@ -515,7 +553,14 @@ setInterval(tick, 500); tick();
         // Long-living HTTP response with a WAV header claiming ~24 h of
         // audio. Browsers / iOS Safari treat this as a streaming source
         // and start playback as bytes arrive.
-        const int    sr           = 48000;
+        //
+        // The header's rate MUST be the device's actual rate: feedStreamSamples
+        // pushes whatever the audio callback is running at, so a hardcoded
+        // 48000 made the remote audition play at the wrong speed and pitch on
+        // every 44.1 / 88.2 / 96 kHz rig. Fall back to 48 k only if the device
+        // hasn't reported a rate yet.
+        const double devSr        = engine.getDeviceSampleRate();
+        const int    sr           = devSr > 0.0 ? (int) (devSr + 0.5) : 48000;
         const int    bitsPerSamp  = 16;
         const int    numChannels  = 2;
         const juce::uint32 fakeBytes = (juce::uint32) (sr * numChannels * (bitsPerSamp / 8) * 60 * 60 * 24);
@@ -563,6 +608,14 @@ setInterval(tick, 500); tick();
             if (wIdx == readIdx) { juce::Thread::sleep (10); continue; }
 
             const auto cap   = streamRing.capacity();
+            // Resync when the producer has lapped us. The reader only ever
+            // advanced by `take`, so a consumer that fell more than one ring
+            // behind (a stalled Wi-Fi link) spent the rest of the connection
+            // reading samples the audio thread had already overwritten --
+            // permanent garbage instead of a glitch-then-recover. Jump to the
+            // oldest still-valid sample instead.
+            if (wIdx - readIdx > cap)
+                readIdx = wIdx - cap;
             const auto avail = wIdx - readIdx;
             const auto take  = juce::jmin ((std::size_t) 1024, (std::size_t) avail);
             outChunk.resize (take * 2);

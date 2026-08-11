@@ -48,6 +48,16 @@ namespace zynforge
         return {};
     }
 
+    // Bit depth the chosen container can actually write. FLAC tops out at
+    // 24-bit, so a blanket jlimit(16, 32) handed it 32 and createWriterFor
+    // returned nullptr -- the export died with an opaque "Cannot create
+    // writer" instead of just using the best depth FLAC supports.
+    static int bitsForFormat (ExportFormat fmt, int requested)
+    {
+        if (fmt == ExportFormat::Flac24) return juce::jlimit (16, 24, requested);
+        return juce::jlimit (16, 32, requested);
+    }
+
     static std::unique_ptr<juce::AudioFormatWriter> makePcmWriter (
         ExportFormat fmt,
         juce::OutputStream* out,
@@ -127,12 +137,45 @@ namespace zynforge
         if (outStream == nullptr) { outError = "Cannot write to destination"; return false; }
 
         // For MP3 we always render the intermediate WAV at 24-bit.
-        const int bits = isMp3 ? 24 : juce::jlimit (16, 32, opts.bitsPerSample);
+        const int bits = isMp3 ? 24 : bitsForFormat (opts.format, opts.bitsPerSample);
         auto writer = makePcmWriter (isMp3 ? ExportFormat::Wav24 : opts.format,
                                      outStream.get(), destSR, (unsigned int) channels,
                                      bits);
         if (writer == nullptr) { outError = "Cannot create writer"; return false; }
         outStream.release(); // writer owns the stream now
+
+        // Same-rate export: copy straight through. Running a rate-1.0 export
+        // through ResamplingAudioSource put a Lagrange interpolator in the path
+        // for no reason -- the output was neither bit-exact nor sample-aligned
+        // with the source, which matters when the stems are going back into
+        // another DAW alongside the originals.
+        if (juce::approximatelyEqual (srcSR, destSR))
+        {
+            juce::AudioBuffer<float> copyBuf (channels, 4096);
+            juce::int64 pos = 0;
+            while (pos < srcLen)
+            {
+                const int n = (int) juce::jmin ((juce::int64) 4096, srcLen - pos);
+                copyBuf.clear();
+                if (! reader->read (&copyBuf, 0, n, pos, true, true))
+                {
+                    outError = "Read failed";
+                    writer = nullptr; destPcmFile.deleteFile();
+                    return false;
+                }
+                const auto** arr = (const float**) copyBuf.getArrayOfReadPointers();
+                if (! writer->writeFromFloatArrays (arr, channels, n))
+                {
+                    outError = "Write failed (destination full?)";
+                    writer = nullptr; destPcmFile.deleteFile();
+                    return false;
+                }
+                pos += n;
+            }
+            writer = nullptr;   // flush + close
+            if (! isMp3) return true;
+            return encodeMp3 (destPcmFile, destWithoutExt, opts, outError);
+        }
 
         // Resampling pipeline: keep `reader` alive -- pass `deleteWhenRemoved=false`.
         juce::AudioFormatReaderSource readerSrc (reader.get(), false);
@@ -153,7 +196,13 @@ namespace zynforge
             const auto** arr = (const float**) buf.getArrayOfReadPointers();
             if (! writer->writeFromFloatArrays (arr, channels, thisBlock))
             {
-                outError = "Write failed";
+                // Close + DELETE the partial file. Returning with it in place
+                // left a truncated export on disk that looks like a finished
+                // one -- the worst outcome for a "never lose audio" tool.
+                outError = "Write failed (destination full?)";
+                writer = nullptr;
+                resampler.releaseResources();
+                destPcmFile.deleteFile();
                 return false;
             }
             written += thisBlock;
@@ -199,7 +248,7 @@ namespace zynforge
         std::unique_ptr<juce::FileOutputStream> outStream (destPcmFile.createOutputStream());
         if (outStream == nullptr) { outError = "Cannot write to destination"; return false; }
 
-        const int bits = isMp3 ? 24 : juce::jlimit (16, 32, opts.bitsPerSample);
+        const int bits = isMp3 ? 24 : bitsForFormat (opts.format, opts.bitsPerSample);
         auto writer = makePcmWriter (isMp3 ? ExportFormat::Wav24 : opts.format,
                                      outStream.get(), destSR, 2, bits);   // 2 channels
         if (writer == nullptr) { outError = "Cannot create writer"; return false; }
@@ -229,7 +278,14 @@ namespace zynforge
             stereo.copyFrom (1, 0, monoR, 0, 0, thisBlock);
             const auto** arr = (const float**) stereo.getArrayOfReadPointers();
             if (! writer->writeFromFloatArrays (arr, 2, thisBlock))
-            { outError = "Write failed"; return false; }
+            {
+                outError = "Write failed (destination full?)";
+                writer = nullptr;
+                resL.releaseResources();
+                resR.releaseResources();
+                destPcmFile.deleteFile();   // don't leave a truncated export
+                return false;
+            }
             written += thisBlock;
         }
         writer = nullptr;

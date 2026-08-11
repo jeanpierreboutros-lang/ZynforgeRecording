@@ -66,6 +66,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/MainComponentTools.cpp
     Source/UI/MainComponentStrips.cpp
     Source/UI/TrackSelectDialog.cpp
+    Source/Tests/AuditFixTests.cpp
     Source/Tests/AutomationTests.cpp
     Source/Tests/MarkerTests.cpp
     Source/Tests/EngineStateTests.cpp

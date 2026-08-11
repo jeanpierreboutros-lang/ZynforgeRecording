@@ -644,6 +644,22 @@ namespace zynforge
         float automationValueAt (int track, AutomationParam, juce::int64 samplePos,
                                  float fallback) const noexcept;
 
+        // OFFLINE lookup for the render / bounce path. Identical maths, but it
+        // BLOCKS on automationLock instead of falling back to the static value
+        // when contended. A rendered file must reproduce the arrangement
+        // exactly; the RT fallback above (correct for the audio thread, which
+        // must never block) would silently bake static fader levels into the
+        // bounce wherever it lost the try-lock. Never call this from the audio
+        // thread.
+        float automationValueAtOffline (int track, AutomationParam, juce::int64 samplePos,
+                                        float fallback) const;
+    private:
+        // Shared curve evaluation for the two lookups above. Caller must
+        // already hold automationLock.
+        float automationValueAtLocked (int track, AutomationParam, juce::int64 samplePos,
+                                       float fallback) const noexcept;
+    public:
+
         // Per-track clip list. Lazy: a track stays in 'whole file' mode
         // (no entry in trackClips, or one full-range entry) until the
         // engineer splits or trims it. The EDIT view + future playback
@@ -881,6 +897,18 @@ namespace zynforge
         void rememberRecentSession (const juce::File& dir);
         juce::Array<juce::File> getRecentSessions() const;
         void clearRecentSessions();
+
+        // Where new sessions are created. Honours the engineer's "Local
+        // Storage" override (appProps "sessionsRoot", set from the New Session
+        // / Welcome dialog), falling back to ~/Music/Zynforge Sessions.
+        // The NETWORK remote-record paths (OSC, companion server) must use
+        // this: they used to hardcode the Music folder, so a take triggered
+        // from the desk or a tablet landed on the internal drive instead of the
+        // external the engineer had configured for the show.
+        juce::File getSessionsRoot() const;
+        // Timestamped session folder under getSessionsRoot(), for the remote
+        // record entry points that always start a FRESH session.
+        juce::File makeTimestampedSessionDir() const;
 
         // Wipe every per-strip persisted override so all strips read
         // their defaults (name = '1', '2', '3' ..., no colour override,

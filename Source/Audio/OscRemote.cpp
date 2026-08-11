@@ -62,10 +62,10 @@ namespace zynforge
 
     void OscRemote::recordStart()
     {
-        const auto root = juce::File::getSpecialLocation (juce::File::userMusicDirectory)
-                              .getChildFile ("Zynforge Sessions");
-        const auto stamp = juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S");
-        engine.startRecording (root.getChildFile ("Session_" + stamp));
+        // Honour the engineer's "Local Storage" override. This used to hardcode
+        // ~/Music/Zynforge Sessions, so a take started from the desk landed on
+        // the internal drive instead of the external configured for the show.
+        engine.startRecording (engine.makeTimestampedSessionDir());
     }
     void OscRemote::recordStop() { engine.stopRecording(); }
     void OscRemote::playStart()  { engine.startPlayback(); }

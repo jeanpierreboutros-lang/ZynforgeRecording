@@ -282,8 +282,36 @@ void MainComponent::togglePunchMode()
     else
     {
         if (engine.isRecording()) engine.stopRecording();
+        restoreArmStateAfterPunch();   // leaving punch mode must not keep the forced arms
         showStatus ("Punch mode OFF");
     }
+}
+
+// Capture / restore the engineer's arm layout around a punch. servicePunch has
+// to force `armed = punchArmed` so only the punch-armed tracks hit disk, but
+// that write is destructive: without restoring it, narrowing the punch set (or
+// arming more tracks after enabling PUNCH) silently left those channels
+// disarmed for the NEXT take -- a missed-recording bug on a live rig.
+void MainComponent::snapshotArmStateForPunch()
+{
+    if (! armStateBeforePunch.empty()) return;   // already holding a snapshot
+    auto& rec = engine.getRecorder();
+    const int n = rec.getNumTracks();
+    armStateBeforePunch.resize ((size_t) n);
+    for (int i = 0; i < n; ++i)
+        armStateBeforePunch[(size_t) i] =
+            rec.getTrack (i).armed.load (std::memory_order_relaxed) ? 1 : 0;
+}
+
+void MainComponent::restoreArmStateAfterPunch()
+{
+    if (armStateBeforePunch.empty()) return;
+    auto& rec = engine.getRecorder();
+    const int n = juce::jmin ((int) armStateBeforePunch.size(), rec.getNumTracks());
+    for (int i = 0; i < n; ++i)
+        rec.getTrack (i).armed.store (armStateBeforePunch[(size_t) i] != 0,
+                                      std::memory_order_relaxed);
+    armStateBeforePunch.clear();
 }
 
 void MainComponent::servicePunch()
@@ -315,7 +343,10 @@ void MainComponent::servicePunch()
             // flattens it on stop, so no refusal here.
             auto& rec = engine.getRecorder();
 
-            // Force-arm only the punch-armed tracks for the punch.
+            // Force-arm only the punch-armed tracks for the punch -- but keep
+            // the engineer's real arm layout so it can be put back on punch-out
+            // (see snapshotArmStateForPunch).
+            snapshotArmStateForPunch();
             for (int i = 0; i < rec.getNumTracks(); ++i)
                 rec.getTrack (i).armed.store (engine.isTrackPunchArmed (i),
                                               std::memory_order_relaxed);
@@ -329,8 +360,10 @@ void MainComponent::servicePunch()
     else if (! inside && wasInsidePunch && engine.isRecording())
     {
         // Crossed out -- stop recording cleanly (the splice replaces the
-        // punched region; audio after the punch-out is preserved).
+        // punched region; audio after the punch-out is preserved), then put the
+        // engineer's arm layout back exactly as it was before the punch.
         engine.stopRecording();
+        restoreArmStateAfterPunch();
     }
     wasInsidePunch = inside;
 }
@@ -351,6 +384,7 @@ void MainComponent::servicePunchSession()
     if (! done) return;
 
     if (engine.isRecording()) engine.stopRecording();   // safety net
+    restoreArmStateAfterPunch();   // no-op if servicePunch already restored it
     engine.stopPlayback();
     engine.setPunchModeOn (false);
     punchSessionActive = false;
@@ -605,7 +639,15 @@ void MainComponent::consoleToggleSoundcheck()
 void MainComponent::consoleCaptureGains()
 {
     if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
-    const int n = juce::jlimit (1, 32, engine.getRecorder().getNumTracks());
+    // jlimit(1, ...) turned an empty session into a 1-channel poll, which then
+    // "captured" a single head-amp and saved it as the show's gains.
+    const int tracks = engine.getRecorder().getNumTracks();
+    if (tracks <= 0)
+    {
+        showStatus ("No channels yet -- build the session before capturing head-amp gains");
+        return;
+    }
+    const int n = juce::jlimit (1, 32, tracks);
     consoleLink.captureGains (n);
     // Persist once the replies have had time to land (UDP round trip on
     // a local network is milliseconds; 1.5 s is generous).
@@ -613,12 +655,22 @@ void MainComponent::consoleCaptureGains()
     juce::Timer::callAfterDelay (1500, [self]
     {
         if (self == nullptr) return;
-        // Only persist if replies actually came back -- never clobber a
-        // previously-saved console_state.json with an empty capture (e.g.
-        // the desk went unreachable between connect and capture).
+        // Only persist a COMPLETE capture. "Not empty" wasn't enough: this
+        // timer and ConsoleLink's own reply watchdog are both 1500 ms, so on a
+        // lossy link they race -- a partial capture (a handful of replies)
+        // would pass the emptiness check and overwrite console_state.json as
+        // if it were the whole show, leaving the un-captured channels to be
+        // "restored" to whatever the desk happened to have at soundcheck.
         if (self->consoleLink.getCapturedGains().empty())
         {
             self->showStatus ("No head-amp replies from the console -- gains not saved");
+            return;
+        }
+        if (! self->consoleLink.isGainCaptureComplete())
+        {
+            self->showStatus (juce::String ((int) self->consoleLink.getCapturedGains().size())
+                              + " of the requested head-amp gains came back -- PARTIAL capture "
+                                "NOT saved. Check the console link and capture again.");
             return;
         }
         const auto sess = self->engine.getActiveSessionDir();

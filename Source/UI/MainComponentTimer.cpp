@@ -184,18 +184,13 @@ void MainComponent::timerCallback()
         if ((diskTick % 12) == 0)
             engine.getRecorder().updateDiskHealth (
                 engine.getRecorder().estimateBytesPerSecondForArmedTracks());
-        // Slow SMART status poll -- diskutil info is 50-200 ms
-        // blocking, so we run it every ~30 s (24 Hz * 30 = 720 ticks)
-        // and only when recording. Failing status flips a hard warning.
+        // Slow SMART status poll -- every ~30 s (24 Hz * 30 = 720 ticks) and
+        // only when recording. Dispatched to a background thread: `diskutil
+        // info` blocks for 50-200 ms normally and can hang outright on an
+        // unresponsive volume, which froze the UI mid-take when it ran here.
+        // Failing status flips a hard warning.
         if ((diskTick % 720) == 0)
-        {
-            const auto sd = engine.getActiveSessionDir();
-            if (sd.isDirectory())
-                smartPrimaryStatus = (int) MultitrackRecorder::querySmartStatus (sd);
-            const auto bd = engine.getRecorder().getBackupDirectory();
-            if (bd.isDirectory())
-                smartBackupStatus = (int) MultitrackRecorder::querySmartStatus (bd);
-        }
+            pollSmartStatusAsync();
     }
     else if (engine.isPlaying())
     {
@@ -231,17 +226,38 @@ void MainComponent::timerCallback()
     formatButton .setEnabled (! rec);
     preRollButton.setEnabled (! rec);
 
-    const auto sessRoot = juce::File::getSpecialLocation (juce::File::userMusicDirectory)
-                              .getChildFile ("Zynforge Sessions");
+    // Free space on the volume the take ACTUALLY lands on. This used to
+    // hardcode ~/Music/Zynforge Sessions, so an engineer recording to an
+    // external drive (the `sessionsRoot` override, or any session opened from
+    // elsewhere) watched the free-space figure for the wrong disk all show.
+    const auto sessRoot = [this]
+    {
+        const auto active = engine.getActiveSessionDir();
+        if (active.isDirectory()) return active;
+        return getSessionsRoot();
+    }();
     const auto bytesFree = sessRoot.exists() ? sessRoot.getBytesFreeOnVolume()
                                               : juce::File ("/").getBytesFreeOnVolume();
     const double freeGB = (double) bytesFree / (1024.0 * 1024.0 * 1024.0);
 
-    const int    bitDepth     = 24;
-    const int    bytesPerSamp = bitDepth / 8;
-    const int    channels     = juce::jmax (1, status.numTracks);
-    const double bytesPerSec  = deviceSR * bytesPerSamp * channels;
-    const double remainingSec = bytesPerSec > 0 ? (double) bytesFree / bytesPerSec : 0.0;
+    // Ask the recorder for the real write rate: it knows the capture format's
+    // bit depth and counts backup + every mirror destination. The old inline
+    // maths assumed 24-bit and ALL tracks (not just armed), so the "remaining"
+    // readout was wrong in both directions depending on the rig.
+    double bytesPerSec = (double) recorder.estimateBytesPerSecondForArmedTracks();
+    if (bytesPerSec <= 0.0)
+    {
+        // Nothing armed yet -- show a pre-show estimate at the current format
+        // across every strip so the number isn't just blank/infinite.
+        const auto fmt = recorder.getCaptureFormat();
+        const int bytesPerSamp =
+              (fmt == zynforge::CaptureFormat::Wav16 || fmt == zynforge::CaptureFormat::Aiff16
+               || fmt == zynforge::CaptureFormat::Flac16)                                            ? 2
+            : (fmt == zynforge::CaptureFormat::Wav32Float || fmt == zynforge::CaptureFormat::Aiff32Float) ? 4
+            : 3;
+        bytesPerSec = deviceSR * bytesPerSamp * juce::jmax (1, status.numTracks);
+    }
+    const double remainingSec = bytesPerSec > 0.0 ? (double) bytesFree / bytesPerSec : 0.0;
 
     bigClock.setDiskInfo (freeGB,
                           status.lastWriteMs,
@@ -287,6 +303,45 @@ void MainComponent::timerCallback()
             statusLabel.setText (warn.trim(), juce::dontSendNotification);
         }
     }
+}
+
+// Query SMART health for the session + backup volumes on a BACKGROUND thread.
+// MultitrackRecorder::querySmartStatus shells out to `diskutil info`, which
+// blocks for 50-200 ms on a healthy drive and can stall far longer on a network
+// mount or a spun-down disk. Running it inline from timerCallback froze the
+// message thread -- and therefore the whole UI -- in the middle of a take.
+// Only ONE probe is ever in flight; the results land in atomics the timer reads.
+void MainComponent::pollSmartStatusAsync()
+{
+    if (smartQueryInFlight.exchange (true, std::memory_order_acq_rel))
+        return;   // a previous probe is still waiting on a slow drive
+
+    const auto sessionDir = engine.getActiveSessionDir();
+    const auto backupDir  = engine.getRecorder().getBackupDirectory();
+    if (! sessionDir.isDirectory() && ! backupDir.isDirectory())
+    {
+        smartQueryInFlight.store (false, std::memory_order_release);
+        return;
+    }
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    juce::Thread::launch ([self, sessionDir, backupDir]
+    {
+        const int prim = sessionDir.isDirectory()
+            ? (int) MultitrackRecorder::querySmartStatus (sessionDir) : -1;
+        const int back = backupDir.isDirectory()
+            ? (int) MultitrackRecorder::querySmartStatus (backupDir)  : -1;
+
+        // Publish on the message thread through the SafePointer so a quit
+        // mid-probe can't write into a freed MainComponent.
+        juce::MessageManager::callAsync ([self, prim, back]
+        {
+            if (self == nullptr) return;
+            if (prim >= 0) self->smartPrimaryStatus.store (prim, std::memory_order_relaxed);
+            if (back >= 0) self->smartBackupStatus .store (back, std::memory_order_relaxed);
+            self->smartQueryInFlight.store (false, std::memory_order_release);
+        });
+    });
 }
 
 void MainComponent::updateTransportLabels()

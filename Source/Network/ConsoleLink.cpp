@@ -123,6 +123,7 @@ namespace zynforge
             return;
         }
         gains.clear();
+        gainCaptureComplete = false;
         expectedGainReplies = juce::jlimit (0, 128, numHeadamps);
         for (int i = 0; i < expectedGainReplies; ++i)
             sendMessage (juce::OSCMessage (juce::OSCAddressPattern (headampAddress (i))));
@@ -190,6 +191,7 @@ namespace zynforge
             {
                 stopTimer();   // all replies in -- cancel the watchdog
                 expectedGainReplies = 0;
+                gainCaptureComplete = true;   // every requested reply landed
                 if (onStatus) onStatus (juce::String ((int) gains.size())
                                         + " head-amp gains captured.");
             }
@@ -212,6 +214,7 @@ namespace zynforge
         {
             const int got = (int) gains.size();
             expectedGainReplies = 0;
+            gainCaptureComplete = false;   // partial -- must NOT be persisted as the show's gains
             if (onStatus) onStatus ("Head-amp capture timed out (" + juce::String (got)
                                     + " of expected received) -- try again.");
         }
@@ -259,6 +262,7 @@ namespace zynforge
         if (auto* gainArr = v.getProperty ("gains", {}).getArray())
         {
             gains.clear();
+            gainCaptureComplete = true;   // a saved capture is by definition finished
             for (const auto& g : *gainArr)
                 if (g.hasProperty ("headamp") && g.hasProperty ("gain"))
                 {

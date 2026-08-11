@@ -89,6 +89,12 @@ namespace zynforge
         std::mutex                            workersLock;
         std::vector<std::unique_ptr<Worker>>  workers;
         void reapFinishedWorkers();
+        // Ceiling on live workers. A thread was spawned per connection BEFORE
+        // the token check, so an unauthenticated peer on the LAN could open
+        // sockets and hold each worker for its full 5 s request deadline until
+        // the process ran out of threads. Real use is one 500 ms poller plus at
+        // most a couple of audition streams; 32 is generous headroom.
+        static constexpr std::size_t kMaxConcurrentWorkers = 32;
 
         // Ring buffer for the streaming WAV endpoint. Single producer
         // (audio thread), single consumer (per-stream worker thread).

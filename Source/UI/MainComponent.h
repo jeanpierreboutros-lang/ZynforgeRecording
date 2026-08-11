@@ -107,9 +107,15 @@ private:
     // via the undo manager's stored-command count).
     void serviceAutosave();
     void showAutosaveSettings();
-    int  exportTracksTo (const juce::File& dir,
-                         const std::vector<int>& channelIndices,
-                         const zynforge::ExportOptions&);
+    // Kick off a track export. Resolves every source file + destination stem
+    // on the MESSAGE thread (it reads TrackStates), then does the actual
+    // decode / resample / encode work on `exportThread` and reports the result
+    // via callAsync. Running the whole thing inline used to freeze the app for
+    // the length of the export -- minutes for a 32-track MP3 batch, with no
+    // progress and no way to cancel.
+    void startExportTracksTo (const juce::File& dir,
+                              const std::vector<int>& channelIndices,
+                              const zynforge::ExportOptions&);
     void showStatus (const juce::String& msg);
 public:
     // Called from Main.cpp's systemRequestedQuit so an unsaved
@@ -469,6 +475,14 @@ private:
     // overwrites it in place rather than piling up tracks.
     void generateOrRefreshClickTrack();
     int  clickTrackIndex { -1 };   // -1 = not yet created in this session
+
+    // Arm state captured the moment a punch-in fires. servicePunch force-writes
+    // `armed = punchArmed` on every track so only the punch-armed ones capture;
+    // without restoring afterwards that rewrite was PERMANENT, silently
+    // disarming channels for the next take. Empty => no punch snapshot held.
+    std::vector<char> armStateBeforePunch;
+    void snapshotArmStateForPunch();
+    void restoreArmStateAfterPunch();
     int  lastExportFailures { 0 }; // tracks failed in the last exportTracksTo (partial-failure warning)
 
     // Offline stem/mix bounce runs on this OWNED thread (not a detached
@@ -483,6 +497,20 @@ private:
         bounceCancel.store (true, std::memory_order_relaxed);
         if (bounceThread.joinable()) bounceThread.join();
         bounceCancel.store (false, std::memory_order_relaxed);
+    }
+
+    // Track export + Save-As folder copy run here, on the same owned-and-joined
+    // pattern as the bounce: both are unbounded file work (a 32-track MP3
+    // batch, a multi-GB session copy) that used to run on the message thread
+    // and freeze the app. Cancelled + joined in the destructor so neither can
+    // outlive the engine.
+    std::thread       exportThread;
+    std::atomic<bool> exportCancel { false };
+    void joinExportThread() noexcept
+    {
+        exportCancel.store (true, std::memory_order_relaxed);
+        if (exportThread.joinable()) exportThread.join();
+        exportCancel.store (false, std::memory_order_relaxed);
     }
     void promptCueName (const juce::String& title,
                         const juce::String& initial,
@@ -526,12 +554,18 @@ private:
     // hard cuts are click-free. Toggled from the Edit menu.
     bool zeroCrossSnap { true };
 
-    // SMART status cache. Polled in a slow timer because `diskutil
-    // info` is a 50-200 ms blocking subprocess call; we don't want it
-    // running every 24 Hz frame. -1 = unset, 0 = Verified, 1 = Failing,
-    // 2 = Unknown. Mirrors record their own slot per index.
-    int  smartPrimaryStatus { -1 };
-    int  smartBackupStatus  { -1 };
+    // SMART status cache. `diskutil info` is a blocking subprocess call
+    // (50-200 ms typical, unbounded on an unresponsive volume), so it runs on a
+    // BACKGROUND thread and publishes here; the timer only ever reads these
+    // atomics. Running it inline on the message thread froze the whole UI
+    // mid-take whenever the drive was slow to answer. -1 = unset,
+    // 0 = Verified, 1 = Failing, 2 = Unknown.
+    std::atomic<int>  smartPrimaryStatus { -1 };
+    std::atomic<int>  smartBackupStatus  { -1 };
+    // At most one SMART probe in flight -- the 30 s poll must not stack up
+    // background queries when a drive is answering slowly.
+    std::atomic<bool> smartQueryInFlight { false };
+    void pollSmartStatusAsync();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MainComponent)
 };

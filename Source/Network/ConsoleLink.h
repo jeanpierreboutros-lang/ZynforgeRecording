@@ -69,6 +69,12 @@ namespace zynforge
         void captureGains (int numHeadamps);
         void restoreGains();      // write capturedGains back to the desk
         const std::map<int, float>& getCapturedGains() const noexcept { return gains; }
+        // True only when the LAST captureGains() run received every head-amp
+        // reply it asked for. A timed-out capture leaves a partial map behind;
+        // persisting that as if it were the show's gains would restore only
+        // some channels and silently leave the rest at soundcheck settings.
+        // A capture loaded from console_state.json counts as complete.
+        bool isGainCaptureComplete() const noexcept { return gainCaptureComplete; }
         float gainToDb (float v) const noexcept { return profile.gainToDb (v); }
 
         // Round-trip the stashed patch + captured gains through the
@@ -122,6 +128,7 @@ namespace zynforge
         int                  pendingPatchQueries { 0 };
         std::map<int, float> gains;          // headamp idx -> raw 0..1
         int                  expectedGainReplies { 0 };
+        bool                 gainCaptureComplete { false };
 
         std::function<void (const juce::OSCMessage&)> sendHook;
 

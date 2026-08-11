@@ -775,6 +775,8 @@ MainComponent::~MainComponent()
     // are torn down -- the bounce thread dereferences engine, so it must finish
     // while engine is still alive (a detached thread used to UAF on quit).
     joinBounceThread();
+    // Same for the export / Save-As copy worker.
+    joinExportThread();
 
    #if JUCE_MAC
     juce::MenuBarModel::setMacMainMenu (nullptr);

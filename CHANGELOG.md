@@ -17,6 +17,45 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (whole-codebase bug hunt — 36 findings, 2026-08-11)
+
+A read-through of the audio core, recorder, player, clip/bounce engine, session IO, main UI control paths, the network layer and the capture daemon turned up **36 defects** — 4 blockers, 7 high, 13 medium, 12 low — all fixed in one pass. Build green, **278 test groups / 0 failures** (269 → 278: nine new regression tests in `Source/Tests/AuditFixTests.cpp`), design audit CLEAN, smoke-tested.
+
+**Blockers**
+
+- **Bounce Stereo Mix no longer reads past the end of the track vector.** `forEachStereoMixWindow` bounded its per-track loops on `max(recorder, player)` track count but dereferenced *recorder* TrackStates, so any session with more `Track_NN` files on disk than strips in the mixer — delete a strip after recording, then bounce — indexed off the end of the vector. The mixer is now authoritative for the mix (matching the stems bounce), and `getTrack()` carries a debug bounds assert so the next unchecked caller trips in testing rather than at a show.
+- **A slow or unresponsive drive can't freeze the app mid-take.** The 30-second SMART poll called `readAllProcessOutput()` *before* `waitForProcessToFinish(2000)` — and that read blocks until the child's pipe closes, so the timeout was dead code and a wedged `diskutil` hung the message thread indefinitely. It now waits-then-reads with a real kill on timeout, **and** runs on a background thread (one probe in flight, results published to atomics) so it never touches the UI thread at all.
+- **The pre-flight checklist no longer probes disk speed during a take.** `measureWriteSpeedMBps` writes 16 MB synchronously, on the message thread, into the volume the take is streaming to. Opening pre-flight mid-show stole write bandwidth from the capture and froze the UI. While recording it now reports the requirement only.
+- **A second take no longer destroys the first take's stereo mix.** `startRecording` deleted and recreated `Export Files/StereoMix.wav` every time — including on a continue — silently wiping the earlier archive. Takes after the first are numbered (`StereoMix_02.wav`, …); the first keeps the historic name.
+
+**High**
+
+- **Export runs on a background thread.** Decode / resample / encode (plus a 120 s `lame` wait per file for MP3) ran inline on the message thread: a 32-track batch beachballed the app with no progress and no cancel. Sources are resolved on the message thread, the work happens on an owned + joined worker, and completion (or the INCOMPLETE / failed warning) is reported when it finishes.
+- **Save As copies the session off the message thread**, and refuses a destination inside the source (which would have copied the growing destination into itself).
+- **Generate Click Track survives applying a template.** `clickTrackIndex` is session-scoped and every other session boundary resets it; `applySessionTemplate` didn't, so the stale index failed the "is this really a Click strip?" guard *forever after* — the feature was dead for the rest of the session.
+- **The capture daemon detaches its audio callback before resizing tracks.** `SetTrackCount` mutated the recorder's track + FIFO vectors from the socket reader thread while the CoreAudio callback was reading them. It now brackets the resize with `removeAudioCallback`/`addAudioCallback` (as the GUI side already did) and refuses mid-take with a real error reply.
+- **Deleting a mid-list strip keeps stereo pairs and cue targets attached to the right channels.** Only the Strip\* keys (name / colour / gain / pan / routing) were shifted down; `strip_stereo_N` and `strip_uid_N` weren't, so the next device restart re-formed pairs on the wrong strips and re-stamped the stable IDs that cue snapshots reference precisely to survive reordering.
+- **Remote audition plays at the right speed.** `/stream.wav` hardcoded 48 kHz in its WAV header while the audio thread fed it at the device rate — wrong pitch and speed on every 44.1 / 88.2 / 96 kHz rig.
+- **Imported audio is converted to the session's sample rate.** Each file was written at its *own* rate; the player doesn't resample and takes the last-loaded file's rate as the session's, so importing a 44.1 k file into a 48 k session played something at the wrong speed with no warning. Same-rate sources still take a straight copy path (no resampler in the way); the status line reports how many were converted.
+
+**Medium**
+
+- A punch no longer rewrites your arm layout. `servicePunch` force-writes `armed = punchArmed` so only punch-armed tracks capture, but never restored it — narrowing the punch set (or arming more tracks after enabling PUNCH) left those channels **disarmed for the next take**. The pre-punch layout is snapshotted and restored on punch-out, punch-session end, and leaving punch mode.
+- The disk-rate estimate counts **mirror destinations** (each is another full copy), so "minutes remaining" and the DISK STRUGGLING threshold are honest on a mirrored rig.
+- The BigClock free-space readout watches the volume the take **actually lands on** (it hardcoded `~/Music/Zynforge Sessions`, ignoring the Local Storage override) and derives the write rate from the real format + armed count instead of assuming 24-bit × all tracks.
+- Tab transient navigation works in **FLAC / AIFF** sessions (the scan was `Track_*.wav`-only, and parsed the track index from the last `_` instead of the `Track_NN` prefix).
+- The timeline CSV names the file that's actually on disk instead of hardcoding `.wav`.
+- **Continue-recording after changing the capture format** extends the existing take in its own container instead of forking a second file at the same track index.
+- A **partial** console head-amp capture is no longer persisted as if complete (ConsoleLink's watchdog and the save timer are both 1500 ms and raced); `isGainCaptureComplete()` gates the write.
+- `seedDefaultClips` grows the clip lists instead of resizing down, so a clip on a strip above the last recorded take survives a reload.
+- Companion server: concurrent workers are **capped** (a thread was spawned per connection *before* the token check — an unauthenticated LAN peer could exhaust threads), the `/stream.wav` reader **resyncs** when the producer laps it instead of serving overwritten samples forever, and the token compare is **constant-time**.
+- Offline renders read automation under a **blocking** lock (`automationValueAtOffline`); the real-time try-lock variant, correct for the audio thread, was baking static fader values into bounces wherever it lost the lock.
+- OSC and companion **remote RECORD honour the Local Storage override** instead of always writing to `~/Music/Zynforge Sessions`.
+
+**Low**
+
+`takeIsMultiPart` and `swapTracks` no longer treat `.punchbase` sidecars as take files (and a swap sweeps `Track_swap_*` temps orphaned by a crash mid-swap) · a failed export deletes its partial output instead of leaving a truncated file that looks finished · 32-bit FLAC export clamps to 24 instead of dying with "Cannot create writer" · a same-rate export is a straight copy (no interpolator latency) · the duplicate audio-time header-flush timer in `drainShard` is gone (the wall-clock one is shard-scoped; the other iterated *every* shard's writers) · **master mute now mutes the click**, which was written into the outputs after the master fader · toast severity no longer mis-classifies "Recording blocked…" / "Export INCOMPLETE" / the `!` live warnings as neutral info · "Remove last capture" sees user-named sessions and picks the most recently *modified* one · head-amp capture is refused on an empty session · the R half of an armed stereo pair with no input routed keeps its FIFO fed with silence (a starved R side pinned the interleaved write at zero frames and returned the whole pair as silence padding).
+
 ### Fixed (third re-audit — regressions the last fix pass introduced, 2026-07-10)
 
 A focused six-agent re-audit re-read the diff the previous re-audit landed, because this project's fix passes keep carrying regressions. It found three **High**s (two of them freshly introduced by the last pass, one pre-existing that the last pass made visible) plus a **Medium** and a few **Low**s. Build green, all test groups / 0 failures (two new regression tests: *swapTracks renames continuation parts*, *marker during a continue lands on the timeline*).

@@ -136,8 +136,31 @@ namespace zynforge::capture
                 break;
 
             case Action::SetTrackCount:
+            {
+                Reply r; r.id = c.id;
+                if (recorder.isRecording())
+                {
+                    // setTrackCount is a no-op while recording anyway; say so
+                    // rather than silently ignoring the command.
+                    r.error = "refusing to resize tracks mid-take";
+                    server.sendReply (r);
+                    break;
+                }
+                // setTrackCount ADDS/REMOVES entries in the recorder's tracks +
+                // fifos vectors. We're on the socket reader thread, and the
+                // CoreAudio callback reads those same vectors every block --
+                // resizing under it is a use-after-free on the audio thread.
+                // Detach the callback for the resize, exactly like
+                // AudioEngine::setStripCount does on the GUI side.
+                // (removeAudioCallback blocks until any in-flight callback
+                // returns, so after it we're the sole owner.)
+                if (! testMode.load()) deviceManager.removeAudioCallback (this);
                 recorder.setTrackCount (juce::jlimit (1, 256, c.intValue));
+                if (! testMode.load()) deviceManager.addAudioCallback (this);
+                r.ok = true;
+                server.sendReply (r);
                 break;
+            }
 
             case Action::SetSessionDir:
                 // Reserved for Phase 1d (pre-arming the session before the

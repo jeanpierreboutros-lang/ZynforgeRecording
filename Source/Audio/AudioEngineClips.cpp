@@ -77,8 +77,13 @@ namespace zynforge
             trackClips.clear();
             trackPlaylists.clear();
         }
-        trackClips.resize    ((size_t) n);
-        trackPlaylists.resize ((size_t) n);
+        // GROW ONLY. A plain resize(n) SHRANK the lists to the player's track
+        // count, destroying the clip list of every strip above the highest
+        // recorded Track_NN -- e.g. a cross-track clip pasted onto a strip that
+        // was never recorded to. That ran on every stop-record / reload, so the
+        // edit silently vanished even though preserveEdits was true.
+        if ((int) trackClips.size()     < n) trackClips.resize     ((size_t) n);
+        if ((int) trackPlaylists.size() < n) trackPlaylists.resize ((size_t) n);
 
         for (int i = 0; i < n; ++i)
         {
@@ -682,7 +687,16 @@ namespace zynforge
                                               const std::function<bool (const juce::AudioBuffer<float>&, juce::int64, int)>& consume)
     {
         if (totalSamples <= 0) return false;
-        const int nTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
+        // The MIXER is authoritative for the stereo mix: every loop below reads
+        // a TrackState (solo / mute / gain / pan / VCA), so the bound MUST be
+        // the recorder's track count. It used to be jmax(recorder, player),
+        // which indexed `recorder.getTrack()` -- an unchecked `*tracks[i]` --
+        // past the end whenever the session had more Track_NN files on disk
+        // than strips in the mixer (delete a strip after recording, then Bounce
+        // Stereo Mix). A file with no strip has no fader/pan/mute, so it isn't
+        // part of the mix -- matching onBounceStems, which already bounds on
+        // the recorder count.
+        const int nTracks = recorder.getNumTracks();
         const auto audioDir = getActiveSessionDir().getChildFile ("Audio Files");
 
         bool anySolo = false;
@@ -764,10 +778,13 @@ namespace zynforge
                 {
                     const int n = juce::jmin (step, winLen - i);
                     const juce::int64 absPos = winStart + i;
-                    const float volDb = automationValueAt (cp->autoCh, AutomationParam::Volume, absPos, cp->baseDb);
-                    const float panV  = automationValueAt (cp->track,  AutomationParam::Pan,    absPos, cp->basePan);
-                    const float muteV = automationValueAt (cp->autoCh, AutomationParam::Mute,   absPos,
-                                                           cp->ts->muted.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
+                    // OFFLINE (blocking) reads -- the rendered file must follow
+                    // the curves exactly; the RT try-lock variant would bake
+                    // static fader values in wherever it lost the lock.
+                    const float volDb = automationValueAtOffline (cp->autoCh, AutomationParam::Volume, absPos, cp->baseDb);
+                    const float panV  = automationValueAtOffline (cp->track,  AutomationParam::Pan,    absPos, cp->basePan);
+                    const float muteV = automationValueAtOffline (cp->autoCh, AutomationParam::Mute,   absPos,
+                                                                  cp->ts->muted.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
                     if (muteV > 0.5f) continue;
 
                     const double gain = juce::Decibels::decibelsToGain ((double) (volDb + cp->vcaDb), -60.0);

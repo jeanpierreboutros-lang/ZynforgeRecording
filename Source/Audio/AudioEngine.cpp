@@ -48,6 +48,28 @@ namespace zynforge
         return out;
     }
 
+    juce::File AudioEngine::getSessionsRoot() const
+    {
+        if (appProps != nullptr)
+        {
+            const auto override_ = appProps->getValue ("sessionsRoot", {});
+            if (override_.isNotEmpty())
+            {
+                juce::File f (override_);
+                if (f.isDirectory() || f.createDirectory().wasOk())
+                    return f;
+            }
+        }
+        return juce::File::getSpecialLocation (juce::File::userMusicDirectory)
+                   .getChildFile ("Zynforge Sessions");
+    }
+
+    juce::File AudioEngine::makeTimestampedSessionDir() const
+    {
+        const auto stamp = juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S");
+        return getSessionsRoot().getChildFile ("Session_" + stamp);
+    }
+
     void AudioEngine::clearRecentSessions()
     {
         if (appProps == nullptr) return;
@@ -188,8 +210,16 @@ namespace zynforge
             // rendered mix / stem export.
             auto exportDir = sessionDir.getChildFile ("Export Files");
             exportDir.createDirectory();
-            const auto path = exportDir.getChildFile ("StereoMix.wav");
-            path.deleteFile();
+            // NEVER overwrite a previous take's mix. startRecording runs again
+            // for every continue / second take into the SAME session, and the
+            // old code deleteFile()d StereoMix.wav each time -- silently
+            // destroying the earlier take's archive. Number subsequent takes
+            // (StereoMix.wav, StereoMix_02.wav, ...); the first take keeps the
+            // historic name so existing workflows are unchanged.
+            auto path = exportDir.getChildFile ("StereoMix.wav");
+            for (int take = 2; path.existsAsFile() && take < 1000; ++take)
+                path = exportDir.getChildFile ("StereoMix_"
+                                               + juce::String (take).paddedLeft ('0', 2) + ".wav");
 
             juce::WavAudioFormat wav;
             if (auto* out = path.createOutputStream().release())
@@ -835,14 +865,24 @@ namespace zynforge
         perTrackOut.clear();
         if (! sessionDir.isDirectory()) return;
 
+        // Match EVERY supported container, not just .wav -- takes can be
+        // captured as FLAC or AIFF, and a .wav-only glob left Tab transient
+        // navigation completely dead in those sessions. Continuation parts are
+        // skipped here (detectInFile scans one file and each part restarts at
+        // t=0, so a part's onsets would land at the wrong timeline position).
         const auto audioDir = sessionDir.getChildFile ("Audio Files");
-        auto files = audioDir.isDirectory()
-                       ? audioDir.findChildFiles (juce::File::findFiles, false, "Track_*.wav")
-                       : sessionDir.findChildFiles (juce::File::findFiles, false, "Track_*.wav");
+        const auto scanDir  = audioDir.isDirectory() ? audioDir : sessionDir;
+        auto files = scanDir.findChildFiles (juce::File::findFiles, false,
+                         "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff");
         for (auto& f : files)
         {
             const auto stem = f.getFileNameWithoutExtension();
-            const int idx = stem.fromLastOccurrenceOf ("_", false, false).getIntValue();
+            if (stem.containsIgnoreCase ("_part")) continue;
+            // Parse the index from the Track_NN PREFIX. fromLastOccurrenceOf("_")
+            // turned "Track_04_part02" into "part02" and, worse, is fragile for
+            // any suffixed sidecar -- the prefix parse is what the other
+            // analyzers (QC, noise, song detect) already use.
+            const int idx = stem.fromFirstOccurrenceOf ("Track_", false, false).getIntValue();
             if (idx <= 0) continue;
             if ((int) perTrackOut.size() < idx) perTrackOut.resize ((size_t) idx);
             auto onsets = zynforge::TransientDetector::detectInFile (f);
@@ -1136,6 +1176,30 @@ namespace zynforge
             // Reload after the per-slot Strip* shifts above so our save keeps
             // their rewrites, then update the count.
             reloadAppPropsBeforeWrite();
+
+            // The appProps-owned per-index keys have to shift down too. Only
+            // the Strip* modules' keys (name / colour / gain / pan / routing)
+            // were being shifted, so after deleting a strip from the MIDDLE the
+            // stereo-pair flags and the stable strip UUIDs stayed attached to
+            // the old indices. applyPersistedStripState re-reads both by index
+            // on the next device restart, which re-formed stereo pairs on the
+            // wrong strips and re-stamped strip IDs -- silently breaking every
+            // cue snapshot, which references strips by stripId precisely so it
+            // survives a reorder.
+            for (int i = index; i < recorder.getNumTracks(); ++i)
+            {
+                const auto dst = juce::String (i);
+                const auto src = juce::String (i + 1);
+                appProps->setValue ("strip_stereo_" + dst,
+                                    appProps->getBoolValue ("strip_stereo_" + src, false));
+                appProps->setValue ("strip_uid_" + dst,
+                                    appProps->getValue ("strip_uid_" + src, juce::String()));
+            }
+            // Drop the now-orphan tail slot so it can't be revived by a later grow.
+            const auto tail = juce::String (recorder.getNumTracks());
+            appProps->removeValue ("strip_stereo_" + tail);
+            appProps->removeValue ("strip_uid_"    + tail);
+
             appProps->setValue ("stripCount", recorder.getNumTracks());
             appProps->saveIfNeeded();
         }
@@ -1327,6 +1391,12 @@ namespace zynforge
                     const auto rest = f.getFileName().substring (prefix.length());
                     const bool audioExt = ext == ".wav" || ext == ".flac"
                                        || ext == ".aif" || ext == ".aiff";
+                    // Genuinely EXCLUDE .punchbase sidecars -- the comment
+                    // claimed they were skipped but "Track_NN.*" matched
+                    // Track_NN.punchbase.wav (rest starts with "."), so a
+                    // stray sidecar from an aborted punch was renamed onto the
+                    // other channel and could later be spliced into it.
+                    if (rest.containsIgnoreCase (".punchbase")) continue;
                     if (audioExt && (rest.startsWith (".") || rest.startsWith ("_part")))
                         out.add (f);
                 }
@@ -1340,6 +1410,12 @@ namespace zynforge
                 const auto toPrefix   = juce::String::formatted ("Track_%02d", to + 1);
                 return audioDir.getChildFile (toPrefix + f.getFileName().substring (fromPrefix.length()));
             };
+
+            // Sweep any Track_swap_* temps orphaned by a crash mid-swap --
+            // nothing else ever cleans them up and they'd shadow a later swap.
+            for (const auto& stale : audioDir.findChildFiles (juce::File::findFiles,
+                                                              false, "Track_swap_*"))
+                stale.deleteFile();
 
             const auto aFiles = filesForTrack (a);
             const auto bFiles = filesForTrack (b);
@@ -2741,7 +2817,12 @@ namespace zynforge
             }
         }
 
-        if (click.isEnabled())
+        // Master MUTE gates the click too. The click is written straight into
+        // the output buffers AFTER the master fader/mute has been applied to
+        // the monitor sum, so muting the master used to leave the metronome
+        // audible on the monitor bus it rides -- surprising, and loud, in a
+        // "kill the monitors" moment.
+        if (click.isEnabled() && ! masterState.muted.load (std::memory_order_relaxed))
         {
             const int cOutL = juce::jlimit (0, numOutputs - 1,
                                             masterOutL.load (std::memory_order_relaxed));

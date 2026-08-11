@@ -409,16 +409,13 @@ namespace zynforge
         }
     }
 
-    float AudioEngine::automationValueAt (int track, AutomationParam p,
-                                          juce::int64 samplePos,
-                                          float fallback) const noexcept
+    // Shared curve evaluation. The CALLER owns automationLock -- the two public
+    // entry points differ only in how they take it (try-lock on the audio
+    // thread, blocking for offline renders).
+    float AudioEngine::automationValueAtLocked (int track, AutomationParam p,
+                                                juce::int64 samplePos,
+                                                float fallback) const noexcept
     {
-        // SUSPEND short-circuits every lane to the live fader value
-        // so the engineer can audition raw moves without the engine
-        // pulling them back to stored automation.
-        if (automationReadSuspended.load (std::memory_order_acquire)) return fallback;
-        const juce::ScopedTryLock stl (automationLock);
-        if (! stl.isLocked()) return fallback;     // UI mid-edit -- use the slider value
         if (track < 0 || track >= (int) automationData.size()) return fallback;
         const auto& a = automationData[(size_t) track];
         const std::vector<AutomationPoint>* lane = nullptr;
@@ -513,6 +510,36 @@ namespace zynforge
                 break;
         }
         return withTrim ((float) (prev->value + shaped * (next->value - prev->value)));
+    }
+
+    float AudioEngine::automationValueAt (int track, AutomationParam p,
+                                          juce::int64 samplePos,
+                                          float fallback) const noexcept
+    {
+        // SUSPEND short-circuits every lane to the live fader value
+        // so the engineer can audition raw moves without the engine
+        // pulling them back to stored automation.
+        if (automationReadSuspended.load (std::memory_order_acquire)) return fallback;
+        const juce::ScopedTryLock stl (automationLock);
+        if (! stl.isLocked()) return fallback;     // UI mid-edit -- use the slider value
+        return automationValueAtLocked (track, p, samplePos, fallback);
+    }
+
+    float AudioEngine::automationValueAtOffline (int track, AutomationParam p,
+                                                 juce::int64 samplePos,
+                                                 float fallback) const
+    {
+        // SUSPEND is an audition switch and applies offline too, so a bounce
+        // matches what the engineer is hearing.
+        if (automationReadSuspended.load (std::memory_order_acquire)) return fallback;
+        // BLOCKING, unlike the RT path: a rendered file has to reproduce the
+        // arrangement exactly. With a try-lock, any contention (the UI touching
+        // a lane, or simply the audio thread holding it for its own read) baked
+        // the static fader value into the bounce for that window instead of the
+        // automation curve -- a silently wrong deliverable. We're on the bounce
+        // thread here, so blocking is free.
+        const juce::ScopedLock sl (automationLock);
+        return automationValueAtLocked (track, p, samplePos, fallback);
     }
 
     void AudioEngine::removeAutomationPointNear (int track, AutomationParam p,

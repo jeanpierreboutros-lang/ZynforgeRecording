@@ -145,7 +145,17 @@ namespace zynforge
         // EDIT rebuild + the meterbridge (which both watch this counter) must
         // re-run even though the count is unchanged.
         void         bumpTrackGeneration() noexcept { trackGen.fetch_add (1, std::memory_order_relaxed); }
-        TrackState&  getTrack (int i) noexcept     { return *tracks[(std::size_t) i]; }
+        // NOT bounds-checked in release -- this is on the audio thread's hot
+        // path (once per strip per block), so every caller must range-check
+        // against getNumTracks() first. The debug assert catches the callers
+        // that don't: an out-of-range index here is an unchecked
+        // `*tracks[i]` past the end of the vector, which is how a stale
+        // player-derived track count crashed the stereo-mix bounce.
+        TrackState&  getTrack (int i) noexcept
+        {
+            jassert (i >= 0 && i < (int) tracks.size());
+            return *tracks[(std::size_t) i];
+        }
 
         // Health + position counters -- all RT-safe to read.
         juce::int64 getSamplesSinceStart() const noexcept { return samplesSinceStart.load(std::memory_order_relaxed); }

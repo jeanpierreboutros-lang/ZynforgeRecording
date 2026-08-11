@@ -6,6 +6,20 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Whole-codebase bug hunt — the message thread is a show-critical resource — 2026-08-11
+
+**Context.** A single-reader pass over the audio core, recorder, player, clip/bounce engine, session IO, UI control paths, network layer and capture daemon found 36 defects (4 blockers, 7 high, 13 medium, 12 low). Unlike the 2026-07 audits — which were dominated by *data-loss* bugs — the severe findings here clustered around two themes that hadn't been treated as first-class hazards.
+
+**Theme 1: blocking the message thread is a show-stopping bug, not a polish item.** Four separate paths could freeze the app for seconds to forever while a take was rolling: the SMART poll (`readAllProcessOutput()` has no timeout and the `waitForProcessToFinish` after it was dead code), the pre-flight write-speed probe (16 MB written synchronously to the take's own volume), track export (per-file resample + a 120 s `lame` wait), and Save As (a multi-GB folder copy). None of them lose audio — the capture thread keeps rolling — but to an engineer at FOH a beachballed transport *is* the emergency. **Decision:** unbounded file or subprocess work goes on an owned, cancellable, destructor-joined worker (the existing `bounceThread` pattern, now joined by `exportThread`); engine state is resolved on the message thread first and only plain values cross the boundary; and nothing writes to the session volume mid-take. Written up as a top-level rule in `CLAUDE.md`.
+
+**Theme 2: "max of two counts" is an anti-pattern when the two counts mean different things.** `forEachStereoMixWindow` bounded its loops on `jmax(recorder.getNumTracks(), player.getNumTracks())` and then dereferenced *recorder* TrackStates — an unchecked `*tracks[i]` past the end whenever a session had more `Track_NN` files on disk than strips in the mixer. The player's count comes from the filesystem; the recorder's is the mixer. **Decision:** the mixer is authoritative for anything reading mixer state (a file with no strip has no fader, so it isn't in the mix — matching the stems bounce). `jmax` stays legitimate purely as a *range check* on an index, which is how the sibling entry points use it. `getTrack()` gained a debug bounds assert so the next unchecked caller trips in testing.
+
+**Also worth recording.** Two correctness-of-deliverable fixes follow the same shape as earlier ADRs: the offline bounce now reads automation under a **blocking** lock (`automationValueAtOffline`) because the RT try-lock-with-fallback — correct for the audio thread, which must never block — was silently baking static fader values into rendered files; and a **continue-record adopts the existing take's container** rather than the current capture format, because scanning for only the current extension forked the take into two files claiming one track index when the engineer changed format between takes.
+
+**Consequences.** Nine of the fixes are locked by `Source/Tests/AuditFixTests.cpp` (278 groups / 0 failures, up from 269). The rest are message-thread behaviour and remain smoke-test territory — which is itself the argument for keeping the smoke test in the workflow rules. One behaviour change needs JP's confirmation: **master mute now mutes the click** (it was written into the output buffers after the master fader, so "kill the monitors" left the metronome audible).
+
+---
+
 ## Third re-audit — the fix passes keep regressing; the discipline that held — 2026-07-10
 
 **Context.** The re-audit below itself landed regressions, so a third, focused six-agent pass re-read *only the diff the second pass produced*. The pattern held for a third time: the fix pass introduced new regressions AND left one of its own fixes incomplete.
