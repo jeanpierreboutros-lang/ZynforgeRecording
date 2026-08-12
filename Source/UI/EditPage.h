@@ -5,6 +5,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include "../Audio/AudioEngine.h"
+#include "EditTimeline.h"
 #include "PlaceholderView.h"
 #include "TimelineMinimap.h"
 
@@ -16,6 +17,8 @@
 
 namespace zynforge
 {
+
+
     // EDIT view -- one row per channel with the strip header (colour, name,
     // REC / MUTE / SOLO) on the left and the recorded WAV's waveform drawn
     // on the right via juce::AudioThumbnail. A vertical playhead spans all
@@ -112,6 +115,13 @@ namespace zynforge
         // scrollToSample centres the horizontal viewport on a sample
         // position. Both no-op when the row list / session isn't
         // ready yet.
+        // Stop every EDIT row's meter timer before the host frees TrackStates
+        // (any recorder-vector shrink). The MIXER equivalent is
+        // ChannelStrip::invalidate(); MainComponent::condemnAllStrips() drives
+        // both so neither view is left sampling freed memory in the window
+        // before its rows/strips are rebuilt.
+        void  condemnAllRows();
+
         void  setLogicalRowsVisible (const std::vector<int>& rows);
         void  scrollToSample (juce::int64 sample);
         // Zoom + scroll so the sample range [a, b) fills the viewport (Pro
@@ -274,6 +284,10 @@ namespace zynforge
         bool       lastRecording   { false };
         bool       waveCacheSaved  { false };   // WaveCache.wfm written for this session yet?
         juce::File lastSessionDir;
+        // Session whose WaveCache.wfm has already been pulled into the
+        // thumbnail caches. Separate from lastSessionDir so the load can't be
+        // defeated by the order in which timerCallback updates that field.
+        juce::File waveCacheLoadedFor;
         float      zoom            { 1.0f };
         float      vZoom           { 1.0f };
         juce::var  clipUndoBefore;   // playlist snapshot taken at clip-drag start

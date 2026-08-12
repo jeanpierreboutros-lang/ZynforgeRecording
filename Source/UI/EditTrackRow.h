@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <vector>
 
 namespace zynforge
@@ -128,6 +129,21 @@ namespace zynforge
 
         int trackIndex() const noexcept { return index; }
 
+        // Stop reading the (about-to-be-freed) TrackState. The EDIT rows have
+        // exactly the lifetime hazard ChannelStrip::invalidate() closes on the
+        // MIXER side: this row's LedMeter holds a TrackState& AND runs its own
+        // timer, and the rows are only rebuilt on EditPage's next 24 Hz tick --
+        // so every recorder-vector shrink (session open with fewer tracks,
+        // Close Session, New Session, apply template, delete strips,
+        // New-from-CSV) left the meter sampling freed memory for up to a tick.
+        // condemnAllStrips() now calls through to here as well. Idempotent;
+        // paint() is separately guarded by the stale-index check.
+        void invalidate()
+        {
+            rowValid = false;
+            meter.detach();
+        }
+
         // Toolbar / click-overlay context -- set by the host EditPage
         // after construction so all rows share the same global view.
         AutomationToolbar* toolbar  { nullptr };
@@ -213,12 +229,21 @@ namespace zynforge
             nameLabel.setTooltip ("Double-click to rename this track. Changes mirror to the MIXER + PATCH views.");
             nameLabel.onTextChange = [this]
             {
-                const auto newName = nameLabel.getText().trim();
-                auto& st = engine.getRecorder().getTrack (index);
-                st.name = newName.isEmpty() ? juce::String (index + 1)
-                                            : newName;
-                nameLabel.setText (st.name, juce::dontSendNotification);
-                engine.setTrackName (index, st.name);
+                const auto typed = nameLabel.getText().trim();
+                const auto newName = typed.isEmpty() ? juce::String (index + 1) : typed;
+                // Go through engine.setTrackName ONLY. The raw `st.name = ...`
+                // this used to do bypassed setNameThreadSafe, racing the
+                // companion server's getNameThreadSafe() on its worker thread
+                // (torn / freed juce::String) -- and it was redundant, since
+                // setTrackName does the locked write plus persistence.
+                engine.setTrackName (index, newName);
+                // A stereo pair is ONE logical strip: mirror the name onto the
+                // R half like arm / mon / mute / solo already do, or the R
+                // track keeps a stale name in session_mix.json and shows it
+                // the moment the pair is unlinked.
+                if (stereo && index + 1 < engine.getRecorder().getNumTracks())
+                    engine.setTrackName (index + 1, newName + " R");
+                nameLabel.setText (newName, juce::dontSendNotification);
             };
             nameLabel.onTabKey = [this] (bool shift)
             {
@@ -385,6 +410,10 @@ namespace zynforge
         // changes (mute/solo via mixer, rename, etc.) show up here.
         void updatePollState()
         {
+            // Condemned (TrackState being freed) or the vector already shrank
+            // past us -- same guard paint() carries. Without it the 24 Hz poll
+            // reads freed memory in the window before TrackList::rebuild runs.
+            if (! rowValid || index >= engine.getRecorder().getNumTracks()) return;
             auto& s = engine.getRecorder().getTrack (index);
             if (armButton .getToggleState() != s.armed .load()) armButton .setToggleState (s.armed .load(), juce::dontSendNotification);
             if (muteButton.getToggleState() != s.muted .load()) muteButton.setToggleState (s.muted .load(), juce::dontSendNotification);
@@ -454,8 +483,29 @@ namespace zynforge
             if (outR == -2) outR = index;
             const int wantIn  = (inR  < 0) ? 1 : inR  + 2;
             const int wantOut = (outR < 0) ? 1 : outR + 2;
+            // A STEREO row lists only even start channels (ids 2, 4, 6 ...),
+            // but the routing can legitimately be odd -- a stereo L sitting at
+            // an odd physical index gets inputRouting = 1 from
+            // applyPersistedStripState. setSelectedId with an id that isn't in
+            // the list silently cleared the box, so the engineer saw a BLANK
+            // routing combo with no way to tell what the pair was patched to.
+            // Add the real entry on demand so the state is always displayed.
+            ensureRoutingItem (inputCombo,  wantIn,  inR,  "In ");
+            ensureRoutingItem (outputCombo, wantOut, outR, "Out ");
             if (inputCombo .getSelectedId() != wantIn ) inputCombo .setSelectedId (wantIn,  juce::dontSendNotification);
             if (outputCombo.getSelectedId() != wantOut) outputCombo.setSelectedId (wantOut, juce::dontSendNotification);
+        }
+
+        // Make sure `id` exists in `box`; if not, append a correctly-labelled
+        // entry for device channel `dev` so an off-grid routing still shows.
+        void ensureRoutingItem (juce::ComboBox& box, int id, int dev, const char* prefix)
+        {
+            if (id <= 1 || dev < 0) return;                       // "(unrouted)" always exists
+            if (box.indexOfItemId (id) >= 0) return;
+            const auto label = stereo
+                ? juce::String (prefix) + juce::String (dev + 1) + "-" + juce::String (dev + 2)
+                : juce::String (prefix) + juce::String (dev + 1);
+            box.addItem (label, id);
         }
 
         void setWaveformFiles (const juce::File& fL, const juce::File& fRin)
@@ -949,10 +999,11 @@ namespace zynforge
                         // a handle on a stepped curve (40..240 BPM
                         // mapped to bottom..top of the lane).
                         const auto& tempoMap = engine.getTempoMap();
-                        const auto& player   = engine.getPlayer();
-                        const juce::int64 totalSamples = player.isLoaded()
-                            ? player.getTotalLengthSamples()
-                            : (juce::int64) (48000.0 * 60.0);
+                        // Shared lane span (5-min notional when empty, at the
+                        // DEVICE rate). The hardcoded 48000*60 here was both a
+                        // different span from the ruler AND wrong at any other
+                        // sample rate -- 30 s of real time at 96 kHz.
+                        const juce::int64 totalSamples = laneTimelineSamples();
 
                         auto bpmToY = [&] (float bpm) -> int
                         {
@@ -1015,11 +1066,7 @@ namespace zynforge
                         // waveform) with the marker name. Previously this lane
                         // drew 6 fake evenly-spaced ticks + the literal word
                         // "markers" -- it ignored the real marker list.
-                        const auto& player = engine.getPlayer();
-                        const juce::int64 totalSamples = player.isLoaded()
-                            ? player.getTotalLengthSamples()
-                            : (juce::int64) (player.getSampleRate() > 0.0
-                                             ? player.getSampleRate() * 300.0 : 48000.0 * 300.0);
+                        const juce::int64 totalSamples = laneTimelineSamples();
                         const auto mapper = TimelineMapper::forLane (inner, totalSamples);
                         const auto& all = engine.getMarkers().getAll();
                         if (all.empty())
@@ -1818,10 +1865,7 @@ namespace zynforge
                 const bool showEditCursor = player2.isPlaying() || loadedSamples2 <= 0;
                 if (cursorSample >= 0 && showEditCursor)
                 {
-                    const double sr2 = player2.getSampleRate() > 0.0
-                                    ? player2.getSampleRate() : 48000.0;
-                    const juce::int64 totalSamples2 = loadedSamples2 > 0
-                        ? loadedSamples2 : (juce::int64) (sr2 * 300.0);
+                    const juce::int64 totalSamples2 = laneTimelineSamples();
                     const double prop = juce::jlimit (0.0, 1.0,
                         (double) cursorSample / (double) totalSamples2);
                     const int cx = juce::roundToInt (prop * (wavePane.getWidth() - 8)) + 4;
@@ -2086,7 +2130,13 @@ namespace zynforge
             const double sr = engine.getDeviceManager().getCurrentAudioDevice() != nullptr
                 ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
                 : 48000.0;
-            return (juce::int64) (sr * 60.0);
+            // Shared notional span, matching EditTimeRuler + the edit-cursor
+            // click. This used to be 60 s while the ruler drew 300 s, so on an
+            // empty session (tempo / automation laid down before recording) a
+            // point placed under the ruler's 2:30 mark was stored at 0:30 and
+            // drawn at the far right of the lane -- exactly the paint-vs-
+            // hit-test mismatch the comment above warns about.
+            return notionalEmptyLaneSamples (sr);
         }
 
         // Map an (x,y) inside the lane area to (samplePos, value) so
@@ -2192,11 +2242,8 @@ namespace zynforge
                 const auto& player = engine.getPlayer();
                 const juce::int64 loadedSamples = player.isLoaded()
                     ? player.getTotalLengthSamples() : 0;
-                const double sr = player.getSampleRate() > 0.0
-                                ? player.getSampleRate() : 48000.0;
-                const juce::int64 totalSamples = loadedSamples > 0
-                    ? loadedSamples
-                    : (juce::int64) (sr * 300.0);    // 5-min notional span
+                // ONE span for the whole lane -- see laneTimelineSamples().
+                const juce::int64 totalSamples = laneTimelineSamples();
                 const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
                 const double prop = juce::jlimit (0.0, 1.0,
                     (double) (e.x - inner.getX())
@@ -2395,9 +2442,15 @@ namespace zynforge
             // Snapshot clip state for Cmd+Z before any clip-edit drag
             // (crossfade / trim / move / fade) can arm below. The commit
             // in mouseUp no-ops when nothing actually moved.
+            // Only snapshot when there is actually something to grab: a click
+            // on empty lane area armed no drag, so mouseUp never committed and
+            // the snapshot was left dangling in EditPage::clipUndoBefore. It
+            // was harmless only because every commit site re-snapshots first --
+            // a trap for the next edit path added.
             if (laneMode == LaneMode::Waveform && inWavePane (e.x))
-                if (auto* page = findParentComponentOfClass<EditPage>())
-                    page->beginClipEdit();
+                if (const auto* cl = engine.tryClipsFor (index); cl != nullptr && ! cl->empty())
+                    if (auto* page = findParentComponentOfClass<EditPage>())
+                        page->beginClipEdit();
 
             // Crossfade midpoint drag wins over clip-edit drag --
             // the handle sits inside the overlap band so the engineer
@@ -2466,7 +2519,8 @@ namespace zynforge
                                         auto* page = findParentComponentOfClass<EditPage>();
                                         if (page != nullptr) page->beginClipEdit();
                                         for (int peer : editGroupPeers())
-                                            engine.setClipGainDb (peer, i, 0.0f);
+                                            if (const int pi = peerClipIndex (peer, i); pi >= 0)
+                                                engine.setClipGainDb (peer, pi, 0.0f);
                                         if (page != nullptr) page->commitClipEdit ("Reset clip gain");
                                         repaint();
                                         return;
@@ -2603,10 +2657,7 @@ namespace zynforge
                 // tempo map instead of the per-track point store.
                 if (toolbar->getParam() == AutomationToolbar::Param::Tempo)
                 {
-                    const auto& player = engine.getPlayer();
-                    const juce::int64 totalSamples = player.isLoaded()
-                        ? player.getTotalLengthSamples()
-                        : (juce::int64) (48000.0 * 60.0);
+                    const juce::int64 totalSamples = laneTimelineSamples();
                     const juce::int64 tol = juce::jmax<juce::int64> (1,
                         totalSamples / juce::jmax (1, getWidth() - headerW) * 8);
                     // Y → BPM (40..240 range mirrors the paint mapping).
@@ -2727,16 +2778,29 @@ namespace zynforge
                         const auto& b = (*clips)[(size_t) (draggingXfadeAIdx + 1)];
                         const auto aEnd   = a.timelineStartSamples + a.fileLengthSamples;
                         const auto bStart = b.timelineStartSamples;
-                        const juce::int64 clamped = juce::jlimit (bStart + 1, aEnd - 1, midSample);
+                        // Guard the degenerate overlap. With an overlap of <= 2
+                        // samples the bounds invert (lo > hi): juce::jlimit
+                        // asserts in debug and returns the UPPER bound in
+                        // release, which produced a NEGATIVE fade length.
+                        if (aEnd - bStart < 2) return;
+                        const juce::int64 lo = bStart + 1, hi = aEnd - 1;
+                        const juce::int64 clamped = juce::jlimit (lo, hi, midSample);
                         const juce::int64 bFadeIn  = clamped - bStart;
                         const juce::int64 aFadeOut = aEnd - clamped;
                         // Preserve existing fadeIn / fadeOut on the
                         // OPPOSITE edge of each clip; only the
                         // crossfade-side fade is being adjusted.
-                        engine.setClipFades (index, draggingXfadeAIdx,
-                                             a.fadeInSamples, aFadeOut);
-                        engine.setClipFades (index, draggingXfadeAIdx + 1,
-                                             bFadeIn, b.fadeOutSamples);
+                        // Broadcast to EDIT-group peers like every other clip
+                        // edit -- the crossfade was the one drag that stayed
+                        // local, so a grouped pair silently drifted apart.
+                        for (int peer : editGroupPeers())
+                        {
+                            const int pa = peerClipIndex (peer, draggingXfadeAIdx);
+                            const int pb = peerClipIndex (peer, draggingXfadeAIdx + 1);
+                            if (pa < 0 || pb < 0) continue;
+                            engine.setClipFades (peer, pa, a.fadeInSamples, aFadeOut);
+                            engine.setClipFades (peer, pb, bFadeIn, b.fadeOutSamples);
+                        }
                         repaint();
                     }
                 }
@@ -2787,6 +2851,10 @@ namespace zynforge
                     const int cur = reorderLiveIndex;
                     auto& rec = engine.getRecorder();
                     const int n = rec.getNumTracks();
+                    // The track vector can shrink under a drag in flight (a
+                    // delete from another surface); getTrack() is unchecked, so
+                    // bail rather than read past the end.
+                    if (cur < 0 || cur >= n) { reorderArmed = reorderActive = false; return; }
                     const bool s  = rec.getTrack (cur).isStereo.load() && (cur + 1 < n);
                     const int step = s ? 2 : 1;
                     // Size of the ADJACENT logical strip we'd swap with, in the
@@ -2900,7 +2968,8 @@ namespace zynforge
                         const float dB = juce::jlimit (-60.0f, 12.0f,
                             dragStartGainDb + (float) (dragStartGainY - e.y) * 0.15f);
                         for (int peer : editGroupPeers())
-                            engine.setClipGainDb (peer, draggingClipIdx, dB);
+                            if (const int pi = peerClipIndex (peer, draggingClipIdx); pi >= 0)
+                                engine.setClipGainDb (peer, pi, dB);
                         repaint();
                     }
                     return;
@@ -2927,7 +2996,8 @@ namespace zynforge
                                 0, c.fileLengthSamples - dragStartFadeOut,
                                 dragStartFadeIn + wantSamples);
                             for (int peer : editGroupPeers())
-                                engine.setClipFades (peer, draggingClipIdx, newIn, dragStartFadeOut);
+                                if (const int pi = peerClipIndex (peer, draggingClipIdx); pi >= 0)
+                                    engine.setClipFades (peer, pi, newIn, dragStartFadeOut);
                         }
                         else
                         {
@@ -2936,7 +3006,8 @@ namespace zynforge
                                 0, c.fileLengthSamples - dragStartFadeIn,
                                 dragStartFadeOut - wantSamples);
                             for (int peer : editGroupPeers())
-                                engine.setClipFades (peer, draggingClipIdx, dragStartFadeIn, newOut);
+                                if (const int pi = peerClipIndex (peer, draggingClipIdx); pi >= 0)
+                                    engine.setClipFades (peer, pi, dragStartFadeIn, newOut);
                         }
                         repaint();
                         return;
@@ -2968,7 +3039,8 @@ namespace zynforge
                             }
                         if (stepSamples != 0)
                             for (int peer : editGroupPeers())
-                                engine.editClip (peer, draggingClipIdx, mode, stepSamples);
+                                if (const int pi = peerClipIndex (peer, draggingClipIdx); pi >= 0)
+                                    engine.editClip (peer, pi, mode, stepSamples);
                         repaint();
                     }
                 }
@@ -3020,6 +3092,22 @@ namespace zynforge
                     const auto oldPos = lane[(size_t) draggingPointIdx].samplePos;
                     engine.removeAutomationPointNear (index, p, oldPos, 1);
                     engine.addAutomationPoint        (index, p, coord.samplePos, coord.value);
+
+                    // RE-RESOLVE the index. The lane is kept sorted by
+                    // samplePos, so the moment the dragged point crosses a
+                    // neighbour its index changes -- and the stale
+                    // draggingPointIdx then referred to a DIFFERENT point, which
+                    // the next drag event deleted and dragged to the cursor.
+                    // Dragging one point across three used to consume all three.
+                    const auto& after = engine.getAutomation (index, p);
+                    int nearest = -1;
+                    juce::int64 bestDist = std::numeric_limits<juce::int64>::max();
+                    for (int i = 0; i < (int) after.size(); ++i)
+                    {
+                        const auto d = std::abs (after[(size_t) i].samplePos - coord.samplePos);
+                        if (d < bestDist) { bestDist = d; nearest = i; }
+                    }
+                    if (nearest >= 0) draggingPointIdx = nearest;
                     repaint();
                 }
             }
@@ -3127,7 +3215,8 @@ namespace zynforge
                             // clip on every EDIT-group peer.
                             std::vector<EditPage::ClipRef> refs;
                             for (int peer : editGroupPeers())
-                                refs.push_back ({ peer, clickedClipIdx });
+                                if (const int pi = peerClipIndex (peer, clickedClipIdx); pi >= 0)
+                                    refs.push_back ({ peer, pi });
                             page->setSelectedClips (refs, { index, clickedClipIdx });
                         }
                     }
@@ -3145,7 +3234,17 @@ namespace zynforge
 
             auto picker = std::make_unique<StripColourPicker> (
                 current,
-                [this] (juce::Colour chosen) { engine.setTrackColour (index, chosen); repaint(); });
+                [this] (juce::Colour chosen)
+                {
+                    engine.setTrackColour (index, chosen);
+                    // Mirror onto the R half -- the MIXER's colour callback
+                    // already does this, so recolouring the same pair from EDIT
+                    // left the two views' stored colours diverged (visible in
+                    // PATCH and after an unlink).
+                    if (stereo && index + 1 < engine.getRecorder().getNumTracks())
+                        engine.setTrackColour (index + 1, chosen);
+                    repaint();
+                });
 
             // Anchor the call-out on the swatch's *pinned* on-screen position
             // (header floats at headerOriginX while the timeline is scrolled).
@@ -3191,6 +3290,27 @@ namespace zynforge
             return out;
         }
 
+        // Resolve the clip on `peer` that corresponds to THIS row's clip
+        // `srcIdx`. A clip index is only meaningful inside one track's list:
+        // two tracks in an edit group can hold different arrangements (one
+        // split, one not), and broadcasting a raw index edited whichever clip
+        // happened to sit at that position on the peer -- bounds-checked in the
+        // engine, so no crash, just a silently wrong edit on the wrong region.
+        // Match by TIMELINE OVERLAP instead: the peer clip containing the
+        // source clip's midpoint. Returns -1 when the peer has nothing there,
+        // in which case the caller skips that peer rather than guessing.
+        int peerClipIndex (int peer, int srcIdx) const
+        {
+            if (peer == index) return srcIdx;
+            const auto* src = engine.tryClipsFor (index);
+            if (src == nullptr || srcIdx < 0 || srcIdx >= (int) src->size()) return -1;
+            const auto& sc = (*src)[(size_t) srcIdx];
+
+            const auto* dst = engine.tryClipsFor (peer);
+            if (dst == nullptr) return -1;
+            return clipIndexAtMidpoint (*dst, sc.timelineStartSamples, sc.fileLengthSamples);
+        }
+
         // True once the background thumbnail scan has finished for this row's
         // file(s) (an empty/no-source thumbnail counts as loaded). Lets the
         // page persist WaveCache.wfm the moment the whole session is scanned.
@@ -3210,6 +3330,9 @@ namespace zynforge
 
     private:
         bool hovered { false };
+        // False once invalidate() has run -- the backing TrackState is being
+        // destroyed, so updatePollState() must stop dereferencing it too.
+        bool rowValid { true };
 
         void showFadeMenu (int clipIdx, juce::Point<int> screenPos)
         {
@@ -3974,7 +4097,12 @@ namespace zynforge
             const size_t half = v.size() / 2;
             for (size_t i = 0; i < half; ++i)
                 v[i] = juce::jmax (v[2 * i], v[2 * i + 1]);
-            v.resize (half);
+            // Carry an ODD tail element instead of dropping it. Safe today only
+            // because the cap is hit at exactly 32768, but a silent one-column
+            // loss per decimation is the kind of thing that starts biting the
+            // moment the growth becomes batched.
+            if (v.size() % 2 != 0) { v[half] = v.back(); v.resize (half + 1); }
+            else                     v.resize (half);
         }
 
         // Draw the live capture envelope across `area`: one mirrored

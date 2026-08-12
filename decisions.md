@@ -6,6 +6,18 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## EDIT-view audit — a fix is only fixed where it was applied — 2026-08-12
+
+**Context.** The 2026-08-11 hunt deferred the EDIT view (a 4,087-line row class) as a follow-up. Reading it produced 16 defects, and the two HIGHs both come from the same root cause the previous audits kept circling.
+
+**The lesson, again, sharper.** `condemnAllStrips()` exists to stop timer-driven components reading a `TrackState&` that is about to be freed. It was written for the MIXER, then extended three separate times as new MIXER call sites were found. Nobody ever asked the other question: *what else caches a `TrackState&` on a timer?* The EDIT view does — every `TrackRow` owns a `LedMeter` built from `getTrack(index)` — and `LedMeter::detach()` even carries a comment saying it's "called from `ChannelStrip::invalidate()`". So the whole time the MIXER hole was being closed and re-closed, the identical hole sat open one view over. **Decision:** the rule in `CLAUDE.md` is no longer "call `condemnAllStrips()` from every shrink site" but "**every surface that caches a `TrackState&` must be wired into `condemnAllStrips()`**" — the enumeration is over *consumers*, not call sites. Wiring EDIT in was three lines once the question was asked.
+
+**Second theme: duplicated constants drift.** The empty-session timeline span existed as four independent literals — 300 s in the ruler, 300 s at the edit cursor, 60 s in `laneTimelineSamples()`, `48000 * 60` in the tempo lane (wrong at any rate but 48 k). `laneTimelineSamples()`'s own comment warned that a paint-vs-hit-test mismatch "makes freshly-placed automation points un-clickable" — and the function was itself one of the mismatched copies. Same shape in the edit-group broadcasts, where a clip INDEX (meaningful only inside one track's list) was passed to peers. **Decision:** both now live as named helpers in a new `Source/UI/EditTimeline.h` that the ruler, the lanes and the tests all include. Extracting them is also what made them testable — `EditPage::TrackRow` is a private nested class, so logic left inside it can only ever be smoke-tested.
+
+**Consequences.** 281 groups / 0 failures (278 → 281). Three of the sixteen are locked by `EditViewFixTests.cpp`; the rest live in mouse handlers on a private nested class and remain smoke-test territory, which is the standing argument for keeping the smoke test in the workflow rules rather than trusting the suite alone.
+
+---
+
 ## Whole-codebase bug hunt — the message thread is a show-critical resource — 2026-08-11
 
 **Context.** A single-reader pass over the audio core, recorder, player, clip/bounce engine, session IO, UI control paths, network layer and capture daemon found 36 defects (4 blockers, 7 high, 13 medium, 12 low). Unlike the 2026-07 audits — which were dominated by *data-loss* bugs — the severe findings here clustered around two themes that hadn't been treated as first-class hazards.

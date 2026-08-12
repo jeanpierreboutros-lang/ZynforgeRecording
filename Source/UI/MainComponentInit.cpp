@@ -906,7 +906,17 @@ void MainComponent::rebuildStrips()
                 if (step == 2) engine.setTrackColour (i + 1, chosen);
             }
         };
-        auto nameCb   = [this, i] (juce::String chosen) { engine.setTrackName   (i, chosen); };
+        // A stereo pair is ONE logical strip, so the name mirrors onto the R
+        // half like gain / mute / solo / colour already do. Without this the R
+        // track kept its old name in session_mix.json and showed it the moment
+        // the pair was unlinked.
+        auto nameCb   = [this, i, step] (juce::String chosen)
+        {
+            engine.setTrackName (i, chosen);
+            if (step == 2 && i + 1 < engine.getRecorder().getNumTracks())
+                engine.setTrackName (i + 1, chosen.isEmpty() ? juce::String()
+                                                             : chosen + " R");
+        };
         // Helper: routes fader / pan moves into one of three sinks
         // depending on toolbar state:
         //   WRITE  - drop a new automation point at the playhead

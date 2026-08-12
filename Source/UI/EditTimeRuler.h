@@ -3,6 +3,7 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "../Audio/AudioEngine.h"
+#include "EditTimeline.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 
@@ -127,7 +128,7 @@ namespace zynforge
             const auto& player = engine.getPlayer();
             const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
             const auto totalLoaded = player.getTotalLengthSamples();
-            const double totalSec = totalLoaded > 0 ? (double) totalLoaded / sr : 300.0;
+            const double totalSec = totalLoaded > 0 ? (double) totalLoaded / sr : kNotionalEmptyLaneSec;
             const double pxPerSec = rulerPxPerSec (totalSec);
 
             auto& markers = engine.getMarkers();
@@ -274,7 +275,7 @@ namespace zynforge
             const auto total = player.getTotalLengthSamples();
             const double sr  = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
             const double totalSec = recording ? juce::jmax ((double) recSamples / sr, 1.0)
-                                              : (total > 0 ? (double) total / sr : 300.0);
+                                              : (total > 0 ? (double) total / sr : kNotionalEmptyLaneSec);
             const double pxPerSec = rulerPxPerSec (totalSec);
             const double rulerBottom = (double) (rulerTop + rulerH);
             const auto secToX = [&] (double s) { return rulerTimeToX (s, pxPerSec); };
@@ -528,7 +529,7 @@ namespace zynforge
             const auto& player = engine.getPlayer();
             const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
             const auto total = player.getTotalLengthSamples();
-            const double totalSec = total > 0 ? (double) total / sr : 300.0;
+            const double totalSec = total > 0 ? (double) total / sr : kNotionalEmptyLaneSec;
             const double pxPerSec = rulerPxPerSec (totalSec);
             const double sec = rulerXToTime (xPx, pxPerSec);
             return (juce::int64) (sec * sr);

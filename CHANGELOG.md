@@ -17,6 +17,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (EDIT-view audit — 16 findings, 2026-08-12)
+
+The follow-up pass the 2026-08-11 hunt deferred: `EditTrackRow.h` (4,087 lines), `EditPage`, the time ruler and the MIXER strip where the two views are supposed to stay linked. **16 defects** — 2 high, 7 medium, 7 low — all fixed. Build green, **281 test groups / 0 failures** (278 → 281, `Source/Tests/EditViewFixTests.cpp`), design audit CLEAN, smoke-tested.
+
+**High**
+
+- **The EDIT view never stopped its meters before a TrackState was freed.** Each `TrackRow` owns a `LedMeter` holding a `TrackState&` on its own timer, and the rows only rebuild on EditPage's next 24 Hz tick — so every recorder-vector shrink (session open with fewer tracks, Close Session, New Session, apply template, delete strips, New-from-CSV) left EDIT reading freed memory for up to a tick. `LedMeter::detach()` existed for exactly this and was only ever wired to the MIXER's `ChannelStrip::invalidate()`; `condemnAllStrips()` now condemns **both** views, and the row's 24 Hz poll carries the same stale-index guard `paint()` already had.
+- **Dragging an automation point past a neighbour consumed the neighbour.** The point drag re-adds the point at its new position, but never re-resolved `draggingPointIdx` — and the lane is kept sorted, so the moment the dragged point crossed another the stale index referred to a *different* point, which the next drag event deleted and dragged to the cursor. Drag one point across three and you ate all three.
+
+**Medium**
+
+- **Reopening a session with the same strip count silently bypassed the waveform cache.** `timerCallback` assigned `lastSessionDir` *before* calling `refresh()`, which gates the `WaveCache.wfm` load on `sessionDir != lastSessionDir` — already false. Only a track-count change still loaded it, so a 32-track show opened next to another 32-track show re-scanned every WAV. The load now gates on its own marker and can't be defeated by caller ordering (it also stops the double-load when both branches fire on one tick).
+- **Edit-group clip edits broadcast this row's clip INDEX to its peers.** Trim, move, fade, clip-gain (drag *and* Alt-click reset) and click-selection all reused the source index, which is only meaningful inside one track's list — a peer with a different arrangement got the wrong region edited. They now resolve the peer's own clip by timeline overlap (`clipIndexAtMidpoint`) and skip a peer that has nothing there.
+- **The empty-session lane span disagreed with the ruler.** Ruler, edit cursor and markers lane used 300 s; the automation lane's paint *and* hit-test used 60 s; the tempo lane hardcoded `48000 * 60` (so 30 s of real time at 96 kHz). A point placed under the ruler's 2:30 mark was stored at 0:30. All four now share `notionalEmptyLaneSamples()` in the new `Source/UI/EditTimeline.h`.
+- **A stereo pair at an odd physical index showed blank routing combos.** Stereo rows list only even start channels (ids 2, 4, 6 …) but the selection is `routing + 2`, so an odd routing selected an id that didn't exist and cleared the box. The real entry is now added on demand so the patch is always visible.
+- **The EDIT swatch colour picker didn't mirror onto the stereo partner** (the MIXER's already did), so recolouring the same pair from the two views left their stored colours diverged — visible in PATCH and after an unlink.
+- **Renaming a stereo pair never mirrored onto the R half, in either view.** The R track kept its old name in `session_mix.json` and showed it the moment the pair was unlinked.
+- **Both rename handlers wrote `TrackState::name` unlocked**, racing the companion server's `getNameThreadSafe()` on its worker thread (torn / freed `juce::String`). Both now go through the locked setter.
+
+**Low**
+
+Crossfade drag now broadcasts to edit-group peers like every other clip edit (it was the one that stayed local) and refuses a degenerate ≤ 2-sample overlap that inverted `jlimit`'s bounds into a negative fade · a wave-pane click that arms no drag no longer opens an undo snapshot it never commits · `list` is guarded in the two places that dereferenced it unchecked · the reorder drag bounds-checks its walking index before `getTrack()` · `decimateInPlace` carries an odd tail element instead of dropping it · quit skips the wave-cache write when the timer already saved this session.
+
 ### Fixed (whole-codebase bug hunt — 36 findings, 2026-08-11)
 
 A read-through of the audio core, recorder, player, clip/bounce engine, session IO, main UI control paths, the network layer and the capture daemon turned up **36 defects** — 4 blockers, 7 high, 13 medium, 12 low — all fixed in one pass. Build green, **278 test groups / 0 failures** (269 → 278: nine new regression tests in `Source/Tests/AuditFixTests.cpp`), design audit CLEAN, smoke-tested.

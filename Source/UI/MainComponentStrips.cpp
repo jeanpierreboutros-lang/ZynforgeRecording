@@ -314,6 +314,13 @@ void MainComponent::condemnAllStrips()
     // per-strip delete paths but not the whole-set shrinks).
     for (auto& s : strips)
         if (s != nullptr) s->invalidate();
+
+    // The EDIT view has the SAME hazard and was never covered: each TrackRow
+    // owns a LedMeter holding a TrackState& on its own timer, and the rows are
+    // only rebuilt on EditPage's next 24 Hz tick -- so every caller of this
+    // function left EDIT sampling freed memory in exactly the window this
+    // function exists to close. Condemn both views together.
+    if (editPage != nullptr) editPage->condemnAllRows();
 }
 
 void MainComponent::deleteSelectedStrips()

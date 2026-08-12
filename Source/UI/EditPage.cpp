@@ -282,6 +282,14 @@ namespace zynforge
         {
             for (auto& r : rows) r->holdLiveEnvelopeUntilScanned();
         }
+
+        // Stop every row's meter timer before the caller frees the TrackStates
+        // they reference. The rows themselves are rebuilt on EditPage's next
+        // 24 Hz tick, which is far too late -- see TrackRow::invalidate().
+        void condemnAllRows()
+        {
+            for (auto& r : rows) r->invalidate();
+        }
         void pushRecLevels()
         {
             auto& rec = engine.getRecorder();
@@ -493,11 +501,13 @@ namespace zynforge
     EditPage::~EditPage()
     {
         stopTimer();
-        // Flush the waveform cache to WaveCache.wfm in whichever
-        // session is active. Best-effort: failure here only means the
-        // next launch re-scans waveforms, no data loss.
+        // Flush the waveform cache to WaveCache.wfm in whichever session is
+        // active. Best-effort: failure here only means the next launch
+        // re-scans waveforms, no data loss -- so SKIP it when the timer
+        // already wrote this session's cache (the common case), rather than
+        // paying a cache-sized synchronous write on every quit.
         const auto sessionDir = engine.getActiveSessionDir();
-        if (sessionDir.isDirectory())
+        if (! waveCacheSaved && sessionDir.isDirectory())
             saveCacheToSession (sessionDir);
     }
 
@@ -661,8 +671,18 @@ namespace zynforge
         // into the thumbnail cache BEFORE the new TrackRows ask
         // their thumbnails for sources -- otherwise the thumbnails
         // re-scan the WAV files even though cached peaks exist.
-        if (sessionDir != lastSessionDir && sessionDir.isDirectory())
+        // Gate on our OWN marker, not lastSessionDir. timerCallback assigns
+        // lastSessionDir before calling us, so this test was already false by
+        // the time we ran -- and reopening a session with the same strip count
+        // as the current one (the only path that reaches refresh() through
+        // that branch) silently skipped the cache and re-scanned every WAV.
+        // A dedicated marker makes the load immune to the caller's ordering
+        // and also stops the double-load when both branches fire on one tick.
+        if (sessionDir.isDirectory() && sessionDir != waveCacheLoadedFor)
+        {
             loadCacheFromSession (sessionDir);
+            waveCacheLoadedFor = sessionDir;
+        }
 
         // While recording, only the ARMED rows defer to the live red capture
         // envelope (their growing WAVs would scan as blocky garbage and the
@@ -694,6 +714,11 @@ namespace zynforge
         // selection change (Cmd+A / clear) or a cue recall changes automation.
         if (list != nullptr) list->repaintRows();
         repaint();
+    }
+
+    void EditPage::condemnAllRows()
+    {
+        if (list != nullptr) list->condemnAllRows();
     }
 
     void EditPage::rescanWaveforms()
@@ -829,6 +854,7 @@ namespace zynforge
                                   : player.getTotalLengthSamples();
         const auto  pos     = rec ? recPos : player.getPositionSamples();
         int playheadX = -1;
+        if (list == nullptr) return;   // every other use in this function guards; these two didn't
         if (total > 0 && list->rowCount() > 0)
         {
             constexpr int kHeaderW = brand::space::editHeaderW;   // == TrackRow::headerW (same token)
@@ -1002,6 +1028,7 @@ namespace zynforge
 
     void EditPage::wheelZoomHorizontal (float delta)
     {
+        if (list == nullptr) return;
         // Keep the time under the viewport centre stable across the zoom.
         const double centreFrac = (viewport.getViewPositionX()
                                    + viewport.getWidth() * 0.5)
