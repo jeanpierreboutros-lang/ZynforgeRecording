@@ -310,7 +310,12 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
     // otherwise the export found no Track_*.wav and reported "Export failed".
     const auto audioDir = sourceDir.getChildFile ("Audio Files");
     const auto srcBase  = audioDir.isDirectory() ? audioDir : sourceDir;
+    // Bare Track_* also matches Track_NN.punchbase.<ext> (a crash-orphaned punch
+    // sidecar). matchesIndex below demands an EXACT "Track_NN" stem so one can't
+    // slip through today, but exclude it here too rather than depend on that.
     auto allFiles = srcBase.findChildFiles (juce::File::findFiles, false, "Track_*");
+    allFiles.removeIf ([] (const juce::File& f)
+                       { return f.getFileName().containsIgnoreCase (".punchbase"); });
 
     auto matchesIndex = [] (const juce::File& f, int index1Based) -> bool
     {

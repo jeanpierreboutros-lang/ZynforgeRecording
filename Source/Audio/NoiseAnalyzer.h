@@ -190,11 +190,14 @@ namespace zynforge
             const auto base = audioFiles.isDirectory() ? audioFiles : sessionDir;
             for (const auto& f : base.findChildFiles (juce::File::findFiles, false, "Track_*"))
             {
-                // Audio only -- exclude .wav.punchbase and other Track_* sidecars
-                // that produced phantom "clean" rows in the report.
+                // Audio only. NOTE the sidecar is Track_NN.punchbase.<ext> --
+                // the marker is before the EXTENSION, so this ext test never
+                // excluded it despite the old comment saying so; it needs its
+                // own check or a crash-orphaned sidecar adds a phantom row.
                 const auto ext = f.getFileExtension().toLowerCase();
                 if (ext != ".wav" && ext != ".flac" && ext != ".aif" && ext != ".aiff")
                     continue;
+                if (f.getFileName().containsIgnoreCase (".punchbase")) continue;
                 const auto stem = f.getFileNameWithoutExtension();   // "Track_04" or "Track_04_part02"
                 if (stem.containsIgnoreCase ("_part"))
                     continue;   // continuation parts belong to their main file, not a separate row

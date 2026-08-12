@@ -482,10 +482,14 @@ void MainComponent::editCropToLoopRange()
     const auto dir = engine.getActiveSessionDir();
     if (! dir.isDirectory())      { showStatus ("No active session to crop"); return; }
 
-    // Multi-part takes (Track_NN_partNN.wav) span several files -- cropping
+    // Multi-part takes (Track_NN_partNN.<ext>) span several files -- cropping
     // those correctly is out of scope, so refuse rather than mangle them.
+    // ALL containers: a .wav-only glob never saw a FLAC/AIFF session's parts,
+    // so Crop went ahead on exactly the multi-part take this guard exists to
+    // protect. Takes are not always WAV -- see CLAUDE.md.
     const auto audioDir = dir.getChildFile ("Audio Files");
-    for (auto& f : audioDir.findChildFiles (juce::File::findFiles, false, "Track_*.wav"))
+    for (auto& f : audioDir.findChildFiles (juce::File::findFiles, false,
+             "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff"))
         if (f.getFileNameWithoutExtension().containsIgnoreCase ("_part"))
         { showStatus ("Cannot crop a multi-part take -- use Save Session As"); return; }
 

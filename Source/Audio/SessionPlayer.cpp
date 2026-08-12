@@ -83,6 +83,14 @@ namespace zynforge
                 // as a phantom continuation, inflating its length / mis-ordering it.
                 const auto rest = f.getFileNameWithoutExtension()
                                     .fromFirstOccurrenceOf ("Track_", false, false);  // "04" / "04_part02" / "04_consolidated_1"
+                // A punch sidecar is Track_NN.punchbase.<ext> -- the marker sits
+                // before the EXTENSION, so it has no '_' after the prefix and
+                // sailed through the suffix filter below. It then sorts BEFORE
+                // the real Track_NN.<ext> and was concatenated as part 1 of the
+                // take. Sidecars only survive a crash between the punch stash
+                // and the splice, which is exactly the recovery path. Excluded
+                // explicitly (matching NoiseAnalyzer / swapTracks / takeIsMultiPart).
+                if (rest.containsIgnoreCase (".punchbase")) continue;
                 const int usc = rest.indexOfChar ('_');
                 if (usc >= 0 && ! rest.substring (usc + 1).startsWithIgnoreCase ("part"))
                     continue;

@@ -5,6 +5,9 @@
 #include "FloatingLaunch.h"
 #include "DismissOnOutsideClick.h"
 
+#include <algorithm>
+#include <vector>
+
 namespace zynforge
 {
     namespace
@@ -15,6 +18,7 @@ namespace zynforge
         public:
             explicit MeterbridgeContent (AudioEngine& eng) : engine (eng)
             {
+                liveBridges().push_back (this);
                 rebuild();
                 lastGen = engine.getRecorder().getTrackGeneration();
                 setSize (juce::jmax (640, (int) meters.size() * 60 + 24), 380);
@@ -25,6 +29,28 @@ namespace zynforge
                 // two launch paths, one of which stores no pointer, so it must
                 // self-heal rather than rely on the owner to reap it.
                 startTimerHz (12);
+            }
+
+            ~MeterbridgeContent() override
+            {
+                auto& live = liveBridges();
+                live.erase (std::remove (live.begin(), live.end(), this), live.end());
+            }
+
+            // Every open bridge, so condemnAllMeters() can reach instances the
+            // caller holds no pointer to. Message thread only, so no lock.
+            static std::vector<MeterbridgeContent*>& liveBridges()
+            {
+                static std::vector<MeterbridgeContent*> v;
+                return v;
+            }
+
+            // Stop reading TrackStates the caller is about to free. The 12 Hz
+            // generation watch below still rebinds afterwards; this just closes
+            // the window in between.
+            void condemn()
+            {
+                for (auto& m : meters) if (m != nullptr) m->detach();
             }
 
             void timerCallback() override
@@ -122,6 +148,12 @@ namespace zynforge
             // Click anywhere outside the meterbridge → it closes itself.
             DismissOnOutsideClick dismisser { *this };
         };
+    }
+
+    void Meterbridge::condemnAllMeters()
+    {
+        for (auto* b : MeterbridgeContent::liveBridges())
+            if (b != nullptr) b->condemn();
     }
 
     juce::DialogWindow* Meterbridge::launch (AudioEngine& engine)

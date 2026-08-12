@@ -6,6 +6,20 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Enforce bug CLASSES in CI, not in prose — 2026-08-13
+
+**Context.** Five audit passes over two months. Every one found defects in classes a previous pass had already "fixed" somewhere else: `condemnAllStrips` was extended four times across MIXER call sites while the identical hazard sat open in the EDIT rows and the meterbridge; `.wav`-only globs were fixed in the player, then found again in the transient cache, the timeline CSV and the Crop guard; the unlocked `TrackState::name` write was fixed in two rename editors and still present in a menu item. Each fix was correct. Each was applied only where the bug was *found*.
+
+**Why documentation didn't work.** Every one of those classes was already written up in `CLAUDE.md` — often with the exact failure mode spelled out. The prose was read, agreed with, and then not applied to the file being edited two weeks later. A rule that depends on someone remembering it at the right moment is not a control.
+
+**Decision.** Bug classes get a **grep that fails the build**. `Tools/invariants_audit.sh` runs in CI (before the build, so a violation fails fast) and in a pre-commit hook, alongside the existing design gate. Seven rules today, each traceable to at least one shipped defect. The rule set is enumerated over **consumers** of a hazardous pattern, not over the call sites that trigger it — that inversion is what the `condemnAllStrips` story cost us four times.
+
+**A gate must be proven to fail.** Two of the original seven rules passed a deliberately injected regression: one matched a *commented-out* call, the other was satisfied by an unrelated comment elsewhere in the same file. Both were found only because the gate was self-tested by breaking the code on purpose. **Adding a rule without watching it go red is adding a rule that does nothing** — this is the same lesson as the 2026-07-10 ADR about regression tests needing to reproduce the precondition, one level up.
+
+**Consequences.** The sweep that produced the gate found five more open sites (meterbridge condemn, punch-sidecar loading, the Crop container guard, a second unlocked name write, a hardcoded sessions root). Ongoing cost is one CI step and the discipline of adding a rule when a class is identified. The limits are real and worth stating: it is grep, so it cannot tell code from comment without help, it only guards classes we already know about, and every rule is a maintenance liability if the pattern legitimately changes.
+
+---
+
 ## EDIT-view audit — a fix is only fixed where it was applied — 2026-08-12
 
 **Context.** The 2026-08-11 hunt deferred the EDIT view (a 4,087-line row class) as a follow-up. Reading it produced 16 defects, and the two HIGHs both come from the same root cause the previous audits kept circling.

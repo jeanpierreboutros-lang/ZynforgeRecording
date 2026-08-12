@@ -15,6 +15,16 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Current Priorities
 
+### PROCESS HARDENING — 2026-08-13 (shipped)
+
+Acting on the two engineering items from the market-position review: stop fixing bug *instances*, and make the UI testable.
+
+- [x] **Invariants CI gate** (M) — `Tools/invariants_audit.sh`, 7 rules over the bug classes that five audit passes each re-violated somewhere new. Wired into CI (before the build) and a pre-commit hook (`Tools/install_hooks.sh`; hooks aren't tracked by git). Every rule verified to go RED against an injected regression — 2 of the 7 were initially blind and fixed before landing. ADR: *Enforce bug CLASSES in CI, not in prose*.
+- [x] **The sweep behind it found 5 more open sites** (M) — meterbridge never condemned (3rd `TrackState&` cacher, 12 Hz window); crash-orphaned `.punchbase` sidecar loaded as part 1 of the take (+ phantom noise-report row); Crop's multi-part guard was `.wav`-only; a 2nd unlocked `TrackState::name` write; transport bar's fallback record path hardcoded the Music folder.
+- [x] **`EditPage::TrackRow` made publicly declared + directly tested** (M) — `EditTrackRowTests.cpp` (5 groups) covers the meter-condemn contract, the stale-index guard and stereo routing display. Reverting the stale-index fix **crashes the test binary in `TrackRow::updatePollState`** — the production UAF, reproduced. 286 groups / 0 failures.
+- [x] **Fixed cross-test pollution** (S) — test-mode engines share one throwaway `.settings`, so per-strip writes leaked between suites (this broke *Player maps files by Track_NN index*). Documented in `testing.md`; suites that mutate strip state must `clearAllStripOverrides()` on setup + teardown.
+- [ ] **Remaining from the market review** (L) — (1) **verify the X32 on hardware or pull the claim** — untested desk control is the largest liability and the cheapest fix; (2) decide the console strategy (deep on X32/M32/WING vs drop OSC control and lean on Dante/VSC) given LiveTrax 3 ships DiGiCo + A&H + SSL at $39.99; (3) Windows is the reach question and it's a project, not a port.
+
 ### EDIT-VIEW AUDIT — 2026-08-12 (all 16 fixed, shipped)
 
 The follow-up the 2026-08-11 hunt deferred: `EditTrackRow.h` (4,087 lines), `EditPage`, the time ruler, and the MIXER strip where the two views must stay linked. **16 defects (2 High, 7 Medium, 7 Low), all fixed.** Build green, **281 test groups / 0 failures**, design audit CLEAN, smoke-tested. See the CHANGELOG *EDIT-view audit* entry and `decisions.md` *EDIT-view audit — a fix is only fixed where it was applied*.

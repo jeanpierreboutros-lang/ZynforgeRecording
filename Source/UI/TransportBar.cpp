@@ -279,10 +279,11 @@ namespace zynforge
                 engine.stopRecording();
                 return;
             }
-            const auto root = juce::File::getSpecialLocation (juce::File::userMusicDirectory)
-                                  .getChildFile ("Zynforge Sessions");
-            const auto stamp = juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S");
-            engine.startRecording (root.getChildFile ("Session_" + stamp));
+            // Honour the engineer's "Local Storage" override like every other
+            // record entry point. (Unreachable today -- the host always wires
+            // onRequestRecord above -- but a hardcoded Music-folder path is
+            // exactly the fallback that goes live unnoticed later.)
+            engine.startRecording (engine.makeTimestampedSessionDir());
         };
         loop     ->onClick = [this]
         {

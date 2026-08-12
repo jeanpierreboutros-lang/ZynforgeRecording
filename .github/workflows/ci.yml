@@ -30,8 +30,15 @@ jobs:
           path: build/_deps
           key: juce-deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
 
+      # Both gates run BEFORE the build so a violation fails fast (and so a
+      # broken invariant can't be masked by a build error further down).
+      # Path is Tools/ with a capital T -- the old lowercase spelling only
+      # worked because the macOS runner's filesystem is case-insensitive.
       - name: Design-system audit
-        run: ./tools/design_audit.sh
+        run: ./Tools/design_audit.sh
+
+      - name: Invariants audit
+        run: ./Tools/invariants_audit.sh
 
       - name: Configure
         run: cmake -B build -G Xcode

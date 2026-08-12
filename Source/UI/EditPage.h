@@ -243,8 +243,18 @@ namespace zynforge
         void paint (juce::Graphics&) override;
         void resized() override;
 
-    private:
+        // TrackRow is PUBLIC so the test suite can construct one directly.
+        // It was private, and its definition lives in EditTrackRow.h which only
+        // EditPage.cpp includes -- so ~4,000 lines of the most bug-dense code in
+        // the app (three mouse handlers, every hit-test, the routing combos, the
+        // meter lifetime) were structurally untestable. Two audits in a row found
+        // defects here that could only be smoke-tested. Nothing else about the
+        // class changes: TrackList still owns every instance, and EditPage still
+        // drives it. See Source/Tests/EditTrackRowTests.cpp.
+    public:
         class TrackRow;
+
+    private:
         class TrackList;
 
         void timerCallback() override;

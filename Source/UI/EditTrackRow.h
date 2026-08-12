@@ -502,9 +502,17 @@ namespace zynforge
         {
             if (id <= 1 || dev < 0) return;                       // "(unrouted)" always exists
             if (box.indexOfItemId (id) >= 0) return;
-            const auto label = stereo
+            auto label = stereo
                 ? juce::String (prefix) + juce::String (dev + 1) + "-" + juce::String (dev + 2)
                 : juce::String (prefix) + juce::String (dev + 1);
+            // Match rebuildRoutingCombos' decoration exactly: a channel the
+            // device doesn't currently have reads "(off)". Without this the
+            // on-demand entry was the ONE item in the list missing the suffix.
+            const bool isOut = juce::String (prefix).startsWithIgnoreCase ("Out");
+            const int  count = isOut ? engine.getCurrentDeviceOutputCount()
+                                     : engine.getCurrentDeviceInputCount();
+            const bool live  = stereo ? (dev + 1 < count) : (dev < count);
+            if (! live) label += " (off)";
             box.addItem (label, id);
         }
 
@@ -3256,6 +3264,17 @@ namespace zynforge
         int  getHeaderWidth() const noexcept { return headerW; }
         int  getTrackIndex()  const noexcept { return index; }
         bool isStereoPair()   const noexcept { return stereo; }
+
+        // ── Test seams ─────────────────────────────────────────────────────
+        // Narrow read-only accessors so the suite can assert on this row's
+        // visible state. Same idiom as MultitrackRecorder::drainPendingForTests
+        // / AudioEngine::prepareForTests. Needed because the row's header
+        // widgets are private and, until this class was made publicly
+        // declared, none of this was reachable from a test at all.
+        juce::String getNameTextForTests()   const { return nameLabel.getText(); }
+        juce::String getInputRoutingTextForTests()  const { return inputCombo.getText(); }
+        juce::String getOutputRoutingTextForTests() const { return outputCombo.getText(); }
+        bool         isCondemnedForTests()   const noexcept { return ! rowValid; }
 
         // Physical tracks this row's clip edits propagate to: itself plus
         // every member of its EDIT group (so split / trim / move / fade /

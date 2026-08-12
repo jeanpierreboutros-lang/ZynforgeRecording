@@ -582,8 +582,12 @@ namespace zynforge
                 case 4: if (renameCb)
                         {
                             renameCb ({});
-                            state.name = juce::String (stripIndex + 1);
-                            nameLabel.setText (state.name, juce::dontSendNotification);
+                            // setNameThreadSafe, not a raw write -- same race
+                            // with the companion server's getNameThreadSafe()
+                            // as the inline rename editor had.
+                            const auto reset = juce::String (stripIndex + 1);
+                            state.setNameThreadSafe (reset);
+                            nameLabel.setText (reset, juce::dontSendNotification);
                         }
                         break;
                 case 5: state.streamSend.store (! state.streamSend.load (std::memory_order_relaxed),

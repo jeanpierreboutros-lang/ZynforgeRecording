@@ -17,6 +17,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Added (invariants CI gate) + Fixed (bug-class sweep — 5 more open sites, 2026-08-13)
+
+Four audit passes each found the *same bug classes* re-violated in new places. This change attacks the class instead of the instance.
+
+- **New `Tools/invariants_audit.sh` — a second CI gate, alongside the design audit.** Seven rules, each with at least one shipped defect behind it: every consumer of a cached `TrackState&` must expose a detach hook *and* be wired into `condemnAllStrips()`; no `getTrack()` bounded by a player-derived count; `TrackState::name` written only through the locked setter; no `.wav`-only `Track_*` globs; bare `Track_*` globs must exclude `.punchbase` sidecars; the sessions root resolved only via `AudioEngine::getSessionsRoot()`; no bare `reload()` on the shared settings file; offline renders using `automationValueAtOffline`. Runs in CI before the build and in a pre-commit hook (`Tools/install_hooks.sh` — hooks aren't tracked by git, so each clone installs once). **Every rule was verified to go red against an injected regression** — two of them were initially blind (a commented-out call and an unrelated comment satisfied the check) and were fixed before landing.
+- **The sweep that produced it found 5 more open sites in classes already "fixed" elsewhere:**
+  - **The floating meterbridge was never condemned.** Third component caching a `TrackState&` on its own timer, rebinding only on its 12 Hz tick — a *wider* freed-memory window than the MIXER and EDIT ones already closed. `condemnAllStrips()` now condemns all three.
+  - **A crash-orphaned punch sidecar was loaded as part of the take.** `Track_NN.punchbase.<ext>` puts the marker before the extension, so it slipped through `SessionPlayer`'s suffix filter, sorted *before* the real take, and was concatenated as part 1. Same blind spot made it a phantom row in the noise report (whose comment claimed it was excluded — the extension test never could).
+  - **Crop's multi-part guard was `.wav`-only**, so on a FLAC/AIFF session it never saw the continuation parts and went ahead on exactly the take it exists to protect.
+  - **A second unlocked `TrackState::name` write** (the strip menu's "reset name") still raced the companion server's locked read.
+  - **The transport bar's fallback record path** still hardcoded `~/Music/Zynforge Sessions`, ignoring the Local Storage override.
+
+### Changed (the EDIT row is now testable, 2026-08-13)
+
+`EditPage::TrackRow` is a **public** nested declaration. It was private, with its ~4,000-line definition in a header only `EditPage.cpp` includes — so the three mouse handlers, every hit-test, the routing combos and the meter lifetime were structurally unreachable from the suite, and two consecutive audits found defects there that could only be smoke-tested. New `Source/Tests/EditTrackRowTests.cpp` (5 groups) covers the meter-condemn contract, the stale-index guard, and odd/even/unrouted stereo routing display. **286 test groups / 0 failures** (281 → 286).
+
+Two things surfaced while writing those tests and were fixed:
+- **Cross-test pollution.** Every test-mode `AudioEngine` shares one throwaway `.settings` file, so a `setTrackStereo` / routing write in one suite persisted into the next one that called `applyPersistedStripState()` — this genuinely broke *Player maps files by Track_NN index*. Test isolation from the *user's* settings was already asserted; isolation *between tests* was not.
+- **An inconsistency in the odd-stereo-routing fix**: the on-demand combo entry didn't carry the `(off)` suffix the regularly-built entries do, so it was the one item in the list undecorated.
+
 ### Fixed (EDIT-view audit — 16 findings, 2026-08-12)
 
 The follow-up pass the 2026-08-11 hunt deferred: `EditTrackRow.h` (4,087 lines), `EditPage`, the time ruler and the MIXER strip where the two views are supposed to stay linked. **16 defects** — 2 high, 7 medium, 7 low — all fixed. Build green, **281 test groups / 0 failures** (278 → 281, `Source/Tests/EditViewFixTests.cpp`), design audit CLEAN, smoke-tested.

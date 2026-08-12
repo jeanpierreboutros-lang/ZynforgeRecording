@@ -16,6 +16,7 @@
 #include "../Theme/DialogChrome.h"
 #include "StripColourPicker.h"
 #include "NewSessionDialog.h"
+#include "Meterbridge.h"
 #include "../Audio/ChannelCsv.h"
 
 using namespace zynforge;
@@ -321,6 +322,13 @@ void MainComponent::condemnAllStrips()
     // function left EDIT sampling freed memory in exactly the window this
     // function exists to close. Condemn both views together.
     if (editPage != nullptr) editPage->condemnAllRows();
+
+    // ...and the floating meterbridge, whose LedMeters hold TrackState& on
+    // their own timers and only rebind on its 12 Hz tick. Three surfaces cache
+    // a TrackState&; ALL THREE are condemned here. If you add a fourth, wire it
+    // in with the same change -- this rule is enumerated over CONSUMERS of
+    // TrackState&, not over the call sites that shrink the vector.
+    Meterbridge::condemnAllMeters();
 }
 
 void MainComponent::deleteSelectedStrips()
