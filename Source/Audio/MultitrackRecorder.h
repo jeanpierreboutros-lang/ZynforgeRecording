@@ -486,6 +486,28 @@ namespace zynforge
         // crashed-but-flushed file is already readable before stopRecording.
         void flushOpenWritersForTests() { flushOpenWriters (0, writers.size()); }
 
+        // Report-write generation, keyed by SESSION.
+        //
+        // stopRecording writes session.report.json synchronously, then a
+        // BACKGROUND thread hashes the audio (GBs) and rewrites it with the
+        // SHA-256s. Two takes stopped close together put two hash threads on
+        // the SAME file, and the slower one wins -- so the integrity manifest
+        // could end up describing the PREVIOUS take. Worse, a punch splice
+        // REPLACES the take while an earlier take's hash thread may still be
+        // reading it, so that thread's hashes are of a file being overwritten.
+        //
+        // Each stop claims a generation for its session; a background write is
+        // dropped once a newer stop has claimed one. Keyed by session PATH and
+        // process-wide, because the racing stops are frequently different
+        // recorder instances writing one session -- a per-recorder counter (the
+        // first version of this fix) doesn't serialise them at all.
+        //
+        // Returns a shared token so the background thread can capture it BY
+        // VALUE: that thread deliberately never captures `this`, so the token
+        // has to be able to outlive the recorder.
+        static std::shared_ptr<std::atomic<juce::int64>> claimReportGeneration (
+            const juce::File& sessionDir, juce::int64& outGeneration);
+
     private:
 
         double sampleRate { 48000.0 };

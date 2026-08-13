@@ -15,6 +15,12 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Current Priorities
 
+### INTEGRITY-MANIFEST RACE — 2026-08-13 (fixed)
+
+- [x] **`session.report.json` could describe the previous take** (M) — overlapping post-stop SHA threads raced to write one report and the slower won; a punch splice also replaces the take *while* an earlier hash thread reads it. Report generation is now claimed per SESSION and process-wide. Surfaced as a ~1-in-5 flake in `PunchRecordTests`; 15 consecutive clean runs since. This one matters more than its size: the integrity manifest is the product's headline trust claim.
+- [ ] **Flaky tests are load-bearing signal here** — this was visible only as an intermittent failure, and the first instinct (re-run it) would have buried a real data-integrity bug. Treat a flake as a defect until proven otherwise.
+
+
 ### MULTI-CONSOLE SUPPORT — 2026-08-13 (shipped)
 
 Console control rebuilt on a transport seam so support isn't capped at OSC desks, with the value-dense read-only features generalised across families and every write gated behind a handshake. **293 test groups / 0 failures.** ADR: *Ship console families you can't test, safely*.

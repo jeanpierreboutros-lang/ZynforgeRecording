@@ -1455,6 +1455,12 @@ namespace zynforge
 
         if (sessionDir.isDirectory())
         {
+            // Claim this stop's report generation for THIS SESSION. Anything a
+            // previous stop's hash thread is still working on is now stale and
+            // must not overwrite what we write below.
+            juce::int64 myGen = 0;
+            auto genToken = claimReportGeneration (sessionDir, myGen);
+
             // 1) Write the metadata report SYNCHRONOUSLY, right now -- this
             //    guarantees session.report.json exists the instant recording
             //    stops, even for a huge take whose hashing runs for minutes
@@ -1471,7 +1477,7 @@ namespace zynforge
             //    take, but isn't throttled to a trickle the way BACKGROUND was.
             //    If interrupted, the metadata report from step 1 still stands.
             juce::Thread::launch (
-                [buildReportJson, sessionDir, bDir, backupWasRunning,
+                [buildReportJson, sessionDir, bDir, backupWasRunning, myGen, genToken,
                  trackMetas  = std::move (trackMetas),
                  writerSnaps = std::move (writerSnapshots)]
                 {
@@ -1520,6 +1526,13 @@ namespace zynforge
                         });
                     for (auto& th : pool) th.join();
 
+                    // A NEWER take has stopped while we were hashing -- its
+                    // (correct, current) report is already on disk. Writing
+                    // ours now would replace it with the previous take's
+                    // lengths + hashes, so the manifest would describe audio
+                    // that is no longer the session's. Drop it.
+                    if (genToken->load (std::memory_order_acquire) != myGen) return;
+
                     writeTextAtomic (sessionDir.getChildFile ("session.report.json"),
                                      buildReportJson (trackMetas, writerSnaps, true, shaByPath));
                 });
@@ -1528,6 +1541,23 @@ namespace zynforge
         // Clean stop -- remove the recovery marker.
         if (activeSessionDir.isDirectory())
             activeSessionDir.getChildFile ("recording.session").deleteFile();
+    }
+
+    std::shared_ptr<std::atomic<juce::int64>>
+        MultitrackRecorder::claimReportGeneration (const juce::File& sessionDir,
+                                                   juce::int64& outGeneration)
+    {
+        // Process-wide, keyed by session path: the stops that race are often
+        // DIFFERENT recorder instances writing one session's report.
+        static std::mutex m;
+        static std::map<juce::String, std::shared_ptr<std::atomic<juce::int64>>> tokens;
+
+        const auto key = sessionDir.getFullPathName();
+        const std::lock_guard<std::mutex> lk (m);
+        auto& tok = tokens[key];
+        if (tok == nullptr) tok = std::make_shared<std::atomic<juce::int64>> (0);
+        outGeneration = tok->fetch_add (1, std::memory_order_acq_rel) + 1;
+        return tok;
     }
 
     void MultitrackRecorder::closeWriters()

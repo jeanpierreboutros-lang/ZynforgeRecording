@@ -17,6 +17,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (integrity manifest could describe the WRONG take — 2026-08-13)
+
+`session.report.json` — the SHA-256 manifest that proves what was delivered — could end up describing a **previous** take.
+
+`stopRecording` writes the report synchronously, then hashes the audio on a background thread and rewrites the report with the SHAs. Two takes stopped close together put two hash threads on the same file and **the slower one won**. Worse, a punch splice REPLACES the take on disk while an earlier take's hash thread may still be reading it, so that thread hashes a file mid-replacement and writes a value matching nothing at all.
+
+Each stop now claims a report generation **keyed by session and process-wide**, and a background write is dropped once a newer stop has claimed one. Process-wide matters: the racing stops are frequently different recorder instances writing one session, which a per-recorder counter doesn't serialise (that was the first, insufficient version of this fix).
+
+Found because it made *Punch record / session report length + SHA describe the SPLICED file* flaky — roughly 1 run in 5. 15 consecutive clean suite runs since.
+
 ### Added (multi-console support: transport seam, read tier, handshake gate — 2026-08-13)
 
 Console control was welded to `juce::DatagramSocket` + OSC, which capped support at "OSC desks only" — so DiGiCo / Yamaha / SSL / A&H could only ever be honest stubs. Rebuilt around a **transport seam**, with the value-dense read-only features generalised across families.
