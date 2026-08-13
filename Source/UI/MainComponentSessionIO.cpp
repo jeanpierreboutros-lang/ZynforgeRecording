@@ -1064,6 +1064,16 @@ void MainComponent::applySessionSampleRate (double sr)
     // The session's intended rate -- what the record guard + banner compare
     // the live device clock against. The 10 Hz timer keeps the engine copy
     // in lockstep from this, so updating pendingSampleRate is authoritative.
+    //
+    // NEVER mid-take: the device push below restarts the device, and
+    // audioDeviceStopped -> recorder.release() -> stopRecording() would end the
+    // recording. Changing the session rate during a take is meaningless anyway
+    // -- the audio on disk is already at the device's rate.
+    if (engine.isRecording())
+    {
+        showStatus ("Recording -- stop the take before changing the session sample rate.");
+        return;
+    }
     pendingSampleRate = sr;
     engine.setSessionSampleRate (sr);
 

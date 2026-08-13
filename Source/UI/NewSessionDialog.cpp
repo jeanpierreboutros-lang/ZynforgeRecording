@@ -255,12 +255,18 @@ namespace zynforge
 
             static int sampleRateIdFromHz (double hz)
             {
-                if (hz <= 44150.0)  return 1;
-                if (hz <= 48050.0)  return 2;
-                if (hz <= 88250.0)  return 3;
-                if (hz <= 96050.0)  return 4;
-                if (hz <= 176450.0) return 5;
-                return 6;
+                // Nearest of the offered rates, not "everything below 44.15k is
+                // 44.1k" -- a device running 32 k displayed as 44.1 kHz.
+                static const double offered[] = { 44100.0, 48000.0, 88200.0,
+                                                  96000.0, 176400.0, 192000.0 };
+                int best = 0;
+                double bestDist = std::abs (hz - offered[0]);
+                for (int i = 1; i < 6; ++i)
+                {
+                    const double d = std::abs (hz - offered[i]);
+                    if (d < bestDist) { bestDist = d; best = i; }
+                }
+                return best + 1;
             }
 
             static double hzFromId (int id)

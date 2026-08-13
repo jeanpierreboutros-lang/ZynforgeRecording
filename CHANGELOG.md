@@ -17,6 +17,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed (dialogs + Theme audit — 6 findings, 2026-08-13)
+
+The last unread surface. Smaller than the previous passes, but one item is a show-stopper.
+
+- **The DEVICE panel could silently stop a live take.** `onDeviceChanged` / `onSampleRateChanged` / `onBufferSizeChanged` each called `setAudioDeviceSetup(..., true)` immediately on combo change with **no recording guard anywhere in the file** — and a device restart runs `audioDeviceStopped()` → `recorder.release()` → `stopRecording()`. The panel is a *non-modal floating window* that can already be open when RECORD is pressed, so nudging the buffer-size combo mid-show ended the take. Every mutating path is now guarded, the Cancel/destructor revert (which also restarts the device) is skipped while rolling, and the four device combos grey out with an explanation the moment a take starts.
+- **Adding this as invariants rule 8 immediately found three more unguarded sites** that reading had missed: `applySessionSampleRate`, and both new-session device pushes in `MainComponentHelp`. All guarded.
+- **The Local Storage button lied about which drive it pointed at.** `compactPath` prepended `~` unconditionally, so `/Volumes/RECORD/Sessions` displayed as `~/Volumes/RECORD/Sessions` — on the exact control that tells the engineer where the take lands. (`NewSessionDialog`'s copy of the "identical" helper had already diverged and was correct; only the Welcome dialog's was wrong.)
+- **`MarkerListDialog` and `TimelineStrip` captured raw `this`** in async menu / modal callbacks, against the SafePointer convention every other dialog follows — closing the dialog while a rename was open dereferenced freed state.
+- **A device below 44.15 kHz displayed as "44.1 kHz"** in the New Session / Welcome rate picker; it now picks the nearest offered rate.
+- **`NoiseReportDialog`'s sort comparator now floors non-finite keys**, per the documented strict-weak-ordering rule. Not currently reachable (the analyzer clamps its inputs) — but the comparator shouldn't *depend* on that; an unfloored NaN is the hardened-`std::sort` SIGABRT that crashed the recovery dialog once already.
+
+**Came back clean**, worth recording because these are the classes that bit elsewhere: all three sortable dialogs use the correct swapped-operand pattern; `SessionRecoveryDialog` / `ControlSurfacesDialog` bounds-check every row index; PatchPage rebuilds its logical-strip list fresh per call so it has no stale-index exposure despite being a floating window; AlertWindow ownership is balanced across all 27 sites.
+
 ### Fixed (integrity manifest could describe the WRONG take — 2026-08-13)
 
 `session.report.json` — the SHA-256 manifest that proves what was delivered — could end up describing a **previous** take.

@@ -198,16 +198,19 @@ namespace zynforge
         aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
         aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
+        // SafePointer, not raw `this`: the modal outlives this call and the
+        // strip can be destroyed (view switch / session close) while the rename
+        // box is open. Same convention as every other dialog in the app.
+        juce::Component::SafePointer<TimelineStrip> safeSelf (this);
         aw->enterModalState (true,
             juce::ModalCallbackFunction::create (
-                [this, idx, aw] (int result)
+                [safeSelf, idx, aw] (int result)
                 {
-                    if (result == 1)
-                    {
-                        engine.getMarkers().renameMarker (idx, aw->getTextEditorContents ("name"));
-                        repaint();
-                    }
-                    delete aw;
+                    std::unique_ptr<juce::AlertWindow> own (aw);
+                    if (result != 1 || safeSelf == nullptr) return;
+                    safeSelf->engine.getMarkers().renameMarker (
+                        idx, own->getTextEditorContents ("name"));
+                    safeSelf->repaint();
                 }),
             false);
     }

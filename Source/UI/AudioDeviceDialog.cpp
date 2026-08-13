@@ -111,7 +111,8 @@ namespace zynforge
 
         // ─── The main dialog content ───────────────────────────────────────
         class DialogContent final : public juce::Component,
-                                    private juce::ChangeListener
+                                    private juce::ChangeListener,
+                                    private juce::Timer
         {
         public:
             // Modal launchAsync (selfOwned) vs tracked launchFloating: governs
@@ -136,6 +137,11 @@ namespace zynforge
                 origMasterL = engine.getMasterOutputL();
                 origMasterR = engine.getMasterOutputR();
                 dm.addChangeListener (this);
+                // Slow watch on the RECORDING state only. This panel is a
+                // non-modal floating window, so a take can start (or stop)
+                // while it's open; without this the enable/grey state set in
+                // refreshAll would be whatever it was when the panel opened.
+                startTimerHz (4);
 
                 auto styleCombo = [] (juce::ComboBox& c)
                 {
@@ -236,13 +242,19 @@ namespace zynforge
 
             ~DialogContent() override
             {
+                stopTimer();
                 engine.getDeviceManager().removeChangeListener (this);
 
                 // Cancel/ESC/close -> also revert the LIVE-applied monitor bus.
                 if (! applied)
                     engine.setMasterOutputs (origMasterL, origMasterR);
 
-                if (! applied)
+                // The revert below RESTARTS the device, which would stop a take
+                // just as surely as an apply would. If a recording is rolling
+                // (the panel can be closed while armed), leave the device
+                // exactly as it is -- protecting the take beats restoring a
+                // setting the engineer can put back afterwards.
+                if (! applied && ! engine.isRecording())
                 {
                     if (snapshot != nullptr)
                         // Restore with the SAME channel counts the app boots with
@@ -257,6 +269,35 @@ namespace zynforge
                         // device/rate/buffer change via the captured setup.
                         engine.getDeviceManager().setAudioDeviceSetup (origSetup, true);
                 }
+            }
+
+            // EVERY path in this panel that reconfigures the device goes through
+            // here first. setAudioDeviceSetup()/initialise() RESTART the device,
+            // and AudioEngine::audioDeviceStopped -> recorder.release() ->
+            // stopRecording(): so nudging the buffer-size combo mid-show
+            // silently ENDED the take. The panel is a non-modal floating window
+            // and can already be open when RECORD is pressed, so guarding the
+            // launch alone isn't enough -- the guard has to be here, on the
+            // mutation. MainComponent::applySessionSettings guards the same
+            // operation at its own entry point; this was the one that didn't.
+            void timerCallback() override
+            {
+                const bool rec = engine.isRecording();
+                if (rec == lastRecording) return;   // change-gated: no work while idle
+                lastRecording = rec;
+                refreshAll();                       // re-applies the enable/grey state
+                if (rec)
+                    statusLabel.setText ("Recording -- device settings are locked until the take ends.",
+                                         juce::dontSendNotification);
+            }
+
+            bool blockedWhileRecording()
+            {
+                if (! engine.isRecording()) return false;
+                statusLabel.setText ("Recording -- stop the take before changing the audio device.",
+                                     juce::dontSendNotification);
+                refreshAll();   // snap the combos back to the live device
+                return true;
             }
 
             void paint (juce::Graphics& g) override
@@ -346,6 +387,16 @@ namespace zynforge
             {
                 if (refreshing) return;
                 const juce::ScopedValueSetter<bool> guard (refreshing, true);
+
+                // Grey the device-reconfiguring controls while a take is
+                // rolling, so the refusal is VISIBLE before it's triggered
+                // rather than only after. The monitor-bus picker stays live:
+                // it's atomics + prefs, it never restarts the device.
+                const bool rec = engine.isRecording();
+                outputBox.setEnabled (! rec);
+                inputBox .setEnabled (! rec);
+                rateBox  .setEnabled (! rec);
+                bufferBox.setEnabled (! rec);
 
                 auto& dm = engine.getDeviceManager();
                 auto* type = dm.getCurrentDeviceTypeObject();
@@ -466,6 +517,7 @@ namespace zynforge
             void onDeviceChanged (bool isInput)
             {
                 if (refreshing) return;
+                if (blockedWhileRecording()) return;
                 auto& dm = engine.getDeviceManager();
                 juce::AudioDeviceManager::AudioDeviceSetup setup;
                 dm.getAudioDeviceSetup (setup);
@@ -502,6 +554,7 @@ namespace zynforge
             void onSampleRateChanged()
             {
                 if (refreshing) return;
+                if (blockedWhileRecording()) return;
                 auto& dm = engine.getDeviceManager();
                 juce::AudioDeviceManager::AudioDeviceSetup setup;
                 dm.getAudioDeviceSetup (setup);
@@ -518,6 +571,7 @@ namespace zynforge
             void onBufferSizeChanged()
             {
                 if (refreshing) return;
+                if (blockedWhileRecording()) return;
                 auto& dm = engine.getDeviceManager();
                 juce::AudioDeviceManager::AudioDeviceSetup setup;
                 dm.getAudioDeviceSetup (setup);
@@ -572,6 +626,7 @@ namespace zynforge
             int origMasterL { 0 }, origMasterR { 1 };
             bool applied    { false };
             bool refreshing { false };
+            bool lastRecording { false };
         };
     }
 

@@ -110,13 +110,20 @@ namespace zynforge
                 juce::PopupMenu m;
                 m.addItem (1, "Rename...");
                 m.addItem (2, "Delete");
-                m.showMenuAsync (juce::PopupMenu::Options(), [this, row] (int chosen)
+                // SafePointer, not raw `this`: showMenuAsync and the rename
+                // modal below both OUTLIVE this click, and the dialog can be
+                // closed while either is open -- dereferencing `engine`/`table`
+                // afterwards is a use-after-free. Every other dialog in the app
+                // already uses this pattern; this was the one that didn't.
+                juce::Component::SafePointer<MarkerListDialog> safeSelf (this);
+                m.showMenuAsync (juce::PopupMenu::Options(), [safeSelf, row] (int chosen)
                 {
+                    if (safeSelf == nullptr) return;
                     if (chosen == 1)
                     {
                         auto* aw = new juce::AlertWindow ("Rename marker",
                             "Name:", juce::MessageBoxIconType::NoIcon);
-                        aw->addTextEditor ("n", engine.getMarkers().getMarker (row).name, {});
+                        aw->addTextEditor ("n", safeSelf->engine.getMarkers().getMarker (row).name, {});
                         if (auto* ed = aw->getTextEditor ("n"))
                         {
                             ed->setSelectAllWhenFocused (true);
@@ -129,20 +136,23 @@ namespace zynforge
                         aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
                         aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
                         aw->enterModalState (true, juce::ModalCallbackFunction::create (
-                            [aw, this, row] (int r)
+                            [aw, safeSelf, row] (int r)
                         {
                             std::unique_ptr<juce::AlertWindow> own (aw);
-                            if (r != 1) return;
-                            engine.getMarkers().renameMarker (row, own->getTextEditorContents ("n").trim());
-                            engine.getMarkers().save();
-                            table.updateContent();
+                            // The dialog can be closed while the rename box is
+                            // open -- re-check before touching any member.
+                            if (r != 1 || safeSelf == nullptr) return;
+                            safeSelf->engine.getMarkers().renameMarker (
+                                row, own->getTextEditorContents ("n").trim());
+                            safeSelf->engine.getMarkers().save();
+                            safeSelf->table.updateContent();
                         }));
                     }
                     else if (chosen == 2)
                     {
-                        engine.getMarkers().removeMarker (row);
-                        engine.getMarkers().save();
-                        table.updateContent();
+                        safeSelf->engine.getMarkers().removeMarker (row);
+                        safeSelf->engine.getMarkers().save();
+                        safeSelf->table.updateContent();
                     }
                 });
             }

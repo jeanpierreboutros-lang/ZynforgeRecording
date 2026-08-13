@@ -15,6 +15,16 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Current Priorities
 
+### DIALOGS + THEME AUDIT — 2026-08-13 (all 6 fixed, shipped)
+
+The last unread surface. **293 test groups / 0 failures**, both gates CLEAN.
+
+- [x] **HIGH: the DEVICE panel could stop a live take** (M) — three combo handlers reconfigured the device with no recording guard; the panel is a non-modal floating window that can be open when RECORD is pressed. Guarded at every mutation + Cancel/dtor revert, and the combos now grey out mid-take via a 4 Hz state watch.
+- [x] **Invariants rule 8 added — and it found 3 MORE unguarded sites** reading had missed (`applySessionSampleRate`, both new-session device pushes). Verified to go red against an injected regression.
+- [x] **Medium/Low** (S) — `compactPath` labelling external drives as `~`; raw-`this` captures in `MarkerListDialog` + `TimelineStrip`; sub-44.1k rates displaying as 44.1 kHz; `NoiseReportDialog`'s comparator now floors non-finite keys.
+- [ ] **Not line-by-line read**: `ZynForgeLookAndFeel`, `Icons.h`, `ExportDialog`, `ClickSettingsDialog`, `MirrorDrivesDialog`, `TimecodeSyncDialog`, `SessionPropertiesDialog` internals — swept for known hazard classes only.
+
+
 ### INTEGRITY-MANIFEST RACE — 2026-08-13 (fixed)
 
 - [x] **`session.report.json` could describe the previous take** (M) — overlapping post-stop SHA threads raced to write one report and the slower won; a punch splice also replaces the take *while* an earlier hash thread reads it. Report generation is now claimed per SESSION and process-wide. Surfaced as a ~1-in-5 flake in `PunchRecordTests`; 15 consecutive clean runs since. This one matters more than its size: the integrity manifest is the product's headline trust claim.

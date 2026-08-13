@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cmath>
+
 #include <juce_gui_basics/juce_gui_basics.h>
 
 #include "../Theme/DialogChrome.h"
@@ -135,17 +137,25 @@ namespace zynforge
                 const int b = forwards ? ib : ia;   // operands, never !lt
                 const auto& fa = data[(size_t) a];
                 const auto& fb = data[(size_t) b];
+                // Map non-finite keys to a floor so the ordering stays TOTAL.
+                // A NaN compares false both ways, which makes "equivalent"
+                // non-transitive -- not a strict weak ordering, and hardened
+                // libc++ std::sort ABORTS on that (see the sort rule in
+                // CLAUDE.md; it crashed the recovery dialog once already).
+                // NoiseAnalyzer currently clamps its inputs so NaN shouldn't
+                // reach here, but the comparator must not DEPEND on that.
+                auto k = [] (float v) { return std::isfinite (v) ? v : -1.0e30f; };
                 auto lt = [&]() -> bool
                 {
                     switch (col)
                     {
                         case 1: return fa.trackName.compareNatural (fb.trackName) < 0;
-                        case 2: return fa.humDb < fb.humDb;
-                        case 3: return fa.humFundamentalHz < fb.humFundamentalHz;
-                        case 4: return fa.humDbAboveFloor < fb.humDbAboveFloor;
+                        case 2: return k (fa.humDb)           < k (fb.humDb);
+                        case 3: return k (fa.humFundamentalHz) < k (fb.humFundamentalHz);
+                        case 4: return k (fa.humDbAboveFloor)  < k (fb.humDbAboveFloor);
                         case 5: return fa.bumpCount < fb.bumpCount;
-                        case 6: return fa.noiseFloorDbFS < fb.noiseFloorDbFS;
-                        case 7: return fa.crestFactor < fb.crestFactor;
+                        case 6: return k (fa.noiseFloorDbFS)   < k (fb.noiseFloorDbFS);
+                        case 7: return k (fa.crestFactor)      < k (fb.crestFactor);
                     }
                     return false;
                 }();

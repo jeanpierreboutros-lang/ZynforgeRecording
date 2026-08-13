@@ -153,6 +153,29 @@ report "offline renders use automationValueAtOffline" \
        "the RT try-lock variant silently bakes static values into a bounce" \
        "$HITS"
 
+# ── 8. Device reconfiguration is guarded against a live take ───────────────
+# setAudioDeviceSetup()/initialise() RESTART the device, and
+# AudioEngine::audioDeviceStopped -> recorder.release() -> stopRecording(). So
+# ANY caller that reconfigures the device mid-take silently ENDS it. The guard
+# existed in MainComponent::applySessionSettings and nowhere else -- the DEVICE
+# panel let you stop a show by nudging the buffer-size combo.
+# AudioEngine's own ctor/init calls are exempt (there's no take at boot).
+HITS=""
+while IFS= read -r m; do
+    [[ -z "$m" ]] && continue
+    f="${m%%:*}"; ln="${m#*:}"; ln="${ln%%:*}"
+    [[ "$f" == *"AudioEngine.cpp" ]] && continue          # boot-time init
+    # The guard must be nearby: same function, so look back 40 lines for an
+    # isRecording()/blockedWhileRecording() check. Comments stripped so a
+    # commented-out guard can't satisfy it.
+    START=$(( ln > 40 ? ln - 40 : 1 ))
+    WIN=$(sed -n "${START},${ln}p" "$f" 2>/dev/null | sed 's,//.*,,')
+    grep -q "isRecording\|blockedWhileRecording" <<<"$WIN" || HITS+="$m"$'\n'
+done < <(grep -rn "setAudioDeviceSetup (\|deviceManager.initialise (\|getDeviceManager().initialise (" $SCOPE 2>/dev/null)
+report "device reconfiguration is guarded against a live take" \
+       "setAudioDeviceSetup/initialise restart the device, which stops the recorder" \
+       "$(printf '%s' "$HITS")"
+
 echo
 if [[ $FAIL -eq 0 ]]; then
     green "invariants audit: CLEAN"

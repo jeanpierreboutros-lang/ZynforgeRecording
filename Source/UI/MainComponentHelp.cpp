@@ -433,7 +433,11 @@ void MainComponent::showStartupWelcome()
                 setup.useDefaultOutputChannels = true;
                 changed = true;
             }
-            if (changed)
+            // Skip the device reconfiguration if a take is somehow rolling:
+            // it restarts the device, which stops the recorder. (Creating a
+            // session mid-take shouldn't be reachable, but the take-ending
+            // failure mode is bad enough to guard at the mutation itself.)
+            if (changed && ! self->engine.isRecording())
                 self->engine.getDeviceManager().setAudioDeviceSetup (setup, true);
         }
 
@@ -536,9 +540,11 @@ void MainComponent::launchNewSessionDialog()
         self->pendingSampleRate = r.sampleRate;
         self->refreshFormatButton();
 
-        // Apply the chosen sample rate to the device immediately.
+        // Apply the chosen sample rate to the device immediately -- but never
+        // while recording: the restart would stop the take.
         auto setup = self->engine.getDeviceManager().getAudioDeviceSetup();
-        if (! juce::approximatelyEqual (setup.sampleRate, r.sampleRate))
+        if (! self->engine.isRecording()
+            && ! juce::approximatelyEqual (setup.sampleRate, r.sampleRate))
         {
             setup.sampleRate = r.sampleRate;
             self->engine.getDeviceManager().setAudioDeviceSetup (setup, true);

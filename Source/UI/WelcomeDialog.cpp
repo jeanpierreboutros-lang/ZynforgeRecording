@@ -19,11 +19,15 @@ namespace zynforge
             auto p = f.getFullPathName();
             const auto home = juce::File::getSpecialLocation
                                  (juce::File::userHomeDirectory).getFullPathName();
-            if (p.startsWith (home))
-                p = p.substring (home.length());
-            if (! p.endsWithChar ('/'))
-                p += "/";
-            return "~" + p;
+            // Only abbreviate to "~" when the path is ACTUALLY under home. The
+            // "~" used to be prepended unconditionally, so an external drive
+            // read as "~/Volumes/RECORD/Sessions/" -- and this string is the
+            // Local Storage button, i.e. the control that tells the engineer
+            // which drive the take lands on.
+            const bool underHome = home.isNotEmpty() && p.startsWith (home);
+            if (underHome) p = "~" + p.substring (home.length());
+            if (! p.endsWithChar ('/')) p += "/";
+            return p;
         }
 
         static int fileTypeIdFromFormat (CaptureFormat f)
@@ -44,13 +48,19 @@ namespace zynforge
         }
         static int sampleRateIdFromHz (double hz)
         {
-            if (hz <= 44150.0)  return 1;
-            if (hz <= 48050.0)  return 2;
-            if (hz <= 88250.0)  return 3;
-            if (hz <= 96050.0)  return 4;
-            if (hz <= 176450.0) return 5;
-            return 6;
+            // Nearest of the offered rates, not "everything below 44.15k is
+            // 44.1k" -- a device running 32 k used to display as 44.1 kHz.
+            static const double offered[] = { 44100.0, 48000.0, 88200.0, 96000.0, 176400.0, 192000.0 };
+            int best = 0;
+            double bestDist = std::abs (hz - offered[0]);
+            for (int i = 1; i < 6; ++i)
+            {
+                const double d = std::abs (hz - offered[i]);
+                if (d < bestDist) { bestDist = d; best = i; }
+            }
+            return best + 1;
         }
+
         static double hzFromSampleRateId (int id)
         {
             switch (id) { case 1: return 44100.0; case 3: return 88200.0; case 4: return 96000.0;
