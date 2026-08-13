@@ -6,6 +6,23 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Guard the show at the MUTATION, not at the dialog — 2026-08-13
+
+**Context.** The dialogs + `Theme/` pass was the last unread surface. It found `AudioDeviceDialog` — a **floating, non-modal** panel — calling `setAudioDeviceSetup(setup, true)` from three combo handlers with zero `isRecording` references in the file. A device restart runs `audioDeviceStopped()` -> `recorder.release()` -> `stopRecording()`, so nudging the buffer-size combo mid-show ended the take. `MainComponent::applySessionSettings` had guarded the identical operation for months. This is the same shape as the `condemnAllStrips` UAF and the `.wav`-only take globs: the hazard was understood, the guard was written once, at the site where it was first noticed.
+
+**Decision.** Two things, together:
+
+1. **Guard at the mutation, never at the entry point.** The instinct is to refuse to *open* the DEVICE panel while recording. That is wrong here and would have shipped a false sense of safety: the panel is non-modal, so the engineer can leave it open and then hit RECORD. Enablement computed once in a constructor is stale the moment the show starts. Every mutating path checks live state, the controls grey out from a 4 Hz change-gated watch, and the Cancel/destructor revert — which *also* restarts the device — is skipped while rolling.
+2. **Encode it as invariants rule 10** rather than as a paragraph in `CLAUDE.md`. The rule enumerates every caller of `setAudioDeviceSetup()` / `initialise()` and demands a recording guard within 40 lines above it.
+
+**Rationale.** Point 2 paid for itself the same day. Careful reading of the dialog files found one violation; the rule found **four** — the three combo handlers plus `applySessionSampleRate` and both new-session device pushes in `MainComponentHelp`. That is the argument for the whole gate, restated: a rule that enumerates the *consumers* of a hazardous pattern finds instances that reading misses, because reading follows the call graph you already have in your head.
+
+**Consequences.** Ten checks now gate every commit, and `Tools/invariants_audit.sh` is the file to add to when an audit finds a class rather than an instance. New device-touching code must guard or the build goes red. The cost is real: a rule mis-written is worse than no rule (two of the original seven were blind — one matched a commented-out call, one was satisfied by an unrelated comment in the same file), so **a new rule is not landed until it has been watched go red against an injected regression**. That step is now part of the ritual, not an optional nicety.
+
+**Also fixed in the same pass**, all smaller, all real: `compactPath` labelling `/Volumes/RECORD/...` as `~/Volumes/RECORD/...` on the control that tells the engineer which drive the take lands on; raw `this` captured in `MarkerListDialog`'s and `TimelineStrip`'s async menu/modal callbacks (the SafePointer convention every other dialog already followed); a sub-44.1k device displaying as "44.1 kHz"; and `NoiseReportDialog`'s comparator not flooring non-finite keys — unreachable today because the analyzer clamps, but the comparator shouldn't *depend* on a caller's clamping when an unfloored NaN is the hardened-`std::sort` SIGABRT that already crashed the recovery dialog once.
+
+---
+
 ## Ship console families you can't test, safely — 2026-08-13
 
 **Context.** The console layer was OSC-only, so four of the six console families in the picker were honest stubs. Meanwhile a direct competitor shipped DiGiCo + Allen & Heath + SSL integration at $39.99. Going up-market means supporting desks nobody here owns — which collides head-on with the standing rule that untested desk control is the project's largest liability.

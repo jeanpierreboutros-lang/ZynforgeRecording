@@ -143,7 +143,7 @@ Message-thread only. `MainComponent` runs a 24 Hz `juce::Timer` that pulls atomi
 - `SessionSettingsDialog` — editable: audio format / sample rate / bit depth. Menu label: "Session Format & Recording...".
 - `SessionPropertiesDialog` — name / notes + read-only audio config summary. Menu label: "Session Info & Notes...".
 - `ClickSettingsDialog` — metronome (tempo source / voice / subdivisions per click slot).
-- `AudioDeviceDialog` — JUCE's `AudioDeviceSelectorComponent` wrapped in DialogChrome.
+- `AudioDeviceDialog` — a purpose-built device panel (not JUCE's `AudioDeviceSelectorComponent`): output / input / sample-rate / buffer-size combos, monitor-output picker, and a live input meter, in DialogChrome cards. It is **non-modal and floating**, so it can be open when a take starts — it watches `engine.isRecording()` on a 4 Hz timer, greys the four device combos while rolling, and refuses every path that would call `setAudioDeviceSetup()` (a device restart ends the take via `audioDeviceStopped` -> `recorder.release()`). Enforced for all callers by invariants rule 10.
 The old "Settings" + "Properties" labels were ambiguous; relabelled 2026-05-24 to surface what each dialog actually owns. The two dialogs deliberately have separate concerns (edit vs inspect) — collapsing them would put irreversible Format/SR changes one click away from an informational view.
 
 ### Theme (`Source/Theme/`)
