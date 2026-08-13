@@ -2,80 +2,137 @@
 
 namespace zynforge
 {
-    ConsoleLink::ConsoleLink()
-    {
-        receiver.addListener (this);
-    }
-
-    ConsoleLink::~ConsoleLink()
-    {
-        receiver.removeListener (this);
-        disconnect();
-    }
+    ConsoleLink::ConsoleLink()  = default;
+    ConsoleLink::~ConsoleLink() { disconnect(); }
 
     void ConsoleLink::setProfile (ConsoleProfile::Kind k)
     {
         if (k == profile.kind) return;
-        disconnect();                       // addresses / port change with the desk
+        disconnect();                       // addresses / port / transport all change
         profile = consoleProfileFor (k);
         stagePatch.clear();
         gains.clear();
         patch = Patch::Unknown;
+        dialectConfirmed = false;
     }
 
     bool ConsoleLink::connect (const juce::String& targetHost, int port)
     {
         disconnect();
         const int usePort = port > 0 ? port : profile.defaultPort;
-        // One UDP socket shared by sender + receiver: the desk replies to
-        // the request's source port, so we must listen where we send from.
-        // A FRESH socket each time -- shutdown() in disconnect() left the
-        // previous one's handle invalid for re-binding.
-        socket = std::make_unique<juce::DatagramSocket> (false);
-        if (! socket->bindToPort (0))                       { socket.reset(); return false; }
-        if (! receiver.connectToSocket (*socket))           { socket.reset(); return false; }
-        if (! sender.connectToSocket (*socket, targetHost, usePort))
+
+        switch (profile.transport)
         {
-            // The receiver's reader thread references `socket`; disconnect it
-            // BEFORE freeing the socket (disconnect() orders it this way too),
-            // else socket.reset() frees a socket the reader thread still uses.
-            receiver.disconnect();
-            socket.reset();
+            case ConsoleProfile::Transport::TextLineTcp:
+                transport = std::make_unique<TextLineTransport>(); break;
+            case ConsoleProfile::Transport::MidiTcp:
+                transport = std::make_unique<MidiTcpTransport>();  break;
+            case ConsoleProfile::Transport::OscUdp:
+            default:
+                transport = std::make_unique<OscUdpTransport>();   break;
+        }
+
+        transport->onMessage = [this] (const ConsoleMessage& m) { handleMessage (m); };
+        if (! transport->connect (targetHost, usePort))
+        {
+            transport.reset();
             return false;
         }
+
         host      = targetHost;
         connected = true;
         patch     = Patch::Unknown;
-        if (onStatus) onStatus (profile.displayName + " link up: "
-                                + targetHost + ":" + juce::String (usePort));
+        dialectConfirmed = false;
+
+        // HANDSHAKE. Send the dialect's probe; a parseable reply confirms the
+        // address model and unlocks the write tier. Nothing blocks on it -- the
+        // link is immediately usable read-only either way.
+        if (profile.dialect.probe)
+            sendMessage (profile.dialect.probe());
+        // Ask for pushed updates (names / scene changes) where supported.
+        if (profile.dialect.subscribe)
+            sendMessage (profile.dialect.subscribe());
+
+        if (onStatus)
+            onStatus (profile.displayName + " link up: " + targetHost + ":"
+                      + juce::String (usePort) + "  (" + transport->getName() + ")");
         return true;
     }
 
     void ConsoleLink::disconnect()
     {
         if (! connected) return;
-        sender.disconnect();
-        receiver.disconnect();
-        socket.reset();           // closes + frees the handle; connect() makes a new one
+        if (transport != nullptr)
+        {
+            transport->onMessage = nullptr;   // no late delivery into a dead link
+            transport->disconnect();
+        }
+        transport.reset();
         connected = false;
+        dialectConfirmed = false;
         host.clear();
         patch = Patch::Unknown;
+        stopTimer();
     }
 
-    juce::String ConsoleLink::inBlockAddress (int blockIdx) const
+    void ConsoleLink::sendMessage (const ConsoleMessage& m)
     {
-        return profile.inBlockAddress ? profile.inBlockAddress (blockIdx) : juce::String();
+        if (m.isEmpty()) return;
+        if (msgHook != nullptr) { msgHook (m); return; }
+        if (connected && transport != nullptr) transport->send (m);
     }
 
-    juce::String ConsoleLink::headampAddress (int headampIdx) const
+    // Every WRITE goes through here. Two independent gates: the profile has to
+    // claim the capability at all, and the dialect has to be trustworthy --
+    // either verified by hand or confirmed by the connect-time handshake.
+    // Refusing loudly beats writing a guess into a desk mid-show.
+    bool ConsoleLink::guardWrite (const char* what)
     {
-        return profile.gainAddress ? profile.gainAddress (headampIdx) : juce::String();
+        if (! connected) return false;
+        if (canWrite()) return true;
+        if (onStatus)
+            onStatus (juce::String (profile.displayName)
+                      + ": " + what + " blocked -- the console didn't answer the "
+                      "handshake, so its control dialect is unconfirmed. Read-only.");
+        return false;
     }
 
-    void ConsoleLink::sendMessage (const juce::OSCMessage& m)
+    void ConsoleLink::setSendHook (std::function<void (const juce::OSCMessage&)> hook)
     {
-        if (sendHook != nullptr) { sendHook (m); return; }
-        if (connected) sender.send (m);
+        if (hook == nullptr) { msgHook = nullptr; return; }
+        // Translate the neutral message back into OSC so the long-standing X32
+        // tests keep asserting on juce::OSCMessage unchanged.
+        setMessageHook ([hook] (const ConsoleMessage& m)
+        {
+            juce::OSCMessage osc { juce::OSCAddressPattern (m.address) };
+            for (const auto& a : m.args)
+            {
+                if      (a.isInt() || a.isInt64()) osc.addInt32 ((juce::int32) (int) a);
+                else if (a.isDouble())             osc.addFloat32 ((float) (double) a);
+                else                               osc.addString (a.toString());
+            }
+            hook (osc);
+        });
+    }
+
+    void ConsoleLink::injectReply (const juce::OSCMessage& m)
+    {
+        ConsoleMessage cm { m.getAddressPattern().toString() };
+        for (const auto& a : m)
+        {
+            if      (a.isInt32())   cm.args.emplace_back ((int) a.getInt32());
+            else if (a.isFloat32()) cm.args.emplace_back ((double) a.getFloat32());
+            else if (a.isString())  cm.args.emplace_back (a.getString());
+        }
+        handleMessage (cm);
+    }
+
+    void ConsoleLink::requestChannelNames (int count)
+    {
+        if (! connected || ! profile.canReadNames || ! profile.dialect.queryChannelName) return;
+        for (int ch = 1; ch <= juce::jlimit (0, 128, count); ++ch)
+            sendMessage (profile.dialect.queryChannelName (ch));
+        if (onStatus) onStatus ("Requested " + juce::String (count) + " channel names...");
     }
 
     void ConsoleLink::enterSoundcheck()
@@ -88,13 +145,15 @@ namespace zynforge
                 : profile.displayName + ": repatch over the wire isn't supported.");
             return;
         }
-        // Phase 1: query the current routing of every block. The replies
-        // stash the show patch; once all are in, phase 2 (in
-        // oscMessageReceived) flips the blocks to the card returns.
+        if (! guardWrite ("repatch")) return;
+
+        // Phase 1: query the current routing of every block. The replies stash
+        // the show patch; once all are in, phase 2 flips the blocks to card.
         stagePatch.clear();
         pendingPatchQueries = profile.numInBlocks;
         for (int b = 0; b < profile.numInBlocks; ++b)
-            sendMessage (juce::OSCMessage (juce::OSCAddressPattern (inBlockAddress (b))));
+            if (profile.dialect.queryInBlock)
+                sendMessage (profile.dialect.queryInBlock (b));
         if (onStatus) onStatus ("Reading console patch...");
         startTimer (1200);   // abort if a routing reply is lost
     }
@@ -102,14 +161,15 @@ namespace zynforge
     void ConsoleLink::exitSoundcheck()
     {
         if (! connected || ! profile.canRepatch) return;
+        if (! guardWrite ("repatch")) return;
         if (stagePatch.size() < (size_t) profile.numInBlocks)
         {
             if (onStatus) onStatus ("No stashed stage patch -- enter soundcheck first.");
             return;
         }
         for (const auto& [block, value] : stagePatch)
-            sendMessage (juce::OSCMessage (juce::OSCAddressPattern (inBlockAddress (block)),
-                                           (juce::int32) value));
+            if (profile.dialect.setInBlock)
+                sendMessage (profile.dialect.setInBlock (block, value));
         patch = Patch::Stage;
         if (onStatus) onStatus ("Console repatched to STAGE (restored show patch).");
     }
@@ -122,11 +182,16 @@ namespace zynforge
             if (onStatus) onStatus (profile.displayName + ": head-amp gain capture isn't supported.");
             return;
         }
+        // Capture is a READ, but it feeds restoreGains() which is a write, and
+        // a half-understood reply format would poison the stash. Gate it too.
+        if (! guardWrite ("head-amp capture")) return;
+
         gains.clear();
         gainCaptureComplete = false;
         expectedGainReplies = juce::jlimit (0, 128, numHeadamps);
         for (int i = 0; i < expectedGainReplies; ++i)
-            sendMessage (juce::OSCMessage (juce::OSCAddressPattern (headampAddress (i))));
+            if (profile.dialect.queryHeadAmp)
+                sendMessage (profile.dialect.queryHeadAmp (i));
         if (onStatus) onStatus ("Capturing " + juce::String (expectedGainReplies)
                                 + " head-amp gains...");
         startTimer (1500);   // abort if a head-amp reply is lost
@@ -135,65 +200,80 @@ namespace zynforge
     void ConsoleLink::restoreGains()
     {
         if (! connected || ! profile.canCaptureGains) return;
+        if (! guardWrite ("head-amp restore")) return;
         if (gains.empty())
         {
             if (onStatus) onStatus ("No captured gains to restore.");
             return;
         }
         for (const auto& [idx, value] : gains)
-            sendMessage (juce::OSCMessage (juce::OSCAddressPattern (headampAddress (idx)),
-                                           value));
+            if (profile.dialect.setHeadAmp)
+                sendMessage (profile.dialect.setHeadAmp (idx, value));
         if (onStatus) onStatus (juce::String ((int) gains.size())
                                 + " head-amp gains restored to show settings.");
     }
 
-    void ConsoleLink::oscMessageReceived (const juce::OSCMessage& m)
+    void ConsoleLink::handleMessage (const ConsoleMessage& m)
     {
-        const auto addr = m.getAddressPattern().toString();
+        if (! profile.dialect.parse) return;
+        const auto ev = profile.dialect.parse (m);
 
-        // Routing-block reply (query response carries the enum as int).
-        for (int b = 0; b < profile.numInBlocks; ++b)
+        switch (ev.type)
         {
-            if (addr != inBlockAddress (b)) continue;
-            if (m.size() < 1 || ! m[0].isInt32()) return;
-            if (pendingPatchQueries > 0)
+            case ConsoleEvent::Type::None:
+                return;
+
+            case ConsoleEvent::Type::HandshakeOk:
+                if (! dialectConfirmed)
+                {
+                    dialectConfirmed = true;
+                    if (onStatus)
+                        onStatus (profile.displayName + ": dialect confirmed -- console control enabled.");
+                }
+                return;
+
+            // ── READ TIER ────────────────────────────────────────────────
+            case ConsoleEvent::Type::ChannelName:
+                if (onChannelName && ev.index >= 1) onChannelName (ev.index, ev.text);
+                return;
+
+            case ConsoleEvent::Type::SceneRecalled:
+                if (onSceneRecalled) onSceneRecalled (ev.index, ev.text);
+                return;
+
+            // ── WRITE-TIER REPLIES ───────────────────────────────────────
+            case ConsoleEvent::Type::InputBlockRouting:
             {
-                stagePatch[b] = (int) m[0].getInt32();
+                if (pendingPatchQueries <= 0) return;
+                stagePatch[ev.index] = ev.intValue;
                 if (--pendingPatchQueries == 0)
                 {
-                    stopTimer();   // all replies in -- cancel the watchdog
+                    stopTimer();
                     // Phase 2: full show patch stashed -> flip to card.
                     for (int blk = 0; blk < profile.numInBlocks; ++blk)
-                        sendMessage (juce::OSCMessage (
-                            juce::OSCAddressPattern (inBlockAddress (blk)),
-                            (juce::int32) (profile.cardBlockFirst + blk)));
+                        if (profile.dialect.setInBlock)
+                            sendMessage (profile.dialect.setInBlock (
+                                blk, profile.cardBlockFirst + blk));
                     patch = Patch::Soundcheck;
-                    if (onStatus) onStatus ("Console repatched to SOUNDCHECK (card returns); show patch stashed.");
+                    if (onStatus)
+                        onStatus ("Console repatched to SOUNDCHECK (card returns); show patch stashed.");
                 }
+                return;
             }
-            return;
-        }
 
-        // Head-amp gain reply: /headamp/NNN/gain ,f
-        if (addr.startsWith ("/headamp/") && addr.endsWith ("/gain")
-            && m.size() >= 1 && m[0].isFloat32())
-        {
-            const int idx = addr.fromFirstOccurrenceOf ("/headamp/", false, false)
-                                .upToFirstOccurrenceOf ("/", false, false).getIntValue();
-            // The index comes straight off the wire -- range-check it before
-            // using it as a map key so a malformed / spoofed reply can't seed
-            // the gains map with a garbage (e.g. huge or negative) head-amp
-            // number that we'd later blindly write back to the desk (finding
-            // #8b). captureGains only ever polls [0, 128).
-            if (idx < 0 || idx >= 128) return;
-            gains[idx] = m[0].getFloat32();
-            if (expectedGainReplies > 0 && (int) gains.size() >= expectedGainReplies)
+            case ConsoleEvent::Type::HeadAmpGain:
             {
-                stopTimer();   // all replies in -- cancel the watchdog
-                expectedGainReplies = 0;
-                gainCaptureComplete = true;   // every requested reply landed
-                if (onStatus) onStatus (juce::String ((int) gains.size())
-                                        + " head-amp gains captured.");
+                if (ev.index < 0 || ev.index >= 128) return;   // range-check off-wire indices
+                gains[ev.index] = ev.value;
+                if (expectedGainReplies > 0 && (int) gains.size() >= expectedGainReplies)
+                {
+                    stopTimer();
+                    expectedGainReplies = 0;
+                    gainCaptureComplete = true;
+                    if (onStatus) onStatus (juce::String ((int) gains.size())
+                                            + " head-amp gains captured.");
+                }
+                return;
             }
         }
     }
@@ -201,7 +281,7 @@ namespace zynforge
     void ConsoleLink::timerCallback()
     {
         // Reply-timeout watchdog (see header). A query is still outstanding ->
-        // a UDP reply was lost; abort cleanly so the UI doesn't sit forever on
+        // a reply was lost; abort cleanly so the UI doesn't sit forever on
         // "Reading console patch..." / "Capturing head-amp gains...".
         stopTimer();
         if (pendingPatchQueries > 0)
@@ -226,6 +306,7 @@ namespace zynforge
     {
         auto* obj = new juce::DynamicObject();
         obj->setProperty ("host", host);
+        obj->setProperty ("console", (int) profile.kind);
         obj->setProperty ("capturedAt", juce::Time::getCurrentTime().toISO8601 (true));
 
         juce::Array<juce::var> patchArr;
@@ -267,14 +348,14 @@ namespace zynforge
                 if (g.hasProperty ("headamp") && g.hasProperty ("gain"))
                 {
                     // Range-check a hand-edited / corrupted state file before it
-                    // ever reaches restoreGains -> the desk. The wire path already
+                    // ever reaches restoreGains -> the desk. The wire path also
                     // clamps; this path did not.
                     const int ha = (int) g.getProperty ("headamp", 0);
                     if (ha < 0 || ha >= 128) continue;
                     // gains hold the RAW normalised 0..1 wire value (sent back
                     // verbatim by restoreGains), so clamp in THAT domain -- a
                     // dB-range clamp (-12..60) was a no-op that passed
-                    // dB-looking garbage (e.g. 24) straight to the desk.
+                    // dB-looking garbage straight to the desk.
                     gains[ha] = juce::jlimit (0.0f, 1.0f,
                                               (float) (double) g.getProperty ("gain", 0.0));
                 }

@@ -17,6 +17,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Added (multi-console support: transport seam, read tier, handshake gate — 2026-08-13)
+
+Console control was welded to `juce::DatagramSocket` + OSC, which capped support at "OSC desks only" — so DiGiCo / Yamaha / SSL / A&H could only ever be honest stubs. Rebuilt around a **transport seam**, with the value-dense read-only features generalised across families.
+
+- **`ConsoleTransport` + three implementations.** `OscUdpTransport` (X32/M32, WING, DiGiCo), `TextLineTransport` (Yamaha SCP — ASCII lines over TCP), `MidiTcpTransport` (Allen & Heath — MIDI over TCP). A `ConsoleMessage` (address + typed args) is the neutral unit; transports own bytes and framing, `ConsoleDialect` owns the wire dialect, `ConsoleLink` is left as pure state machine.
+- **READ TIER — the two things a recorder actually wants from a console, on every supported family:**
+  - **Channel names** land on the matching strip, so takes arrive labelled instead of "1, 2, 3".
+  - **Scene / snapshot recalls drop a named marker**, which is what makes a show navigable the next morning.
+  Both are read-only and cannot change a desk, which is why they're safe to ship for consoles nobody here owns.
+- **New console profiles:** Behringer WING, DiGiCo SD/Quantum, Yamaha CL/QL/RIVAGE/DM, Allen & Heath dLive/Avantis/SQ. Each declares its transport, capabilities and dialect honestly.
+- **Connect-time handshake, and a hard write gate.** On connect the link sends the dialect's probe; a parseable reply confirms the address model. **A dialect we don't already trust cannot WRITE to a desk until that handshake succeeds** — repatch, head-amp capture and restore are all refused with an explanation, and the menu items grey out. The X32/M32 reference dialect is trusted (documented protocol, encode/parse pinned by tests) and behaves exactly as before.
+
+**Read this before trusting any of it:** only the X32/M32 address model is trusted. WING, DiGiCo, Yamaha and A&H dialects were written from published protocol conventions with **no hardware to verify them against**. The plumbing (framing, tokenising, encode/parse, the gate) is tested; the dialects are not. That asymmetry is deliberate and enforced in code: a wrong guess degrades to "read-only, no console control", never to writing garbage into someone's show. `Source/Tests/ConsoleTransportTests.cpp` (7 groups) covers SCP tokenising, MIDI framing across split reads and SysEx, per-family parse, and the refusal itself. **293 test groups / 0 failures.**
+
+**Also fixed:** `ConsoleLinkTests` indexed its captured-message vector without a size check, so a regression that changed the message count **segfaulted the test binary** — aborting the suite and hiding every test after it. A failing assertion has to stay a failing assertion.
+
 ### Added (invariants CI gate) + Fixed (bug-class sweep — 5 more open sites, 2026-08-13)
 
 Four audit passes each found the *same bug classes* re-violated in new places. This change attacks the class instead of the instance.

@@ -602,6 +602,35 @@ void MainComponent::promptConsoleConnect()
             consoleLink.setProfile (profiles[(size_t) profileIdx].kind);
 
             consoleLink.onStatus = [this] (const juce::String& s) { showStatus (s); };
+
+            // ── READ TIER ────────────────────────────────────────────────
+            // The two things a recorder actually wants from a console, both
+            // read-only and therefore safe on any desk, confirmed or not.
+
+            // A channel name lands on the matching strip, so takes arrive
+            // labelled instead of "1, 2, 3". Routed through the engine's
+            // capture-aware path so "New session from console" can also
+            // collect names for channels that don't exist yet.
+            consoleLink.onChannelName = [this] (int ch1, const juce::String& name)
+            {
+                if (name.trim().isEmpty()) return;
+                engine.onConsoleChannelName (ch1, name.trim());
+            };
+
+            // A scene / snapshot recall drops a marker. This is what makes a
+            // show navigable the next morning -- jump straight to the song.
+            // Markers need a session context; if there isn't one yet the recall
+            // is simply ignored rather than dropped at a meaningless position.
+            consoleLink.onSceneRecalled = [this] (int sceneIdx, const juce::String& sceneName)
+            {
+                if (! engine.getMarkers().hasContext()) return;
+                const auto label = sceneName.trim().isNotEmpty()
+                                     ? sceneName.trim()
+                                     : "Scene " + juce::String (sceneIdx);
+                if (engine.dropMarkerAtCurrentPosition (label) >= 0)
+                    showStatus ("Console scene \"" + label + "\" -- marker dropped");
+            };
+
             if (! consoleLink.connect (host))
             {
                 showStatus ("Console link failed -- check the IP and the network");
@@ -613,6 +642,15 @@ void MainComponent::promptConsoleConnect()
                 p->setValue ("consoleProfile", profileIdx);
                 p->saveIfNeeded();
             }
+            // Pull the channel names straight away so the session labels
+            // itself the moment the desk is reachable.
+            if (consoleLink.getProfile().canReadNames)
+            {
+                const int n = juce::jlimit (1, 64,
+                    juce::jmax (8, engine.getRecorder().getNumTracks()));
+                consoleLink.requestChannelNames (n);
+            }
+
             // For a native-VSC desk, point the engineer at the console.
             if (! consoleLink.getProfile().canRepatch
                 && consoleLink.getProfile().note.isNotEmpty())

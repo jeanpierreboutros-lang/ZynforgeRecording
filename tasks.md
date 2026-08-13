@@ -15,6 +15,18 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Current Priorities
 
+### MULTI-CONSOLE SUPPORT — 2026-08-13 (shipped)
+
+Console control rebuilt on a transport seam so support isn't capped at OSC desks, with the value-dense read-only features generalised across families and every write gated behind a handshake. **293 test groups / 0 failures.** ADR: *Ship console families you can't test, safely*.
+
+- [x] **Transport + dialect seam** (L) — `ConsoleTransport` (OSC/UDP, SCP text/TCP, MIDI/TCP) + `ConsoleDialect` + risk-tiered `ConsoleProfile`; `ConsoleLink` is now a pure state machine. X32/M32 behaviour unchanged.
+- [x] **READ tier across families** (M) — channel names -> strip names, scene/snapshot recall -> named marker. Wired into the console-connect flow.
+- [x] **New profiles** (M) — Behringer WING, DiGiCo SD/Quantum, Yamaha CL/QL/RIVAGE/DM, Allen & Heath dLive/Avantis/SQ.
+- [x] **Handshake write-gate** (M) — `canWrite() = dialectTrusted || dialectConfirmed`; untrusted dialects are read-only until the desk answers the probe. Menu items grey accordingly (added to the menu-state signature, since the handshake resolves asynchronously after connect).
+- [x] **Test-suite robustness** (S) — `ConsoleLinkTests` indexed a vector without a size check, so a regression segfaulted the binary and hid every later test.
+- [ ] **⚠ THE DIALECTS ARE UNVERIFIED** — WING / DiGiCo / Yamaha / A&H address tables come from published protocol conventions, not hardware. The gate makes a wrong guess degrade to read-only, but first contact with each desk will need a session with the console in front of you: confirm names arrive, confirm a scene recall drops a marker, then decide whether to promote the dialect to `dialectTrusted`.
+- [ ] **X32 hardware pass still outstanding** — routing enum indices + AES50 head-amp mapping. Unchanged by this work.
+
 ### PROCESS HARDENING — 2026-08-13 (shipped)
 
 Acting on the two engineering items from the market-position review: stop fixing bug *instances*, and make the UI testable.

@@ -3,6 +3,7 @@
 #include <juce_osc/juce_osc.h>
 
 #include "ConsoleProfile.h"
+#include "ConsoleTransports.h"
 
 #include <functional>
 #include <map>
@@ -38,9 +39,7 @@ namespace zynforge
     // between an OSCSender and an OSCReceiver (the desk replies to the
     // request's source port). Message-thread only, like the rest of the
     // OSC layer.
-    class ConsoleLink final : private juce::OSCReceiver::Listener<
-                                  juce::OSCReceiver::MessageLoopCallback>,
-                              private juce::Timer
+    class ConsoleLink final : private juce::Timer
     {
     public:
         ConsoleLink();
@@ -89,16 +88,53 @@ namespace zynforge
         // or gain reply arrives, and when enter/exit/restore complete.
         std::function<void (const juce::String& status)> onStatus;
 
-        // ── Test seams ──────────────────────────────────────────────────
-        void setSendHook (std::function<void (const juce::OSCMessage&)> hook)
+        // ── READ TIER ───────────────────────────────────────────────────
+        // The two things a RECORDER actually wants from a console, both
+        // read-only and therefore safe on any desk verified or not.
+        //
+        // A channel name arrived (1-based console channel). The host renames
+        // the matching strip so takes land labelled.
+        std::function<void (int ch1, const juce::String& name)> onChannelName;
+        // A scene / snapshot was recalled. The host drops a marker, which is
+        // what makes a show navigable the next morning.
+        std::function<void (int sceneIdx, const juce::String& name)> onSceneRecalled;
+
+        // Ask the desk for every channel name in [1, count]. No-op unless the
+        // profile declares canReadNames.
+        void requestChannelNames (int count);
+
+        // ── HANDSHAKE / SELF-VERIFICATION ───────────────────────────────
+        // On connect the link sends the dialect's probe. A parseable reply
+        // means the address model matches what we think this desk is, and the
+        // WRITE tier unlocks. No reply (or an unparseable one) leaves the link
+        // in READ-ONLY mode -- which is why a dialect written from published
+        // docs, with no hardware to test against, is safe to ship: a wrong
+        // guess degrades to "no console control", never to writing garbage.
+        bool isDialectConfirmed() const noexcept { return dialectConfirmed; }
+        // True when writes are permitted: the profile claims the capability AND
+        // either the dialect is verified-by-hand or the handshake confirmed it.
+        bool canWrite() const noexcept
         {
-            sendHook = std::move (hook);
-            connected = connected || sendHook != nullptr;   // hooked = "connected" for tests
+            return profile.dialectTrusted || dialectConfirmed;
         }
-        void injectReply (const juce::OSCMessage& m) { oscMessageReceived (m); }
+
+        // ── Test seams ──────────────────────────────────────────────────
+        // Intercept every outgoing message and play the console's side, with
+        // no socket. The OSC overloads are kept so the existing X32 tests read
+        // unchanged; they translate to/from ConsoleMessage.
+        void setSendHook (std::function<void (const juce::OSCMessage&)> hook);
+        void setMessageHook (std::function<void (const ConsoleMessage&)> hook)
+        {
+            msgHook = std::move (hook);
+            connected = connected || msgHook != nullptr;   // hooked = "connected" for tests
+        }
+        void injectReply (const juce::OSCMessage& m);
+        void injectReply (const ConsoleMessage& m) { handleMessage (m); }
+        // Pretend the handshake landed, for tests that exercise the write tier.
+        void confirmDialectForTests() noexcept { dialectConfirmed = true; }
 
     private:
-        void oscMessageReceived (const juce::OSCMessage&) override;
+        void handleMessage (const ConsoleMessage&);
         // Reply-timeout watchdog: a query (enterSoundcheck / captureGains) waits
         // for N UDP replies; if one is lost the op would hang forever ("Reading
         // console patch..."). This one-shot fires ~1.2 s after a query and
@@ -107,20 +143,17 @@ namespace zynforge
         // stopTimer cancels it on completion), so no generation counter is
         // needed to invalidate a stale timer.
         void timerCallback() override;
-        void sendMessage (const juce::OSCMessage&);
-        juce::String inBlockAddress (int blockIdx) const;      // via active profile
-        juce::String headampAddress (int headampIdx) const;    // via active profile
+        void sendMessage (const ConsoleMessage&);
+        // Refuse a write the profile/handshake doesn't permit, with a status
+        // line explaining why rather than silently doing nothing.
+        bool guardWrite (const char* what);
 
         ConsoleProfile profile { x32Profile() };
 
-        // Recreated on every connect(): juce::DatagramSocket::shutdown()
-        // permanently invalidates the handle (handle = -1, never reopened),
-        // so a reused socket can't re-bind after a disconnect. A fresh
-        // socket per connect makes disconnect -> reconnect work.
-        std::unique_ptr<juce::DatagramSocket> socket;
-        juce::OSCSender      sender;
-        juce::OSCReceiver    receiver;
+        // Built per connect() from the profile's transport kind.
+        std::unique_ptr<ConsoleTransport> transport;
         bool                 connected { false };
+        bool                 dialectConfirmed { false };
         juce::String         host;
 
         Patch                patch { Patch::Unknown };
@@ -130,7 +163,7 @@ namespace zynforge
         int                  expectedGainReplies { 0 };
         bool                 gainCaptureComplete { false };
 
-        std::function<void (const juce::OSCMessage&)> sendHook;
+        std::function<void (const ConsoleMessage&)> msgHook;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ConsoleLink)
     };

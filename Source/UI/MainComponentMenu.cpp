@@ -261,8 +261,14 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                                ? "Console: disconnect " + consoleLink.getHost()
                                : juce::String ("Console: connect..."));
             // Repatch + gain items only light up for a desk we drive over OSC.
-            const bool consoleRepatch = consoleLink.isConnected() && consoleLink.getProfile().canRepatch;
-            const bool consoleGains   = consoleLink.isConnected() && consoleLink.getProfile().canCaptureGains;
+            // Write-tier items also require a TRUSTWORTHY dialect: either the
+            // address model is one we trust (the X32 reference) or the console
+            // answered the connect-time handshake. An unconfirmed desk stays
+            // read-only, so grey the write items rather than offering an action
+            // that would be refused.
+            const bool consoleWritable = consoleLink.isConnected() && consoleLink.canWrite();
+            const bool consoleRepatch = consoleWritable && consoleLink.getProfile().canRepatch;
+            const bool consoleGains   = consoleWritable && consoleLink.getProfile().canCaptureGains;
             m.addItem (955, consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck
                                ? "Console: back to STAGE patch"
                                : "Console: SOUNDCHECK patch (card returns)",
@@ -345,6 +351,10 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) consoleLink.getPatch()
         << '|' << (int) consoleLink.getProfile().canRepatch
         << '|' << (int) consoleLink.getProfile().canCaptureGains
+        // The handshake flips canWrite() asynchronously AFTER connect, so it
+        // must be in the signature or the write items stay greyed until some
+        // unrelated state change happens to refresh the menu.
+        << '|' << (int) consoleLink.canWrite()
         << '|' << (int) useCaptureDaemon
         << '|' << (int) captureSupervisor.isAttached()
         << '|' << (int) (useCaptureDaemon && captureSupervisor.isDaemonRecording());

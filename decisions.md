@@ -6,6 +6,23 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Ship console families you can't test, safely — 2026-08-13
+
+**Context.** The console layer was OSC-only, so four of the six console families in the picker were honest stubs. Meanwhile a direct competitor shipped DiGiCo + Allen & Heath + SSL integration at $39.99. Going up-market means supporting desks nobody here owns — which collides head-on with the standing rule that untested desk control is the project's largest liability.
+
+**The resolution is to separate two things that were conflated.** "Is this address model correct?" and "is the desk on the other end who we think it is?" are different questions with different answers and different blast radii.
+
+- **Risk-tier the capabilities.** For a RECORDER, nearly all the console value is read-only: channel names label the session, scene recalls drop markers that make the show navigable next morning. Neither can change a desk. Repatch and head-amp gain restore — the features that can wreck a show — are the *least* differentiating. So the read tier generalises across every family and the write tier stays narrow.
+- **Gate writes on a handshake, not on ownership.** `canWrite()` requires `dialectTrusted || dialectConfirmed`. `dialectTrusted` is a claim about the address model — documented protocol plus encode/parse pinned by tests, true only for the X32/M32 reference. `dialectConfirmed` is set when the console answers the connect-time probe the way the dialect predicts. A dialect written from published documentation therefore ships **usable read-only immediately** and **cannot write until the desk identifies itself**.
+
+**Decision.** Transport seam (`ConsoleTransport` + OSC/UDP, SCP text/TCP, MIDI/TCP), dialect seam (`ConsoleDialect`), risk-tiered capabilities, handshake-gated writes. Adding a console family is now a dialect table plus tests, not a protocol rewrite.
+
+**What this does NOT buy.** The plumbing is tested; the dialects are guesses. Framing, tokenising, encode/parse round-trips and the refusal itself are covered by `ConsoleTransportTests`, but no test can tell us whether Yamaha's parameter path or A&H's SysEx enquiry is spelled correctly. First contact with each desk will find things. The gate means those findings are "it stayed read-only" rather than "it wrote nonsense to my preamps" — and the tests make the *plumbing* not the suspect when it happens.
+
+**Consequences.** X32/M32 behaviour is unchanged (it's trusted, so it writes immediately as before). The four new families are read-only until proven. A caveat worth repeating: `dialectTrusted` is not "hardware-verified" — the X32's routing enum indices and AES50 head-amp mapping still want a real desk before anyone leans on them at a gig.
+
+---
+
 ## Enforce bug CLASSES in CI, not in prose — 2026-08-13
 
 **Context.** Five audit passes over two months. Every one found defects in classes a previous pass had already "fixed" somewhere else: `condemnAllStrips` was extended four times across MIXER call sites while the identical hazard sat open in the EDIT rows and the meterbridge; `.wav`-only globs were fixed in the player, then found again in the transient cache, the timeline CSV and the Crop guard; the unlocked `TrackState::name` write was fixed in two rename editors and still present in a menu item. Each fix was correct. Each was applied only where the bug was *found*.

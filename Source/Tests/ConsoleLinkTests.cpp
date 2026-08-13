@@ -20,6 +20,36 @@ namespace zynforge
             std::vector<juce::OSCArgument> args;
         };
 
+        // A size assertion that FAILS the test instead of letting the next
+        // line index an empty vector. A regression that changed the message
+        // count used to segfault the whole binary here, which aborted the
+        // suite and hid every test after it -- a failing assertion has to stay
+        // a failing assertion.
+        template <typename T>
+        bool haveAtLeast (const std::vector<T>& v, int n, const juce::String& what)
+        {
+            if ((int) v.size() >= n) return true;
+            expect (false, what + ": expected >= " + juce::String (n)
+                           + " messages, got " + juce::String ((int) v.size()));
+            return false;
+        }
+
+        // Same idea for arg indexing: check before you dereference.
+        template <typename Msg>
+        bool expectAtLeastOneFloatArg (const Msg& m)
+        {
+            const bool ok = m.args.size() >= 1 && m.args[0].isFloat32();
+            expect (ok, "expected one float arg");
+            return ok;
+        }
+        template <typename Msg>
+        bool expectAtLeastOneIntArg (const Msg& m)
+        {
+            const bool ok = m.args.size() >= 1 && m.args[0].isInt32();
+            expect (ok, "expected one int arg");
+            return ok;
+        }
+
         void runTest() override
         {
             beginTest ("enterSoundcheck queries all four IN blocks, then flips to CARD");
@@ -36,10 +66,13 @@ namespace zynforge
                 link.enterSoundcheck();
                 // Phase 1: four argument-less queries.
                 expectEquals ((int) sent.size(), 4);
+                if (haveAtLeast (sent, 4, "enterSoundcheck queries"))
+                {
                 expectEquals (sent[0].addr, juce::String ("/config/routing/IN/1-8"));
                 expectEquals (sent[1].addr, juce::String ("/config/routing/IN/9-16"));
                 expectEquals (sent[2].addr, juce::String ("/config/routing/IN/17-24"));
                 expectEquals (sent[3].addr, juce::String ("/config/routing/IN/25-32"));
+                }
                 for (const auto& s : sent)
                     expect (s.args.empty(), "query must carry no arguments");
 
@@ -97,9 +130,12 @@ namespace zynforge
 
                 link.captureGains (3);
                 expectEquals ((int) sent.size(), 3);
-                expectEquals (sent[0].addr, juce::String ("/headamp/000/gain"));
-                expectEquals (sent[1].addr, juce::String ("/headamp/001/gain"));
-                expectEquals (sent[2].addr, juce::String ("/headamp/002/gain"));
+                if (haveAtLeast (sent, 3, "captureGains polls"))
+                {
+                    expectEquals (sent[0].addr, juce::String ("/headamp/000/gain"));
+                    expectEquals (sent[1].addr, juce::String ("/headamp/001/gain"));
+                    expectEquals (sent[2].addr, juce::String ("/headamp/002/gain"));
+                }
 
                 link.injectReply (juce::OSCMessage (juce::OSCAddressPattern ("/headamp/000/gain"), 0.5f));
                 link.injectReply (juce::OSCMessage (juce::OSCAddressPattern ("/headamp/001/gain"), 0.0f));
@@ -117,8 +153,9 @@ namespace zynforge
                 sent.clear();
                 link.restoreGains();
                 expectEquals ((int) sent.size(), 3);
-                expect (sent[0].args.size() == 1 && sent[0].args[0].isFloat32());
-                expectWithinAbsoluteError (sent[0].args[0].getFloat32(), 0.5f, 1.0e-6f);
+                if (haveAtLeast (sent, 1, "restoreGains writes")
+                    && expectAtLeastOneFloatArg (sent[0]))
+                    expectWithinAbsoluteError (sent[0].args[0].getFloat32(), 0.5f, 1.0e-6f);
             }
 
             beginTest ("connect -> disconnect -> reconnect rebinds a fresh socket");
@@ -173,7 +210,9 @@ namespace zynforge
                 });
                 b.exitSoundcheck();
                 expectEquals ((int) sent.size(), 4);
-                expectEquals ((int) sent[0].args[0].getInt32(), 10);
+                if (haveAtLeast (sent, 1, "exitSoundcheck restores")
+                    && expectAtLeastOneIntArg (sent[0]))
+                    expectEquals ((int) sent[0].args[0].getInt32(), 10);
 
                 dir.deleteRecursively();
             }
