@@ -245,8 +245,39 @@ namespace zynforge
             juce::File    root;
             CaptureFormat format { CaptureFormat::Wav24 };
         };
-        void setMirrors (const std::vector<MirrorConfig>& configs);
+        // Returns false (and changes nothing) when a take is rolling -- the
+        // caller MUST NOT persist a config the recorder just refused, or the
+        // settings file and the live recorder disagree for the rest of the show.
+        bool setMirrors (const std::vector<MirrorConfig>& configs);
         std::vector<MirrorConfig> getMirrors() const               { return mirrorConfigs; }
+
+        // Why a mirror root is unusable, or an empty string when it's safe.
+        //
+        // A mirror writes to `root/<sessionName>/Audio Files/Track_NN.<ext>`,
+        // which is the SAME shape the primary and backup use. So a root that
+        // happens to be the session's parent resolves to the primary take's own
+        // files -- two writers, one path, for the length of the show. The mirror
+        // picker opens at ~/Music and the sessions root is ~/Music/Zynforge
+        // Sessions, so "mirror into my sessions folder" is one click away and
+        // destroys the take it was meant to protect. Same for two rows on one
+        // drive, and for a root pointed at the backup destination.
+        //
+        // Checked at record start (colliding mirrors are skipped, never opened)
+        // AND in the mirror picker, so the engineer hears about it at the desk
+        // rather than at load-out.
+        static juce::String mirrorRootRejection (const juce::File& root,
+                                                 const juce::File& sessionDir,
+                                                 const juce::File& backupRoot,
+                                                 const std::vector<juce::File>& alreadyAccepted);
+
+        // Mirrors dropped at the last record start (collision or unreachable
+        // drive). A configured mirror that never opens produces no Mirror entry,
+        // so anyMirrorFailed() structurally cannot see it -- this is how the
+        // banner reports "you have fewer copies than you configured".
+        int getMirrorsSkippedAtStart() const noexcept
+        {
+            return mirrorsSkippedAtStart.load (std::memory_order_relaxed);
+        }
         // Any mirror failed during the active take? Cleared at start.
         bool anyMirrorFailed() const noexcept;
         bool       hasBackupFailed() const noexcept         { return backupFailed.load (std::memory_order_relaxed); }
@@ -582,6 +613,13 @@ namespace zynforge
         // only while not recording; the active take captures whatever
         // was configured at startRecording.
         std::vector<MirrorConfig> mirrorConfigs;
+        // The subset of mirrorConfigs that actually opened for the live take:
+        // collisions and unreachable drives are filtered out at record start.
+        // WriterChannel::mirrors is built from THIS list, so anything indexing
+        // a mirror by position (the session report) must index this one -- not
+        // the configured list, which can be longer.
+        std::vector<MirrorConfig> activeMirrors;
+        std::atomic<int>          mirrorsSkippedAtStart { 0 };
 
         std::vector<float> scratch;
 

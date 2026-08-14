@@ -6,6 +6,37 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## A redundancy feature must prove the copy is somewhere else — 2026-08-14
+
+**Context.** Reading the seven files the previous pass had only grepped turned up the most serious defect of the whole audit series, in the feature whose entire purpose is not losing audio. Mirrors write to `root/<sessionName>/Audio Files/Track_NN.<ext>`. The primary writes `sessionDir/Audio Files/Track_NN.<ext>`. Those are the same path exactly when the mirror root is the session's parent — and the mirror picker opens at `~/Music`, sessions live in `~/Music/Zynforge Sessions`, and a fresh mirror row defaults to WAV 24-bit, the same as the default capture format. So picking "my sessions folder" as a mirror — a reasonable thing to think you want — opened two `AudioFormatWriter`s on every take file and left them there for the show. Nothing checked. `applyAndClose` filtered exactly one thing: rows where no folder had ever been picked.
+
+**Decision.** A mirror destination must be *proven to be somewhere else* before it is accepted. `MultitrackRecorder::mirrorRootRejection` refuses a root that holds the session, is inside the session, duplicates another mirror, or is the backup root, and it is applied in **two** places: the picker (so the engineer finds out at the desk, with the reason on the offending row) and record start (so a bad config restored from settings, or a session opened somewhere new after the mirror was configured, can't bite either). Skipped mirrors are counted and the recording banner reports them.
+
+**Rationale.** Validating only in the dialog would have been the same mistake as guarding a dialog's launch instead of its mutation: the config outlives the dialog. It's persisted, and the *session* moves — a root that was fine when configured becomes the session's parent the moment the engineer opens a session from that folder. The check has to run where the writers are opened. The dialog check exists for the message, not for the safety.
+
+**The corollary is the more general lesson.** Two of the other findings in this pass were the same shape — a component quietly disagreeing with the engine about whether something happened:
+
+- `AudioEngine::setMirrors` persisted a mirror list the recorder had *refused* mid-take, so the settings file claimed a redundancy that wasn't running, and a restart made it appear to fix itself. **An engine setter that can refuse must report the refusal, and a caller must not persist what was refused.** `setMirrors` now returns `bool` and is `[[nodiscard]]`.
+- `ClickSettingsDialog` switched the live click engine off, saved that, and closed *before* calling the generate path — which refuses mid-take. Pressing "Generate click track" during a show silenced the drummer's click and produced no file. **Do the thing first, then commit to it.** `generateOrRefreshClickTrack` now returns whether it rendered.
+
+**Consequences.** `setMirrors` is `[[nodiscard]]`; new mirror-shaped destinations must go through the rejection rule. Five regression tests pin it, and the injected-regression check showed 6 failures with the rule neutered.
+
+---
+
+## The design gate's blind spot is `Theme/` itself — 2026-08-14
+
+**Context.** `ZynForgeLookAndFeel::drawToggleButton` painted the ON-state letter with `Colours::white.withAlpha(0.95f)` over whatever accent the call site had set as the fill. That is correct for record red and wrong for everything else in the palette: solo `#FFD64D`, monitor `#4AD878`, mute `#FF7733` and the dialog toggles `#5DD87A` all have a perceived brightness above `onSignal`'s 0.55 threshold, so they want a **black** letter. White on solo yellow is roughly 1.2:1 — an effectively invisible **S** on one of the few chips an engineer scans mid-show in a dark room.
+
+Two documented rules were broken by that one line ("Text on a saturated accent: `brand::onSignal(bg)`. Never hardcode black or white", and the bare-`Colours::white` ban). `Tools/design_audit.sh` enforces both — and **excludes `Source/Theme/`**, because `Theme/` is where the sanctioned helpers are defined.
+
+**Decision.** That exclusion is right for the *definitions* and wrong for the *call sites*. Invariants **rule 11** now bans raw `Colours::white` / `Colours::black` everywhere in `Theme/` except `BrandColors.h`, which is where `gloss()` and `onSignal()` legitimately produce them.
+
+**Rationale.** A LookAndFeel paints for every call site in the app, which makes it the most expensive place in the codebase to hardcode a colour: the call sites did the right thing (`ChannelStrip` sets a per-function accent; `ClickSettingsDialog` even calls `onSignal` for its own buttons) and the LAF overrode all of them. Generalising: an exclusion added so a gate can express a rule becomes the one place the rule isn't enforced. Verified by reintroducing the original line and watching rule 11 go red.
+
+**Consequences.** Eleven checks now gate every commit. Adding a colour constant to `Theme/` outside `BrandColors.h` fails the build.
+
+---
+
 ## Guard the show at the MUTATION, not at the dialog — 2026-08-13
 
 **Context.** The dialogs + `Theme/` pass was the last unread surface. It found `AudioDeviceDialog` — a **floating, non-modal** panel — calling `setAudioDeviceSetup(setup, true)` from three combo handlers with zero `isRecording` references in the file. A device restart runs `audioDeviceStopped()` -> `recorder.release()` -> `stopRecording()`, so nudging the buffer-size combo mid-show ended the take. `MainComponent::applySessionSettings` had guarded the identical operation for months. This is the same shape as the `condemnAllStrips` UAF and the `.wav`-only take globs: the hazard was understood, the guard was written once, at the site where it was first noticed.

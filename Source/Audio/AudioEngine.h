@@ -924,7 +924,10 @@ namespace zynforge
         // persists via appProps so the engineer's mirror setup
         // survives an app restart (mirror_count + mirror_root_<n> +
         // mirror_format_<n>).
-        void setMirrors (const std::vector<MultitrackRecorder::MirrorConfig>& configs);
+        // Returns false when a take is rolling: the recorder refuses the change
+        // and NOTHING is persisted, so the settings file can never claim a
+        // redundancy the live recorder isn't providing. Callers must surface it.
+        [[nodiscard]] bool setMirrors (const std::vector<MultitrackRecorder::MirrorConfig>& configs);
         std::vector<MultitrackRecorder::MirrorConfig> getMirrors() const
         {
             return recorder.getMirrors();

@@ -15,6 +15,17 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Current Priorities
 
+### THE SEVEN SKIPPED FILES — 2026-08-14 (all 14 fixed, shipped)
+
+The files the dialogs pass had only *grepped*. Reading them found the worst bug of the audit series.
+**298 test groups / 0 failures**, both gates CLEAN. Every source surface in the app has now been read.
+
+- [x] **HIGH: a mirror drive could overwrite the take it protects** (M) — mirror paths share the primary's shape, so the sessions root as a mirror root put two writers on every take file. `mirrorRootRejection` + enforcement in the picker AND at record start; 5 regression tests.
+- [x] **MED** (M) — skipped mirrors now reported in the banner (`anyMirrorFailed` structurally couldn't see them); `setMirrors` reports its mid-take refusal instead of being persisted anyway; "Generate click track" no longer kills the click for a render that never happened; toggle chips use `brand::onSignal` (white-on-solo-yellow was ~1.2:1); export defaults to the session's rate; Session Properties' name field no longer pretends to rename.
+- [x] **Invariants rule 11** — `Theme/` may not hardcode white/black outside `BrandColors.h`. Closes the design gate's own blind spot (it excludes `Theme/`). Verified red against the original line.
+- [x] **LOW** (S) — Cancel result code, focus/Return wiring, scrollable+capped mirror list, `drawAlertBox` comment vs code + hardcoded text rect, non-uniform icon scaling, meter-bar baselines, dead members.
+
+
 ### DIALOGS + THEME AUDIT — 2026-08-13 (all 6 fixed, shipped)
 
 The last unread surface. **293 test groups / 0 failures**, both gates CLEAN.
@@ -22,7 +33,7 @@ The last unread surface. **293 test groups / 0 failures**, both gates CLEAN.
 - [x] **HIGH: the DEVICE panel could stop a live take** (M) — three combo handlers reconfigured the device with no recording guard; the panel is a non-modal floating window that can be open when RECORD is pressed. Guarded at every mutation + Cancel/dtor revert, and the combos now grey out mid-take via a 4 Hz state watch.
 - [x] **Invariants rule 8 added — and it found 3 MORE unguarded sites** reading had missed (`applySessionSampleRate`, both new-session device pushes). Verified to go red against an injected regression.
 - [x] **Medium/Low** (S) — `compactPath` labelling external drives as `~`; raw-`this` captures in `MarkerListDialog` + `TimelineStrip`; sub-44.1k rates displaying as 44.1 kHz; `NoiseReportDialog`'s comparator now floors non-finite keys.
-- [ ] **Not line-by-line read**: `ZynForgeLookAndFeel`, `Icons.h`, `ExportDialog`, `ClickSettingsDialog`, `MirrorDrivesDialog`, `TimecodeSyncDialog`, `SessionPropertiesDialog` internals — swept for known hazard classes only.
+- [x] **Not line-by-line read**: `ZynForgeLookAndFeel`, `Icons.h`, `ExportDialog`, `ClickSettingsDialog`, `MirrorDrivesDialog`, `TimecodeSyncDialog`, `SessionPropertiesDialog` — **done 2026-08-14**, 14 findings, all fixed.
 
 
 ### INTEGRITY-MANIFEST RACE — 2026-08-13 (fixed)

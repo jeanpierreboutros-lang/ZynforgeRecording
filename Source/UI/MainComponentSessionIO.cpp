@@ -894,12 +894,22 @@ void MainComponent::onSaveSessionAs()
     });
 }
 
+// The rate the session's audio is actually AT -- what the export dialog should
+// default to, so "just export it" doesn't silently resample. Prefer the loaded
+// player (it read the files), fall back to the session setting, then the device.
+static double sessionAudioRateFor (zynforge::AudioEngine& engine)
+{
+    if (const double pr = engine.getPlayer().getSampleRate(); pr > 0.0) return pr;
+    if (const double ss = engine.getSessionSampleRate();      ss > 0.0) return ss;
+    return engine.getDeviceSampleRate();
+}
+
 void MainComponent::onExportAllTracks()
 {
     const auto source = engine.getActiveSessionDir();
     if (! source.isDirectory()) { showStatus ("No active session"); return; }
 
-    zynforge::ExportDialog::launch ("Export all tracks",
+    zynforge::ExportDialog::launch ("Export all tracks", sessionAudioRateFor (engine),
         [this] (std::optional<zynforge::ExportOptions> opts)
     {
         if (! opts.has_value()) return;
@@ -938,7 +948,7 @@ void MainComponent::onExportIndividualTrack (int channelIndex)
     const auto source = engine.getActiveSessionDir();
     if (! source.isDirectory()) { showStatus ("No active session"); return; }
 
-    zynforge::ExportDialog::launch ("Export track",
+    zynforge::ExportDialog::launch ("Export track", sessionAudioRateFor (engine),
         [this, channelIndex] (std::optional<zynforge::ExportOptions> opts)
     {
         if (! opts.has_value()) return;
@@ -1007,7 +1017,7 @@ void MainComponent::onExportIndividualTracks()
         if (chosenTracks.empty()) return;
 
         // Step 2: format / sample-rate / bit-depth (or MP3 bitrate).
-        zynforge::ExportDialog::launch ("Export format",
+        zynforge::ExportDialog::launch ("Export format", sessionAudioRateFor (engine),
             [this, chosenTracks] (std::optional<zynforge::ExportOptions> opts)
         {
             if (! opts.has_value()) return;

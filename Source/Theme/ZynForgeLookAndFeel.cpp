@@ -160,10 +160,15 @@ namespace zynforge
             g.drawRoundedRectangle (r, brand::radius::md, 1.0f);
         }
 
-        // Letter -- white-ish when on for max contrast against the
-        // saturated background; muted grey when off.
-        const auto txt = on ? juce::Colours::white.withAlpha (0.95f)
-                            : brand::textMuted;
+        // Letter -- brand::onSignal picks black or white from the ACTUAL fill,
+        // muted grey when off. This was hardcoded white, which is correct only
+        // for record red: solo (#FFD64D), monitor (#4AD878), mute (#FF7733) and
+        // the dialog toggles (#5DD87A) are all bright enough that onSignal
+        // returns BLACK -- white on solo yellow is about 1.2:1, i.e. an
+        // unreadable S on the one chip you scan mid-show. Never hardcode a
+        // foreground over a caller-supplied accent.
+        const auto onFill = b.findColour (juce::ToggleButton::tickColourId);
+        const auto txt    = on ? brand::onSignal (onFill) : brand::textMuted;
         g.setColour (txt);
         // Heavier, slightly larger glyph than the default uiLabel so
         // the single-letter chips read at a glance.
@@ -176,13 +181,16 @@ namespace zynforge
                                             juce::TextLayout& textLayout)
     {
         // macOS-native-style alert chrome. Two-tone body:
-        //  - upper area (message)            : bgPanel (lighter)
-        //  - lower footer area (buttons)     : bgDeep   (darker)
-        // No icon column (engineers don't need a question mark to
-        // tell them this is a dialog -- removing it via NoIcon at
-        // call sites, the textArea now spans the full width).
+        //  - upper area (message)            : bgElevated (neutral grey)
+        //  - lower footer area (buttons)     : a touch darker
         // No brand-orange title stripe -- the message itself is the
         // header, bold and large; the body text follows underneath.
+        //
+        // Icon column: alerts raised with MessageBoxIconType::NoIcon get the
+        // full width and no glyph; every other type gets the forge-mark badge
+        // in the 80px column JUCE reserves. (An earlier version of this comment
+        // claimed there was never an icon column -- the code below has drawn one
+        // since the forge-mark landed.)
 
         const auto full = alert.getLocalBounds().toFloat();
 
@@ -221,15 +229,14 @@ namespace zynforge
                                                        badge, badge));
         }
 
-        // Text positioned exactly as JUCE's LookAndFeel_V4::drawAlertBox does
-        // (origin x = iconSpace, y = 30, full width) so the pre-sized layout
-        // lands without re-flow or clipping.
-        juce::ignoreUnused (textArea);
-        const juce::Rectangle<int> alertBounds (
-            (int) full.getX() + iconSpace, 30,
-            (int) full.getWidth(),
-            (int) full.getHeight() - getAlertWindowButtonHeight() - 20);
-        textLayout.draw (g, alertBounds.toFloat());
+        // Text drawn into the area AlertWindow actually laid out for it, inset
+        // by the icon column -- the same thing LookAndFeel_V4 does. The previous
+        // version ignored textArea and hardcoded y = 30 with the full window
+        // width, so the rect overhung the right edge by the whole icon column
+        // and ignored the space reserved for text editors / combo boxes. It
+        // happened to render because the layout is pre-wrapped and
+        // left-justified; it was one justification change from clipping.
+        textLayout.draw (g, textArea.withTrimmedLeft (iconSpace).toFloat());
     }
 
     int ZynForgeLookAndFeel::getAlertBoxWindowFlags()

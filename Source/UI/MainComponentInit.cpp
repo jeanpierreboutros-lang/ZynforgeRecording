@@ -567,7 +567,9 @@ MainComponent::MainComponent()
             {
                 // 'Generate click track' button -- render an audio file
                 // of the click for offline workflows (mixdown / export).
-                generateOrRefreshClickTrack();
+                // The result matters: the dialog only switches the live click
+                // engine off if the render actually happened.
+                return generateOrRefreshClickTrack();
             });
     };
     addAndMakeVisible (tempoBar);

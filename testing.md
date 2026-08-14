@@ -84,13 +84,22 @@ tail -1 "$HOME/Library/Logs/Zynforge/test-report.log"   # "[zynforge tests] N te
 
 ```bash
 Tools/design_audit.sh       # 7 brand rules   -- raw colours/fonts/alphas/radii/tints, spacing ratchet
-Tools/invariants_audit.sh   # 10 correctness rules -- the bug CLASSES that repeat audits kept re-finding
+Tools/invariants_audit.sh   # 11 correctness rules -- the bug CLASSES that repeat audits kept re-finding
 Tools/install_hooks.sh      # once per clone: wires both as a pre-commit hook (hooks aren't in git)
 ```
 
 These catch a class of defect no unit test will: a hazard correctly handled at nine call sites and missed at the tenth. They run in under a second, so run them before the suite, not after.
 
 **Adding a rule: watch it go RED before you land it.** A rule that passes on a broken tree is worse than no rule, because it reads like coverage. Two of the original seven were blind — one matched a *commented-out* call, one was satisfied by an unrelated comment in the same file — which is why the rules now strip comments (`sed 's,//.*,,'`) before grepping. The procedure is: write the rule, inject the regression it's supposed to catch, confirm the gate fails, restore, confirm it passes. Rule 10 found three real unguarded sites on the day it landed that a careful read of the same files had missed.
+
+**A NEW test file needs a cmake RECONFIGURE, not just a build.** Adding a `.cpp` to `CMakeLists.txt` and running `cmake --build build --config Release` reported **BUILD SUCCEEDED** while silently not compiling it: the project was regenerated but the build used the stale target, so the suite ran with the old test list. The pass count is the tell — it didn't move. Run `cmake -B build -G Xcode` first, then build, then confirm your suite is actually in the binary:
+
+```bash
+strings "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app/Contents/MacOS/Zynforge Recording" \
+    | grep -c "<your beginTest name>"      # 0 means it never got linked
+```
+
+This is the same failure mode as the stale test-report mtime below, one layer down: a green run that didn't run what you think it ran.
 
 **Test isolation — BETWEEN tests, not just from your settings.** Every test-mode `AudioEngine` shares ONE throwaway `zynforge-test.settings`, so any suite that writes per-strip state (`setTrackStereo` → `strip_stereo_N`, routing → `strip_in_N`, gains, colours) **leaks into every later suite** that constructs an engine and calls `applyPersistedStripState()`. `EditTrackRowTests` broke *Player maps files by Track_NN index* exactly this way. A suite that mutates per-strip state must call `engine.clearAllStripOverrides()` on setup AND teardown — see that file's `Host` struct.
 

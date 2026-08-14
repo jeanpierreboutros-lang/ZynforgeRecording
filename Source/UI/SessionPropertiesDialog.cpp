@@ -55,7 +55,26 @@ namespace zynforge
                     addAndMakeVisible (ed);
                 };
 
-                setupRow (nameLabel,   nameEditor,   "Session name",   initialFields.name);
+                // Session name is READ-ONLY here and shows the FOLDER name --
+                // which is what the title bar, the status line, the recent list
+                // and the .zfproj all use. The editable field wrote a `name`
+                // property that nothing but this dialog ever read back, so
+                // typing a new name looked like a rename and changed nothing.
+                // Renaming a session means moving the folder and its .zfproj
+                // while the engine holds it open; that belongs in Save As, not
+                // in the dialog documented as "inspect".
+                nameLabel.setText ("Session name", juce::dontSendNotification);
+                styleLabel (nameLabel);
+                addAndMakeVisible (nameLabel);
+                nameValue.setText (initialFields.name, juce::dontSendNotification);
+                styleReadOnly (nameValue);
+                addAndMakeVisible (nameValue);
+                nameHint.setText ("Use File > Save As to write the session under a different name",
+                                  juce::dontSendNotification);
+                nameHint.setFont (brand::type::caption());
+                nameHint.setColour (juce::Label::textColourId, brand::textTertiary);
+                addAndMakeVisible (nameHint);
+
                 setupRow (artistLabel, artistEditor, "Artist / band",  initialFields.artist);
                 setupRow (venueLabel,  venueEditor,  "Venue",          initialFields.venue);
                 setupRow (fohLabel,    fohEditor,    "FOH engineer",   initialFields.fohEngineer);
@@ -103,7 +122,20 @@ namespace zynforge
                 cancelButton.onClick = [this] { dismiss (false); };
                 addAndMakeVisible (cancelButton);
 
-                setSize (520, 540);
+                // Custom Component dialogs do by hand what dialog::primeNameEditor
+                // does for AlertWindows: focus the first field with its text
+                // selected, and make Return commit. Six editors and none of it.
+                for (auto* ed : { &artistEditor, &venueEditor, &fohEditor, &dateEditor })
+                {
+                    ed->setSelectAllWhenFocused (true);
+                    ed->onReturnKey = [this] { commit(); };
+                }
+                // notesEditor is multi-line: Return there inserts a newline.
+                juce::MessageManager::callAsync (
+                    [safe = juce::Component::SafePointer<Content> (this)]
+                    { if (safe != nullptr) safe->artistEditor.grabKeyboardFocus(); });
+
+                setSize (520, 556);
             }
 
             void paint (juce::Graphics& g) override
@@ -125,7 +157,13 @@ namespace zynforge
                     b.removeFromTop (brand::space::sm);
                 };
 
-                row (nameLabel,   nameEditor);
+                {
+                    auto line = b.removeFromTop (30 + 18);
+                    nameLabel.setBounds (line.removeFromTop (brand::space::xl));
+                    nameValue.setBounds (line.removeFromTop (30));
+                    nameHint .setBounds (b.removeFromTop (16));
+                    b.removeFromTop (brand::space::sm);
+                }
                 row (artistLabel, artistEditor);
                 row (venueLabel,  venueEditor);
                 row (fohLabel,    fohEditor);
@@ -163,13 +201,7 @@ namespace zynforge
             void commit()
             {
                 SessionPropertiesDialog::Fields out = initialFields;
-                // Never accept an empty session name -- keep the existing name
-                // if the field was cleared, else fall back to a default the
-                // same way NewSessionDialog does ("Untitled-1").
-                const auto trimmedName = nameEditor.getText().trim();
-                out.name        = trimmedName.isNotEmpty() ? trimmedName
-                                : initialFields.name.trim().isNotEmpty() ? initialFields.name.trim()
-                                : juce::String ("Untitled-1");
+                // out.name stays as it came in -- the folder name is authoritative.
                 out.artist      = artistEditor.getText().trim();
                 out.venue       = venueEditor .getText().trim();
                 out.fohEngineer = fohEditor   .getText().trim();
@@ -179,10 +211,13 @@ namespace zynforge
                 dismiss (true);
             }
 
-            void dismiss (bool /*saved*/)
+            void dismiss (bool saved)
             {
+                // 1 = Save, 0 = Cancel, per the app-wide result-code convention.
+                // This used to ignore its argument and always report 1, so Cancel
+                // read as Save to anything inspecting the modal result.
                 if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
-                    dw->exitModalState (1);
+                    dw->exitModalState (saved ? 1 : 0);
             }
 
             SessionPropertiesDialog::Fields       initialFields;
@@ -190,7 +225,8 @@ namespace zynforge
 
             juce::Label title;
             juce::Label nameLabel,   artistLabel, venueLabel, fohLabel, dateLabel, notesLabel;
-            juce::TextEditor nameEditor, artistEditor, venueEditor, fohEditor, dateEditor, notesEditor;
+            juce::Label nameValue, nameHint;
+            juce::TextEditor artistEditor, venueEditor, fohEditor, dateEditor, notesEditor;
             juce::Label configHeader;
             juce::Label sampleRateCap, bitDepthCap, formatCap;
             juce::Label sampleRateVal, bitDepthVal, formatVal;

@@ -473,7 +473,8 @@ private:
     // (and tempoMap, if any) to lay down a click WAV in the session's
     // Audio Files/ folder. Tracks the file path so a re-press just
     // overwrites it in place rather than piling up tracks.
-    void generateOrRefreshClickTrack();
+    // False when the render was refused (mid-take, no session, write failed).
+    bool generateOrRefreshClickTrack();
     int  clickTrackIndex { -1 };   // -1 = not yet created in this session
 
     // Arm state captured the moment a punch-in fires. servicePunch force-writes

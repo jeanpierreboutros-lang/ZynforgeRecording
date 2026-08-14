@@ -592,10 +592,16 @@ namespace zynforge
         }
     }
 
-    void AudioEngine::setMirrors (const std::vector<MultitrackRecorder::MirrorConfig>& configs)
+    bool AudioEngine::setMirrors (const std::vector<MultitrackRecorder::MirrorConfig>& configs)
     {
-        recorder.setMirrors (configs);
-        if (appProps == nullptr) return;
+        // The recorder REFUSES a mirror change mid-take. Persisting one it
+        // refused left the settings file claiming a redundancy the live
+        // recorder wasn't providing: the engineer adds a mirror drive during
+        // the show, the dialog closes without a word, nothing mirrors, and
+        // after the next restart it "works" -- which reads as a flake rather
+        // than a rule. Report the refusal instead, and write nothing.
+        if (! recorder.setMirrors (configs)) return false;
+        if (appProps == nullptr) return true;
 
         reloadAppPropsBeforeWrite();
         // Wipe any prior persisted mirror slots so we don't leave a
@@ -614,6 +620,7 @@ namespace zynforge
                                 (int) configs[i].format);
         }
         appProps->saveIfNeeded();
+        return true;
     }
 
     int AudioEngine::loadSession (const juce::File& sessionDir, bool preserveEdits)

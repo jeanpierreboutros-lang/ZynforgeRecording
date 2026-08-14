@@ -16,6 +16,9 @@ namespace zynforge::icons
         Selection, Cut, Copy, Paste, Undo, Redo
     };
 
+    // Shared baseline for the Meters glyph's bars.
+    inline constexpr float kMeterBase = 0.86f;
+
     inline juce::Path pathFor (Glyph g)
     {
         juce::Path p;
@@ -90,11 +93,15 @@ namespace zynforge::icons
                 break;
 
             case Glyph::Meters:
+                // Bars of rising height sharing ONE baseline. The heights used
+                // to be derived independently of the tops, so the four bottoms
+                // landed at 0.82 / 0.84 / 0.86 / 0.88 -- a meter icon with a
+                // stepped floor.
                 for (int i = 0; i < 4; ++i)
-                    p.addRectangle (0.18f + i * 0.18f,
-                                    0.78f - i * 0.14f,
-                                    0.12f,
-                                    0.04f + i * 0.16f);
+                {
+                    const float top = 0.78f - i * 0.16f;
+                    p.addRectangle (0.18f + i * 0.18f, top, 0.12f, kMeterBase - top);
+                }
                 break;
 
             case Glyph::Osc:
@@ -245,9 +252,15 @@ namespace zynforge::icons
                       float strokeThickness = 1.2f)
     {
         auto p = pathFor (glyph);
-        p.applyTransform (juce::AffineTransform::scale (bounds.getWidth(),
-                                                        bounds.getHeight())
-                              .translated (bounds.getX(), bounds.getY()));
+        // UNIFORM scale, centred in `bounds`. Scaling x and y independently
+        // stretched every glyph whenever the bounds weren't square -- circles
+        // became ellipses, the padlock skewed. The only current caller happens
+        // to pass a square rect, which is exactly how an API like this hides a
+        // bug until someone lays out a wide icon button.
+        const float side = juce::jmin (bounds.getWidth(), bounds.getHeight());
+        p.applyTransform (juce::AffineTransform::scale (side, side)
+                              .translated (bounds.getCentreX() - side * 0.5f,
+                                           bounds.getCentreY() - side * 0.5f));
         g.setColour (colour);
         // 'Filled' shapes -- Record, Stop, Play, Plus, Lock body, Trash
         // body -- get filled. Stroked-only outlines for the rest.

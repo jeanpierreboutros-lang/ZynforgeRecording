@@ -294,11 +294,20 @@ void MainComponent::timerCallback()
         const bool diskTrouble = recorder.isDiskStruggling();
         const bool smartBad = (smartPrimaryStatus == (int) MultitrackRecorder::SmartStatus::Failing)
                            || (smartBackupStatus  == (int) MultitrackRecorder::SmartStatus::Failing);
-        if (primFail || diskTrouble || smartBad)
+        // A mirror that never OPENED (drive absent, or a root that would have
+        // collided with the take) creates no Mirror entry, so anyMirrorFailed()
+        // -- which walks the entries -- structurally cannot see it. Without this
+        // the engineer runs the whole show believing they have a copy they don't.
+        const int mirrorsSkipped = recorder.getMirrorsSkippedAtStart();
+        if (primFail || diskTrouble || smartBad || mirrorsSkipped > 0)
         {
             juce::String warn;
             if (smartBad)    warn << "! SMART FAILING -- replace this drive  ";
             if (primFail)    warn << "! PRIMARY WRITE FAILED -- recording on backup/mirror  ";
+            if (mirrorsSkipped > 0)
+                warn << "! " << mirrorsSkipped << " MIRROR"
+                     << (mirrorsSkipped == 1 ? "" : "S") << " NOT WRITING -- drive missing "
+                                                            "or folder unusable  ";
             if (diskTrouble) warn << "! DISK STRUGGLING -- missed samples imminent";
             statusLabel.setText (warn.trim(), juce::dontSendNotification);
         }

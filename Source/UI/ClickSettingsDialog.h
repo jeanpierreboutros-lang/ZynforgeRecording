@@ -36,7 +36,12 @@ namespace zynforge
     {
     public:
         using SaveCallback     = std::function<void (const ClickSettings&)>;
-        using GenerateCallback = std::function<void()>;
+        // Returns TRUE only if the click track was actually rendered. The
+        // generate path refuses mid-take (and with no session open), and the
+        // dialog must not commit its side of the deal -- switching the live
+        // click engine OFF -- for a generation that never happened. Doing so
+        // killed the click in the drummer's wedge mid-song and produced nothing.
+        using GenerateCallback = std::function<bool()>;
 
         // Opens modal-async. onSave fires whenever any control changes
         // (live edit), so the engineer hears the changes when they

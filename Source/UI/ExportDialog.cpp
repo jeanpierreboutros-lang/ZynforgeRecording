@@ -1,4 +1,8 @@
 #include "ExportDialog.h"
+
+#include <algorithm>
+#include <cmath>
+#include <vector>
 #include "../Theme/DialogChrome.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
@@ -10,7 +14,7 @@ namespace zynforge
         class ExportDialogContent final : public juce::Component
         {
         public:
-            explicit ExportDialogContent (ExportDialog::ResultCallback cb)
+            ExportDialogContent (ExportDialog::ResultCallback cb, double sessionRate)
                 : callback (std::move (cb))
             {
                 // Format
@@ -31,12 +35,34 @@ namespace zynforge
                 rateLabel.setColour (juce::Label::textColourId, brand::textPrimary);
                 addAndMakeVisible (rateLabel);
 
-                rateBox.addItem ("44.1 kHz",  1);
-                rateBox.addItem ("48 kHz",    2);
-                rateBox.addItem ("96 kHz",    3);
-                rateBox.addItem ("192 kHz",   4);
-                rateBox.setSelectedId (2);
+                // Standard rates, plus the session's own rate when it isn't one
+                // of them (88.2 kHz sessions exist). The session rate is
+                // preselected and marked, so "just export it" is a straight copy
+                // and choosing a conversion is a deliberate act.
+                rateHz = { 44100.0, 48000.0, 96000.0, 192000.0 };
+                const double sr = sessionRate > 0.0 ? sessionRate : 48000.0;
+                if (std::find_if (rateHz.begin(), rateHz.end(),
+                                  [sr] (double r) { return std::abs (r - sr) < 1.0; })
+                    == rateHz.end())
+                    rateHz.push_back (sr);
+                std::sort (rateHz.begin(), rateHz.end());
+
+                int selectId = 1;
+                for (size_t i = 0; i < rateHz.size(); ++i)
+                {
+                    const bool isSession = std::abs (rateHz[i] - sr) < 1.0;
+                    auto label = juce::String (rateHz[i] / 1000.0, rateHz[i] < 100000.0 ? 1 : 0)
+                                 + " kHz" + (isSession ? "  (session)" : "");
+                    rateBox.addItem (label, (int) i + 1);
+                    if (isSession) selectId = (int) i + 1;
+                }
+                rateBox.setSelectedId (selectId);
+                rateBox.onChange = [this] { refreshAvailability(); };
                 addAndMakeVisible (rateBox);
+
+                srNote.setFont (brand::type::caption());
+                srNote.setJustificationType (juce::Justification::centredLeft);
+                addAndMakeVisible (srNote);
 
                 // Bit depth
                 bitsLabel.setText ("Bit depth", juce::dontSendNotification);
@@ -71,8 +97,17 @@ namespace zynforge
                 cancelButton.onClick = [this] { onCancel(); };
                 addAndMakeVisible (cancelButton);
 
+                sessionRateHz = sr;
                 refreshAvailability();
-                setSize (380, 240);
+
+                // Return = Export, Escape = Cancel, matching every other prompt
+                // in the app (result code 1 for the primary action).
+                okButton.setWantsKeyboardFocus (true);
+                juce::MessageManager::callAsync (
+                    [safe = juce::Component::SafePointer<ExportDialogContent> (this)]
+                    { if (safe != nullptr) safe->okButton.grabKeyboardFocus(); });
+
+                setSize (380, 268);
             }
 
             void resized() override
@@ -94,7 +129,8 @@ namespace zynforge
                 row (bitsLabel,    bitsBox);
                 row (bitrateLabel, bitrateBox);
 
-                r.removeFromTop (brand::space::lg);
+                srNote.setBounds (r.removeFromTop (18));
+                r.removeFromTop (brand::space::sm);
                 auto btnRow = r.removeFromBottom (32);
                 okButton    .setBounds (btnRow.removeFromRight (110));
                 btnRow.removeFromRight (brand::space::md);
@@ -133,6 +169,18 @@ namespace zynforge
 
                 bitrateLabel.setEnabled (isMp3);
                 bitrateBox  .setEnabled (isMp3);
+
+                const int rateIdx = rateBox.getSelectedId() - 1;
+                const double chosen = (rateIdx >= 0 && rateIdx < (int) rateHz.size())
+                                          ? rateHz[(size_t) rateIdx] : sessionRateHz;
+                const bool converting = std::abs (chosen - sessionRateHz) > 1.0;
+                srNote.setText (converting
+                                  ? "Sample-rate conversion from "
+                                    + juce::String (sessionRateHz / 1000.0, 1) + " kHz"
+                                  : "No sample-rate conversion",
+                                juce::dontSendNotification);
+                srNote.setColour (juce::Label::textColourId,
+                                  converting ? brand::accentSolo : brand::textTertiary);
             }
 
             void onAccept()
@@ -147,13 +195,10 @@ namespace zynforge
                     case 4: opts.format = ExportFormat::Mp3;    break;
                 }
 
-                switch (rateBox.getSelectedId())
-                {
-                    case 1: opts.sampleRate = 44100.0;  break;
-                    case 2: opts.sampleRate = 48000.0;  break;
-                    case 3: opts.sampleRate = 96000.0;  break;
-                    case 4: opts.sampleRate = 192000.0; break;
-                }
+                const int rateIdx = rateBox.getSelectedId() - 1;
+                opts.sampleRate = (rateIdx >= 0 && rateIdx < (int) rateHz.size())
+                                      ? rateHz[(size_t) rateIdx]
+                                      : sessionRateHz;
 
                 switch (bitsBox.getSelectedId())
                 {
@@ -183,6 +228,9 @@ namespace zynforge
             }
 
             ExportDialog::ResultCallback callback;
+            std::vector<double> rateHz;
+            double              sessionRateHz { 48000.0 };
+            juce::Label         srNote;
 
             juce::Label    formatLabel, rateLabel, bitsLabel, bitrateLabel;
             juce::ComboBox formatBox,   rateBox,   bitsBox,   bitrateBox;
@@ -190,7 +238,9 @@ namespace zynforge
         };
     }
 
-    void ExportDialog::launch (const juce::String& title, ResultCallback cb)
+    void ExportDialog::launch (const juce::String& title,
+                               double sessionSampleRate,
+                               ResultCallback cb)
     {
         // We wrap the callback so the dialog can only fire it once.
         auto shared = std::make_shared<ResultCallback> (std::move (cb));
@@ -199,7 +249,7 @@ namespace zynforge
             if (shared && *shared) { (*shared)(result); *shared = nullptr; }
         };
 
-        auto content = std::make_unique<ExportDialogContent> (fireOnce);
+        auto content = std::make_unique<ExportDialogContent> (fireOnce, sessionSampleRate);
 
         juce::DialogWindow::LaunchOptions opts;
         opts.content.setOwned (content.release());

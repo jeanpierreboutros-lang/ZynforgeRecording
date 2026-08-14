@@ -20,7 +20,11 @@
 
 using namespace zynforge;
 
-void MainComponent::generateOrRefreshClickTrack()
+// Returns TRUE only when a click WAV was actually written. Every refusal here
+// is silent apart from a status line, so the CALLER cannot assume it happened --
+// ClickSettingsDialog used to switch the live click engine off on the strength
+// of calling this, which killed the click mid-take and generated nothing.
+bool MainComponent::generateOrRefreshClickTrack()
 {
     // NEVER regenerate during a take. This deleteFile()s + synchronously renders
     // a session-length WAV and then engine.loadSession() -- which frees/reopens
@@ -31,14 +35,14 @@ void MainComponent::generateOrRefreshClickTrack()
     if (engine.isRecording())
     {
         showStatus ("Click track refreshes after recording stops");
-        return;
+        return false;
     }
 
     const auto sessionDir = engine.getActiveSessionDir();
     if (! sessionDir.isDirectory())
     {
         showStatus ("Open or create a session before generating a click");
-        return;
+        return false;
     }
 
     auto audioFiles = sessionDir.getChildFile ("Audio Files");
@@ -109,7 +113,7 @@ void MainComponent::generateOrRefreshClickTrack()
         || recorder.getTrack (clickTrackIndex).inputRouting.load (std::memory_order_relaxed) >= 0)
     {
         showStatus ("Click slot isn't a Click strip -- aborted to protect recordings");
-        return;
+        return false;
     }
 
     const auto trackName = juce::String::formatted ("Track_%02d", clickTrackIndex + 1);
@@ -123,7 +127,7 @@ void MainComponent::generateOrRefreshClickTrack()
         juce::StringPairArray meta;
         std::unique_ptr<juce::AudioFormatWriter> writer (
             wav.createWriterFor (out, sr, 1, 24, meta, 0));
-        if (writer == nullptr) { delete out; showStatus ("Click write failed"); return; }
+        if (writer == nullptr) { delete out; showStatus ("Click write failed"); return false; }
 
         // Larger render chunks → fewer disk writes (8× the old size).
         constexpr int kChunk = 32768;
@@ -234,7 +238,7 @@ void MainComponent::generateOrRefreshClickTrack()
     if (! rendered)
     {
         showStatus ("Click track NOT generated -- couldn't write to the session folder");
-        return;
+        return false;
     }
 
     // Default the click track to hardware output 1 so it's audible
@@ -262,6 +266,7 @@ void MainComponent::generateOrRefreshClickTrack()
     // engineer can see the metronome pulse against each track's audio.
     if (editPage != nullptr)
         editPage->setClickTrackPresent (true, clickTrackIndex);
+    return true;
 }
 
 void MainComponent::togglePunchMode()

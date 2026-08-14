@@ -176,6 +176,34 @@ report "device reconfiguration is guarded against a live take" \
        "setAudioDeviceSetup/initialise restart the device, which stops the recorder" \
        "$(printf '%s' "$HITS")"
 
+# ── 11. Theme/ must not hardcode a foreground over a caller's accent ───────
+# The DESIGN gate bans bare Colours::white/black -- but it EXCLUDES Theme/,
+# because Theme/ is where the sanctioned helpers live. That exclusion is how
+# ZynForgeLookAndFeel::drawToggleButton shipped a hardcoded white letter over
+# whatever accent the call site set: correct only for record red, and about
+# 1.2:1 (unreadable) on solo yellow -- the chip an engineer scans mid-show.
+# A LookAndFeel paints for EVERY call site, so a wrong constant there is the
+# most expensive place in the codebase to put one.
+#
+# Sanctioned producers of raw white/black are the two helpers themselves:
+#   brand::gloss(a)   -- specular sheen
+#   brand::onSignal(bg) -- picks the legible foreground FROM the background
+# Anything else in Theme/ that names Colours::white/black must justify itself
+# in the allow-list below.
+HITS=""
+while IFS= read -r m; do
+    [[ -z "$m" ]] && continue
+    f="${m%%:*}"
+    # BrandColors.h defines gloss() and onSignal(); those ARE the sanctioned
+    # producers. Everything else in Theme/ is a call site.
+    [[ "$f" == *"BrandColors.h" ]] && continue
+    HITS+="$m"$'\n'
+done < <(grep -rn "Colours::white\|Colours::black" Source/Theme 2>/dev/null \
+         | sed 's,//.*,,' | grep "Colours::")
+report "Theme/ paints accents via brand::onSignal, not hardcoded white/black" \
+       "a LookAndFeel paints for every call site -- a fixed foreground over a caller-supplied accent is unreadable on half the palette" \
+       "$(printf '%s' "$HITS")"
+
 echo
 if [[ $FAIL -eq 0 ]]; then
     green "invariants audit: CLEAN"

@@ -612,6 +612,37 @@ namespace zynforge
         writers.clear();
         writers.reserve (tracks.size());
 
+        // Resolve the mirror list ONCE for the whole take, before any writer
+        // opens. Two things get dropped here:
+        //   - a root that collides with the primary, the backup, or another
+        //     mirror (mirrorRootRejection) -- opening it would put two writers
+        //     on one path for the length of the show;
+        //   - a root whose drive isn't there and can't be created.
+        // Both are counted so the recording banner can say the engineer has
+        // fewer copies than they configured: a mirror that never opens creates
+        // no Mirror entry, so anyMirrorFailed() cannot see it.
+        activeMirrors.clear();
+        {
+            std::vector<juce::File> accepted;
+            int skipped = 0;
+            for (const auto& mc : mirrorConfigs)
+            {
+                if (mirrorRootRejection (mc.root, sessionDir, backupDir, accepted).isNotEmpty())
+                {
+                    ++skipped;
+                    continue;
+                }
+                if (! mc.root.isDirectory() && ! mc.root.createDirectory().wasOk())
+                {
+                    ++skipped;              // drive not mounted / not writable
+                    continue;
+                }
+                accepted.push_back (mc.root);
+                activeMirrors.push_back (mc);
+            }
+            mirrorsSkippedAtStart.store (skipped, std::memory_order_relaxed);
+        }
+
         // Resolves a CaptureFormat to its container code + bit-depth +
         // file extension. Container codes match the integer scheme used
         // by openWriterAtPath / WriterChannel::primaryContainer:
@@ -818,14 +849,13 @@ namespace zynforge
             }
 
             // Extra N-way mirror destinations beyond primary + backup.
-            for (const auto& mc : mirrorConfigs)
+            // usableMirrors was filtered once at the top of startRecording:
+            // collisions with the primary / backup / another mirror are gone,
+            // and every remaining root exists. Do NOT iterate mirrorConfigs
+            // here -- that is what let a colliding root open a writer on the
+            // take's own file.
+            for (const auto& mc : activeMirrors)
             {
-                if (! mc.root.isDirectory())
-                {
-                    // Try to create -- root might be a path the
-                    // engineer set up before plugging in the drive.
-                    if (! mc.root.createDirectory().wasOk()) continue;
-                }
                 const auto mirrorSession = mc.root.getChildFile (sessionDir.getFileName())
                                                     .getChildFile ("Audio Files");
                 mirrorSession.createDirectory();
@@ -988,10 +1018,45 @@ namespace zynforge
                                   std::memory_order_relaxed);
     }
 
-    void MultitrackRecorder::setMirrors (const std::vector<MirrorConfig>& configs)
+    bool MultitrackRecorder::setMirrors (const std::vector<MirrorConfig>& configs)
     {
-        if (isRecording()) return;     // only editable when stopped
+        if (isRecording()) return false;   // only editable when stopped
         mirrorConfigs = configs;
+        return true;
+    }
+
+    juce::String MultitrackRecorder::mirrorRootRejection (
+        const juce::File& root,
+        const juce::File& sessionDir,
+        const juce::File& backupRoot,
+        const std::vector<juce::File>& alreadyAccepted)
+    {
+        if (root == juce::File()) return "No folder chosen";
+
+        // A mirror writes root/<sessionName>/Audio Files/. The primary writes
+        // sessionDir/Audio Files/. Those are the same path exactly when the root
+        // IS the session's parent -- and with the default WAV 24-bit mirror
+        // format matching the default capture format, the same filename too.
+        if (sessionDir != juce::File())
+        {
+            if (root == sessionDir.getParentDirectory())
+                return "That folder holds this session -- the mirror would "
+                       "overwrite the take it is meant to protect";
+            if (root == sessionDir || root.isAChildOf (sessionDir))
+                return "That folder is inside the session -- a mirror there is "
+                       "not a second copy";
+        }
+
+        // The backup copy uses the identical root/<sessionName>/Audio Files
+        // shape, so a mirror aimed at the backup root collides with it.
+        if (backupRoot != juce::File() && root == backupRoot)
+            return "That is already the backup destination";
+
+        for (const auto& other : alreadyAccepted)
+            if (root == other)
+                return "Another mirror already writes to that folder";
+
+        return {};
     }
 
     bool MultitrackRecorder::anyMirrorFailed() const noexcept
@@ -1139,8 +1204,11 @@ namespace zynforge
             for (size_t mi = 0; mi < wc.mirrors.size(); ++mi)
             {
                 const auto& m = wc.mirrors[mi];
-                const juce::File root = (mi < mirrorConfigs.size())
-                                            ? mirrorConfigs[mi].root
+                // activeMirrors, NOT mirrorConfigs: wc.mirrors is built from
+                // the filtered list, so a skipped mirror would shift every
+                // later root by one and mis-attribute them in the report.
+                const juce::File root = (mi < activeMirrors.size())
+                                            ? activeMirrors[mi].root
                                             : juce::File();
                 wr.mirrors.push_back ({ root, m.totalSamples, m.partFiles, m.failed });
             }
@@ -1656,8 +1724,10 @@ namespace zynforge
         // rate by the whole mirror count -- which made "minutes remaining"
         // optimistic and raised the bar isDiskStruggling compares against, so
         // the disk warning fired late (or not at all) on a mirrored rig.
+        // While a take is rolling the honest count is what actually opened;
+        // before it starts, the configured list is the right (pessimistic) one.
         int bytesPerSampMirrors = 0;
-        for (const auto& mc : mirrorConfigs)
+        for (const auto& mc : (isRecording() ? activeMirrors : mirrorConfigs))
             bytesPerSampMirrors += bitsFor (mc.format) / 8;
 
         // FLAC compresses ~50% typical; treat its byte rate as the
