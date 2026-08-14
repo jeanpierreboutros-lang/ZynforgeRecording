@@ -17,6 +17,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+## [0.2.0] – 2026-08-14
+
+First tagged build since 0.0.1. Everything below shipped between those two points; the headline changes are **multi-console support** (five desk families, with anything that could alter a desk gated behind a handshake), a **non-destructive clip editor with take comping**, and a long hardening series — six audit passes whose findings are all fixed, plus two CI gates that now fail the build on the bug *classes* those passes kept re-finding in new places.
+
+The in-tree version had read `0.1.0` since the beginning without ever being tagged or released, so this cut skips it.
+
 ### Fixed (Network folder audit — 15 findings, 2026-08-14)
 
 - **A console dropping its TCP link aborted the whole app.** The Yamaha and Allen & Heath transports' reader clears its own run flag when the peer closes, and `disconnect()` early-returned on that flag *before* the join — so a finished-but-unjoined `std::thread` reached its destructor, and destroying one calls `std::terminate()`. No crash dialog, no save. It fired on the next Connect, profile change, or quit after a desk power-cycled or a switch rebooted. `CaptureLink` had already been bitten by this exact thing and documented the lesson; the newer transports repeated it. **Now unconditional: the flag decides whether to do work, never whether to join** — and a new gate rule enforces that, which immediately found two more sites written the same way.

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(ZynforgeRecording VERSION 0.1.0 LANGUAGES C CXX)
+project(ZynforgeRecording VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -32,7 +32,7 @@ juce_add_gui_app(ZynforgeRecording
     # icon (JUCE points the document type's CFBundleTypeIconFile at the app
     # Icon) and double-clicking one opens the app, instead of a blank page.
     DOCUMENT_EXTENSIONS           "zfproj"
-    VERSION                       0.1.0
+    VERSION                       ${PROJECT_VERSION}
     HARDENED_RUNTIME_ENABLED      TRUE
     HARDENED_RUNTIME_OPTIONS      "com.apple.security.device.audio-input"
     MICROPHONE_PERMISSION_ENABLED TRUE
@@ -208,7 +208,7 @@ target_compile_definitions(ZynforgeCapture PRIVATE
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_APPLICATION_NAME_STRING="zynforge-capture"
-    JUCE_APPLICATION_VERSION_STRING="0.1.0"
+    JUCE_APPLICATION_VERSION_STRING="${PROJECT_VERSION}"
 )
 
 target_link_libraries(ZynforgeCapture PRIVATE

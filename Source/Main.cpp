@@ -104,7 +104,18 @@ public:
     ZynforgeRecordingApp() = default;
 
     const juce::String getApplicationName()    override { return "Zynforge Recording"; }
-    const juce::String getApplicationVersion() override { return "0.1.0"; }
+    // Single-sourced from CMake (project VERSION -> the target's JUCE_VERSION
+    // -> this macro). It used to be a hardcoded literal here as well as in
+    // three places in CMakeLists, so the About box and every crash report kept
+    // the stale number after a bump -- exactly what happened at 0.2.0.
+    const juce::String getApplicationVersion() override
+    {
+       #ifdef JUCE_APPLICATION_VERSION_STRING
+        return JUCE_APPLICATION_VERSION_STRING;
+       #else
+        return "0.0.0";
+       #endif
+    }
     bool moreThanOneInstanceAllowed()          override { return false; }
 
     void initialise (const juce::String& commandLine) override
