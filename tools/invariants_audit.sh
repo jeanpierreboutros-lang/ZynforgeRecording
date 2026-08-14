@@ -204,6 +204,37 @@ report "Theme/ paints accents via brand::onSignal, not hardcoded white/black" \
        "a LookAndFeel paints for every call site -- a fixed foreground over a caller-supplied accent is unreadable on half the palette" \
        "$(printf '%s' "$HITS")"
 
+# ── 12. A std::thread member is never left unjoined behind a flag check ────
+# Destroying a joinable std::thread calls std::terminate() -- the whole process
+# aborts, no crash dialog, no save. The trap is a reader thread that clears its
+# OWN run flag when the peer disconnects: a teardown written as
+#
+#     if (! running.exchange (false)) return;   // <- skips everything below
+#     socket->close();
+#     if (reader.joinable()) reader.join();
+#
+# then early-returns without joining, and the destructor aborts. This shipped
+# twice: CaptureLink fixed it in 2026, the console TCP transports repeated it,
+# and a Yamaha/A&H desk dropping its link killed the app on the next Connect or
+# on quit. Join UNCONDITIONALLY; the flag decides whether to do work, never
+# whether to join.
+HITS=""
+while IFS= read -r m; do
+    [[ -z "$m" ]] && continue
+    f="${m%%:*}"; ln="${m#*:}"; ln="${ln%%:*}"
+    # The candidate line itself must be CODE, not a comment describing the
+    # anti-pattern. (Rules 1-7 were once blind to a commented-out call; this is
+    # the same mistake mirrored -- a comment producing a false positive.)
+    CODE=$(sed -n "${ln}p" "$f" 2>/dev/null | sed 's,//.*,,')
+    grep -q "exchange *(false)) *return" <<<"$CODE" || continue
+    END=$(( ln + 15 ))
+    WIN=$(sed -n "${ln},${END}p" "$f" 2>/dev/null | sed 's,//.*,,')
+    grep -q "\.join *()" <<<"$WIN" && HITS+="$m"$'\n'
+done < <(grep -rn "exchange (false)) return\|exchange(false)) return" $SCOPE 2>/dev/null)
+report "no std::thread join is skipped by an early flag return" \
+       "destroying a joinable std::thread calls std::terminate() -- join unconditionally" \
+       "$(printf '%s' "$HITS")"
+
 echo
 if [[ $FAIL -eq 0 ]]; then
     green "invariants audit: CLEAN"

@@ -84,13 +84,17 @@ tail -1 "$HOME/Library/Logs/Zynforge/test-report.log"   # "[zynforge tests] N te
 
 ```bash
 Tools/design_audit.sh       # 7 brand rules   -- raw colours/fonts/alphas/radii/tints, spacing ratchet
-Tools/invariants_audit.sh   # 11 correctness rules -- the bug CLASSES that repeat audits kept re-finding
+Tools/invariants_audit.sh   # 12 correctness rules -- the bug CLASSES that repeat audits kept re-finding
 Tools/install_hooks.sh      # once per clone: wires both as a pre-commit hook (hooks aren't in git)
 ```
 
 These catch a class of defect no unit test will: a hazard correctly handled at nine call sites and missed at the tenth. They run in under a second, so run them before the suite, not after.
 
 **Adding a rule: watch it go RED before you land it.** A rule that passes on a broken tree is worse than no rule, because it reads like coverage. Two of the original seven were blind — one matched a *commented-out* call, one was satisfied by an unrelated comment in the same file — which is why the rules now strip comments (`sed 's,//.*,,'`) before grepping. The procedure is: write the rule, inject the regression it's supposed to catch, confirm the gate fails, restore, confirm it passes. Rule 10 found three real unguarded sites on the day it landed that a careful read of the same files had missed.
+
+**A failing run can POISON the next one.** The capture-daemon suites launch the real binary and bind a port. When a run fails partway (or aborts), a daemon can survive and hold that port, so the *next* run fails 4 tests with "should have launched (nothing was on the port)" — a failure that has nothing to do with the change under test. `pkill -f "Zynforge Recording"` and re-run before believing it. Distinguish this from a genuine flake by running three times: a poisoned port fails once and then passes, a real race fails intermittently forever.
+
+**`juce::StreamingSocket::waitUntilReady` takes the socket's readLock even for a WRITE check** (`juce_Socket.cpp`). Polling writability on a socket whose reader thread is parked in `waitUntilReady(true, 200)` starves the writer on that lock and every send fails — it broke all 32 capture-daemon assertions when tried as a fix for a blocking-write wedge. Bound a wedged write with a timed write MUTEX plus a `close()` from another thread instead.
 
 **A NEW test file needs a cmake RECONFIGURE, not just a build.** Adding a `.cpp` to `CMakeLists.txt` and running `cmake --build build --config Release` reported **BUILD SUCCEEDED** while silently not compiling it: the project was regenerated but the build used the stale target, so the suite ran with the old test list. The pass count is the tell — it didn't move. Run `cmake -B build -G Xcode` first, then build, then confirm your suite is actually in the binary:
 

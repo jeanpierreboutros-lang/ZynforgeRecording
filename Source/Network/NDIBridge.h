@@ -57,7 +57,7 @@ namespace zynforge
         bool start (const juce::String& sourceName, double sampleRate)
         {
             stop();
-            sr = sampleRate;
+            sr.store (sampleRate, std::memory_order_relaxed);
             if (! loadLibrary()) return false;
 
             // NDIlib_initialize() -- bring the runtime up.
@@ -91,6 +91,18 @@ namespace zynforge
                 // Older SDKs use NDIlib_send_send_audio.
                 sendAudioFn = sym ("NDIlib_send_send_audio");
             }
+            if (sendAudioFn == nullptr)
+            {
+                // Runtime present and send_create succeeded, but neither audio
+                // entry point resolved -- an SDK we don't know. This used to
+                // return false with the sender live and the dylib mapped until
+                // the next start()/destruction. Tear down what we built.
+                using DestroyFn = void (*)(void*);
+                if (auto fn = (DestroyFn) sym ("NDIlib_send_destroy")) fn (sender);
+                sender = nullptr;
+                unloadLibrary();
+                return false;
+            }
 
             // Pre-size the scratch buffer OFF the audio thread so pushStereo
             // never allocates (see finding #4). Sized to the max block we
@@ -121,9 +133,21 @@ namespace zynforge
                     fn (sender);
                 sender = nullptr;
             }
-            if (using InitFn = void (*)(); auto fn = (InitFn) sym ("NDIlib_destroy"))
+            // (Plain declaration, not an alias-in-if-initializer -- that form is
+            // a C++23 extension and warned on every build.)
+            using DestroyLibFn = void (*)();
+            if (auto fn = (DestroyLibFn) sym ("NDIlib_destroy"))
                 fn();
             unloadLibrary();
+        }
+
+        // The device rate can change under a running transmit (the engineer
+        // switches interface / rate). The frames' declared rate must follow, or
+        // every receiver on the LAN plays the rest of the show at the wrong
+        // pitch. Called from the message thread when the device reopens.
+        void setSampleRate (double newRate) noexcept
+        {
+            if (newRate > 0.0) sr.store (newRate, std::memory_order_relaxed);
         }
 
         // Push numSamples of interleaved stereo audio. Called from the
@@ -172,7 +196,7 @@ namespace zynforge
             std::memcpy (scratch.data() + n,      R, sizeof (float) * (size_t) n);
 
             AudioFrame f {};
-            f.sample_rate              = (int) sr;
+            f.sample_rate              = (int) sr.load (std::memory_order_relaxed);
             f.no_channels              = 2;
             f.no_samples               = n;
             f.timecode                 = (juce::int64) -1;
@@ -227,7 +251,7 @@ namespace zynforge
         void*               sendAudioFn { nullptr };
         std::atomic<bool>   enabled     { false };
         std::atomic<int>    inUse       { 0 };       // audio-thread calls in flight (finding #3)
-        double              sr          { 48000.0 };
+        std::atomic<double> sr          { 48000.0 };   // live: see setSampleRate
         std::vector<float>  scratch;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NDIBridge)

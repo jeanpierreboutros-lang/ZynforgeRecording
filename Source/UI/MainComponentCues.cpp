@@ -631,11 +631,15 @@ void MainComponent::promptMirrorHost()
     }
 
     auto* aw = new juce::AlertWindow ("Mirror primary host",
-                                      "Enter the primary Mac's address (host:port). "
-                                      "The primary must have its companion server running.",
+                                      "Enter the primary Mac's address (host:port) and the access "
+                                      "token from its companion server (Session > Companion "
+                                      "server on the primary shows the full URL -- the token is "
+                                      "the ?t= part). Without it the primary answers 401 and "
+                                      "nothing syncs.",
                                       juce::MessageBoxIconType::NoIcon);
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
     aw->addTextEditor ("addr", "192.168.1.42:9000", "Primary host:");
+    aw->addTextEditor ("token", "", "Access token:");
     dialog::primeNameEditor (*aw, "addr");
     aw->addButton ("Start", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
@@ -649,7 +653,16 @@ void MainComponent::promptMirrorHost()
             const auto colon = addr.indexOfChar (':');
             const auto host = (colon > 0) ? addr.substring (0, colon) : addr;
             const auto port = (colon > 0) ? addr.substring (colon + 1).getIntValue() : 9000;
-            sessionMirror.start (host, port);
+            auto tok = aw->getTextEditorContents ("token").trim();
+            // Accept a pasted full URL as well as a bare token -- that's what
+            // the primary puts on screen, so it's what gets copied.
+            if (tok.contains ("?t=")) tok = tok.fromLastOccurrenceOf ("?t=", false, false).trim();
+            if (tok.isEmpty())
+            {
+                showStatus ("Mirror needs the primary's access token -- nothing started");
+                return;
+            }
+            sessionMirror.start (host, port, tok);
             showStatus ("Mirroring " + host + ":" + juce::String (port));
         }), false);
 }

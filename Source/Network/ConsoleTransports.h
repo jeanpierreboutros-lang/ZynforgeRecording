@@ -35,7 +35,9 @@ namespace zynforge
         ~OscUdpTransport() override { receiver.removeListener (this); disconnect(); }
 
         juce::String getName() const override { return "OSC/UDP"; }
-        bool isConnected() const override     { return connected; }
+        // atomic: isConnected() is read from other threads, and the other two
+        // transports already use one. A torn plain bool is UB, not a style nit.
+        bool isConnected() const override     { return connected.load (std::memory_order_acquire); }
 
         bool connect (const juce::String& host, int port) override
         {
@@ -53,22 +55,21 @@ namespace zynforge
                 socket.reset();
                 return false;
             }
-            connected = true;
+            connected.store (true, std::memory_order_release);
             return true;
         }
 
         void disconnect() override
         {
-            if (! connected) return;
+            if (! connected.exchange (false, std::memory_order_acq_rel)) return;
             sender.disconnect();
             receiver.disconnect();
             socket.reset();
-            connected = false;
         }
 
         bool send (const ConsoleMessage& m) override
         {
-            if (! connected || m.isEmpty()) return false;
+            if (! isConnected() || m.isEmpty()) return false;
             juce::OSCMessage osc { juce::OSCAddressPattern (m.address) };
             for (const auto& a : m.args)
             {
@@ -98,7 +99,7 @@ namespace zynforge
         std::unique_ptr<juce::DatagramSocket> socket;
         juce::OSCSender   sender;
         juce::OSCReceiver receiver;
-        bool              connected { false };
+        std::atomic<bool> connected { false };
     };
 
     // ── ASCII line protocol over TCP (Yamaha SCP) ───────────────────────────
@@ -127,7 +128,16 @@ namespace zynforge
 
         void disconnect() override
         {
-            if (! running.exchange (false)) return;
+            // ALWAYS join a joinable reader, even when `running` is ALREADY
+            // false. readLoop clears the flag itself when the DESK drops the
+            // connection (power cycle, switch reboot, idle TCP timeout), so
+            // gating the join on it left a finished-but-unjoined thread --
+            // and destroying a joinable std::thread calls std::terminate().
+            // The whole process aborted on the next Connect / profile change /
+            // quit after a console dropped its link. CaptureLink::disconnect
+            // documents having been bitten by exactly this; the lesson didn't
+            // reach here.
+            running.store (false);
             if (socket != nullptr) socket->close();   // unblocks the reader
             if (reader.joinable()) reader.join();
             socket.reset();
@@ -140,7 +150,9 @@ namespace zynforge
             for (const auto& a : m.args)
             {
                 line << " ";
-                if (a.isString()) line << "\"" << a.toString() << "\"";
+                // Escape embedded quotes -- an unescaped one closes the token
+                // early and corrupts the rest of the line.
+                if (a.isString()) line << "\"" << a.toString().replace ("\"", "\\\"") << "\"";
                 else              line << a.toString();
             }
             line << "\n";
@@ -268,7 +280,10 @@ namespace zynforge
 
         void disconnect() override
         {
-            if (! running.exchange (false)) return;
+            // See TextLineTransport::disconnect -- an unconditional join. A
+            // reader that exited on its own (desk dropped the link) must still
+            // be joined or destroying it calls std::terminate().
+            running.store (false);
             if (socket != nullptr) socket->close();
             if (reader.joinable()) reader.join();
             socket.reset();
@@ -310,10 +325,47 @@ namespace zynforge
                 out.push_back (std::move (m));
             };
 
+            // RUNNING STATUS: after "B0 00 01" a desk may send "00 02" meaning
+            // another CC on the same channel. Those continuations were being
+            // discarded as stray data bytes -- and NRPN parameter sweeps, which
+            // is most of what A&H sends, are exactly that. The comment at the
+            // top of this class and the framing test both claimed running
+            // status was handled; neither was true.
+            juce::uint8 runningStatus = 0;
+
+            // DATA bytes that follow a status byte. System-common messages were
+            // all sized 0, so 0xF1 / 0xF2 / 0xF3 desynced the stream by their
+            // own data bytes.
+            auto dataBytesFor = [] (juce::uint8 st) -> int
+            {
+                const juce::uint8 hi = (juce::uint8) (st & 0xF0);
+                if (hi == 0xC0 || hi == 0xD0) return 1;        // prog change / chan pressure
+                if (hi >= 0x80 && hi <= 0xE0) return 2;        // note / CC / bend
+                switch (st)                                     // system common
+                {
+                    case 0xF1: case 0xF3: return 1;             // quarter-frame / song select
+                    case 0xF2:            return 2;             // song position
+                    default:              return 0;             // realtime (F8..FF), F6, F7
+                }
+            };
+
             while (i < n)
             {
                 const juce::uint8 s = d[i];
-                if (s < 0x80) { ++i; continue; }              // stray data byte
+
+                if (s < 0x80)                                  // data byte
+                {
+                    if (runningStatus == 0) { ++i; continue; }  // genuinely stray -- no status yet
+                    const int need = dataBytesFor (runningStatus);
+                    if (need == 0) { ++i; continue; }
+                    if (i + need > n) break;                    // incomplete -- wait for more
+                    // Re-materialise the implied status byte so the dialect
+                    // always sees a complete message.
+                    juce::uint8 msg[3] = { runningStatus, 0, 0 };
+                    for (int k = 0; k < need; ++k) msg[k + 1] = d[i + k];
+                    emit (msg, need + 1);
+                    i += need; consumed = i; continue;
+                }
 
                 if (s == 0xF0)                                // SysEx: run to 0xF7
                 {
@@ -321,14 +373,18 @@ namespace zynforge
                     while (e < n && d[e] != 0xF7) ++e;
                     if (e >= n) break;                        // incomplete -- wait for more
                     emit (d + i, e - i + 1);
-                    i = e + 1; consumed = i; continue;
+                    i = e + 1; consumed = i;
+                    runningStatus = 0;                        // SysEx cancels running status
+                    continue;
                 }
 
-                const int need = ((s & 0xF0) == 0xC0 || (s & 0xF0) == 0xD0) ? 2   // prog/chan-press
-                               : ((s & 0xF0) >= 0x80 && (s & 0xF0) <= 0xE0) ? 3   // note/CC/bend
-                               : 1;                                               // realtime
+                const int need = dataBytesFor (s) + 1;
                 if (i + need > n) break;                      // incomplete
                 emit (d + i, need);
+                // Channel messages arm running status; system messages clear it
+                // (realtime bytes, which are 1 byte, deliberately do NOT --
+                // but they also never reach here as a multi-byte message).
+                runningStatus = (s < 0xF0) ? s : 0;
                 i += need; consumed = i;
             }
 

@@ -135,14 +135,24 @@ namespace zynforge
 
     private:
         void handleMessage (const ConsoleMessage&);
-        // Reply-timeout watchdog: a query (enterSoundcheck / captureGains) waits
-        // for N UDP replies; if one is lost the op would hang forever ("Reading
-        // console patch..."). This one-shot fires ~1.2 s after a query and
-        // aborts cleanly if replies are still outstanding. Only one query is
-        // ever outstanding at a time (startTimer replaces any prior timer,
-        // stopTimer cancels it on completion), so no generation counter is
-        // needed to invalidate a stale timer.
+        // ONE repeating heartbeat, two jobs.
+        //
+        // 1. SUBSCRIPTION RENEWAL. The X32's /xremote subscription expires after
+        //    about 10 s. subscribe() was sent once on connect and never again,
+        //    so the desk stopped pushing ~10 s in and the entire pushed read
+        //    tier -- scene recalls dropping markers, live name changes -- went
+        //    silently dead for the rest of the show. The dialect's own comment
+        //    said it had to be re-sent periodically; nothing did.
+        // 2. REPLY TIMEOUT. A query (enterSoundcheck / captureGains) waits for N
+        //    replies; a lost one would hang the op forever ("Reading console
+        //    patch..."). Deadlines are timestamps checked on each beat rather
+        //    than a one-shot timer, so the two jobs can share the timer.
         void timerCallback() override;
+        void startHeartbeat();
+        static constexpr int kHeartbeatMs      = 1000;
+        static constexpr int kResubscribeMs    = 5000;   // < the X32's ~10 s expiry
+        static constexpr int kPatchTimeoutMs   = 1200;
+        static constexpr int kGainTimeoutMs    = 1500;
         void sendMessage (const ConsoleMessage&);
         // Refuse a write the profile/handshake doesn't permit, with a status
         // line explaining why rather than silently doing nothing.
@@ -162,6 +172,10 @@ namespace zynforge
         std::map<int, float> gains;          // headamp idx -> raw 0..1
         int                  expectedGainReplies { 0 };
         bool                 gainCaptureComplete { false };
+        // Deadlines (ms since start, 0 = inactive) rather than one-shot timers.
+        juce::uint32         patchDeadlineMs { 0 };
+        juce::uint32         gainDeadlineMs  { 0 };
+        juce::uint32         nextSubscribeMs { 0 };
 
         std::function<void (const ConsoleMessage&)> msgHook;
 

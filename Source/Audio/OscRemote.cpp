@@ -90,18 +90,11 @@ namespace zynforge
         // from console" can collect names for channels that don't exist yet.
         engine.onConsoleChannelName (idx1, s);
     }
-    void OscRemote::setChannelMute (int idx1, bool m)
-    {
-        const int i = idx1 - 1;
-        if (i < 0 || i >= engine.getRecorder().getNumTracks()) return;
-        engine.getRecorder().getTrack (i).muted.store (m, std::memory_order_relaxed);
-    }
-    void OscRemote::setChannelArm (int idx1, bool a)
-    {
-        const int i = idx1 - 1;
-        if (i < 0 || i >= engine.getRecorder().getNumTracks()) return;
-        engine.getRecorder().getTrack (i).armed.store (a, std::memory_order_relaxed);
-    }
+    // Pair-aware + lock-held: the OSC receiver runs on its own thread, so the
+    // old check-then-index was a TOCTOU against the vector shrinking, and it
+    // half-updated stereo pairs (mirroring lived only in ChannelStrip).
+    void OscRemote::setChannelMute (int idx1, bool m) { engine.setTrackMuted (idx1 - 1, m); }
+    void OscRemote::setChannelArm  (int idx1, bool a) { engine.setTrackArmed (idx1 - 1, a); }
     void OscRemote::setChannelColour (int idx1, juce::uint32 rgb)
     {
         engine.setTrackColour (idx1 - 1, juce::Colour ((juce::uint32) (rgb | 0xff000000)));

@@ -6,6 +6,34 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## A run flag decides whether to work, never whether to join — 2026-08-14
+
+**Context.** The Network audit's worst finding was a process abort. `TextLineTransport` / `MidiTcpTransport` (Yamaha, Allen & Heath) run a reader thread that clears `running` **itself** when the peer closes. `disconnect()` began `if (! running.exchange(false)) return;` — so once the desk dropped the link, teardown skipped the join, the destructor destroyed a joinable `std::thread`, and `std::terminate()` took the process out. No crash dialog, no chance to save. Trigger: a desk power-cycle, a switch reboot, an idle TCP timeout — then the next Connect, profile change, or quit.
+
+`CaptureLink::disconnect` carries a comment describing this exact bug being fixed in that file. The transports written later repeated it.
+
+**Decision.** Join unconditionally. **The flag decides whether to do WORK; it must never decide whether to JOIN.** Encoded as invariants **rule 12**: an `exchange(false)) return` within 15 lines above a `.join()` fails the build.
+
+**Rationale.** The seductive part is that the early return looks like correct idempotence — and in `CompanionServer::stop()` and `CaptureServer::stop()` it genuinely *was* safe, because only `stop()` ever clears those flags. That is precisely why prose didn't hold the line: the pattern is fine until someone adds a second writer of the flag, and the failure mode when they do is not a bug report, it's `SIGABRT`. Rule 12 found both of those "safe" sites the moment it existed; they're now unconditional too, so the rule is enforceable rather than aspirational.
+
+**Consequences.** Twelve checks gate every commit. Verified both directions: with the bug reintroduced the test run dies at `exit=134` after 209 of 302 groups, leaving an `.ips` whose trace reads `std::terminate` → `TextLineTransport`; restored, 302/302. Writing the rule also reproduced the rules-1-7 blindness in mirror image — it matched the anti-pattern quoted in my own explanatory *comment* — so candidate lines are comment-stripped before they count, same as the window.
+
+---
+
+## Cross-thread reads of the track vector need a lock, not a convention — 2026-08-14
+
+**Context.** `condemnAllStrips()` is the codebase's answer to "a `TrackState` can be freed while something else is reading it". It works by detaching UI **components** before the recorder's vector shrinks. The Network audit found three readers it cannot help: the companion server's `/cmd` handler and `captureStatus()` (both on worker threads, the latter once per client every 500 ms), and the OSC receiver. Each range-checked `getNumTracks()` and then called `getTrack()` — a TOCTOU against `removeLastTrack()`'s `tracks.pop_back()`, which frees the `TrackState`. The vector had no lock at all.
+
+The invariants gate did not fire, correctly: rules 1-2 enumerate consumers that **cache** a `TrackState&`. These take one transiently. The hazard is the same; the shape isn't.
+
+**Decision.** `MultitrackRecorder` gets a `structureLock` (a recursive `juce::CriticalSection`) taken by every structural mutator and by every off-audio-thread reader. The **audio thread does not take it** and its relationship to the vector is unchanged — this fixes the network race specifically, and pretending otherwise would be a much larger claim than the change supports.
+
+**Rationale.** The alternative — marshalling every remote command to the message thread — is worse for `captureStatus()`, which has to return a value to an HTTP response and would need a blocking round-trip, i.e. a new deadlock surface. A short lock around a bounded walk is cheaper than that and easier to reason about.
+
+**The second half of the same fix.** Routing those callers through the engine also closed a separate documented violation: *"mute / solo / arm mirror across the pair automatically — never half-update"* was implemented **only in `ChannelStrip`**, via its `pairState` pointer. So a mute from a phone, an OSC message, or an MCU surface left one leg of a stereo pair in the opposite state. There are now `setTrackMuted/Soloed/Armed` + `toggle*` on `AudioEngine` that do both jobs — pair mirroring and the lock — and remote surfaces have no business doing either by hand. This is the third time a rule written for the UI turned out not to cover the network entry points; the durable form is an engine method, not a note.
+
+---
+
 ## A redundancy feature must prove the copy is somewhere else — 2026-08-14
 
 **Context.** Reading the seven files the previous pass had only grepped turned up the most serious defect of the whole audit series, in the feature whose entire purpose is not losing audio. Mirrors write to `root/<sessionName>/Audio Files/Track_NN.<ext>`. The primary writes `sessionDir/Audio Files/Track_NN.<ext>`. Those are the same path exactly when the mirror root is the session's parent — and the mirror picker opens at `~/Music`, sessions live in `~/Music/Zynforge Sessions`, and a fresh mirror row defaults to WAV 24-bit, the same as the default capture format. So picking "my sessions folder" as a mirror — a reasonable thing to think you want — opened two `AudioFormatWriter`s on every take file and left them there for the show. Nothing checked. `applyAndClose` filtered exactly one thing: rows where no folder had ever been picked.

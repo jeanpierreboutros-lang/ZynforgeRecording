@@ -1,6 +1,7 @@
 #include "CompanionServer.h"
 #include "../Theme/BrandColors.h"
 
+#include <cmath>
 #include <cstring>
 #include <thread>
 
@@ -256,7 +257,13 @@ setInterval(tick, 500); tick();
     {
         // running=false FIRST (finding #1) so the accept loop exits and every
         // /stream.wav worker's `while (running.load())` drain loop unwinds.
-        if (! running.exchange (false)) return;
+        //
+        // Unconditional, not `if (! exchange(false)) return;`: an early return
+        // gated on a flag is how a joinable std::thread survives to its
+        // destructor, and destroying one calls std::terminate(). Only stop()
+        // clears this flag today, so it was safe -- but the console TCP
+        // transports proved how quickly that stops being true.
+        running.store (false);
         if (listener != nullptr) listener->close();
         if (acceptThread.joinable()) acceptThread.join();
 
@@ -329,7 +336,16 @@ setInterval(tick, 500); tick();
         while (running.load() && listener != nullptr)
         {
             auto client = std::unique_ptr<juce::StreamingSocket> (listener->waitForNextConnection());
-            if (client == nullptr) break;
+            if (client == nullptr)
+            {
+                // nullptr conflates "listener closed" with a transient accept
+                // error. Bailing on both meant one EMFILE left the server
+                // silently accepting nothing while isRunning() -- and the menu
+                // item -- still reported it as up.
+                if (! running.load()) break;
+                juce::Thread::sleep (200);
+                continue;
+            }
 
             // Reap any finished workers so the vector doesn't accumulate across
             // a long session (clients re-poll every 500 ms = a new connection
@@ -491,12 +507,12 @@ setInterval(tick, 500); tick();
         const int channel = (int) parsed.getProperty ("channel", 0);
         const bool value  = (bool) parsed.getProperty ("value", true);
 
-        auto setBoolOnTrack = [&] (auto setter)
-        {
-            const int idx = channel - 1;
-            if (idx < 0 || idx >= engine.getRecorder().getNumTracks()) return;
-            setter (engine.getRecorder().getTrack (idx), value);
-        };
+        // Route through the engine's pair-aware, lock-held setters. Doing it
+        // here meant (a) a TOCTOU on the track vector -- this runs on a WORKER
+        // thread while the message thread can shrink it, freeing the TrackState
+        // between the range check and the store -- and (b) half-updating a
+        // stereo pair, since pair mirroring lived only in ChannelStrip.
+        const int trackIdx = channel - 1;
 
         // Transport touches non-atomic engine state (startRecording opens
         // files + mutates vectors, playback (re)loads the session) -- marshal
@@ -537,9 +553,17 @@ setInterval(tick, 500); tick();
                 }
             });
         }
-        else if (action == "mute")   setBoolOnTrack ([] (auto& t, bool v) { t.muted .store (v); });
-        else if (action == "solo")   setBoolOnTrack ([] (auto& t, bool v) { t.soloed.store (v); });
-        else if (action == "arm")    setBoolOnTrack ([] (auto& t, bool v) { t.armed .store (v); });
+        else if (action == "mute")   engine.setTrackMuted  (trackIdx, value);
+        else if (action == "solo")   engine.setTrackSoloed (trackIdx, value);
+        else if (action == "arm")    engine.setTrackArmed  (trackIdx, value);
+        else
+        {
+            // An unknown action used to fall through to 200 OK, so a client
+            // typo was indistinguishable from success.
+            writeRaw (s, "400 Bad Request", "application/json",
+                      "{\"ok\":false,\"error\":\"unknown action\"}");
+            return;
+        }
 
         writeRaw (s, "200 OK", "application/json", "{\"ok\":true}");
     }
@@ -599,11 +623,18 @@ setInterval(tick, 500); tick();
         write_le16 ((juce::uint16) bitsPerSamp);
         s.write ("data", 4); write_le32 (fakeBytes);
 
-        // Drain the ring into the socket. Stop on socket error.
+        // Drain the ring into the socket. Stop on socket error -- or when the
+        // DEVICE RATE CHANGES: the header above declared `sr` for the whole
+        // response, so continuing to feed a stream after the device switches
+        // rates plays the rest of the show at the wrong pitch. Ending the
+        // response makes the browser's audio element re-request, which writes a
+        // fresh (correct) header.
         std::size_t readIdx = streamRing.writeIdx.load (std::memory_order_acquire);
         std::vector<juce::int16> outChunk;
         while (running.load())
         {
+            const double nowSr = engine.getDeviceSampleRate();
+            if (nowSr > 0.0 && std::abs (nowSr - (double) sr) > 1.0) break;   // rate changed
             const auto wIdx = streamRing.writeIdx.load (std::memory_order_acquire);
             if (wIdx == readIdx) { juce::Thread::sleep (10); continue; }
 

@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <functional>
 #include <mutex>
+#include <chrono>
 #include <thread>
 
 namespace zynforge::capture
@@ -52,8 +53,15 @@ namespace zynforge::capture
         bool writeLine (const juce::var&);
 
         std::unique_ptr<juce::StreamingSocket> listener;
-        juce::StreamingSocket* client { nullptr };   // valid while a reader thread runs
-        std::mutex             writeLock;            // serialises writes to `client`
+        // shared_ptr, not a raw pointer: the accept loop needs to CLOSE a stuck
+        // client's socket without holding writeLock (that's what interrupts a
+        // blocking write), and it must not race the reader thread destroying it.
+        std::shared_ptr<juce::StreamingSocket> client;   // valid while a reader thread runs
+        // TIMED: a peer that is alive but not reading blocks whoever is writing
+        // to it. With a plain mutex every OTHER writer -- the status pump, the
+        // accept loop's "bye" -- queued behind that stuck write, so one dozing
+        // GUI wedged the daemon. A timed acquire fails fast instead.
+        std::timed_mutex       writeLock;            // serialises writes to `client`
         std::thread            acceptThread, readThread;
         std::atomic<bool>      running { false };
         std::atomic<bool>      clientConnected { false };
@@ -96,7 +104,7 @@ namespace zynforge::capture
         bool writeLine (const juce::var&);
 
         std::unique_ptr<juce::StreamingSocket> socket;
-        std::mutex        writeLock;
+        std::timed_mutex  writeLock;
         std::thread       readThread;
         std::atomic<bool> connected  { false };
         std::atomic<bool> superseded { false };

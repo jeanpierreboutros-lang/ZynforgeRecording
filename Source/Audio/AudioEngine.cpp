@@ -641,6 +641,60 @@ namespace zynforge
         return n;
     }
 
+    // Resolve a strip's stereo partner: L (isStereo) -> N+1, R -> N-1.
+    // Called with the recorder's structure lock already held.
+    static int stereoPartnerIndexLocked (MultitrackRecorder& rec, int index)
+    {
+        if (index >= 0 && index + 1 < rec.getNumTracks()
+            && rec.getTrack (index).isStereo.load (std::memory_order_relaxed))
+            return index + 1;
+        if (index > 0
+            && rec.getTrack (index - 1).isStereo.load (std::memory_order_relaxed))
+            return index - 1;
+        return -1;
+    }
+
+    template <typename Member>
+    static bool applyToPair (MultitrackRecorder& rec, int index, Member member,
+                             bool value, const juce::CriticalSection& lock)
+    {
+        const juce::ScopedLock sl (lock);
+        if (index < 0 || index >= rec.getNumTracks()) return false;
+        (rec.getTrack (index).*member).store (value, std::memory_order_relaxed);
+        const int partner = stereoPartnerIndexLocked (rec, index);
+        if (partner >= 0 && partner < rec.getNumTracks())
+            (rec.getTrack (partner).*member).store (value, std::memory_order_relaxed);
+        return true;
+    }
+
+    bool AudioEngine::setTrackMuted (int i, bool v)
+    { return applyToPair (recorder, i, &TrackState::muted,  v, recorder.getStructureLock()); }
+    bool AudioEngine::setTrackSoloed (int i, bool v)
+    { return applyToPair (recorder, i, &TrackState::soloed, v, recorder.getStructureLock()); }
+    bool AudioEngine::setTrackArmed (int i, bool v)
+    { return applyToPair (recorder, i, &TrackState::armed,  v, recorder.getStructureLock()); }
+
+    template <typename Member>
+    static bool togglePair (MultitrackRecorder& rec, int index, Member member,
+                            const juce::CriticalSection& lock)
+    {
+        const juce::ScopedLock sl (lock);
+        if (index < 0 || index >= rec.getNumTracks()) return false;
+        const bool next = ! (rec.getTrack (index).*member).load (std::memory_order_relaxed);
+        (rec.getTrack (index).*member).store (next, std::memory_order_relaxed);
+        const int partner = stereoPartnerIndexLocked (rec, index);
+        if (partner >= 0 && partner < rec.getNumTracks())
+            (rec.getTrack (partner).*member).store (next, std::memory_order_relaxed);
+        return next;
+    }
+
+    bool AudioEngine::toggleTrackMuted (int i)
+    { return togglePair (recorder, i, &TrackState::muted,  recorder.getStructureLock()); }
+    bool AudioEngine::toggleTrackSoloed (int i)
+    { return togglePair (recorder, i, &TrackState::soloed, recorder.getStructureLock()); }
+    bool AudioEngine::toggleTrackArmed (int i)
+    { return togglePair (recorder, i, &TrackState::armed,  recorder.getStructureLock()); }
+
     EngineStatus AudioEngine::captureStatus()
     {
         EngineStatus s;
@@ -664,6 +718,13 @@ namespace zynforge
         s.captureFormat    = (int) recorder.getCaptureFormat();
 
         constexpr juce::uint32 kDefaultSwatch = 0xff3a3f44;   // neutral graphite
+        // The companion server calls this from a WORKER thread every 500 ms per
+        // client. numTracks was snapshotted above and then used to index -- a
+        // TOCTOU against the message thread shrinking the vector, i.e. a read of
+        // freed TrackStates. Hold the structure lock across the whole walk and
+        // re-read the count under it.
+        const juce::ScopedLock sl (recorder.getStructureLock());
+        s.numTracks = recorder.getNumTracks();
         s.tracks.reserve ((size_t) s.numTracks);
         for (int i = 0; i < s.numTracks; ++i)
         {
@@ -1531,6 +1592,10 @@ namespace zynforge
         // recorder.prepare / player.prepare are idempotent on the
         // same sr/blockSize.
         deviceSampleRate.store (sr, std::memory_order_relaxed);
+        // Keep the NDI transmit's declared rate on the LIVE device rate --
+        // a rate change under a running transmit otherwise plays the rest of
+        // the show at the wrong pitch on every receiver.
+        ndi.setSampleRate (sr);
         audioLoadPct    .store (0.0f, std::memory_order_relaxed);
         recorder.setAudioWorkgroup ({});   // empty workgroup -- no scheduler hint in tests
         click.prepare (sr);
@@ -1681,6 +1746,10 @@ namespace zynforge
         const auto blockSize = device->getCurrentBufferSizeSamples();
 
         deviceSampleRate.store (sr, std::memory_order_relaxed);
+        // Keep the NDI transmit's declared rate on the LIVE device rate --
+        // a rate change under a running transmit otherwise plays the rest of
+        // the show at the wrong pitch on every receiver.
+        ndi.setSampleRate (sr);
         deviceBlockSize .store (blockSize, std::memory_order_relaxed);
         audioLoadPct    .store (0.0f, std::memory_order_relaxed);
 

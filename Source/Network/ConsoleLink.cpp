@@ -50,8 +50,14 @@ namespace zynforge
         if (profile.dialect.probe)
             sendMessage (profile.dialect.probe());
         // Ask for pushed updates (names / scene changes) where supported.
+        // Subscriptions EXPIRE (the X32's /xremote lasts ~10 s), so this is the
+        // first of a repeating series -- see startHeartbeat.
         if (profile.dialect.subscribe)
+        {
             sendMessage (profile.dialect.subscribe());
+            nextSubscribeMs = juce::Time::getMillisecondCounter() + kResubscribeMs;
+        }
+        startHeartbeat();
 
         if (onStatus)
             onStatus (profile.displayName + " link up: " + targetHost + ":"
@@ -72,6 +78,7 @@ namespace zynforge
         dialectConfirmed = false;
         host.clear();
         patch = Patch::Unknown;
+        patchDeadlineMs = gainDeadlineMs = nextSubscribeMs = 0;
         stopTimer();
     }
 
@@ -155,7 +162,8 @@ namespace zynforge
             if (profile.dialect.queryInBlock)
                 sendMessage (profile.dialect.queryInBlock (b));
         if (onStatus) onStatus ("Reading console patch...");
-        startTimer (1200);   // abort if a routing reply is lost
+        patchDeadlineMs = juce::Time::getMillisecondCounter() + kPatchTimeoutMs;
+        startHeartbeat();    // abort if a routing reply is lost
     }
 
     void ConsoleLink::exitSoundcheck()
@@ -194,7 +202,8 @@ namespace zynforge
                 sendMessage (profile.dialect.queryHeadAmp (i));
         if (onStatus) onStatus ("Capturing " + juce::String (expectedGainReplies)
                                 + " head-amp gains...");
-        startTimer (1500);   // abort if a head-amp reply is lost
+        gainDeadlineMs = juce::Time::getMillisecondCounter() + kGainTimeoutMs;
+        startHeartbeat();    // abort if a head-amp reply is lost
     }
 
     void ConsoleLink::restoreGains()
@@ -245,10 +254,24 @@ namespace zynforge
             case ConsoleEvent::Type::InputBlockRouting:
             {
                 if (pendingPatchQueries <= 0) return;
+                // Range-check the off-wire index, exactly like HeadAmpGain below.
+                // Without it a junk index became a stagePatch key, and
+                // exitSoundcheck later wrote that garbage back to the desk --
+                // the one thing the whole write-gate design exists to prevent.
+                if (ev.index < 0 || ev.index >= profile.numInBlocks) return;
                 stagePatch[ev.index] = ev.intValue;
-                if (--pendingPatchQueries == 0)
+                // Completion is "every DISTINCT block is stashed", not "N replies
+                // arrived". We subscribe to pushed updates on connect, so an
+                // unsolicited routing message during the read window used to
+                // decrement the counter for a block already held: the count hit
+                // zero with an INCOMPLETE stash, phase 2 flipped the desk to card
+                // anyway, and exitSoundcheck then refused to restore -- leaving
+                // the desk on card returns with the show patch nowhere but in the
+                // engineer's head.
+                if ((int) stagePatch.size() >= profile.numInBlocks)
                 {
-                    stopTimer();
+                    pendingPatchQueries = 0;
+                    patchDeadlineMs = 0;
                     // Phase 2: full show patch stashed -> flip to card.
                     for (int blk = 0; blk < profile.numInBlocks; ++blk)
                         if (profile.dialect.setInBlock)
@@ -267,7 +290,7 @@ namespace zynforge
                 gains[ev.index] = ev.value;
                 if (expectedGainReplies > 0 && (int) gains.size() >= expectedGainReplies)
                 {
-                    stopTimer();
+                    gainDeadlineMs = 0;
                     expectedGainReplies = 0;
                     gainCaptureComplete = true;
                     if (onStatus) onStatus (juce::String ((int) gains.size())
@@ -278,26 +301,55 @@ namespace zynforge
         }
     }
 
+    void ConsoleLink::startHeartbeat()
+    {
+        if (! isTimerRunning()) startTimer (kHeartbeatMs);
+    }
+
     void ConsoleLink::timerCallback()
     {
-        // Reply-timeout watchdog (see header). A query is still outstanding ->
-        // a reply was lost; abort cleanly so the UI doesn't sit forever on
-        // "Reading console patch..." / "Capturing head-amp gains...".
-        stopTimer();
-        if (pendingPatchQueries > 0)
+        if (! connected) { stopTimer(); return; }
+        const auto now = juce::Time::getMillisecondCounter();
+
+        // 1. Renew the push subscription BEFORE it expires. Without this the
+        //    desk stops pushing ~10 s after connect and every scene recall
+        //    silently stops dropping a marker for the rest of the show.
+        if (profile.dialect.subscribe && now >= nextSubscribeMs)
         {
-            pendingPatchQueries = 0;
-            stagePatch.clear();
-            if (onStatus) onStatus ("Console patch read timed out (lost reply) -- try again.");
+            sendMessage (profile.dialect.subscribe());
+            nextSubscribeMs = now + kResubscribeMs;
         }
-        if (expectedGainReplies > 0)
+
+        // 2. Reply-timeout watchdogs. A query is still outstanding past its
+        //    deadline -> a reply was lost; abort cleanly so the UI doesn't sit
+        //    forever on "Reading console patch..." / "Capturing head-amp gains".
+        if (patchDeadlineMs != 0 && now >= patchDeadlineMs)
         {
-            const int got = (int) gains.size();
-            expectedGainReplies = 0;
-            gainCaptureComplete = false;   // partial -- must NOT be persisted as the show's gains
-            if (onStatus) onStatus ("Head-amp capture timed out (" + juce::String (got)
-                                    + " of expected received) -- try again.");
+            patchDeadlineMs = 0;
+            if (pendingPatchQueries > 0)
+            {
+                pendingPatchQueries = 0;
+                stagePatch.clear();
+                if (onStatus) onStatus ("Console patch read timed out (lost reply) -- try again.");
+            }
         }
+        if (gainDeadlineMs != 0 && now >= gainDeadlineMs)
+        {
+            gainDeadlineMs = 0;
+            if (expectedGainReplies > 0)
+            {
+                const int got = (int) gains.size();
+                expectedGainReplies = 0;
+                gainCaptureComplete = false;   // partial -- must NOT be persisted as the show's gains
+                if (onStatus) onStatus ("Head-amp capture timed out (" + juce::String (got)
+                                        + " of expected received) -- try again.");
+            }
+        }
+
+        // Nothing left to do and no subscription to renew -> stop beating.
+        if (profile.dialect.subscribe == nullptr
+            && patchDeadlineMs == 0 && gainDeadlineMs == 0)
+            stopTimer();
     }
 
     // ── Persistence ─────────────────────────────────────────────────────

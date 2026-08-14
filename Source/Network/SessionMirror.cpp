@@ -8,10 +8,12 @@ namespace zynforge
     SessionMirror::SessionMirror (AudioEngine& e) : engine (e) {}
     SessionMirror::~SessionMirror() { stop(); }
 
-    void SessionMirror::start (const juce::String& primaryHost, int p, int periodMs)
+    void SessionMirror::start (const juce::String& primaryHost, int p,
+                               const juce::String& accessToken, int periodMs)
     {
-        host = primaryHost;
-        port = p;
+        host  = primaryHost;
+        port  = p;
+        token = accessToken.trim();
         if (host.isEmpty()) { stop(); return; }
         startTimer (periodMs);
     }
@@ -50,7 +52,15 @@ namespace zynforge
             else
             {
                 const auto v = juce::JSON::parse (payload);
-                if (! v.isObject()) { lastError = "bad JSON payload"; }
+                if (! v.isObject())
+                {
+                    // The commonest cause by far is a rejected token: the
+                    // companion answers 401 with a plain-text body. Say so
+                    // instead of the generic parse failure.
+                    lastError = payload.containsIgnoreCase ("access token")
+                                    ? "primary rejected the access token"
+                                    : "bad JSON payload";
+                }
                 else
                 {
                     applyState (v);
@@ -68,19 +78,25 @@ namespace zynforge
             if (fetchThread.joinable()) fetchThread.join();
             const auto h = host;
             const int  p = port;
+            const auto tk = token;
             abortFetch.store (false);
             fetchActive.store (true);
-            fetchThread = std::thread ([this, h, p]
+            fetchThread = std::thread ([this, h, p, tk]
             {
-                fetchOnce (h, p);
+                fetchOnce (h, p, tk);
                 fetchActive.store (false);
             });
         }
     }
 
-    void SessionMirror::fetchOnce (juce::String h, int p)
+    void SessionMirror::fetchOnce (juce::String h, int p, juce::String tk)
     {
-        const auto url = juce::URL ("http://" + h + ":" + juce::String (p) + "/state.json");
+        // The token must ride on the query string -- every companion endpoint
+        // 401s without it. Without this the mirror never got past the gate.
+        const auto url = juce::URL ("http://" + h + ":" + juce::String (p) + "/state.json"
+                                    + (tk.isNotEmpty()
+                                          ? "?t=" + juce::URL::addEscapeChars (tk, false)
+                                          : juce::String()));
 
         // Connection timeout is 300 ms; the read loop below adds a hard byte
         // ceiling + a total-time budget so a slow/rogue host streaming forever
@@ -90,7 +106,11 @@ namespace zynforge
         std::unique_ptr<juce::InputStream> stream (url.createInputStream (options));
 
         juce::String payload, err;
-        if (stream == nullptr)
+        if (tk.isEmpty())
+        {
+            err = "no access token -- copy it from the primary's companion server";
+        }
+        else if (stream == nullptr)
         {
             err = "no response from " + h + ":" + juce::String (p);
         }

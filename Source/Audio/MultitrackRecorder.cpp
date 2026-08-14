@@ -211,6 +211,7 @@ namespace zynforge
 
         const int fifoSize = juce::nextPowerOfTwo ((int) (sampleRate * kFifoSeconds));
 
+        const juce::ScopedLock sl (structureLock);
         auto t = std::make_unique<TrackState>();
         t->setNameThreadSafe (juce::String ((int) tracks.size() + 1));
         tracks.push_back (std::move (t));
@@ -228,6 +229,7 @@ namespace zynforge
     void MultitrackRecorder::removeLastTrack()
     {
         if (isRecording() || tracks.empty()) return;
+        const juce::ScopedLock sl (structureLock);   // off-thread readers are mid-getTrack
         tracks.pop_back();
         fifos.pop_back();
         preRoll.pop_back();
@@ -238,6 +240,7 @@ namespace zynforge
     void MultitrackRecorder::removeTrackAt (int index)
     {
         if (isRecording()) return;
+        const juce::ScopedLock sl (structureLock);
         if (index < 0 || index >= (int) tracks.size()) return;
         tracks.erase (tracks.begin() + index);
         fifos.erase  (fifos.begin()  + index);
@@ -249,6 +252,10 @@ namespace zynforge
     void MultitrackRecorder::setTrackCount (int n)
     {
         if (isRecording()) return;
+        // One lock for the whole resize: a reader must never observe a
+        // half-applied count. CriticalSection is recursive, so the
+        // add/removeLastTrack calls below re-entering it is fine.
+        const juce::ScopedLock sl (structureLock);
         n = juce::jmax (0, n);
         while ((int) tracks.size() > n) removeLastTrack();
         while ((int) tracks.size() < n) addTrack();

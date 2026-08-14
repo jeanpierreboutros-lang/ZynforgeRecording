@@ -128,28 +128,19 @@ namespace zynforge
                 return;
             }
             case mcu::Action::Mute:
-                juce::MessageManager::callAsync ([eng, ch]
-                {
-                    auto& r = eng->getRecorder();
-                    if (ch >= 0 && ch < r.getNumTracks())
-                    { auto& t = r.getTrack (ch); t.muted.store (! t.muted.load (std::memory_order_relaxed), std::memory_order_relaxed); }
-                });
+                // Engine setter: mirrors a stereo pair (this used to leave one
+                // leg in the opposite state) and holds the structure lock.
+                juce::MessageManager::callAsync ([eng, ch] { eng->toggleTrackMuted (ch); });
                 return;
             case mcu::Action::Solo:
-                juce::MessageManager::callAsync ([eng, ch]
-                {
-                    auto& r = eng->getRecorder();
-                    if (ch >= 0 && ch < r.getNumTracks())
-                    { auto& t = r.getTrack (ch); t.soloed.store (! t.soloed.load (std::memory_order_relaxed), std::memory_order_relaxed); }
-                });
+                // Engine setter: mirrors a stereo pair (this used to leave one
+                // leg in the opposite state) and holds the structure lock.
+                juce::MessageManager::callAsync ([eng, ch] { eng->toggleTrackSoloed (ch); });
                 return;
             case mcu::Action::Arm:
-                juce::MessageManager::callAsync ([eng, ch]
-                {
-                    auto& r = eng->getRecorder();
-                    if (ch >= 0 && ch < r.getNumTracks())
-                    { auto& t = r.getTrack (ch); t.armed.store (! t.armed.load (std::memory_order_relaxed), std::memory_order_relaxed); }
-                });
+                // Engine setter: mirrors a stereo pair (this used to leave one
+                // leg in the opposite state) and holds the structure lock.
+                juce::MessageManager::callAsync ([eng, ch] { eng->toggleTrackArmed (ch); });
                 return;
             case mcu::Action::Play:
             case mcu::Action::Stop:

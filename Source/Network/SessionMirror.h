@@ -38,7 +38,16 @@ namespace zynforge
 
         // Start polling primaryHost:port for /state.json every periodMs.
         // Set to empty host or call stop() to turn the mirror off.
-        void start (const juce::String& primaryHost, int port, int periodMs = 500);
+        //
+        // `accessToken` is REQUIRED: the primary's companion server rejects
+        // every tokenless request with 401 (the token gate was added after this
+        // class was written), so the mirror fetched a plain-text 401 body,
+        // failed to parse it as JSON, and reported "bad JSON payload" forever
+        // while the UI said "Mirroring ...". It has never worked end to end.
+        // The token is the one shown by Session > Companion server on the
+        // PRIMARY machine.
+        void start (const juce::String& primaryHost, int port,
+                    const juce::String& accessToken, int periodMs = 500);
         void stop();
 
         bool         isMirroring() const noexcept { return juce::Timer::isTimerRunning(); }
@@ -52,10 +61,11 @@ namespace zynforge
         // Runs on a short-lived background thread: bounded, time-budgeted GET
         // so a slow/rogue host can't freeze the UI or exhaust memory. Publishes
         // the result for the next timerCallback to apply on the message thread.
-        void fetchOnce (juce::String host, int port);
+        void fetchOnce (juce::String host, int port, juce::String token);
 
         AudioEngine&  engine;
         juce::String  host;
+        juce::String  token;
         int           port { 9000 };
         juce::int64   lastSyncMs { 0 };
         juce::String  lastError;

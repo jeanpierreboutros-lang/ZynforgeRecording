@@ -1,5 +1,7 @@
 #include "CaptureLink.h"
 
+#include <chrono>
+
 namespace zynforge::capture
 {
     namespace
@@ -56,6 +58,18 @@ namespace zynforge::capture
             return true;
         }
 
+        // NOTE: do NOT poll writability with StreamingSocket::waitUntilReady
+        // here. It takes the socket's readLock even for a WRITE check (see
+        // juce_Socket.cpp), and this socket always has a reader thread parked in
+        // waitUntilReady(true, 200) -- so the writer starves on the lock and
+        // every send fails. Tried it; it broke the whole capture-daemon suite.
+        //
+        // A peer that is alive but not reading still wedges THIS write, which is
+        // unavoidable with a blocking socket API. What must not happen is that
+        // wedge spreading: writeLock is a timed_mutex so other writers fail fast
+        // instead of queueing behind it, and the stuck write is interrupted the
+        // way this codebase already does it everywhere else -- by closing the
+        // socket from another thread.
         bool writeAll (juce::StreamingSocket& s, const juce::String& line)
         {
             const auto utf8 = line.toRawUTF8();
@@ -69,6 +83,9 @@ namespace zynforge::capture
             }
             return true;
         }
+
+        // How long any writer will wait for the write lock before giving up.
+        constexpr auto kWriteLockWait = std::chrono::milliseconds (250);
     }
 
     // ── CaptureServer ───────────────────────────────────────────────────────
@@ -93,11 +110,20 @@ namespace zynforge::capture
         // Never call from onCommand (it fires on the reader thread): the
         // join below would deadlock on itself. Assert in debug.
         jassert (std::this_thread::get_id() != readThread.get_id());
-        if (! running.exchange (false)) return;
+        // The flag decides whether to do WORK; it must never decide whether to
+        // JOIN. Only stop() clears `running` today, so the early return was safe
+        // -- but it is the exact shape that aborted the process in the console
+        // TCP transports (a reader that clears its own flag, then a destructor
+        // that destroys a joinable thread -> std::terminate). Unconditional.
+        running.store (false);
         if (listener != nullptr) listener->close();
         {
-            const std::lock_guard<std::mutex> g (writeLock);
-            if (client != nullptr) client->close();   // unblock the reader's wait
+            std::shared_ptr<juce::StreamingSocket> live;
+            {
+                std::unique_lock<std::timed_mutex> g (writeLock, kWriteLockWait);
+                live = client;
+            }
+            if (live != nullptr) live->close();       // unblock the reader's wait
         }
         if (acceptThread.joinable()) acceptThread.join();
         if (readThread.joinable())   readThread.join();
@@ -111,7 +137,16 @@ namespace zynforge::capture
         while (running.load() && listener != nullptr)
         {
             auto sock = std::unique_ptr<juce::StreamingSocket> (listener->waitForNextConnection());
-            if (sock == nullptr) break;
+            if (sock == nullptr)
+            {
+                // nullptr means "listener closed" OR a transient accept error
+                // (EMFILE and friends). Treating both as shutdown left the
+                // server not accepting while isRunning() still said it was up.
+                // Only a cleared `running` is a real shutdown.
+                if (! running.load()) break;
+                juce::Thread::sleep (200);
+                continue;
+            }
             // One GUI at a time: a NEW connection supersedes the old one.
             // Tell the old client it's being superseded ON PURPOSE (a "bye")
             // BEFORE closing its socket, so it distinguishes an intentional
@@ -121,12 +156,19 @@ namespace zynforge::capture
             // disconnected on its own, wedging the accept loop (and the new
             // connection) indefinitely.
             {
-                const std::lock_guard<std::mutex> g (writeLock);
-                if (client != nullptr)
+                // Grab a reference under the lock if we can get it quickly; a
+                // wedged writer must not stop us superseding the connection.
+                std::shared_ptr<juce::StreamingSocket> old;
                 {
-                    writeAll (*client, frame (encodeBye ("superseded")));
-                    client->close();
+                    std::unique_lock<std::timed_mutex> g (writeLock, kWriteLockWait);
+                    old = client;
+                    if (g.owns_lock() && old != nullptr)
+                        writeAll (*old, frame (encodeBye ("superseded")));
                 }
+                // Close OUTSIDE the lock: this is what interrupts a write that's
+                // stuck on a dead peer, so it must not queue behind that write.
+                // The shared_ptr keeps the socket alive while we do it.
+                if (old != nullptr) old->close();
             }
             if (readThread.joinable()) readThread.join();
             readThread = std::thread ([this, s = std::move (sock)] () mutable
@@ -138,16 +180,17 @@ namespace zynforge::capture
 
     void CaptureServer::readLoop (std::unique_ptr<juce::StreamingSocket> sock)
     {
+        std::shared_ptr<juce::StreamingSocket> shared (std::move (sock));
         {
-            const std::lock_guard<std::mutex> g (writeLock);
-            client = sock.get();
+            const std::lock_guard<std::timed_mutex> g (writeLock);
+            client = shared;
         }
         clientConnected.store (true);
 
         juce::MemoryBlock scratch;
         while (running.load())
         {
-            const bool keep = pumpLines (*sock, scratch, [this] (const juce::String& line)
+            const bool keep = pumpLines (*shared, scratch, [this] (const juce::String& line)
             {
                 const auto v = juce::JSON::parse (line);
                 if (messageType (v) != "cmd") return;
@@ -174,7 +217,7 @@ namespace zynforge::capture
         }
 
         {
-            const std::lock_guard<std::mutex> g (writeLock);
+            const std::lock_guard<std::timed_mutex> g (writeLock);
             client = nullptr;
         }
         clientConnected.store (false);
@@ -182,8 +225,11 @@ namespace zynforge::capture
 
     bool CaptureServer::writeLine (const juce::var& v)
     {
-        const std::lock_guard<std::mutex> g (writeLock);
-        if (client == nullptr) return false;
+        // Fail fast instead of queueing behind a write that's stuck on a dead
+        // peer -- that queueing is what let one dozing GUI stall the daemon's
+        // whole status pump.
+        std::unique_lock<std::timed_mutex> g (writeLock, kWriteLockWait);
+        if (! g.owns_lock() || client == nullptr) return false;
         return writeAll (*client, frame (v));
     }
 
@@ -276,8 +322,8 @@ namespace zynforge::capture
 
     bool CaptureClient::writeLine (const juce::var& v)
     {
-        const std::lock_guard<std::mutex> g (writeLock);
-        if (! connected.load() || socket == nullptr) return false;
+        std::unique_lock<std::timed_mutex> g (writeLock, kWriteLockWait);
+        if (! g.owns_lock() || ! connected.load() || socket == nullptr) return false;
         return writeAll (*socket, frame (v));
     }
 

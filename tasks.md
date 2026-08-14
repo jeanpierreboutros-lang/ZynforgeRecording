@@ -15,6 +15,18 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Current Priorities
 
+### NETWORK FOLDER AUDIT — 2026-08-14 (all 15 fixed, shipped)
+
+**302 test groups / 0 failures** (4 new), both gates CLEAN.
+
+- [x] **HIGH: a console dropping its TCP link aborted the app** (M) — reader clears its own flag, `disconnect()` early-returned before the join, destructor destroyed a joinable `std::thread` → `std::terminate`. Proven live: injected regression gives `exit=134` after 209/302 groups.
+- [x] **HIGH: companion server read freed `TrackState`s** (M) — `condemnAllStrips` protects components, not network threads. Added `MultitrackRecorder::structureLock`.
+- [x] **HIGH: console scene markers died ~10 s after connect** (S) — `/xremote` expires; `subscribe()` was sent once. Heartbeat renewal, watchdogs folded in as deadlines.
+- [x] **MED** (M) — patch stash counted replies not distinct blocks (desk stranded on card returns); unvalidated wire index; stereo pairs half-updated from every remote surface; Session Mirror could never authenticate; capture daemon wedged by a dozing GUI.
+- [x] **LOW** (S) — accept-loop error handling, unknown `/cmd` → 400, device rate changes for the audition stream + NDI, MIDI running status + system-common framing, SCP quote escaping, atomic connected flag, NDI partial-init leak.
+- [x] **Invariants rule 12** — no `std::thread` join skipped by an early flag return. Found 2 more sites the moment it existed. Verified red/green.
+
+
 ### THE SEVEN SKIPPED FILES — 2026-08-14 (all 14 fixed, shipped)
 
 The files the dialogs pass had only *grepped*. Reading them found the worst bug of the audit series.

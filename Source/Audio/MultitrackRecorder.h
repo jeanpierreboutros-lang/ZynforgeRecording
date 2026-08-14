@@ -134,6 +134,34 @@ namespace zynforge
         void setTrackCount (int n);
 
         int          getNumTracks() const noexcept { return (int) tracks.size(); }
+
+        // ── Cross-thread access to the track vector ────────────────────────
+        // The vector SHRINKS on the message thread (removeLastTrack / setTrackCount
+        // / removeTrackAt), which FREES TrackStates. Off-thread readers -- the
+        // companion server's worker threads, the OSC receiver, the MCU surface --
+        // range-check getNumTracks() and then call getTrack(), which is a
+        // TOCTOU: the vector can shrink between the two, and the read lands in
+        // freed memory. condemnAllStrips() closes this for the UI, but it detaches
+        // COMPONENTS -- it does nothing for a network thread.
+        //
+        // So: every structural change takes this lock, and every non-audio-thread
+        // reader takes it around "check the count, then use the track". It is a
+        // juce::CriticalSection (recursive), so nesting from the message thread
+        // is safe. The AUDIO thread does NOT take it and must not -- its
+        // relationship to the vector is unchanged by this.
+        const juce::CriticalSection& getStructureLock() const noexcept { return structureLock; }
+
+        // Convenience for the common cross-thread shape: run `fn(TrackState&)`
+        // under the structure lock iff `index` is in range. Returns false when
+        // the index was out of range (or the track vanished).
+        template <typename Fn>
+        bool withTrack (int index, Fn&& fn)
+        {
+            const juce::ScopedLock sl (structureLock);
+            if (index < 0 || index >= (int) tracks.size()) return false;
+            fn (*tracks[(std::size_t) index]);
+            return true;
+        }
         // Bumped whenever the track SET changes (added / removed / cleared
         // + recreated on a device restart). UI watches this to rebuild
         // strips even when the COUNT is unchanged but the underlying
@@ -545,6 +573,9 @@ namespace zynforge
         int    blockSize  { 512 };
 
         std::vector<std::unique_ptr<TrackState>>     tracks;
+        // Guards STRUCTURAL changes to `tracks` against off-thread readers.
+        // See getStructureLock(). Not taken by the audio thread.
+        mutable juce::CriticalSection                structureLock;
         std::atomic<int>                             trackGen { 0 };   // bumped on any track-set change
         std::vector<std::unique_ptr<ChannelFifo>>    fifos;
         std::vector<WriterChannel>                   writers;

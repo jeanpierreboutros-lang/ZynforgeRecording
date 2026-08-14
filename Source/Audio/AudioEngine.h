@@ -402,6 +402,29 @@ namespace zynforge
 
         // Returns recording dir if recording, else loaded playback session,
         // else an empty File.
+        // ── Pair-aware, thread-safe track toggles ──────────────────────────
+        // The ONE place remote surfaces (companion server, OSC, MCU) may flip
+        // mute / solo / arm. Two things they all got wrong doing it themselves:
+        //
+        //  1. STEREO. A pair is two adjacent strips with isStereo on the L, and
+        //     "mute/solo/arm mirror across the pair -- never half-update" is a
+        //     documented invariant. It was implemented only in ChannelStrip
+        //     (via its pairState pointer), so every non-UI entry point left one
+        //     leg of a stereo pair in the opposite state.
+        //  2. LIFETIME. They range-checked getNumTracks() and then called
+        //     getTrack() -- a TOCTOU against the message thread shrinking the
+        //     vector. These take the recorder's structure lock for both.
+        //
+        // Returns false when the index is out of range.
+        bool setTrackMuted  (int index, bool v);
+        bool setTrackSoloed (int index, bool v);
+        bool setTrackArmed  (int index, bool v);
+        // Read-modify-write under the same lock, for surfaces with a toggle
+        // button and no state of their own (MCU). Returns the NEW value.
+        bool toggleTrackMuted  (int index);
+        bool toggleTrackSoloed (int index);
+        bool toggleTrackArmed  (int index);
+
         juce::File getActiveSessionDir() const;
 
         // Pin the active session folder explicitly (used by New Session...
