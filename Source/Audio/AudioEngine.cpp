@@ -67,7 +67,25 @@ namespace zynforge
     juce::File AudioEngine::makeTimestampedSessionDir() const
     {
         const auto stamp = juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S");
-        return getSessionsRoot().getChildFile ("Session_" + stamp);
+        return getSessionsRoot().getNonexistentChildFile ("Session_" + stamp, {}, false);
+    }
+
+    bool AudioEngine::hasUsableArmedInput()
+    {
+        auto* device = deviceManager.getCurrentAudioDevice();
+        if (device == nullptr) return false;
+        const auto active = device->getActiveInputChannels();
+        const juce::ScopedLock sl (recorder.getStructureLock());
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+        {
+            const auto& t = recorder.getTrack (i);
+            const int input = t.inputRouting.load (std::memory_order_relaxed);
+            if (t.armed.load (std::memory_order_relaxed)
+                && ! t.isBus.load (std::memory_order_relaxed)
+                && input >= 0 && active[input])
+                return true;
+        }
+        return false;
     }
 
     void AudioEngine::clearRecentSessions()
@@ -152,6 +170,8 @@ namespace zynforge
 
     bool AudioEngine::startRecording (const juce::File& sessionDir)
     {
+        if (sessionTransitionActive.load (std::memory_order_acquire))
+            return false;
         // Bypass-proof guard: refuse to capture if the device clock disagrees
         // with the session rate (silent wrong-speed/pitch take). Covers every
         // caller -- record button, transport bar, punch auto-record, companion.
@@ -746,9 +766,9 @@ namespace zynforge
         return s;
     }
 
-    void AudioEngine::saveSessionMixTo (const juce::File& sessionDir)
+    bool AudioEngine::saveSessionMixTo (const juce::File& sessionDir)
     {
-        if (! sessionDir.isDirectory()) return;
+        if (! sessionDir.isDirectory()) return false;
 
         juce::Array<juce::var> arr;
         for (int i = 0; i < recorder.getNumTracks(); ++i)
@@ -809,25 +829,25 @@ namespace zynforge
         }
         root->setProperty ("tempoMap", tmap);
 
-        sessionDir.getChildFile ("session_mix.json")
-                  .replaceWithText (juce::JSON::toString (juce::var (root.get()), true));
+        return sessionDir.getChildFile ("session_mix.json")
+                         .replaceWithText (juce::JSON::toString (juce::var (root.get()), true));
     }
 
-    void AudioEngine::loadSessionMixFrom (const juce::File& sessionDir)
+    bool AudioEngine::loadSessionMixFrom (const juce::File& sessionDir)
     {
         const auto f = sessionDir.getChildFile ("session_mix.json");
-        if (! f.existsAsFile()) return;   // older session -- leave current state alone
+        if (! f.existsAsFile()) return false;
 
         const auto parsed = juce::JSON::parse (f);
         auto* root = parsed.getDynamicObject();
-        if (root == nullptr) return;
+        if (root == nullptr || ! root->hasProperty ("trackCount")) return false;
 
-        // Grow the recorder to the saved strip count so every saved strip has
-        // a track to land on (the file lists ALL strips, so applying each one
-        // makes the session fully authoritative for its mixer state -- no need
-        // to pre-clear; every field is written below).
+        // The saved session is authoritative in both directions.  Growing only
+        // left channels from the previous, larger session alive and exposed
+        // them to the user after Open.
         const int want = (int) root->getProperty ("trackCount");
-        if (want > recorder.getNumTracks())
+        if (want < 0) return false;
+        if (want != recorder.getNumTracks())
             setStripCount (want);
 
         // Session tempo state. Guarded so an older session (no keys) keeps
@@ -894,6 +914,7 @@ namespace zynforge
                                     std::memory_order_relaxed);
                             }
                 }
+        return true;
     }
 
     void AudioEngine::setPhasePair (int leftCh1Based, int rightCh1Based) noexcept
@@ -1823,6 +1844,34 @@ namespace zynforge
         }
     }
 
+    void AudioEngine::clearSessionState()
+    {
+        stopPlayback();
+        player.unload();
+        player.clearAllClips();
+        player.clearLoopRegion();
+        player.setLoopEnabled (false);
+
+        trackClips.clear();
+        trackPlaylists.clear();
+        {
+            const juce::ScopedLock sl (automationLock);
+            automationData.clear();
+        }
+        clearAllAutomationTrims();
+        markers.clearContext();
+        invalidateTransientCache();
+        editCursorSample.store (-1, std::memory_order_release);
+        {
+            const juce::ScopedLock sl (tempoLock);
+            tempoMap.clear();
+        }
+        currentTempoBpm.store (120.0f, std::memory_order_relaxed);
+        timeSigNumerator.store (4, std::memory_order_relaxed);
+        timeSigDenominator.store (4, std::memory_order_relaxed);
+        setActiveSessionDir ({});
+    }
+
     void AudioEngine::setTimeSignature (int numerator, int denominator)
     {
         numerator   = juce::jlimit (1, 32, numerator);
@@ -1925,6 +1974,10 @@ namespace zynforge
     int AudioEngine::getOscPort() const
     {
         return osc != nullptr ? osc->getPort() : 0;
+    }
+    juce::String AudioEngine::getOscAccessToken() const
+    {
+        return osc != nullptr ? osc->getAccessToken() : juce::String();
     }
     int AudioEngine::getOscDialect() const
     {

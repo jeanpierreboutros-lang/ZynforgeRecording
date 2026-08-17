@@ -271,6 +271,7 @@ namespace zynforge
         bool connect (const juce::String& host, int port) override
         {
             disconnect();
+            runningStatus = 0;
             socket = std::make_unique<juce::StreamingSocket>();
             if (! socket->connect (host, port, 2000)) { socket.reset(); return false; }
             running.store (true);
@@ -311,7 +312,8 @@ namespace zynforge
         // Frame a byte stream into MIDI messages. Static + public so the suite
         // can prove the framing (running-status, SysEx spanning reads) without
         // a socket. Appends complete messages to `out`, keeps the remainder.
-        static void frame (juce::MemoryBlock& buffer, std::vector<ConsoleMessage>& out)
+        static void frame (juce::MemoryBlock& buffer, std::vector<ConsoleMessage>& out,
+                           juce::uint8& runningStatus)
         {
             const auto* d = static_cast<const juce::uint8*> (buffer.getData());
             const int   n = (int) buffer.getSize();
@@ -331,8 +333,6 @@ namespace zynforge
             // is most of what A&H sends, are exactly that. The comment at the
             // top of this class and the framing test both claimed running
             // status was handled; neither was true.
-            juce::uint8 runningStatus = 0;
-
             // DATA bytes that follow a status byte. System-common messages were
             // all sized 0, so 0xF1 / 0xF2 / 0xF3 desynced the stream by their
             // own data bytes.
@@ -352,6 +352,16 @@ namespace zynforge
             while (i < n)
             {
                 const juce::uint8 s = d[i];
+
+                // MIDI realtime bytes may appear between ANY two data bytes.
+                // Emit them immediately without cancelling channel running
+                // status (MIDI 1.0 spec).
+                if (s >= 0xF8)
+                {
+                    emit (d + i, 1);
+                    ++i; consumed = i;
+                    continue;
+                }
 
                 if (s < 0x80)                                  // data byte
                 {
@@ -396,6 +406,12 @@ namespace zynforge
             }
         }
 
+        static void frame (juce::MemoryBlock& buffer, std::vector<ConsoleMessage>& out)
+        {
+            juce::uint8 status = 0;
+            frame (buffer, out, status);
+        }
+
     private:
         void readLoop()
         {
@@ -411,7 +427,7 @@ namespace zynforge
                 scratch.append (buf, (size_t) got);
 
                 std::vector<ConsoleMessage> msgs;
-                frame (scratch, msgs);
+                frame (scratch, msgs, runningStatus);
                 for (auto& m : msgs) deliverOnMessageThread (std::move (m));
                 if (scratch.getSize() > (1u << 20)) break;
             }
@@ -421,5 +437,6 @@ namespace zynforge
         std::unique_ptr<juce::StreamingSocket> socket;
         std::thread       reader;
         std::atomic<bool> running { false };
+        juce::uint8       runningStatus { 0 };
     };
 }

@@ -43,7 +43,10 @@ namespace zynforge
         playing.store (false, std::memory_order_release);
         waitForCallbackDrain();
 
-        tracks.clear();
+        {
+            const juce::ScopedLock sl (tracksLock);
+            tracks.clear();
+        }
         readerCount.store (0, std::memory_order_release);
         loaded.store (false, std::memory_order_release);
         {
@@ -125,10 +128,9 @@ namespace zynforge
         std::vector<Pending> pending;
         int maxIndex = -1;
 
-        // Group every file by its track index. files.sort() already orders a
-        // group as main-first then parts ascending ("Track_07.wav" < "..._part02"
-        // < "..._part03"), so each group is in playback order. A take split
-        // across parts is read back as ONE seamless stream via ConcatReader.
+        // Group every file by its track index. Playback order is resolved by
+        // findTakeParts' numeric part parsing, never lexicographic filename
+        // order (which places part100 before part11).
         std::map<int, std::vector<juce::File>> byIndex;
         for (auto& f : files)
         {
@@ -143,27 +145,32 @@ namespace zynforge
 
         for (auto& [idx, partFiles] : byIndex)
         {
-            std::vector<std::unique_ptr<juce::AudioFormatReader>> partReaders;
-            double      fileSR = deviceSampleRate;
-            bool        stereo = false;
-            juce::int64 takeLen = 0;
-            for (auto& pf : partFiles)
-            {
-                std::unique_ptr<juce::AudioFormatReader> raw (formatManager.createReaderFor (pf));
-                if (raw == nullptr) continue;
-                if (partReaders.empty()) { fileSR = raw->sampleRate; stereo = raw->numChannels >= 2; }
-                takeLen += (juce::int64) raw->lengthInSamples;
-                partReaders.push_back (std::move (raw));
-            }
-            if (partReaders.empty()) continue;
-
-            // One file -> use it directly; many -> stitch with ConcatReader.
-            std::unique_ptr<juce::AudioFormatReader> reader;
-            if (partReaders.size() == 1) reader = std::move (partReaders.front());
-            else                         reader = std::make_unique<ConcatReader> (std::move (partReaders));
+            juce::File mainFile;
+            for (const auto& f : partFiles)
+                if (! f.getFileNameWithoutExtension().containsIgnoreCase ("_part"))
+                { mainFile = f; break; }
+            if (! mainFile.existsAsFile()) continue;
+            auto reader = ConcatReader::create (formatManager, findTakeParts (mainFile));
+            if (reader == nullptr) continue; // incomplete/corrupt take: never play a silent truncation
+            const double fileSR = reader->sampleRate;
+            const bool stereo = reader->numChannels >= 2;
+            const auto takeLen = reader->lengthInSamples;
 
             const auto bufferSamples = (int) (fileSR * kReaderBufferSeconds);
             auto buf = std::make_shared<juce::BufferingAudioReader> (reader.release(), readerThread, bufferSamples);
+            // Prime every track before making the session playable. Without
+            // this handshake, the background thread could fill track 1 first
+            // and a later track several callbacks afterwards, producing a
+            // user-audible staggered start even though all files begin at the
+            // same sample. Playback itself remains non-blocking below.
+            {
+                const int primeSamples = juce::jmax (1, juce::jmin (blockSize, 512));
+                juce::AudioBuffer<float> prime ((int) juce::jmax ((unsigned int) 1,
+                                                                 buf->numChannels),
+                                                 primeSamples);
+                buf->setReadTimeout (1000);
+                buf->read (&prime, 0, primeSamples, 0, true, true);
+            }
             buf->setReadTimeout (0); // non-blocking -- fill silence if not buffered yet
 
             pending.push_back ({ idx, std::move (buf), takeLen, stereo });
@@ -174,20 +181,21 @@ namespace zynforge
 
         // Build the index-aligned track list. Empty slots (no file) get a
         // default Track (null reader) which processBlock renders as silence.
-        tracks.assign ((std::size_t) (maxIndex + 1), Track{});
-        for (auto& p : pending)
         {
-            if (p.stereo)
+            const juce::ScopedLock sl (tracksLock);
+            tracks.assign ((std::size_t) (maxIndex + 1), Track{});
+            for (auto& p : pending)
             {
-                if (p.index + 1 >= (int) tracks.size()) continue;
-                // L reads file channel 0, R reads channel 1 (shared reader).
-                tracks[(std::size_t) p.index]     = Track { p.reader, p.length, true,  false };
-                tracks[(std::size_t) p.index + 1] = Track { p.reader, p.length, false, true  };
+                if (p.stereo)
+                {
+                    if (p.index + 1 >= (int) tracks.size()) continue;
+                    tracks[(std::size_t) p.index]     = Track { p.reader, p.length, true,  false };
+                    tracks[(std::size_t) p.index + 1] = Track { p.reader, p.length, false, true  };
+                }
+                else
+                    tracks[(std::size_t) p.index] = Track { p.reader, p.length, true, true };
             }
-            else
-            {
-                tracks[(std::size_t) p.index] = Track { p.reader, p.length, true, true };
-            }
+            readerCount.store ((int) tracks.size(), std::memory_order_release);
         }
 
         this->sessionDir = sessionDir;
@@ -195,10 +203,9 @@ namespace zynforge
         fileSampleRate = sr;
         totalLength.store (maxLen, std::memory_order_release);
         position   .store (0,      std::memory_order_release);
-        readerCount.store ((int) tracks.size(), std::memory_order_release);
-        loaded     .store (! tracks.empty(), std::memory_order_release);
+        loaded.store (readerCount.load (std::memory_order_acquire) > 0, std::memory_order_release);
 
-        return (int) tracks.size();
+        return readerCount.load (std::memory_order_acquire);
     }
 
     void SessionPlayer::unload()
@@ -216,7 +223,10 @@ namespace zynforge
             clipsAuthoritative.clear();
             for (auto& f : authoritativeFlags) f.store (0, std::memory_order_release);
         }
-        tracks.clear();
+        {
+            const juce::ScopedLock sl (tracksLock);
+            tracks.clear();
+        }
         readerCount.store (0, std::memory_order_release);
         loaded     .store (false, std::memory_order_release);
         sessionName.clear();
@@ -240,14 +250,14 @@ namespace zynforge
         // completed and it's safe to free the readers. Short 1 ms naps keep it
         // responsive; the ceiling guards a stopped device that never advances
         // the counter (fall through after kDrainCeilingMs).
-        const juce::uint32 start   = callbackGeneration.load (std::memory_order_acquire);
-        const auto         endTime = juce::Time::getMillisecondCounter()
-                                       + (juce::uint32) kDrainCeilingMs;
+        const juce::uint32 start = callbackGeneration.load (std::memory_order_acquire);
+        const auto waitStarted = juce::Time::getMillisecondCounter();
         for (;;)
         {
             if ((juce::uint32) (callbackGeneration.load (std::memory_order_acquire) - start) >= 2)
                 return;
-            if (juce::Time::getMillisecondCounter() >= endTime)
+            if ((juce::uint32) (juce::Time::getMillisecondCounter() - waitStarted)
+                    >= (juce::uint32) kDrainCeilingMs)
                 return;
             juce::Thread::sleep (1);
         }
@@ -310,10 +320,10 @@ namespace zynforge
                 const juce::ScopedLock sl (clipsLock);
                 if (extraReaders.find (key) != extraReaders.end()) continue;
             }
-            if (auto* raw = formatManager.createReaderFor (c.audioFile))
+            if (auto raw = ConcatReader::create (formatManager, findTakeParts (c.audioFile)))
             {
                 const auto bufSamples = (int) (raw->sampleRate * kReaderBufferSeconds);
-                auto br = std::make_unique<juce::BufferingAudioReader> (raw, readerThread, bufSamples);
+                auto br = std::make_unique<juce::BufferingAudioReader> (raw.release(), readerThread, bufSamples);
                 br->setReadTimeout (0);
                 built.emplace_back (key, std::move (br));
             }
@@ -370,6 +380,9 @@ namespace zynforge
         // Bump the generation FIRST (even on the early-out below) so the
         // load/unload drain handshake advances every block the device runs.
         callbackGeneration.fetch_add (1, std::memory_order_acq_rel);
+
+        const juce::ScopedTryLock trackGuard (tracksLock);
+        if (! trackGuard.isLocked()) return;
 
         if (! playing.load (std::memory_order_acquire)) return;
 

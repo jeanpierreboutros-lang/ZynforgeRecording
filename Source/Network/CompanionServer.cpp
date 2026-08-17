@@ -21,14 +21,14 @@ namespace zynforge
             juce::MemoryBlock head;
             char buf[1024];
             // 5 s overall deadline so a half-open client doesn't wedge us.
-            const auto deadline = juce::Time::getMillisecondCounter() + 5000;
+            const auto started = juce::Time::getMillisecondCounter();
             // Bytes of `head` already scanned for the CRLFCRLF terminator, so
             // each read only scans the fresh region (avoids the O(n^2) full
             // re-decode-and-rescan on every read).
             int scanned = 0;
             for (;;)
             {
-                if (juce::Time::getMillisecondCounter() >= deadline) return {};
+                if ((juce::uint32) (juce::Time::getMillisecondCounter() - started) >= 5000u) return {};
                 const int ready = s.waitUntilReady (true, 200);
                 if (ready < 0) return {};        // socket error / closed
                 if (ready == 0) continue;        // timed out, loop until deadline
@@ -61,7 +61,7 @@ namespace zynforge
                 int bodyHave = size - (hdrEnd + 4);
                 bodyOut = juce::String::fromUTF8 (data + hdrEnd + 4, juce::jmax (0, bodyHave));
                 while (bodyHave < contentLength
-                       && juce::Time::getMillisecondCounter() < deadline)
+                       && (juce::uint32) (juce::Time::getMillisecondCounter() - started) < 5000u)
                 {
                     const int r2 = s.waitUntilReady (true, 200);
                     if (r2 < 0) break;
@@ -523,20 +523,36 @@ setInterval(tick, 500); tick();
         // stay inline -- they're safe off-thread.
         if (action == "play" || action == "stop" || action == "record")
         {
+            struct CommandResult
+            {
+                juce::WaitableEvent finished;
+                bool ok { false };
+                juce::String error;
+            };
+            auto result = std::make_shared<CommandResult>();
             auto* eng = &engine;
             const auto act = action;
-            juce::MessageManager::callAsync ([eng, act]
+            const bool queued = juce::MessageManager::callAsync ([eng, act, result]
             {
                 if (act == "play")
-                { if (eng->getPlayer().isPlaying()) eng->stopPlayback(); else eng->startPlayback(); }
+                {
+                    if (eng->getPlayer().isPlaying()) eng->stopPlayback(); else eng->startPlayback();
+                    result->ok = true;
+                }
                 else if (act == "stop")
-                { eng->stopPlayback(); if (eng->isRecording()) eng->stopRecording(); eng->getPlayer().rewind(); }
+                {
+                    eng->stopPlayback(); if (eng->isRecording()) eng->stopRecording(); eng->getPlayer().rewind();
+                    result->ok = true;
+                }
                 else if (act == "record")
                 {
                     if (eng->isRecording())
                     {
                         eng->stopRecording();
+                        result->ok = true;
                     }
+                    else if (! eng->hasUsableArmedInput())
+                        result->error = "no armed track has a live input";
                     else
                     {
                         // Start a FRESH timestamped session (never start into
@@ -548,10 +564,27 @@ setInterval(tick, 500); tick();
                         // makeTimestampedSessionDir honours the engineer's
                         // "Local Storage" override; hardcoding the Music folder
                         // put remote-started takes on the wrong drive.
-                        eng->startRecording (eng->makeTimestampedSessionDir());
+                        result->ok = eng->startRecording (eng->makeTimestampedSessionDir());
+                        if (! result->ok) result->error = "recording could not start";
                     }
                 }
+                result->finished.signal();
             });
+            if (! queued || ! result->finished.wait (5000))
+            {
+                writeRaw (s, "503 Service Unavailable", "application/json",
+                          "{\"ok\":false,\"error\":\"command timed out\"}");
+                return;
+            }
+            if (! result->ok)
+            {
+                juce::DynamicObject::Ptr reply (new juce::DynamicObject());
+                reply->setProperty ("ok", false);
+                reply->setProperty ("error", result->error);
+                writeRaw (s, "409 Conflict", "application/json",
+                          juce::JSON::toString (juce::var (reply.get())));
+                return;
+            }
         }
         else if (action == "mute")   engine.setTrackMuted  (trackIdx, value);
         else if (action == "solo")   engine.setTrackSoloed (trackIdx, value);

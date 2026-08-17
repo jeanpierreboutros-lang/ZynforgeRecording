@@ -359,7 +359,14 @@ void MainComponent::servicePunch()
             // tick past loopStart), so the captured audio lands at the right
             // timeline position instead of being nudged earlier to loopStart.
             engine.armPunchIn (player.getPositionSamples());
-            engine.startRecording (sessionDir);
+            if (! engine.startRecording (sessionDir))
+            {
+                engine.getRecorder().cancelPunchIn();
+                restoreArmStateAfterPunch();
+                showStatus ("Punch-in failed -- existing take was restored");
+                wasInsidePunch = inside;
+                return;
+            }
         }
     }
     else if (! inside && wasInsidePunch && engine.isRecording())
@@ -867,7 +874,7 @@ void MainComponent::detectSongsToMarkers()
     showStatus ("Detecting songs (multi-track quorum scan)...");
 
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::Thread::launch ([self, files]
+    juce::Thread::launch ([self, files, sessionDir]
     {
         const zynforge::songs::Params params;        // -40 dB / 4 s gap / 60 s min / quorum 2
         std::vector<std::vector<char>> flags;
@@ -888,9 +895,14 @@ void MainComponent::detectSongsToMarkers()
         }
         const auto found = zynforge::songs::detect (flags, sr, params);
 
-        juce::MessageManager::callAsync ([self, found]
+        juce::MessageManager::callAsync ([self, found, sessionDir]
         {
             if (self == nullptr) return;
+            if (self->engine.getActiveSessionDir() != sessionDir)
+            {
+                self->showStatus ("Song detection finished for the previous session; no markers were changed");
+                return;
+            }
             if (found.empty())
             {
                 self->showStatus ("No songs detected -- try Marker List to add them by hand.");

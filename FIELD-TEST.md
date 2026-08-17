@@ -10,7 +10,7 @@ Run this with a real audio interface plugged in. 20 minutes if nothing breaks. T
 
 | # | Gesture | Expect | Failure indicator |
 |---|---|---|---|
-| ☐ 1.1 | Quit the app cleanly. Re-launch. | Welcome dialog appears alone. | Multiple modals stack on top of each other. |
+| ☐ 1.1 | Quit the app cleanly. Re-launch. | Last valid session auto-reopens; with no remembered session, Welcome appears alone. | Empty grey app, wrong session state, or stacked modals. |
 | ☐ 1.2 | Force-quit mid-recording (Cmd+Opt+Esc), re-launch. | Session Recovery dialog appears first, table lists the orphan with track count + size + modified date. | Orphan missing from table (used to silently skip user-named sessions). |
 | ☐ 1.3 | Select the orphan, click Recover. | Session loads. Marker bar shows any pre-crash markers. | "Recovered..." status but session doesn't open. |
 | ☐ 1.4 | Re-trigger orphan, click Delete, confirm. | Confirm dialog with full path. Row vanishes from table. | Dialog closes without deleting OR deletes without confirm. |
@@ -77,7 +77,7 @@ Run this with a real audio interface plugged in. 20 minutes if nothing breaks. T
 
 | # | Gesture | Expect | Failure indicator |
 |---|---|---|---|
-| ☐ 6.1 | Tools → Start companion. | Status bar: "Companion on (loopback-only) — URL copied to clipboard." | LAN address shown by default. |
+| ☐ 6.1 | Session → Start companion server. | Status bar: "Companion on (loopback-only) — URL copied to clipboard." | LAN address shown by default. |
 | ☐ 6.2 | Paste the URL into a browser tab on the SAME machine. | Companion UI loads. | 401 / connection refused. |
 | ☐ 6.3 | Try the same URL from your phone (same Wi-Fi). | Connection refused (loopback only). | Phone connects = LAN exposure regression. |
 | ☐ 6.4 | Visit `http://localhost:9000/state.json` WITHOUT `?t=<token>`. | 401 Unauthorized, plain-text body. | 200 OK = auth bypass. |
@@ -100,9 +100,27 @@ Run this with a real audio interface plugged in. 20 minutes if nothing breaks. T
 
 | # | Gesture | Expect | Failure indicator |
 |---|---|---|---|
-| ☐ 8.1 | Connect a console via OSC. Move a fader on the console. | Strip in app responds. | No reaction. |
+| ☐ 8.1 | Connect a console dialect via OSC. Change a channel name and recall a scene. | Strip name updates and a named marker drops; transport/arm/mute remain unchanged. | Missing metadata/marker, or unauthenticated state change. |
 | ☐ 8.2 | Enable MIDI clock out, pick a device. | Status pill in row 1: "MIDI ★ <device name>". External gear locks tempo. | Pill says enabled but external doesn't sync. |
 | ☐ 8.3 | Cue a setlist of 5+ cues. Press next-cue 5 times during playback. | Soft-takeover fade between each, no clicks. | Hard cuts = ramp engine broken. |
+
+---
+
+## 9. Session integrity + authenticated remote control 🟥 / 🟧
+
+| # | Gesture | Expect | Failure indicator |
+|---|---|---|---|
+| ☐ 9.1 | Make unsaved mixer + clip + cue changes, then invoke New, Open, CSV import-as-session, Create from Console, New from Template, and double-click another `.zfproj`. | Each replacement offers Save & Continue / Continue Without Saving / Cancel. Cancel preserves everything; a deliberately unwritable save cancels the replacement. | Current session disappears, or switch continues after save failure. |
+| ☐ 9.2 | Save As to an existing non-empty session folder, then to a new folder on another volume. | Non-empty target is refused. New target copies in the background; source remains active until complete; clone opens with audio, mix, clips, cues and layout intact. | Folders merge, UI freezes, destination opens early, or state is missing. |
+| ☐ 9.3 | Start a large cross-volume Save As, then quit once and allow cancellation. | App reports cancellation and stays open until the owned worker finishes; source is unchanged and a newly-created partial target is removed. | Quit UAF/crash, partial clone remains, or source becomes the target. |
+| ☐ 9.4 | Relocate a session across volumes; separately simulate inability to remove the old folder after a complete copy. | New folder opens and is authoritative. Cleanup failure explicitly names the old folder instead of reporting total move failure. | Active path still points old, or successful copy is discarded/misreported. |
+| ☐ 9.5 | During Save As, relocation, stem bounce and stereo bounce, try Record, Play, +CH, delete/reorder, and a second file operation. | Every competing mutation refuses with a wait/busy message; the running job finishes or cancels cleanly. | Structure changes under the worker, crash, corrupt/short output. |
+| ☐ 9.6 | Save a default template. Create once from Welcome and once with File ▸ New Session; also choose New Session from Template while a show is open. | Default layout appears in both new sessions. Explicit template asks about the current show and creates a different session; it never overwrites the show. | Empty default session or template destructively changes current session. |
+| ☐ 9.7 | Open a 24-strip session, then a 4-strip session; repeat with missing and malformed `session_mix.json`. | Valid mix shrinks exactly to 4. Invalid/missing mix falls back to the audio count. No names/stereo/tempo/cues from the first session survive. | Extra ghost strips or previous-show state leaks. |
+| ☐ 9.8 | Build a continued take through `_part10`, `_part11`, and `_part100`; play/export/bounce/QC it. Then temporarily remove the last part. | Complete take is numerically ordered and sample-complete. Missing trailing part refuses instead of producing a plausible shorter result. | `part100` plays before `part11`, or truncated output is accepted. |
+| ☐ 9.9 | Start Generic OSC and note the shown token. Send a state-changing command without it, with a wrong token, then with the token as the final string argument. | First two do nothing; authenticated command works. Console-specific dialect messages may update names/markers/trim but cannot arm/mute/transport. | Tokenless UDP changes the session or console dialect starts recording. |
+| ☐ 9.10 | Companion: issue Record with no armed live input, then with a valid armed input. | First request returns a truthful conflict/error and does not roll; second returns success only after recording really starts. | `{ok:true}` with no take, or remote starts an unusable zero-input take. |
+| ☐ 9.11 | Quit with an active take using Stop & Quit; separately make the session destination unwritable before Save & Quit. | Stop & Quit stops and saves. Save failure cancels quit and leaves the app/session available. | App quits after failed save. |
 
 ---
 
@@ -170,10 +188,11 @@ The protocol logic is unit-tested; these confirm it against real gear. Open
    settings; note the `osc.udp://<this-mac>:<port>/` connection string.
 2. On the **console**, point its OSC target at this Mac's IP + that port (UDP).
 3. Turn on **"Debug: log OSC traffic"**, open **"View OSC Log..."**.
-4. From the desk: move a channel mute / change a name / recall a scene / hit
-   transport. Confirm in the log you see `<- /Console/... ` (or `/sq/`,
-   `/sslnet/`, `/Yamaha/`) lines, and the app reacts (mute toggles, marker
-   drops, transport follows).
+4. From the desk: change a channel name / gain trim and recall a scene. Confirm
+   in the log you see `<- /Console/... ` (or `/sq/`, `/sslnet/`, `/Yamaha/`),
+   names/Trim-Follow update, and a marker drops. Console dialect input is
+   intentionally read-only for arm/mute/transport; those messages must not
+   change the session.
 5. **Bidirectional:** set the **Console IP + Receive Port**, hit **"Request ALL
    channel names"**. Watch the log for the `-> request...` line, then for
    incoming `<- .../name "..."` replies, and the channel names populating.

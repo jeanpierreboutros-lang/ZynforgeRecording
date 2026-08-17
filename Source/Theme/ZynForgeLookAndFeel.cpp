@@ -69,8 +69,8 @@ namespace zynforge
 
     juce::Typeface::Ptr ZynForgeLookAndFeel::getTypefaceForFont (const juce::Font& f)
     {
-        // Load Inter / JetBrains Mono from the BinaryData target the
-        // moment any font requests those typeface names, then hold them
+        // Load JetBrains Mono from the BinaryData target the moment any font
+        // requests a fixed-width typeface, then hold the faces
         // as MEMBERS (not function-local statics). Members die with the
         // LookAndFeel -- which MainComponent owns and destroys during
         // shutdown(), while CoreText is still alive. A function-local
@@ -78,12 +78,8 @@ namespace zynforge
         // and run its CoreText destructor after the framework is gone,
         // crashing the process on quit. Called on the message thread
         // only (paint), so the lazy init needs no lock.
-        if (interReg == nullptr)
+        if (monoReg == nullptr)
         {
-            interReg  = juce::Typeface::createSystemTypefaceFor (
-                BinaryData::InterRegular_ttf, BinaryData::InterRegular_ttfSize);
-            interBold = juce::Typeface::createSystemTypefaceFor (
-                BinaryData::InterBold_ttf,    BinaryData::InterBold_ttfSize);
             monoReg   = juce::Typeface::createSystemTypefaceFor (
                 BinaryData::JetBrainsMonoRegular_ttf, BinaryData::JetBrainsMonoRegular_ttfSize);
             monoBold  = juce::Typeface::createSystemTypefaceFor (
@@ -93,11 +89,7 @@ namespace zynforge
         const auto name  = f.getTypefaceName();
         const bool bold  = f.isBold();
 
-        // brand::uiFamily resolves to 'Inter' in BrandTokens.h. The
-        // 'SF Pro' / 'SF Mono' fallbacks keep any legacy call sites
-        // (pre-2026-05-23 rename) wiring through to the bundled face.
-        if (name.containsIgnoreCase ("inter") || name == "SF Pro")
-            return bold ? interBold : interReg;
+        // Fixed-width legacy names continue to resolve to the bundled face.
         if (name.containsIgnoreCase ("jetbrains")
             || name.containsIgnoreCase ("mono")
             || name == "SF Mono")

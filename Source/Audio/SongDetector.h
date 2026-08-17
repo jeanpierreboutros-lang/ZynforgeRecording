@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <vector>
+#include "MultiPartReader.h"
 
 namespace zynforge::songs
 {
@@ -41,7 +42,7 @@ namespace zynforge::songs
         std::vector<char> flags;
         juce::AudioFormatManager fm;
         fm.registerBasicFormats();
-        std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (f));
+        auto reader = zynforge::ConcatReader::create (fm, zynforge::findTakeParts (f));
         if (reader == nullptr || reader->lengthInSamples <= 0 || reader->sampleRate <= 0.0)
             return flags;
 

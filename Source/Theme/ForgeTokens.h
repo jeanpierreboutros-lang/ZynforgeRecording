@@ -109,7 +109,7 @@ namespace zynforge::forge
     inline constexpr int space_btnH = 24;
 
     // ── type ──
-    inline constexpr const char* uiFamily   = "Inter";
+    inline constexpr const char* uiFamily   = "<Sans-Serif>";
     inline constexpr const char* monoFamily = "JetBrains Mono";
     inline constexpr float type_micro = 9.5f;
     inline constexpr float type_label = 10.0f;

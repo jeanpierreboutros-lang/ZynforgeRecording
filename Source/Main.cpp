@@ -184,14 +184,36 @@ public:
             quit();
             return;
         }
+        for (const auto& arg : getCommandLineParameterArray())
+        {
+            const juce::File candidate (arg.unquoted());
+            if (candidate.existsAsFile() && candidate.hasFileExtension ("zfproj"))
+            { pendingDocument = candidate; break; }
+        }
         // Branded launch splash for 7 s, then the main window opens.
         splash = std::make_unique<SplashWindow> (getApplicationName().toUpperCase(),
                                                  "created by Jean-Pierre Boutros");
         juce::Timer::callAfterDelay (7000, [this]
         {
             splash.reset();
-            mainWindow = std::make_unique<MainWindow> (getApplicationName());
+            mainWindow = std::make_unique<MainWindow> (getApplicationName(), pendingDocument);
         });
+    }
+
+    void anotherInstanceStarted (const juce::String& commandLine) override
+    {
+        juce::StringArray args;
+        args.addTokens (commandLine, true);
+        for (const auto& arg : args)
+        {
+            const juce::File candidate (arg.unquoted());
+            if (! candidate.existsAsFile() || ! candidate.hasFileExtension ("zfproj")) continue;
+            pendingDocument = candidate;
+            if (mainWindow != nullptr)
+                if (auto* mc = dynamic_cast<MainComponent*> (mainWindow->getContentComponent()))
+                    mc->openSessionDocument (candidate, true);
+            break;
+        }
     }
 
     void shutdown() override
@@ -223,7 +245,7 @@ private:
     class MainWindow final : public juce::DocumentWindow
     {
     public:
-        explicit MainWindow (const juce::String& name)
+        MainWindow (const juce::String& name, const juce::File& document)
             : DocumentWindow (name,
                               zynforge::brand::brandDeep,
                               DocumentWindow::allButtons)
@@ -231,6 +253,9 @@ private:
             setUsingNativeTitleBar (true);
             setResizable (true, true);
             setContentOwned (new MainComponent(), true);
+            if (document.existsAsFile())
+                if (auto* mc = dynamic_cast<MainComponent*> (getContentComponent()))
+                    mc->openSessionDocument (document);
             centreWithSize (1320, 820);
             setVisible (true);
         }
@@ -245,6 +270,7 @@ private:
 
     std::unique_ptr<MainWindow> mainWindow;
     std::unique_ptr<SplashWindow> splash;
+    juce::File pendingDocument;
 };
 
 START_JUCE_APPLICATION (ZynforgeRecordingApp)

@@ -9,6 +9,11 @@ using namespace zynforge;
 
 bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
 {
+    if (sessionIoBusy.load())
+    {
+        showStatus ("Wait for the session operation to finish");
+        return true;
+    }
     // Session LOCK is a "don't touch" safety for a running show. It disables
     // the on-screen controls, but keyboard shortcuts bypassed it entirely --
     // a stray Spacebar could stop the take, digits could recall cues, Delete

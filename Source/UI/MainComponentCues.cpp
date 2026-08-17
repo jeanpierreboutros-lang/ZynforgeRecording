@@ -137,10 +137,10 @@ void MainComponent::loadSetlistFromActiveSession()
     }
 }
 
-void MainComponent::saveSetlistToActiveSession() const
+bool MainComponent::saveSetlistToActiveSession() const
 {
     const auto proj = findSessionProj (engine.getActiveSessionDir());
-    if (proj == juce::File{}) return;
+    if (proj == juce::File{}) return false;
 
     // Preserve the existing .zfproj fields (createdAt, sampleRate, etc.)
     // when we rewrite -- only the 'setlist' key is touched.
@@ -212,11 +212,12 @@ void MainComponent::saveSetlistToActiveSession() const
     obj->setProperty ("formatVersion", 3);
     obj->setProperty ("updatedAt",     juce::Time::getCurrentTime().toISO8601 (true));
 
-    proj.replaceWithText (juce::JSON::toString (juce::var (obj.get())));
+    const bool ok = proj.replaceWithText (juce::JSON::toString (juce::var (obj.get())));
 
     // Drop a full backup session into Session File Backups/ so a misclicked
     // cue / accidental delete / file corruption is recoverable from the show.
     writeSessionBackupSnapshot();
+    return ok;
 }
 
 void MainComponent::writeSessionBackupSnapshot() const
@@ -729,4 +730,3 @@ void MainComponent::printSetlist()
     target.startAsProcess();    // open in default browser
     showStatus ("Setlist -> " + target.getFileName() + " (printable)");
 }
-

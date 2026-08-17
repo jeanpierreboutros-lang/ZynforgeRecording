@@ -360,6 +360,7 @@ void MainComponent::showAboutDialog()
 
 void MainComponent::showStartupWelcome()
 {
+    if (explicitDocumentOpened) return;
     // Auto-reopen the last session instead of greeting an empty app. The
     // active-session folder is restored from appProps on launch (for Save),
     // but the *content* wasn't loaded -- so the engineer came back to a blank
@@ -400,6 +401,11 @@ void MainComponent::showStartupWelcome()
         n.interleaved   = r.interleaved;
         n.ioSettings    = r.ioSettings;
         const auto sessionFolder = self->createSessionFolderStructure (n);
+        if (! sessionFolder.isDirectory())
+        {
+            self->showStatus ("Couldn't create session -- check permissions / free space");
+            return;
+        }
 
         if (auto* p = self->engine.getAppProps())
         {
@@ -454,12 +460,20 @@ void MainComponent::showStartupWelcome()
         // inherits them on a freshly-added channel (see launchNewSessionDialog).
         self->engine.getPlayer().unload();
 
-        // Fresh session starts EMPTY -- no auto-applied template,
-        // no leftover names. Engineers add channels with +CH or pick
-        // a template explicitly from File ▸ New Session from Template.
         self->refreshFormatButton();
-        self->showStatus ("Session created: " + sessionFolder.getFileName()
-                          + " -- add channels with +CH");
+        const auto defaultTemplate = self->getDefaultTemplate();
+        if (defaultTemplate.existsAsFile())
+        {
+            self->applySessionTemplate (defaultTemplate);
+            if (! self->saveSessionStateTo (sessionFolder))
+                self->showStatus ("Session created, but its default template state could not be saved");
+            else
+                self->showStatus ("Session created from "
+                                  + defaultTemplate.getFileNameWithoutExtension());
+        }
+        else
+            self->showStatus ("Session created: " + sessionFolder.getFileName()
+                              + " -- add channels with +CH");
     };
 
     auto onOpen = [self] (const juce::File& sessionDir)
@@ -494,15 +508,16 @@ void MainComponent::showStartupWelcome()
                                      std::move (onOpen));
 }
 
-void MainComponent::launchNewSessionDialog()
+void MainComponent::launchNewSessionDialog (juce::File templateFile)
 {
+    if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
     const auto defaultRoot = getSessionsRoot();
     const auto curFormat   = engine.getRecorder().getCaptureFormat();
     const double curSr     = pendingSampleRate;
 
     juce::Component::SafePointer<MainComponent> self (this);
     zynforge::NewSessionDialog::launch (defaultRoot, curSr, curFormat,
-        [self] (const zynforge::NewSessionDialog::Result& r)
+        [self, templateFile] (const zynforge::NewSessionDialog::Result& r)
     {
         if (self == nullptr) return;
 
@@ -516,6 +531,11 @@ void MainComponent::launchNewSessionDialog()
         // Subsequent record / save / export operations all live inside
         // this folder.
         const auto sessionFolder = self->createSessionFolderStructure (r);
+        if (! sessionFolder.isDirectory())
+        {
+            self->showStatus ("Couldn't create session -- check permissions / free space");
+            return;
+        }
 
         // Persist the new sessions root (used by makeNewSessionDir +
         // every future file dialog) and remember the chosen format
@@ -567,10 +587,20 @@ void MainComponent::launchNewSessionDialog()
         // via loadSession(); New Session must too.
         self->engine.getPlayer().unload();
 
-        // Fresh session starts EMPTY (see showStartupWelcome for the
-        // same rule). Templates apply only via explicit menu choice.
-        self->showStatus ("New session '" + r.name
-                          + "' -- add channels with +CH and arm REC to capture");
+        const auto selectedTemplate = templateFile.existsAsFile()
+                                    ? templateFile : self->getDefaultTemplate();
+        if (selectedTemplate.existsAsFile())
+        {
+            self->applySessionTemplate (selectedTemplate);
+            if (! self->saveSessionStateTo (sessionFolder))
+                self->showStatus ("Session created, but its template state could not be saved");
+            else
+                self->showStatus ("New session '" + r.name + "' from "
+                                  + selectedTemplate.getFileNameWithoutExtension());
+        }
+        else
+            self->showStatus ("New session '" + r.name
+                              + "' -- add channels with +CH and arm REC to capture");
     });
 }
 

@@ -72,18 +72,15 @@ namespace zynforge::brand
 
     // ── Typography scale ──────────────────────────────────────────────────
     //
-    // Two pinned typeface families. Picked by name so we can swap to
-    // bundled Inter / JetBrains Mono later by changing exactly these
-    // two strings.
+    // Proportional text uses the platform sans-serif; fixed-width text uses
+    // the bundled JetBrains Mono face.
     //
     //   uiFamily   -- proportional UI text (labels, body, titles, buttons)
     //   monoFamily -- tabular numerals (BigClock, BPM, meter dB readouts,
     //                CPU%, MB/s -- anywhere a value changes and shouldn't
     //                cause horizontal layout jitter)
     //
-    // These names match the bundled BinaryData faces directly. The
-    // LookAndFeel still accepts "SF Pro" / "SF Mono" for any legacy
-    // call, but new code should ask by the canonical name.
+    // The LookAndFeel still accepts "SF Mono" for legacy fixed-width calls.
     inline constexpr const char* uiFamily   = forge::uiFamily;
     inline constexpr const char* monoFamily = forge::monoFamily;
 

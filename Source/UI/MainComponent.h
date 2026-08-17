@@ -77,6 +77,7 @@ private:
     void onExportIndividualTrack (int channelIndex);
     void onExportIndividualTracks();   // tick-box picker → format → destination → export
     void closeSession();               // unload to the empty/Welcome state without quitting
+    void confirmSessionReplacement (std::function<void()> continuation);
     void onImportAudioFiles();
     void onLockToggled();
     void onBackupClicked();
@@ -92,7 +93,7 @@ private:
     void showAboutDialog();
     void showFirstRunTutorial();
     void showUserGuide();
-    void launchNewSessionDialog();
+    void launchNewSessionDialog (juce::File templateFile = {});
     juce::File createSessionFolderStructure (const zynforge::NewSessionDialog::Result&);
     // Canonical "open this session folder" sequence: pin the active dir,
     // restore setlist + UI layout, load the audio, restore the full mixer
@@ -102,9 +103,9 @@ private:
     bool saveSessionStateTo (const juce::File& dir);
     // Periodic auto-save + timestamped backup of the active session, driven
     // from the 10 Hz timer. Interval (minutes; 0 = off) lives in appProps
-    // "autosaveMinutes"; showAutosaveSettings() is the picker dialog. Only
-    // fires when the session actually changed since the last save (tracked
-    // via the undo manager's stored-command count).
+    // "autosaveMinutes"; showAutosaveSettings() is the picker dialog. Each
+    // interval writes the complete session state, including changes made by
+    // controls that do not participate in the undo manager.
     void serviceAutosave();
     void showAutosaveSettings();
     // Kick off a track export. Resolves every source file + destination stem
@@ -121,6 +122,8 @@ public:
     // Called from Main.cpp's systemRequestedQuit so an unsaved
     // session / running recording prompts BEFORE the app shuts down.
     void confirmAndQuit();
+    // Application/document hand-off for Finder-opened .zfproj files.
+    bool openSessionDocument (const juce::File& document, bool confirmBeforeReplacing = false);
 private:
     void applySessionSettings();
 
@@ -340,7 +343,7 @@ private:
     // the active session's .zfproj. No-op when no session is active.
     // Called on every layout change so reopening the show restores the
     // exact workspace the engineer left.
-    void  saveUILayoutToActiveSession();
+    bool  saveUILayoutToActiveSession();
 
     // Setlist printing -- writes setlist.html into the active session
     // dir and opens it in the default browser (engineer prints from
@@ -411,6 +414,7 @@ private:
     bool             mixerGridView { false };
 
     bool sessionLocked { false };
+    bool explicitDocumentOpened { false };
 
     std::unique_ptr<juce::FileChooser> chooser;
     std::shared_ptr<juce::ChangeListener> batchColourListenerHandle;
@@ -457,7 +461,7 @@ private:
     void updateCueRamp();
 
     void loadSetlistFromActiveSession();
-    void saveSetlistToActiveSession() const;
+    bool saveSetlistToActiveSession() const;
     // Snapshot the WHOLE session definition (mix + setlist/cues/automation/
     // layout + settings + markers) into a timestamped sub-folder of the
     // session's own "Session File Backups/" -- a restorable backup session.
@@ -507,6 +511,7 @@ private:
     // outlive the engine.
     std::thread       exportThread;
     std::atomic<bool> exportCancel { false };
+    std::atomic<bool> sessionIoBusy { false };
     void joinExportThread() noexcept
     {
         exportCancel.store (true, std::memory_order_relaxed);

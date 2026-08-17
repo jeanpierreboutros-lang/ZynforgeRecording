@@ -4,11 +4,12 @@
 
 ## Description
 
-A `juce::Component` hosted via `juce::DialogWindow::LaunchOptions` with a vertical sidebar (New / Open) and a right pane that swaps content based on the sidebar selection. Surfaced once on first launch via `MainComponent::showStartupWelcome()` and on demand via File ▸ New Session.
+A `juce::Component` hosted via `juce::DialogWindow::LaunchOptions` with a vertical sidebar (New / Open) and a right pane that swaps content based on the sidebar selection. Surfaced when there is no valid remembered/document-opened session via `MainComponent::showStartupWelcome()` and on demand via File ▸ New Session.
 
 ## When to use
 
 - **First launch:** after the optional tutorial. Engineer hasn't created a session yet; the right pane defaults to "New".
+- **Later launch with no session:** shown only when the remembered active session is missing/invalid. A valid last session auto-reopens, and an explicit Finder/command-line `.zfproj` takes precedence.
 - **File ▸ New Session...:** opens straight to the New pane.
 - **File ▸ Open Session...:** opens straight to the Open pane.
 
@@ -48,7 +49,7 @@ static void launch (juce::File defaultRoot,
                     OpenCallback onOpen);
 ```
 
-Static `launch` constructs the dialog asynchronously. `onCreate` fires when the engineer commits a new session; `onOpen` when they pick an existing one.
+Static `launch` constructs the dialog asynchronously. `onCreate` fires when the engineer commits a new session; `onOpen` when they pick an existing one. `MainComponent` owns replacement confirmation and filesystem creation: a failed create leaves the current session untouched, while a configured default template is applied and saved only after the new folder exists.
 
 ## Sidebar
 
@@ -65,15 +66,15 @@ Two items only — `New` and `Open`. Earlier builds had Sketch / Cloud / Learn e
 |---|---|
 | Initial (first launch) | New sidebar selected, name field empty + focused, default-selected for typing |
 | Name entered | Create button enables |
-| Create clicked | Validates name (legalises slashes/colons), creates folder via `MainComponent::createSessionFolderStructure`, fires `onCreate`, closes |
+| Create clicked | Validates name, then `MainComponent::createSessionFolderStructure` creates a unique folder and all required files; a default template is applied to the new session when configured |
 | Open clicked | File picker opens; on selection, fires `onOpen` and closes |
 | Cancel / Esc | Closes without firing either callback |
 
 ## Validation
 
 - Name must be non-empty. Invalid chars replaced via `juce::File::createLegalFileName`.
-- Resolved folder uniqueness: if `<location>/<safeName>` exists, append `-2`, `-3`, ... up to 9999.
-- Location must be writable; failure surfaces an `AlertWindow` ("Couldn't create session folder").
+- Resolved folder uniqueness uses `getNonexistentChildFile`, so an existing show is never reused or overwritten.
+- Location, subfolder, and `.zfproj` creation must all succeed. Failure removes the partial new folder, reports the storage error, and leaves the current session loaded.
 
 ## Tokens used
 
@@ -89,7 +90,7 @@ Launch order is serialised via nested `callAfterDelay` so dialogs don't stack:
 
 1. **Recovery** (250 ms after launch) — if orphans exist, shows first
 2. **Tutorial** (after recovery dismissal) — only on first-run
-3. **Welcome** (after tutorial dismissal) — always
+3. **Document/last-session open or Welcome** (after tutorial dismissal) — an explicit `.zfproj` wins; otherwise a valid last session auto-reopens; Welcome is the empty fallback
 
 The chain is in `MainComponent` ctor; don't move it without verifying the sequence still holds.
 

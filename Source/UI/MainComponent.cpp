@@ -42,6 +42,7 @@ void MainComponent::updateMixerPlaceholder()
 
 void MainComponent::onRecordClicked()
 {
+    if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
     // A RECORD-triggered selection punch is in flight (pre-roll / recording /
     // post-roll) -- pressing RECORD again ends it: punch out if recording
     // (splices the take), then stop the transport and tear down.
@@ -569,6 +570,7 @@ void MainComponent::onBackupClicked()
 
 void MainComponent::onFileMenuClicked()
 {
+    if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
     const auto activeDir   = engine.getActiveSessionDir();
     const bool hasActive   = activeDir.isDirectory();
 
@@ -577,7 +579,7 @@ void MainComponent::onFileMenuClicked()
     menu.addItem (4, "Import Audio Files...",   ! engine.isRecording());
     menu.addSeparator();
     menu.addItem (2, "Save Session State",      hasActive);
-    menu.addItem (3, "Save Session As...",   hasActive);
+    menu.addItem (3, "Save Session As...");
     menu.addSeparator();
 
     juce::PopupMenu exportMenu;
@@ -599,7 +601,7 @@ void MainComponent::onFileMenuClicked()
                         [this] (int chosen)
     {
         if (chosen == 0) return;
-        if (chosen == 1)           onLoadSessionClicked();
+        if (chosen == 1)           confirmSessionReplacement ([this] { onLoadSessionClicked(); });
         else if (chosen == 2)      onSaveSessionState();
         else if (chosen == 3)      onSaveSessionAs();
         else if (chosen == 4)      onImportAudioFiles();
@@ -658,6 +660,7 @@ void MainComponent::showStatus (const juce::String& msg)
 
 void MainComponent::removeLastCapture()
 {
+    if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
     const auto root = getSessionsRoot();
     if (! root.isDirectory()) { showStatus ("No sessions to remove"); return; }
 
@@ -679,6 +682,7 @@ void MainComponent::removeLastCapture()
         if (d.getLastModificationTime() > target.getLastModificationTime())
             target = d;
 
+    const bool deletingActive = target == engine.getActiveSessionDir();
     juce::AlertWindow::showAsync (
         juce::MessageBoxOptions()
             .withIconType (juce::MessageBoxIconType::NoIcon)
@@ -686,11 +690,26 @@ void MainComponent::removeLastCapture()
             .withMessage ("Permanently delete\n\n" + target.getFullPathName() + "\n\nThis cannot be undone.")
             .withButton ("Delete")
             .withButton ("Cancel"),
-        [this, target] (int result)
+        [this, target, deletingActive] (int result)
     {
         if (result != 1) return;   // first button ("Delete") = commandID 1
         if (target.deleteRecursively())
+        {
+            if (deletingActive)
+            {
+                condemnAllStrips();
+                engine.clearSessionState();
+                engine.setStripCount (0);
+                cues.clear();
+                currentCueIndex = -1;
+                clickTrackIndex = -1;
+                lastTrackCount = -1;
+                undoManager.clearUndoHistory();
+                updateTransportLabels();
+                showStartupWelcome();
+            }
             showStatus ("Removed: " + target.getFileName());
+        }
         else
             showStatus ("Couldn't remove that folder");
     });
@@ -724,6 +743,13 @@ void MainComponent::applySessionSettings()
 
 void MainComponent::confirmAndQuit()
 {
+    if (sessionIoBusy.load())
+    {
+        exportCancel.store (true);
+        bounceCancel.store (true);
+        showStatus ("Cancelling session file operation -- quit again when it finishes");
+        return;
+    }
     const bool recording = engine.isRecording();
     const auto activeDir = engine.getActiveSessionDir();
     const bool hasActiveSession = activeDir.isDirectory();
@@ -745,11 +771,16 @@ void MainComponent::confirmAndQuit()
         aw->addButton ("Stop & Quit", kStopQuit, juce::KeyPress (juce::KeyPress::returnKey));
         aw->addButton ("Cancel",      kCancel,   juce::KeyPress (juce::KeyPress::escapeKey));
         aw->enterModalState (true,
-            juce::ModalCallbackFunction::create ([this, aw] (int result)
+            juce::ModalCallbackFunction::create ([this, aw, activeDir] (int result)
             {
                 std::unique_ptr<juce::AlertWindow> dispose (aw);
                 if (result == kCancel) return;       // stay in app
                 engine.stopRecording();
+                if (activeDir.isDirectory() && ! saveSessionStateTo (activeDir))
+                {
+                    showStatus ("Quit cancelled -- session state could not be saved");
+                    return;
+                }
                 if (auto* app = juce::JUCEApplication::getInstance())
                     app->quit();
             }),
@@ -812,8 +843,11 @@ void MainComponent::confirmAndQuit()
             if (result == kCancel)
                 return;                              // abort the quit, stay in app
 
-            if (result == kSave)
-                saveSessionStateTo (activeDir);      // silent write; no picker
+            if (result == kSave && ! saveSessionStateTo (activeDir))
+            {
+                showStatus ("Quit cancelled -- session state could not be saved");
+                return;
+            }
 
             // kDontSave (or any unexpected value) -- fall through to quit.
             if (auto* app = juce::JUCEApplication::getInstance())
@@ -1005,5 +1039,3 @@ void MainComponent::onDeviceClicked()
     }
     deviceDialog = zynforge::AudioDeviceDialog::launch (engine);
 }
-
-

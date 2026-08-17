@@ -2,6 +2,8 @@
 
 Turnkey verification of the **hardware-gated audit items** and **everything changed since the 2026-05-24 build** (native stereo capture, console link, the compact/GRID mixer UI, prompt chrome, the design re-tone). Run on the real rig. The general first-launch/recording/takes flow lives in `FIELD-TEST.md` — this file is the delta.
 
+The 2026-08-18 session-integrity/security remediation has its canonical manual matrix in `FIELD-TEST.md` §9. Run that section before this hardware-only delta; it covers guarded session replacement, transactional Save As/relocation, default templates, `.zfproj` document launch, incomplete multipart refusal, authenticated Generic OSC and truthful companion errors without duplicating the steps here.
+
 **Severity:** 🟥 data-loss (stop + report now) · 🟧 audio-path (stop if reproducible) · 🟨 stage-readiness · ⬜ cosmetic.
 **Turnkey helper:** after any take, `tools/verify_take.sh [session]` checks RF64/split/length/sha/missedSamples in one pass (exit 0 = green).
 

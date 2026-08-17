@@ -44,7 +44,9 @@ namespace zynforge
         // path would (parse + dialect dispatch + engine setters). Lets unit
         // tests exercise the full OSC wiring without a UDP socket or the
         // message loop.
-        void dispatchForTest (const juce::OSCMessage& m) { oscMessageReceived (m); }
+        void dispatchForTest (const juce::OSCMessage& m)
+        { testDispatch = true; oscMessageReceived (m); testDispatch = false; }
+        juce::String getAccessToken() const { return accessToken; }
 
     private:
         void oscMessageReceived (const juce::OSCMessage&) override;
@@ -73,11 +75,13 @@ namespace zynforge
         // pair matched a known action (name / mute / arm / colour).
         bool dispatchChannelOp (int oneBasedIndex,
                                 const juce::String& key,
-                                const juce::OSCMessage&);
+                                const juce::OSCMessage&, bool allowControl = false);
 
         AudioEngine& engine;
         Dialect      dialect    { Dialect::Generic };
         int          port       { 8000 };
         bool         listening  { false };
+        juce::String accessToken;
+        bool testDispatch { false };
     };
 }

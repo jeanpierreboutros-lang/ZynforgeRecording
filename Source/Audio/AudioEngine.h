@@ -147,6 +147,10 @@ namespace zynforge
         bool startRecording (const juce::File& sessionDir);
         void stopRecording();
         bool isRecording() const noexcept                  { return recorder.isRecording(); }
+        void setSessionTransitionActive (bool active) noexcept
+        { sessionTransitionActive.store (active, std::memory_order_release); }
+        bool isSessionTransitionActive() const noexcept
+        { return sessionTransitionActive.load (std::memory_order_acquire); }
 
         // Stereo mix bus → file. When enabled, every startRecording also
         // opens a stereo StereoMix.wav writer in the session dir which
@@ -170,9 +174,14 @@ namespace zynforge
         // positions. saveSessionMixTo writes them all into session_mix.json
         // in the session folder; loadSessionMixFrom sizes the recorder to the
         // saved count and applies the file, making the session authoritative
-        // for its own mixer state. No file (older sessions) = no change.
-        void saveSessionMixTo   (const juce::File& sessionDir);
-        void loadSessionMixFrom (const juce::File& sessionDir);
+        // for its own mixer state. Returns false for a missing or malformed
+        // file so callers can recover a sensible layout from recorded audio.
+        bool saveSessionMixTo   (const juce::File& sessionDir);
+        bool loadSessionMixFrom (const juce::File& sessionDir);
+        // Drop every piece of session-owned state before opening or creating
+        // another session.  Keeping this in AudioEngine makes non-UI entry
+        // points obey the same boundary as File > Open/New.
+        void clearSessionState();
         void startPlayback()
         {
             // Never play back on top of a live take. This is a recorder, not
@@ -368,6 +377,7 @@ namespace zynforge
         void  stopOsc();
         bool  isOscListening() const;
         int   getOscPort() const;
+        juce::String getOscAccessToken() const;
 
         // ── Outbound console control (DiGiCo bidirectional link) ────────
         // Ask the console (at host:port) to report all channel names. The
@@ -932,6 +942,9 @@ namespace zynforge
         // Timestamped session folder under getSessionsRoot(), for the remote
         // record entry points that always start a FRESH session.
         juce::File makeTimestampedSessionDir() const;
+        // Remote controls have no device dialog in front of them. Refuse a
+        // take unless at least one armed, non-bus strip maps to a live input.
+        bool hasUsableArmedInput();
 
         // Wipe every per-strip persisted override so all strips read
         // their defaults (name = '1', '2', '3' ..., no colour override,
@@ -1010,6 +1023,7 @@ namespace zynforge
         SessionPlayer            player;
         MarkersManager           markers;
         juce::File               activeSession;
+        std::atomic<bool>        sessionTransitionActive { false };
         StripColours             stripColours;
         StripNames               stripNames;
         StripGains               stripGains;

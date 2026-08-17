@@ -55,7 +55,7 @@ namespace zynforge
         if (profile.dialect.subscribe)
         {
             sendMessage (profile.dialect.subscribe());
-            nextSubscribeMs = juce::Time::getMillisecondCounter() + kResubscribeMs;
+            nextSubscribeMs = juce::Time::currentTimeMillis() + kResubscribeMs;
         }
         startHeartbeat();
 
@@ -162,7 +162,7 @@ namespace zynforge
             if (profile.dialect.queryInBlock)
                 sendMessage (profile.dialect.queryInBlock (b));
         if (onStatus) onStatus ("Reading console patch...");
-        patchDeadlineMs = juce::Time::getMillisecondCounter() + kPatchTimeoutMs;
+        patchDeadlineMs = juce::Time::currentTimeMillis() + kPatchTimeoutMs;
         startHeartbeat();    // abort if a routing reply is lost
     }
 
@@ -202,7 +202,7 @@ namespace zynforge
                 sendMessage (profile.dialect.queryHeadAmp (i));
         if (onStatus) onStatus ("Capturing " + juce::String (expectedGainReplies)
                                 + " head-amp gains...");
-        gainDeadlineMs = juce::Time::getMillisecondCounter() + kGainTimeoutMs;
+        gainDeadlineMs = juce::Time::currentTimeMillis() + kGainTimeoutMs;
         startHeartbeat();    // abort if a head-amp reply is lost
     }
 
@@ -309,7 +309,7 @@ namespace zynforge
     void ConsoleLink::timerCallback()
     {
         if (! connected) { stopTimer(); return; }
-        const auto now = juce::Time::getMillisecondCounter();
+        const auto now = juce::Time::currentTimeMillis();
 
         // 1. Renew the push subscription BEFORE it expires. Without this the
         //    desk stops pushing ~10 s after connect and every scene recall

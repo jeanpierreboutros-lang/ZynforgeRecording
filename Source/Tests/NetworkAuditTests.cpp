@@ -115,6 +115,21 @@ namespace zynforge
                 expectEquals ((int) out.size(), 2, "F2 must consume its two data bytes");
                 expectEquals (out[1].intArg (0), 0xC0, "the program change survives intact");
                 expectEquals (out[1].intArg (1), 0x05);
+
+                // Running status persists across TCP reads, and an interleaved
+                // realtime clock byte does not cancel it.
+                out.clear(); buf.reset();
+                juce::uint8 status = 0;
+                const juce::uint8 first[] = { 0xB0, 0x10, 0x20 };
+                buf.append (first, sizeof (first));
+                MidiTcpTransport::frame (buf, out, status);
+                const juce::uint8 second[] = { 0xF8, 0x11, 0x21 };
+                buf.append (second, sizeof (second));
+                MidiTcpTransport::frame (buf, out, status);
+                expectEquals ((int) out.size(), 3);
+                expectEquals (out[1].intArg (0), 0xF8);
+                expectEquals (out[2].intArg (0), 0xB0);
+                expectEquals (out[2].intArg (1), 0x11);
             }
 
             beginTest ("An SCP string argument with a quote in it can't corrupt the line");

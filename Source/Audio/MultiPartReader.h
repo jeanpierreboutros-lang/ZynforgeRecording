@@ -96,11 +96,10 @@ namespace zynforge
             // LEADING part (files before the first that opened) is missing /
             // unreadable: its length is unknowable, so we cannot insert a
             // correctly-sized silent gap, and silently dropping it would
-            // time-shift the rest of the take. A missing TRAILING part only
-            // truncates the tail (no shift), so the contiguous survivors from
-            // part 1 are used as-is -- preserving the all-parts-present path
-            // exactly.
-            if (holeBetween || firstOpened > 0)
+            // time-shift the rest of the take. A missing trailing part is also
+            // rejected: returning a shorter take would silently discard audio
+            // when the caller exports, analyzes, or bounces it.
+            if (holeBetween || firstOpened > 0 || rs.size() != files.size())
             {
                 jassertfalse;
                 return nullptr;

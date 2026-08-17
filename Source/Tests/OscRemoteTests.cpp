@@ -51,7 +51,7 @@ namespace zynforge
                 expectWithinAbsoluteError (engine.getTrackTrimDelta (0), -6.0f, 0.001f);
             }
 
-            beginTest ("DiGiCo dialect routes channel + transport");
+            beginTest ("DiGiCo metadata works but unauthenticated control is ignored");
             {
                 AudioEngine engine;
                 engine.setStripCount (4);
@@ -59,7 +59,7 @@ namespace zynforge
                 osc.setDialect (OscRemote::Dialect::DiGiCo);
 
                 osc.dispatchForTest (juce::OSCMessage ("/Console/Channels/2/mute", (juce::int32) 1));
-                expect (engine.getRecorder().getTrack (1).muted.load());
+                expect (! engine.getRecorder().getTrack (1).muted.load());
 
                 // A scene recall drops a marker.
                 const int before = engine.getMarkers().getCount();

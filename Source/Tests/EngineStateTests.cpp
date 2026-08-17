@@ -233,7 +233,10 @@ namespace zynforge
                 eng.setTimeSignature (4, 4);
                 eng.setTempoMap ({});
 
-                eng.loadSessionMixFrom (tmp);
+                eng.setStripCount (7); // simulate the previously-open larger session
+                expect (eng.loadSessionMixFrom (tmp));
+                expectEquals (eng.getRecorder().getNumTracks(), 4,
+                              "opening a smaller mix must remove old-session strips");
                 expectEquals (eng.getRecorder().getTrack (0).name, juce::String ("KICK"));
                 expectWithinAbsoluteError (eng.getRecorder().getTrack (0).gainDb.load(), -6.0f, 0.01f);
                 expectWithinAbsoluteError (eng.getRecorder().getTrack (1).pan.load(), -0.5f, 0.01f);
@@ -273,13 +276,13 @@ namespace zynforge
 
                 // (a) Truncated / unparseable JSON -> ignored, state untouched.
                 mix.replaceWithText ("{ \"trackCount\": 4, \"strips\": [ { \"index\":");
-                eng.loadSessionMixFrom (tmp);
+                expect (! eng.loadSessionMixFrom (tmp));
                 expectEquals (eng.getRecorder().getNumTracks(), 4);
                 expectEquals (eng.getRecorder().getTrack (0).name, juce::String ("kick"));
 
                 // (b) Valid JSON, absurd trackCount -> clamped (no runaway alloc).
                 mix.replaceWithText ("{ \"trackCount\": 999999999, \"strips\": [] }");
-                eng.loadSessionMixFrom (tmp);
+                expect (eng.loadSessionMixFrom (tmp));
                 expect (eng.getRecorder().getNumTracks() <= 256);
 
                 // (c) Out-of-range strip index -> skipped, not applied.
@@ -287,8 +290,14 @@ namespace zynforge
                 eng.setTrackName (0, "kick");
                 mix.replaceWithText ("{ \"trackCount\": 4, \"strips\": "
                                      "[ { \"index\": 99, \"name\": \"GHOST\" } ] }");
-                eng.loadSessionMixFrom (tmp);
+                expect (eng.loadSessionMixFrom (tmp));
                 expectEquals (eng.getRecorder().getTrack (0).name, juce::String ("kick"));
+
+                // (d) A JSON object without the required track count is not a
+                // valid mix snapshot; Open Session can therefore rebuild the
+                // strip layout from the audio files instead of accepting zero.
+                mix.replaceWithText ("{ \"strips\": [] }");
+                expect (! eng.loadSessionMixFrom (tmp));
 
                 tmp.deleteRecursively();
             }

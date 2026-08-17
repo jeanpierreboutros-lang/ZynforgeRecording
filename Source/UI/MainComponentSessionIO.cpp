@@ -22,7 +22,76 @@
 #include "TrackSelectDialog.h"
 #include "SessionProjPath.h"
 
+#include <array>
+
 using namespace zynforge;
+
+namespace
+{
+bool copyDirectoryCancellable (const juce::File& source, const juce::File& dest,
+                               const std::atomic<bool>& cancel)
+{
+    if (! source.isDirectory() || dest.isAChildOf (source) || dest == source)
+        return false;
+    if ((! dest.isDirectory() && dest.createDirectory().failed()) || cancel.load())
+        return false;
+
+    for (const auto& child : source.findChildFiles (juce::File::findFilesAndDirectories, false))
+    {
+        if (cancel.load (std::memory_order_relaxed)) return false;
+        const auto target = dest.getChildFile (child.getFileName());
+        if (child.isDirectory())
+        {
+            if (! copyDirectoryCancellable (child, target, cancel)) return false;
+        }
+        else
+        {
+            auto in = child.createInputStream();
+            target.deleteFile();
+            auto out = target.createOutputStream();
+            if (in == nullptr || out == nullptr) return false;
+            std::array<char, 1024 * 1024> buffer {};
+            while (! in->isExhausted())
+            {
+                if (cancel.load (std::memory_order_relaxed)) return false;
+                const int got = in->read (buffer.data(), (int) buffer.size());
+                if (got < 0 || (got > 0 && ! out->write (buffer.data(), (size_t) got)))
+                    return false;
+                if (got == 0) break;
+            }
+            out->flush();
+            if (out->getStatus().failed()) return false;
+        }
+    }
+    return ! cancel.load (std::memory_order_relaxed);
+}
+
+void removePartialCopy (const juce::File& dest, bool removeFolder)
+{
+    if (removeFolder) { dest.deleteRecursively(); return; }
+    for (const auto& child : dest.findChildFiles (juce::File::findFilesAndDirectories, false))
+        child.deleteRecursively();
+}
+
+bool ensureSessionScaffold (const juce::File& dest)
+{
+    const auto ensureDir = [] (const juce::File& dir)
+    {
+        return dir.isDirectory() || dir.createDirectory().wasOk();
+    };
+    if (! ensureDir (dest.getChildFile ("Audio Files"))
+        || ! ensureDir (dest.getChildFile ("Export Files"))
+        || ! ensureDir (dest.getChildFile ("Session File Backups")))
+        return false;
+
+    if (findSessionProj (dest) != juce::File{}) return true;
+    juce::DynamicObject::Ptr root (new juce::DynamicObject());
+    root->setProperty ("name", dest.getFileName());
+    root->setProperty ("createdAt", juce::Time::getCurrentTime().toISO8601 (true));
+    return dest.getChildFile (dest.getFileName() + ".zfproj")
+               .replaceWithText (juce::JSON::toString (juce::var (root.get())));
+}
+}
 
 int MainComponent::openSessionFolder (const juce::File& dir)
 {
@@ -32,18 +101,21 @@ int MainComponent::openSessionFolder (const juce::File& dir)
     // the recorder vector and frees TrackStates the live strips still point at.
     condemnAllStrips();
     engine.stopPlayback();
+    engine.clearSessionState();
     engine.setActiveSessionDir (dir);        // pin so Save / Save As / Export stay lit
-    loadSetlistFromActiveSession();
-    loadUILayoutFromActiveSession();
     const int n = engine.loadSession (dir);  // audio -> player + clips
-    engine.loadSessionMixFrom (dir);         // names/colours/gains/routing/sends + size mixer
+    const bool loadedMix = engine.loadSessionMixFrom (dir);
     // Recovery fallback: a session recorded but never explicitly Saved has no
     // session_mix.json, so loadSessionMixFrom can't size the mixer and the app
     // would show "No channels yet" with every Edit / Track / Export menu grey.
     // Size one strip per loaded audio track so the channels (and the menus)
     // come back.
-    if (n > 0 && engine.getRecorder().getNumTracks() < n)
+    if (! loadedMix)
         engine.setStripCount (n);
+    // Playlists/automation must be restored after loadSession seeds its default
+    // clips; loading them first caused the seed to erase the restored edits.
+    loadSetlistFromActiveSession();
+    loadUILayoutFromActiveSession();
     // The click strip's index is SESSION-scoped. Reset it and re-detect from
     // the just-loaded session, so a stale index carried over from a previous
     // session can never deleteFile()/overwrite THIS session's Track_NN.wav on
@@ -73,6 +145,61 @@ int MainComponent::openSessionFolder (const juce::File& dir)
         warnIfSampleRateMismatch();
     }
     return n;
+}
+
+bool MainComponent::openSessionDocument (const juce::File& document, bool confirmBeforeReplacing)
+{
+    if (sessionIoBusy.load())
+    {
+        showStatus ("Wait for the session file operation to finish");
+        return false;
+    }
+    const auto dir = document.isDirectory() ? document : document.getParentDirectory();
+    if (! dir.isDirectory() || (! document.isDirectory() && ! document.hasFileExtension ("zfproj")))
+        return false;
+    const auto current = engine.getActiveSessionDir();
+    if (confirmBeforeReplacing && current.isDirectory() && current != dir)
+    {
+        juce::Component::SafePointer<MainComponent> self (this);
+        confirmSessionReplacement ([self, document]
+        {
+            if (self != nullptr) self->openSessionDocument (document, false);
+        });
+        return true;
+    }
+    explicitDocumentOpened = true;
+    const int n = openSessionFolder (dir);
+    showStatus (n > 0 ? "Loaded: " + dir.getFileName()
+                      : "Opened empty session: " + dir.getFileName());
+    return true;
+}
+
+void MainComponent::confirmSessionReplacement (std::function<void()> continuation)
+{
+    const auto dir = engine.getActiveSessionDir();
+    if (! dir.isDirectory()) { continuation(); return; }
+
+    auto* aw = new juce::AlertWindow (
+        "Replace current session?",
+        "Save the current session before opening or creating another one?",
+        juce::MessageBoxIconType::QuestionIcon, this);
+    aw->setLookAndFeel (&laf);
+    aw->addButton ("Save & Continue", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Continue Without Saving", 2);
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<MainComponent> self (this);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+        [self, aw, dir, continuation = std::move (continuation)] (int result) mutable
+        {
+            std::unique_ptr<juce::AlertWindow> dispose (aw);
+            if (self == nullptr || result == 0) return;
+            if (result == 1 && ! self->saveSessionStateTo (dir))
+            {
+                self->showStatus ("Session switch cancelled -- current session could not be saved");
+                return;
+            }
+            continuation();
+        }), false);
 }
 
 void MainComponent::closeSession()
@@ -106,23 +233,18 @@ void MainComponent::closeSession()
             std::unique_ptr<juce::AlertWindow> dispose (aw);
             if (self == nullptr || result == 0) return;          // Cancel
 
-            if (result == 1 && sessionDir.isDirectory())         // Save & Close
-                self->saveSessionStateTo (sessionDir);
+            if (result == 1 && sessionDir.isDirectory()
+                && ! self->saveSessionStateTo (sessionDir))
+            {
+                self->showStatus ("Close cancelled -- session state could not be saved");
+                return;
+            }
 
             // Forget the session so showStartupWelcome won't auto-reopen it,
             // and reset every session-scoped bit of state to the fresh-empty
             // slate (mirrors a launch with no session).
             auto& engine = self->engine;
-            engine.stopPlayback();
-            engine.setActiveSessionDir ({});
-            engine.getPlayer().unload();
-            engine.getPlayer().clearAllClips();
-            engine.getPlayer().clearLoopRegion();
-            engine.getPlayer().setLoopEnabled (false);
-            engine.getMarkers().clearContext();
-            engine.clearAutomation (AudioEngine::AutomationParam::Volume);
-            engine.clearAutomation (AudioEngine::AutomationParam::Pan);
-            engine.clearAutomation (AudioEngine::AutomationParam::Mute);
+            engine.clearSessionState();
             engine.clearAllStripOverrides();
             self->condemnAllStrips();   // stop strip timers before setStripCount(0) frees the TrackStates
             engine.setStripCount (0);
@@ -177,22 +299,22 @@ bool MainComponent::saveSessionStateTo (const juce::File& dir)
     // gain, pan, mute, solo, monitor, arm, routing, stereo, VCA + edit group)
     // so it travels per-show instead of leaking between sessions via global
     // appProps.
-    engine.saveSessionMixTo (dir);
+    const bool wroteMix = engine.saveSessionMixTo (dir);
 
     // Persist cues + comp playlists (Takes) + automation lanes into the
     // .zfproj. These were only auto-saved on cue edits before, so drawing
     // automation and hitting Save (without touching a cue) used to lose it.
-    saveSetlistToActiveSession();
+    const bool wroteSetlist = saveSetlistToActiveSession();
 
     // Also persist the UI layout into the session's .zfproj so reopening
     // the show brings back the engineer's view choice, strip width,
     // VCA-panel visibility, and EDIT zoom.
-    saveUILayoutToActiveSession();
+    const bool wroteLayout = saveUILayoutToActiveSession();
 
     // Re-baseline the auto-save dirty signal: after any save (manual or auto)
     // there are no unsaved edits, so the next auto-save waits for a real change.
     lastSavedUndoUnits = undoManager.getNumberOfUnitsTakenUpByStoredCommands();
-    return wroteSettings;
+    return wroteSettings && wroteMix && wroteSetlist && wroteLayout;
 }
 
 void MainComponent::serviceAutosave()
@@ -216,11 +338,9 @@ void MainComponent::serviceAutosave()
     if (now - lastAutosaveMs < (juce::uint32) mins * 60000) return;
     lastAutosaveMs = now;
 
-    // Only write when the session actually changed since the last save -- avoids
-    // churning identical backups when nothing's been touched.
-    const int units = undoManager.getNumberOfUnitsTakenUpByStoredCommands();
-    if (units == lastSavedUndoUnits) return;
-
+    // A number of session mutations are deliberately not represented by the
+    // undo manager (recording, routing, cue recall, imports).  Saving on each
+    // configured interval is the only reliable way not to miss those changes.
     if (saveSessionStateTo (dir))   // writes mix + .zfproj + a timestamped backup snapshot (10 kept)
         statusLabel.setText ("Auto-saved " + juce::Time::getCurrentTime().formatted ("%H:%M:%S"),
                              juce::dontSendNotification);
@@ -269,13 +389,13 @@ void MainComponent::showAutosaveSettings()
     }), true);
 }
 
-void MainComponent::saveUILayoutToActiveSession()
+bool MainComponent::saveUILayoutToActiveSession()
 {
     const auto dir = engine.getActiveSessionDir();
-    if (! dir.isDirectory()) return;
+    if (! dir.isDirectory()) return false;
 
     const auto proj = findSessionProj (dir);
-    if (proj == juce::File{}) return;
+    if (proj == juce::File{}) return false;
 
     juce::DynamicObject::Ptr obj;
     const auto parsed = juce::JSON::parse (proj);
@@ -293,7 +413,7 @@ void MainComponent::saveUILayoutToActiveSession()
     ui->setProperty ("editZoom",     editPage != nullptr ? (double) editPage->getZoom() : 1.0);
     obj->setProperty ("ui", juce::var (ui.get()));
     obj->setProperty ("updatedAt", juce::Time::getCurrentTime().toISO8601 (true));
-    proj.replaceWithText (juce::JSON::toString (juce::var (obj.get())));
+    return proj.replaceWithText (juce::JSON::toString (juce::var (obj.get())));
 }
 
 void MainComponent::startExportTracksTo (const juce::File& destDir,
@@ -448,6 +568,7 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
 
 void MainComponent::onBounceStems()
 {
+    if (sessionIoBusy.load()) { showStatus ("Another session operation is already running"); return; }
     const auto sessionDir = engine.getActiveSessionDir();
     if (! sessionDir.isDirectory()) { showStatus ("No active session to bounce"); return; }
 
@@ -467,6 +588,9 @@ void MainComponent::onBounceStems()
         const double sr      = engine.getPlayer().getSampleRate() > 0.0
                                  ? engine.getPlayer().getSampleRate() : 48000.0;
         if (arrLen <= 0) { showStatus ("Nothing to bounce -- record or load a session first"); return; }
+        if (sessionIoBusy.exchange (true)) { showStatus ("Another session operation is already running"); return; }
+        engine.setSessionTransitionActive (true);
+        if (editPage != nullptr) editPage->setEnabled (false);
 
         showStatus ("Bouncing " + juce::String (nTracks) + " edited stems...");
         // Offline render on an OWNED background thread (joined + cancellable in
@@ -476,10 +600,11 @@ void MainComponent::onBounceStems()
         juce::Component::SafePointer<MainComponent> self (this);
         bounceThread = std::thread ([this, self, dest, nTracks, arrLen, sr]
         {
+            const juce::ScopedLock structureGuard (engine.getRecorder().getStructureLock());
             int written = 0;
             for (int t = 0; t < nTracks; ++t)
             {
-                if (bounceCancel.load (std::memory_order_relaxed)) return;
+                if (bounceCancel.load (std::memory_order_relaxed)) break;
                 auto& rec = engine.getRecorder();
                 // A stereo pair bounces as ONE interleaved stereo stem from
                 // its L half; skip the R half (already written).
@@ -504,7 +629,11 @@ void MainComponent::onBounceStems()
             const bool cancelled = bounceCancel.load (std::memory_order_relaxed);
             juce::MessageManager::callAsync ([self, written, cancelled, dest]
             {
-                if (self != nullptr && ! cancelled)
+                if (self == nullptr) return;
+                self->sessionIoBusy.store (false);
+                self->engine.setSessionTransitionActive (false);
+                if (self->editPage != nullptr) self->editPage->setEnabled (true);
+                if (! cancelled)
                     self->showStatus ("Bounced " + juce::String (written)
                                       + " edited stem(s) -> " + dest.getFileName());
             });
@@ -514,6 +643,7 @@ void MainComponent::onBounceStems()
 
 void MainComponent::onBounceStereoMix()
 {
+    if (sessionIoBusy.load()) { showStatus ("Another session operation is already running"); return; }
     const auto sessionDir = engine.getActiveSessionDir();
     if (! sessionDir.isDirectory()) { showStatus ("No active session to bounce"); return; }
 
@@ -534,6 +664,9 @@ void MainComponent::onBounceStereoMix()
         const double sr     = engine.getPlayer().getSampleRate() > 0.0
                                  ? engine.getPlayer().getSampleRate() : 48000.0;
         if (arrLen <= 0) { showStatus ("Nothing to bounce -- record or load a session first"); return; }
+        if (sessionIoBusy.exchange (true)) { showStatus ("Another session operation is already running"); return; }
+        engine.setSessionTransitionActive (true);
+        if (editPage != nullptr) editPage->setEnabled (false);
 
         showStatus ("Bouncing stereo mix...");
         // Owned + joinable thread (see onBounceStems) -- never a detached
@@ -542,16 +675,21 @@ void MainComponent::onBounceStereoMix()
         juce::Component::SafePointer<MainComponent> self (this);
         bounceThread = std::thread ([this, self, dest, arrLen, sr]
         {
-            if (bounceCancel.load (std::memory_order_relaxed)) return;
+            const juce::ScopedLock structureGuard (engine.getRecorder().getStructureLock());
             // Streams the summed mix window-by-window straight to disk.
-            const bool ok = engine.bounceStereoMixToWav (dest, arrLen, sr, &bounceCancel);
+            const bool ok = ! bounceCancel.load (std::memory_order_relaxed)
+                         && engine.bounceStereoMixToWav (dest, arrLen, sr, &bounceCancel);
             // A superseding bounce (or app quit) sets bounceCancel and joins us;
             // that returns false but is NOT a failure -- don't post a spurious
             // "bounce failed" over the new bounce's status.
             const bool cancelled = bounceCancel.load (std::memory_order_relaxed);
             juce::MessageManager::callAsync ([self, ok, cancelled, dest]
             {
-                if (self != nullptr && ! cancelled)
+                if (self == nullptr) return;
+                self->sessionIoBusy.store (false);
+                self->engine.setSessionTransitionActive (false);
+                if (self->editPage != nullptr) self->editPage->setEnabled (true);
+                if (! cancelled)
                     self->showStatus (ok ? "Bounced stereo mix -> " + dest.getFileName()
                                          : juce::String ("Stereo mix bounce failed"));
             });
@@ -579,6 +717,7 @@ void MainComponent::onSaveSessionState()
 
 void MainComponent::onImportAudioFiles()
 {
+    if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
     if (engine.isRecording()) { showStatus ("Stop recording before importing"); return; }
 
     // Accept anything the JUCE basic format manager + FLAC can read.
@@ -587,7 +726,7 @@ void MainComponent::onImportAudioFiles()
     const juce::String filters = "*.wav;*.aif;*.aiff;*.flac;*.mp3;*.ogg;*.m4a;*.caf";
 
     chooser = std::make_unique<juce::FileChooser> (
-        "Pick audio files to import as a new session",
+        "Pick audio files to append to the current session",
         juce::File::getSpecialLocation (juce::File::userMusicDirectory),
         filters);
 
@@ -819,6 +958,11 @@ void MainComponent::onImportAudioFiles()
 
 void MainComponent::onSaveSessionAs()
 {
+    if (sessionIoBusy.exchange (true))
+    {
+        showStatus ("Another session file operation is already running");
+        return;
+    }
     // Source may or may not exist yet:
     //  * If the engineer made a session via File ▸ New Session... or
     //    loaded one with Open Session..., getActiveSessionDir() points
@@ -839,31 +983,65 @@ void MainComponent::onSaveSessionAs()
     chooser->launchAsync (flags, [this, source] (const juce::FileChooser& fc)
     {
         auto dest = fc.getResult();
-        if (dest.getFullPathName().isEmpty()) return;
+        if (dest.getFullPathName().isEmpty()) { sessionIoBusy.store (false); return; }
 
-        if (! dest.exists()) dest.createDirectory();
-        if (! dest.isDirectory()) { showStatus ("Save As destination invalid"); return; }
+        if (source == dest)
+        {
+            const bool ok = saveSessionStateTo (dest);
+            sessionIoBusy.store (false);
+            showStatus (ok ? "Session saved" : "Save failed -- check permissions / free space");
+            return;
+        }
+
+        const bool createdDestination = ! dest.exists();
+        if (createdDestination && dest.createDirectory().failed())
+        { sessionIoBusy.store (false); showStatus ("Save As destination invalid"); return; }
+        if (! dest.isDirectory())
+        { sessionIoBusy.store (false); showStatus ("Save As destination invalid"); return; }
 
         // Refuse a destination INSIDE the source: copyDirectoryTo would copy
         // the growing destination into itself.
         if (source.isDirectory() && dest.isAChildOf (source))
         {
+            sessionIoBusy.store (false);
             showStatus ("Save As failed -- pick a folder outside the current session");
             return;
         }
 
-        // Seed the Pro Tools-style subfolder layout in the new spot.
-        dest.getChildFile ("Audio Files")         .createDirectory();
-        dest.getChildFile ("Export Files")       .createDirectory();
-        dest.getChildFile ("Session File Backups").createDirectory();
+        // Save As is a clone, never a merge.  Refusing a non-empty folder
+        // prevents JUCE's copyFileTo from deleting same-named destination
+        // files and prevents an old session from becoming a hybrid.
+        if (! dest.findChildFiles (juce::File::findFilesAndDirectories, false).isEmpty())
+        {
+            sessionIoBusy.store (false);
+            showStatus ("Save As needs a new or empty folder");
+            return;
+        }
 
         const bool needsCopy = source.isDirectory() && source != dest;
         if (! needsCopy)
         {
-            // Nothing to copy -- just pin + write the state files.
+            if (! ensureSessionScaffold (dest))
+            {
+                removePartialCopy (dest, createdDestination);
+                sessionIoBusy.store (false);
+                showStatus ("Save As failed -- couldn't create the session files");
+                return;
+            }
             engine.setActiveSessionDir (dest);
-            saveSessionStateTo (dest);
-            showStatus ("Saved As -> " + dest.getFileName());
+            const bool ok = saveSessionStateTo (dest);
+            sessionIoBusy.store (false);
+            showStatus (ok ? "Saved As -> " + dest.getFileName()
+                           : "Save As failed -- check permissions / free space");
+            return;
+        }
+
+        // Freeze a complete source snapshot before the background copy begins.
+        if (! saveSessionStateTo (source))
+        {
+            removePartialCopy (dest, createdDestination);
+            sessionIoBusy.store (false);
+            showStatus ("Save As failed -- couldn't save the current session");
             return;
         }
 
@@ -872,22 +1050,26 @@ void MainComponent::onSaveSessionAs()
         // thread for the duration. The state files are written afterwards, back
         // on the message thread, because saveSessionStateTo touches engine state.
         joinExportThread();
+        engine.setSessionTransitionActive (true);
         showStatus ("Saving As -> " + dest.getFileName() + " (copying session)...");
 
         juce::Component::SafePointer<MainComponent> self (this);
-        exportThread = std::thread ([self, source, dest]
+        exportThread = std::thread ([self, source, dest, createdDestination]
         {
-            const bool ok = source.copyDirectoryTo (dest);
-            juce::MessageManager::callAsync ([self, ok, dest]
+            const bool ok = self != nullptr
+                         && copyDirectoryCancellable (source, dest, self->exportCancel);
+            juce::MessageManager::callAsync ([self, ok, dest, createdDestination]
             {
                 if (self == nullptr) return;
-                if (! ok) { self->showStatus ("Save As failed -- check permissions / free space"); return; }
-                // Pin the new folder as the active session FIRST so the parts of
-                // the save that target getActiveSessionDir() (setlist /
-                // playlists / automation / UI layout) land in the new location,
-                // then write everything (settings + full mix state + .zfproj).
-                self->engine.setActiveSessionDir (dest);
-                self->saveSessionStateTo (dest);
+                self->engine.setSessionTransitionActive (false);
+                self->sessionIoBusy.store (false);
+                if (! ok)
+                {
+                    removePartialCopy (dest, createdDestination);
+                    self->showStatus ("Save As cancelled or failed -- source session is unchanged");
+                    return;
+                }
+                self->openSessionFolder (dest);
                 self->showStatus ("Saved As -> " + dest.getFileName());
             });
         });
@@ -1171,14 +1353,21 @@ void MainComponent::exportTimelineCsv()
 
 void MainComponent::relocateActiveSession()
 {
+    if (sessionIoBusy.exchange (true))
+    {
+        showStatus ("Another session file operation is already running");
+        return;
+    }
     if (engine.isRecording())
     {
+        sessionIoBusy.store (false);
         showStatus ("Stop recording before moving the session.");
         return;
     }
     const auto oldDir = engine.getActiveSessionDir();
     if (! oldDir.isDirectory())
     {
+        sessionIoBusy.store (false);
         showStatus ("No active session to move -- record or open one first.");
         return;
     }
@@ -1192,14 +1381,29 @@ void MainComponent::relocateActiveSession()
         [this, oldDir] (const juce::FileChooser& fc)
         {
             const auto newParent = fc.getResult();
-            if (! newParent.isDirectory()) return;
+            if (! newParent.isDirectory()) { sessionIoBusy.store (false); return; }
 
             const auto newDir = newParent.getChildFile (oldDir.getFileName());
-            if (newDir == oldDir) { showStatus ("That's already the session's location."); return; }
+            if (newDir == oldDir)
+            { sessionIoBusy.store (false); showStatus ("That's already the session's location."); return; }
+            if (newParent == oldDir || newParent.isAChildOf (oldDir) || newDir.isAChildOf (oldDir))
+            {
+                sessionIoBusy.store (false);
+                showStatus ("Move failed -- the destination cannot be inside the session");
+                return;
+            }
             if (newDir.exists())
             {
+                sessionIoBusy.store (false);
                 showStatus ("A folder named \"" + oldDir.getFileName()
                             + "\" already exists there -- pick another location.");
+                return;
+            }
+
+            if (! saveSessionStateTo (oldDir))
+            {
+                sessionIoBusy.store (false);
+                showStatus ("Move failed -- couldn't save the current session");
                 return;
             }
 
@@ -1207,22 +1411,34 @@ void MainComponent::relocateActiveSession()
             // we move them, then do the (possibly cross-volume) move off the
             // message thread so a big session can't freeze the UI.
             engine.stopPlayback();
+            engine.setSessionTransitionActive (true);
+            joinExportThread();
             showStatus ("Moving session to " + newParent.getFullPathName() + " ...");
 
             juce::Component::SafePointer<MainComponent> self (this);
-            juce::Thread::launch ([self, oldDir, newDir, newParent]
+            exportThread = std::thread ([self, oldDir, newDir, newParent]
             {
-                bool ok = oldDir.moveFileTo (newDir);          // instant within a volume
-                if (! ok)                                       // cross-volume: copy + delete
+                bool relocated = oldDir.moveFileTo (newDir);   // instant within a volume
+                bool oldCopyRemains = false;
+                if (! relocated)                               // cross-volume: copy + delete
                 {
-                    ok = oldDir.copyDirectoryTo (newDir);
-                    if (ok) oldDir.deleteRecursively();
+                    const bool copied = self != nullptr
+                                     && copyDirectoryCancellable (oldDir, newDir, self->exportCancel);
+                    if (copied && ! self->exportCancel.load (std::memory_order_relaxed))
+                    {
+                        relocated = true; // the complete new copy is authoritative
+                        oldCopyRemains = ! oldDir.deleteRecursively();
+                    }
+                    else
+                        newDir.deleteRecursively();
                 }
 
-                juce::MessageManager::callAsync ([self, ok, newDir, newParent]
+                juce::MessageManager::callAsync ([self, relocated, oldCopyRemains, oldDir, newDir, newParent]
                 {
                     if (self == nullptr) return;
-                    if (! ok)
+                    self->engine.setSessionTransitionActive (false);
+                    self->sessionIoBusy.store (false);
+                    if (! relocated)
                     {
                         self->showStatus ("Move failed -- check permissions / free space. Session left in place.");
                         return;
@@ -1233,7 +1449,10 @@ void MainComponent::relocateActiveSession()
                         p->saveIfNeeded();
                     }
                     self->openSessionFolder (newDir);   // re-pin paths + reload audio from the new home
-                    self->showStatus ("Session moved to " + newDir.getFullPathName());
+                    self->showStatus (oldCopyRemains
+                        ? "Session moved, but the old folder could not be fully removed: "
+                            + oldDir.getFullPathName()
+                        : "Session moved to " + newDir.getFullPathName());
                 });
             });
         });
@@ -1241,6 +1460,7 @@ void MainComponent::relocateActiveSession()
 
 void MainComponent::onLoadSessionClicked()
 {
+    if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
     chooser = std::make_unique<juce::FileChooser> (
         "Choose a session folder",
         getSessionsRoot(),
@@ -1492,22 +1712,12 @@ juce::File MainComponent::makeNewSessionDir() const
         }
     }
     const auto stamp = juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S");
-    return getSessionsRoot().getChildFile ("Session_" + stamp);
+    const auto root = getSessionsRoot();
+    return root.getNonexistentChildFile ("Session_" + stamp, {}, false);
 }
 
 juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessionDialog::Result& r)
 {
-    // Fresh session => wipe any per-strip persistence left behind by
-    // the previous run (gains, pans, colours, names, routing, stereo
-    // flags, VCA assignments). Without this, a hard-pan from last
-    // weekend's show silently ports over to a new band.
-    engine.clearAllStripOverrides();
-
-    // A brand-new session has no click strip yet; drop any index carried
-    // over from the previous session so a tempo change can't delete/overwrite
-    // this session's Track_NN.wav (the stale-clickTrackIndex data-loss bug).
-    clickTrackIndex = -1;
-
     // Resolve a safe folder name even if the engineer typed something
     // with slashes / colons in the picker.
     auto safeName = juce::File::createLegalFileName (r.name);
@@ -1516,20 +1726,25 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
     // Ensure the chosen Local Storage exists, then make the session
     // folder underneath it. If that name already exists, append a
     // numeric suffix so we don't trample on an existing session.
-    r.location.createDirectory();
+    if (r.location.createDirectory().failed() || ! r.location.isDirectory())
+        return {};
 
-    juce::File sessionFolder = r.location.getChildFile (safeName);
-    for (int i = 2; sessionFolder.exists() && i < 9999; ++i)
-        sessionFolder = r.location.getChildFile (safeName + "-" + juce::String (i));
-    sessionFolder.createDirectory();
+    const juce::File sessionFolder = r.location.getNonexistentChildFile (safeName, {}, false);
+    if (sessionFolder.createDirectory().failed() || ! sessionFolder.isDirectory())
+        return {};
 
     // Subfolders -- only the ones actually wired today. Clip Groups
     // and Video Files were Pro Tools-style placeholders that nothing
     // read or wrote, so they're dropped to avoid confusing the
     // engineer with empty folders.
-    sessionFolder.getChildFile ("Audio Files")         .createDirectory();
-    sessionFolder.getChildFile ("Export Files")       .createDirectory();
-    sessionFolder.getChildFile ("Session File Backups").createDirectory();
+    const bool madeFolders = sessionFolder.getChildFile ("Audio Files")         .createDirectory().wasOk()
+                          && sessionFolder.getChildFile ("Export Files")       .createDirectory().wasOk()
+                          && sessionFolder.getChildFile ("Session File Backups").createDirectory().wasOk();
+    if (! madeFolders)
+    {
+        sessionFolder.deleteRecursively();
+        return {};
+    }
 
     // Session document -- a small JSON file that ties the folder together.
     // (Equivalent of Pro Tools' .ptx; we use .zfproj for clarity.)
@@ -1542,12 +1757,21 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
         m->setProperty ("captureFormat",   (int) r.captureFormat);
         m->setProperty ("interleaved",     r.interleaved);
         m->setProperty ("ioPreset",        r.ioSettings);
-        sessionFolder.getChildFile (safeName + ".zfproj")
-                     .replaceWithText (juce::JSON::toString (juce::var (m.get())));
+        if (! sessionFolder.getChildFile (safeName + ".zfproj")
+                            .replaceWithText (juce::JSON::toString (juce::var (m.get()))))
+        {
+            sessionFolder.deleteRecursively();
+            return {};
+        }
     }
 
     // WaveCache.wfm is written on demand by EditPage::saveCacheToSession
     // (on close) and read back on session open. No placeholder needed.
 
+    // Only clear the previous session after every filesystem operation has
+    // succeeded; a permissions/disk failure must leave the current work open.
+    engine.clearSessionState();
+    engine.clearAllStripOverrides();
+    clickTrackIndex = -1;
     return sessionFolder;
 }

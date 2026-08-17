@@ -62,14 +62,14 @@ personality:
 typography:
   # ── Display / hero / brand mark ─────────────────────────────────────
   splash-title:
-    fontFamily: Menlo
+    fontFamily: JetBrains Mono
     fontSize: 28px
     fontWeight: 700
     lineHeight: 1.1
 
   # ── Strip + dense technical data ────────────────────────────────────
   channel-name:
-    fontFamily: Menlo
+    fontFamily: JetBrains Mono
     fontSize: 15px
     fontWeight: 700
     lineHeight: 1.2
@@ -79,17 +79,17 @@ typography:
     fontWeight: 700
     lineHeight: 1.2
   label:
-    fontFamily: Menlo
+    fontFamily: JetBrains Mono
     fontSize: 9px
     fontWeight: 400
     lineHeight: 1.1
   status-bar:
-    fontFamily: Menlo
+    fontFamily: JetBrains Mono
     fontSize: 10.5px
     fontWeight: 400
     lineHeight: 1.2
   led-label:
-    fontFamily: Menlo
+    fontFamily: JetBrains Mono
     fontSize: 9px
     fontWeight: 600
     lineHeight: 1
@@ -108,7 +108,7 @@ typography:
     lineHeight: 1.2
     letterSpacing: 0.02em
   hint:
-    fontFamily: Menlo
+    fontFamily: JetBrains Mono
     fontSize: 8.5px
     fontWeight: 400
     lineHeight: 1
@@ -285,13 +285,15 @@ from.
 
 Two font families, used for distinct purposes:
 
-- **Menlo (monospace)** — every place numeric data appears: channel
+- **JetBrains Mono (bundled)** — every place numeric data appears: channel
   names, labels (dB ticks, CPU%, latency ms), LED captions, status
   bar, hints. Fixed-width gives a stable visual rhythm when values
   change.
-- **-apple-system (SF Pro)** — plugin/device names, dialog body,
+- **Native macOS sans-serif** — channel names, plugin/device names, dialog body,
   picker manufacturer column. Brand strings read more cleanly in
-  proportional type.
+proportional type.
+
+The proportional face deliberately follows the platform. The files formerly named `Inter-Regular.ttf` / `Inter-Bold.ttf` were GitHub HTML error responses rather than valid fonts and were removed; restoring them would make CoreText parse non-font data. Fixed-width roles remain deterministic through the valid bundled JetBrains Mono assets.
 
 Sizes follow a deliberately tight scale (8.5 / 9 / 10.5 / 11 / 13 /
 15 / 28). LED labels use uppercase + 4% letter-spacing (`led-label`

@@ -6,6 +6,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "../Audio/AudioEngine.h"
+#include "../Audio/MultiPartReader.h"
 
 namespace zynforge
 {
@@ -89,6 +90,7 @@ namespace zynforge
                 player.start();
                 player.setPositionSamples (lenA - block / 2);
                 // warm it
+                bool sawBoundary = false;
                 for (int t = 0; t < 120; ++t)
                 {
                     std::vector<float> ob ((size_t) block, 0.0f);
@@ -99,13 +101,37 @@ namespace zynforge
                     for (float v : ob) { mn = juce::jmin (mn, v); mx = juce::jmax (mx, v); }
                     if (mx > 0.4f && mn < -0.2f)   // saw +0.5 (part1) AND -0.3 (part2)
                     {
-                        expect (true);
-                        dir.deleteRecursively();
-                        return;
+                        sawBoundary = true;
+                        break;
                     }
                     juce::Thread::sleep (5);
                 }
-                expect (false, "boundary block did not contain both parts (gap at the seam)");
+                expect (sawBoundary, "boundary block did not contain both parts (gap at the seam)");
+            }
+
+            beginTest ("numeric part discovery does not place part100 before part11");
+            {
+                const auto main = af.getChildFile ("Track_02.wav");
+                writeDc (main, 0.1f, 64, sr);
+                writeDc (af.getChildFile ("Track_02_part100.wav"), 0.2f, 64, sr);
+                const auto parts = findTakeParts (main);
+                expectEquals ((int) parts.size(), 100);
+                expectEquals (parts[10].getFileName(), juce::String ("Track_02_part11.wav"));
+                expectEquals (parts[99].getFileName(), juce::String ("Track_02_part100.wav"));
+                main.deleteFile();
+                af.getChildFile ("Track_02_part100.wav").deleteFile();
+            }
+
+            beginTest ("missing middle part is rejected instead of time-shifting later audio");
+            {
+                auto broken = dir.getParentDirectory().getChildFile ("zf-broken-" + juce::Uuid().toString());
+                auto baf = broken.getChildFile ("Audio Files");
+                baf.createDirectory();
+                writeDc (baf.getChildFile ("Track_01.wav"), 0.1f, 64, sr);
+                writeDc (baf.getChildFile ("Track_01_part03.wav"), 0.3f, 64, sr);
+                AudioEngine eng;
+                expectEquals (eng.loadSession (broken), 0);
+                broken.deleteRecursively();
             }
 
             beginTest ("unload() fully empties the player (new session can't inherit it)");

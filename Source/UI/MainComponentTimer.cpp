@@ -412,7 +412,7 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
     }
 
     // Persistent always-visible banner (record-red) while mismatched.
-    // ASCII only -- the bundled Inter font has no warning-triangle glyph
+    // ASCII only -- sample-rate mismatch must stay legible in every UI face.
     // (it rendered as mojibake); the red colour carries the alarm.
     srWarnLabel.setText ("! SAMPLE-RATE MISMATCH  device " + fmt (deviceSampleRate)
                          + "  vs  session " + fmt (sessionSR) + "  - recording blocked",

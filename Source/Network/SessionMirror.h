@@ -16,15 +16,13 @@ namespace zynforge
     // Use case: a FOH Mac runs the live recording. A second 'safety' Mac
     // runs a fresh ZynForge Recording instance pointed at the same audio
     // device's secondary inputs, and is told to mirror the primary's
-    // session structure (strip count, names, colours, BPM, cue list,
-    // transport state). The safety Mac records to its own session folder
+    // channel layout (strip count, names, colours, stereo pairs). The safety Mac records to its own session folder
     // independently, but its UI and naming stays locked to the primary so
     // the engineer can swap to it without losing track.
     //
     // Protocol: the primary's existing CompanionServer (port 9000) already
     // serves GET /state.json with the full mixer state. The mirror polls
-    // it every 500 ms and applies non-destructive deltas (names, colours,
-    // BPM, cue list) to its local engine. Audio routing and per-strip
+    // it every 500 ms and applies non-destructive layout deltas. Audio routing and per-strip
     // gain are left alone -- each machine keeps its own monitor mix.
     //
     // This class is intentionally LIGHTWEIGHT -- it does not transfer

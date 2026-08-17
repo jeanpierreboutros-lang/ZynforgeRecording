@@ -224,14 +224,12 @@ namespace zynforge
         if (! sourceL.existsAsFile() || ! sourceR.existsAsFile())
         { outError = "Source not found"; return false; }
 
-        // Stitch each side's continuation parts (legacy two-mono-file stereo
-        // can also be multi-part), falling back to the single file on a hole.
+        // Stitch each side's continuation parts. A missing/corrupt middle part
+        // is a hard error: falling back to part 1 silently truncated exports.
         std::unique_ptr<juce::AudioFormatReader> readerL (
             ConcatReader::create (formatManager, findTakeParts (sourceL)));
-        if (readerL == nullptr) readerL.reset (formatManager.createReaderFor (sourceL));
         std::unique_ptr<juce::AudioFormatReader> readerR (
             ConcatReader::create (formatManager, findTakeParts (sourceR)));
-        if (readerR == nullptr) readerR.reset (formatManager.createReaderFor (sourceR));
         if (readerL == nullptr || readerR == nullptr) { outError = "Cannot read source"; return false; }
 
         const auto srcSR   = readerL->sampleRate;
@@ -324,12 +322,22 @@ namespace zynforge
         const bool started = proc.start (cmd);
         if (! started) { outError = "Failed to launch lame"; tempWav.deleteFile(); return false; }
 
-        proc.waitForProcessToFinish (120000);
+        const bool finished = proc.waitForProcessToFinish (120000);
+        if (! finished)
+        {
+            proc.kill();
+            proc.waitForProcessToFinish (5000);
+            tempWav.deleteFile();
+            destMp3.deleteFile();
+            outError = "lame timed out";
+            return false;
+        }
         const auto code = proc.getExitCode();
         tempWav.deleteFile();
 
         if (code != 0)
         {
+            destMp3.deleteFile();
             outError = "lame exited with code " + juce::String (code);
             return false;
         }

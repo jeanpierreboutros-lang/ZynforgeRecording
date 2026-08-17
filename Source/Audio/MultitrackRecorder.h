@@ -72,6 +72,12 @@ namespace zynforge
             recordBaseSamples = punchInPos;
         }
         bool isPunchInArmed() const noexcept { return punchInActive; }
+        void cancelPunchIn() noexcept
+        {
+            punchInActive = false;
+            punchInPos = 0;
+            recordBaseSamples = 0;
+        }
 
         // ── Continue recording (append a new part) ─────────────────────────
         // Arm the NEXT startRecording to CONTINUE the existing take rather than

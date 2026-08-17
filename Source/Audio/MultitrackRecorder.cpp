@@ -592,6 +592,7 @@ namespace zynforge
 
     bool MultitrackRecorder::startRecording (const juce::File& sessionDir)
     {
+        const juce::ScopedLock structureGuard (structureLock);
         if (recording.load()) return false;
         if (tracks.empty())   return false;
 
@@ -684,15 +685,27 @@ namespace zynforge
         // to sidecars BEFORE the writer truncates the target, so the WHOLE base
         // (a take built up by continue-recording is multi-part) survives to be
         // spliced + flattened back on stop. No-op when not punching or no take.
-        auto stashForPunch = [this] (const juce::File& target)
+        std::vector<std::pair<juce::File, juce::File>> punchStashes;
+        auto stashForPunch = [this, &punchStashes] (const juce::File& target)
         {
             if (! punchInActive) return;
             for (auto& part : findTakeParts (target))   // [Track_NN, _part02, ...]
             {
                 const auto sidecar = punchSidecar (part);
                 sidecar.deleteFile();
-                part.moveFileTo (sidecar);
+                if (part.moveFileTo (sidecar))
+                    punchStashes.emplace_back (part, sidecar);
             }
+        };
+
+        auto restorePunchStashes = [this, &punchStashes]
+        {
+            for (auto it = punchStashes.rbegin(); it != punchStashes.rend(); ++it)
+            {
+                it->first.deleteFile();
+                it->second.moveFileTo (it->first);
+            }
+            cancelPunchIn();
         };
 
         // Continue: the timeline base is the EXISTING take's length, measured
@@ -907,9 +920,10 @@ namespace zynforge
         // sidecars stay on disk under their .punchbase names, so the existing
         // take is renamed-aside, never lost.) The success path -- at least one
         // primary writer open -- is unchanged.
-        if (primaryAttempts > 0 && primaryOpened == 0)
+        if (primaryAttempts == 0 || primaryOpened != primaryAttempts)
         {
             closeWriters();
+            restorePunchStashes();
             return false;
         }
 

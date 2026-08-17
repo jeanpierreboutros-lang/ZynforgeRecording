@@ -18,6 +18,14 @@ open "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
 
 First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Apple Silicon + Intel).
 
+To install the verified Release build locally, quit the running app, preserve the old copy, and copy the bundle into `/Applications`:
+
+```bash
+mv "/Applications/Zynforge Recording.app" "/Applications/Zynforge Recording.app.backup"
+ditto "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app" "/Applications/Zynforge Recording.app"
+codesign --verify --deep --strict "/Applications/Zynforge Recording.app"
+```
+
 ## Documentation
 
 | Topic | File |
@@ -100,7 +108,7 @@ First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Ap
 - Voice + subdivision per accent vs. off-beat; click-track regen on tempo change
 
 ### Console integration (OSC)
-Five dialects with **full action parity** (transport, scene recall → marker, per-channel name / mute / arm / colour): Generic, DiGiCo, Allen & Heath (SQ / Avantis), SSL Live, Yamaha (DM7 / RIVAGE PM). 1-based channel indices to match console numbering.
+Five inbound dialects: Generic, DiGiCo, Allen & Heath (SQ / Avantis), SSL Live, and Yamaha (DM / RIVAGE). Console dialects accept the read-only values a recorder needs — channel names, gain/trim for Trim-Follow, scene recalls and markers — but cannot arm, mute, or drive transport. **Generic OSC control is authenticated:** the app shows a per-start token when OSC begins listening, and every state-changing Generic command must include that token as its final string argument. A tokenless UDP packet cannot start a take. Channel indices are 1-based to match console numbering.
 
 ### Control surfaces (MIDI)
 Bidirectional **Mackie Control / FaderPort (MCU)** surface: motor **faders ↔ channel gain**, **mute / solo / arm** with LED feedback, **V-pots → pan** with ring feedback, **scribble strips** show names, **bank / channel** buttons page through all tracks, and **meters** mirror to the surface. Plus a **master (9th) fader** for the monitor level, **jog-wheel transport scrub**, and the surface's **7-segment time display** showing the playhead as `HH:MM:SS:FF`. Channel state is applied straight off the MIDI thread (atomic); transport is marshalled to the message thread.
@@ -133,13 +141,21 @@ Why no built-in HTTPS: JUCE has no server-side TLS, so in-app HTTPS would mean b
 - Cue switching repaints the EDIT automation lanes immediately so the curve visibly updates per song
 - Waveform cache builds in the background on import / record and is flushed to `WaveCache.wfm` as soon as the scan finishes, not only on app quit — reopening a session paints waveforms instantly
 
+### Session integrity
+- New, Open, New from CSV, New from Console, Finder `.zfproj` opens, and template-based session creation all offer **Save & Continue / Continue Without Saving / Cancel** before replacing the current session. A failed save cancels the switch, close, or quit instead of discarding the current state
+- **Save As is a clone, not a merge:** it requires a new or empty destination, saves the source first, copies on a cancellable worker, and switches to the clone only after a complete copy. A failed/cancelled copy leaves the source session active and removes a newly-created partial destination
+- Moving a session is similarly transactional. Recording, playback start, strip changes, bounces, and competing session operations are gated while a move/copy/bounce owns the session; a cross-volume move keeps the complete destination authoritative and warns if the old copy could not be removed
+- Opening a session clears all previous session state, loads audio and the exact mixer track count (including shrinking), then restores playlists/automation after default clips are seeded. A malformed or missing `session_mix.json` falls back to the audio count instead of leaking the previous session's strips
+- `.zfproj` files are real macOS documents: double-clicking one or sending it to an already-running app opens its containing session through the same guarded path
+- A configured default template is applied to every new session, including the Welcome flow. Choosing **New Session from Template** creates a new session; it never destructively applies a template over the open show
+
 ## Visual identity
 
 Design values are sourced from the **FORGE family design system** (`../ZynForgeBrand/tokens.json` → generated, vendored `Source/Theme/ForgeTokens.h`) — one token edit retunes the whole ZynForge family. See `ZynForgeBrand/FORGE.md`.
 
 Part of the ZynForge family — shares palette + fader/meter style with ZynForge Live (sibling project). **Flat design: every surface is a solid fill (no gradients or glossy sheens).** Near-black canvas, neutral-grey strips by default (recoloured per channel from a hue/shade picker), LED-segment meters, and **bright orange reserved for STATE** (armed / peaking), never permanent chrome.
 
-`Inter` (UI) + `JetBrains Mono` (tabular numerals) bundled as BinaryData. A named type scale (UI ladder + mono `monoStamp/monoCounter/readout/…`), a 14-step `alpha::` scale, `space::`/`radius::`/`motion::`/`shadow::` tokens. All chrome routes through `Source/Theme/` tokens — **never raw hex, raw fonts, raw gradients, or ad-hoc opacities** — enforced by `Tools/design_audit.sh` (run as a pre-commit gate; raw colours/fonts/alphas fail, and a spacing ratchet stops raw `reduced()` px from growing). A second pre-commit gate, `Tools/invariants_audit.sh`, does the same for **correctness**: 10 rules encoding the bug classes that repeat audits kept finding re-violated in new places (freed-`TrackState` reads, `.wav`-only take globs, unguarded device restarts mid-take, …). Full rationale in [`design.md`](design.md).
+Native macOS sans-serif for UI text + bundled `JetBrains Mono` for tabular numerals. (The former files named as Inter were HTML error pages, not fonts, and have been removed.) A named type scale (UI ladder + mono `monoStamp/monoCounter/readout/…`), a 14-step `alpha::` scale, `space::`/`radius::`/`motion::`/`shadow::` tokens. All chrome routes through `Source/Theme/` tokens — **never raw hex, raw fonts, raw gradients, or ad-hoc opacities** — enforced by `Tools/design_audit.sh` (run as a pre-commit gate; raw colours/fonts/alphas fail, and a spacing ratchet stops raw `reduced()` px from growing). A second pre-commit gate, `Tools/invariants_audit.sh`, does the same for **correctness**: 12 rules encoding the bug classes that repeat audits kept finding re-violated in new places (freed-`TrackState` reads, `.wav`-only take globs, unguarded device restarts mid-take, …). Full rationale in [`design.md`](design.md).
 
 ## Where things live
 
@@ -152,7 +168,7 @@ Source/
 └── Network/           — CompanionServer, NDIBridge, OscRemote
 ```
 
-Sessions land in `~/Music/Zynforge Sessions/<SessionName>/` with subfolders (`Audio Files/`, `Export Files/`, `Session File Backups/`, `Clip Groups/`) and per-session state files at the root: **`<Name>.zfproj`** (cues, playlists, automation, UI layout), **`session_mix.json`** (per-strip mix + session tempo), **`markers.json`** (markers), **`session.report.json`** (sha256 + counts on clean stop), and **`WaveCache.wfm`** (versioned thumbnail cache). The `.zfproj` document carries the ZynForge icon in Finder. See [`architecture.md`](architecture.md) §6 for the full data flow.
+Sessions land in `~/Music/Zynforge Sessions/<SessionName>/` with subfolders (`Audio Files/`, `Export Files/`, `Session File Backups/`) and per-session state files at the root: **`<Name>.zfproj`** (cues, playlists, automation, UI layout), **`session_mix.json`** (per-strip mix + session tempo), **`markers.json`** (markers), **`session.report.json`** (sha256 + counts on clean stop), and **`WaveCache.wfm`** (versioned thumbnail cache). The `.zfproj` document carries the ZynForge icon in Finder and opens the session when double-clicked. See [`architecture.md`](architecture.md) §6 for the full data flow.
 
 ## Sibling project
 

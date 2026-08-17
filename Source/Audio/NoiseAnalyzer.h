@@ -4,6 +4,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 #include <vector>
+#include "MultiPartReader.h"
 
 namespace zynforge
 {
@@ -54,7 +55,7 @@ namespace zynforge
             juce::AudioFormatManager fm;
             fm.registerBasicFormats();
             fm.registerFormat (new juce::FlacAudioFormat(), false);   // FLAC takes are analysable too
-            std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (wavFile));
+            auto reader = ConcatReader::create (fm, findTakeParts (wavFile));
             if (reader == nullptr || reader->numChannels < 1) return nf;   // guard OOB read on malformed file
 
             const double sr     = reader->sampleRate;

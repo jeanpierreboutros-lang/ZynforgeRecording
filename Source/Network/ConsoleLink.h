@@ -173,9 +173,9 @@ namespace zynforge
         int                  expectedGainReplies { 0 };
         bool                 gainCaptureComplete { false };
         // Deadlines (ms since start, 0 = inactive) rather than one-shot timers.
-        juce::uint32         patchDeadlineMs { 0 };
-        juce::uint32         gainDeadlineMs  { 0 };
-        juce::uint32         nextSubscribeMs { 0 };
+        juce::int64          patchDeadlineMs { 0 };
+        juce::int64          gainDeadlineMs  { 0 };
+        juce::int64          nextSubscribeMs { 0 };
 
         std::function<void (const ConsoleMessage&)> msgHook;
 

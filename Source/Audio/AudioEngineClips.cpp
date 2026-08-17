@@ -11,6 +11,7 @@
 // seedDefaultClips.
 
 #include "AudioEngine.h"
+#include "MultiPartReader.h"
 
 #include <algorithm>
 #include <cmath>
@@ -452,7 +453,7 @@ namespace zynforge
         {
             juce::AudioFormatManager fm;
             fm.registerBasicFormats();
-            std::unique_ptr<juce::AudioFormatReader> rd (fm.createReaderFor (trackFile));
+            auto rd = ConcatReader::create (fm, findTakeParts (trackFile));
             if (rd != nullptr) lengthSamples = (juce::int64) rd->lengthInSamples;
         }
         c.fileLengthSamples = lengthSamples > 0 ? lengthSamples
@@ -509,7 +510,7 @@ namespace zynforge
 
                 if (srcFile.existsAsFile())
                 {
-                    reader.reset (fm.createReaderFor (srcFile));
+                    reader = ConcatReader::create (fm, findTakeParts (srcFile));
                     if (reader == nullptr) return false;
                     readChannel = (reader->numChannels >= 2) ? 0 : -1;
                 }
@@ -525,7 +526,7 @@ namespace zynforge
                         if (f.existsAsFile()) { srcFile = f; break; }
                     }
                     if (! srcFile.existsAsFile()) return false;
-                    reader.reset (fm.createReaderFor (srcFile));
+                    reader = ConcatReader::create (fm, findTakeParts (srcFile));
                     if (reader == nullptr || reader->numChannels < 2) return false;
                     readChannel = 1;
                 }
@@ -571,8 +572,8 @@ namespace zynforge
                         const auto key = c.audioFile.getFullPathName();
                         auto it = extra.find (key);
                         if (it == extra.end())
-                            it = extra.emplace (key, std::unique_ptr<juce::AudioFormatReader> (
-                                                         fm.createReaderFor (c.audioFile))).first;
+                            it = extra.emplace (key, ConcatReader::create (
+                                                         fm, findTakeParts (c.audioFile))).first;
                         if (it->second != nullptr) rd = it->second.get();
                     }
                     if (rd == nullptr) continue;
@@ -648,8 +649,8 @@ namespace zynforge
     bool AudioEngine::renderTrackArrangement (int track, juce::AudioBuffer<float>& out,
                                               juce::int64 totalSamples)
     {
-        if (totalSamples <= 0) return false;
-        const int outLen = (int) juce::jmin<juce::int64> (totalSamples, 0x7fffffff);
+        if (totalSamples <= 0 || totalSamples > std::numeric_limits<int>::max()) return false;
+        const int outLen = (int) totalSamples;
         bool sized = false;
         return forEachArrangementWindow (track, 0, outLen,
             [&] (const float* data, juce::int64 winStart, int winLen)
@@ -809,8 +810,11 @@ namespace zynforge
 
     bool AudioEngine::renderStereoMix (juce::AudioBuffer<float>& outStereo, juce::int64 totalSamples)
     {
-        if (totalSamples <= 0) return false;
-        const int len = (int) juce::jmin<juce::int64> (totalSamples, 0x7fffffff);
+        // AudioBuffer uses an int sample count. The file-bounce path below is
+        // the streaming API for longer timelines; refuse instead of silently
+        // truncating or overflowing this in-memory convenience render.
+        if (totalSamples <= 0 || totalSamples > std::numeric_limits<int>::max()) return false;
+        const int len = (int) totalSamples;
         outStereo.setSize (2, len, false, true, true);
         outStereo.clear();
         return forEachStereoMixWindow (len,
@@ -861,7 +865,7 @@ namespace zynforge
         auto writer = createWav24Writer (dest, sampleRate, 2);
         if (writer == nullptr) return false;
 
-        const int len = (int) juce::jmin<juce::int64> (totalSamples, 0x7fffffff);
+        const juce::int64 len = totalSamples;
         juce::AudioBuffer<float> stereo (2, kRenderWindowSamples), tmp (1, 0);
         bool ok = true;
         for (juce::int64 winStart = 0; winStart < len && ok; winStart += kRenderWindowSamples)

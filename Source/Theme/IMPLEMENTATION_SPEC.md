@@ -20,7 +20,7 @@ meter: green #3cb878  idle #2c303a  ember #e05518  hot #ff8a24  whiteHot #ffefcf
 fader: hi #33353c  lo #1c1e23  edge #555760
 personality[8] (strip washes): 4c6c88 528a6a 807646 765a8c 783c4e 3c8286 805c32 7a6a38
 radius: sm 2.5  md 4  lg 5  xl 8     space: xs 4 sm 6 md 8 lg 10 xl 16
-type (Inter / JetBrains Mono): label10 caption11 body13 title14 headline18 hero44
+type (native sans / JetBrains Mono): label10 caption11 body13 title14 headline18 hero44
 ```
 
 ---
@@ -35,7 +35,7 @@ Geometry the target uses (per strip, top→bottom):
 | Spine | **5px** brandOrange down the left edge; glow `0 0 8px`; full-bright + ember bloom when armed |
 | Header plate | **30px** tall, `#0b0b0e→#000`, 1px gloss top, **2px brandOrange under-seam**, 1px black divider |
 | Number | far-left, **JetBrains Mono Bold 24px**, colour `#b4b7bf` (raised steel), box `{12,3,34,24}` |
-| Name | Inter **Bold 13px** (`channelName()`), left-aligned, starts at x≈44, right-reserved 20px (caret) +18px (chip) |
+| Name | Native sans **Bold 13px** (`channelName()`), left-aligned, starts at x≈44, right-reserved 20px (caret) +18px (chip) |
 | Colour chip | 12×12, radius sm, far right of header |
 | In / Master combos | 20px (`ioH`) each, `#000` bg, 1px edge, caption 11px |
 | Pan knob | **40px** mono / 30px stereo, machined radial knob + orange pointer (LookAndFeel `drawRotarySlider`) |
@@ -58,9 +58,9 @@ are positioned (the mixer viewport), not the strip itself — see §4.
 | Height | 128px, radius lg (5) |
 | Idle | `bgPanel`, edge border, green `accentStatus` timer |
 | **Recording** | bg `linear-gradient(meterEmber@26 → meterHot@1f)`, **inset orange frame** (`#0e0f12` 2px + `brandOrange@55` 1px), **orange corner brackets** (top-left/right, 20px, 2px), timer **meterWhiteHot** w/ `0 0 18px meterHot` glow |
-| Left | forge-mark (28px, hot when recording) + REC lamp + label (Inter bold 18px) |
+| Left | forge-mark (28px, hot when recording) + REC lamp + label (native sans bold 18px) |
 | Centre | timer **JetBrains Mono Bold 52px** |
-| Right | 7-row stat grid, label Inter 10px tertiary / value mono bold 10.5px secondary, 240px wide |
+| Right | 7-row stat grid, label native sans 10px tertiary / value mono bold 10.5px secondary, 240px wide |
 
 ✅ **DONE** (2026-06-14) — corner brackets are in `BigClockPanel::paint` (top-left +
 top-right 2px `brandOrange` L-strokes, ~20px, inside the inset orange frame).

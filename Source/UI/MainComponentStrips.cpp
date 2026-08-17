@@ -333,6 +333,7 @@ void MainComponent::condemnAllStrips()
 
 void MainComponent::deleteSelectedStrips()
 {
+    if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
     if (selectedLogical.empty() || engine.isRecording()) return;
 
     // removeStripAt frees TrackStates + shifts indices as it goes; condemn all
@@ -578,6 +579,7 @@ void MainComponent::importChannelNamesFromCsv()
 
 void MainComponent::createSessionFromCsv()
 {
+    if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
     if (engine.isRecording()) { showStatus ("Stop recording before creating a session"); return; }
 
     chooser = std::make_unique<juce::FileChooser> (
@@ -599,6 +601,11 @@ void MainComponent::createSessionFromCsv()
             r.interleaved   = true;
             r.ioSettings    = "Last Used";
             const auto dir  = createSessionFolderStructure (r);
+            if (! dir.isDirectory())
+            {
+                showStatus ("Couldn't create session -- check permissions / free space");
+                return;
+            }
 
             engine.setActiveSessionDir (dir);
             // Stop the live strips' meter/spectrum timers before setStripCount
@@ -622,6 +629,7 @@ void MainComponent::createSessionFromCsv()
 
 void MainComponent::createSessionFromConsole()
 {
+    if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
     if (engine.isRecording()) { showStatus ("Stop recording before creating a session"); return; }
 
     auto* p = engine.getAppProps();
@@ -666,6 +674,11 @@ void MainComponent::createSessionFromConsole()
         r.interleaved   = true;
         r.ioSettings    = "Last Used";
         const auto dir  = self->createSessionFolderStructure (r);
+        if (! dir.isDirectory())
+        {
+            self->showStatus ("Couldn't create session -- check permissions / free space");
+            return;
+        }
 
         self->engine.setActiveSessionDir (dir);
         self->engine.clearAllStripOverrides();

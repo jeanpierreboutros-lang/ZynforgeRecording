@@ -3,6 +3,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include <vector>
 #include <algorithm>
+#include "MultiPartReader.h"
 
 namespace zynforge
 {
@@ -99,7 +100,7 @@ namespace zynforge
 
             juce::AudioFormatManager fm;
             fm.registerBasicFormats();
-            std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (f));
+            auto reader = ConcatReader::create (fm, findTakeParts (f));
             if (reader == nullptr) return onsets;
 
             const auto sr = reader->sampleRate;

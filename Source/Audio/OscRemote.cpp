@@ -5,6 +5,7 @@ namespace zynforge
 {
     OscRemote::OscRemote (AudioEngine& e) : engine (e)
     {
+        accessToken = juce::String::toHexString (juce::Random::getSystemRandom().nextInt64());
         // Match anything -- we route per-dialect inside oscMessageReceived.
         addListener (this);
     }
@@ -65,7 +66,8 @@ namespace zynforge
         // Honour the engineer's "Local Storage" override. This used to hardcode
         // ~/Music/Zynforge Sessions, so a take started from the desk landed on
         // the internal drive instead of the external configured for the show.
-        engine.startRecording (engine.makeTimestampedSessionDir());
+        if (engine.hasUsableArmedInput())
+            engine.startRecording (engine.makeTimestampedSessionDir());
     }
     void OscRemote::recordStop() { engine.stopRecording(); }
     void OscRemote::playStart()  { engine.startPlayback(); }
@@ -143,6 +145,16 @@ namespace zynforge
     {
         const auto path = m.getAddressPattern().toString();
 
+        // Generic OSC is reachable over UDP and has no connection identity.
+        // Require an unguessable token as the final argument for every command
+        // that can change the session. Console dialects below intentionally do
+        // not expose transport/arm/mute at all because those protocols cannot
+        // carry this application token.
+        if (! testDispatch
+            && (m.size() == 0 || ! m[m.size() - 1].isString()
+                || m[m.size() - 1].getString() != accessToken))
+            return false;
+
         if (path == "/zynforge/record")
         {
             if (m.size() == 0 || ! toBool (m[0])) recordStop(); else recordStart();
@@ -194,13 +206,13 @@ namespace zynforge
     // has been stripped down to {<channel-number>, <key>}, the actual
     // setter call is identical.
     bool OscRemote::dispatchChannelOp (int ch1, const juce::String& key,
-                                       const juce::OSCMessage& m)
+                                       const juce::OSCMessage& m, bool allowControl)
     {
         if (m.size() < 1) return false;
         const auto k = key.toLowerCase();
         if (k == "name")   { setChannelName   (ch1, toString (m[0])); return true; }
-        if (k == "mute")   { setChannelMute   (ch1, toBool   (m[0])); return true; }
-        if (k == "arm")    { setChannelArm    (ch1, toBool   (m[0])); return true; }
+        if (allowControl && k == "mute") { setChannelMute (ch1, toBool (m[0])); return true; }
+        if (allowControl && k == "arm")  { setChannelArm  (ch1, toBool (m[0])); return true; }
         // Console preamp / input trim (dB) -> trim-follow. "fader" is the mix
         // fader, a different thing, so it's deliberately NOT mapped here.
         if (k == "gain" || k == "trim" || k == "preamp")
@@ -221,12 +233,6 @@ namespace zynforge
 
         if (path == "/Console/Snapshots/recall" && m.size() >= 1)
         { dropSceneMarker (toInt (m[0])); return true; }
-        if (path == "/Console/Transport/record" && m.size() >= 1)
-        { if (toBool (m[0])) recordStart(); else recordStop(); return true; }
-        if (path == "/Console/Transport/play"   && m.size() >= 1)
-        { if (toBool (m[0])) playStart();   else playStop();   return true; }
-        if (path == "/Console/Transport/stop")
-        { playStop(); recordStop(); return true; }
         if (path == "/Console/Marker")
         { dropMarker (m.size() > 0 ? toString (m[0]) : juce::String()); return true; }
 
@@ -245,12 +251,6 @@ namespace zynforge
 
         if (path == "/sq/scene/recall" && m.size() >= 1)
         { dropSceneMarker (toInt (m[0])); return true; }
-        if (path == "/sq/transport/record" && m.size() >= 1)
-        { if (toBool (m[0])) recordStart(); else recordStop(); return true; }
-        if (path == "/sq/transport/play" && m.size() >= 1)
-        { if (toBool (m[0])) playStart();   else playStop();   return true; }
-        if (path == "/sq/transport/stop")
-        { playStop(); recordStop(); return true; }
         if (path == "/sq/marker")
         { dropMarker (m.size() > 0 ? toString (m[0]) : juce::String()); return true; }
 
@@ -273,12 +273,6 @@ namespace zynforge
 
         if (path == "/sslnet/snapshot/recall" && m.size() >= 1)
         { dropSceneMarker (toInt (m[0])); return true; }
-        if (path == "/sslnet/transport/record" && m.size() >= 1)
-        { if (toBool (m[0])) recordStart(); else recordStop(); return true; }
-        if (path == "/sslnet/transport/play" && m.size() >= 1)
-        { if (toBool (m[0])) playStart();   else playStop();   return true; }
-        if (path == "/sslnet/transport/stop")
-        { playStop(); recordStop(); return true; }
         if (path == "/sslnet/marker")
         { dropMarker (m.size() > 0 ? toString (m[0]) : juce::String()); return true; }
 
@@ -301,12 +295,6 @@ namespace zynforge
 
         if (eitherIs ("/Yamaha/Scene/recall",  "/RIVAGE/Scene/recall")  && m.size() >= 1)
         { dropSceneMarker (toInt (m[0])); return true; }
-        if (eitherIs ("/Yamaha/Transport/record", "/RIVAGE/Transport/record") && m.size() >= 1)
-        { if (toBool (m[0])) recordStart(); else recordStop(); return true; }
-        if (eitherIs ("/Yamaha/Transport/play",   "/RIVAGE/Transport/play")   && m.size() >= 1)
-        { if (toBool (m[0])) playStart();   else playStop();   return true; }
-        if (eitherIs ("/Yamaha/Transport/stop",   "/RIVAGE/Transport/stop"))
-        { playStop(); recordStop(); return true; }
         if (eitherIs ("/Yamaha/Marker",           "/RIVAGE/Marker"))
         { dropMarker (m.size() > 0 ? toString (m[0]) : juce::String()); return true; }
 

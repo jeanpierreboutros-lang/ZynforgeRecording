@@ -34,7 +34,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // Session LOCK also disables these -- LOCK is a "don't touch" safety for
         // a running show, but only the buttons + keyboard were gated, so the
         // menu bar still let a locked show New/Open/Close/Import/Export.
-        const bool sessionEditable = ! engine.isRecording() && ! sessionLocked;
+        const bool sessionEditable = ! engine.isRecording() && ! sessionLocked
+                                  && ! sessionIoBusy.load();
         menu.addItem (5, "New Session...",         sessionEditable);
         // Opening another session mid-take re-pins the active dir + applies the
         // new session's mixer/routing onto the strips being recorded, then STOP
@@ -46,8 +47,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // session yet, Save falls through to Save As (picker), and
         // Save As is by definition a picker so it never needs prior
         // state.
-        menu.addItem (2, "Save\tCmd+S");
-        menu.addItem (3, "Save As...");
+        menu.addItem (2, "Save\tCmd+S", ! sessionIoBusy.load());
+        menu.addItem (3, "Save As...", ! sessionIoBusy.load());
         menu.addItem (951, "Auto-Save & Backup...");
         menu.addSeparator();
         // Close the session back to the Welcome screen WITHOUT quitting --
@@ -370,7 +371,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
 {
     juce::Logger::writeToLog ("[ZF] menuItemSelected id=" + juce::String (id));
 
-    if (id == 1)         onLoadSessionClicked();
+    if (id == 1)         confirmSessionReplacement ([this] { onLoadSessionClicked(); });
     else if (id == 2)    onSaveSessionState();
     else if (id == 951)  showAutosaveSettings();
     else if (id == 952)  runQcAnalysis();
@@ -382,8 +383,8 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 958)  toggleCaptureDaemon();
     else if (id == 3)    onSaveSessionAs();
     else if (id == 4)    onImportAudioFiles();
-    else if (id == 7)    createSessionFromCsv();
-    else if (id == 5)    launchNewSessionDialog();
+    else if (id == 7)    confirmSessionReplacement ([this] { createSessionFromCsv(); });
+    else if (id == 5)    confirmSessionReplacement ([this] { launchNewSessionDialog(); });
     else if (id == 6)    closeSession();
     else if (id == 10)   onExportAllTracks();
     else if (id == 11)   onExportIndividualTracks();
@@ -396,7 +397,11 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     {
         const auto list = listSessionTemplates();
         const int idx = id - 200;
-        if (idx >= 0 && idx < list.size()) applySessionTemplate (list[idx]);
+        if (idx >= 0 && idx < list.size())
+        {
+            const auto selected = list[idx];
+            confirmSessionReplacement ([this, selected] { launchNewSessionDialog (selected); });
+        }
     }
     else if (id == 250)  promptDeleteSessionTemplate();
     else if (id == 260)  setDefaultTemplate ({});
@@ -424,7 +429,8 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
         const int port = oscListenPort();
         if (engine.startOsc (port, dialect))
             showStatus ("OSC listening on " + juce::String (port) + " (" +
-                        juce::StringArray ({"Generic","DiGiCo","A&H","SSL","Yamaha"})[dialect] + ")");
+                        juce::StringArray ({"Generic","DiGiCo","A&H","SSL","Yamaha"})[dialect] + ")"
+                        + (dialect == 0 ? " -- token " + engine.getOscAccessToken() : juce::String()));
         else
             showStatus ("OSC failed to bind UDP " + juce::String (port) + " -- port already in use?");
     }
@@ -583,7 +589,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
                        : "Trim-Follow OFF -- recorded tracks play at their printed level");
     }
     else if (id == 720)  zynforge::ControlSurfacesDialog::launch (engine,
-                            [this] { createSessionFromConsole(); });
+                            [this] { confirmSessionReplacement ([this] { createSessionFromConsole(); }); });
     else if (id == 600)  zynforge::TimecodeSyncDialog::launch (engine);
     else if (id == 610)
     {

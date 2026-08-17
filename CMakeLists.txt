@@ -41,12 +41,11 @@ juce_add_gui_app(ZynforgeRecording
 
 juce_generate_juce_header(ZynforgeRecording)
 
-# Bundled fonts — Inter for UI text, JetBrains Mono for tabular numerals.
+# Bundled font for tabular numerals. UI text uses JUCE's native sans face;
+# the former "Inter" files were GitHub HTML error pages, not fonts.
 # Both ship with the binary so the brand identity is locked across macOS
 # versions and per-user font settings. License: SIL Open Font License.
 juce_add_binary_data(ZynforgeFonts SOURCES
-    Source/Theme/Fonts/Inter-Regular.ttf
-    Source/Theme/Fonts/Inter-Bold.ttf
     Source/Theme/Fonts/JetBrainsMono-Regular.ttf
     Source/Theme/Fonts/JetBrainsMono-Bold.ttf
 )

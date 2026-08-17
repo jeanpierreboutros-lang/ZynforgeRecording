@@ -557,6 +557,42 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 **Rationale:** One line makes every prompt first-party AND fixes font resolution app-wide — both were the same root cause (no default LAF).
 **Consequences:** + every popup/menu/tooltip/alert is ZynForge chrome with the bundled fonts. − broad blast radius (governs all default-LAF components); the member-LAF lifetime must be reset in the dtor to avoid a dangling default on shutdown (done).
 
+## Session replacement and copies are transactions — 2026-08-18
+
+**Status:** Accepted
+**Context:** Session operations crossed three kinds of state at once: live engine/strip objects, multiple persisted JSON files, and potentially multi-gigabyte audio folders. Open could inherit the previous session or restore playlists before the player erased them; Save As merged into existing folders and pinned incomplete copies; cross-volume relocation could report failure after a complete destination existed; save errors were ignored by switch/close/quit.
+**Decision:** Every session replacement uses one confirmation funnel and one ordered open funnel. A requested save must succeed before replacement. Open clears session-scoped state, loads audio/default clips, applies exact mix topology (or audio fallback), then restores playlists/automation/UI. Save As and relocation are owned, cancellable, joined transactions: save source first, reject ambiguous targets, keep the source authoritative during work, and switch only to a complete destination. A transition flag blocks record/play/topology/bounce mutations while a worker owns session structure. A complete destination plus failed old-folder cleanup is success with a warning, not rollback or generic failure.
+**Rationale:** The engineer must always know which complete folder is authoritative, and no action presented as Save/Open/Move may silently produce a hybrid session or discard the current one. One funnel prevents each menu/document/template entry point from drifting.
+**Consequences:** Save As requires a new or empty folder. Long copies remain cancellable and the UI stays responsive, but conflicting actions temporarily refuse. Every future session entry point must call `confirmSessionReplacement`/`openSessionFolder`; every future background consumer of session topology must participate in the transition/structure-ownership protocol.
+**Alternatives Considered:** Merge-by-filename (rejected: creates hybrid sessions and overwrites same-named files); pin destination before copy (rejected: partial folder becomes active); best-effort saves on close/quit (rejected: the requested safety action becomes data loss).
+**Related Documents:** `MainComponentSessionIO.cpp`; `architecture.md` *Session transition funnel*; `FIELD-TEST.md` §9.
+
+---
+
+## Inbound remote control is authenticated or read-only — 2026-08-18
+
+**Status:** Accepted
+**Context:** Generic OSC listened on UDP and accepted transport/arm/mute with no sender identity or secret, so any host able to reach the port could start or alter a take. Console dialect messages cannot carry a ZynForge application credential. The companion server had authentication, but returned success before marshalled transport commands actually ran.
+**Decision:** Generic OSC generates a per-start token and requires it as the final string argument on every state-changing command. Console-specific inbound dialects retain read-only recorder value (names, scene markers, gain/trim) but cannot arm, mute, or drive transport. Companion transport commands marshal to the message thread, wait up to five seconds, and return the real engine result; record additionally requires a usable armed live input.
+**Rationale:** UDP reachability is not authorization, and a recorder should fail closed when identity cannot be established. Read-only console metadata remains useful without giving an unauthenticated packet show-changing power. HTTP callers must not receive optimistic success for a command that later fails.
+**Consequences:** Existing Generic OSC controllers must append the token displayed by the app. Console transport control through the inbound-dialect listener is intentionally removed; trusted desk control remains in the separately probed/gated `ConsoleLink`. Remote clients can now distinguish conflicts and timeouts.
+**Alternatives Considered:** Source-IP allowlist (rejected: spoofable/brittle across DHCP); state-changing console dialects without a token (rejected: no application identity); asynchronous HTTP 200 (rejected: false operational feedback).
+**Related Documents:** `OscRemote`; `CompanionServer`; README *Console integration (OSC)*; `FIELD-TEST.md` §9.
+
+---
+
+## Native sans-serif replaces invalid Inter assets — 2026-08-18
+
+**Status:** Accepted (supersedes the Inter portion of *ZynForge LookAndFeel is the app-wide default*, 2026-06-14)
+**Context:** `Inter-Regular.ttf` and `Inter-Bold.ttf` were GitHub HTML error pages saved with `.ttf` extensions, not fonts. They bloated the app and asked CoreText to parse invalid data. JetBrains Mono is a valid bundled font and remains useful for stable numeric widths.
+**Decision:** Proportional UI roles request JUCE's native sans-serif; fixed-width roles resolve to bundled JetBrains Mono. Remove the invalid Inter assets from BinaryData. Keep all callers on named `brand::type::*` roles so the face decision stays centralized.
+**Rationale:** Native macOS typography is valid, legible and stable without adding another binary dependency. The token/type-role system preserves consistent sizing and makes a future validated proportional font a single controlled change.
+**Consequences:** Proportional glyph metrics may vary slightly by macOS version. Pixel specs name “native sans,” not Inter. Never add a font asset without validating its magic/type and license first.
+**Alternatives Considered:** Re-download Inter during this fix (rejected: unnecessary dependency for a correctness release); keep the invalid assets unused (rejected: misleading and still shipped).
+**Related Documents:** `CMakeLists.txt`; `Source/Theme/ForgeTokens.h`; `design.md` *Typography*.
+
+---
+
 ## Template
 
 ```

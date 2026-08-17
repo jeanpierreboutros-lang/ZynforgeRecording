@@ -116,12 +116,13 @@ namespace zynforge
         }
         else
         {
-            const auto deadline = juce::Time::getMillisecondCounter() + (juce::uint32) kFetchBudgetMs;
+            const auto started = juce::Time::getMillisecondCounter();
             juce::MemoryBlock mb;
             char buf[4096];
             while (! stream->isExhausted()
                    && (int) mb.getSize() < kMaxPayloadBytes
-                   && juce::Time::getMillisecondCounter() < deadline
+                   && (juce::uint32) (juce::Time::getMillisecondCounter() - started)
+                        < (juce::uint32) kFetchBudgetMs
                    && ! abortFetch.load())
             {
                 const int n = stream->read (buf, (int) sizeof (buf));
@@ -148,7 +149,10 @@ namespace zynforge
         // and the mirror applied NOTHING end to end. Reuse the canonical parser.
         const auto st = EngineStatus::fromJson (v);
         auto& rec = engine.getRecorder();
-        const int n = juce::jmin ((int) st.tracks.size(), rec.getNumTracks());
+        const int remoteCount = juce::jlimit (0, 256, (int) st.tracks.size());
+        if (! engine.isRecording() && rec.getNumTracks() != remoteCount)
+            engine.setStripCount (remoteCount);
+        const int n = juce::jmin (remoteCount, rec.getNumTracks());
         for (int i = 0; i < n; ++i)
         {
             const auto& t   = st.tracks[(std::size_t) i];
@@ -162,6 +166,8 @@ namespace zynforge
             if ((t.colourARGB & 0x00ffffffu) != 0
                 && cur.colourARGB.load (std::memory_order_relaxed) != t.colourARGB)
                 engine.setTrackColour (i, juce::Colour (t.colourARGB));
+            if (cur.isStereo.load (std::memory_order_relaxed) != t.stereoLeft)
+                engine.setTrackStereo (i, t.stereoLeft);
         }
     }
 }

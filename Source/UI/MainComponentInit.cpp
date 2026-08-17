@@ -227,6 +227,11 @@ MainComponent::MainComponent()
     addChannelButton.setTooltip ("Set the number of recording channels -- opens a prompt where you type the count (1-256).");
     addChannelButton.onClick = [this]
     {
+        if (sessionIoBusy.load())
+        {
+            showStatus ("Wait for the session operation to finish");
+            return;
+        }
         if (engine.isRecording())
         {
             showStatus ("Stop recording before changing channel count");
@@ -348,7 +353,8 @@ MainComponent::MainComponent()
             {
                 oscButton.setButtonText ("OSC *");
                 showStatus ("OSC listening on " + juce::String (port) + " (" +
-                            juce::StringArray ({"Generic","DiGiCo","A&H","SSL","Yamaha"})[dialect] + ")");
+                            juce::StringArray ({"Generic","DiGiCo","A&H","SSL","Yamaha"})[dialect] + ")"
+                            + (dialect == 0 ? " -- token " + engine.getOscAccessToken() : juce::String()));
             }
             else showStatus ("OSC failed to bind port " + juce::String (port));
         });
@@ -744,6 +750,7 @@ MainComponent::MainComponent()
         auto proceed = [self, firstRun]
         {
             if (self == nullptr) return;
+            if (self->explicitDocumentOpened) return;
             if (firstRun)
             {
                 self->showFirstRunTutorial();

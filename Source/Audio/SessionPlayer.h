@@ -47,8 +47,9 @@ namespace zynforge
         bool isPlaying()      const noexcept { return playing.load (std::memory_order_acquire); }
         int  getNumTracks()   const noexcept { return (int) readerCount.load(); }
         juce::int64 getTotalLengthSamples() const noexcept { return totalLength.load(); }
-        juce::int64 getTrackLengthSamples (int trackIdx) const noexcept
+        juce::int64 getTrackLengthSamples (int trackIdx) const
         {
+            const juce::ScopedLock sl (tracksLock);
             if (trackIdx < 0 || trackIdx >= (int) tracks.size()) return 0;
             return tracks[(size_t) trackIdx].length;
         }
@@ -115,6 +116,11 @@ namespace zynforge
         juce::TimeSliceThread    readerThread { "ZF Player Reader" };
 
         std::vector<Track> tracks;
+        // Reader lifetime guard. The audio thread only try-locks (and emits
+        // silence on contention), while load/unload take the lock before
+        // replacing readers. This makes teardown safe even with a stopped
+        // device where the old generation-counter drain cannot advance.
+        mutable juce::CriticalSection tracksLock;
 
         // Active clip lists, keyed by track index. Audio thread reads
         // under clipsLock -- UI thread holds it just long enough to

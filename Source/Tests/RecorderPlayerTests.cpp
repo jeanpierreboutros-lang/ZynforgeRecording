@@ -51,6 +51,20 @@ namespace zynforge
                 expect (! eng.getRecorder().isRecording());
             }
 
+            beginTest ("record start fails when no capture strip is armed");
+            {
+                AudioEngine eng;
+                auto& rec = eng.getRecorder();
+                rec.prepare (48000.0, 64, 2);
+                for (int i = 0; i < rec.getNumTracks(); ++i)
+                    rec.getTrack (i).armed.store (false);
+                auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                              .getNonexistentChildFile ("zf_no_armed", {}, false);
+                expect (! rec.startRecording (dir));
+                expect (! rec.isRecording());
+                dir.deleteRecursively();
+            }
+
             beginTest ("Backup format persists independently of primary");
             {
                 AudioEngine eng;
