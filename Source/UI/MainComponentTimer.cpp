@@ -16,6 +16,14 @@ static juce::String samplesToTimecode (juce::int64 samples, double sr)
 
 void MainComponent::timerCallback()
 {
+    if (useCaptureDaemon)
+    {
+        captureSupervisor.tick();
+        engine.setExternalRecording (captureSupervisor.isDaemonRecording());
+        // Keep idle capture pre-roll following the GUI's device/arm layout.
+        // Identical configurations are cached and cause no IPC or reinitialisation.
+        if (! engine.isRecording() && captureSupervisor.isAttached()) configureCaptureDaemon();
+    }
     // Keep the macOS menu's greyed/enabled states in sync with reality
     // (Undo/Redo, Edit, Track, Export) -- they're cached until we ask for a
     // refresh, so without this they freeze in the empty launch state.
@@ -171,6 +179,11 @@ void MainComponent::timerCallback()
         // Timeline position (continues from the take end on a continue), not the
         // new file's raw length, so the clock carries on instead of restarting.
         elapsed = recorder.getRecordTimelineSamples();
+        if (useCaptureDaemon && captureSupervisor.isDaemonRecording())
+        {
+            const auto remote = captureSupervisor.lastStatus();
+            elapsed = remote.positionSamples; timerSR = remote.sampleRate;
+        }
 
         // Refresh the free-space estimate every ~2 s of timer ticks
         // (the timer runs at 24 Hz, so divide by 48). Querying the
@@ -221,7 +234,8 @@ void MainComponent::timerCallback()
     // Capture-daemon watchdog (Phase 1d/2): cheap when inactive.
     if (useCaptureDaemon) captureSupervisor.tick();
 
-    const auto status = engine.captureStatus();
+    const auto status = useCaptureDaemon && captureSupervisor.isDaemonRecording()
+                          ? captureSupervisor.lastStatus() : engine.captureStatus();
     const bool rec = status.recording;
     formatButton .setEnabled (! rec);
     preRollButton.setEnabled (! rec);

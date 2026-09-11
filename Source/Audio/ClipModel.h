@@ -15,6 +15,7 @@ namespace zynforge
     {
         juce::String name;
         juce::File   audioFile;
+        int          sourceChannel { -1 }; // -1 = track's own channel; explicit files default to 0
         // Position on the timeline.
         juce::int64  timelineStartSamples { 0 };
         // Region of the underlying audio file referenced by this clip.
@@ -61,6 +62,7 @@ namespace zynforge
     {
         if (clipIdx < 0 || clipIdx >= (int) list.size()) return false;
         auto& src = list[(size_t) clipIdx];
+        if (src.locked) return false;
         if (sampleInFile <= src.fileStartSamples
             || sampleInFile >= src.fileStartSamples + src.fileLengthSamples)
             return false;

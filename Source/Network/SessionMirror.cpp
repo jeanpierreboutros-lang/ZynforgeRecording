@@ -151,7 +151,10 @@ namespace zynforge
         auto& rec = engine.getRecorder();
         const int remoteCount = juce::jlimit (0, 256, (int) st.tracks.size());
         if (! engine.isRecording() && rec.getNumTracks() != remoteCount)
+        {
+            if (onBeforeTrackCountChange) onBeforeTrackCountChange();
             engine.setStripCount (remoteCount);
+        }
         const int n = juce::jmin (remoteCount, rec.getNumTracks());
         for (int i = 0; i < n; ++i)
         {

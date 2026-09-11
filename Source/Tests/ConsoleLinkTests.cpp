@@ -152,6 +152,9 @@ namespace zynforge
                 // Restore writes the same floats back to the same heads.
                 sent.clear();
                 link.restoreGains();
+                link.injectReply (juce::OSCMessage (juce::OSCAddressPattern ("/headamp/000/gain"), 0.9f));
+                expectWithinAbsoluteError (link.getCapturedGains().at (0), 0.5f, 1.0e-6f,
+                                           "live console updates must not overwrite the capture snapshot");
                 expectEquals ((int) sent.size(), 3);
                 if (haveAtLeast (sent, 1, "restoreGains writes")
                     && expectAtLeastOneFloatArg (sent[0]))
@@ -189,6 +192,7 @@ namespace zynforge
                                                 : b == 2 ? "/config/routing/IN/17-24"
                                                          : "/config/routing/IN/25-32")),
                         (juce::int32) (10 + b)));                      // AES50-B patch
+                a.captureGains (5);
                 a.injectReply (juce::OSCMessage (juce::OSCAddressPattern ("/headamp/004/gain"), 0.25f));
                 expect (a.saveTo (dir));
                 expect (dir.getChildFile (ConsoleLink::kStateFileName).existsAsFile());

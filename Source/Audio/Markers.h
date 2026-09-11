@@ -20,6 +20,7 @@ namespace zynforge
         // should be shown; empty + zoom > 0 means "show all".
         float                     zoom         { -1.0f };
         std::vector<int>          visibleTracks;
+        juce::String runtimeId { juce::Uuid().toString() };
     };
 
     // Per-session marker list. Persisted as markers.json in the session dir.
@@ -40,6 +41,7 @@ namespace zynforge
         void  clear();
         int   getCount() const                 { return (int) markers.size(); }
         Marker getLast() const;
+        juce::String lastDroppedId;
 
         const std::vector<Marker>& getAll() const noexcept { return markers; }
         Marker getMarker (int i) const;

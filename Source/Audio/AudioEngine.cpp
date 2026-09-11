@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "TrackFileTransaction.h"
 #include "OscRemote.h"
 #include "MidiControlSurface.h"
 #include <juce_osc/juce_osc.h>
@@ -170,7 +171,7 @@ namespace zynforge
 
     bool AudioEngine::startRecording (const juce::File& sessionDir)
     {
-        if (sessionTransitionActive.load (std::memory_order_acquire))
+        if (isRecording() || sessionTransitionActive.load (std::memory_order_acquire))
             return false;
         // Bypass-proof guard: refuse to capture if the device clock disagrees
         // with the session rate (silent wrong-speed/pitch take). Covers every
@@ -645,6 +646,7 @@ namespace zynforge
 
     int AudioEngine::loadSession (const juce::File& sessionDir, bool preserveEdits)
     {
+        if (! TrackFileTransaction::recover (sessionDir)) return -1;
         const auto n = player.loadSession (sessionDir);
         if (n > 0)
         {
@@ -692,7 +694,7 @@ namespace zynforge
     bool AudioEngine::setTrackSoloed (int i, bool v)
     { return applyToPair (recorder, i, &TrackState::soloed, v, recorder.getStructureLock()); }
     bool AudioEngine::setTrackArmed (int i, bool v)
-    { return applyToPair (recorder, i, &TrackState::armed,  v, recorder.getStructureLock()); }
+    { return ! isRecording() && applyToPair (recorder, i, &TrackState::armed, v, recorder.getStructureLock()); }
 
     template <typename Member>
     static bool togglePair (MultitrackRecorder& rec, int index, Member member,
@@ -713,7 +715,7 @@ namespace zynforge
     bool AudioEngine::toggleTrackSoloed (int i)
     { return togglePair (recorder, i, &TrackState::soloed, recorder.getStructureLock()); }
     bool AudioEngine::toggleTrackArmed (int i)
-    { return togglePair (recorder, i, &TrackState::armed,  recorder.getStructureLock()); }
+    { return ! isRecording() && togglePair (recorder, i, &TrackState::armed, recorder.getStructureLock()); }
 
     EngineStatus AudioEngine::captureStatus()
     {
@@ -776,6 +778,7 @@ namespace zynforge
             auto& t = recorder.getTrack (i);
             juce::DynamicObject::Ptr o (new juce::DynamicObject());
             o->setProperty ("index",     i);
+            o->setProperty ("uid",       t.stripId);
             o->setProperty ("name",      t.name);
             o->setProperty ("colour",    (juce::int64) t.colourARGB.load (std::memory_order_relaxed));
             o->setProperty ("gainDb",    (double) t.gainDb.load (std::memory_order_relaxed));
@@ -876,6 +879,13 @@ namespace zynforge
                     if (idx < 0 || idx >= recorder.getNumTracks()) continue;
                     auto& t = recorder.getTrack (idx);
 
+                    if (o->getProperty ("uid").toString().isNotEmpty())
+                    {
+                        t.stripId = o->getProperty ("uid").toString();
+                        if (appProps != nullptr)
+                            appProps->setValue ("strip_uid_" + juce::String (idx), t.stripId);
+                    }
+
                     if (o->hasProperty ("name"))     setTrackName          (idx, o->getProperty ("name").toString());
                     if (o->hasProperty ("colour"))   setTrackColour        (idx, juce::Colour ((juce::uint32) (juce::int64) o->getProperty ("colour")));
                     if (o->hasProperty ("gainDb"))   setTrackGainDb        (idx, (float) (double) o->getProperty ("gainDb"));
@@ -914,6 +924,13 @@ namespace zynforge
                                     std::memory_order_relaxed);
                             }
                 }
+        if (appProps != nullptr)
+        {
+            reloadAppPropsBeforeWrite();
+            for (int i = 0; i < recorder.getNumTracks(); ++i)
+                appProps->setValue ("strip_uid_" + juce::String (i), recorder.getTrack (i).stripId);
+            appProps->saveIfNeeded();
+        }
         return true;
     }
 
@@ -1180,7 +1197,7 @@ namespace zynforge
 
     void AudioEngine::setStripCount (int n)
     {
-        if (recorder.isRecording()) return;
+        if (isRecording()) return;
         n = juce::jlimit (0, 256, n);
 
         const int oldCount = recorder.getNumTracks();
@@ -1214,86 +1231,13 @@ namespace zynforge
         setStripCount (recorder.getNumTracks() + 1);
     }
 
-    void AudioEngine::removeStripAt (int index)
+    bool AudioEngine::removeStripAt (int index)
     {
-        if (recorder.isRecording()) return;
         const int n = recorder.getNumTracks();
-        if (index < 0 || index >= n)  return;
-        if (n < 1) return;
-
-        deviceManager.removeAudioCallback (this);
-        recorder.removeTrackAt (index);
-
-        // The persistent stores key by index, so shift everything after the
-        // removed slot down by one to keep colour / name / gain / routing
-        // consistent with the new track positions.
-        for (int i = index; i < recorder.getNumTracks(); ++i)
-        {
-            // Pull entry (i + 1)'s persistent values into slot i.
-            if (stripColours.hasColour (i + 1))
-                setTrackColour (i, stripColours.getColour (i + 1));
-            else
-                setTrackColour (i, juce::Colour ((juce::uint32) 0));
-
-            if (stripNames.hasName (i + 1))
-                setTrackName (i, stripNames.getName (i + 1));
-            else
-                setTrackName (i, {});
-
-            if (stripGains.hasGain (i + 1))
-                setTrackGainDb (i, stripGains.getGainDb (i + 1));
-            else
-                setTrackGainDb (i, 0.0f);
-
-            setTrackPan (i, stripGains.hasPan (i + 1) ? stripGains.getPan (i + 1) : 0.0f);
-
-            if (stripRouting.hasInput (i + 1))
-                setTrackInputRouting (i, stripRouting.getInput (i + 1));
-            if (stripRouting.hasOutput (i + 1))
-                setTrackOutputRouting (i, stripRouting.getOutput (i + 1));
-        }
-
-        // Clear the now-orphan slot at the end of the persistent stores.
-        const int lastIdx = recorder.getNumTracks();
-        setTrackColour       (lastIdx, juce::Colour ((juce::uint32) 0));
-        setTrackName         (lastIdx, {});
-        setTrackGainDb       (lastIdx, 0.0f);
-        setTrackPan          (lastIdx, 0.0f);
-
-        if (appProps != nullptr)
-        {
-            // Reload after the per-slot Strip* shifts above so our save keeps
-            // their rewrites, then update the count.
-            reloadAppPropsBeforeWrite();
-
-            // The appProps-owned per-index keys have to shift down too. Only
-            // the Strip* modules' keys (name / colour / gain / pan / routing)
-            // were being shifted, so after deleting a strip from the MIDDLE the
-            // stereo-pair flags and the stable strip UUIDs stayed attached to
-            // the old indices. applyPersistedStripState re-reads both by index
-            // on the next device restart, which re-formed stereo pairs on the
-            // wrong strips and re-stamped strip IDs -- silently breaking every
-            // cue snapshot, which references strips by stripId precisely so it
-            // survives a reorder.
-            for (int i = index; i < recorder.getNumTracks(); ++i)
-            {
-                const auto dst = juce::String (i);
-                const auto src = juce::String (i + 1);
-                appProps->setValue ("strip_stereo_" + dst,
-                                    appProps->getBoolValue ("strip_stereo_" + src, false));
-                appProps->setValue ("strip_uid_" + dst,
-                                    appProps->getValue ("strip_uid_" + src, juce::String()));
-            }
-            // Drop the now-orphan tail slot so it can't be revived by a later grow.
-            const auto tail = juce::String (recorder.getNumTracks());
-            appProps->removeValue ("strip_stereo_" + tail);
-            appProps->removeValue ("strip_uid_"    + tail);
-
-            appProps->setValue ("stripCount", recorder.getNumTracks());
-            appProps->saveIfNeeded();
-        }
-
-        deviceManager.addAudioCallback (this);
+        if (index < 0 || index >= n) return false;
+        std::vector<int> order;
+        for (int i = 0; i < n; ++i) if (i != index) order.push_back (i);
+        return reorderTracks (order);
     }
 
     void AudioEngine::applyPersistedStripState()
@@ -1379,7 +1323,7 @@ namespace zynforge
         // fixed at record start, and the capture feed gates on isStereo per
         // block, so flipping this mid-take desyncs the on-disk layout from the
         // flag. Refuse while recording -- like setStripCount / removeStripAt.
-        if (recorder.isRecording()) return;
+        if (isRecording()) return;
         recorder.getTrack (channelIndex).isStereo.store (isStereoPair,
                                                           std::memory_order_release);
         // Bump the track generation so EVERY view (MIXER, EDIT, and the
@@ -1451,152 +1395,206 @@ namespace zynforge
 
     bool AudioEngine::swapTracks (int a, int b)
     {
-        if (recorder.isRecording()) return false;
         const int n = recorder.getNumTracks();
-        if (a == b || a < 0 || b < 0 || a >= n || b >= n) return false;
+        if (a < 0 || b < 0 || a >= n || b >= n || a == b) return false;
+        std::vector<int> order;
+        for (int i = 0; i < n; ++i) order.push_back (i == a ? b : i == b ? a : i);
+        return reorderTracks (order);
+    }
 
-        // ── Swap on-disk Track_NN.wav (and any backup mirror) ────────
-        auto sessionDir = activeSession.isDirectory() ? activeSession : juce::File();
-        if (sessionDir.isDirectory())
+    bool AudioEngine::reorderTracks (const std::vector<int>& order)
+    {
+        if (isRecording() || isSessionTransitionActive()) return false;
+        const int n = recorder.getNumTracks();
+        std::vector<int> destination ((size_t) n, -1);
+        for (int i = 0; i < (int) order.size(); ++i)
         {
-            auto audioDir = sessionDir.getChildFile ("Audio Files");
-            if (! audioDir.isDirectory()) audioDir = sessionDir;
-
-            // Swap EVERY on-disk file of each take -- the main Track_NN.<ext>
-            // AND its _partXX continuations, across all supported containers
-            // (.wav/.flac/.aif/.aiff). Renaming only Track_NN.wav stranded a
-            // continued or FLAC/AIFF take's parts at the old index, so a reorder
-            // permanently stitched them onto the wrong channel. Excludes
-            // .punchbase sidecars (a swap can't run mid-record, so any stray one
-            // stays associated with its take anyway).
-            const auto filesForTrack = [&audioDir] (int idx) -> juce::Array<juce::File>
-            {
-                juce::Array<juce::File> out;
-                const auto prefix = juce::String::formatted ("Track_%02d", idx + 1);
-                for (const auto& f : audioDir.findChildFiles (juce::File::findFiles, false,
-                         prefix + ".*;" + prefix + "_part*"))
-                {
-                    const auto ext  = f.getFileExtension().toLowerCase();
-                    const auto rest = f.getFileName().substring (prefix.length());
-                    const bool audioExt = ext == ".wav" || ext == ".flac"
-                                       || ext == ".aif" || ext == ".aiff";
-                    // Genuinely EXCLUDE .punchbase sidecars -- the comment
-                    // claimed they were skipped but "Track_NN.*" matched
-                    // Track_NN.punchbase.wav (rest starts with "."), so a
-                    // stray sidecar from an aborted punch was renamed onto the
-                    // other channel and could later be spliced into it.
-                    if (rest.containsIgnoreCase (".punchbase")) continue;
-                    if (audioExt && (rest.startsWith (".") || rest.startsWith ("_part")))
-                        out.add (f);
-                }
-                return out;
-            };
-            // Map a file belonging to track `from` onto track `to`, keeping its
-            // _partXX suffix + extension (only the Track_NN prefix changes).
-            const auto renamedTo = [&audioDir] (const juce::File& f, int from, int to)
-            {
-                const auto fromPrefix = juce::String::formatted ("Track_%02d", from + 1);
-                const auto toPrefix   = juce::String::formatted ("Track_%02d", to + 1);
-                return audioDir.getChildFile (toPrefix + f.getFileName().substring (fromPrefix.length()));
-            };
-
-            // Sweep any Track_swap_* temps orphaned by a crash mid-swap --
-            // nothing else ever cleans them up and they'd shadow a later swap.
-            for (const auto& stale : audioDir.findChildFiles (juce::File::findFiles,
-                                                              false, "Track_swap_*"))
-                stale.deleteFile();
-
-            const auto aFiles = filesForTrack (a);
-            const auto bFiles = filesForTrack (b);
-            // Two-phase via temp names so the OS never sees a collision even when
-            // A and B have identically-suffixed parts: stage A -> temp, move B ->
-            // A's names, then temp (former A) -> B's names.
-            juce::Array<std::pair<juce::File, juce::File>> staged; // { temp, finalDest }
-            for (const auto& f : aFiles)
-            {
-                auto finalDest = renamedTo (f, a, b);
-                auto tmp = audioDir.getChildFile ("Track_swap_" + finalDest.getFileName());
-                if (f.moveFileTo (tmp)) staged.add ({ tmp, finalDest });
-            }
-            for (const auto& f : bFiles)
-                f.moveFileTo (renamedTo (f, b, a));
-            for (const auto& pr : staged)
-                pr.first.moveFileTo (pr.second);
+            const int old = order[(size_t) i];
+            if (old < 0 || old >= n || destination[(size_t) old] >= 0) return false;
+            destination[(size_t) old] = i;
         }
-
-        // ── Swap persisted overrides (PropertiesFile keys are 1-based) ──
-        // Reload first so the swap reads the latest on-disk values (the Strip*
-        // modules share this file) and our save doesn't clobber their keys.
+        player.stop();
+        deviceManager.removeAudioCallback (this);
+        const juce::ScopedLock structureGuard (recorder.getStructureLock());
+        const juce::ScopedLock automationGuard (automationLock);
+        std::vector<std::unique_ptr<TrackState>> states;
         reloadAppPropsBeforeWrite();
-        const int oneA = a + 1, oneB = b + 1;
-        auto swapProp = [&] (const juce::String& keyA, const juce::String& keyB)
+        for (int i = 0; i < n; ++i)
         {
-            if (appProps == nullptr) return;
-            const auto va = appProps->getValue (keyA, {});
-            const auto vb = appProps->getValue (keyB, {});
-            appProps->setValue (keyA, vb);
-            appProps->setValue (keyB, va);
+            auto s = std::make_unique<TrackState>();
+            s->copySettingsFrom (recorder.getTrack (i));
+            if (appProps != nullptr)
+                s->stripId = appProps->getValue ("strip_uid_" + juce::String (i), s->stripId);
+            states.push_back (std::move (s));
+        }
+        auto oldClips = trackClips;
+        auto oldPlaylists = trackPlaylists;
+        const auto oldAutomation = automationToJson();
+        const auto session = activeSession;
+        auto audio = session.getChildFile ("Audio Files");
+        if (! audio.isDirectory()) audio = session;
+        std::vector<TrackFileTransaction::Move> moves;
+        const auto removedDir = session.getChildFile ("Removed Tracks").getChildFile (juce::Uuid().toString());
+        // Each track's complete take (all containers and continuation parts)
+        // moves together. Removed audio is archived, never deleted.
+        if (session.isDirectory())
+            for (int old = 0; old < n; ++old)
+            {
+                const auto prefix = juce::String::formatted ("Track_%02d", old + 1);
+                for (const auto& f : audio.findChildFiles (juce::File::findFiles, false, prefix + ".*;" + prefix + "_part*"))
+                {
+                    if (f.getFileName().containsIgnoreCase (".punchbase")) continue;
+                    if (! f.hasFileExtension ("wav;flac;aif;aiff")) continue;
+                    const int dest = destination[(size_t) old];
+                    const auto target = dest >= 0
+                        ? audio.getChildFile (juce::String::formatted ("Track_%02d", dest + 1)
+                                               + f.getFileName().substring (prefix.length()))
+                        : removedDir.getChildFile (f.getFileName());
+                    if (target != f) moves.emplace_back (f, target);
+                }
+            }
+        auto remapClip = [&] (Clip& c, int oldTrack)
+        {
+            // Make implicit references explicit before filenames move, so a
+            // surviving cross-track clip can still read an archived take.
+            if (c.audioFile == juce::File())
+            {
+                int channel = 0;
+                auto source = getTrackAudioFile (oldTrack, &channel);
+                if (destination[(size_t) oldTrack] >= 0
+                    && ! (channel == 1 && oldTrack > 0 && destination[(size_t) oldTrack - 1] < 0)) return;
+                c.audioFile = source; c.sourceChannel = channel;
+            }
+            for (const auto& m : moves)
+                if (c.audioFile == m.first) { c.audioFile = m.second; break; }
         };
-        // Names / colours / gains / pan / routings / stereo flag.
-        swapProp ("strip_name_"   + juce::String (oneA), "strip_name_"   + juce::String (oneB));
-        swapProp ("strip_colour_" + juce::String (oneA), "strip_colour_" + juce::String (oneB));
-        swapProp ("strip_gain_"   + juce::String (oneA), "strip_gain_"   + juce::String (oneB));
-        swapProp ("strip_pan_"    + juce::String (oneA), "strip_pan_"    + juce::String (oneB));
-        swapProp ("strip_in_"     + juce::String (oneA), "strip_in_"     + juce::String (oneB));
-        swapProp ("strip_out_"    + juce::String (oneA), "strip_out_"    + juce::String (oneB));
-        swapProp ("strip_stereo_" + juce::String (a),    "strip_stereo_" + juce::String (b));
-        if (appProps != nullptr) appProps->saveIfNeeded();
-
-        // ── Swap the live TrackState contents (NOT the objects: the UI
-        //    holds references and must keep them valid). ──
-        auto& ta = recorder.getTrack (a);
-        auto& tb = recorder.getTrack (b);
-
-        { const auto an = ta.getNameThreadSafe(), bn = tb.getNameThreadSafe();
-          ta.setNameThreadSafe (bn); tb.setNameThreadSafe (an); }
-        const auto cA = ta.colourARGB.load();
-        const auto cB = tb.colourARGB.load();
-        ta.colourARGB.store (cB); tb.colourARGB.store (cA);
-        const auto gA = ta.gainDb.load(), gB = tb.gainDb.load();
-        ta.gainDb.store (gB); tb.gainDb.store (gA);
-        const auto pA = ta.pan.load(), pB = tb.pan.load();
-        ta.pan.store (pB); tb.pan.store (pA);
-        const auto inA = ta.inputRouting.load(),  inB = tb.inputRouting.load();
-        ta.inputRouting.store (inB); tb.inputRouting.store (inA);
-        const auto outA = ta.outputRouting.load(), outB = tb.outputRouting.load();
-        ta.outputRouting.store (outB); tb.outputRouting.store (outA);
-        const auto sA = ta.isStereo.load(),  sB = tb.isStereo.load();
-        ta.isStereo.store (sB); tb.isStereo.store (sA);
-        const auto mA = ta.muted .load(),    mB = tb.muted .load();
-        ta.muted .store (mB); tb.muted .store (mA);
-        const auto soA = ta.soloed.load(),   soB = tb.soloed.load();
-        ta.soloed.store (soB); tb.soloed.store (soA);
-        const auto onA = ta.monitor.load(),  onB = tb.monitor.load();
-        ta.monitor.store (onB); tb.monitor.store (onA);
-        const auto arA = ta.armed .load(),   arB = tb.armed .load();
-        ta.armed .store (arB); tb.armed .store (arA);
-
-        // ── Swap the engine-side clip lists + comp playlists so every
-        //    split / fade / take follows its audio to the new index. ──
+        auto nextClips = trackClips;
+        auto nextPlaylists = trackPlaylists;
+        nextClips.resize ((size_t) n); nextPlaylists.resize ((size_t) n);
+        for (int old = 0; old < n; ++old)
         {
-            const int hi = juce::jmax (a, b);
-            if (hi >= (int) trackClips.size())     trackClips.resize     ((size_t) hi + 1);
-            if (hi >= (int) trackPlaylists.size()) trackPlaylists.resize ((size_t) hi + 1);
-            std::swap (trackClips[(size_t) a],     trackClips[(size_t) b]);
-            std::swap (trackPlaylists[(size_t) a], trackPlaylists[(size_t) b]);
+            for (auto& c : nextClips[(size_t) old]) remapClip (c, old);
+            for (auto& take : nextPlaylists[(size_t) old].takes)
+                for (auto& c : take.clips) remapClip (c, old);
         }
+        TrackFileTransaction files;
+        const bool disk = session.isDirectory();
+        if (disk && ! files.begin (session, moves))
+        { deviceManager.addAudioCallback (this); return false; }
 
-        // ── Re-load player so it picks up the renamed audio files, then
-        //    republish clips PRESERVING edits. Never the wiping session-open
-        //    loadSession() here -- that reseeded defaults over every track's
-        //    comps/splits/fades (the reorder-wipe blocker). ──
-        if (sessionDir.isDirectory())
+        trackClips.clear(); trackPlaylists.clear();
+        juce::Array<juce::var> nextAutomation;
+        for (int i = 0; i < (int) order.size(); ++i)
         {
-            player.loadSession (sessionDir);
-            invalidateTransientCache();
-            seedDefaultClips (/*preserveEdits*/ true);
+            const int old = order[(size_t) i];
+            auto& t = recorder.getTrack (i);
+            t.copySettingsFrom (*states[(size_t) old]);
+            for (auto& send : t.sends)
+            {
+                const int bus = send.targetBus.load();
+                send.targetBus.store (bus >= 0 && bus < n ? destination[(size_t) bus] : -1);
+            }
+            trackClips.push_back (nextClips[(size_t) old]);
+            trackPlaylists.push_back (nextPlaylists[(size_t) old]);
+            if (auto* arr = oldAutomation.getArray())
+                for (const auto& a : *arr)
+                    if ((int) a["track"] == old)
+                    {
+                        auto copy = a.clone(); copy.getDynamicObject()->setProperty ("track", i);
+                        nextAutomation.add (copy);
+                    }
         }
-        return true;
+        // Persist through the actual zero-based stores, not hand-built keys.
+        auto persist = [this] (int count)
+        {
+            for (int i = 0; i < count; ++i)
+            {
+                auto& t = recorder.getTrack (i);
+                setTrackName (i, t.getNameThreadSafe()); setTrackColour (i, juce::Colour (t.colourARGB.load()));
+                setTrackGainDb (i, t.gainDb.load()); setTrackPan (i, t.pan.load());
+                setTrackInputRouting (i, t.inputRouting.load()); setTrackOutputRouting (i, t.outputRouting.load());
+                setTrackStereo (i, t.isStereo.load()); setTrackVcaGroup (i, t.vcaGroup.load());
+                setTrackEditGroup (i, t.editGroup.load()); setTrackIsBus (i, t.isBus.load());
+                for (int s = 0; s < TrackState::kNumSends; ++s)
+                    setTrackSend (i, s, t.sends[(size_t) s].targetBus.load(),
+                                  t.sends[(size_t) s].levelDb.load(), t.sends[(size_t) s].postFader.load());
+            }
+            if (appProps != nullptr)
+            {
+                reloadAppPropsBeforeWrite();
+                for (int i = 0; i < count; ++i)
+                    appProps->setValue ("strip_uid_" + juce::String (i), recorder.getTrack (i).stripId);
+                for (int i = count; i < 256; ++i)
+                {
+                    appProps->removeValue ("strip_uid_" + juce::String (i));
+                    appProps->removeValue ("strip_stereo_" + juce::String (i));
+                }
+                appProps->setValue ("stripCount", count); appProps->saveIfNeeded();
+            }
+        };
+        loadAutomationFromJson (juce::var (nextAutomation));
+        // Retain objects until metadata is safely written; shrink only on commit.
+        bool saved = true;
+        if (disk)
+        {
+            saved = saveSessionMixTo (session);
+            if (saved)
+            {
+                auto mix = juce::JSON::parse (session.getChildFile ("session_mix.json"));
+                mix.getDynamicObject()->setProperty ("trackCount", (int) order.size());
+                if (auto* arr = mix["strips"].getArray())
+                    while (arr->size() > (int) order.size()) arr->removeLast();
+                saved = session.getChildFile ("session_mix.json").replaceWithText (juce::JSON::toString (mix));
+            }
+            for (const auto& f : session.findChildFiles (juce::File::findFiles, false, "*.zfproj"))
+            {
+                auto project = juce::JSON::parse (f);
+                if (auto* root = project.getDynamicObject())
+                {
+                    root->setProperty ("playlists", playlistsToJson());
+                    root->setProperty ("automation", automationToJson());
+                    if (auto* cues = root->getProperty ("setlist").getArray())
+                        for (auto& cue : *cues)
+                            if (auto* object = cue.getDynamicObject())
+                                if (auto* lanes = object->getProperty ("automation").getArray())
+                                {
+                                    juce::Array<juce::var> remapped;
+                                    for (const auto& lane : *lanes)
+                                    {
+                                        const int old = (int) lane["track"];
+                                        if (old < 0 || old >= n || destination[(size_t) old] < 0) continue;
+                                        auto copy = lane.clone();
+                                        if (auto* item = copy.getDynamicObject())
+                                        { item->setProperty ("track", destination[(size_t) old]); remapped.add (copy); }
+                                    }
+                                    object->setProperty ("automation", remapped);
+                                }
+                    saved = f.replaceWithText (juce::JSON::toString (project)) && saved;
+                }
+                else saved = false;
+            }
+            if (saved) saved = files.commit();
+        }
+        if (! saved)
+        {
+            TrackFileTransaction::recoverOne (files.folder);
+            for (int i = 0; i < n; ++i) recorder.getTrack (i).copySettingsFrom (*states[(size_t) i]);
+            trackClips = std::move (oldClips); trackPlaylists = std::move (oldPlaylists);
+            loadAutomationFromJson (oldAutomation);
+            persist (n);
+        }
+        else
+        {
+            recorder.setTrackCount ((int) order.size());
+            persist ((int) order.size());
+        }
+        if (disk) player.loadSession (session);
+        player.clearAllClips();
+        for (int i = 0; i < (int) trackClips.size(); ++i) player.setTrackClips (i, trackClips[(size_t) i]);
+        invalidateTransientCache();
+        deviceManager.addAudioCallback (this);
+        if (saved && onTracksReordered) onTracksReordered (destination);
+        return saved;
     }
 
     namespace { std::atomic<bool> s_testSkipAudioInit { false }; }
@@ -2012,6 +2010,7 @@ namespace zynforge
 
     void AudioEngine::setTrackInputRouting (int channelIndex, int deviceCh)
     {
+        if (isRecording()) return;
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
         deviceCh = juce::jmax (-1, deviceCh);
         recorder.getTrack (channelIndex).inputRouting.store (deviceCh, std::memory_order_relaxed);

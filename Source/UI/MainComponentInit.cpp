@@ -22,6 +22,26 @@ using namespace zynforge;
 
 MainComponent::MainComponent()
 {
+    engine.onTracksReordered = [this] (const std::vector<int>& destination)
+    {
+        for (auto& cue : cues)
+            if (auto* lanes = cue.automation.getArray())
+            {
+                juce::Array<juce::var> remapped;
+                for (const auto& lane : *lanes)
+                {
+                    const int old = (int) lane["track"];
+                    if (old < 0 || old >= (int) destination.size() || destination[(size_t) old] < 0) continue;
+                    auto copy = lane.clone();
+                    if (auto* item = copy.getDynamicObject())
+                    { item->setProperty ("track", destination[(size_t) old]); remapped.add (copy); }
+                }
+                cue.automation = juce::var (remapped);
+            }
+        clipClipboard = juce::var(); // any copied implicit track index is now stale
+        undoManager.clearUndoHistory(); // old per-index snapshots must not undo onto different audio
+        rebaselineMixerUndo();
+    };
     setLookAndFeel (&laf);
     // Make the ZynForge chrome the app-wide default so EVERY prompt --
     // including juce::AlertWindow::showAsync(...) boxes that don't set their
@@ -1065,9 +1085,14 @@ void MainComponent::rebuildStrips()
         // Right-click menu wiring.
         auto deleteCb     = [this, i, step]
         {
-            // Stereo strip: delete both halves of the pair.
-            engine.removeStripAt (i);
-            if (step == 2) engine.removeStripAt (i);   // same idx after shift
+            if (engine.isRecording() || sessionIoBusy.load()) return;
+            std::vector<int> order;
+            for (int t = 0; t < engine.getRecorder().getNumTracks(); ++t)
+                if (t < i || t >= i + step) order.push_back (t);
+            condemnAllStrips();
+            const bool ok = engine.reorderTracks (order);
+            lastTrackCount = -1;
+            showStatus (ok ? "Strip removed; audio retained in Removed Tracks" : "Could not remove strip safely");
         };
         auto addCb        = [this] { engine.addOneStrip(); };
         auto linkStereoCb = [this, i]
@@ -1158,6 +1183,7 @@ void MainComponent::rebuildStrips()
                     .store (srcVal, std::memory_order_relaxed);
             }
         };
+        s->canChangeArm = [this] { return ! engine.isRecording(); };
         s->onAfterArmedToggle    = [this, broadcastToggle] (int src) { broadcastToggle (src, &zynforge::TrackState::armed);   };
         s->onAfterMonitorToggle  = [this, broadcastToggle] (int src) { broadcastToggle (src, &zynforge::TrackState::monitor); };
         s->onAfterMuteToggle     = [this, broadcastToggle] (int src) { broadcastToggle (src, &zynforge::TrackState::muted);   };

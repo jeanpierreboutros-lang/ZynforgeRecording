@@ -146,7 +146,8 @@ namespace zynforge
 
         bool startRecording (const juce::File& sessionDir);
         void stopRecording();
-        bool isRecording() const noexcept                  { return recorder.isRecording(); }
+        bool isRecording() const noexcept { return recorder.isRecording() || externalRecording.load(); }
+        void setExternalRecording (bool active) noexcept { externalRecording.store (active); }
         void setSessionTransitionActive (bool active) noexcept
         { sessionTransitionActive.store (active, std::memory_order_release); }
         bool isSessionTransitionActive() const noexcept
@@ -312,7 +313,7 @@ namespace zynforge
         // The audio callback is briefly detached while the recorder
         // mutates its track vector.
         void addOneStrip();
-        void removeStripAt (int index);
+        bool removeStripAt (int index);
 
         // Wipe every strip-level override stored in appProps (names,
         // colours, gains, pans, routing, stereo flags, UUIDs). Called
@@ -340,6 +341,8 @@ namespace zynforge
         // same TrackState references -- only their contents swap -- so
         // strips don't dangle. Returns true on success.
         bool swapTracks (int a, int b);
+        bool reorderTracks (const std::vector<int>& order);
+        std::function<void (const std::vector<int>&)> onTracksReordered;
 
         // Punch in/out -- the player auto-arms enabled punch tracks when
         // the playhead enters the loop region and disarms again when it
@@ -855,7 +858,9 @@ namespace zynforge
         int  pasteClip (int track, juce::int64 timelineStart,
                         juce::int64 fileStart, juce::int64 fileLength,
                         juce::int64 fadeIn, juce::int64 fadeOut, float gainDb,
-                        const juce::String& name, const juce::File& audioFile = {});
+                        const juce::String& name, const juce::File& audioFile = {},
+                        int sourceChannel = -1, int fadeCurve = 0);
+        juce::File getTrackAudioFile (int track, int* channel = nullptr) const;
 
         // Mutate one clip's bounds and republish to the player. Three
         // edit modes the EDIT row's drag handles drive:
@@ -1024,6 +1029,7 @@ namespace zynforge
         MarkersManager           markers;
         juce::File               activeSession;
         std::atomic<bool>        sessionTransitionActive { false };
+        std::atomic<bool>        externalRecording { false };
         StripColours             stripColours;
         StripNames               stripNames;
         StripGains               stripGains;

@@ -281,12 +281,14 @@ namespace zynforge
             }
         };
 
+        // Loading is snapshot replacement (including undo), not a merge.
+        automationData.clear();
         for (const auto& item : *arr)
         {
             auto* trk = item.getDynamicObject();
             if (trk == nullptr) continue;
             const int t = (int) trk->getProperty ("track");
-            if (t < 0) continue;
+            if (t < 0 || t >= 256) continue;
             if (t >= (int) automationData.size())
                 automationData.resize ((size_t) t + 1);
             auto& a = automationData[(size_t) t];

@@ -109,7 +109,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             juce::PopupMenu setDefault;
             setDefault.addItem (260, "(None)", true, ! starred.existsAsFile());
             for (int i = 0; i < tList.size(); ++i)
-                setDefault.addItem (261 + i, tList[i].getFileNameWithoutExtension(),
+                setDefault.addItem (2000 + i, tList[i].getFileNameWithoutExtension(),
                                     true, tList[i] == starred);
             templates.addSubMenu ("Set default template", setDefault);
 
@@ -369,6 +369,8 @@ void MainComponent::refreshMenuStateIfChanged()
 
 void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
 {
+    if (sessionIoBusy.load())
+    { showStatus ("Wait for the session operation to finish"); return; }
     juce::Logger::writeToLog ("[ZF] menuItemSelected id=" + juce::String (id));
 
     if (id == 1)         confirmSessionReplacement ([this] { onLoadSessionClicked(); });
@@ -405,10 +407,10 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     }
     else if (id == 250)  promptDeleteSessionTemplate();
     else if (id == 260)  setDefaultTemplate ({});
-    else if (id >= 261 && id < 290)
+    else if (id >= 2000 && id < 2100)
     {
         const auto list = listSessionTemplates();
-        const int idx = id - 261;
+        const int idx = id - 2000;
         if (idx >= 0 && idx < list.size()) setDefaultTemplate (list[idx]);
     }
     else if (id == 900)  showKeyboardShortcuts();

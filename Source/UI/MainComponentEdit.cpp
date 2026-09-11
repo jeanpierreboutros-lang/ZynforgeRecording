@@ -65,7 +65,7 @@ namespace
         t.muted   .store ((bool) obj->getProperty ("mute"), std::memory_order_relaxed);
         t.soloed  .store ((bool) obj->getProperty ("solo"), std::memory_order_relaxed);
         t.monitor .store ((bool) obj->getProperty ("mon"),  std::memory_order_relaxed);
-        t.armed   .store ((bool) obj->getProperty ("rec"),  std::memory_order_relaxed);
+        if (! eng.isRecording()) t.armed.store ((bool) obj->getProperty ("rec"), std::memory_order_relaxed);
     }
 
     int physicalFromLogical (zynforge::AudioEngine& eng, int logical)
@@ -435,6 +435,7 @@ void MainComponent::editSoloSelection()
 // automatically off the 10 Hz refresh since they read TrackState.armed.
 void MainComponent::armSelection()
 {
+    if (engine.isRecording()) { showStatus ("Stop recording before changing record arms"); return; }
     if (selectedLogical.empty())
     {
         showStatus ("Select channels first, then Option+R to arm / disarm");
@@ -571,8 +572,13 @@ void MainComponent::dropMarkerAndPromptName()
         return;
     }
 
-    const int rowIndex = newCount - 1;
-    const auto defaultName = "Marker " + juce::String (newCount);
+    const auto markerId = engine.getMarkers().lastDroppedId;
+    int rowIndex = -1;
+    const auto& markers = engine.getMarkers().getAll();
+    for (int i = 0; i < (int) markers.size(); ++i)
+        if (markers[(size_t) i].runtimeId == markerId) { rowIndex = i; break; }
+    if (rowIndex < 0) return;
+    const auto defaultName = markers[(size_t) rowIndex].name;
 
     // 2. Apply the default name straight away so the marker is
     //    immediately visible in the timeline + Memory Locations list
@@ -605,7 +611,7 @@ void MainComponent::dropMarkerAndPromptName()
 
     juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true,
-        juce::ModalCallbackFunction::create ([self, aw, rowIndex, defaultName] (int result)
+        juce::ModalCallbackFunction::create ([self, aw, markerId, defaultName] (int result)
         {
             std::unique_ptr<juce::AlertWindow> dispose (aw);
             if (self == nullptr) return;
@@ -614,6 +620,11 @@ void MainComponent::dropMarkerAndPromptName()
             const auto typed = dispose->getTextEditorContents ("markerName").trim();
             if (typed.isEmpty() || typed == defaultName) return;
 
+            int rowIndex = -1;
+            const auto& list = self->engine.getMarkers().getAll();
+            for (int i = 0; i < (int) list.size(); ++i)
+                if (list[(size_t) i].runtimeId == markerId) { rowIndex = i; break; }
+            if (rowIndex < 0) return; // marker deleted or another session opened
             self->engine.getMarkers().renameMarker (rowIndex, typed);
             self->engine.getMarkers().save();
             self->showStatus ("Marker " + juce::String (rowIndex + 1)
@@ -998,6 +1009,12 @@ void MainComponent::editClipboardCut (bool cut)
             const auto& c = (*clips)[(size_t) idx];
             auto* obj = new juce::DynamicObject();
             obj->setProperty ("track",      track);
+            int channel = c.sourceChannel;
+            auto sourceFile = c.audioFile;
+            if (sourceFile == juce::File()) sourceFile = engine.getTrackAudioFile (track, &channel);
+            obj->setProperty ("audioFile", sourceFile.getFullPathName());
+            obj->setProperty ("sourceChannel", channel);
+            obj->setProperty ("fadeCurve", c.fadeCurve);
             obj->setProperty ("fileStart",  (juce::int64) c.fileStartSamples);
             obj->setProperty ("fileLength", (juce::int64) c.fileLengthSamples);
             obj->setProperty ("fadeIn",     (juce::int64) c.fadeInSamples);
@@ -1030,13 +1047,9 @@ void MainComponent::editClipboardPaste()
                 if (editPage != nullptr && editPage->getActiveRowTrackIndex() >= 0)
                     target = editPage->getActiveRowTrackIndex();
 
-                juce::File audioFile;   // empty = same-track
-                if (target != sourceTrack)
-                {
-                    auto dir = engine.getActiveSessionDir().getChildFile ("Audio Files");
-                    audioFile = dir.getChildFile (
-                        juce::String::formatted ("Track_%02d.wav", sourceTrack + 1));
-                }
+                const juce::File audioFile (obj->getProperty ("audioFile").toString());
+                if (! audioFile.existsAsFile())
+                { showStatus ("Paste failed: copied clip media is missing"); return; }
 
                 const auto pos    = currentPlayheadSamples (engine);
                 const auto before = engine.playlistsToJson();
@@ -1047,7 +1060,8 @@ void MainComponent::editClipboardPaste()
                     (juce::int64) obj->getProperty ("fadeIn"),
                     (juce::int64) obj->getProperty ("fadeOut"),
                     (float) (double) obj->getProperty ("gainDb"),
-                    obj->getProperty ("name").toString(), audioFile);
+                    obj->getProperty ("name").toString(), audioFile,
+                    (int) obj->getProperty ("sourceChannel"), (int) obj->getProperty ("fadeCurve"));
                 if (newIdx >= 0)
                 {
                     pushClipUndo ("Paste clip", before);
@@ -1133,6 +1147,3 @@ void MainComponent::editFinishRange()
 //   "setlist": [ {"name": "Intro", "samplePos": 0}, ... ]
 // Loaded on session swap, persisted on every add / update so a crash
 // mid-show doesn't lose what the engineer just dialled in.
-
-
-

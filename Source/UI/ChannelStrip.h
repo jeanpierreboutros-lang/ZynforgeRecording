@@ -123,6 +123,7 @@ namespace zynforge
         // edit group. The strip passes its own track index; the host
         // looks up the group + peers via the engine.
         std::function<void (int /*srcTrackIndex*/)> onAfterArmedToggle;
+        std::function<bool()> canChangeArm;
         std::function<void (int /*srcTrackIndex*/)> onAfterMonitorToggle;
         std::function<void (int /*srcTrackIndex*/)> onAfterMuteToggle;
         std::function<void (int /*srcTrackIndex*/)> onAfterSoloToggle;

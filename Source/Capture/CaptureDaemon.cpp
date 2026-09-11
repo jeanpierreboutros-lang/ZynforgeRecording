@@ -70,7 +70,8 @@ namespace zynforge::capture
         const auto block = device->getCurrentBufferSizeSamples();
         currentSampleRate.store (sr);
         currentBlockSize .store (block);
-        recorder.prepare (sr, block, device->getActiveInputChannels().countNumberOfSetBits());
+        recorder.prepare (sr, block, recorder.getNumTracks() > 0 ? recorder.getNumTracks()
+                                    : device->getActiveInputChannels().countNumberOfSetBits());
         recorder.setAudioWorkgroup (device->getWorkgroup());
     }
 
@@ -86,7 +87,15 @@ namespace zynforge::capture
                                                           int numSamples,
                                                           const juce::AudioIODeviceCallbackContext&)
     {
-        recorder.processBlock (inputChannelData, numInputChannels, numSamples);
+        const float* routed[256] {};
+        const int count = juce::jmin (256, recorder.getNumTracks());
+        for (int ch = 0; ch < count; ++ch)
+        {
+            int input = recorder.getTrack (ch).inputRouting.load();
+            if (input == -2) input = ch;
+            if (input >= 0 && input < numInputChannels) routed[ch] = inputChannelData[input];
+        }
+        recorder.processBlock (routed, count, numSamples);
         // Capture-only: silence any outputs the device forced on us.
         for (int ch = 0; ch < numOutputChannels; ++ch)
             if (outputChannelData[ch] != nullptr)
@@ -110,9 +119,13 @@ namespace zynforge::capture
                 else
                 {
                     dir.createDirectory();
+                    // Continue into a new part even after reattaching/restarting
+                    // the GUI. Existing takes must never be truncated.
+                    recorder.armContinue (0);
                     if (recorder.startRecording (dir))  r.ok = true;
                     else                                r.error = "recorder failed to start";
                 }
+                server.sendStatus (buildStatus());
                 server.sendReply (r);
                 break;
             }
@@ -121,12 +134,13 @@ namespace zynforge::capture
             {
                 recorder.stopRecording();
                 Reply r; r.ok = true; r.id = c.id;
+                server.sendStatus (buildStatus());
                 server.sendReply (r);
                 break;
             }
 
             case Action::ArmTrack:
-                if (c.trackIndex >= 0 && c.trackIndex < recorder.getNumTracks())
+                if (! recorder.isRecording() && c.trackIndex >= 0 && c.trackIndex < recorder.getNumTracks())
                     recorder.getTrack (c.trackIndex).armed.store (c.boolValue,
                                                                   std::memory_order_relaxed);
                 break;
@@ -138,6 +152,8 @@ namespace zynforge::capture
             case Action::SetTrackCount:
             {
                 Reply r; r.id = c.id;
+                if (c.intValue == recorder.getNumTracks())
+                { r.ok = true; server.sendReply (r); break; }
                 if (recorder.isRecording())
                 {
                     // setTrackCount is a no-op while recording anyway; say so
@@ -166,6 +182,47 @@ namespace zynforge::capture
                 // Reserved for Phase 1d (pre-arming the session before the
                 // start command); StartRecording carries the dir today.
                 break;
+
+            case Action::ConfigureCapture:
+            {
+                Reply r; r.id = c.id;
+                if (recorder.isRecording()) { r.error = "stop recording before configuration"; server.sendReply (r); break; }
+                const auto& cfg = c.configuration;
+                auto* tracks = cfg["tracks"].getArray();
+                if (tracks == nullptr || tracks->isEmpty() || tracks->size() > 256)
+                { r.error = "invalid track configuration"; server.sendReply (r); break; }
+                if (! testMode.load())
+                {
+                    auto xml = juce::parseXML (cfg["deviceState"].toString());
+                    if (xml == nullptr) { r.error = "missing device configuration"; server.sendReply (r); break; }
+                    deviceManager.removeAudioCallback (this);
+                    const auto error = deviceManager.initialise (256, 0, xml.get(), false);
+                    if (error.isNotEmpty()) { r.error = error; server.sendReply (r); break; }
+                    deviceManager.addAudioCallback (this);
+                    deviceManager.removeAudioCallback (this);
+                    auto* device = deviceManager.getCurrentAudioDevice();
+                    if (device == nullptr || std::abs (device->getCurrentSampleRate() - (double) cfg["sampleRate"]) > 0.5)
+                    { r.error = "requested capture sample rate unavailable"; server.sendReply (r); break; }
+                }
+                recorder.setTrackCount (tracks->size());
+                for (int i = 0; i < tracks->size(); ++i)
+                {
+                    auto& t = recorder.getTrack (i); const auto& v = (*tracks)[i];
+                    t.setNameThreadSafe (v["name"].toString()); t.stripId = v["uid"].toString();
+                    t.inputRouting.store ((int) v["input"]); t.armed.store ((bool) v["armed"]);
+                    t.isStereo.store ((bool) v["stereo"]); t.isBus.store ((bool) v["bus"]);
+                }
+                recorder.setPreRollSeconds (juce::jlimit (0, 30, (int) cfg["preRoll"]));
+                recorder.setBackupDirectory (juce::File (cfg["backup"].toString()));
+                recorder.setBackupCaptureFormat ((CaptureFormat) (int) cfg["backupFormat"]);
+                std::vector<MultitrackRecorder::MirrorConfig> mirrors;
+                if (auto* ms = cfg["mirrors"].getArray())
+                    for (const auto& m : *ms)
+                        mirrors.push_back ({ juce::File (m["root"].toString()), (CaptureFormat) (int) m["format"] });
+                recorder.setMirrors (mirrors);
+                if (! testMode.load()) deviceManager.addAudioCallback (this);
+                r.ok = true; server.sendReply (r); break;
+            }
 
             case Action::StartPlayback:
             case Action::StopPlayback:
@@ -203,6 +260,8 @@ namespace zynforge::capture
     {
         EngineStatus s;
         s.recording      = recorder.isRecording();
+        s.sessionPath    = recorder.getActiveSessionDir().getFullPathName();
+        s.positionSamples = recorder.getRecordTimelineSamples();
         s.elapsedSamples = recorder.getSamplesSinceStart();
         s.sampleRate     = currentSampleRate.load();
         s.blockSize      = currentBlockSize.load();
@@ -212,6 +271,7 @@ namespace zynforge::capture
         s.missedSamples  = recorder.getMissedSamples();
         s.numTracks      = recorder.getNumTracks();
         s.captureFormat  = (int) recorder.getCaptureFormat();
+        s.backupActive   = recorder.isBackupActive();
         s.tracks.reserve ((size_t) s.numTracks);
         for (int i = 0; i < s.numTracks; ++i)
         {
@@ -235,12 +295,8 @@ namespace zynforge::capture
         {
             if (server.hasClient())
             {
-                EngineStatus s;
-                {
-                    const std::lock_guard<std::mutex> g (commandLock);
-                    s = buildStatus();
-                }
-                server.sendStatus (s);
+                const std::lock_guard<std::mutex> g (commandLock);
+                server.sendStatus (buildStatus());
             }
             for (int i = 0; i < 10 && running.load(); ++i)
                 juce::Thread::sleep (10);

@@ -750,6 +750,7 @@ void MainComponent::connectCaptureDaemon (bool announceReattach)
 {
     captureSupervisor.onDaemonDied = [this] (bool wasRecording)
     {
+        engine.setExternalRecording (false);
         showStatus (wasRecording
             ? "!! CAPTURE DAEMON DIED MID-TAKE -- audio up to the last flush is on disk. NOT relaunching automatically."
             : "Capture daemon exited.");
@@ -768,6 +769,9 @@ void MainComponent::connectCaptureDaemon (bool announceReattach)
     juce::Thread::sleep (250);   // let the first status push land
     if (captureSupervisor.isDaemonRecording())
     {
+        engine.setExternalRecording (true);
+        const auto status = captureSupervisor.lastStatus();
+        if (status.sessionPath.isNotEmpty()) engine.setActiveSessionDir (juce::File (status.sessionPath));
         recordButton.setButtonText ("STOP");
         if (announceReattach)
             showStatus ("REATTACHED to a rolling capture-daemon take -- STOP closes it normally.");
@@ -801,6 +805,37 @@ void MainComponent::toggleCaptureDaemon()
         p->setValue ("useCaptureDaemon", useCaptureDaemon);
         p->saveIfNeeded();
     }
+}
+
+bool MainComponent::configureCaptureDaemon()
+{
+    auto* device = engine.getDeviceManager().getCurrentAudioDevice();
+    auto xml = engine.getDeviceManager().createStateXml();
+    if (device == nullptr || xml == nullptr) return false;
+    auto* o = new juce::DynamicObject();
+    juce::var config (o);
+    o->setProperty ("deviceState", xml->toString());
+    o->setProperty ("sampleRate", device->getCurrentSampleRate());
+    auto& rec = engine.getRecorder();
+    o->setProperty ("preRoll", rec.getPreRollSeconds());
+    o->setProperty ("backup", rec.getBackupDirectory().getFullPathName());
+    o->setProperty ("backupFormat", (int) rec.getBackupCaptureFormat());
+    juce::Array<juce::var> tracks, mirrors;
+    for (int i = 0; i < rec.getNumTracks(); ++i)
+    {
+        auto& t = rec.getTrack (i); auto* s = new juce::DynamicObject();
+        s->setProperty ("name", t.getNameThreadSafe()); s->setProperty ("uid", t.stripId);
+        s->setProperty ("input", t.inputRouting.load()); s->setProperty ("armed", t.armed.load());
+        s->setProperty ("stereo", t.isStereo.load()); s->setProperty ("bus", t.isBus.load());
+        tracks.add (juce::var (s));
+    }
+    for (const auto& m : rec.getMirrors())
+    {
+        auto* s = new juce::DynamicObject(); s->setProperty ("root", m.root.getFullPathName());
+        s->setProperty ("format", (int) m.format); mirrors.add (juce::var (s));
+    }
+    o->setProperty ("tracks", tracks); o->setProperty ("mirrors", mirrors);
+    return captureSupervisor.configureCapture (config);
 }
 
 void MainComponent::scanForCrashReports()

@@ -19,11 +19,12 @@ namespace zynforge::capture
     // it and it's testable in isolation -- the same transport-seam-first
     // approach used for ConsoleLink before any hardware existed.
 
-    inline constexpr int kProtocolVersion = 1;
+    inline constexpr int kProtocolVersion = 2;
 
     enum class Action
     {
         Hello,            // version handshake (client -> daemon, daemon replies)
+        ConfigureCapture,
         StartRecording,   // sessionDir
         StopRecording,
         StartPlayback,
@@ -41,6 +42,7 @@ namespace zynforge::capture
         switch (a)
         {
             case Action::Hello:            return "hello";
+            case Action::ConfigureCapture: return "configureCapture";
             case Action::StartRecording:   return "startRecording";
             case Action::StopRecording:    return "stopRecording";
             case Action::StartPlayback:    return "startPlayback";
@@ -59,6 +61,7 @@ namespace zynforge::capture
     {
         ok = true;
         if (s == "hello")            return Action::Hello;
+        if (s == "configureCapture") return Action::ConfigureCapture;
         if (s == "startRecording")   return Action::StartRecording;
         if (s == "stopRecording")    return Action::StopRecording;
         if (s == "startPlayback")    return Action::StartPlayback;
@@ -78,6 +81,7 @@ namespace zynforge::capture
     {
         Action       action     { Action::Ping };
         juce::String sessionDir;
+        juce::var    configuration;
         int          trackIndex { -1 };
         bool         boolValue  { false };
         int          intValue   { 0 };
@@ -90,6 +94,7 @@ namespace zynforge::capture
             o->setProperty ("type",   "cmd");
             o->setProperty ("action", actionToString (action));
             if (sessionDir.isNotEmpty()) o->setProperty ("sessionDir", sessionDir);
+            if (configuration.isObject()) o->setProperty ("configuration", configuration);
             if (trackIndex >= 0)         o->setProperty ("trackIndex", trackIndex);
             o->setProperty ("boolValue", boolValue);
             o->setProperty ("intValue",  intValue);
@@ -107,6 +112,7 @@ namespace zynforge::capture
             c.action = actionFromString (v.getProperty ("action", "").toString(), actionOk);
             if (! actionOk) return c;
             c.sessionDir = v.getProperty ("sessionDir", "").toString();
+            c.configuration = v.getProperty ("configuration", juce::var());
             c.trackIndex = (int) v.getProperty ("trackIndex", -1);
             c.boolValue  = (bool) v.getProperty ("boolValue", false);
             c.intValue   = (int) v.getProperty ("intValue", 0);

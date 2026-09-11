@@ -93,6 +93,7 @@ namespace zynforge
         void clearAllClips();
 
     private:
+        void renderBlock (float* const*, int, int) noexcept;
         // Bounded handshake used by loadSession/unload after clearing
         // `playing`: waits until two full audio callbacks have completed
         // (via callbackGeneration) so no in-flight block is still reading

@@ -52,6 +52,7 @@ namespace zynforge
         juce::String getPrimary()  const          { return host; }
         juce::int64  getLastSyncMs() const        { return lastSyncMs; }
         juce::String getLastError()  const        { return lastError; }
+        std::function<void()> onBeforeTrackCountChange;
 
     private:
         void timerCallback() override;

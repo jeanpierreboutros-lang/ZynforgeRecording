@@ -32,6 +32,8 @@ namespace zynforge::capture
     bool CaptureSupervisor::connectOrLaunch (int wantPort, const juce::StringArray& extraArgs)
     {
         disconnect();
+        configuredCapture.clear();
+        failedCapture.clear(); retryCaptureAtMs = 0;
         port = wantPort;
 
         client.onStatus = [this] (const EngineStatus& s)
@@ -118,14 +120,13 @@ namespace zynforge::capture
         // Record-then-quit force-kills a take mid-roll.
         if (launched)
         {
-            const bool positivelyIdle = hasStatus() && ! isDaemonRecording();
 
             // Ask the daemon to quit. It accepts only when idle (ack ok) and
             // refuses mid-take (ok == false), so a rolling take survives even
             // if our local status was stale.
             const bool quitAccepted = requestQuit();
 
-            if (positivelyIdle || quitAccepted)
+            if (quitAccepted)
                 for (int i = 0; i < 20 && process.isRunning(); ++i)
                     juce::Thread::sleep (50);
 
@@ -134,7 +135,7 @@ namespace zynforge::capture
             // Kill fallback fires ONLY when we know the daemon is idle -- either
             // a fresh status said so, or the daemon acked the quit. It can never
             // fire on a default/unknown status.
-            if ((positivelyIdle || quitAccepted) && process.isRunning())
+            if (quitAccepted && process.isRunning())
                 process.kill();
         }
         else
@@ -172,6 +173,25 @@ namespace zynforge::capture
         // NOT proof the take is rolling, so we no longer light Record on it.
         const auto reply = client.request (rec, 5000);
         return reply.ok;
+    }
+
+    bool CaptureSupervisor::configureCapture (const juce::var& config)
+    {
+        const auto text = juce::JSON::toString (config);
+        if (text == configuredCapture) return true;
+        if (text == failedCapture && juce::Time::currentTimeMillis() < retryCaptureAtMs) return false;
+        if (! isAttached() || isDaemonRecording()) return false;
+        Command c; c.action = Action::ConfigureCapture; c.configuration = config;
+        if (! client.request (c, 5000).ok)
+        {
+            // The idle UI polls configuration for pre-roll. A missing device
+            // must not cause a new blocking request on every UI timer tick.
+            failedCapture = text; retryCaptureAtMs = juce::Time::currentTimeMillis() + 5000;
+            return false;
+        }
+        failedCapture.clear();
+        configuredCapture = text;
+        return true;
     }
 
     bool CaptureSupervisor::stopRecording()

@@ -771,6 +771,8 @@ namespace zynforge
         armButton.setToggleState (s.armed.load(), juce::dontSendNotification);
         armButton.onClick = [this]
         {
+            if (canChangeArm && ! canChangeArm())
+            { armButton.setToggleState (state.armed.load(), juce::dontSendNotification); return; }
             state.armed.store (armButton.getToggleState(), std::memory_order_relaxed);
             if (pairState) pairState->armed.store (armButton.getToggleState(),
                                                    std::memory_order_relaxed);

@@ -287,6 +287,7 @@ namespace zynforge
             case ConsoleEvent::Type::HeadAmpGain:
             {
                 if (ev.index < 0 || ev.index >= 128) return;   // range-check off-wire indices
+                if (expectedGainReplies <= 0) return; // preserve the completed capture snapshot
                 gains[ev.index] = ev.value;
                 if (expectedGainReplies > 0 && (int) gains.size() >= expectedGainReplies)
                 {

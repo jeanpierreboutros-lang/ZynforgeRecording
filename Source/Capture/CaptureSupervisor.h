@@ -66,6 +66,10 @@ namespace zynforge::capture
         bool startRecording (const juce::File& sessionDir, int trackCount,
                              int captureFormat, const juce::BigInteger& armedTracks);
         bool stopRecording();
+        bool configureCapture (const juce::var&);
+        juce::String configuredCapture;
+        juce::String failedCapture;
+        juce::int64 retryCaptureAtMs { 0 };
         // Ask an IDLE daemon to exit (refused mid-take by the daemon).
         bool requestQuit();
 

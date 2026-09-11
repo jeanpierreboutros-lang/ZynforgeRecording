@@ -604,6 +604,8 @@ namespace zynforge
         void joinAudioWorkgroupOnCurrentThread (juce::WorkgroupToken&);
 
         std::atomic<bool>        recording          { false };
+        // Immutable between recording's release/acquire publication and stop.
+        std::vector<bool>        captureArms;
         std::atomic<bool>        writersReady       { false };
         std::atomic<juce::int64> samplesSinceStart  { 0 };
         std::atomic<juce::int64> missedSamples      { 0 };

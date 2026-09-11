@@ -307,7 +307,7 @@ namespace zynforge
 
     void SessionPlayer::setTrackClips (int trackIdx, std::vector<Clip> clips)
     {
-        if (trackIdx < 0) return;
+        if (trackIdx < 0 || trackIdx >= kMaxAuthoritativeTracks) return;
 
         // Build readers for any clip that references a file other than its
         // track's own -- OUTSIDE the lock, since opening a file is slow.
@@ -324,6 +324,11 @@ namespace zynforge
             {
                 const auto bufSamples = (int) (raw->sampleRate * kReaderBufferSeconds);
                 auto br = std::make_unique<juce::BufferingAudioReader> (raw.release(), readerThread, bufSamples);
+                // Publish a usable reader, not one whose first callback must
+                // emit silence while the background thread starts filling it.
+                juce::AudioBuffer<float> prime (2, 512);
+                br->setReadTimeout (1000);
+                br->read (&prime, 0, 512, juce::jmax ((juce::int64) 0, c.fileStartSamples), true, true);
                 br->setReadTimeout (0);
                 built.emplace_back (key, std::move (br));
             }
@@ -335,7 +340,10 @@ namespace zynforge
         // from the read thread, which is too slow to hold the lock for.
         std::vector<std::unique_ptr<juce::BufferingAudioReader>> stale;
         {
+            const juce::ScopedLock tl (tracksLock);
             const juce::ScopedLock sl (clipsLock);
+            if (trackIdx >= (int) tracks.size()) tracks.resize ((size_t) trackIdx + 1);
+            readerCount.store ((int) tracks.size(), std::memory_order_release);
             for (auto& b : built)
                 if (extraReaders.find (b.first) == extraReaders.end())
                     extraReaders.emplace (b.first, std::move (b.second));
@@ -343,6 +351,13 @@ namespace zynforge
             if (trackIdx >= (int) clipsAuthoritative.size()) clipsAuthoritative.resize ((size_t) trackIdx + 1, 0);
             activeClips[(size_t) trackIdx]        = std::move (clips);
             clipsAuthoritative[(size_t) trackIdx] = 1;   // explicit list (even if empty)
+            juce::int64 extent = 0;
+            for (const auto& t : tracks) extent = juce::jmax (extent, t.length);
+            for (const auto& list : activeClips)
+                for (const auto& c : list)
+                    extent = juce::jmax (extent, c.timelineStartSamples + c.fileLengthSamples);
+            totalLength.store (extent, std::memory_order_release);
+            loaded.store (extent > 0, std::memory_order_release);
             // Mirror into the lock-free flag the audio thread reads on
             // clipsLock contention (see processBlock).
             if (trackIdx < kMaxAuthoritativeTracks)
@@ -376,6 +391,31 @@ namespace zynforge
     }
 
     void SessionPlayer::processBlock (float* const* outputs, int numOutputs, int numSamples) noexcept
+    {
+        for (int ch = 0; ch < numOutputs; ++ch)
+            if (outputs[ch] != nullptr) juce::FloatVectorOperations::clear (outputs[ch], numSamples);
+        int done = 0;
+        while (done < numSamples)
+        {
+            int count = numSamples - done;
+            const auto begin = loopStart.load();
+            const auto end = loopEnd.load();
+            if (loopEnabled.load() && begin >= 0 && end > begin)
+            {
+                const auto pos = position.load();
+                const auto remaining = end - (pos >= end ? begin : pos);
+                count = (int) juce::jmin ((juce::int64) count, juce::jmax ((juce::int64) 1, remaining));
+            }
+            float* shifted[kMaxAuthoritativeTracks] {};
+            const int channels = juce::jmin (numOutputs, kMaxAuthoritativeTracks);
+            for (int ch = 0; ch < channels; ++ch)
+                shifted[ch] = outputs[ch] != nullptr ? outputs[ch] + done : nullptr;
+            renderBlock (shifted, channels, count);
+            done += count;
+        }
+    }
+
+    void SessionPlayer::renderBlock (float* const* outputs, int numOutputs, int numSamples) noexcept
     {
         // Bump the generation FIRST (even on the early-out below) so the
         // load/unload drain handshake advances every block the device runs.
@@ -488,11 +528,13 @@ namespace zynforge
                     int readChan = t.useRight ? 1 : 0;
                     if (c.audioFile != juce::File())
                     {
+                        rd = nullptr; // missing explicit media must never substitute the own take
+                        readChan = juce::jlimit (0, 1, c.sourceChannel);
                         auto it = extraReaders.find (c.audioFile.getFullPathName());
                         if (it != extraReaders.end() && it->second != nullptr)
                         {
                             rd = it->second.get();
-                            readChan = 0;
+                            readChan = juce::jlimit (0, 1, c.sourceChannel);
                         }
                     }
                     if (rd != nullptr)

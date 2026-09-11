@@ -55,6 +55,7 @@ namespace zynforge
             m.name = candidate;
         }
 
+        lastDroppedId = m.runtimeId;
         markers.push_back (std::move (m));
         sortByPosition();
         save();

@@ -68,6 +68,7 @@ namespace zynforge
 
     struct EngineStatus
     {
+        juce::String sessionPath;
         bool          recording   { false };
         bool          playing     { false };
         juce::int64   positionSamples { 0 };
@@ -93,6 +94,7 @@ namespace zynforge
         {
             auto* o = new juce::DynamicObject();
             o->setProperty ("recording", recording);
+            o->setProperty ("sessionPath", sessionPath);
             o->setProperty ("playing",   playing);
             o->setProperty ("positionSamples", positionSamples);
             o->setProperty ("elapsedSamples",  elapsedSamples);
@@ -120,6 +122,7 @@ namespace zynforge
         static EngineStatus fromJson (const juce::var& v)
         {
             EngineStatus s;
+            s.sessionPath = v.getProperty ("sessionPath", "").toString();
             s.recording   = (bool) v.getProperty ("recording", false);
             s.playing     = (bool) v.getProperty ("playing", false);
             s.positionSamples = (juce::int64) v.getProperty ("positionSamples", 0);

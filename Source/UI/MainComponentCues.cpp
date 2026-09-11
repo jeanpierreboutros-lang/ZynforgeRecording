@@ -38,6 +38,21 @@ void MainComponent::loadSetlistFromActiveSession()
     cues.clear();
     currentCueIndex = -1;
 
+    // Older sessions saved cue UUIDs but not the corresponding strip UUIDs.
+    // Rebind those legacy snapshots by their saved physical order once; newly
+    // saved sessions then use portable identities normally. Never apply this
+    // fallback to a strip that already has an authoritative session UUID.
+    std::vector<bool> portableIds;
+    const auto mix = juce::JSON::parse (engine.getActiveSessionDir().getChildFile ("session_mix.json"));
+    if (auto* strips = mix["strips"].getArray())
+        for (const auto& strip : *strips)
+        {
+            const int index = (int) strip["index"];
+            if (index < 0 || index >= 256) continue;
+            if (index >= (int) portableIds.size()) portableIds.resize ((size_t) index + 1, false);
+            portableIds[(size_t) index] = strip["uid"].toString().isNotEmpty();
+        }
+
     const auto proj = findSessionProj (engine.getActiveSessionDir());
     if (proj.existsAsFile())
     {
@@ -72,6 +87,10 @@ void MainComponent::loadSetlistFromActiveSession()
                                 {
                                     zynforge::SetlistBar::StripSnapshot s;
                                     s.stripId      = so->getProperty ("uid").toString();
+                                    const int physical = (int) cue.strips.size();
+                                    if (physical < engine.getRecorder().getNumTracks()
+                                        && (physical >= (int) portableIds.size() || ! portableIds[(size_t) physical]))
+                                        s.stripId = engine.getRecorder().getTrack (physical).stripId;
                                     s.gainDb       = (float) (double) so->getProperty ("gainDb");
                                     s.pan          = (float) (double) so->getProperty ("pan");
                                     s.inputRouting = (int)            so->getProperty ("in");
@@ -663,6 +682,7 @@ void MainComponent::promptMirrorHost()
                 showStatus ("Mirror needs the primary's access token -- nothing started");
                 return;
             }
+            sessionMirror.onBeforeTrackCountChange = [this] { condemnAllStrips(); };
             sessionMirror.start (host, port, tok);
             showStatus ("Mirroring " + host + ":" + juce::String (port));
         }), false);

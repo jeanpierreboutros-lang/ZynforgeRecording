@@ -183,6 +183,7 @@ private:
     void showCrashReportNotice (const juce::Array<juce::File>& reports);
     void promptMirrorHost();
     zynforge::SessionMirror sessionMirror { engine };
+    bool configureCaptureDaemon();
     // X32/M32 console link: soundcheck repatch + head-amp gain capture.
     zynforge::ConsoleLink consoleLink;
     // Capture-process split, Phase 1d: out-of-process recording behind a

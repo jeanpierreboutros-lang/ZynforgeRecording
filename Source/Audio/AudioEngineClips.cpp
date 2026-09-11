@@ -20,6 +20,29 @@
 
 namespace zynforge
 {
+    juce::File AudioEngine::getTrackAudioFile (int track, int* channel) const
+    {
+        if (channel != nullptr) *channel = 0;
+        if (! getActiveSessionDir().isDirectory()) return {};
+        auto dir = getActiveSessionDir().getChildFile ("Audio Files");
+        if (! dir.isDirectory()) dir = getActiveSessionDir();
+        juce::AudioFormatManager fm; fm.registerBasicFormats();
+        for (int offset = 0; offset <= 1 && track - offset >= 0; ++offset)
+            for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
+            {
+                const auto f = dir.getChildFile (juce::String::formatted ("Track_%02d", track - offset + 1) + ext);
+                if (! f.existsAsFile()) continue;
+                if (offset == 1)
+                {
+                    auto r = ConcatReader::create (fm, findTakeParts (f));
+                    if (r == nullptr || r->numChannels < 2) continue;
+                }
+                if (channel != nullptr) *channel = offset;
+                return f;
+            }
+        return {};
+    }
+
     void AudioEngine::seedDefaultClips (bool preserveEdits)
     {
         // Give every track a single full-range clip so the EDIT tools
@@ -68,7 +91,7 @@ namespace zynforge
             if (i >= (int) trackPlaylists.size() || i >= (int) trackClips.size()) return false;
             if (trackPlaylists[(size_t) i].takes.size() > 1) return true;
             const auto& list = trackClips[(size_t) i];
-            if (list.empty())    return false;   // nothing worth preserving
+            if (list.empty())    return ! trackPlaylists[(size_t) i].takes.empty();
             if (list.size() > 1) return true;    // split into multiple clips
             return ! isPlainDefault (list[0]);
         };
@@ -154,7 +177,7 @@ namespace zynforge
             // a full-range clip so the crop has something to intersect,
             // otherwise the track would be silently dropped.
             std::vector<Clip> src = trackClips[(size_t) t];
-            if (src.empty())
+            if (src.empty() && (t >= (int) trackPlaylists.size() || trackPlaylists[(size_t) t].takes.empty()))
             {
                 Clip full;
                 full.timelineStartSamples = 0;
@@ -166,6 +189,7 @@ namespace zynforge
             std::vector<Clip> out;
             for (const auto& c : src)
             {
+                if (c.locked) { out.push_back (c); continue; }
                 const juce::int64 cs = c.timelineStartSamples;
                 const juce::int64 ce = cs + c.fileLengthSamples;
                 const juce::int64 is = juce::jmax (cs, startSample);   // intersection
@@ -259,6 +283,7 @@ namespace zynforge
         if (p.takes.size() <= 1) return;   // never delete the last take
 
         p.takes.erase (p.takes.begin() + takeIdx);
+        if (takeIdx < p.activeTake) --p.activeTake;
         if (p.activeTake >= (int) p.takes.size()) p.activeTake = (int) p.takes.size() - 1;
         trackClips[(size_t) track] = p.takes[(size_t) p.activeTake].clips;
         player.setTrackClips (track, trackClips[(size_t) track]);
@@ -297,6 +322,7 @@ namespace zynforge
                     juce::DynamicObject::Ptr cObj (new juce::DynamicObject());
                     cObj->setProperty ("name",        c.name);
                     cObj->setProperty ("file",        c.audioFile.getFullPathName());
+                    cObj->setProperty ("sourceChannel", c.sourceChannel);
                     cObj->setProperty ("tlStart",     (juce::int64) c.timelineStartSamples);
                     cObj->setProperty ("fileStart",   (juce::int64) c.fileStartSamples);
                     cObj->setProperty ("fileLen",     (juce::int64) c.fileLengthSamples);
@@ -305,8 +331,8 @@ namespace zynforge
                     cObj->setProperty ("fadeCurve",   c.fadeCurve);
                     // Cross-track clips reference another track's file --
                     // store the NAME only so the session stays portable.
-                    if (c.audioFile != juce::File())
-                        cObj->setProperty ("audioFile", c.audioFile.getFileName());
+                    if (c.audioFile != juce::File() && c.audioFile.isAChildOf (getActiveSessionDir()))
+                        cObj->setProperty ("sessionAudioFile", c.audioFile.getRelativePathFrom (getActiveSessionDir()));
                     cObj->setProperty ("gainDb",      (double) c.gainDb);
                     cObj->setProperty ("muted",       c.muted);
                     cObj->setProperty ("locked",      c.locked);
@@ -333,7 +359,9 @@ namespace zynforge
             auto* pObj = item.getDynamicObject();
             if (pObj == nullptr) continue;
             const int t = (int) pObj->getProperty ("track");
-            if (t < 0 || t >= (int) trackPlaylists.size()) continue;
+            if (t < 0 || t >= 256) continue;
+            if (t >= (int) trackPlaylists.size()) trackPlaylists.resize ((size_t) t + 1);
+            if (t >= (int) trackClips.size()) trackClips.resize ((size_t) t + 1);
             auto& pl = trackPlaylists[(size_t) t];
 
             pl.takes.clear();
@@ -363,10 +391,14 @@ namespace zynforge
                         c.fadeInSamples        = (juce::int64) (double) cObj->getProperty ("fadeIn");
                         c.fadeOutSamples       = (juce::int64) (double) cObj->getProperty ("fadeOut");
                         c.fadeCurve            = (int) cObj->getProperty ("fadeCurve");   // 0 if absent
+                        c.sourceChannel        = cObj->hasProperty ("sourceChannel") ? (int) cObj->getProperty ("sourceChannel") : -1;
                         const auto afName = cObj->getProperty ("audioFile").toString();
                         if (afName.isNotEmpty())
                             c.audioFile = getActiveSessionDir().getChildFile ("Audio Files")
                                                                .getChildFile (afName);
+                        const auto relativeFile = cObj->getProperty ("sessionAudioFile").toString();
+                        if (relativeFile.isNotEmpty())
+                            c.audioFile = getActiveSessionDir().getChildFile (relativeFile);
                         c.gainDb               = (float)        (double) cObj->getProperty ("gainDb");
                         c.muted                = (bool)         cObj->getProperty ("muted");
                         c.locked               = (bool)         cObj->getProperty ("locked");
@@ -414,7 +446,7 @@ namespace zynforge
             {
                 const auto& c = list[(size_t) i];
                 const auto tEnd = c.timelineStartSamples + c.fileLengthSamples;
-                if (timelineSample > c.timelineStartSamples && timelineSample < tEnd)
+                if (! c.locked && timelineSample > c.timelineStartSamples && timelineSample < tEnd)
                 {
                     const auto fileOffset = c.fileStartSamples
                                           + (timelineSample - c.timelineStartSamples);
@@ -430,6 +462,10 @@ namespace zynforge
     // false when there's no audio file backing the track.
     bool AudioEngine::ensureClipList (int track)
     {
+        // Existing empty arrangements are deliberately silent.
+        if (track >= 0 && track < (int) trackPlaylists.size()
+            && ! trackPlaylists[(size_t) track].takes.empty())
+            return true;
         auto& list = clipsFor (track);
         if (! list.empty()) return true;
 
@@ -498,6 +534,7 @@ namespace zynforge
             bool open (const juce::File& audioDir, int track, const std::vector<Clip>* engineClips)
             {
                 fm.registerBasicFormats();
+                if (engineClips != nullptr) clips = *engineClips;
 
                 // 1) The track's OWN file (Track_<track+1>). A 2-channel own
                 //    file means this index is the LEFT of an interleaved
@@ -511,7 +548,7 @@ namespace zynforge
                 if (srcFile.existsAsFile())
                 {
                     reader = ConcatReader::create (fm, findTakeParts (srcFile));
-                    if (reader == nullptr) return false;
+                    if (reader == nullptr) return engineClips != nullptr;
                     readChannel = (reader->numChannels >= 2) ? 0 : -1;
                 }
                 else if (track > 0)
@@ -525,20 +562,21 @@ namespace zynforge
                         auto f = audioDir.getChildFile (juce::String::formatted ("Track_%02d", track) + ext);
                         if (f.existsAsFile()) { srcFile = f; break; }
                     }
-                    if (! srcFile.existsAsFile()) return false;
+                    if (! srcFile.existsAsFile()) return engineClips != nullptr;
                     reader = ConcatReader::create (fm, findTakeParts (srcFile));
-                    if (reader == nullptr || reader->numChannels < 2) return false;
+                    if (reader == nullptr || reader->numChannels < 2)
+                    { reader.reset(); return engineClips != nullptr; }
                     readChannel = 1;
                 }
                 else
                 {
-                    return false;
+                    return engineClips != nullptr;
                 }
 
                 // Active-take clips; bootstrap a whole-file clip if the
                 // track was never edited so it still renders.
                 if (engineClips != nullptr) clips = *engineClips;
-                if (clips.empty())
+                if (engineClips == nullptr)
                 {
                     Clip c;
                     c.timelineStartSamples = 0;
@@ -569,6 +607,7 @@ namespace zynforge
                     juce::AudioFormatReader* rd = reader.get();
                     if (c.audioFile != juce::File() && c.audioFile != srcFile)
                     {
+                        rd = nullptr;
                         const auto key = c.audioFile.getFullPathName();
                         auto it = extra.find (key);
                         if (it == extra.end())
@@ -581,7 +620,8 @@ namespace zynforge
                     // Read both channels (a stereo file fills L+R; a mono file
                     // fills ch 0). For the track's own reader, pick the L/R
                     // half via readChannel; cross-track clips are mono -> ch 0.
-                    const int ch = (rd == reader.get()) ? (readChannel < 0 ? 0 : readChannel) : 0;
+                    const int ch = c.sourceChannel >= 0 ? juce::jlimit (0, 1, c.sourceChannel)
+                                 : (rd == reader.get() ? juce::jmax (0, readChannel) : 0);
                     tmp.setSize (2, span, false, false, true);
                     tmp.clear();
                     rd->read (&tmp, 0, span, fileReadStart, true, true);
@@ -1184,7 +1224,7 @@ namespace zynforge
                 changed = true;
                 continue;
             }
-            if (cs >= end)                                // after the gap -> slide left
+            if (cs >= end && ! c.locked)                   // locked clips stay anchored
             {
                 c.timelineStartSamples -= shift;
                 changed = true;
@@ -1253,7 +1293,8 @@ namespace zynforge
     int AudioEngine::pasteClip (int track, juce::int64 timelineStart,
                                 juce::int64 fileStart, juce::int64 fileLength,
                                 juce::int64 fadeIn, juce::int64 fadeOut, float gainDb,
-                                const juce::String& name, const juce::File& audioFile)
+                                const juce::String& name, const juce::File& audioFile,
+                                int sourceChannel, int fadeCurve)
     {
         const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
         if (track < 0 || track >= maxTracks) return -1;
@@ -1263,6 +1304,8 @@ namespace zynforge
 
         Clip c;
         c.audioFile            = audioFile;   // empty = same-track (track reader)
+        c.sourceChannel        = sourceChannel;
+        c.fadeCurve            = fadeCurve;
         c.name                 = name.isNotEmpty() ? name : juce::String ("paste");
         c.timelineStartSamples = juce::jmax ((juce::int64) 0, timelineStart);
         c.fileStartSamples     = fileStart;
@@ -1430,13 +1473,18 @@ namespace zynforge
         // For a native-stereo L slot this resolves to the 2-channel file, so
         // the peak below spans BOTH channels -> one gain covers the pair.
         auto file = c.audioFile;
-        if (! file.existsAsFile())
-            file = getActiveSessionDir().getChildFile ("Audio Files")
-                       .getChildFile (juce::String::formatted ("Track_%02d.wav", track + 1));
+        if (file == juce::File())
+        {
+            int channel = 0;
+            file = getTrackAudioFile (track, &channel);
+            // Native stereo is normalized once, on L, against both channels.
+            // R must not receive a second independently calculated gain.
+            if (channel == 1) return kFail;
+        }
         if (! file.existsAsFile()) return kFail;
 
         juce::AudioFormatManager fm; fm.registerBasicFormats();
-        std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (file));
+        auto reader = ConcatReader::create (fm, findTakeParts (file));
         if (reader == nullptr || reader->numChannels == 0) return kFail;
 
         const juce::int64 start = juce::jmax ((juce::int64) 0, c.fileStartSamples);
@@ -1452,7 +1500,11 @@ namespace zynforge
         {
             const int n = (int) juce::jmin ((juce::int64) block, len - p);
             if (! reader->read (&buf, 0, n, start + p, true, true)) break;
-            for (int ch = 0; ch < buf.getNumChannels(); ++ch)
+            const int firstChannel = c.audioFile != juce::File() && c.sourceChannel >= 0
+                                       ? juce::jlimit (0, buf.getNumChannels() - 1, c.sourceChannel) : 0;
+            const int lastChannel = c.audioFile != juce::File() && c.sourceChannel >= 0
+                                      ? firstChannel + 1 : buf.getNumChannels();
+            for (int ch = firstChannel; ch < lastChannel; ++ch)
                 peak = juce::jmax (peak, buf.getMagnitude (ch, 0, n));
         }
         if (peak <= 0.0f) return kFail;   // silent -> nothing to normalize
@@ -1484,14 +1536,13 @@ namespace zynforge
             { clip = &c; break; }
         if (clip == nullptr) return timelineSample;
 
-        auto file = clip->audioFile.existsAsFile()
-            ? clip->audioFile
-            : getActiveSessionDir().getChildFile ("Audio Files")
-                  .getChildFile (juce::String::formatted ("Track_%02d.wav", track + 1));
+        int channel = juce::jmax (0, clip->sourceChannel);
+        auto file = clip->audioFile;
+        if (file == juce::File()) file = getTrackAudioFile (track, &channel);
         if (! file.existsAsFile()) return timelineSample;
 
         juce::AudioFormatManager fm; fm.registerBasicFormats();
-        std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (file));
+        auto reader = ConcatReader::create (fm, findTakeParts (file));
         if (reader == nullptr || reader->numChannels == 0) return timelineSample;
 
         const juce::int64 fileSample = clip->fileStartSamples
@@ -1508,8 +1559,8 @@ namespace zynforge
         if (! reader->read (&buf, 0, n, readStart, true, true)) return timelineSample;
 
         const int centre = (int) (fileSample - readStart);
-        const int chans  = buf.getNumChannels();
-        auto mono = [&] (int i) { float s = 0.0f; for (int ch = 0; ch < chans; ++ch) s += buf.getSample (ch, i); return s; };
+        channel = juce::jlimit (0, buf.getNumChannels() - 1, channel);
+        auto mono = [&] (int i) { return buf.getSample (channel, i); };
         auto crosses = [&] (int i) { return i > 0 && i < n
             && ((mono (i - 1) <= 0.0f && mono (i) > 0.0f)
              || (mono (i - 1) >= 0.0f && mono (i) < 0.0f)); };

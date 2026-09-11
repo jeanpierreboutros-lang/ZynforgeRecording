@@ -15,6 +15,7 @@
 // report; onDeviceClicked launches the audio-device dialog).
 
 #include "MainComponent.h"
+#include "../Audio/TrackFileTransaction.h"
 #include "../Theme/DialogChrome.h"
 #include "../Audio/TimelineExport.h"
 #include "NewSessionDialog.h"
@@ -95,7 +96,11 @@ bool ensureSessionScaffold (const juce::File& dest)
 
 int MainComponent::openSessionFolder (const juce::File& dir)
 {
+    if (engine.isRecording() || captureSupervisor.isDaemonRecording())
+    { showStatus ("Stop recording before switching sessions"); return -1; }
     if (! dir.isDirectory()) return 0;
+    if (! zynforge::TrackFileTransaction::recover (dir))
+    { showStatus ("Session has an incomplete file move; recovery files were retained in Session File Backups"); return -1; }
 
     // Condemn the current strips before loading -- a smaller session shrinks
     // the recorder vector and frees TrackStates the live strips still point at.
@@ -116,6 +121,24 @@ int MainComponent::openSessionFolder (const juce::File& dir)
     // clips; loading them first caused the seed to erase the restored edits.
     loadSetlistFromActiveSession();
     loadUILayoutFromActiveSession();
+    const auto projectSettings = juce::JSON::parse (findSessionProj (dir));
+    if ((double) projectSettings["sampleRate"] > 0.0)
+        pendingSampleRate = (double) projectSettings["sampleRate"];
+    const auto settings = juce::JSON::parse (dir.getChildFile ("session_settings.json"));
+    if (auto* s = settings.getDynamicObject())
+    {
+        if (s->hasProperty ("captureFormat"))
+            engine.getRecorder().setCaptureFormat ((CaptureFormat) juce::jlimit (0, (int) CaptureFormat::Flac24,
+                                                                                 (int) s->getProperty ("captureFormat")));
+        if (s->hasProperty ("preRollSeconds"))
+            engine.getRecorder().setPreRollSeconds (juce::jlimit (0, 30, (int) s->getProperty ("preRollSeconds")));
+        if (s->hasProperty ("loopStart") && s->hasProperty ("loopEnd"))
+            engine.getPlayer().setLoopRegion ((juce::int64) s->getProperty ("loopStart"),
+                                             (juce::int64) s->getProperty ("loopEnd"));
+        if (s->hasProperty ("sampleRate")) pendingSampleRate = (double) s->getProperty ("sampleRate");
+    }
+    if (engine.getPlayer().isLoaded()) pendingSampleRate = engine.getPlayer().getSampleRate();
+    engine.setSessionSampleRate (pendingSampleRate);
     // The click strip's index is SESSION-scoped. Reset it and re-detect from
     // the just-loaded session, so a stale index carried over from a previous
     // session can never deleteFile()/overwrite THIS session's Track_NN.wav on
@@ -149,6 +172,8 @@ int MainComponent::openSessionFolder (const juce::File& dir)
 
 bool MainComponent::openSessionDocument (const juce::File& document, bool confirmBeforeReplacing)
 {
+    if (engine.isRecording() || captureSupervisor.isDaemonRecording())
+    { showStatus ("Stop recording before opening another session"); return false; }
     if (sessionIoBusy.load())
     {
         showStatus ("Wait for the session file operation to finish");
@@ -169,6 +194,7 @@ bool MainComponent::openSessionDocument (const juce::File& document, bool confir
     }
     explicitDocumentOpened = true;
     const int n = openSessionFolder (dir);
+    if (n < 0) return false;
     showStatus (n > 0 ? "Loaded: " + dir.getFileName()
                       : "Opened empty session: " + dir.getFileName());
     return true;
@@ -176,6 +202,8 @@ bool MainComponent::openSessionDocument (const juce::File& document, bool confir
 
 void MainComponent::confirmSessionReplacement (std::function<void()> continuation)
 {
+    if (engine.isRecording() || captureSupervisor.isDaemonRecording())
+    { showStatus ("Stop recording before replacing the session"); return; }
     const auto dir = engine.getActiveSessionDir();
     if (! dir.isDirectory()) { continuation(); return; }
 
@@ -193,6 +221,8 @@ void MainComponent::confirmSessionReplacement (std::function<void()> continuatio
         {
             std::unique_ptr<juce::AlertWindow> dispose (aw);
             if (self == nullptr || result == 0) return;
+            if (self->engine.isRecording() || self->sessionIoBusy.load())
+            { self->showStatus ("Session switch cancelled: recording or file operation in progress"); return; }
             if (result == 1 && ! self->saveSessionStateTo (dir))
             {
                 self->showStatus ("Session switch cancelled -- current session could not be saved");
@@ -273,6 +303,7 @@ bool MainComponent::saveSessionStateTo (const juce::File& dir)
     juce::DynamicObject::Ptr root (new juce::DynamicObject());
     root->setProperty ("captureFormat",  (int) recorder.getCaptureFormat());
     root->setProperty ("preRollSeconds", recorder.getPreRollSeconds());
+    root->setProperty ("sampleRate", player.isLoaded() ? player.getSampleRate() : pendingSampleRate);
 
     if (player.hasLoopRegion())
     {
@@ -319,6 +350,7 @@ bool MainComponent::saveSessionStateTo (const juce::File& dir)
 
 void MainComponent::serviceAutosave()
 {
+    if (sessionIoBusy.load()) return;
     auto* props = engine.getAppProps();
     if (props == nullptr) return;
 
@@ -778,6 +810,8 @@ void MainComponent::onImportAudioFiles()
         // speed with no warning. Convert on the way in instead.
         const double targetSr = [this]
         {
+            if (engine.getPlayer().isLoaded() && engine.getPlayer().getSampleRate() > 0.0)
+                return engine.getPlayer().getSampleRate();
             if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())
                 if (d->getCurrentSampleRate() > 0.0) return d->getCurrentSampleRate();
             return pendingSampleRate > 0.0 ? pendingSampleRate : 48000.0;
@@ -934,7 +968,9 @@ void MainComponent::onImportAudioFiles()
         // re-iterate logical strips (collapse stereo pairs into one).
         lastTrackCount = -1;
 
-        const int loaded = engine.loadSession (sessionDir);
+        const auto savedEdits = engine.playlistsToJson();
+        const int loaded = engine.loadSession (sessionDir, true);
+        engine.loadPlaylistsFromJson (savedEdits);
 
         // Persist the mixer state NOW -- otherwise the stereo-pair flags
         // (and names / routing) set above are RAM-only, and reopening the
@@ -958,6 +994,8 @@ void MainComponent::onImportAudioFiles()
 
 void MainComponent::onSaveSessionAs()
 {
+    if (engine.isRecording() || captureSupervisor.isDaemonRecording())
+    { showStatus ("Stop recording before Save As"); return; }
     if (sessionIoBusy.exchange (true))
     {
         showStatus ("Another session file operation is already running");

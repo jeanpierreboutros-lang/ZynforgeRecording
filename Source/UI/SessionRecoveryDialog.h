@@ -52,7 +52,9 @@ namespace zynforge
                 // index, so counting them inflated a split session's track count
                 // (a 4-track session split into 2 parts each read as "8 tracks").
                 int takes = 0;
-                for (const auto& f : d.findChildFiles (juce::File::findFiles, false,
+                const auto audio = d.getChildFile ("Audio Files").isDirectory()
+                                     ? d.getChildFile ("Audio Files") : d;
+                for (const auto& f : audio.findChildFiles (juce::File::findFiles, false,
                                         "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff"))
                     if (! f.getFileNameWithoutExtension().containsIgnoreCase ("_part"))
                         ++takes;

@@ -9,6 +9,7 @@
 #include <thread>
 #include <mutex>
 #include <atomic>
+#include <filesystem>
 
 #if JUCE_MAC
  #include <pthread/qos.h>
@@ -387,7 +388,8 @@ namespace zynforge
             // the engineer can gain-stage WITHOUT having to arm the
             // strip first. Pre-roll history + ring buffer push are
             // still arm-gated below.
-            const bool armed   = t.armed  .load (std::memory_order_relaxed);
+            const bool armed   = rec ? captureArms[(size_t) ch]
+                                     : t.armed.load (std::memory_order_relaxed);
             const bool monitor = t.monitor.load (std::memory_order_relaxed);
 
             // RIGHT half of a stereo pair whose LEFT is armed: this channel
@@ -402,7 +404,8 @@ namespace zynforge
             {
                 const auto& lft = *tracks[(std::size_t) (ch - 1)];
                 pairArmed = lft.isStereo.load (std::memory_order_relaxed)
-                         && lft.armed   .load (std::memory_order_relaxed)
+                         && (rec ? captureArms[(size_t) ch - 1]
+                                 : lft.armed.load (std::memory_order_relaxed))
                          && ! lft.isBus .load (std::memory_order_relaxed);
             }
 
@@ -502,7 +505,7 @@ namespace zynforge
             // armed bus (e.g. armed over OSC/MCU) would feed an undrained FIFO
             // that overflows into a false "samples dropped" alarm.
             if (rec && ! t.isBus.load (std::memory_order_relaxed)
-                    && (t.armed.load (std::memory_order_relaxed) || pairArmed))
+                    && (armed || pairArmed))
             {
                 // Live waveform overview: bin the captured input into min/max
                 // pairs so the EDIT lane draws the detailed waveform AS it
@@ -595,6 +598,15 @@ namespace zynforge
         const juce::ScopedLock structureGuard (structureLock);
         if (recording.load()) return false;
         if (tracks.empty())   return false;
+
+        // Reject collisions before opening ANY primary writer. The legacy
+        // backup uses <root>/<session name>, exactly like an N-way mirror.
+        if (backupDir != juce::File()
+            && mirrorRootRejection (backupDir, sessionDir, {}, {}).isNotEmpty())
+            return false;
+        captureArms.clear();
+        for (const auto& track : tracks)
+            captureArms.push_back (track->armed.load (std::memory_order_relaxed));
 
         // A recorder must never report a live take it isn't actually writing:
         // if the session folder can't be created (read-only / unmounted volume,
@@ -1047,11 +1059,21 @@ namespace zynforge
     }
 
     juce::String MultitrackRecorder::mirrorRootRejection (
-        const juce::File& root,
-        const juce::File& sessionDir,
-        const juce::File& backupRoot,
+        const juce::File& requestedRoot,
+        const juce::File& requestedSession,
+        const juce::File& requestedBackup,
         const std::vector<juce::File>& alreadyAccepted)
     {
+        const auto canonical = [] (const juce::File& f)
+        {
+            if (f == juce::File()) return f;
+            std::error_code error;
+            const auto path = std::filesystem::weakly_canonical (f.getFullPathName().toStdString(), error);
+            return error ? f : juce::File (juce::String (path.string()));
+        };
+        const auto root = canonical (requestedRoot);
+        const auto sessionDir = canonical (requestedSession);
+        const auto backupRoot = canonical (requestedBackup);
         if (root == juce::File()) return "No folder chosen";
 
         // A mirror writes root/<sessionName>/Audio Files/. The primary writes
@@ -1074,7 +1096,7 @@ namespace zynforge
             return "That is already the backup destination";
 
         for (const auto& other : alreadyAccepted)
-            if (root == other)
+            if (root == canonical (other))
                 return "Another mirror already writes to that folder";
 
         return {};

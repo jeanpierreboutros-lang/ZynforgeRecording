@@ -34,6 +34,54 @@ namespace zynforge
         {
             using namespace zynforge::capture;
 
+            beginTest ("Configured input routing and repeat recording preserve previous takes");
+            {
+                CaptureDaemon daemon; daemon.setTestModeNoDevice (true);
+                bool listening = false;
+                for (int port : { 49730, 49731, 49732 })
+                    if (daemon.start (port, 2)) { listening = true; break; }
+                expect (listening);
+                if (! listening) return;
+                daemon.prepareForTests (48000, 256, 2);
+                CaptureClient client; expect (client.connect ("127.0.0.1", daemon.getPort()));
+                expect (client.hello (2000).ok);
+                Command config; config.action = Action::ConfigureCapture;
+                config.configuration = juce::JSON::parse (R"({"sampleRate":48000,"preRoll":0,"backup":"","backupFormat":1,"tracks":[{"input":1,"armed":true,"stereo":false,"bus":false,"name":"Routed input"},{"input":0,"armed":false,"stereo":false,"bus":false}],"mirrors":[]})");
+                expect (client.request (config, 2000).ok);
+                const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getChildFile ("zf-daemon-repeat-" + juce::Uuid().toString());
+                juce::AudioBuffer<float> input (2, 256);
+                juce::FloatVectorOperations::fill (input.getWritePointer (0), 0.1f, 256);
+                juce::FloatVectorOperations::fill (input.getWritePointer (1), 0.6f, 256);
+                const float* inputs[] { input.getReadPointer (0), input.getReadPointer (1) };
+                for (int take = 0; take < 2; ++take)
+                {
+                    Command start; start.action = Action::StartRecording; start.sessionDir = dir.getFullPathName();
+                    expect (client.request (start, 3000).ok);
+                    Command arm; arm.action = Action::ArmTrack; arm.trackIndex = 0; arm.boolValue = false;
+                    expect (client.send (arm));
+                    daemon.audioDeviceIOCallbackWithContext (inputs, 2, nullptr, 0, 256, {});
+                    Command stop; stop.action = Action::StopRecording;
+                    expect (client.request (stop, 5000).ok);
+                    expect (daemon.getRecorder().getTrack (0).armed.load(), "mid-take arm change must be refused");
+                }
+                const auto audio = dir.getChildFile ("Audio Files");
+                juce::AudioFormatManager fm; fm.registerBasicFormats();
+                for (auto* name : { "Track_01.wav", "Track_01_part02.wav" })
+                {
+                    std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (audio.getChildFile (name)));
+                    expect (reader != nullptr);
+                    if (reader)
+                    {
+                        expectEquals (reader->lengthInSamples, (juce::int64) 256);
+                        juce::AudioBuffer<float> sample (1, 1); reader->read (&sample, 0, 1, 0, true, false);
+                        expectWithinAbsoluteError (sample.getSample (0, 0), 0.6f, 0.001f);
+                    }
+                }
+                expect (! audio.getChildFile ("Track_02.wav").existsAsFile());
+                client.disconnect(); daemon.stop(); dir.deleteRecursively();
+            }
+
             auto sessionDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
                                   .getChildFile ("zf-daemon-" + juce::Uuid().toString());
 

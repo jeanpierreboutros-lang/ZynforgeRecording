@@ -272,8 +272,8 @@ namespace zynforge
             soloButton.setTooltip ("S -- solo the track; other unmuted tracks drop out (yellow when on)");
             armButton .onClick = [this]
             {
-                engine.getRecorder().getTrack (index).armed.store (armButton.getToggleState());
-                if (stereo) engine.getRecorder().getTrack (index + 1).armed.store (armButton.getToggleState());
+                engine.setTrackArmed (index, armButton.getToggleState());
+                armButton.setToggleState (engine.getRecorder().getTrack (index).armed.load(), juce::dontSendNotification);
             };
             monButton.onClick = [this]
             {

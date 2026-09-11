@@ -10,6 +10,7 @@
 // colourSelectedStrips, physicalFromLogicalIdx, moveSelectedStrips,
 // showBatchRenameDialog, showBatchColourDialog.
 
+
 #include "MainComponent.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
@@ -20,6 +21,36 @@
 #include "../Audio/ChannelCsv.h"
 
 using namespace zynforge;
+
+void MainComponent::moveSelectedStrips (int delta)
+{
+    if (selectedLogical.empty() || engine.isRecording() || sessionIoBusy.load()) return;
+    std::vector<std::vector<int>> blocks;
+    auto& rec = engine.getRecorder();
+    for (int p = 0; p < rec.getNumTracks();)
+    {
+        const int width = rec.getTrack (p).isStereo.load() && p + 1 < rec.getNumTracks() ? 2 : 1;
+        std::vector<int> block;
+        for (int k = 0; k < width; ++k) block.push_back (p + k);
+        blocks.push_back (std::move (block)); p += width;
+    }
+    std::vector<int> selected (selectedLogical.begin(), selectedLogical.end());
+    if (delta > 0) std::reverse (selected.begin(), selected.end());
+    std::set<int> next;
+    for (int i : selected)
+    {
+        const int target = i + delta;
+        if (i < 0 || i >= (int) blocks.size()) continue;
+        if (target < 0 || target >= (int) blocks.size()) { next.insert (i); continue; }
+        std::swap (blocks[(size_t) i], blocks[(size_t) target]); next.insert (target);
+    }
+    std::vector<int> order;
+    for (const auto& block : blocks) order.insert (order.end(), block.begin(), block.end());
+    if (engine.reorderTracks (order))
+    { selectedLogical = std::move (next); showStatus ("Moved selected strips"); }
+    else showStatus ("Move failed; check disk permissions and Session File Backups before retrying");
+    lastTrackCount = -1;
+}
 
 namespace
 {
@@ -333,46 +364,21 @@ void MainComponent::condemnAllStrips()
 
 void MainComponent::deleteSelectedStrips()
 {
-    if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
-    if (selectedLogical.empty() || engine.isRecording()) return;
-
-    // removeStripAt frees TrackStates + shifts indices as it goes; condemn all
-    // strips first (the single-delete path does the same via invalidate()).
-    condemnAllStrips();
-
-    // Delete from the highest index down so earlier indices stay valid.
-    std::vector<int> sorted (selectedLogical.begin(), selectedLogical.end());
-    std::sort (sorted.rbegin(), sorted.rend());
-
-    int removed = 0;
-    for (int logical : sorted)
+    if (sessionIoBusy.load() || engine.isRecording() || selectedLogical.empty()) return;
+    std::vector<int> order;
+    auto& rec = engine.getRecorder();
+    for (int p = 0, logical = 0; p < rec.getNumTracks(); ++logical)
     {
-        if (logical < 0 || logical >= (int) strips.size()) continue;
-        // The strip's deleteCb already knows how to remove the right
-        // number of underlying tracks (1 for mono, 2 for stereo). We
-        // simulate that by walking through the engine's index map.
-        // Since the strip list rebuilds on the next tick, we just call
-        // engine.removeStripAt for each logical entry -- for stereo
-        // pairs we call it twice at the same physical index because
-        // the second physical track shifts down.
-        // To find the physical index of a logical row, sum mono+stereo
-        // strip widths up to that point.
-        int phys = 0;
-        for (int k = 0; k < logical; ++k)
-        {
-            auto& t = engine.getRecorder().getTrack (phys);
-            phys += t.isStereo.load (std::memory_order_relaxed) ? 2 : 1;
-        }
-        if (phys >= engine.getRecorder().getNumTracks()) continue;
-        const bool wasStereo = engine.getRecorder().getTrack (phys)
-                                    .isStereo.load (std::memory_order_relaxed);
-        engine.removeStripAt (phys);
-        if (wasStereo) engine.removeStripAt (phys);
-        ++removed;
+        const int width = rec.getTrack (p).isStereo.load() && p + 1 < rec.getNumTracks() ? 2 : 1;
+        if (selectedLogical.count (logical) == 0)
+            for (int k = 0; k < width; ++k) order.push_back (p + k);
+        p += width;
     }
-    selectedLogical.clear();
-    lastTrackCount = -1;
-    showStatus ("Deleted " + juce::String (removed) + " selected strip(s)");
+    condemnAllStrips();
+    const bool ok = engine.reorderTracks (order);
+    selectedLogical.clear(); lastTrackCount = -1;
+    showStatus (ok ? "Strips removed; recorded audio retained in Removed Tracks"
+                   : "Could not remove strips; check disk permissions and Session File Backups");
 }
 
 void MainComponent::colourSelectedStrips()
@@ -419,54 +425,6 @@ void MainComponent::colourSelectedStrips()
 // keep the existing UI call sites working.
 int MainComponent::physicalFromLogicalIdx (int logical)  { return engine.physicalFromLogical (logical); }
 int MainComponent::logicalFromPhysicalIdx (int physical) { return engine.logicalFromPhysical (physical); }
-
-void MainComponent::moveSelectedStrips (int delta)
-{
-    if (selectedLogical.empty() || engine.isRecording()) return;
-
-    recordUndoSnapshot ("Move selection");
-
-    // Order the move: up (delta < 0) sweeps low-to-high; down sweeps
-    // high-to-low -- so we never trample a target slot mid-sweep.
-    std::vector<int> sorted (selectedLogical.begin(), selectedLogical.end());
-    if (delta < 0) std::sort (sorted.begin(),  sorted.end());
-    else           std::sort (sorted.rbegin(), sorted.rend());
-
-    std::set<int> newSelection;
-    int moved = 0;
-    for (int logical : sorted)
-    {
-        const int target = logical + delta;
-        if (target < 0 || target >= (int) strips.size()) { newSelection.insert (logical); continue; }
-
-        const int physA = physicalFromLogicalIdx (logical);
-        const int physB = physicalFromLogicalIdx (target);
-
-        auto& rec = engine.getRecorder();
-        const bool stereoA = (physA < rec.getNumTracks())
-                              && rec.getTrack (physA).isStereo.load (std::memory_order_relaxed);
-        const bool stereoB = (physB < rec.getNumTracks())
-                              && rec.getTrack (physB).isStereo.load (std::memory_order_relaxed);
-
-        // Swap each physical-track pair. Mono-mono / stereo-stereo
-        // moves swap the matching halves; mono-stereo asymmetric
-        // pairs fall back to swapping only the first half and let
-        // the engineer adjust (rare in practice).
-        engine.swapTracks (physA, physB);
-        if (stereoA && stereoB
-            && physA + 1 < rec.getNumTracks()
-            && physB + 1 < rec.getNumTracks())
-        {
-            engine.swapTracks (physA + 1, physB + 1);
-        }
-        newSelection.insert (target);
-        ++moved;
-    }
-    selectedLogical = std::move (newSelection);
-    lastTrackCount = -1;
-    showStatus ("Moved " + juce::String (moved) + " strip(s) "
-                + (delta < 0 ? "up" : "down"));
-}
 
 void MainComponent::showBatchRenameDialog()
 {

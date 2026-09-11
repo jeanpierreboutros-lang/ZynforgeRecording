@@ -17,6 +17,27 @@ namespace zynforge
     {
         static constexpr int kFftSize = 1024;
 
+        // Copy identity/settings, never live meter/FIFO scratch. Call with the
+        // device callback detached; existing UI references remain valid.
+        void copySettingsFrom (const TrackState& other)
+        {
+            setNameThreadSafe (other.getNameThreadSafe()); stripId = other.stripId;
+            #define ZF_COPY_FIELD(field) field.store (other.field.load());
+            ZF_COPY_FIELD(armed) ZF_COPY_FIELD(monitor) ZF_COPY_FIELD(muted) ZF_COPY_FIELD(soloed)
+            ZF_COPY_FIELD(gainDb) ZF_COPY_FIELD(pan) ZF_COPY_FIELD(liveInputGainDb) ZF_COPY_FIELD(captureInputGainDb)
+            ZF_COPY_FIELD(outputMuted) ZF_COPY_FIELD(vcaGroup) ZF_COPY_FIELD(editGroup) ZF_COPY_FIELD(isBus)
+            ZF_COPY_FIELD(inputRouting) ZF_COPY_FIELD(outputRouting) ZF_COPY_FIELD(streamSend)
+            ZF_COPY_FIELD(isStereo) ZF_COPY_FIELD(colourARGB)
+            #undef ZF_COPY_FIELD
+            rampTargetGainDb.store (gainDb.load()); rampTargetPan.store (pan.load()); rampSamplesRemaining.store (0);
+            for (int i = 0; i < kNumSends; ++i)
+            {
+                sends[(size_t) i].targetBus.store (other.sends[(size_t) i].targetBus.load());
+                sends[(size_t) i].levelDb.store (other.sends[(size_t) i].levelDb.load());
+                sends[(size_t) i].postFader.store (other.sends[(size_t) i].postFader.load());
+            }
+        }
+
         std::atomic<float> peak    { 0.0f };
         std::atomic<float> rms     { 0.0f };
         std::atomic<bool>  clipped { false };
