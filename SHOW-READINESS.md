@@ -2,7 +2,7 @@
 
 ## Decision as of 2026-09-15
 
-The latest candidate is ready for exact-rig rehearsal; **not yet approved as the sole recorder for this show**. It fixes 39 additional confirmed audit issues. A fresh macOS-12 universal Release build passed 350 test groups on arm64 and x86_64, and the ASan+UBSan Debug build passed 350/0; Xcode analysis has no app-owned diagnostics and strict ad-hoc bundle verification passed. The candidate is not installed/committed/pushed, and no software result certifies physical hardware, clock stability, disk endurance or uninterrupted show-length capture. See [the current audit](AUDIT_REPORT_2026-09-15.md).
+The latest build is installed and ready for exact-rig rehearsal; **not yet approved as the sole recorder for this show**. It fixes 41 additional confirmed audit issues. Application code through `df5ad36` is pushed to `origin/main`; its macOS-12 universal Release passed 350 test groups on arm64 and x86_64, ASan+UBSan Debug passed 350/0, GitHub Debug/Release CI is green, Xcode analysis has no app-owned diagnostics, and the installed bundle passed strict ad-hoc verification plus its own 350/0 test run. No software result certifies physical hardware, clock stability, disk endurance or uninterrupted show-length capture. See [the current audit](AUDIT_REPORT_2026-09-15.md) and [installation record](INSTALL.md).
 
 ## Confirmed plan and open choices
 

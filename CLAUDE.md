@@ -18,7 +18,7 @@ JUCE 8 / C++20 / CMake, macOS-first (Universal) multitrack recording + playback 
 
 ## Documentation & References
 
-**Current candidate (2026-09-15):** 39 additional confirmed findings fixed. A fresh macOS-12 universal Release build passes 350 test groups on both arm64 and x86_64, the ASan+UBSan Debug build passes 350/0, and Xcode static analysis has no app-owned diagnostics; 27 invariant checks, the design audit and strict bundle verification are clean. The candidate is not installed/committed/pushed. Physical rig acceptance remains pending. Read [AUDIT_REPORT_2026-09-15.md](AUDIT_REPORT_2026-09-15.md), [INSTALL.md](INSTALL.md) and [SHOW-READINESS.md](SHOW-READINESS.md). Do not equate tests or older field-soak history with approval for the new SD5/56-input rig. Unchanged visual token specs remain authoritative; this remediation does not retheme the app.
+**Current build (2026-09-15):** 41 additional confirmed findings fixed. Application code through `df5ad36` is pushed and that exact macOS-12 universal Release is installed with the matching protocol-v2 helper. It passes 350 test groups on both arm64 and x86_64, ASan+UBSan Debug passes 350/0, Xcode static analysis has no app-owned diagnostics, and 27 invariant checks, the design audit, strict bundle verification and GitHub Debug/Release CI are clean. Physical rig acceptance remains pending. Read [AUDIT_REPORT_2026-09-15.md](AUDIT_REPORT_2026-09-15.md), [INSTALL.md](INSTALL.md) and [SHOW-READINESS.md](SHOW-READINESS.md). Do not equate tests or older field-soak history with approval for the new SD5/56-input rig. Unchanged visual token specs remain authoritative; this remediation does not retheme the app.
 
 ### September implementation invariants
 

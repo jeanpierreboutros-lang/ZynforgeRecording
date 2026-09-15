@@ -35,11 +35,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - The capture helper is embedded and the final local bundle is sealed after embedding, so deep/strict signature verification succeeds.
 - Guarded test preconditions that previously allowed a failed non-fatal expectation to become a null dereference; removed analyzer-confirmed dead code and narrowed the X32 route-setter closure while adding direct callback coverage.
 - Raised the deployment target to macOS 12.0 because Xcode 27 rejects macOS 11 projects, and moved all macOS toolchain settings before `project()` so clean builds really target their documented floor.
+- Replaced C++20 parenthesized aggregate initialization of JUCE scope guards with brace initialization so the supported Xcode 15.4 GitHub runner builds the same sources as Xcode 27.
+- Updated the CI action pins to the current Node 24 release lines while retaining immutable commit hashes, removing the hosted-runner Node 20 deprecation warning.
 
 ### Validation — 2026-09-15
 
 - A fresh macOS-12 universal Release build passes **350 test groups, 0 failures on arm64 and x86_64**; ASan+UBSan Debug passes 350/0. Xcode static analysis has no app-owned diagnostics. The 27-rule invariant audit and design audit are clean; deep/strict bundle verification passes.
-- The candidate is not installed, committed or pushed. Hardware/show acceptance and Developer ID notarization remain pending. Full evidence: [2026-09-15 audit report](AUDIT_REPORT_2026-09-15.md).
+- Application code through `df5ad36` is pushed to `origin/main`, [GitHub run 34986170067](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/34986170067) passed its clean Debug/Release matrix, and that exact signed bundle is installed at `/Applications/Zynforge Recording.app`; the previous app is preserved at `/Applications/Zynforge Recording.app.backup-20260915-before-df5ad36`. Hardware/show acceptance and Developer ID notarization remain pending. Full evidence: [2026-09-15 audit report](AUDIT_REPORT_2026-09-15.md).
 
 ### Fixed — recording and session integrity, 2026-09-12
 

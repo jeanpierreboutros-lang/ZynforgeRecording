@@ -49,11 +49,14 @@ If copying or verification fails, do not launch the partial installation. Preser
 - Installed bundle matched the signed stage; deep/strict signature verification passed. Launch was requested successfully; full hardware smoke testing remains pending.
 - Previous app: `/Applications/Zynforge Recording.app.backup-20260912-44a309e`.
 
-## Candidate record — 2026-09-15 (not installed)
+## Installation record — 2026-09-15
 
-- Fresh macOS-12 universal Release: 350 test groups, zero failures on arm64 and x86_64; ASan+UBSan Debug: 350/0.
-- Xcode static analysis has no app-owned diagnostics. The bundle and matching universal daemon pass deep/strict ad-hoc signature verification.
-- Commit/push and installation remain pending; do not confuse this candidate with the installed 2026-09-12 build.
+- Application code: `df5ad36`, pushed to `origin/main`. The later documentation/CI-pin commit does not change the installed executable.
+- Fresh macOS-12 universal Release: 350 test groups, zero failures on arm64 and x86_64; ASan+UBSan Debug: 350/0. [GitHub run 34986170067](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/34986170067) passed clean Debug and Release builds/tests plus helper verification.
+- Installed: `/Applications/Zynforge Recording.app`, with the matching protocol-v2 `ZynforgeCapture` helper. The installed bundle is byte-for-byte identical to the staged build; both executables are universal arm64+x86_64, require macOS 12.0, and pass deep/strict ad-hoc signature verification.
+- The installed binary itself passed 350 test groups / zero failures and launched to the native 48 kHz / 24-bit New Session screen without a crash report.
+- Previous app: `/Applications/Zynforge Recording.app.backup-20260915-before-df5ad36`.
+- Xcode static analysis has no app-owned diagnostics; 27 invariants and the design audit are clean.
 - Developer ID signing/notarization is not configured; Gatekeeper rejects this ad-hoc development bundle for distribution.
 
 ## Rollback

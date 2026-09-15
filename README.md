@@ -10,7 +10,7 @@ Active development, pre-1.0. Ships **multitrack recording**, **virtual-soundchec
 
 ## Build
 
-As of 2026-09-15, the latest audit candidate fixes 39 additional confirmed issues. Its fresh macOS-12 universal Release build passes **350 test groups, 0 failures on both arm64 and x86_64**, and its ASan+UBSan Debug build passes 350/0; Xcode static analysis has no app-owned diagnostics, while the 27-rule invariant gate, design audit and strict bundle-signature check are clean. The candidate is **not installed, committed or pushed**. It is ready for exact-rig rehearsal, not validated as the sole recorder for the planned show. Hardware, storage, clocking and a three-hour rehearsal remain acceptance gates; see [the current audit](AUDIT_REPORT_2026-09-15.md) and [Show readiness](SHOW-READINESS.md).
+As of 2026-09-15, the latest audit fixes **41 additional confirmed issues**. Application code through `df5ad36` is pushed to `origin/main`, and that exact macOS-12 universal Release is installed at `/Applications/Zynforge Recording.app` with its matching capture helper. It passes **350 test groups, 0 failures on both arm64 and x86_64**, ASan+UBSan Debug passes 350/0, Xcode static analysis has no app-owned diagnostics, and the 27-rule invariant gate, design audit, strict bundle-signature check and GitHub Debug/Release workflow are clean. It is ready for exact-rig rehearsal, not validated as the sole recorder for the planned show. Hardware, storage, clocking and a three-hour rehearsal remain acceptance gates; see [the current audit](AUDIT_REPORT_2026-09-15.md), [installation record](INSTALL.md) and [Show readiness](SHOW-READINESS.md).
 
 ```bash
 cmake -B build -G Xcode

@@ -2,9 +2,9 @@
 
 ## Outcome
 
-The audit found **39 confirmed issues: 0 critical, 12 high, 24 medium and 3 low**. All 39 were fixed in the current working tree and each fix is covered by a focused unit/integration test, an invariant gate, or a build/package verification gate. A fresh macOS-12 universal Release build passed **350 test groups with zero failures on arm64 and x86_64**, and the final ASan+UBSan Debug build passed 350/0. Xcode static analysis has no app-owned diagnostics. The 27-rule invariant audit and design audit are clean. A final native launch/render smoke test passed.
+The audit found **41 confirmed issues: 0 critical, 12 high, 26 medium and 3 low**. All 41 were fixed and each fix is covered by a focused unit/integration test, an invariant gate, or a build/package/CI verification gate. A fresh macOS-12 universal Release build passed **350 test groups with zero failures on arm64 and x86_64**, and the final ASan+UBSan Debug build passed 350/0. Xcode static analysis has no app-owned diagnostics. The 27-rule invariant audit and design audit are clean. GitHub's clean Debug/Release workflow and final native launch/render smoke test passed.
 
-This is a software-validation result, not show certification. The exact DiGiCo SD5 + RME HDSPe AoX-D + 56-input + 48 kHz rig, a continuous three-hour rehearsal, device/clock loss, real backup drives, VoiceOver navigation and notarized distribution were not available. The newly audited app has not been installed, committed or pushed.
+This is a software-validation result, not show certification. The exact DiGiCo SD5 + RME HDSPe AoX-D + 56-input + 48 kHz rig, a continuous three-hour rehearsal, device/clock loss, real backup drives, VoiceOver navigation and notarized distribution were not available. Application code through `df5ad36` is committed and pushed to `origin/main`; that exact bundle is installed at `/Applications/Zynforge Recording.app` with its matching helper and a recoverable prior-app backup.
 
 ## Expected behaviour established from the project
 
@@ -228,7 +228,7 @@ ZynForge Recording is a macOS live multitrack recorder and virtual-soundcheck pl
 - **Root cause:** only optimized tests ran; dependency/action references were mutable or weakly checked.
 - **Fix:** run Debug and Release, use exact paths, pin JUCE and GitHub actions to immutable commits, verify bundled helper/signature.
 - **Verification:** workflow review and local equivalent Debug/Release runs.
-- **Remaining:** GitHub-hosted CI was not triggered because the current worktree was not pushed.
+- **Remaining:** CI currently covers the hosted macOS-14/Xcode 15.4 environment; local Xcode 27 validation supplements it, but every intermediate Xcode release is not separately tested.
 
 ### M13 — Background exports could overlap session transitions
 
@@ -338,6 +338,24 @@ ZynForge Recording is a macOS live multitrack recorder and virtual-soundcheck pl
 - **Verification:** Xcode static analysis no longer reports the two null-call paths; complete Debug and Release suites pass.
 - **Remaining:** test helpers must continue to distinguish JUCE's non-fatal expectations from fatal assertions.
 
+### M25 — Scope-guard syntax failed on the supported CI compiler
+
+- **Affected:** `AtomicFile.h`, `AudioImport.cpp`, `ClickTrackRenderer.cpp`; macOS-14/Xcode 15.4 CI.
+- **Reproduce; expected/actual:** push the locally clean Xcode 27 build to GitHub. Expected the supported CI compiler to build it; Xcode 15.4 stopped at all three `juce::ScopeGuard(...)` sites with “no matching constructor”.
+- **Root cause:** parenthesized aggregate initialization accepted by the newer local compiler was not accepted by the older supported runner compiler.
+- **Fix:** use standard brace aggregate initialization at every scope-guard site.
+- **Verification:** the universal Release rebuild and both architecture test runs remained 350/0; [GitHub run 34986170067](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/34986170067) passed clean Debug and Release builds/tests on Xcode 15.4.
+- **Remaining:** compiler coverage is Xcode 15.4 and 27, not every intermediate Xcode release.
+
+### M26 — CI action runtimes were deprecated
+
+- **Affected:** `.github/workflows/ci.yml`.
+- **Reproduce; expected/actual:** inspect the otherwise-green GitHub workflow annotations. Expected a warning-free supported runner configuration; checkout, cache and artifact-upload v4 pins targeted deprecated Node 20 and were being force-run on Node 24.
+- **Root cause:** immutable action pins were secure against tag movement but had not advanced with the actions' supported runtime lines.
+- **Fix:** resolve the current official releases and pin checkout v7.0.1, cache v6.1.0 and upload-artifact v7.0.1 to their exact commits.
+- **Verification:** the final GitHub workflow rerun passes its gates, clean Debug/Release builds and tests, helper/signature verification and artifact upload without the Node 20 annotation.
+- **Remaining:** pinned action releases still require deliberate periodic review; Dependabot is not configured for Actions updates.
+
 ## Low findings
 
 ### L1 — Zero persisted through an ambiguous null-like overload
@@ -381,10 +399,11 @@ ZynForge Recording is a macOS live multitrack recorder and virtual-soundcheck pl
 - Native smoke: the final universal app launched, stayed alive, and New Session rendered correctly with 48 kHz selected; no fresh crash report appeared. The computer-control accessibility service failed to start, so deeper automated native clicks were unavailable.
 - Source/repository scans: no production direct persistent `replaceWithText`, no remaining `jassertfalse`, no TODO/FIXME/HACK markers, no tracked common-format private keys/tokens, and risky process/network/thread/file paths were reviewed.
 - CI's three action pins were resolved against their exact upstream GitHub commits; `git diff --check` is clean.
+- [GitHub run 34986170067](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/34986170067) passed clean Debug and Release builds/tests plus bundled-helper verification on macOS-14/Xcode 15.4.
+- The installed bundle is byte-for-byte identical to the verified local build; its main/helper hashes match, both binaries are universal with a macOS 12.0 minimum, deep/strict signature verification passes, the installed executable passes 350/0, and its native New Session UI launched without a new crash report.
 
 ## Checks not completed
 
-- Git commit/push: not requested in this audit turn. No source-control or remote claims are made for this worktree.
 - Static/security scanners `clang-tidy`, `cppcheck`, `semgrep`, `scan-build` and `osv-scanner`: not installed.
 - LeakSanitizer: unsupported by the platform runtime; ASan and UBSan were used.
 - Developer ID signing, notarization and Gatekeeper distribution acceptance: no certificate/profile was supplied. The bundle is validly ad-hoc signed only and `spctl` rejects it.
@@ -392,4 +411,4 @@ ZynForge Recording is a macOS live multitrack recorder and virtual-soundcheck pl
 
 ## Show decision
 
-The candidate is suitable for the **exact-rig rehearsal**, not yet suitable as the only recorder at a show. For 56 mono channels at 48 kHz/24-bit, raw audio is approximately **58.06 GB for two hours per destination**; plan at least 70 GB usable headroom per primary/backup destination for the show, and the project’s safer recommendation remains 150 GB free per drive for a three-hour acceptance rehearsal plus soundcheck/overrun. Follow [SHOW-READINESS.md](SHOW-READINESS.md) and retain a genuinely independent recorder.
+The installed build is suitable for the **exact-rig rehearsal**, not yet suitable as the only recorder at a show. For 56 mono channels at 48 kHz/24-bit, raw audio is approximately **58.06 GB for two hours per destination**; plan at least 70 GB usable headroom per primary/backup destination for the show, and the project’s safer recommendation remains 150 GB free per drive for a three-hour acceptance rehearsal plus soundcheck/overrun. Follow [SHOW-READINESS.md](SHOW-READINESS.md) and retain a genuinely independent recorder.

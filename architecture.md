@@ -8,7 +8,7 @@ It is **not** a mixer or DAW. No plugins, no effects, no talkback. Architectural
 
 ## 2. Technology Stack
 
-Current candidate validation (2026-09-15): a fresh macOS-12 universal Release build passes 350 test groups / zero failures on arm64 and x86_64; the ASan+UBSan Debug build passes 350/0, Xcode static analysis has no app-owned diagnostics, and 27 invariants plus strict ad-hoc bundle verification are clean. Installation and physical hardware acceptance remain separate and pending; see [AUDIT_REPORT_2026-09-15.md](AUDIT_REPORT_2026-09-15.md), [testing.md](testing.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
+Current validation (2026-09-15): application code through `df5ad36` is pushed and installed with its protocol-v2 helper. A fresh macOS-12 universal Release passes 350 test groups / zero failures on arm64 and x86_64; ASan+UBSan Debug passes 350/0, GitHub Debug/Release CI is green, Xcode static analysis has no app-owned diagnostics, and 27 invariants plus strict ad-hoc bundle verification are clean. Physical hardware acceptance remains separate and pending; see [AUDIT_REPORT_2026-09-15.md](AUDIT_REPORT_2026-09-15.md), [testing.md](testing.md), [INSTALL.md](INSTALL.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
 
 | Component | Version / Notes |
 |---|---|

@@ -17,10 +17,10 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ### Show acceptance — current as of 2026-09-15
 
-- [x] Fix all 39 findings from the 2026-09-15 audit; pass 350 test groups on both slices of a fresh macOS-12 universal Release build and in ASan+UBSan Debug; pass Xcode analysis with no app-owned diagnostics, 27 invariants, design audit and strict bundle verification. See [AUDIT_REPORT_2026-09-15.md](AUDIT_REPORT_2026-09-15.md).
+- [x] Fix all 41 findings from the 2026-09-15 audit; pass 350 test groups on both slices of a fresh macOS-12 universal Release build and in ASan+UBSan Debug; pass Xcode analysis with no app-owned diagnostics, 27 invariants, design audit, strict bundle verification and GitHub Debug/Release CI. See [AUDIT_REPORT_2026-09-15.md](AUDIT_REPORT_2026-09-15.md).
 - [x] Accept the local Xcode 27 license and verify the universal arm64+x86_64 build, both architecture test runs, static analyzer, deployment load commands and final diff.
-- [ ] Review, commit/push and install the 2026-09-15 candidate with matching protocol-v2 daemon and rollback backup. The installed 2026-09-12 build remains unchanged. See [INSTALL.md](INSTALL.md).
-- [x] Update current documentation, operating guidance and validation limits for the candidate.
+- [x] Review, commit/push and install application code `df5ad36` with the matching protocol-v2 daemon; preserve the former app at `/Applications/Zynforge Recording.app.backup-20260915-before-df5ad36`; verify exact-copy hashes/signature, installed 350/0 tests and native launch. See [INSTALL.md](INSTALL.md).
+- [x] Update current documentation, operating guidance, deployment record and validation limits for the installed build.
 - [ ] User to select MADI/Dante path, Mac/chassis, primary/backup storage and independent recorder. Confirmed: SD5, RME HDSPe AoX-D, 56 inputs, 48 kHz, approximately two hours.
 - [ ] Perform the exact-rig three-hour acceptance rehearsal and inspect all primary/backup recordings. See [SHOW-READINESS.md](SHOW-READINESS.md). No show sign-off yet.
 - [ ] Complete native UI, device-loss and crash/reattachment checks on disposable sessions.
