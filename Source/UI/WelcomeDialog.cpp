@@ -384,16 +384,18 @@ namespace zynforge
             {
                 folderChooser = std::make_unique<juce::FileChooser>
                     ("Choose session storage location", storageDir);
+                juce::Component::SafePointer<NewPanel> self (this);
                 folderChooser->launchAsync (
                     juce::FileBrowserComponent::canSelectDirectories
                     | juce::FileBrowserComponent::openMode,
-                    [this] (const juce::FileChooser& fc)
+                    [self] (const juce::FileChooser& fc)
                     {
+                        if (self == nullptr) return;
                         const auto chosen = fc.getResult();
                         if (chosen.isDirectory())
                         {
-                            storageDir = chosen;
-                            pathButton.setButtonText (compactPath (storageDir));
+                            self->storageDir = chosen;
+                            self->pathButton.setButtonText (compactPath (self->storageDir));
                         }
                     });
             }
@@ -478,14 +480,16 @@ namespace zynforge
             {
                 folderChooser = std::make_unique<juce::FileChooser>
                     ("Open Zynforge session", defaultDir);
+                juce::Component::SafePointer<OpenPanel> self (this);
                 folderChooser->launchAsync (
                     juce::FileBrowserComponent::canSelectDirectories
                     | juce::FileBrowserComponent::openMode,
-                    [this] (const juce::FileChooser& fc)
+                    [self] (const juce::FileChooser& fc)
                     {
+                        if (self == nullptr) return;
                         const auto chosen = fc.getResult();
-                        if (chosen.isDirectory() && chooseCallback)
-                            chooseCallback (chosen);
+                        if (chosen.isDirectory() && self->chooseCallback)
+                            self->chooseCallback (chosen);
                     });
             }
 

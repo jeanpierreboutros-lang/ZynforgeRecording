@@ -10,7 +10,7 @@ This procedure installs a locally built macOS app; it does not create a notarize
 
 ## Package both executables
 
-The build produces the GUI bundle and a separate `build/ZynforgeCapture_artefacts/Release/ZynforgeCapture`. `CaptureSupervisor` can discover that sibling in the build tree. The installed layout instead requires:
+The build produces the GUI bundle and a separate `ZynforgeCapture` artefact, then automatically embeds the matching helper and seals the local app after the copy. The installed layout requires:
 
 ```text
 Zynforge Recording.app/Contents/MacOS/
@@ -18,14 +18,13 @@ Zynforge Recording.app/Contents/MacOS/
   ZynforgeCapture
 ```
 
-Capture protocol version 2 requires matching builds. After a successful build/test run, stage the bundle in a temporary directory:
+Capture protocol version 2 requires matching builds. After a successful build/test run, first verify that the built bundle already contains and seals both executables, then stage it in a temporary directory:
 
 ```bash
 install_stage=$(mktemp -d /private/tmp/zynforge-install.XXXXXX)
+test -x "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app/Contents/MacOS/ZynforgeCapture"
+codesign --verify --deep --strict "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
 ditto "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app" "$install_stage/Zynforge Recording.app"
-ditto "build/ZynforgeCapture_artefacts/Release/ZynforgeCapture" "$install_stage/Zynforge Recording.app/Contents/MacOS/ZynforgeCapture"
-codesign --force --sign - "$install_stage/Zynforge Recording.app/Contents/MacOS/ZynforgeCapture"
-codesign --force --sign - --preserve-metadata=entitlements "$install_stage/Zynforge Recording.app"
 codesign --verify --deep --strict "$install_stage/Zynforge Recording.app"
 ```
 
@@ -49,6 +48,13 @@ If copying or verification fails, do not launch the partial installation. Preser
 - Installed: `/Applications/Zynforge Recording.app`, with matching daemon.
 - Installed bundle matched the signed stage; deep/strict signature verification passed. Launch was requested successfully; full hardware smoke testing remains pending.
 - Previous app: `/Applications/Zynforge Recording.app.backup-20260912-44a309e`.
+
+## Candidate record — 2026-09-15 (not installed)
+
+- Fresh macOS-12 universal Release: 350 test groups, zero failures on arm64 and x86_64; ASan+UBSan Debug: 350/0.
+- Xcode static analysis has no app-owned diagnostics. The bundle and matching universal daemon pass deep/strict ad-hoc signature verification.
+- Commit/push and installation remain pending; do not confuse this candidate with the installed 2026-09-12 build.
+- Developer ID signing/notarization is not configured; Gatekeeper rejects this ad-hoc development bundle for distribution.
 
 ## Rollback
 

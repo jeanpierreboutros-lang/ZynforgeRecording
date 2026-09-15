@@ -27,10 +27,19 @@ namespace zynforge::timelineexport
         return juce::String::formatted ("%02d:%02d:%02d:%02d", hh, mm, ss, ff);
     }
 
-    // RFC-4180-ish field: wrap in quotes, double any internal quote.
+    // RFC-4180-ish field: wrap in quotes, double any internal quote. Also
+    // neutralise spreadsheet formulas. Track/cue names may originate on a
+    // networked console; opening an export in Excel/Numbers must not execute a
+    // value beginning with =, +, -, @, tab, CR or LF as a formula/directive.
     inline juce::String csvField (const juce::String& s)
     {
-        return "\"" + s.replace ("\"", "\"\"") + "\"";
+        auto safe = s;
+        if (safe.isNotEmpty()
+            && (safe[0] == '=' || safe[0] == '+' || safe[0] == '-'
+                || safe[0] == '@' || safe[0] == '\t'
+                || safe[0] == '\r' || safe[0] == '\n'))
+            safe = "'" + safe;
+        return "\"" + safe.replace ("\"", "\"\"") + "\"";
     }
 
     inline juce::String buildCsv (const juce::String& sessionName,

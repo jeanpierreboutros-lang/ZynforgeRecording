@@ -279,8 +279,10 @@ namespace
         {
             const auto cur = juce::Colour (engine.getRecorder().getTrack (idx)
                                               .colourARGB.load (std::memory_order_relaxed));
+            juce::Component::SafePointer<BatchColourTable> self (this);
             auto picker = std::make_unique<zynforge::StripColourPicker> (
-                cur, [this, idx] (juce::Colour c) { setRowColour (idx, c); });
+                cur, [self, idx] (juce::Colour c)
+                { if (self != nullptr) self->setRowColour (idx, c); });
             juce::CallOutBox::launchAsynchronously (std::move (picker),
                 rows[(size_t) idx]->swatch.getScreenBounds(), nullptr);
         }
@@ -291,10 +293,14 @@ namespace
             if (n == 0) return;
             const int first = juce::jlimit (1, n, fromEd.getText().getIntValue());
             const int last  = juce::jlimit (first, n, toEd.getText().getIntValue());
+            juce::Component::SafePointer<BatchColourTable> self (this);
             auto picker = std::make_unique<zynforge::StripColourPicker> (
                 brand::brandOrange,
-                [this, first, last] (juce::Colour c)
-                { for (int ch = first - 1; ch < last; ++ch) setRowColour (ch, c); });
+                [self, first, last] (juce::Colour c)
+                {
+                    if (self == nullptr) return;
+                    for (int ch = first - 1; ch < last; ++ch) self->setRowColour (ch, c);
+                });
             juce::CallOutBox::launchAsynchronously (std::move (picker),
                 rangeBtn.getScreenBounds(), nullptr);
         }
@@ -394,21 +400,23 @@ void MainComponent::colourSelectedStrips()
         current = strips[(size_t) first]->getResolvedColour();
 
     const std::set<int> sel = selectedLogical;   // snapshot for the callback
+    juce::Component::SafePointer<MainComponent> self (this);
     auto picker = std::make_unique<zynforge::StripColourPicker> (
         current,
-        [this, sel] (juce::Colour chosen)
+        [self, sel] (juce::Colour chosen)
         {
+            if (self == nullptr) return;
             for (int logical : sel)
             {
-                if (logical < 0 || logical >= (int) strips.size()) continue;
-                const int phys = physicalFromLogicalIdx (logical);
-                if (phys < 0 || phys >= engine.getRecorder().getNumTracks()) continue;
-                engine.setTrackColour (phys, chosen);
-                auto& t = engine.getRecorder().getTrack (phys);
+                if (logical < 0 || logical >= (int) self->strips.size()) continue;
+                const int phys = self->physicalFromLogicalIdx (logical);
+                if (phys < 0 || phys >= self->engine.getRecorder().getNumTracks()) continue;
+                self->engine.setTrackColour (phys, chosen);
+                auto& t = self->engine.getRecorder().getTrack (phys);
                 if (t.isStereo.load (std::memory_order_relaxed))
-                    engine.setTrackColour (phys + 1, chosen);
+                    self->engine.setTrackColour (phys + 1, chosen);
             }
-            lastTrackCount = -1;
+            self->lastTrackCount = -1;
         });
 
     juce::CallOutBox::launchAsynchronously (
@@ -444,16 +452,17 @@ void MainComponent::showBatchRenameDialog()
     aw->addButton ("Apply",  1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
+    juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true,
-        juce::ModalCallbackFunction::create ([this, aw, table] (int result)
+        juce::ModalCallbackFunction::create ([self, aw, table] (int result)
         {
             std::unique_ptr<juce::AlertWindow> disposeAw (aw);
             std::unique_ptr<RenameTable>       disposeTable (table);
-            if (result != 1) return;
+            if (result != 1 || self == nullptr) return;
 
-            table->applyTo (engine);
-            lastTrackCount = -1;   // force a strip rebuild so names refresh
-            showStatus ("Channel names updated");
+            table->applyTo (self->engine);
+            self->lastTrackCount = -1;   // force a strip rebuild so names refresh
+            self->showStatus ("Channel names updated");
         }),
         false);
 
@@ -485,27 +494,30 @@ void MainComponent::showBatchColourDialog()
                                       juce::MessageBoxIconType::NoIcon);
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome (not JUCE-default navy)
 
-    auto* table = new BatchColourTable (engine, [this] { lastTrackCount = -1; });
+    juce::Component::SafePointer<MainComponent> self (this);
+    auto* table = new BatchColourTable (engine, [self]
+    { if (self != nullptr) self->lastTrackCount = -1; });
     table->setSize (460, table->preferredHeight());
     aw->addCustomComponent (table);
     aw->addButton ("Done",   1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
     aw->enterModalState (true,
-        juce::ModalCallbackFunction::create ([this, aw, table, snapshot, total] (int result)
+        juce::ModalCallbackFunction::create ([self, aw, table, snapshot, total] (int result)
         {
             std::unique_ptr<juce::AlertWindow>     disposeAw (aw);
             std::unique_ptr<BatchColourTable>      disposeTable (table);
+            if (self == nullptr) return;
             if (result != 1)   // Cancel -> restore the snapshot
             {
                 for (int i = 0; i < total && i < (int) snapshot.size(); ++i)
-                    engine.setTrackColour (i, juce::Colour (snapshot[(size_t) i]));
-                lastTrackCount = -1;
-                showStatus ("Batch colour cancelled");
+                    self->engine.setTrackColour (i, juce::Colour (snapshot[(size_t) i]));
+                self->lastTrackCount = -1;
+                self->showStatus ("Batch colour cancelled");
                 return;
             }
-            lastTrackCount = -1;
-            showStatus ("Channel colours updated");
+            self->lastTrackCount = -1;
+            self->showStatus ("Channel colours updated");
         }),
         false);
 }
@@ -514,21 +526,23 @@ void MainComponent::importChannelNamesFromCsv()
 {
     chooser = std::make_unique<juce::FileChooser> (
         "Import channel names from CSV", getSessionsRoot(), "*.csv;*.txt");
+    juce::Component::SafePointer<MainComponent> self (this);
     chooser->launchAsync (juce::FileBrowserComponent::openMode
                           | juce::FileBrowserComponent::canSelectFiles,
-        [this] (const juce::FileChooser& fc)
+        [self] (const juce::FileChooser& fc)
         {
+            if (self == nullptr) return;
             const auto f = fc.getResult();
             if (! f.existsAsFile()) return;
             const auto names = zynforge::channelcsv::parseNames (f.loadFileAsString());
-            if (names.isEmpty()) { showStatus ("No channel names found in " + f.getFileName()); return; }
+            if (names.isEmpty()) { self->showStatus ("No channel names found in " + f.getFileName()); return; }
 
-            const int n = engine.getRecorder().getNumTracks();
+            const int n = self->engine.getRecorder().getNumTracks();
             int applied = 0;
             for (int i = 0; i < names.size() && i < n; ++i)
-            { engine.setTrackName (i, names[i]); ++applied; }
-            lastTrackCount = -1;
-            showStatus ("Imported " + juce::String (applied) + " channel name(s) from "
+            { self->engine.setTrackName (i, names[i]); ++applied; }
+            self->lastTrackCount = -1;
+            self->showStatus ("Imported " + juce::String (applied) + " channel name(s) from "
                         + f.getFileName()
                         + (names.size() > n ? "  (" + juce::String (names.size() - n)
                                               + " extra ignored)" : juce::String()));
@@ -542,45 +556,47 @@ void MainComponent::createSessionFromCsv()
 
     chooser = std::make_unique<juce::FileChooser> (
         "New session from CSV", getSessionsRoot(), "*.csv;*.txt");
+    juce::Component::SafePointer<MainComponent> self (this);
     chooser->launchAsync (juce::FileBrowserComponent::openMode
                           | juce::FileBrowserComponent::canSelectFiles,
-        [this] (const juce::FileChooser& fc)
+        [self] (const juce::FileChooser& fc)
         {
+            if (self == nullptr) return;
             const auto f = fc.getResult();
             if (! f.existsAsFile()) return;
             const auto names = zynforge::channelcsv::parseNames (f.loadFileAsString());
-            if (names.isEmpty()) { showStatus ("No channel names found in " + f.getFileName()); return; }
+            if (names.isEmpty()) { self->showStatus ("No channel names found in " + f.getFileName()); return; }
 
             zynforge::NewSessionDialog::Result r;
             r.name          = f.getFileNameWithoutExtension();
-            r.location      = getSessionsRoot();
-            r.captureFormat = engine.getRecorder().getCaptureFormat();
-            r.sampleRate    = pendingSampleRate;
+            r.location      = self->getSessionsRoot();
+            r.captureFormat = self->engine.getRecorder().getCaptureFormat();
+            r.sampleRate    = self->pendingSampleRate;
             r.interleaved   = true;
             r.ioSettings    = "Last Used";
-            const auto dir  = createSessionFolderStructure (r);
+            const auto dir  = self->createSessionFolderStructure (r);
             if (! dir.isDirectory())
             {
-                showStatus ("Couldn't create session -- check permissions / free space");
+                self->showStatus ("Couldn't create session -- check permissions / free space");
                 return;
             }
 
-            engine.setActiveSessionDir (dir);
+            self->engine.setActiveSessionDir (dir);
             // Stop the live strips' meter/spectrum timers before setStripCount
             // frees any TrackState they reference (a CSV with fewer names than
             // the current count shrinks the recorder vector); strips rebuild on
             // the next 10 Hz tick.
-            condemnAllStrips();
-            engine.clearAllStripOverrides();
-            engine.setStripCount (names.size());
+            self->condemnAllStrips();
+            self->engine.clearAllStripOverrides();
+            self->engine.setStripCount (names.size());
             for (int i = 0; i < names.size(); ++i)
-                engine.setTrackName (i, names[i]);
-            lastTrackCount = -1;
-            loadSetlistFromActiveSession();
-            loadUILayoutFromActiveSession();
-            saveSessionStateTo (dir);   // persist the names + strip count now
+                self->engine.setTrackName (i, names[i]);
+            self->lastTrackCount = -1;
+            self->loadSetlistFromActiveSession();
+            self->loadUILayoutFromActiveSession();
+            self->saveSessionStateTo (dir);   // persist the names + strip count now
 
-            showStatus ("New session '" + r.name + "' with " + juce::String (names.size())
+            self->showStatus ("New session '" + r.name + "' with " + juce::String (names.size())
                         + " channels from " + f.getFileName());
         });
 }

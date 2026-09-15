@@ -205,6 +205,7 @@ namespace zynforge
             if (r == nullptr) return;
             const auto dir  = r->dir;
             const auto name = r->name;
+            juce::Component::SafePointer<SessionRecoveryDialog> self (this);
             juce::AlertWindow::showAsync (
                 juce::MessageBoxOptions()
                     .withIconType (juce::MessageBoxIconType::WarningIcon)
@@ -214,27 +215,34 @@ namespace zynforge
                                   + "\n\nThe audio in this session will be lost.")
                     .withButton ("Delete")
                     .withButton ("Cancel"),
-                [this, dir] (int chosen)
+                [self, dir] (int chosen)
                 {
-                    if (chosen != 1) return;
-                    dir.deleteRecursively();
+                    if (chosen != 1 || self == nullptr) return;
+                    if (! dir.deleteRecursively())
+                    {
+                        juce::AlertWindow::showMessageBoxAsync (
+                            juce::MessageBoxIconType::WarningIcon,
+                            "Delete failed",
+                            "The session could not be removed. Check permissions and try again.");
+                        return;
+                    }
                     // Drop the row from our local model so the table
                     // updates without needing a relaunch. If we just
                     // emptied the list, close the dialog.
                     int dropAt = -1;
-                    for (size_t i = 0; i < rows.size(); ++i)
-                        if (rows[i].dir == dir) { dropAt = (int) i; break; }
+                    for (size_t i = 0; i < self->rows.size(); ++i)
+                        if (self->rows[i].dir == dir) { dropAt = (int) i; break; }
                     if (dropAt >= 0)
                     {
-                        rows.erase (rows.begin() + dropAt);
-                        sortedIndices.clear();
-                        for (size_t i = 0; i < rows.size(); ++i)
-                            sortedIndices.push_back ((int) i);
-                        sortIndicesBy (table.getHeader().getSortColumnId(),
-                                       table.getHeader().isSortedForwards());
-                        table.updateContent();
-                        if (rows.empty())
-                            if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
+                        self->rows.erase (self->rows.begin() + dropAt);
+                        self->sortedIndices.clear();
+                        for (size_t i = 0; i < self->rows.size(); ++i)
+                            self->sortedIndices.push_back ((int) i);
+                        self->sortIndicesBy (self->table.getHeader().getSortColumnId(),
+                                             self->table.getHeader().isSortedForwards());
+                        self->table.updateContent();
+                        if (self->rows.empty())
+                            if (auto* dw = self->findParentComponentOfClass<juce::DialogWindow>())
                                 dw->exitModalState (0);
                     }
                 });

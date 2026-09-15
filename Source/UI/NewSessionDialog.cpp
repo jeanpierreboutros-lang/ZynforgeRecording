@@ -324,15 +324,17 @@ namespace zynforge
                     "Choose where to create the session",
                     storageDir);
 
+                juce::Component::SafePointer<Content> self (this);
                 folderChooser->launchAsync (juce::FileBrowserComponent::canSelectDirectories
                                             | juce::FileBrowserComponent::openMode,
-                    [this] (const juce::FileChooser& fc)
+                    [self] (const juce::FileChooser& fc)
                 {
+                    if (self == nullptr) return;
                     const auto chosen = fc.getResult();
                     if (chosen.isDirectory())
                     {
-                        storageDir = chosen;
-                        pathButton.setButtonText (compactPath (storageDir));
+                        self->storageDir = chosen;
+                        self->pathButton.setButtonText (compactPath (self->storageDir));
                     }
                 });
             }

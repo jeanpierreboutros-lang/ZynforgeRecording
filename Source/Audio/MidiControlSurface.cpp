@@ -38,7 +38,7 @@ namespace zynforge
     {
         auto& rec = engine.getRecorder();
         const int bank = bankOffset.load (std::memory_order_relaxed);
-        auto* eng = &engine;   // captured by value into marshaled lambdas (not `this`)
+        const auto engineHandle = engine.getAsyncHandle();
 
         // Any operation that indexes a TrackState is marshaled to the message
         // thread (finding #7a). setTrackCount() shrinks the track vector on the
@@ -46,8 +46,9 @@ namespace zynforge
         // a TOCTOU that can dereference a freed TrackState mid-shrink. Running
         // the bounds-check + access together on the message thread serialises
         // them against setTrackCount. Latency is one message-loop tick --
-        // imperceptible on a control surface. Lambdas capture `eng` + values,
-        // never `this`, so they stay safe if the surface is destroyed.
+        // imperceptible on a control surface. Lambdas capture the engine's
+        // invalidatable shared handle, so queued input becomes a no-op if the
+        // owning AudioEngine is destroyed before the message loop runs it.
 
         // Motor fader move -> channel gain.
         if (m.isPitchWheel())
@@ -59,8 +60,10 @@ namespace zynforge
 
             const int ch = bank + (m.getChannel() - 1);   // MCU channel 1..8 -> strip + bank
             const float db = mcu::faderToDb (m.getPitchWheelValue());
-            juce::MessageManager::callAsync ([eng, ch, db]
+            juce::MessageManager::callAsync ([engineHandle, ch, db]
             {
+                auto* eng = engineHandle->load (std::memory_order_acquire);
+                if (eng == nullptr) return;
                 auto& r = eng->getRecorder();
                 if (ch >= 0 && ch < r.getNumTracks())
                     r.getTrack (ch).gainDb.store (db, std::memory_order_relaxed);
@@ -75,8 +78,10 @@ namespace zynforge
         if (m.isController() && mcu::isJogCc (m.getControllerNumber()))
         {
             const int delta = mcu::decodeJogDelta (m.getControllerValue());
-            juce::MessageManager::callAsync ([eng, delta]
+            juce::MessageManager::callAsync ([engineHandle, delta]
             {
+                auto* eng = engineHandle->load (std::memory_order_acquire);
+                if (eng == nullptr) return;
                 auto& player = eng->getPlayer();
                 const double sr = juce::jmax (1.0, player.getSampleRate());
                 const auto step = (juce::int64) std::lround (sr / 30.0) * (juce::int64) delta;
@@ -90,8 +95,10 @@ namespace zynforge
         {
             const int ch = bank + mcu::vpotStrip (m.getControllerNumber());
             const int delta = mcu::decodeVpotDelta (m.getControllerValue());
-            juce::MessageManager::callAsync ([eng, ch, delta]
+            juce::MessageManager::callAsync ([engineHandle, ch, delta]
             {
+                auto* eng = engineHandle->load (std::memory_order_acquire);
+                if (eng == nullptr) return;
                 auto& r = eng->getRecorder();
                 if (ch >= 0 && ch < r.getNumTracks())
                 {
@@ -130,17 +137,20 @@ namespace zynforge
             case mcu::Action::Mute:
                 // Engine setter: mirrors a stereo pair (this used to leave one
                 // leg in the opposite state) and holds the structure lock.
-                juce::MessageManager::callAsync ([eng, ch] { eng->toggleTrackMuted (ch); });
+                juce::MessageManager::callAsync ([engineHandle, ch]
+                { if (auto* eng = engineHandle->load (std::memory_order_acquire)) eng->toggleTrackMuted (ch); });
                 return;
             case mcu::Action::Solo:
                 // Engine setter: mirrors a stereo pair (this used to leave one
                 // leg in the opposite state) and holds the structure lock.
-                juce::MessageManager::callAsync ([eng, ch] { eng->toggleTrackSoloed (ch); });
+                juce::MessageManager::callAsync ([engineHandle, ch]
+                { if (auto* eng = engineHandle->load (std::memory_order_acquire)) eng->toggleTrackSoloed (ch); });
                 return;
             case mcu::Action::Arm:
                 // Engine setter: mirrors a stereo pair (this used to leave one
                 // leg in the opposite state) and holds the structure lock.
-                juce::MessageManager::callAsync ([eng, ch] { eng->toggleTrackArmed (ch); });
+                juce::MessageManager::callAsync ([engineHandle, ch]
+                { if (auto* eng = engineHandle->load (std::memory_order_acquire)) eng->toggleTrackArmed (ch); });
                 return;
             case mcu::Action::Play:
             case mcu::Action::Stop:
@@ -148,8 +158,10 @@ namespace zynforge
             {
                 // Transport touches the player -> marshal to the message thread.
                 const auto a = hit.action;
-                juce::MessageManager::callAsync ([eng, a]
+                juce::MessageManager::callAsync ([engineHandle, a]
                 {
+                    auto* eng = engineHandle->load (std::memory_order_acquire);
+                    if (eng == nullptr) return;
                     if (a == mcu::Action::Play)  { if (eng->isPlaying()) eng->stopPlayback(); else eng->startPlayback(); }
                     if (a == mcu::Action::Stop)  eng->stopPlayback();
                     // Record over MCU intentionally not wired in v1 (avoids an

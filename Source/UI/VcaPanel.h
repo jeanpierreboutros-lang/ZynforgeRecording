@@ -241,11 +241,13 @@ namespace zynforge
                 const juce::uint32 cur = engine.getVca (index).colourARGB.load (std::memory_order_relaxed);
                 const auto current = cur != 0 ? juce::Colour (cur) : brand::stripColour (index);
 
+                juce::Component::SafePointer<VcaStripView> self (this);
                 auto picker = std::make_unique<StripColourPicker> (current,
-                    [this] (juce::Colour chosen)
+                    [self] (juce::Colour chosen)
                     {
-                        engine.setVcaColour (index, chosen);
-                        repaint();
+                        if (self == nullptr) return;
+                        self->engine.setVcaColour (self->index, chosen);
+                        self->repaint();
                     });
                 juce::CallOutBox::launchAsynchronously (std::move (picker),
                     getScreenBounds(), nullptr);

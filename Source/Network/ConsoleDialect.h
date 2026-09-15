@@ -81,9 +81,13 @@ namespace zynforge
                                              "/config/routing/IN/17-24", "/config/routing/IN/25-32" };
             return (b >= 0 && b < 4) ? ConsoleMessage (a[b]) : ConsoleMessage();
         };
-        d.setInBlock = [d] (int b, int v)
+        // Capture only the completed query callable. Capturing the partially
+        // constructed dialect wholesale is unnecessary and confuses lifetime
+        // analysis even though std::function stores the closure by value.
+        const auto queryInBlock = d.queryInBlock;
+        d.setInBlock = [queryInBlock] (int b, int v)
         {
-            auto m = d.queryInBlock (b);
+            auto m = queryInBlock (b);
             if (! m.isEmpty()) m.args.emplace_back (v);
             return m;
         };

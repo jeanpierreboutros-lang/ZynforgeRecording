@@ -1,5 +1,7 @@
 #pragma once
 #include <juce_core/juce_core.h>
+#include "PathSafety.h"
+#include "AtomicFile.h"
 #include <vector>
 
 namespace zynforge
@@ -24,10 +26,17 @@ public:
         auto* moves = o->getProperty ("moves").getArray();
         if (moves == nullptr) return false;
         const auto session = dir.getParentDirectory().getParentDirectory();
+        const auto backups = session.getChildFile ("Session File Backups");
+        // File::isAChildOf is lexical and follows no symlinks. A downloaded
+        // session could therefore make "Audio Files" or "Session File
+        // Backups" a symlink and make recovery rename/copy files outside the
+        // session. Resolve every existing path prefix before touching data.
+        if (! isContainedPath (session, backups) || ! isContainedPath (backups, dir))
+            return false;
         for (const auto& m : *moves)
-            if (! juce::File (m["source"].toString()).isAChildOf (session)
-                || ! juce::File (m["dest"].toString()).isAChildOf (session)
-                || ! juce::File (m["temp"].toString()).isAChildOf (dir)) return false;
+            if (! isContainedPath (session, juce::File (m["source"].toString()))
+                || ! isContainedPath (session, juce::File (m["dest"].toString()))
+                || ! isContainedPath (dir, juce::File (m["temp"].toString()))) return false;
         // During install every original has been staged. Bring installed
         // destinations back to their unique staging names before restoring.
         if (phase == "install")
@@ -37,7 +46,8 @@ public:
                 if (! temp.existsAsFile() && (! dest.existsAsFile() || ! dest.moveFileTo (temp))) return false;
             }
         o->setProperty ("phase", "restore");
-        if (! dir.getChildFile ("journal.json").replaceWithText (juce::JSON::toString (v))) return false;
+        if (! atomicfile::writeText (dir.getChildFile ("journal.json"),
+                                     juce::JSON::toString (v))) return false;
         for (const auto& m : *moves)
         {
             juce::File temp (m["temp"].toString()), source (m["source"].toString());
@@ -46,12 +56,13 @@ public:
         if (auto* metadata = o->getProperty ("metadata").getArray())
             for (const auto& m : *metadata)
             {
-                if (! juce::File (m["backup"].toString()).isAChildOf (dir)
-                    || ! juce::File (m["source"].toString()).isAChildOf (session)) return false;
+                if (! isContainedPath (dir, juce::File (m["backup"].toString()))
+                    || ! isContainedPath (session, juce::File (m["source"].toString()))) return false;
                 if (! juce::File (m["backup"].toString()).copyFileTo (juce::File (m["source"].toString()))) return false;
             }
         o->setProperty ("phase", "recovered");
-        return dir.getChildFile ("journal.json").replaceWithText (juce::JSON::toString (v));
+        return atomicfile::writeText (dir.getChildFile ("journal.json"),
+                                      juce::JSON::toString (v));
     }
 
     static bool recover (const juce::File& session)
@@ -65,7 +76,12 @@ public:
     bool begin (const juce::File& session, const std::vector<Move>& moves)
     {
         if (! recover (session)) return false;
-        folder = session.getChildFile ("Session File Backups").getChildFile ("reorder_" + juce::Uuid().toString());
+        const auto backups = session.getChildFile ("Session File Backups");
+        if (! isContainedPath (session, backups)) return false;
+        for (const auto& m : moves)
+            if (! isContainedPath (session, m.first) || ! isContainedPath (session, m.second))
+                return false;
+        folder = backups.getChildFile ("reorder_" + juce::Uuid().toString());
         if (folder.createDirectory().failed()) return false;
         auto* o = new juce::DynamicObject(); journal = juce::var (o);
         o->setProperty ("phase", "stage");
@@ -110,6 +126,15 @@ public:
         return save();
     }
 private:
-    bool save() { return folder.getChildFile ("journal.json").replaceWithText (juce::JSON::toString (journal)); }
+    static bool isContainedPath (const juce::File& root, const juce::File& child)
+    {
+        return pathsafety::isStrictDescendant (root, child);
+    }
+
+    bool save()
+    {
+        return atomicfile::writeText (folder.getChildFile ("journal.json"),
+                                      juce::JSON::toString (journal));
+    }
 };
 }

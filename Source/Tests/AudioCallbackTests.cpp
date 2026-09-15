@@ -638,7 +638,7 @@ namespace zynforge
                 const auto audioDir   = sessionDir.getChildFile ("Audio Files");
                 const auto wav0       = audioDir.getChildFile ("Track_01.wav");
 
-                auto magnitudeOf = [this] (const juce::File& f) -> float
+                auto magnitudeOf = [] (const juce::File& f) -> float
                 {
                     juce::WavAudioFormat fmt;
                     std::unique_ptr<juce::FileInputStream> in (f.createInputStream());
@@ -1401,7 +1401,6 @@ namespace zynforge
             beginTest ("Pre-roll = 0 means no history is dumped");
             {
                 const auto sessionDir = makeTempSessionDir();
-                juce::int64 framesWritten = 0;
                 {
                     CallbackFixture f (1, 1, 2);
                     auto& rec = f.engine.getRecorder();
@@ -1414,7 +1413,6 @@ namespace zynforge
                     expect (f.engine.startRecording (sessionDir));
                     for (int b = 0; b < 56; ++b) f.process (256);
                     f.engine.stopRecording();
-                    framesWritten = 56 * 256;
                 }
 
                 const auto wav = sessionDir.getChildFile ("Audio Files")

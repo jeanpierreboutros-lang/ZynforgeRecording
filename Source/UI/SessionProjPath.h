@@ -14,8 +14,10 @@ namespace zynforge
     inline juce::File findSessionProj (const juce::File& dir)
     {
         if (! dir.isDirectory()) return {};
-        for (auto& f : dir.findChildFiles (juce::File::findFiles, false, "*.zfproj"))
-            return f;
-        return dir.getChildFile (dir.getFileName() + ".zfproj");
+        const auto canonical = dir.getChildFile (dir.getFileName() + ".zfproj");
+        if (canonical.existsAsFile()) return canonical;
+        auto candidates = dir.findChildFiles (juce::File::findFiles, false, "*.zfproj");
+        candidates.sort();
+        return candidates.isEmpty() ? canonical : candidates.getFirst();
     }
 }

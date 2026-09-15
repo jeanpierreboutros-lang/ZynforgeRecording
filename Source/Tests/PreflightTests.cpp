@@ -65,6 +65,28 @@ namespace zynforge
                 expect (measureWriteSpeedMBps (juce::File::getSpecialLocation (juce::File::tempDirectory), 0) <= 0.0,
                         "zero-size probe fails closed");
             }
+
+            beginTest ("preflight uses configured storage when no session is open");
+            {
+                const auto configured = juce::File::getSpecialLocation (juce::File::tempDirectory);
+                expectEquals (storageRoot ({}, configured).getFullPathName(),
+                              configured.getFullPathName());
+                auto session = configured.getChildFile ("zf-preflight-active");
+                session.createDirectory();
+                expectEquals (storageRoot (session, {}).getFullPathName(),
+                              configured.getFullPathName());
+                session.deleteRecursively();
+            }
+
+            beginTest ("backup readiness distinguishes configured from actively writing");
+            {
+                using R = RedundancyReadiness;
+                expect (redundancyReadiness (false, false, false, false) == R::NotConfigured);
+                expect (redundancyReadiness (false, true,  true,  false) == R::ConfiguredWritable);
+                expect (redundancyReadiness (false, true,  false, false) == R::ConfiguredUnavailable);
+                expect (redundancyReadiness (true,  true,  true,  true)  == R::Active);
+                expect (redundancyReadiness (true,  true,  true,  false) == R::ExpectedButInactive);
+            }
         }
     };
 

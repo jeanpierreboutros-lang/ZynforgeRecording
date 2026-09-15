@@ -109,6 +109,30 @@ namespace zynforge
                 expect (PropertySet::parse (stream, back) && back.size() == 0);
             }
 
+            beginTest ("oversized property sets fail by exception in Debug and Release");
+            {
+                bool valueRejected = false;
+                try
+                {
+                    PropertySet set;
+                    set.addData (1, juce::MemoryBlock (65536, true));
+                    (void) set.serialise();
+                }
+                catch (const std::length_error&) { valueRejected = true; }
+                expect (valueRejected, "a property larger than its 16-bit length field was accepted");
+
+                bool countRejected = false;
+                try
+                {
+                    PropertySet set;
+                    for (int i = 0; i < 65536; ++i)
+                        set.addData ((juce::uint16) i, {});
+                    (void) set.serialise();
+                }
+                catch (const std::length_error&) { countRejected = true; }
+                expect (countRejected, "a property count larger than its 16-bit field was accepted");
+            }
+
             beginTest ("AAF object graph emits to a CFB storage tree + round-trips");
             {
                 Auid header;   header.data1 = 0x0D010101; header.data3 = 0x2F00;

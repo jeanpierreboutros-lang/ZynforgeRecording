@@ -8,6 +8,10 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../Audio/AudioEngine.h"
+#include "../Network/CompanionStreamFormat.h"
+
+#include <atomic>
+#include <thread>
 
 namespace zynforge
 {
@@ -45,7 +49,19 @@ namespace zynforge
                     if (mb.getSize() > 32768) break;
                 }
             }
-            return mb.toString();
+
+            // A successful /stream.wav response contains arbitrary binary
+            // bytes after its ASCII HTTP header.  MemoryBlock::toString()
+            // treats the whole response as UTF-8 and asserts when those bytes
+            // are not a valid sequence.  Project the response to ASCII for
+            // the textual assertions below while preserving RIFF/WAVE tags.
+            juce::MemoryBlock ascii (mb);
+            auto* bytes = static_cast<juce::uint8*> (ascii.getData());
+            for (size_t i = 0; i < ascii.getSize(); ++i)
+                if (bytes[i] != '\r' && bytes[i] != '\n' && bytes[i] != '\t'
+                    && (bytes[i] < 0x20u || bytes[i] > 0x7eu))
+                    bytes[i] = (juce::uint8) ' ';
+            return ascii.toString();
         }
 
         // POST a JSON body and return the response (status + body).
@@ -77,8 +93,34 @@ namespace zynforge
             return mb.toString();
         }
 
+        static void sendInvalidUtf8Request (int port)
+        {
+            juce::StreamingSocket sock;
+            if (! sock.connect ("127.0.0.1", port, 1000)) return;
+            const char request[] = {
+                'P','O','S','T',' ','/','c','m','d',' ','H','T','T','P','/','1','.','1','\r','\n',
+                'H','o','s','t',':',' ','1','2','7','.','0','.','0','.','1','\r','\n',
+                'C','o','n','t','e','n','t','-','L','e','n','g','t','h',':',' ','1','\r','\n','\r','\n',
+                (char) 0xff
+            };
+            sock.write (request, (int) sizeof (request));
+        }
+
         void runTest() override
         {
+            beginTest ("Live WAV placeholder sizes never overflow RIFF's 32-bit fields");
+            {
+                const auto bytes48k = companionstream::placeholderDataBytes (48000, 2, 16);
+                const auto bytes384k = companionstream::placeholderDataBytes (384000, 2, 16);
+                const auto maxField = std::numeric_limits<juce::uint32>::max();
+                expect (bytes48k <= maxField - 36u);
+                expect (bytes384k <= maxField - 36u);
+                expectEquals ((int) (bytes48k % 4u), 0);
+                expectEquals ((int) (bytes384k % 4u), 0);
+                expectEquals ((juce::int64) companionstream::placeholderDataBytes (1, 1, 8, 1),
+                              (juce::int64) 3600);
+            }
+
             beginTest ("Every endpoint -- including /stream.wav -- is token-gated; page threads the token");
 
             AudioEngine::setTestModeSkipAudioInit (true);
@@ -111,6 +153,25 @@ namespace zynforge
                     expect (! httpGet (port, "/stream.wav?t=" + tok).contains ("401"),
                             "tokened stream wrongly rejected");
 
+                    engine.stopCompanionServer();
+                }
+            }
+
+            beginTest ("Malformed unauthenticated UTF-8 is rejected without killing the server");
+            {
+                AudioEngine engine;
+                int port = 0;
+                for (int p = 19244; p < 19250 && port == 0; ++p)
+                    if (engine.startCompanionServer (p)) port = p;
+                expect (port != 0, "companion server failed to start");
+                if (port != 0)
+                {
+                    sendInvalidUtf8Request (port);
+                    juce::Thread::sleep (100);
+                    const auto tok = engine.getCompanionAccessUrl()
+                                         .fromFirstOccurrenceOf ("t=", false, false).trim();
+                    expect (httpGet (port, "/state.json?t=" + tok).contains ("200"),
+                            "server stopped responding after malformed input");
                     engine.stopCompanionServer();
                 }
             }
@@ -163,6 +224,43 @@ namespace zynforge
                             "stream response carries no WAV payload");
 
                     engine.stopCompanionServer();
+                }
+            }
+
+            beginTest ("Stopping the server cancels a transport command queued on the message thread");
+            {
+                AudioEngine engine;
+                int port = 0;
+                for (int p = 19270; p < 19280 && port == 0; ++p)
+                    if (engine.startCompanionServer (p)) port = p;
+                expect (port != 0, "companion server failed to start");
+
+                if (port != 0)
+                {
+                    const auto tok = engine.getCompanionAccessUrl()
+                                         .fromFirstOccurrenceOf ("t=", false, false).trim();
+                    std::atomic<bool> requestStarted { false };
+                    juce::String response;
+                    std::thread requester ([&]
+                    {
+                        requestStarted.store (true, std::memory_order_release);
+                        response = httpPost (port, "/cmd?t=" + tok,
+                                             "{\"action\":\"play\"}");
+                    });
+
+                    while (! requestStarted.load (std::memory_order_acquire))
+                        juce::Thread::yield();
+                    juce::Thread::sleep (150); // allow acceptLoop to queue the command
+
+                    const auto started = juce::Time::getMillisecondCounterHiRes();
+                    engine.stopCompanionServer();
+                    const auto elapsedMs = juce::Time::getMillisecondCounterHiRes() - started;
+                    requester.join();
+
+                    expectLessThan (elapsedMs, 1500.0,
+                                    "stop waited for the five-second transport timeout");
+                    expect (response.contains ("409") || response.isEmpty(),
+                            "cancelled transport returned an unexpected response");
                 }
             }
             AudioEngine::setTestModeSkipAudioInit (false);

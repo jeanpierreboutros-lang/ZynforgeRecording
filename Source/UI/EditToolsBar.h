@@ -196,6 +196,8 @@ namespace zynforge
                 juce::Path p;
                 switch (t)
                 {
+                    case Tool::None:
+                        break;
                     case Tool::Smart:
                         // Pointer + waveform whisp (auto-detects)
                         p.startNewSubPath (cx - 5, cy - 5);

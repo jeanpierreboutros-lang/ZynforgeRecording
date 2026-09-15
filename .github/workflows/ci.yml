@@ -2,7 +2,7 @@ name: build-and-test
 
 # Build the app and run the headless unit-test suite (--run-tests exits
 # non-zero on any failure) on every push / PR to main. Mirrors the local
-# recipe in CLAUDE.md: Xcode generator, Release config.
+# recipe in CLAUDE.md: Xcode generator, Debug assertions plus Release.
 
 on:
   push:
@@ -20,39 +20,56 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      # Pin third-party actions to immutable commits (v4 release lines) so a
+      # moved tag cannot inject code into the release build.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # JUCE arrives via CMake FetchContent; cache the download so only
       # the first run after a JUCE version bump pays for it.
       - name: Cache JUCE sources
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: build/_deps
           key: juce-deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
 
       # Both gates run BEFORE the build so a violation fails fast (and so a
       # broken invariant can't be masked by a build error further down).
-      # Path is Tools/ with a capital T -- the old lowercase spelling only
-      # worked because the macOS runner's filesystem is case-insensitive.
+      # Use the exact tracked lowercase path so this remains portable to a
+      # case-sensitive runner/worktree.
       - name: Design-system audit
-        run: ./Tools/design_audit.sh
+        run: ./tools/design_audit.sh
 
       - name: Invariants audit
-        run: ./Tools/invariants_audit.sh
+        run: ./tools/invariants_audit.sh
 
       - name: Configure
         run: cmake -B build -G Xcode
 
+      # Release-only testing hid JUCE assertions (including duplicate format
+      # registration and damaged-session handling). Keep an assertion-enabled
+      # run in CI so those regressions fail before shipping.
+      - name: Build (Debug)
+        run: cmake --build build --config Debug
+
+      - name: Headless tests (Debug)
+        run: |
+          "build/ZynforgeRecording_artefacts/Debug/Zynforge Recording.app/Contents/MacOS/Zynforge Recording" --run-tests
+
       - name: Build (Release)
         run: cmake --build build --config Release
 
-      - name: Headless tests
+      - name: Headless tests (Release)
         run: |
           "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app/Contents/MacOS/Zynforge Recording" --run-tests
 
+      - name: Verify bundled capture daemon
+        run: |
+          test -x "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app/Contents/MacOS/ZynforgeCapture"
+          codesign --verify --deep --strict "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
+
       - name: Upload test report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: test-report
           path: ~/Library/Logs/Zynforge/test-report.log

@@ -3240,18 +3240,20 @@ namespace zynforge
                             ? juce::Colour ((juce::uint32) s.colourARGB.load())
                             : brand::stripColour (index);
 
+            juce::Component::SafePointer<TrackRow> self (this);
             auto picker = std::make_unique<StripColourPicker> (
                 current,
-                [this] (juce::Colour chosen)
+                [self] (juce::Colour chosen)
                 {
-                    engine.setTrackColour (index, chosen);
+                    if (self == nullptr) return;
+                    self->engine.setTrackColour (self->index, chosen);
                     // Mirror onto the R half -- the MIXER's colour callback
                     // already does this, so recolouring the same pair from EDIT
                     // left the two views' stored colours diverged (visible in
                     // PATCH and after an unlink).
-                    if (stereo && index + 1 < engine.getRecorder().getNumTracks())
-                        engine.setTrackColour (index + 1, chosen);
-                    repaint();
+                    if (self->stereo && self->index + 1 < self->engine.getRecorder().getNumTracks())
+                        self->engine.setTrackColour (self->index + 1, chosen);
+                    self->repaint();
                 });
 
             // Anchor the call-out on the swatch's *pinned* on-screen position

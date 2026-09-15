@@ -59,6 +59,15 @@ void MainComponent::onRecordClicked()
         return;
     }
 
+    // The engineer selected crash-surviving daemon capture.  If that daemon
+    // dies or disconnects, never silently fall back to the in-process recorder
+    // on the next RECORD press -- that would look protected while it is not.
+    if (useCaptureDaemon && ! captureSupervisor.isAttached())
+    {
+        showStatus ("Capture daemon is unavailable -- reconnect or disable daemon mode before recording");
+        return;
+    }
+
     // Phase 1d: a rolling daemon take stops over the wire.
     if (daemonModeActive() && captureSupervisor.isDaemonRecording())
     {
@@ -401,8 +410,6 @@ void MainComponent::onStopClicked()
     // tap arms (flash + toast); a second tap within 2 s fires for
     // real. Any other state -- playback, idle -- stops immediately
     // because there's nothing irreversible to protect.
-    auto& player = engine.getPlayer();
-
     if (engine.isRecording())
     {
         const auto now = juce::Time::getMillisecondCounter();
@@ -425,20 +432,115 @@ void MainComponent::onStopClicked()
         stopArmedAtMs = 0;
     }
 
-    if (daemonModeActive() && (captureSupervisor.isDaemonRecording() || engine.isRecording()))
+    stopActiveCapture (true);
+}
+
+bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind)
+{
+    auto& recorder = engine.getRecorder();
+    const bool localRecording = recorder.isRecording();
+    const bool externalCapture = engine.isRecording() && ! localRecording;
+
+    bool sessionStateSaved = true;
+    if (captureSupervisor.isDaemonRecording() || externalCapture)
     {
-        if (! captureSupervisor.stopRecording())
-        { showStatus ("Daemon did not confirm STOP; take may still be recording"); return; }
+        if (! captureSupervisor.isAttached() || ! captureSupervisor.stopRecording())
+        {
+            showStatus ("Daemon did not confirm STOP; take may still be recording");
+            return false;
+        }
         engine.setExternalRecording (false);
-        engine.loadSession (engine.getActiveSessionDir(), true);
-        saveSessionStateTo (engine.getActiveSessionDir());
+        const auto session = engine.getActiveSessionDir();
+        if (session.isDirectory())
+        {
+            engine.loadSession (session, true);
+            sessionStateSaved = saveSessionStateTo (session);
+        }
+        else
+        {
+            // A removable/session volume can disappear while the daemon still
+            // has an open media descriptor. The audio stop may succeed, but
+            // there is nowhere to persist the project state; that is not a
+            // clean finalisation and must block quit/report failure.
+            sessionStateSaved = false;
+        }
     }
-    else if (engine.isRecording()) engine.stopRecording();
-    engine.stopPlayback();
-    player.rewind();
-    playButton.setButtonText ("PLAY");
+    else if (localRecording)
+    {
+        engine.stopRecording();
+        if (recorder.hasReportWriteFailed())
+            sessionStateSaved = false;
+    }
+
+    if (stopPlaybackAndRewind)
+    {
+        engine.stopPlayback();
+        engine.getPlayer().rewind();
+        playButton.setButtonText ("PLAY");
+    }
     recordButton.setButtonText ("RECORD");
-    statusLabel.setText (player.isLoaded() ? "Stopped" : "Idle", juce::dontSendNotification);
+    statusLabel.setText (stopPlaybackAndRewind && engine.getPlayer().isLoaded()
+                            ? "Stopped" : "Idle",
+                         juce::dontSendNotification);
+    if (! sessionStateSaved)
+    {
+        showStatus (recorder.hasReportWriteFailed()
+            ? "Recording stopped, but the integrity report could not be saved -- check disk permissions / free space"
+            : "Recording stopped, but session state could not be saved -- check disk permissions / free space");
+        return false;
+    }
+    if (localRecording && engine.hasStereoMixWriteFailed())
+    {
+        showStatus ("Recording stopped; multitracks were saved, but the optional stereo mix is incomplete");
+        return false;
+    }
+    return true;
+}
+
+std::optional<bool> MainComponent::handleRemoteTransport (
+    zynforge::AudioEngine::RemoteTransportAction action, juce::String& error)
+{
+    using A = zynforge::AudioEngine::RemoteTransportAction;
+    if (! useCaptureDaemon) return std::nullopt;
+
+    if (action == A::TogglePlay || action == A::StartPlay || action == A::StopPlay)
+        return std::nullopt;
+
+    const bool recording = engine.isRecording() || captureSupervisor.isDaemonRecording();
+    if (action == A::StopAll)
+    {
+        // With no active capture, this is just an ordinary playback STOP.
+        if (! recording) return std::nullopt;
+        if (! stopActiveCapture (true))
+        { error = "capture stop or session finalization failed; check the host"; return false; }
+        return true;
+    }
+
+    if (action == A::StopRecord || (action == A::ToggleRecord && recording))
+    {
+        if (! recording) return true;
+        if (! stopActiveCapture (false))
+        { error = "capture stop or session finalization failed; check the host"; return false; }
+        return true;
+    }
+
+    if (action == A::StartRecord || action == A::ToggleRecord)
+    {
+        if (recording) return true;
+        if (! captureSupervisor.isAttached())
+        {
+            error = "capture daemon is unavailable";
+            showStatus ("Remote RECORD refused -- capture daemon is unavailable");
+            return false;
+        }
+
+        onRecordClicked();
+        if (engine.isRecording()) return true;
+        error = "daemon recording could not start";
+        return false;
+    }
+
+    return std::nullopt;
 }
 
 void MainComponent::onFormatClicked()
@@ -566,13 +668,15 @@ void MainComponent::onBackupClicked()
     const auto flags = juce::FileBrowserComponent::openMode
                      | juce::FileBrowserComponent::canSelectDirectories;
 
-    chooser->launchAsync (flags, [this] (const juce::FileChooser& fc)
+    juce::Component::SafePointer<MainComponent> self (this);
+    chooser->launchAsync (flags, [self] (const juce::FileChooser& fc)
     {
+        if (self == nullptr) return;
         auto dir = fc.getResult();
         if (dir.getFullPathName().isEmpty()) return;
-        engine.setBackupDirectory (dir);
-        backupButton.setButtonText ("BACKUP OK");
-        showStatus ("Backup folder -> " + dir.getFileName());
+        self->engine.setBackupDirectory (dir);
+        self->backupButton.setButtonText ("BACKUP OK");
+        self->showStatus ("Backup folder -> " + dir.getFileName());
     });
 }
 
@@ -606,16 +710,22 @@ void MainComponent::onFileMenuClicked()
     exportMenu.addSubMenu ("Export Individual Track", individualMenu, hasActive && trackCount > 0);
     menu.addSubMenu ("Export", exportMenu);
 
+    juce::Component::SafePointer<MainComponent> self (this);
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&loadButton),
-                        [this] (int chosen)
+                        [self] (int chosen)
     {
-        if (chosen == 0) return;
-        if (chosen == 1)           confirmSessionReplacement ([this] { onLoadSessionClicked(); });
-        else if (chosen == 2)      onSaveSessionState();
-        else if (chosen == 3)      onSaveSessionAs();
-        else if (chosen == 4)      onImportAudioFiles();
-        else if (chosen == 10)     onExportAllTracks();
-        else if (chosen >= 100)    onExportIndividualTrack (chosen - 100);
+        if (chosen == 0 || self == nullptr) return;
+        if (chosen == 1)
+        {
+            auto again = self;
+            self->confirmSessionReplacement ([again]
+            { if (again != nullptr) again->onLoadSessionClicked(); });
+        }
+        else if (chosen == 2)      self->onSaveSessionState();
+        else if (chosen == 3)      self->onSaveSessionAs();
+        else if (chosen == 4)      self->onImportAudioFiles();
+        else if (chosen == 10)     self->onExportAllTracks();
+        else if (chosen >= 100)    self->onExportIndividualTrack (chosen - 100);
     });
 }
 
@@ -692,6 +802,7 @@ void MainComponent::removeLastCapture()
             target = d;
 
     const bool deletingActive = target == engine.getActiveSessionDir();
+    juce::Component::SafePointer<MainComponent> self (this);
     juce::AlertWindow::showAsync (
         juce::MessageBoxOptions()
             .withIconType (juce::MessageBoxIconType::NoIcon)
@@ -699,28 +810,28 @@ void MainComponent::removeLastCapture()
             .withMessage ("Permanently delete\n\n" + target.getFullPathName() + "\n\nThis cannot be undone.")
             .withButton ("Delete")
             .withButton ("Cancel"),
-        [this, target, deletingActive] (int result)
+        [self, target, deletingActive] (int result)
     {
-        if (result != 1) return;   // first button ("Delete") = commandID 1
+        if (result != 1 || self == nullptr) return; // first button = commandID 1
         if (target.deleteRecursively())
         {
             if (deletingActive)
             {
-                condemnAllStrips();
-                engine.clearSessionState();
-                engine.setStripCount (0);
-                cues.clear();
-                currentCueIndex = -1;
-                clickTrackIndex = -1;
-                lastTrackCount = -1;
-                undoManager.clearUndoHistory();
-                updateTransportLabels();
-                showStartupWelcome();
+                self->condemnAllStrips();
+                self->engine.clearSessionState();
+                self->engine.setStripCount (0);
+                self->cues.clear();
+                self->currentCueIndex = -1;
+                self->clickTrackIndex = -1;
+                self->lastTrackCount = -1;
+                self->undoManager.clearUndoHistory();
+                self->updateTransportLabels();
+                self->showStartupWelcome();
             }
-            showStatus ("Removed: " + target.getFileName());
+            self->showStatus ("Removed: " + target.getFileName());
         }
         else
-            showStatus ("Couldn't remove that folder");
+            self->showStatus ("Couldn't remove that folder");
     });
 }
 
@@ -759,7 +870,7 @@ void MainComponent::confirmAndQuit()
         showStatus ("Cancelling session file operation -- quit again when it finishes");
         return;
     }
-    const bool recording = engine.isRecording();
+    const bool recording = engine.isRecording() || captureSupervisor.isDaemonRecording();
     const auto activeDir = engine.getActiveSessionDir();
     const bool hasActiveSession = activeDir.isDirectory();
 
@@ -779,15 +890,16 @@ void MainComponent::confirmAndQuit()
         aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
         aw->addButton ("Stop & Quit", kStopQuit, juce::KeyPress (juce::KeyPress::returnKey));
         aw->addButton ("Cancel",      kCancel,   juce::KeyPress (juce::KeyPress::escapeKey));
+        juce::Component::SafePointer<MainComponent> self (this);
         aw->enterModalState (true,
-            juce::ModalCallbackFunction::create ([this, aw, activeDir] (int result)
+            juce::ModalCallbackFunction::create ([self, aw, activeDir] (int result)
             {
                 std::unique_ptr<juce::AlertWindow> dispose (aw);
-                if (result == kCancel) return;       // stay in app
-                engine.stopRecording();
-                if (activeDir.isDirectory() && ! saveSessionStateTo (activeDir))
+                if (result == kCancel || self == nullptr) return; // stay in app
+                if (! self->stopActiveCapture (false)) return;    // daemon may still be rolling
+                if (activeDir.isDirectory() && ! self->saveSessionStateTo (activeDir))
                 {
-                    showStatus ("Quit cancelled -- session state could not be saved");
+                    self->showStatus ("Quit cancelled -- session state could not be saved");
                     return;
                 }
                 if (auto* app = juce::JUCEApplication::getInstance())
@@ -844,17 +956,18 @@ void MainComponent::confirmAndQuit()
     aw->addButton ("Cancel",     kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
     aw->addButton ("Save",       kSave,   juce::KeyPress (juce::KeyPress::returnKey));
 
+    juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true,
-        juce::ModalCallbackFunction::create ([this, aw, activeDir] (int result)
+        juce::ModalCallbackFunction::create ([self, aw, activeDir] (int result)
         {
             std::unique_ptr<juce::AlertWindow> dispose (aw);
 
-            if (result == kCancel)
+            if (result == kCancel || self == nullptr)
                 return;                              // abort the quit, stay in app
 
-            if (result == kSave && ! saveSessionStateTo (activeDir))
+            if (result == kSave && ! self->saveSessionStateTo (activeDir))
             {
-                showStatus ("Quit cancelled -- session state could not be saved");
+                self->showStatus ("Quit cancelled -- session state could not be saved");
                 return;
             }
 
@@ -885,7 +998,7 @@ void MainComponent::showPreflightChecklist()
 
     const auto sess   = engine.getActiveSessionDir();
     const bool hasSes = sess.isDirectory();
-    const auto root   = sess.getParentDirectory();
+    const auto root   = zynforge::preflight::storageRoot (sess, getSessionsRoot());
     const double freeGB = (root.exists() ? root.getBytesFreeOnVolume() : 0) / 1.0e9;
     const auto fmt    = engine.getRecorder().getCaptureFormat();
     const juce::String fmtStr =
@@ -936,11 +1049,6 @@ void MainComponent::showPreflightChecklist()
                           << (hasSes ? sess.getFileName() : juce::String ("(none)")) << "\n"
          << chk (! cues.empty(), cues.empty())
                           << "Setlist cues: " << (int) cues.size() << "\n"
-         << chk (engine.getRecorder().isBackupActive())
-                          << "Backup writer: "
-                          << (engine.getRecorder().isBackupActive() ? juce::String ("active")
-                                                                     : juce::String ("not configured"))
-                          << "\n"
          << "\n"
          << chk (freeGB > 5.0, freeGB > 1.0)
          << "Disk free:    " << juce::String (freeGB, 1) << " GB ("
@@ -951,6 +1059,28 @@ void MainComponent::showPreflightChecklist()
                                                            ? juce::String ("Playing back")
                                                            : juce::String ("Idle"))
          << "\n";
+
+    const auto backupDir = engine.getRecorder().getBackupDirectory();
+    const bool backupConfigured = backupDir.getFullPathName().isNotEmpty();
+    const bool backupWriterActive = captureSupervisor.isDaemonRecording()
+                                      ? captureSupervisor.lastStatus().backupActive
+                                      : engine.getRecorder().isBackupActive();
+    const bool backupWritable = ! engine.isRecording() && backupConfigured
+                                  && zynforge::preflight::volumeWritable (backupDir);
+    using BackupState = zynforge::preflight::RedundancyReadiness;
+    const auto backupState = zynforge::preflight::redundancyReadiness (
+        engine.isRecording(), backupConfigured, backupWritable, backupWriterActive);
+    body << (backupState == BackupState::Active
+              || backupState == BackupState::ConfiguredWritable ? "[OK]  " : "[X]  ")
+         << "Backup:      ";
+    if (backupState == BackupState::NotConfigured) body << "not configured";
+    else if (backupState == BackupState::ConfiguredWritable)
+        body << backupDir.getFullPathName() << " (configured + writable)";
+    else if (backupState == BackupState::ConfiguredUnavailable)
+        body << backupDir.getFullPathName() << " (NOT writable / missing)";
+    else if (backupState == BackupState::Active) body << "writer active";
+    else body << "configured but NOT WRITING";
+    body << "\n\n";
 
     if (engine.getMidiClockOut().isEnabled())
         body << "[OK]  MIDI clock master: " << engine.getMidiClockOut().getOutputDeviceName() << "\n";
@@ -1024,10 +1154,16 @@ void MainComponent::showPreflightChecklist()
     // Every configured mirror drive: mounted AND actually writable.
     for (const auto& m : engine.getMirrors())
     {
-        const bool w = zynforge::preflight::volumeWritable (m.root);
-        body << chk (w)
-             << "Mirror " << m.root.getFullPathName()
-             << (w ? juce::String (": writable") : juce::String (": NOT writable / missing")) << "\n";
+        if (engine.isRecording())
+            body << "[!]  Mirror " << m.root.getFullPathName()
+                 << ": write probe skipped while recording\n";
+        else
+        {
+            const bool w = zynforge::preflight::volumeWritable (m.root);
+            body << chk (w)
+                 << "Mirror " << m.root.getFullPathName()
+                 << (w ? juce::String (": writable") : juce::String (": NOT writable / missing")) << "\n";
+        }
     }
 
     auto* aw = new juce::AlertWindow ("Pre-flight checklist",

@@ -1,6 +1,6 @@
-# ZynForge Recording — Field-Test Checklist: Audit + Session Changes (updated 2026-09-12)
+# ZynForge Recording — Field-Test Checklist: Audit + Session Changes (updated 2026-09-15)
 
-Historical hardware cases below remain useful, but are not passed results for the current build. Start with [SHOW-READINESS.md](SHOW-READINESS.md) and the September regression section in [FIELD-TEST.md](FIELD-TEST.md). Confirmed show plan: SD5, RME HDSPe AoX-D, 56 inputs, 48 kHz, about two hours; connection, Mac/chassis and storage are undecided. Never run crash/unplug/delete tests on production recordings.
+Historical hardware cases below remain useful, but are not passed results for the current candidate. Start with [SHOW-READINESS.md](SHOW-READINESS.md), [the 2026-09-15 audit](AUDIT_REPORT_2026-09-15.md) and the September regression section in [FIELD-TEST.md](FIELD-TEST.md). Confirmed show plan: SD5, RME HDSPe AoX-D, 56 inputs, 48 kHz, about two hours; connection, Mac/chassis and storage are undecided. Never run crash/unplug/delete tests on production recordings.
 
 Turnkey verification of the **hardware-gated audit items** and **everything changed since the 2026-05-24 build** (native stereo capture, console link, the compact/GRID mixer UI, prompt chrome, the design re-tone). Run on the real rig. The general first-launch/recording/takes flow lives in `FIELD-TEST.md` — this file is the delta.
 

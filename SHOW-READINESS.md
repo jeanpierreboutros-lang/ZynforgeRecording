@@ -1,8 +1,8 @@
 # Show readiness — planned SD5 recording
 
-## Decision as of 2026-09-12
+## Decision as of 2026-09-15
 
-Rehearsal-ready; **not yet approved as the sole recorder for this show**. Commit `44a309e` fixes the 32 reported September issues and passed 320 automated test groups. The installed bundle was verified, but those results do not certify physical hardware, clock stability, disk endurance or uninterrupted show-length capture.
+The latest candidate is ready for exact-rig rehearsal; **not yet approved as the sole recorder for this show**. It fixes 39 additional confirmed audit issues. A fresh macOS-12 universal Release build passed 350 test groups on arm64 and x86_64, and the ASan+UBSan Debug build passed 350/0; Xcode analysis has no app-owned diagnostics and strict ad-hoc bundle verification passed. The candidate is not installed/committed/pushed, and no software result certifies physical hardware, clock stability, disk endurance or uninterrupted show-length capture. See [the current audit](AUDIT_REPORT_2026-09-15.md).
 
 ## Confirmed plan and open choices
 

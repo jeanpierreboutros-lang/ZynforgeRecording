@@ -49,7 +49,7 @@ namespace zynforge
         static juce::String extensionFor (ExportFormat);
 
         // Resolves a path to the `lame` binary if installed (Homebrew /opt
-        // or /usr/local, or whatever `which lame` returns). Returns
+        // or /usr/local, or a directory on PATH). Returns
         // an invalid File if unavailable.
         static juce::File findLameBinary();
 

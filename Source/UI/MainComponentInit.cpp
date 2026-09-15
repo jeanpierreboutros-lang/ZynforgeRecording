@@ -22,6 +22,12 @@ using namespace zynforge;
 
 MainComponent::MainComponent()
 {
+    // Every non-UI transport enters through AudioEngine.  Intercept only the
+    // daemon-specific record/stop cases; std::nullopt lets ordinary playback
+    // and in-process recording retain the engine's default implementation.
+    engine.setRemoteTransportHandler ([this] (auto action, juce::String& error)
+    { return handleRemoteTransport (action, error); });
+
     engine.onTracksReordered = [this] (const std::vector<int>& destination)
     {
         for (auto& cue : cues)
@@ -258,10 +264,11 @@ MainComponent::MainComponent()
             return;
         }
 
+        juce::Component::SafePointer<MainComponent> self (this);
         zynforge::AddTracksDialog::launch (
-            [this] (const std::vector<zynforge::AddTracksDialog::Entry>& entries)
+            [self, this] (const std::vector<zynforge::AddTracksDialog::Entry>& entries)
         {
-            if (entries.empty()) return;
+            if (self == nullptr || entries.empty()) return;
 
             const int existing = engine.getRecorder().getNumTracks();
             int firstNew = existing;
@@ -362,21 +369,22 @@ MainComponent::MainComponent()
         menu.addSeparator();
         menu.addItem (10, "Stop", engine.isOscListening());
 
+        juce::Component::SafePointer<MainComponent> self (this);
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&oscButton),
-                            [this] (int chosen)
+                            [self] (int chosen)
         {
-            if (chosen <= 0) return;
-            if (chosen == 10) { engine.stopOsc(); oscButton.setButtonText ("OSC"); showStatus ("OSC stopped"); return; }
+            if (chosen <= 0 || self == nullptr) return;
+            if (chosen == 10) { self->engine.stopOsc(); self->oscButton.setButtonText ("OSC"); self->showStatus ("OSC stopped"); return; }
             const int dialect = chosen - 1;
-            const int port = oscListenPort();
-            if (engine.startOsc (port, dialect))
+            const int port = self->oscListenPort();
+            if (self->engine.startOsc (port, dialect))
             {
-                oscButton.setButtonText ("OSC *");
-                showStatus ("OSC listening on " + juce::String (port) + " (" +
+                self->oscButton.setButtonText ("OSC *");
+                self->showStatus ("OSC listening on " + juce::String (port) + " (" +
                             juce::StringArray ({"Generic","DiGiCo","A&H","SSL","Yamaha"})[dialect] + ")"
-                            + (dialect == 0 ? " -- token " + engine.getOscAccessToken() : juce::String()));
+                            + (dialect == 0 ? " -- token " + self->engine.getOscAccessToken() : juce::String()));
             }
-            else showStatus ("OSC failed to bind port " + juce::String (port));
+            else self->showStatus ("OSC failed to bind port " + juce::String (port));
         });
     };
     oscButton.setTooltip ("OSC remote: receive transport / scene / marker / channel-name messages from DiGiCo / A&H / SSL / Yamaha consoles or any OSC app.");
@@ -577,10 +585,12 @@ MainComponent::MainComponent()
         init.click2.voice    = (zynforge::ClickSettings::Voice) cl.getVoice2();
         init.click2.sub      = (zynforge::ClickSettings::Subdivision) cl.getSub2();
 
+        juce::Component::SafePointer<MainComponent> self (this);
         zynforge::ClickSettingsDialog::launch (init, engine.getSessionTempoBpm(),
-            [this] (const zynforge::ClickSettings& s)
+            [self] (const zynforge::ClickSettings& s)
             {
-                auto& c = engine.getClickEngine();
+                if (self == nullptr) return;
+                auto& c = self->engine.getClickEngine();
                 c.setEnabled    (s.on);
                 c.setVolume1Db  (s.click1.volumeDb);
                 c.setVolume2Db  (s.click2.volumeDb);
@@ -589,13 +599,18 @@ MainComponent::MainComponent()
                 c.setSub1       ((zynforge::ClickEngine::Subdivision) s.click1.sub);
                 c.setSub2       ((zynforge::ClickEngine::Subdivision) s.click2.sub);
             },
-            [this]
+            [self] (std::function<void (bool)> completion)
             {
                 // 'Generate click track' button -- render an audio file
                 // of the click for offline workflows (mixdown / export).
                 // The result matters: the dialog only switches the live click
                 // engine off if the render actually happened.
-                return generateOrRefreshClickTrack();
+                if (self == nullptr)
+                {
+                    if (completion) completion (false);
+                    return;
+                }
+                self->generateOrRefreshClickTrack (std::move (completion));
             });
     };
     addAndMakeVisible (tempoBar);
@@ -735,7 +750,9 @@ MainComponent::MainComponent()
     // If the previous run had a session pinned, rehydrate its setlist
     // AND its UI layout (view, strip width, VCA panel, EDIT zoom).
     loadSetlistFromActiveSession();
-    juce::Timer::callAfterDelay (50, [this] { loadUILayoutFromActiveSession(); });
+    juce::Component::SafePointer<MainComponent> startupSelf (this);
+    juce::Timer::callAfterDelay (50, [startupSelf]
+    { if (startupSelf != nullptr) startupSelf->loadUILayoutFromActiveSession(); });
 
     // Launch dialogs land in order so first-run + crash-recovery +
     // welcome don't fight for the front. Recovery wins first (data
@@ -749,7 +766,8 @@ MainComponent::MainComponent()
     // Crash telemetry runs late in the launch-dialog queue (recovery and
     // welcome are higher priority; ModalComponentManager serialises).
     juce::Timer::callAfterDelay (brand::motion::launchDelayMs + 1500,
-                                 [this] { scanForCrashReports(); });
+                                 [startupSelf]
+                                 { if (startupSelf != nullptr) startupSelf->scanForCrashReports(); });
 
     // Capture daemon (Phase 1d/2): restore the flag and reattach -- a take
     // left rolling by a crashed/quit GUI is adopted, not orphaned.
@@ -758,12 +776,14 @@ MainComponent::MainComponent()
     {
         useCaptureDaemon = true;
         juce::Timer::callAfterDelay (brand::motion::launchDelayMs + 800,
-                                     [this] { connectCaptureDaemon (true); });
+                                     [startupSelf]
+                                     { if (startupSelf != nullptr) startupSelf->connectCaptureDaemon (true); });
     }
 
-    juce::Timer::callAfterDelay (brand::motion::launchDelayMs, [this, firstRun]
+    juce::Timer::callAfterDelay (brand::motion::launchDelayMs, [startupSelf, firstRun]
     {
-        juce::Component::SafePointer<MainComponent> self (this);
+        auto self = startupSelf;
+        if (self == nullptr) return;
         // The tutorial + Welcome/auto-reopen step. It MUST run only after any
         // recovery dialog closes -- running it underneath auto-reopened the
         // orphan being recovered, so "Delete" then nuked the loaded session.
@@ -789,7 +809,7 @@ MainComponent::MainComponent()
 
         // If the recovery dialog opens, defer `proceed` to its onClosed hook;
         // otherwise run it after the usual short delay.
-        if (! offerSessionRecovery (proceed))
+        if (! self->offerSessionRecovery (proceed))
             juce::Timer::callAfterDelay (450, proceed);
     });
 
@@ -800,6 +820,12 @@ MainComponent::MainComponent()
 
 MainComponent::~MainComponent()
 {
+    // Prevent a transport callback already queued by the companion server from
+    // entering a partially destructed MainComponent. AudioEngine invalidates
+    // its own queued-callback handle at the start of its later destruction.
+    engine.setRemoteTransportHandler ({});
+    sessionMirror.stop();
+
     // Cancel + join any in-flight offline bounce BEFORE members (the engine)
     // are torn down -- the bounce thread dereferences engine, so it must finish
     // while engine is still alive (a detached thread used to UAF on quit).
@@ -910,29 +936,31 @@ void MainComponent::rebuildStrips()
         TrackState* tR = stereo ? &recorder.getTrack (i + 1) : nullptr;
         const int  step = stereo ? 2 : 1;
 
-        auto colourCb = [this, i, step] (juce::Colour chosen)
+        juce::Component::SafePointer<MainComponent> colourOwner (this);
+        auto colourCb = [colourOwner, i, step] (juce::Colour chosen)
         {
+            if (colourOwner == nullptr) return;
             // If the engineer has multiple strips selected (Shift /
             // Cmd-click), apply the colour to every one of them so
             // 'select 8 strips, set colour' works as expected. The
             // single-strip path still works because mouseDown selects
             // this strip first; selectedLogical will contain at least
             // this one when the colour picker opens via right-click.
-            if (selectedLogical.size() > 1)
+            if (colourOwner->selectedLogical.size() > 1)
             {
-                for (int logical : selectedLogical)
+                for (int logical : colourOwner->selectedLogical)
                 {
-                    if (logical < 0 || logical >= (int) strips.size()) continue;
-                    const auto& s = strips[(size_t) logical];
+                    if (logical < 0 || logical >= (int) colourOwner->strips.size()) continue;
+                    const auto& s = colourOwner->strips[(size_t) logical];
                     const int phys = s->getStripIndex();
-                    engine.setTrackColour (phys, chosen);
-                    if (s->isStereo()) engine.setTrackColour (phys + 1, chosen);
+                    colourOwner->engine.setTrackColour (phys, chosen);
+                    if (s->isStereo()) colourOwner->engine.setTrackColour (phys + 1, chosen);
                 }
             }
             else
             {
-                engine.setTrackColour (i, chosen);
-                if (step == 2) engine.setTrackColour (i + 1, chosen);
+                colourOwner->engine.setTrackColour (i, chosen);
+                if (step == 2) colourOwner->engine.setTrackColour (i + 1, chosen);
             }
         };
         // A stereo pair is ONE logical strip, so the name mirrors onto the R

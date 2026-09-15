@@ -68,6 +68,8 @@ namespace zynforge
                 AudioEngine eng;
                 const int n = eng.loadSession (dir);
                 expectEquals (n, 1, "parts should collapse to one track, not many");
+                expect (eng.getActiveSessionDir() == dir,
+                        "loading a session must make it the active save/export target");
                 auto& player = eng.getPlayer();
                 player.prepare (sr, block);
                 expectEquals ((int) player.getTotalLengthSamples(), lenA + lenB,

@@ -28,7 +28,7 @@ For the current September additions, see the following decisions; older entries 
 
 ### Software validation is not show acceptance — 2026-09-12
 
-**Context.** The 320-group automated pass cannot exercise the user's SD5, RME AoX-D, chosen clock/network/storage path or two-hour workload.
+**Context.** Even the current 350-group Release and sanitizer passes cannot exercise the user's SD5, RME AoX-D, chosen clock/network/storage path or two-hour workload.
 
 **Decision.** Keep software completion and rig acceptance separate. Require a three-hour, 56-input rehearsal at 48 kHz with the selected redundancy and recorded results; maintain an independent recorder for important shows.
 

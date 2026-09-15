@@ -100,10 +100,7 @@ namespace zynforge
             // rejected: returning a shorter take would silently discard audio
             // when the caller exports, analyzes, or bounces it.
             if (holeBetween || firstOpened > 0 || rs.size() != files.size())
-            {
-                jassertfalse;
                 return nullptr;
-            }
 
             if (rs.size() == 1)  return std::move (rs.front());
             return std::make_unique<ConcatReader> (std::move (rs));

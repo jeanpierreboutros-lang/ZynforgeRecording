@@ -9,6 +9,7 @@
 // on the same `this`.
 
 #include "MainComponent.h"
+#include "../Network/CloudUpload.h"
 #include "../Theme/DialogChrome.h"
 #include "PatchPage.h"
 #include "Meterbridge.h"
@@ -467,9 +468,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
             showStatus ("No upload command configured -- pick \"Configure cloud upload command...\" first");
             return;
         }
-        const auto cmd = tmpl.replace ("{SESSION}", sessionDir.getFullPathName().quoted(), false);
-        juce::ChildProcess cp;
-        if (cp.start (cmd))
+        if (zynforge::cloud::launchUpload (tmpl, sessionDir))
         {
             showStatus ("Cloud upload started: " + sessionDir.getFileName());
         }
@@ -525,16 +524,17 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
         dialog::primeNameEditor (*aw, "cmd");
         aw->addButton ("Save",   1, juce::KeyPress (juce::KeyPress::returnKey));
         aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+        juce::Component::SafePointer<MainComponent> self (this);
         aw->enterModalState (true,
             juce::ModalCallbackFunction::create (
-                [this, aw] (int result)
+                [self, aw] (int result)
                 {
-                    if (result == 1 && engine.getAppProps() != nullptr)
+                    if (result == 1 && self != nullptr && self->engine.getAppProps() != nullptr)
                     {
                         const auto v = aw->getTextEditorContents ("cmd").trim();
-                        engine.getAppProps()->setValue ("cloudUploadCommand", v);
-                        engine.getAppProps()->saveIfNeeded();
-                        showStatus (v.isEmpty() ? juce::String ("Cloud upload command cleared")
+                        self->engine.getAppProps()->setValue ("cloudUploadCommand", v);
+                        self->engine.getAppProps()->saveIfNeeded();
+                        self->showStatus (v.isEmpty() ? juce::String ("Cloud upload command cleared")
                                                 : juce::String ("Cloud upload command saved"));
                     }
                     delete aw;
@@ -590,8 +590,17 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
         showStatus (on ? "Trim-Follow ON -- console input-gain moves now track the recorded soundcheck"
                        : "Trim-Follow OFF -- recorded tracks play at their printed level");
     }
-    else if (id == 720)  zynforge::ControlSurfacesDialog::launch (engine,
-                            [this] { confirmSessionReplacement ([this] { createSessionFromConsole(); }); });
+    else if (id == 720)
+    {
+        juce::Component::SafePointer<MainComponent> self (this);
+        zynforge::ControlSurfacesDialog::launch (engine, [self]
+        {
+            if (self == nullptr) return;
+            auto continuation = self;
+            self->confirmSessionReplacement ([continuation]
+            { if (continuation != nullptr) continuation->createSessionFromConsole(); });
+        });
+    }
     else if (id == 600)  zynforge::TimecodeSyncDialog::launch (engine);
     else if (id == 610)
     {
@@ -628,7 +637,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     {
         struct SessionFormatContent final : public juce::Component
         {
-            SessionFormatContent (AudioEngine& e, MainComponent& o) : eng (e), owner (o) { rebuild(); setSize (440, 320); }
+            SessionFormatContent (AudioEngine& e, MainComponent& o) : eng (e), owner (o) { rebuild(); setSize (440, 360); }
 
             void rebuild()
             {
@@ -695,6 +704,11 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
                 };
                 addAndMakeVisible (changePathB);
 
+                stereoMixB.setButtonText ("Record optional stereo stream mix");
+                stereoMixB.setTooltip ("Also records the stream-send bus to Export Files; multitrack capture is unchanged.");
+                stereoMixB.setToggleState (eng.getRecordStereoMix(), juce::dontSendNotification);
+                addAndMakeVisible (stereoMixB);
+
                 applyB.setButtonText ("Apply");
                 cancelB.setButtonText ("Cancel");
                 applyB.onClick  = [this] { apply(); };
@@ -742,6 +756,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
                 else if (c == 2) f = b == 1 ? F::Aiff16 : b == 2 ? F::Aiff24 : F::Aiff32Float;
                 else             f = b == 1 ? F::Flac16 : F::Flac24;
                 eng.getRecorder().setCaptureFormat (f);
+                eng.setRecordStereoMix (stereoMixB.getToggleState());
 
                 // Change the SESSION rate (updates pendingSampleRate + the
                 // record-guard, and asks the device to follow) via the host,
@@ -777,6 +792,9 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
                 pr.removeFromRight (brand::space::sm);
                 pathVal.setBounds (pr);
 
+                r.removeFromTop (brand::space::md);
+                stereoMixB.setBounds (r.removeFromTop (28));
+
                 r.removeFromTop (brand::space::lg);
                 auto br = r.removeFromBottom (32);
                 applyB .setBounds (br.removeFromRight (110));
@@ -796,6 +814,7 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
             juce::Label fmtL, rateL, bitsL, pathL, pathVal;
             juce::ComboBox fmtBox, rateBox, bitsBox;
             juce::TextButton applyB, cancelB, changePathB;
+            juce::ToggleButton stereoMixB;
         };
 
         auto* content = new SessionFormatContent (engine, *this);

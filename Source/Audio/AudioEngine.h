@@ -25,6 +25,7 @@
 #include "TimecodeChase.h"
 
 #include <memory>
+#include <optional>
 
 namespace zynforge
 {
@@ -39,6 +40,32 @@ namespace zynforge
     public:
         AudioEngine();
         ~AudioEngine() override;
+
+        // Remote transports (OSC, companion HTTP, control surfaces) all enter
+        // through this one message-thread boundary.  The host may intercept a
+        // command -- capture-daemon mode does this so a remote cannot silently
+        // start/stop the in-process recorder instead of the protected daemon.
+        enum class RemoteTransportAction
+        {
+            TogglePlay,
+            StartPlay,
+            StopPlay,
+            StopAll,
+            ToggleRecord,
+            StartRecord,
+            StopRecord
+        };
+        using RemoteTransportHandler = std::function<std::optional<bool>
+            (RemoteTransportAction, juce::String& error)>;
+        void setRemoteTransportHandler (RemoteTransportHandler handler)
+        { remoteTransportHandler = std::move (handler); }
+        bool performRemoteTransport (RemoteTransportAction, juce::String& error);
+
+        // Queued callbacks must not capture a raw AudioEngine*.  The handle is
+        // nulled at the very start of destruction and remains alive for any
+        // already-queued callback that needs to notice shutdown safely.
+        using AsyncHandle = std::shared_ptr<std::atomic<AudioEngine*>>;
+        AsyncHandle getAsyncHandle() const noexcept { return asyncHandle; }
 
         // Set BEFORE constructing the engine to skip
         // AudioDeviceManager::initialise + addAudioCallback. Tests
@@ -144,9 +171,9 @@ namespace zynforge
         bool  getMasterStereo() const noexcept { return masterStereo.load(); }
         void  setMasterStereo (bool stereo);
 
-        bool startRecording (const juce::File& sessionDir);
-        void stopRecording();
-        bool isRecording() const noexcept { return recorder.isRecording() || externalRecording.load(); }
+        bool startRecording (const juce::File& sessionDir) override;
+        void stopRecording() override;
+        bool isRecording() const noexcept override { return recorder.isRecording() || externalRecording.load(); }
         void setExternalRecording (bool active) noexcept { externalRecording.store (active); }
         void setSessionTransitionActive (bool active) noexcept
         { sessionTransitionActive.store (active, std::memory_order_release); }
@@ -161,6 +188,7 @@ namespace zynforge
         // platform without re-mixing.
         void setRecordStereoMix (bool enabled);
         bool getRecordStereoMix() const noexcept           { return recordStereoMixFlag.load(); }
+        bool hasStereoMixWriteFailed() const noexcept      { return stereoMixWriteFailed.load(); }
 
         // Load a session's audio into the player + seed clips. preserveEdits
         // is false for a genuine session OPEN (wipe stale clips; the caller's
@@ -183,7 +211,7 @@ namespace zynforge
         // another session.  Keeping this in AudioEngine makes non-UI entry
         // points obey the same boundary as File > Open/New.
         void clearSessionState();
-        void startPlayback()
+        void startPlayback() override
         {
             // Never play back on top of a live take. This is a recorder, not
             // a DAW -- summing the previous take into the monitor/master mid-
@@ -196,7 +224,7 @@ namespace zynforge
             if (! wasPlaying) midiClockOut.sendStart();
             else              midiClockOut.sendContinue();
         }
-        void stopPlayback()
+        void stopPlayback() override
         {
             player.stop();
             midiClockOut.sendStop();
@@ -257,7 +285,7 @@ namespace zynforge
         // so sends survive a relaunch.
         void  setTrackSend (int channelIndex, int sendSlot,
                             int targetBus, float levelDb, bool postFader);
-        bool isPlaying() const noexcept                    { return player.isPlaying(); }
+        bool isPlaying() const noexcept override           { return player.isPlaying(); }
 
         MarkersManager& getMarkers() noexcept              { return markers; }
         StripColours&   getStripColours() noexcept         { return stripColours; }
@@ -1023,6 +1051,7 @@ namespace zynforge
                                                const juce::AudioIODeviceCallbackContext&) override;
 
     private:
+        AsyncHandle asyncHandle;
         juce::AudioDeviceManager deviceManager;
         MultitrackRecorder       recorder;
         SessionPlayer            player;
@@ -1058,6 +1087,7 @@ namespace zynforge
 
         // Stereo mix bus → file recorder.
         std::atomic<bool>                                       recordStereoMixFlag { false };
+        std::atomic<bool>                                       stereoMixWriteFailed { false };
         juce::TimeSliceThread                                   mixWriterThread { "ZF Mix Writer" };
         std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> stereoMixWriter;
         juce::AudioBuffer<float>                                stereoMixScratch;
@@ -1106,6 +1136,7 @@ namespace zynforge
         std::unique_ptr<OscRemote> osc;
         std::unique_ptr<CompanionServer> companion;
         std::unique_ptr<juce::PropertiesFile> appProps;
+        RemoteTransportHandler remoteTransportHandler;
 
         // Live performance telemetry -- written from the audio thread
         // (audioLoadPct) and the writer threads (diskMBPerSec /

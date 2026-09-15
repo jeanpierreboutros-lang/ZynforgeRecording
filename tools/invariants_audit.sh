@@ -235,6 +235,165 @@ report "no std::thread join is skipped by an early flag return" \
        "destroying a joinable std::thread calls std::terminate() -- join unconditionally" \
        "$(printf '%s' "$HITS")"
 
+# ── 13. Deferred callbacks never retain naked owner pointers ────────────────
+# Timer::callAfterDelay callbacks are independent Timer objects. They can fire
+# after a fast quit has destroyed MainComponent. A raw [this] capture shipped
+# in every startup callback and made quit-during-launch a UAF window.
+HITS=""
+while IFS= read -r m; do
+    [[ -z "$m" ]] && continue
+    f="${m%%:*}"; rest="${m#*:}"; ln="${rest%%:*}"
+    WIN=$(sed -n "${ln},$((ln + 2))p" "$f" 2>/dev/null | sed 's,//.*,,' )
+    grep -q '\[this' <<<"$WIN" && HITS+="$m"$'\n'
+done < <(grep -rn "Timer::callAfterDelay" Source/UI/MainComponent*.cpp 2>/dev/null)
+report "MainComponent delayed callbacks use SafePointer" \
+       "a delayed raw this capture can fire after fast-quit destroys the window" \
+       "$(printf '%s' "$HITS")"
+
+# A member that retains AudioEngine& must be declared after the engine so its
+# entire construction/destruction lifetime is nested inside the engine's.
+ENGINE_LINE=$(grep -n "AudioEngine *engine" Source/UI/MainComponent.h | head -1 | cut -d: -f1)
+MIRROR_LINE=$(grep -n "SessionMirror sessionMirror" Source/UI/MainComponent.h | head -1 | cut -d: -f1)
+HITS=""
+if [[ -z "$ENGINE_LINE" || -z "$MIRROR_LINE" || "$MIRROR_LINE" -le "$ENGINE_LINE" ]]; then
+    HITS="Source/UI/MainComponent.h: SessionMirror must be declared after AudioEngine"
+fi
+report "engine-reference members are nested inside AudioEngine lifetime" \
+       "constructing SessionMirror first binds a reference before AudioEngine lives and destroys it after AudioEngine dies" \
+       "$HITS"
+
+# MessageManager jobs may execute after the owner's destructor. AudioEngine's
+# shared async handle is the only sanctioned capture in these adapters.
+HITS=$(grep -rn "MessageManager::callAsync" Source/Audio Source/Network 2>/dev/null \
+       | grep -E '\[eng(,|\])')
+report "queued engine callbacks capture the invalidatable async handle" \
+       "a raw AudioEngine pointer in a queued callback becomes UAF on shutdown" \
+       "$HITS"
+
+HITS=""
+grep -q "performRemoteTransport (actionToRun" Source/Network/CompanionServer.cpp \
+    || HITS="Source/Network/CompanionServer.cpp: companion transport bypasses AudioEngine's host boundary"
+grep -q "performRemoteTransport (AudioEngine::RemoteTransportAction::StartRecord" Source/Audio/OscRemote.cpp \
+    || HITS+=$'\nSource/Audio/OscRemote.cpp: OSC record bypasses AudioEngine\047s host boundary'
+report "remote transports share the host interception boundary" \
+       "daemon mode must intercept phone/OSC record and stop instead of operating the local recorder" \
+       "$HITS"
+
+HITS=""
+grep -q "pathsafety::isSameOrDescendant (source, dest)" Source/UI/MainComponentSessionIO.cpp \
+    || HITS="Source/UI/MainComponentSessionIO.cpp: Save As uses lexical source/destination containment"
+grep -q "child.isSymbolicLink()" Source/UI/MainComponentSessionIO.cpp \
+    || HITS+=$'\nSource/UI/MainComponentSessionIO.cpp: session copy follows directory symlinks'
+report "session copies reject canonical recursion and symlink traversal" \
+       "lexical paths let a symlink recurse into the source or copy private files from outside the session" \
+       "$HITS"
+
+# Component-owned asynchronous UI callbacks must carry a SafePointer.  Event
+# handlers stored by the component itself are synchronous and intentionally not
+# covered; only independent timers, menus, choosers, callouts and modal alerts
+# can outlive their owner.
+HITS=""
+while IFS= read -r m; do
+    [[ -z "$m" ]] && continue
+    f="${m%%:*}"; rest="${m#*:}"; ln="${rest%%:*}"
+    WIN=$(sed -n "${ln},$((ln + 8))p" "$f" 2>/dev/null | sed 's,//.*,,' )
+    if grep -q '\[this' <<<"$WIN" && ! grep -q 'SafePointer' <<<"$WIN"; then
+        HITS+="$m"$'\n'
+    fi
+done < <(grep -rn -E "MessageManager::callAsync|Timer::callAfterDelay|showAsync|showMenuAsync|launchAsynchronously|launchAsync" Source/UI 2>/dev/null)
+report "asynchronous component callbacks carry a SafePointer" \
+       "menus, choosers, callouts and modal callbacks can fire after their owning view is destroyed" \
+       "$(printf '%s' "$HITS")"
+
+HITS=""
+grep -q "child.start (arguments, 0)" Source/Network/CloudUpload.h \
+    || HITS="Source/Network/CloudUpload.h: uploader captures pipes owned by a short-lived ChildProcess"
+report "detached uploads do not inherit short-lived output pipes" \
+       "closing an undrained pipe can SIGPIPE a verbose uploader while the UI reports success" \
+       "$HITS"
+
+HITS=""
+EXPORT_BODY=$(sed -n '/void MainComponent::startExportTracksTo/,/^}/p' \
+              Source/UI/MainComponentSessionIO.cpp 2>/dev/null)
+grep -q "sessionIoBusy.exchange (true)" <<<"$EXPORT_BODY" \
+    || HITS="Source/UI/MainComponentSessionIO.cpp: background track export is not marked busy"
+grep -q "sessionIoBusy.store (false)" <<<"$EXPORT_BODY" \
+    || HITS+=$'\nSource/UI/MainComponentSessionIO.cpp: background track export never clears its busy state'
+report "background exports hold the session-I/O exclusion gate" \
+       "without the gate, Save As/session switching can overlap an export and a second export can block the UI joining a multi-hour encode" \
+       "$HITS"
+
+HITS=""
+IMPORT_BODY=$(sed -n '/void MainComponent::onImportAudioFiles/,/^}/p' \
+              Source/UI/MainComponentSessionIO.cpp 2>/dev/null)
+grep -q "exportThread = std::thread" <<<"$IMPORT_BODY" \
+    || HITS="Source/UI/MainComponentSessionIO.cpp: audio import no longer runs on the owned worker"
+grep -q "audioimport::importFiles" <<<"$IMPORT_BODY" \
+    || HITS+=$'\nSource/UI/MainComponentSessionIO.cpp: audio decode/resample has returned to the message thread'
+report "audio import stays off the message thread" \
+       "decoding/resampling a show-length file inline freezes every control and meter until import ends" \
+       "$HITS"
+
+# Session/project metadata and user-facing exports must be staged before
+# replacement. A direct replaceWithText truncates an existing file first, so a
+# disk-full/crash error destroys the last known-good state.
+HITS=$(grep -rn "replaceWithText" $SCOPE --include='*.cpp' --include='*.h' 2>/dev/null \
+       | grep -v 'Source/Audio/AtomicFile.h')
+report "persistent text writes use atomic replacement" \
+       "direct replaceWithText can truncate the previous session/report on failure" \
+       "$HITS"
+
+HITS=""
+grep -q "exportThread = std::thread" Source/UI/MainComponentTools.cpp \
+    || HITS="Source/UI/MainComponentTools.cpp: click-track render returned to the message thread"
+grep -q "temporary.replaceFileIn (destination)" Source/Audio/ClickTrackRenderer.cpp \
+    || HITS+=$'\nSource/Audio/ClickTrackRenderer.cpp: click render replaces/deletes the previous file before success'
+grep -q "installCompletedExport" Source/Audio/TrackExporter.cpp \
+    || HITS+=$'\nSource/Audio/TrackExporter.cpp: track export no longer installs transactionally'
+grep -q "installBounce" Source/Audio/AudioEngineClips.cpp \
+    || HITS+=$'\nSource/Audio/AudioEngineClips.cpp: bounce no longer installs transactionally'
+report "long renders are cancellable and transactionally installed" \
+       "UI-thread rendering freezes the show UI, while early destination deletion loses the previous deliverable on failure" \
+       "$HITS"
+
+HITS=""
+grep -q "eng.setRecordStereoMix (stereoMixB.getToggleState())" Source/UI/MainComponentMenu.cpp \
+    || HITS="Source/UI/MainComponentMenu.cpp: optional stereo-mix recorder has no user-facing control"
+grep -q "stereoMixWriter->write" Source/Audio/AudioEngine.cpp \
+    && grep -q "stereoMixWriteFailed.store (true" Source/Audio/AudioEngine.cpp \
+    || HITS+=$'\nSource/Audio/AudioEngine.cpp: stereo-mix FIFO/write failure is ignored'
+report "optional stereo-mix capture is controllable and failure-visible" \
+       "an unreachable option or ignored writer failure produces no mix while the operator believes it is enabled" \
+       "$HITS"
+
+HITS=""
+grep -q 'findExecutableInPath' Source/Audio/TrackExporter.cpp \
+    || HITS="Source/Audio/TrackExporter.cpp: MP3 encoder lookup can regress to a blocking child-process probe"
+grep -q 'CharPointer_UTF8::isValidString' Source/Network/CompanionServer.cpp \
+    || HITS+=$'\nSource/Network/CompanionServer.cpp: unauthenticated request bodies are decoded without UTF-8 validation'
+report "external inputs fail bounded and validated" \
+       "a timed-out child-process read or malformed pre-auth network bytes can freeze/assert the app" \
+       "$HITS"
+
+HITS=""
+grep -q 'COMMAND /usr/bin/codesign --force --sign -' CMakeLists.txt \
+    || HITS="CMakeLists.txt: local app bundle is not resealed after the capture helper is embedded"
+report "packaged app is sealed after helper embedding" \
+       "copying the helper after link invalidates the bundle signature and makes strict verification fail" \
+       "$HITS"
+
+HITS=""
+DEPLOY_LINE=$(grep -n 'CMAKE_OSX_DEPLOYMENT_TARGET "12.0"' CMakeLists.txt | head -1 | cut -d: -f1)
+PROJECT_LINE=$(grep -n '^project(' CMakeLists.txt | head -1 | cut -d: -f1)
+if [[ -z "$DEPLOY_LINE" ]]; then
+    HITS="CMakeLists.txt: deployment target is outside Xcode 27's supported macOS 12.0+ range"
+elif [[ -z "$PROJECT_LINE" || "$DEPLOY_LINE" -ge "$PROJECT_LINE" ]]; then
+    HITS="CMakeLists.txt: deployment target is assigned after project(), too late for compiler/toolchain initialization"
+fi
+report "deployment target is accepted by the supported Xcode toolchain" \
+       "Xcode 27 rejects macOS 11, while a target assigned after project() silently links a clean build for the host OS" \
+       "$HITS"
+
 echo
 if [[ $FAIL -eq 0 ]]; then
     green "invariants audit: CLEAN"

@@ -1,0 +1,127 @@
+#include <juce_audio_formats/juce_audio_formats.h>
+
+#include "../UI/MainComponent.h"
+#include "../Capture/CaptureDaemon.h"
+
+#include <functional>
+
+namespace zynforge
+{
+    class MainTransportRegressionTests final : public juce::UnitTest
+    {
+    public:
+        MainTransportRegressionTests()
+            : juce::UnitTest ("Main daemon transport regressions", "zynforge") {}
+
+        static bool waitUntil (std::function<bool()> predicate, int timeoutMs)
+        {
+            for (int elapsed = 0; elapsed < timeoutMs; elapsed += 10)
+            {
+                if (predicate()) return true;
+                juce::Thread::sleep (10);
+            }
+            return predicate();
+        }
+
+        void runTest() override
+        {
+            AudioEngine::setTestModeSkipAudioInit (true);
+            MainComponent::s_testConstruct = true;
+
+            capture::CaptureDaemon daemon;
+            daemon.setTestModeNoDevice (true);
+            int port = 0;
+            for (int candidate : { 49760, 49761, 49762 })
+                if (daemon.start (candidate, 2)) { port = candidate; break; }
+            expect (port > 0, "test daemon failed to bind");
+            if (port == 0)
+            {
+                MainComponent::s_testConstruct = false;
+                AudioEngine::setTestModeSkipAudioInit (false);
+                return;
+            }
+            daemon.prepareForTests (48000.0, 256, 2);
+
+            {
+                MainComponent main;
+                main.useCaptureDaemon = true;
+                expect (main.captureSupervisor.connectOrLaunch (port), "supervisor attach failed");
+                expect (waitUntil ([&] { return main.captureSupervisor.hasStatus(); }, 3000));
+
+                juce::BigInteger armed;
+                armed.setBit (0);
+                auto makeSession = []
+                {
+                    return juce::File::getSpecialLocation (juce::File::tempDirectory)
+                        .getChildFile ("zf-main-transport-" + juce::Uuid().toString());
+                };
+
+                beginTest ("remote STOP reaches and finalises the capture daemon");
+                auto first = makeSession();
+                expect (main.captureSupervisor.startRecording (first, 2, 0, armed));
+                expect (waitUntil ([&] { return main.captureSupervisor.isDaemonRecording(); }, 3000));
+                main.engine.setExternalRecording (true);
+                main.engine.setActiveSessionDir (first);
+                juce::String error;
+                expect (main.engine.performRemoteTransport (
+                            AudioEngine::RemoteTransportAction::StopRecord, error), error);
+                expect (waitUntil ([&] { return main.captureSupervisor.hasStatus()
+                                             && ! main.captureSupervisor.isDaemonRecording(); }, 3000));
+                expect (! main.engine.isRecording());
+                expect (first.getChildFile ("Audio Files").getChildFile ("Track_01.wav").existsAsFile());
+
+                beginTest ("confirmed quit stop helper does not orphan a rolling daemon take");
+                auto second = makeSession();
+                expect (main.captureSupervisor.startRecording (second, 2, 0, armed));
+                expect (waitUntil ([&] { return main.captureSupervisor.isDaemonRecording(); }, 3000));
+                main.engine.setExternalRecording (true);
+                main.engine.setActiveSessionDir (second);
+                expect (main.stopActiveCapture (false));
+                expect (waitUntil ([&] { return main.captureSupervisor.hasStatus()
+                                             && ! main.captureSupervisor.isDaemonRecording(); }, 3000));
+                expect (! main.engine.isRecording(), "Stop & Quit path left external recording set");
+
+                beginTest ("daemon stop reports session-finalization failure instead of false success");
+                auto third = makeSession();
+                expect (main.captureSupervisor.startRecording (third, 2, 0, armed));
+                expect (waitUntil ([&] { return main.captureSupervisor.isDaemonRecording(); }, 3000));
+                main.engine.setExternalRecording (true);
+                expect (main.engine.getActiveSessionDir() == second,
+                        "the preceding take should still be the pinned session before the new host pin");
+                // Simulate a session volume disappearing after record starts.
+                // The daemon still finalises its already-open media in `third`,
+                // but the host has nowhere to write mandatory project state.
+                auto vanishedMetadataTarget = makeSession();
+                expect (vanishedMetadataTarget.createDirectory());
+                main.engine.setActiveSessionDir (vanishedMetadataTarget);
+                expect (main.engine.getActiveSessionDir() == vanishedMetadataTarget,
+                        "an explicit daemon-session pin was hidden by the previously loaded take");
+                expect (vanishedMetadataTarget.deleteRecursively());
+                expect (main.engine.getActiveSessionDir() == vanishedMetadataTarget,
+                        "a vanished recording volume silently fell back to the preceding take");
+                expect (! main.stopActiveCapture (false),
+                        "metadata write failure was reported as a clean stop");
+                expect (waitUntil ([&] { return ! main.captureSupervisor.isDaemonRecording(); }, 3000));
+                expect (! main.engine.isRecording(), "capture itself did not stop on metadata failure");
+
+                beginTest ("selected daemon mode never silently falls back after disconnect");
+                main.captureSupervisor.disconnect();
+                error.clear();
+                expect (! main.engine.performRemoteTransport (
+                            AudioEngine::RemoteTransportAction::StartRecord, error));
+                expect (error.containsIgnoreCase ("daemon"));
+                expect (! main.engine.getRecorder().isRecording());
+
+                first.deleteRecursively();
+                second.deleteRecursively();
+                third.deleteRecursively();
+            }
+
+            daemon.stop();
+            MainComponent::s_testConstruct = false;
+            AudioEngine::setTestModeSkipAudioInit (false);
+        }
+    };
+
+    static MainTransportRegressionTests mainTransportRegressionTests;
+}

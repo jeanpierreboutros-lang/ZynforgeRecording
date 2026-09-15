@@ -11,6 +11,7 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MultitrackRecorder.h"
 #include "../Audio/TrackExporter.h"
+#include "../Audio/ProcessSearch.h"
 
 namespace zynforge
 {
@@ -102,6 +103,14 @@ namespace zynforge
                 const bool ok = eng.bounceStereoMixToWav (out, 24000, 48000.0, nullptr);
                 expect (ok, "stereo-mix bounce should succeed");
                 expectEquals (lengthOf (out), (juce::int64) 24000);
+
+                // A cancelled replacement must not erase the last good file.
+                expect (out.replaceWithText ("known-good-bounce"));
+                std::atomic<bool> cancelled { true };
+                expect (! eng.bounceStereoMixToWav (out, 24000, 48000.0, &cancelled));
+                expectEquals (out.loadFileAsString(), juce::String ("known-good-bounce"));
+                expectEquals (out.getParentDirectory().findChildFiles (
+                                  juce::File::findFiles, false, "*.partial.wav").size(), 0);
                 dir.deleteRecursively();
             }
 
@@ -227,12 +236,14 @@ namespace zynforge
             }
 
             // ── FLAC export at 32-bit must clamp, not fail ───────────────────
-            beginTest ("FLAC export clamps an unsupported 32-bit request");
+            beginTest ("Track exporter constructs cleanly and FLAC clamps an unsupported 32-bit request");
             {
                 auto dir = scratchDir ("flac_bits");
                 const auto src = dir.getChildFile ("src.wav");
                 expect (writeWav (src, 48000.0, 4800), "write source");
 
+                // Construction itself is part of this regression: it used to
+                // register FLAC twice, aborting Debug builds in JUCE.
                 TrackExporter ex;
                 ExportOptions opts;
                 opts.format        = ExportFormat::Flac24;
@@ -243,6 +254,26 @@ namespace zynforge
                 expect (ex.exportTrack (src, stem, opts, err),
                         "32-bit FLAC request should clamp to 24 and succeed, not fail: " + err);
                 expect (stem.withFileExtension (".flac").existsAsFile(), "flac not written");
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Executable lookup searches PATH directly without a child process");
+            {
+                auto dir = scratchDir ("path_lookup");
+                const auto first = dir.getChildFile ("missing");
+                const auto second = dir.getChildFile ("folder with spaces");
+                expect (first.createDirectory().wasOk());
+                expect (second.createDirectory().wasOk());
+                const auto fakeLame = second.getChildFile ("lame");
+                expect (fakeLame.replaceWithText ("test executable"));
+
+                expect (processsearch::findExecutableInPath (
+                            "lame", first.getFullPathName() + ":" + second.getFullPathName())
+                        == fakeLame);
+                expect (processsearch::findExecutableInPath ("missing", second.getFullPathName())
+                        == juce::File());
+                expect (processsearch::findExecutableInPath ({}, second.getFullPathName())
+                        == juce::File());
                 dir.deleteRecursively();
             }
 
@@ -263,6 +294,59 @@ namespace zynforge
                 expect (ex.exportTrack (src, stem, opts, err), "export failed: " + err);
                 expectEquals (lengthOf (stem.withFileExtension (".wav")), (juce::int64) 12345,
                               "a same-rate export must be sample-for-sample the same length");
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Failed export preserves an existing deliverable and removes partial output");
+            {
+                auto dir = scratchDir ("transactional_export");
+                const auto src = dir.getChildFile ("src.wav");
+                expect (writeWav (src, 48000.0, 4800), "write source");
+                const auto stem = dir.getChildFile ("out");
+                const auto existing = stem.withFileExtension (".wav");
+                expect (existing.replaceWithText ("known-good-export"));
+
+                TrackExporter ex;
+                ExportOptions opts;
+                opts.format = static_cast<ExportFormat> (999); // invalid persisted/input value
+                opts.sampleRate = 48000.0; // output opens, then writer creation fails
+                juce::String err;
+                expect (! ex.exportTrack (src, stem, opts, err));
+                expectEquals (existing.loadFileAsString(), juce::String ("known-good-export"));
+                expectEquals (dir.findChildFiles (juce::File::findFiles, false, "*.partial.*").size(), 0);
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Recovery-marker and integrity-report write failures are surfaced");
+            {
+                auto dir = scratchDir ("metadata_failure");
+                expect (dir.getChildFile ("Audio Files").createDirectory().wasOk());
+                expect (dir.getChildFile ("recording.session").createDirectory().wasOk());
+                expect (dir.getChildFile ("session.report.json").createDirectory().wasOk());
+                MultitrackRecorder recorder;
+                recorder.prepare (48000.0, 256, 1);
+                recorder.getTrack (0).armed.store (true);
+                expect (recorder.startRecording (dir));
+                expect (recorder.hasRecoveryMarkerFailed());
+                recorder.stopRecording();
+                expect (recorder.hasReportWriteFailed());
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Optional stereo-mix open failure is surfaced while multitracks continue");
+            {
+                auto dir = scratchDir ("stereo_mix_failure");
+                expect (dir.getChildFile ("Audio Files").createDirectory().wasOk());
+                expect (dir.getChildFile ("Export Files").replaceWithText ("not-a-directory"));
+                AudioEngine eng;
+                eng.prepareForTests (48000.0, 256);
+                eng.setStripCount (1);
+                eng.getRecorder().getTrack (0).armed.store (true);
+                eng.setRecordStereoMix (true);
+                expect (eng.startRecording (dir));
+                expect (eng.hasStereoMixWriteFailed());
+                eng.stopRecording();
+                eng.setRecordStereoMix (false);
                 dir.deleteRecursively();
             }
 

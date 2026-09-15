@@ -15,11 +15,12 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Current Priorities
 
-### Show acceptance — current as of 2026-09-12
+### Show acceptance — current as of 2026-09-15
 
-- [x] Fix all 32 September findings; commit/push `44a309e`; build universal Release; pass 320 test groups with zero failures.
-- [x] Install GUI plus matching protocol-v2 daemon; verify signed bundle; retain previous app for rollback. See [INSTALL.md](INSTALL.md).
-- [x] Update current documentation, operating guidance and validation limits.
+- [x] Fix all 39 findings from the 2026-09-15 audit; pass 350 test groups on both slices of a fresh macOS-12 universal Release build and in ASan+UBSan Debug; pass Xcode analysis with no app-owned diagnostics, 27 invariants, design audit and strict bundle verification. See [AUDIT_REPORT_2026-09-15.md](AUDIT_REPORT_2026-09-15.md).
+- [x] Accept the local Xcode 27 license and verify the universal arm64+x86_64 build, both architecture test runs, static analyzer, deployment load commands and final diff.
+- [ ] Review, commit/push and install the 2026-09-15 candidate with matching protocol-v2 daemon and rollback backup. The installed 2026-09-12 build remains unchanged. See [INSTALL.md](INSTALL.md).
+- [x] Update current documentation, operating guidance and validation limits for the candidate.
 - [ ] User to select MADI/Dante path, Mac/chassis, primary/backup storage and independent recorder. Confirmed: SD5, RME HDSPe AoX-D, 56 inputs, 48 kHz, approximately two hours.
 - [ ] Perform the exact-rig three-hour acceptance rehearsal and inspect all primary/backup recordings. See [SHOW-READINESS.md](SHOW-READINESS.md). No show sign-off yet.
 - [ ] Complete native UI, device-loss and crash/reattachment checks on disposable sessions.

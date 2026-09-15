@@ -33,7 +33,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; }
+namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -68,6 +68,12 @@ private:
     void onLoadSessionClicked();
     void onPlayClicked();
     void onStopClicked();
+    // Immediate capture stop shared by the confirmed UI STOP, remote
+    // transports and "Stop & Quit".  Unlike onStopClicked it has no two-tap
+    // guard because its callers have already confirmed their intent.
+    bool stopActiveCapture (bool stopPlaybackAndRewind);
+    std::optional<bool> handleRemoteTransport (
+        zynforge::AudioEngine::RemoteTransportAction, juce::String& error);
     void onFileMenuClicked();
     void onSaveSessionState();
     void onSaveSessionAs();
@@ -182,17 +188,7 @@ private:
     void scanForCrashReports();
     void showCrashReportNotice (const juce::Array<juce::File>& reports);
     void promptMirrorHost();
-    zynforge::SessionMirror sessionMirror { engine };
     bool configureCaptureDaemon();
-    // X32/M32 console link: soundcheck repatch + head-amp gain capture.
-    zynforge::ConsoleLink consoleLink;
-    // Capture-process split, Phase 1d: out-of-process recording behind a
-    // flag (Session menu, id 958; appProps "useCaptureDaemon", default
-    // OFF until the 64-ch hardware soak passes). When active, RECORD
-    // routes through the daemon; playback/monitoring stay in-process.
-    zynforge::capture::CaptureSupervisor captureSupervisor;
-    bool useCaptureDaemon { false };
-    static constexpr int kCaptureDaemonPort = 17890;
     bool daemonModeActive() const { return useCaptureDaemon && captureSupervisor.isAttached(); }
     void toggleCaptureDaemon();
     void connectCaptureDaemon (bool announceReattach);
@@ -361,6 +357,24 @@ private:
     zynforge::ZynForgeLookAndFeel laf;
     zynforge::AudioEngine         engine;
 
+    // These objects retain references/callbacks into `engine`, so declaration
+    // order is safety-critical: construct them after the engine and destroy
+    // them before it.  They previously appeared ~175 lines before `engine`,
+    // making SessionMirror bind a reference before the engine's lifetime began
+    // and letting its destructor run after the engine had already died.
+    zynforge::SessionMirror sessionMirror { engine };
+    // X32/M32 console link: soundcheck repatch + head-amp gain capture.
+    zynforge::ConsoleLink consoleLink;
+    // Capture-process split, Phase 1d: out-of-process recording behind a
+    // flag (Session menu, id 958; appProps "useCaptureDaemon", default
+    // OFF until the 64-ch hardware soak passes). When active, RECORD
+    // routes through the daemon; playback/monitoring stay in-process.
+    zynforge::capture::CaptureSupervisor captureSupervisor;
+    bool useCaptureDaemon { false };
+    static constexpr int kCaptureDaemonPort = 17890;
+
+    friend class zynforge::MainTransportRegressionTests;
+
     // Live SafePointers to dialog windows opened by the header buttons.
     // A second click on the launching button closes the dialog instead of
     // opening another instance.
@@ -478,8 +492,9 @@ private:
     // (and tempoMap, if any) to lay down a click WAV in the session's
     // Audio Files/ folder. Tracks the file path so a re-press just
     // overwrites it in place rather than piling up tracks.
-    // False when the render was refused (mid-take, no session, write failed).
-    bool generateOrRefreshClickTrack();
+    // The render runs on the owned session-I/O worker. Completion (when given)
+    // is delivered on the message thread after the file is installed/reloaded.
+    void generateOrRefreshClickTrack (std::function<void (bool)> completion = {});
     int  clickTrackIndex { -1 };   // -1 = not yet created in this session
 
     // Arm state captured the moment a punch-in fires. servicePunch force-writes

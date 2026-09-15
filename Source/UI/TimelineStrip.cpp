@@ -159,12 +159,14 @@ namespace zynforge
         menu.addItem (4, "Set as Loop Out");
         menu.addItem (5, "Clear Loop", engine.getPlayer().hasLoopRegion());
 
+        juce::Component::SafePointer<TimelineStrip> self (this);
         menu.showMenuAsync (juce::PopupMenu::Options(),
-                            [this, idx] (int chosen)
+                            [self, idx] (int chosen)
         {
-            auto& markers = engine.getMarkers();
-            auto& player  = engine.getPlayer();
-            if (chosen == 1) renameMarkerDialog (idx);
+            if (self == nullptr) return;
+            auto& markers = self->engine.getMarkers();
+            auto& player  = self->engine.getPlayer();
+            if (chosen == 1) self->renameMarkerDialog (idx);
             else if (chosen == 2) markers.removeMarker (idx);
             else if (chosen == 3)
             {
@@ -181,7 +183,7 @@ namespace zynforge
                 player.setLoopRegion (juce::jmax ((juce::int64) 0, juce::jmin (s, e - 1)), e);
             }
             else if (chosen == 5) player.clearLoopRegion();
-            repaint();
+            self->repaint();
         });
     }
 

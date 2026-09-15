@@ -22,12 +22,15 @@ namespace zynforge
                 AudioEngine eng;
                 auto* p = eng.getAppProps();
                 expect (p != nullptr, "no appProps");
-                const auto tempRoot = juce::File::getSpecialLocation (juce::File::tempDirectory);
-                expect (p->getFile().isAChildOf (tempRoot),
-                        "test engine settings live OUTSIDE temp -- a test could clobber real user prefs");
-                // Persisting a session dir must stay inside the throwaway file.
-                eng.setActiveSessionDir (tempRoot);
-                expect (p->getFile().isAChildOf (tempRoot));
+                if (p != nullptr)
+                {
+                    const auto tempRoot = juce::File::getSpecialLocation (juce::File::tempDirectory);
+                    expect (p->getFile().isAChildOf (tempRoot),
+                            "test engine settings live OUTSIDE temp -- a test could clobber real user prefs");
+                    // Persisting a session dir must stay inside the throwaway file.
+                    eng.setActiveSessionDir (tempRoot);
+                    expect (p->getFile().isAChildOf (tempRoot));
+                }
             }
 
             beginTest ("setStripCount grows + shrinks the recorder");

@@ -34,6 +34,19 @@ namespace zynforge
         {
             using namespace zynforge::capture;
 
+           #if JUCE_MAC
+            beginTest ("built application bundle contains its capture daemon");
+            {
+                const auto executable = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
+                const auto bundled = executable.getSiblingFile ("ZynforgeCapture");
+                expect (bundled.existsAsFile(),
+                        "the .app is incomplete: Contents/MacOS/ZynforgeCapture is missing");
+                expectEquals (CaptureSupervisor::discoverBinary().getFullPathName(),
+                              bundled.getFullPathName(),
+                              "runtime discovery did not choose the bundled daemon");
+            }
+           #endif
+
             beginTest ("attaches to an existing daemon instead of launching a twin (reattach)");
             {
                 // In-process daemon stands in for one left rolling by a dead GUI.

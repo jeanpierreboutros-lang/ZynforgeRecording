@@ -63,15 +63,24 @@ namespace zynforge
 
     void OscRemote::recordStart()
     {
-        // Honour the engineer's "Local Storage" override. This used to hardcode
-        // ~/Music/Zynforge Sessions, so a take started from the desk landed on
-        // the internal drive instead of the external configured for the show.
-        if (engine.hasUsableArmedInput())
-            engine.startRecording (engine.makeTimestampedSessionDir());
+        juce::String error;
+        engine.performRemoteTransport (AudioEngine::RemoteTransportAction::StartRecord, error);
     }
-    void OscRemote::recordStop() { engine.stopRecording(); }
-    void OscRemote::playStart()  { engine.startPlayback(); }
-    void OscRemote::playStop()   { engine.stopPlayback(); }
+    void OscRemote::recordStop()
+    {
+        juce::String error;
+        engine.performRemoteTransport (AudioEngine::RemoteTransportAction::StopRecord, error);
+    }
+    void OscRemote::playStart()
+    {
+        juce::String error;
+        engine.performRemoteTransport (AudioEngine::RemoteTransportAction::StartPlay, error);
+    }
+    void OscRemote::playStop()
+    {
+        juce::String error;
+        engine.performRemoteTransport (AudioEngine::RemoteTransportAction::StopPlay, error);
+    }
 
     void OscRemote::dropMarker (const juce::String& name)
     {

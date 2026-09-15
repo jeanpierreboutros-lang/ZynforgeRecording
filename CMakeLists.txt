@@ -1,27 +1,59 @@
 cmake_minimum_required(VERSION 3.22)
 
+# Toolchain-affecting macOS settings must precede project()/enable_language().
+# Otherwise a clean build performs compiler detection for the host OS and may
+# silently emit a binary that cannot run on the documented minimum release.
+if(APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
+    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Universal binary" FORCE)
+endif()
+
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    # Xcode 27 removed macOS 11 from its supported deployment-target range and
+    # refuses to configure/analyse an Xcode project below 12.0.
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "" FORCE)
+endif()
+
 project(ZynforgeRecording VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-if(APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
-    set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "Universal binary" FORCE)
-endif()
-
-if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "" FORCE)
-endif()
-
 include(FetchContent)
 FetchContent_Declare(
     JUCE
     GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
-    GIT_TAG        8.0.4
+    # Immutable commit for JUCE 8.0.4. A mutable release tag lets an upstream
+    # retag silently replace code in a clean build.
+    GIT_TAG        51d11a2be6d5c97ccf12b4e5e827006e19f0555a
     GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable(JUCE)
+
+# JUCE 8.0.4 bundles a libFLAC revision that performs pointer arithmetic on
+# nullptr when escape coding is disabled. It normally happens to work, but is
+# undefined behaviour and is caught by UBSan during every FLAC write. Apply the
+# exact guard used by current upstream libFLAC until the next deliberate JUCE
+# upgrade, and fail configuration if the pinned dependency no longer matches
+# either the vulnerable or corrected form.
+set(ZYNFORGE_JUCE_FLAC_ENCODER
+    "${juce_SOURCE_DIR}/modules/juce_audio_formats/codecs/flac/libFLAC/stream_encoder.c")
+file(READ "${ZYNFORGE_JUCE_FLAC_ENCODER}" ZYNFORGE_JUCE_FLAC_SOURCE)
+set(ZYNFORGE_FLAC_UB_OLD "raw_bits_per_partition+sum,")
+set(ZYNFORGE_FLAC_UB_FIXED "do_escape_coding ? raw_bits_per_partition+sum : NULL,")
+string(FIND "${ZYNFORGE_JUCE_FLAC_SOURCE}" "${ZYNFORGE_FLAC_UB_FIXED}"
+       ZYNFORGE_FLAC_FIXED_AT)
+if(ZYNFORGE_FLAC_FIXED_AT EQUAL -1)
+    string(FIND "${ZYNFORGE_JUCE_FLAC_SOURCE}" "${ZYNFORGE_FLAC_UB_OLD}"
+           ZYNFORGE_FLAC_OLD_AT)
+    if(ZYNFORGE_FLAC_OLD_AT EQUAL -1)
+        message(FATAL_ERROR "Pinned JUCE libFLAC no longer matches the audited encoder patch")
+    endif()
+    string(REPLACE "${ZYNFORGE_FLAC_UB_OLD}" "${ZYNFORGE_FLAC_UB_FIXED}"
+           ZYNFORGE_JUCE_FLAC_SOURCE "${ZYNFORGE_JUCE_FLAC_SOURCE}")
+    file(WRITE "${ZYNFORGE_JUCE_FLAC_ENCODER}" "${ZYNFORGE_JUCE_FLAC_SOURCE}")
+    message(STATUS "Applied upstream libFLAC null-pointer arithmetic guard")
+endif()
 
 juce_add_gui_app(ZynforgeRecording
     PRODUCT_NAME                  "Zynforge Recording"
@@ -66,6 +98,8 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/MainComponentStrips.cpp
     Source/UI/TrackSelectDialog.cpp
     Source/Tests/AuditFixTests.cpp
+    Source/Tests/AudioImportTests.cpp
+    Source/Tests/ClickTrackRendererTests.cpp
     Source/Tests/SeptemberRegressionTests.cpp
     Source/Tests/DialogAuditTests.cpp
     Source/Tests/NetworkAuditTests.cpp
@@ -117,6 +151,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/CaptureLinkTests.cpp
     Source/Tests/CaptureDaemonTests.cpp
     Source/Tests/CaptureSupervisorTests.cpp
+    Source/Tests/MainTransportRegressionTests.cpp
     Source/Network/CaptureLink.cpp
     Source/Capture/CaptureDaemon.cpp
     Source/Capture/CaptureSupervisor.cpp
@@ -148,7 +183,9 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Audio/AudioEngine.cpp
     Source/Audio/AudioEngineAutomation.cpp
     Source/Audio/AudioEngineClips.cpp
+    Source/Audio/AudioImport.cpp
     Source/Audio/ClickEngine.cpp
+    Source/Audio/ClickTrackRenderer.cpp
     Source/Audio/MultitrackRecorder.cpp
     Source/Audio/SessionPlayer.cpp
     Source/Audio/Markers.cpp
@@ -219,3 +256,28 @@ target_link_libraries(ZynforgeCapture PRIVATE
     juce::juce_recommended_lto_flags
     juce::juce_recommended_warning_flags
 )
+
+# The capture supervisor's installed-layout contract is
+#   Zynforge Recording.app/Contents/MacOS/ZynforgeCapture
+# A normal `cmake --build` previously produced the helper only in a separate
+# artefacts directory, so copying/distributing the apparently complete .app
+# made daemon mode fail with "binary not found". Make the GUI target depend on
+# the helper and embed it in every built app bundle.
+if(APPLE)
+    add_dependencies(ZynforgeRecording ZynforgeCapture)
+    add_custom_command(TARGET ZynforgeRecording POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "$<TARGET_FILE:ZynforgeCapture>"
+                "$<TARGET_BUNDLE_DIR:ZynforgeRecording>/Contents/MacOS/ZynforgeCapture"
+        # Unix Makefiles leave GUI bundles with only the linker's executable
+        # signature: resources are unsealed, and copying the helper afterwards
+        # also invalidates any earlier bundle signature. Give local/CI builds a
+        # complete ad-hoc seal after embedding. Xcode or a release pipeline can
+        # replace this with the configured Developer ID signature afterwards.
+        COMMAND /usr/bin/codesign --force --sign -
+                "$<TARGET_BUNDLE_DIR:ZynforgeRecording>/Contents/MacOS/ZynforgeCapture"
+        COMMAND /usr/bin/codesign --force --sign -
+                "$<TARGET_BUNDLE_DIR:ZynforgeRecording>"
+        COMMENT "Embedding ZynforgeCapture and sealing the application bundle"
+        VERBATIM)
+endif()

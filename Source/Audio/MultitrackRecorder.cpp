@@ -1,4 +1,5 @@
 #include "MultitrackRecorder.h"
+#include "AtomicFile.h"
 #include "FastHash.h"
 #include "PunchSplice.h"
 #include "MultiPartReader.h"
@@ -67,23 +68,6 @@ namespace zynforge
         // and fixed. The shard machinery is kept (one shard covering every
         // channel) so re-enabling is a one-line change once it's proven.
         return 1;
-    }
-
-    // Crash-atomic text write: fully write a temp sibling then atomically
-    // rename it over the target (POSIX rename() overwrites in place on the
-    // same volume), so a crash mid-write can never leave a half-written /
-    // torn report or recovery marker. Used for the recovery-session marker
-    // and both session.report.json writes.
-    static void writeTextAtomic (const juce::File& target, const juce::String& text)
-    {
-        const auto tmp = target.getSiblingFile (target.getFileName() + ".tmp");
-        tmp.deleteFile();
-        if (tmp.replaceWithText (text) && tmp.moveFileTo (target))
-            return;
-        // Fallback: best-effort direct write (e.g. rename unsupported on this
-        // filesystem). Still better than leaving nothing.
-        tmp.deleteFile();
-        target.replaceWithText (text);
     }
 
     MultitrackRecorder::MultitrackRecorder()
@@ -595,6 +579,8 @@ namespace zynforge
 
     bool MultitrackRecorder::startRecording (const juce::File& sessionDir)
     {
+        recoveryMarkerFailed.store (false, std::memory_order_relaxed);
+        reportWriteFailed.store (false, std::memory_order_relaxed);
         const juce::ScopedLock structureGuard (structureLock);
         if (recording.load()) return false;
         if (tracks.empty())   return false;
@@ -953,8 +939,10 @@ namespace zynforge
             m->setProperty ("startedAt",  now.toISO8601 (true));
             m->setProperty ("sampleRate", sampleRate);
             m->setProperty ("numTracks",  (int) tracks.size());
-            writeTextAtomic (sessionDir.getChildFile ("recording.session"),
-                             juce::JSON::toString (juce::var (m.get())));
+            recoveryMarkerFailed.store (
+                ! atomicfile::writeText (sessionDir.getChildFile ("recording.session"),
+                                         juce::JSON::toString (juce::var (m.get()))),
+                std::memory_order_relaxed);
         }
 
         samplesSinceStart.store (0, std::memory_order_relaxed);
@@ -1576,8 +1564,10 @@ namespace zynforge
             //    guarantees session.report.json exists the instant recording
             //    stops, even for a huge take whose hashing runs for minutes
             //    (or if the app is killed before hashing finishes).
-            writeTextAtomic (sessionDir.getChildFile ("session.report.json"),
-                             buildReportJson (trackMetas, writerSnapshots, false, {}));
+            reportWriteFailed.store (
+                ! atomicfile::writeText (sessionDir.getChildFile ("session.report.json"),
+                                         buildReportJson (trackMetas, writerSnapshots, false, {})),
+                std::memory_order_relaxed);
 
             // 2) Hash all recorded audio off-thread and rewrite the report with
             //    the SHA-256s. The hashing is (a) hardware-accelerated
@@ -1644,8 +1634,8 @@ namespace zynforge
                     // that is no longer the session's. Drop it.
                     if (genToken->load (std::memory_order_acquire) != myGen) return;
 
-                    writeTextAtomic (sessionDir.getChildFile ("session.report.json"),
-                                     buildReportJson (trackMetas, writerSnaps, true, shaByPath));
+                    atomicfile::writeText (sessionDir.getChildFile ("session.report.json"),
+                                           buildReportJson (trackMetas, writerSnaps, true, shaByPath));
                 });
         }
 

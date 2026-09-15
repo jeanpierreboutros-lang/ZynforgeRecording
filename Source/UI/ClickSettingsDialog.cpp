@@ -192,30 +192,42 @@ namespace zynforge
                     //
                     // This used to switch the live click engine off, save that,
                     // and close -- all BEFORE calling onGenerate. The generate
-                    // path refuses while a take is rolling (it deletes + re-renders
-                    // a session-length WAV and reloads the session), so pressing
+                    // path refuses while a take is rolling (it renders a
+                    // session-length WAV and reloads the session), so pressing
                     // this mid-show silenced the click in the drummer's wedge and
                     // produced no track, with only a transient status line to
                     // explain. Same with no session open. Commit nothing until
                     // the render has actually happened.
-                    const bool generated = onGenerate ? onGenerate() : false;
-                    if (! generated)
-                    {
-                        // The caller has already explained why (status line).
-                        // Leave the click engine exactly as the engineer had it
-                        // and keep the dialog open.
+                    if (! onGenerate)
                         return;
-                    }
 
-                    // Generating commits a click WAV to the session. The
-                    // real-time click engine should NOT also be running on top --
-                    // flip it off and reflect that back to the settings.
-                    settings.on = false;
-                    onButton.setToggleState (false, juce::dontSendNotification);
-                    onButton.setButtonText ("OFF");
-                    if (onSave) onSave (settings);
-                    if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
-                        dw->exitModalState (1);
+                    generateButton.setEnabled (false);
+                    generateButton.setButtonText ("Generating...");
+                    closeButton.setEnabled (false);
+                    juce::Component::SafePointer<Content> self (this);
+                    onGenerate ([self] (bool generated)
+                    {
+                        if (self == nullptr) return;
+                        self->generateButton.setEnabled (true);
+                        self->generateButton.setButtonText ("Generate click track");
+                        self->closeButton.setEnabled (true);
+                        if (! generated)
+                        {
+                            // The caller has already explained why (status line).
+                            // Leave the click engine exactly as the engineer had it
+                            // and keep the dialog open.
+                            return;
+                        }
+
+                        // Generating commits a click WAV to the session. The
+                        // real-time click engine should NOT also be running on top.
+                        self->settings.on = false;
+                        self->onButton.setToggleState (false, juce::dontSendNotification);
+                        self->onButton.setButtonText ("OFF");
+                        if (self->onSave) self->onSave (self->settings);
+                        if (auto* dw = self->findParentComponentOfClass<juce::DialogWindow>())
+                            dw->exitModalState (1);
+                    });
                 };
                 addAndMakeVisible (generateButton);
 

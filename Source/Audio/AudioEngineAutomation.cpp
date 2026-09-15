@@ -488,7 +488,7 @@ namespace zynforge
         // controls how value evolves FROM prev TO next. For Linear,
         // the per-point `tension` warps the ramp into ease-in (<0)
         // or ease-out (>0) via t^exp where exp = 2^(-tension*4).
-        double shaped = t;
+        double shaped;
         switch (prev->curve)
         {
             case AutomationCurve::Hold:

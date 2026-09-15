@@ -126,14 +126,14 @@ namespace zynforge
 
             if (mtcAcc.seen == 0xFF)   // all 8 received
             {
-                const juce::uint8 fr =  mtcAcc.nibbles[0]
-                                     | ((mtcAcc.nibbles[1] & 0x01) << 4);
-                const juce::uint8 sc =  mtcAcc.nibbles[2]
-                                     |  (mtcAcc.nibbles[3] << 4);
-                const juce::uint8 mn =  mtcAcc.nibbles[4]
-                                     |  (mtcAcc.nibbles[5] << 4);
-                const juce::uint8 hr =  mtcAcc.nibbles[6]
-                                     | ((mtcAcc.nibbles[7] & 0x01) << 4);
+                const auto fr = static_cast<juce::uint8> (mtcAcc.nibbles[0]
+                              | ((mtcAcc.nibbles[1] & 0x01) << 4));
+                const auto sc = static_cast<juce::uint8> (mtcAcc.nibbles[2]
+                              |  (mtcAcc.nibbles[3] << 4));
+                const auto mn = static_cast<juce::uint8> (mtcAcc.nibbles[4]
+                              |  (mtcAcc.nibbles[5] << 4));
+                const auto hr = static_cast<juce::uint8> (mtcAcc.nibbles[6]
+                              | ((mtcAcc.nibbles[7] & 0x01) << 4));
 
                 ltcFrames .store (fr, std::memory_order_relaxed);
                 ltcSeconds.store (sc, std::memory_order_relaxed);
@@ -260,7 +260,8 @@ namespace zynforge
             if (bit < 0) return;
 
             // Shift into the rolling window + the 80-bit frame buffer.
-            bitWindow = (bitWindow << 1) | (juce::uint16) bit;
+            bitWindow = static_cast<juce::uint16> ((bitWindow << 1)
+                                                   | static_cast<juce::uint16> (bit));
             frameBits[framePos] = (juce::uint8) bit;
             framePos = (framePos + 1) % 80;
 

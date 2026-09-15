@@ -1,6 +1,6 @@
-# ZynForge Recording — Field-Test Checklist (updated 2026-09-12)
+# ZynForge Recording — Field-Test Checklist (updated 2026-09-15)
 
-Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak. Tick boxes only after performing them; the failure column tells you when to stop and report. Current build: `44a309e`, 320 automated test groups passing. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run.
+Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak. Tick boxes only after performing them; the failure column tells you when to stop and report. Current candidate: 350 automated test groups pass on both slices of the macOS-12 universal Release and in ASan+UBSan Debug; Xcode analysis has no app-owned diagnostics. It is not yet installed/committed/pushed. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run.
 
 Never force-quit, unplug hardware or delete sessions during production recording. Crash tests require a disposable rig/session and a recovery plan. In daemon mode, killing only the GUI is a reattachment test; it does not necessarily stop the recording or create an orphan. Stop both processes gracefully before installing or rolling back.
 

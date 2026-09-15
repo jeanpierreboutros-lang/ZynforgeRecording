@@ -95,14 +95,16 @@ namespace zynforge
         menu.addItem (3, "Move cue up",            onMoveCue != nullptr);
         menu.addItem (4, "Move cue down",          onMoveCue != nullptr);
 
+        juce::Component::SafePointer<SetlistBar> self (this);
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetScreenArea (
                                 juce::Rectangle<int> (e.getScreenPosition(), e.getScreenPosition())),
-                            [this] (int chosen)
+                            [self] (int chosen)
         {
-            if      (chosen == 1 && onRenameCue) onRenameCue();
-            else if (chosen == 2 && onDeleteCue) onDeleteCue();
-            else if (chosen == 3 && onMoveCue)   onMoveCue (-1);
-            else if (chosen == 4 && onMoveCue)   onMoveCue (+1);
+            if (self == nullptr) return;
+            if      (chosen == 1 && self->onRenameCue) self->onRenameCue();
+            else if (chosen == 2 && self->onDeleteCue) self->onDeleteCue();
+            else if (chosen == 3 && self->onMoveCue)   self->onMoveCue (-1);
+            else if (chosen == 4 && self->onMoveCue)   self->onMoveCue (+1);
         });
     }
 

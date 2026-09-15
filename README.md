@@ -10,7 +10,7 @@ Active development, pre-1.0. Ships **multitrack recording**, **virtual-soundchec
 
 ## Build
 
-As of 2026-09-12, fixes for all 32 September audit findings are in commit `44a309e`. The universal Release build passed **320 test groups, 0 failures**. The updated app and matching capture daemon were installed locally and signature-verified. This is **rehearsal-ready, not yet validated as the sole recorder for the planned show**. Hardware, storage, clocking and a three-hour rehearsal remain acceptance gates; see [Show readiness](SHOW-READINESS.md).
+As of 2026-09-15, the latest audit candidate fixes 39 additional confirmed issues. Its fresh macOS-12 universal Release build passes **350 test groups, 0 failures on both arm64 and x86_64**, and its ASan+UBSan Debug build passes 350/0; Xcode static analysis has no app-owned diagnostics, while the 27-rule invariant gate, design audit and strict bundle-signature check are clean. The candidate is **not installed, committed or pushed**. It is ready for exact-rig rehearsal, not validated as the sole recorder for the planned show. Hardware, storage, clocking and a three-hour rehearsal remain acceptance gates; see [the current audit](AUDIT_REPORT_2026-09-15.md) and [Show readiness](SHOW-READINESS.md).
 
 ```bash
 cmake -B build -G Xcode
@@ -18,7 +18,7 @@ cmake --build build --config Release
 open "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
 ```
 
-First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Apple Silicon + Intel).
+First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 12.0+ Universal (Apple Silicon + Intel).
 
 For local installation, follow [INSTALL.md](INSTALL.md). The app needs the matching `ZynforgeCapture` executable bundled in `Contents/MacOS`; copying the GUI bundle alone omits it. Stop all takes and quit both processes before replacement. Capture protocol is version **2**.
 
@@ -36,6 +36,7 @@ For local installation, follow [INSTALL.md](INSTALL.md). The app needs the match
 | User-visible changes | [`CHANGELOG.md`](CHANGELOG.md) |
 | Local installation, verification and rollback | [`INSTALL.md`](INSTALL.md) |
 | Planned SD5 / 56-input show and acceptance gates | [`SHOW-READINESS.md`](SHOW-READINESS.md) |
+| 2026-09-15 whole-project audit and verification limits | [`AUDIT_REPORT_2026-09-15.md`](AUDIT_REPORT_2026-09-15.md) |
 | September audit: all 32 fixes and validation limits | [`AUDIT_FIXES_2026-09-12.md`](AUDIT_FIXES_2026-09-12.md) |
 | Manual regression and hardware checklists | [`FIELD-TEST.md`](FIELD-TEST.md), [`FIELD-TEST-AUDIT.md`](FIELD-TEST-AUDIT.md) |
 

@@ -244,6 +244,7 @@ void MainComponent::pollMixerUndo()
 
 void MainComponent::confirmDeleteRecording (bool ripple, std::function<void()> onConfirm)
 {
+    juce::Component::SafePointer<MainComponent> self (this);
     juce::AlertWindow::showAsync (
         juce::MessageBoxOptions()
             .withIconType (juce::MessageBoxIconType::WarningIcon)
@@ -257,7 +258,8 @@ void MainComponent::confirmDeleteRecording (bool ripple, std::function<void()> o
             .withButton ("Cancel"),
         // LookAndFeel_V2::createAlertWindow gives the FIRST of two buttons
         // commandID 1 and the second 0 -- so "Delete" returns 1, not 0.
-        [onConfirm] (int result) { if (result == 1 && onConfirm) onConfirm(); });
+        [self, onConfirm] (int result)
+        { if (result == 1 && self != nullptr && onConfirm) onConfirm(); });
 }
 
 void MainComponent::confirmDeleteChannels (std::function<void()> onConfirm)
@@ -265,6 +267,7 @@ void MainComponent::confirmDeleteChannels (std::function<void()> onConfirm)
     const int n = (int) selectedLogical.size();
     if (n <= 0 || engine.isRecording()) return;
 
+    juce::Component::SafePointer<MainComponent> self (this);
     juce::AlertWindow::showAsync (
         juce::MessageBoxOptions()
             .withIconType (juce::MessageBoxIconType::WarningIcon)
@@ -277,7 +280,8 @@ void MainComponent::confirmDeleteChannels (std::function<void()> onConfirm)
             .withButton ("Delete")
             .withButton ("Cancel"),
         // First of two buttons gets commandID 1 -- "Delete" returns 1.
-        [onConfirm] (int result) { if (result == 1 && onConfirm) onConfirm(); });
+        [self, onConfirm] (int result)
+        { if (result == 1 && self != nullptr && onConfirm) onConfirm(); });
 }
 
 void MainComponent::editUndo()
@@ -512,18 +516,19 @@ void MainComponent::editCropToLoopRange()
     aw->setLookAndFeel (&laf);
     aw->addButton ("Crop",   kCrop,   juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true,
-        juce::ModalCallbackFunction::create ([this, aw, a, b] (int result)
+        juce::ModalCallbackFunction::create ([self, aw, a, b] (int result)
         {
             std::unique_ptr<juce::AlertWindow> dispose (aw);
-            if (result != kCrop) return;
-            const auto before = engine.playlistsToJson();
-            const int kept = engine.cropToRange (a, b);
-            pushClipUndo ("Crop to loop range", before);   // Cmd+Z reverts the crop
-            engine.getPlayer().clearLoopRegion();
-            if (editPage != nullptr) editPage->repaint();
-            saveUILayoutToActiveSession();   // persist the new clip layout
-            showStatus ("Cropped to loop region (" + juce::String (kept)
+            if (result != kCrop || self == nullptr) return;
+            const auto before = self->engine.playlistsToJson();
+            const int kept = self->engine.cropToRange (a, b);
+            self->pushClipUndo ("Crop to loop range", before);   // Cmd+Z reverts the crop
+            self->engine.getPlayer().clearLoopRegion();
+            if (self->editPage != nullptr) self->editPage->repaint();
+            self->saveUILayoutToActiveSession();   // persist the new clip layout
+            self->showStatus ("Cropped to loop region (" + juce::String (kept)
                         + " track(s) with audio) -- non-destructive");
         }),
         false);

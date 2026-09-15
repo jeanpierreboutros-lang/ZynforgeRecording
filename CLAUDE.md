@@ -4,7 +4,7 @@
 
 JUCE 8 / C++20 / CMake, macOS-first (Universal) multitrack recording + playback application with virtual soundcheck. Sibling to the ZynForge Live plugin-insert host.
 
-**Stack:** JUCE 8.0.4 (via CMake FetchContent), C++20, CMake (Xcode generator), Apple Silicon + Intel universal build, macOS 11.0 deployment target. Embedded HTTP companion server (`StreamingSocket`). Native macOS sans-serif UI + bundled JetBrains Mono. NDI via runtime `dlopen`.
+**Stack:** JUCE 8.0.4 (via CMake FetchContent), C++20, CMake (Xcode generator), Apple Silicon + Intel universal build, macOS 12.0 deployment target. Embedded HTTP companion server (`StreamingSocket`). Native macOS sans-serif UI + bundled JetBrains Mono. NDI via runtime `dlopen`.
 
 ## Workflow rules — non-negotiable
 
@@ -18,7 +18,7 @@ JUCE 8 / C++20 / CMake, macOS-first (Universal) multitrack recording + playback 
 
 ## Documentation & References
 
-**Current baseline (2026-09-12):** `44a309e`, all 32 September findings fixed, universal Release and 320 test groups passing. Installed GUI + protocol-v2 daemon verified; physical rig acceptance remains pending. Read [INSTALL.md](INSTALL.md), [SHOW-READINESS.md](SHOW-READINESS.md) and [AUDIT_FIXES_2026-09-12.md](AUDIT_FIXES_2026-09-12.md) for delivery, rollback and validation limits. Do not equate tests or older field-soak history with approval for the new SD5/56-input rig. Unchanged visual token specs remain authoritative; this remediation does not retheme the app.
+**Current candidate (2026-09-15):** 39 additional confirmed findings fixed. A fresh macOS-12 universal Release build passes 350 test groups on both arm64 and x86_64, the ASan+UBSan Debug build passes 350/0, and Xcode static analysis has no app-owned diagnostics; 27 invariant checks, the design audit and strict bundle verification are clean. The candidate is not installed/committed/pushed. Physical rig acceptance remains pending. Read [AUDIT_REPORT_2026-09-15.md](AUDIT_REPORT_2026-09-15.md), [INSTALL.md](INSTALL.md) and [SHOW-READINESS.md](SHOW-READINESS.md). Do not equate tests or older field-soak history with approval for the new SD5/56-input rig. Unchanged visual token specs remain authoritative; this remediation does not retheme the app.
 
 ### September implementation invariants
 

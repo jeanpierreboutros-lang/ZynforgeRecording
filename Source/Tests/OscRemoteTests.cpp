@@ -78,6 +78,43 @@ namespace zynforge
                 expect (! engine.getRecorder().getTrack (0).armed.load());
             }
 
+            beginTest ("OSC transport goes through the host interception boundary");
+            {
+                AudioEngine engine;
+                std::vector<AudioEngine::RemoteTransportAction> actions;
+                engine.setRemoteTransportHandler ([&] (auto action, juce::String&)
+                    -> std::optional<bool>
+                {
+                    actions.push_back (action);
+                    return true; // a capture-daemon host handled it
+                });
+                OscRemote osc (engine);
+                osc.setDialect (OscRemote::Dialect::Generic);
+
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/record", (juce::int32) 1));
+                osc.dispatchForTest (juce::OSCMessage ("/zynforge/record", (juce::int32) 0));
+                expectEquals ((int) actions.size(), 2);
+                if (actions.size() == 2)
+                {
+                    expect (actions[0] == AudioEngine::RemoteTransportAction::StartRecord);
+                    expect (actions[1] == AudioEngine::RemoteTransportAction::StopRecord);
+                }
+                expect (! engine.getRecorder().isRecording(),
+                        "OSC bypassed the host and started the local recorder");
+            }
+
+            beginTest ("queued-callback handle is invalidated before engine teardown");
+            {
+                AudioEngine::AsyncHandle handle;
+                {
+                    AudioEngine engine;
+                    handle = engine.getAsyncHandle();
+                    expect (handle->load() == &engine);
+                }
+                expect (handle->load (std::memory_order_acquire) == nullptr,
+                        "a queued callback could dereference a destroyed AudioEngine");
+            }
+
             beginTest ("Console name capture collects names for create-from-console");
             {
                 AudioEngine engine;

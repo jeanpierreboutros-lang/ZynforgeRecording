@@ -8,14 +8,14 @@ It is **not** a mixer or DAW. No plugins, no effects, no talkback. Architectural
 
 ## 2. Technology Stack
 
-Current validation: universal Release at `44a309e`, 320 test groups / zero failures (2026-09-12). Hardware acceptance remains separate; see [testing.md](testing.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
+Current candidate validation (2026-09-15): a fresh macOS-12 universal Release build passes 350 test groups / zero failures on arm64 and x86_64; the ASan+UBSan Debug build passes 350/0, Xcode static analysis has no app-owned diagnostics, and 27 invariants plus strict ad-hoc bundle verification are clean. Installation and physical hardware acceptance remain separate and pending; see [AUDIT_REPORT_2026-09-15.md](AUDIT_REPORT_2026-09-15.md), [testing.md](testing.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
 
 | Component | Version / Notes |
 |---|---|
 | Language | C++20 |
 | Framework | JUCE 8.0.4 (pulled via CMake `FetchContent` on first configure) |
 | Build system | CMake 3.21+, Xcode generator on macOS |
-| Platforms | macOS 11.0+, Universal (arm64 + x86_64) |
+| Platforms | macOS 12.0+, Universal (arm64 + x86_64) |
 | Audio backend | CoreAudio via `juce::AudioDeviceManager` |
 | Threading | `juce::AudioWorkgroup` for writer co-scheduling on Apple Silicon |
 | GPU / paint | JUCE software renderer; Apple Accelerate / vDSP for FFTs |
@@ -249,7 +249,7 @@ Bounce stems, bounce stereo mix, and Consolidate all run through a **windowed** 
 
 - **`AudioEngine` is still one ~255-method hub.** Interface segregation has begun — `ITransport` (`Source/Audio/ITransport.h`) is the first extracted facet the engine implements — but current consumers (TransportBar, EditPage) still hold a full `AudioEngine&` because they reach through `getPlayer()`/`getRecorder()`. Migrating consumers to narrow interfaces (`ITransport`, future `IClipEditor`/`IRouting`) is incremental, per-consumer work.
 - **`MainComponent.cpp` is already split** along functional lines (`MainComponentTimer/Keys/Layout/Cues/Edit/SessionIO/Menu/Strips/Help/Tools/...`); see §5. Stereo logical↔physical mapping now lives on `AudioEngine`, not the UI.
-- **Headless unit tests exist** (`Source/Tests/`, `juce::UnitTest`, run via `--run-tests` / `ZYNFORGE_RUN_TESTS=1`; **320 groups** as of 2026-09-12): recorder/player state, clip edits, recording integrity, exact session reset/load, multipart completeness and numeric ordering, audio-callback routing, transients, automation, markers, pre-flight probes, post-show QC, song detection, crash-report scan, network/OSC security, the X32 console link, and EDIT mapping. **CI runs the full suite on every push/PR** (`.github/workflows/ci.yml`, macos-14). See `testing.md`. UI paint/hit-test/modal flow is still out of scope for the suite and must be eyeballed.
+- **Headless unit tests exist** (`Source/Tests/`, `juce::UnitTest`, run via `--run-tests` / `ZYNFORGE_RUN_TESTS=1`; **350 groups** as of 2026-09-15): recorder/player state, clip edits, recording integrity, exact session reset/load, multipart completeness and numeric ordering, transactional metadata/media writes, audio-callback routing, transients, automation, markers, pre-flight probes, post-show QC, song detection, crash-report scan, network/OSC security, capture daemon, console links and EDIT mapping. **CI runs the full suite on every push/PR** (`.github/workflows/ci.yml`, macos-14). See `testing.md`. UI paint/hit-test/modal flow is still out of scope for the suite and must be field-tested.
 - **Capture isolation is optional.** In-process mode shares GUI failure risk; daemon mode supports separate capture and reattachment as described above. Neither mode has completed the planned SD5 rig's acceptance rehearsal on this build.
 - **Companion server is loopback-only HTTP.** Every endpoint is token-gated, and off-machine use must put a trusted TLS tunnel (Tailscale, Cloudflare Tunnel, or SSH forwarding) in front of `127.0.0.1`; raw LAN exposure is not supported.
 - **iOS / iPad companion is web-only** today. Native client is a future consideration (and the intended push-alarm channel for pre-flight / write-latency warnings).

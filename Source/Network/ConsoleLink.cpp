@@ -1,4 +1,5 @@
 #include "ConsoleLink.h"
+#include "../Audio/AtomicFile.h"
 
 namespace zynforge
 {
@@ -419,8 +420,8 @@ namespace zynforge
     bool ConsoleLink::saveTo (const juce::File& sessionDir) const
     {
         if (! sessionDir.isDirectory()) return false;
-        return sessionDir.getChildFile (kStateFileName)
-                   .replaceWithText (juce::JSON::toString (toJson()));
+        return atomicfile::writeText (sessionDir.getChildFile (kStateFileName),
+                                      juce::JSON::toString (toJson()));
     }
 
     bool ConsoleLink::loadFrom (const juce::File& sessionDir)

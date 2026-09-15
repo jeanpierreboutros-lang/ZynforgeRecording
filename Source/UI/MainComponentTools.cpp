@@ -9,6 +9,8 @@
 // .zfproj metadata).
 
 #include "MainComponent.h"
+#include "../Audio/ClickTrackRenderer.h"
+#include "../Audio/AtomicFile.h"
 #include "../Audio/CrashReportScan.h"
 #include "../Audio/NoiseAnalyzer.h"
 #include "../Audio/QcAnalyzer.h"
@@ -17,38 +19,55 @@
 #include "NoiseReportDialog.h"
 #include "QcReportDialog.h"
 #include "SessionPropertiesDialog.h"
+#include "SessionProjPath.h"
 
 using namespace zynforge;
 
-// Returns TRUE only when a click WAV was actually written. Every refusal here
-// is silent apart from a status line, so the CALLER cannot assume it happened --
-// ClickSettingsDialog used to switch the live click engine off on the strength
-// of calling this, which killed the click mid-take and generated nothing.
-bool MainComponent::generateOrRefreshClickTrack()
+// Render on the owned file-I/O worker, then report actual success. The dialog
+// must not switch the live click off merely because work was accepted: an open,
+// encode, cancellation, or disk-full failure leaves both the live click and the
+// previous offline file intact.
+void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> completion)
 {
-    // NEVER regenerate during a take. This deleteFile()s + synchronously renders
-    // a session-length WAV and then engine.loadSession() -- which frees/reopens
-    // readers on the files the recorder is actively writing (disk contention,
-    // dropout risk, multi-second UI freeze). Reachable mid-record via a cue
-    // recall with a differing tempo (digit keys) or a TempoBar BPM nudge; the
-    // click refreshes to the new tempo after the take instead.
+    auto refuse = [this, &completion] (const juce::String& reason)
+    {
+        showStatus (reason);
+        if (completion) completion (false);
+    };
+
+    // NEVER regenerate during a take. The finished file is installed and the
+    // session reloaded, which would reopen readers the recorder is writing.
     if (engine.isRecording())
     {
-        showStatus ("Click track refreshes after recording stops");
-        return false;
+        refuse ("Click track refreshes after recording stops");
+        return;
     }
 
     const auto sessionDir = engine.getActiveSessionDir();
     if (! sessionDir.isDirectory())
     {
-        showStatus ("Open or create a session before generating a click");
-        return false;
+        refuse ("Open or create a session before generating a click");
+        return;
     }
 
+    if (sessionIoBusy.exchange (true))
+    {
+        refuse ("Another session file operation is already running");
+        return;
+    }
+    joinExportThread();
+
     auto audioFiles = sessionDir.getChildFile ("Audio Files");
-    audioFiles.createDirectory();
+    if (audioFiles.createDirectory().failed())
+    {
+        sessionIoBusy.store (false);
+        refuse ("Click write failed -- couldn't create Audio Files");
+        return;
+    }
 
     auto& recorder = engine.getRecorder();
+    const bool addedClickStrip = clickTrackIndex < 0;
+    const int previousTrackCount = recorder.getNumTracks();
     if (clickTrackIndex < 0)
     {
         // First press in this session -- append a fresh track at the end.
@@ -62,47 +81,21 @@ bool MainComponent::generateOrRefreshClickTrack()
         engine.setTrackInputRouting (clickTrackIndex, -1);
     }
 
-    const double sr      = juce::jmax (8000.0, [this]
+    const double sr = juce::jmax (8000.0, [this]
     {
         if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())
             return d->getCurrentSampleRate();
         return 48000.0;
     }());
-    // Match the session's playback length, falling back to 4 hours when
-    // the session is empty so the engineer always has more than enough
-    // click for a show.
+    // Match the session's playback length. An empty new session has no media
+    // length yet, so provide three hours: enough for the stated two-hour show
+    // plus setup/overtime headroom.
     auto& player = engine.getPlayer();
     juce::int64 totalSamples = player.isLoaded() ? player.getTotalLengthSamples() : 0;
     if (totalSamples <= 0)
-        // 1-hour fallback when there's nothing loaded yet -- plenty for
-        // any single show, 4× faster to render than the old 4-hour cap.
-        totalSamples = (juce::int64) (sr * 60.0 * 60.0);
+        totalSamples = (juce::int64) (sr * 60.0 * 60.0 * 3.0);
 
-    // Render the offline click using the same per-voice tone presets
-    // + subdivision factors the real-time engine uses, so the file
-    // matches what the engineer was hearing live before they hit
-    // Generate.
     auto& cl = engine.getClickEngine();
-    const auto preset1 = ClickEngine::getVoicePreset (cl.getVoice1());
-    const auto preset2 = ClickEngine::getVoicePreset (cl.getVoice2());
-    const auto sub1    = cl.getSub1();
-    const auto sub2    = cl.getSub2();
-    const double f1    = ClickEngine::subFactor (sub1);
-    const double f2    = ClickEngine::subFactor (sub2);
-    const float lin1   = juce::Decibels::decibelsToGain (cl.getVol1Db());
-    const float lin2   = juce::Decibels::decibelsToGain (cl.getVol2Db());
-
-    const auto& tempoMap = engine.getTempoMap();
-    auto bpmAtSample = [&] (juce::int64 sample) -> float
-    {
-        float bpm = engine.getSessionTempoBpm();
-        for (const auto& tc : tempoMap)
-        {
-            if (tc.samplePos <= sample) bpm = tc.bpm;
-            else break;
-        }
-        return bpm;
-    };
 
     // Defence in depth: NEVER deleteFile() a slot that isn't actually the
     // click strip. Require both the name AND the playback-only routing
@@ -112,161 +105,87 @@ bool MainComponent::generateOrRefreshClickTrack()
         || recorder.getTrack (clickTrackIndex).getNameThreadSafe() != "Click"
         || recorder.getTrack (clickTrackIndex).inputRouting.load (std::memory_order_relaxed) >= 0)
     {
-        showStatus ("Click slot isn't a Click strip -- aborted to protect recordings");
-        return false;
+        sessionIoBusy.store (false);
+        refuse ("Click slot isn't a Click strip -- aborted to protect recordings");
+        return;
     }
 
     const auto trackName = juce::String::formatted ("Track_%02d", clickTrackIndex + 1);
-    auto dest = audioFiles.getChildFile (trackName + ".wav");
-    dest.deleteFile();
+    const auto destination = audioFiles.getChildFile (trackName + ".wav");
+    clickrender::Settings settings;
+    settings.sampleRate = sr;
+    settings.totalSamples = totalSamples;
+    settings.initialBpm = engine.getSessionTempoBpm();
+    settings.beatsPerBar = engine.getTimeSignatureNumerator();
+    settings.voice1 = ClickEngine::getVoicePreset (cl.getVoice1());
+    settings.voice2 = ClickEngine::getVoicePreset (cl.getVoice2());
+    settings.subdivision1 = cl.getSub1();
+    settings.subdivision2 = cl.getSub2();
+    settings.gain1 = juce::Decibels::decibelsToGain (cl.getVol1Db());
+    settings.gain2 = juce::Decibels::decibelsToGain (cl.getVol2Db());
+    for (const auto& change : engine.getTempoMap())
+        settings.tempoMap.push_back ({ change.samplePos, change.bpm });
 
-    bool rendered = false;
-    if (auto* out = dest.createOutputStream().release())
+    const int generatedTrackIndex = clickTrackIndex;
+    const float generatedBpm = settings.initialBpm;
+    engine.setSessionTransitionActive (true);
+    if (editPage != nullptr) editPage->setEnabled (false);
+    showStatus ("Generating click track in the background...");
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    exportThread = std::thread ([this, self, destination, settings, sessionDir,
+                                 generatedTrackIndex, generatedBpm,
+                                 addedClickStrip, previousTrackCount,
+                                 completion = std::move (completion)] () mutable
     {
-        juce::WavAudioFormat wav;
-        juce::StringPairArray meta;
-        std::unique_ptr<juce::AudioFormatWriter> writer (
-            wav.createWriterFor (out, sr, 1, 24, meta, 0));
-        if (writer == nullptr) { delete out; showStatus ("Click write failed"); return false; }
-
-        // Larger render chunks → fewer disk writes (8× the old size).
-        constexpr int kChunk = 32768;
-        juce::AudioBuffer<float> buf (1, kChunk);
-
-        // Per-voice burst envelope state. We render a damped sine for
-        // each active burst, decaying over ~50 ms.
-        struct Burst { double phase=0, tSec=0, freq=1000, decay=60, gain=0; bool active=false; };
-        Burst v1Burst, v2Burst;
-
-        // Beat-scheduling counters, identical to ClickEngine's runtime.
-        double samplesUntil1 = 0.0;
-        double samplesUntil2 = 0.0;
-        int    beat1Counter  = 0;
-        int    beat2Counter  = 0;
-
-        // Hoist tempo / per-click sample counts out of the sample loop.
-        // bpmAtSample() does a tempoMap scan; running it once per sample
-        // at 60M+ samples was the main reason Generate felt slow. We
-        // recompute when the map says the tempo changes (rare) and
-        // otherwise leave the cached values alone.
-        const bool tempoIsConstant = tempoMap.empty();
-        float  cachedBpm           = engine.getSessionTempoBpm();
-        double samplesPerQuarter   = 60.0 * sr / juce::jmax (20.0f, cachedBpm);
-        double samplesPerClick1    = (f1 > 0.0) ? (samplesPerQuarter / f1) : 0.0;
-        double samplesPerClick2    = (f2 > 0.0) ? (samplesPerQuarter / f2) : 0.0;
-        // Downbeat accent every N beats, N = time-signature numerator (was 4).
-        const int beatsPerBar      = juce::jmax (1, engine.getTimeSignatureNumerator());
-
-        juce::int64 written = 0;
-        while (written < totalSamples)
+        const auto result = clickrender::render (destination, settings, &exportCancel);
+        const bool cancelled = result == clickrender::Result::cancelled;
+        juce::MessageManager::callAsync (
+            [self, result, cancelled, sessionDir, generatedTrackIndex,
+             generatedBpm, addedClickStrip, previousTrackCount,
+             completion = std::move (completion)] () mutable
         {
-            const int thisChunk = (int) juce::jmin ((juce::int64) kChunk, totalSamples - written);
-            buf.clear();
-            auto* dst = buf.getWritePointer (0);
+            if (self == nullptr) return;
+            self->sessionIoBusy.store (false);
+            self->engine.setSessionTransitionActive (false);
+            if (self->editPage != nullptr) self->editPage->setEnabled (true);
 
-            // If the session has tempo changes, refresh the cached
-            // per-click sample counts once per chunk (samples per block,
-            // not per sample). For a typical session with no tempo map
-            // this branch never executes.
-            if (! tempoIsConstant)
+            const bool sameSession = self->engine.getActiveSessionDir() == sessionDir;
+            if (result != clickrender::Result::succeeded || ! sameSession)
             {
-                const float bpm = bpmAtSample (written);
-                if (bpm != cachedBpm)
+                if (addedClickStrip && sameSession)
                 {
-                    cachedBpm        = bpm;
-                    samplesPerQuarter = 60.0 * sr / juce::jmax (20.0f, cachedBpm);
-                    samplesPerClick1  = (f1 > 0.0) ? (samplesPerQuarter / f1) : 0.0;
-                    samplesPerClick2  = (f2 > 0.0) ? (samplesPerQuarter / f2) : 0.0;
+                    self->engine.setStripCount (previousTrackCount);
+                    self->clickTrackIndex = -1;
                 }
+                if (! cancelled)
+                    self->showStatus (sameSession
+                        ? "Click track NOT generated -- the previous file was preserved"
+                        : "Click finished for the previous session; current session was not reloaded");
+                if (completion) completion (false);
+                return;
             }
 
-            for (int i = 0; i < thisChunk; ++i)
+            if (auto* device = self->engine.getDeviceManager().getCurrentAudioDevice())
             {
-
-                if (samplesPerClick1 > 0.0)
-                {
-                    samplesUntil1 -= 1.0;
-                    if (samplesUntil1 <= 0.0)
-                    {
-                        samplesUntil1 += samplesPerClick1;
-                        if ((beat1Counter % beatsPerBar) == 0)
-                        {
-                            v1Burst = { 0.0, 0.0, preset1.freq, preset1.decay, lin1, true };
-                        }
-                        ++beat1Counter;
-                    }
-                }
-                if (samplesPerClick2 > 0.0)
-                {
-                    samplesUntil2 -= 1.0;
-                    if (samplesUntil2 <= 0.0)
-                    {
-                        samplesUntil2 += samplesPerClick2;
-                        const bool downAligned =
-                            (sub2 == ClickEngine::Subdivision::Quarter) && (beat2Counter % beatsPerBar) == 0;
-                        if (! downAligned)
-                            v2Burst = { 0.0, 0.0, preset2.freq, preset2.decay, lin2, true };
-                        ++beat2Counter;
-                    }
-                }
-
-                auto renderBurst = [sr] (Burst& b) -> float
-                {
-                    if (! b.active) return 0.0f;
-                    const double dt   = 1.0 / sr;
-                    const double env  = std::exp (-b.tSec * b.decay);
-                    const double samp = std::sin (b.phase) * env * b.gain;
-                    b.phase += juce::MathConstants<double>::twoPi * b.freq * dt;
-                    b.tSec  += dt;
-                    if (env < 0.001) b.active = false;
-                    return (float) samp;
-                };
-
-                dst[i] = renderBurst (v1Burst) + renderBurst (v2Burst);
+                const int outputs = device->getActiveOutputChannels().countNumberOfSetBits();
+                self->engine.setTrackOutputRouting (generatedTrackIndex,
+                    juce::jlimit (0, juce::jmax (0, outputs - 1), 0));
             }
-
-            writer->writeFromFloatArrays (buf.getArrayOfReadPointers(), 1, thisChunk);
-            written += thisChunk;
-        }
-        rendered = true;
-    }
-
-    // The output stream couldn't be opened (disk full / read-only session
-    // folder). Report the failure instead of falsely claiming success and
-    // leaving an empty click strip; the strip already exists from the
-    // first-press branch, so nothing further to undo.
-    if (! rendered)
-    {
-        showStatus ("Click track NOT generated -- couldn't write to the session folder");
-        return false;
-    }
-
-    // Default the click track to hardware output 1 so it's audible
-    // without further routing -- the strip's OUT combo still exposes
-    // every available device output so the engineer can re-patch it
-    // to a dedicated cue bus (headphones, drummer's IEM, etc.).
-    if (auto* dev = engine.getDeviceManager().getCurrentAudioDevice())
-    {
-        const int outs = dev->getActiveOutputChannels().countNumberOfSetBits();
-        const int outCh = juce::jlimit (0, juce::jmax (0, outs - 1), 0);
-        engine.setTrackOutputRouting (clickTrackIndex, outCh);
-    }
-    engine.setTrackInputRouting (clickTrackIndex, -1);   // no input -- playback only
-
-    // Same-session reload to pick up the new click file -- PRESERVE every
-    // comp/split/fade edit (the default wiping open would discard them).
-    engine.loadSession (sessionDir, /*preserveEdits*/ true);
-    lastTrackCount = -1;
-
-    showStatus ("Click track generated at "
-                + juce::String (engine.getSessionTempoBpm(), 1) + " BPM "
-                + "(routable to any output via its strip)");
-
-    // Light up the click-beat overlay on every other EDIT row so the
-    // engineer can see the metronome pulse against each track's audio.
-    if (editPage != nullptr)
-        editPage->setClickTrackPresent (true, clickTrackIndex);
-    return true;
+            self->engine.setTrackInputRouting (generatedTrackIndex, -1);
+            self->engine.loadSession (sessionDir, true);
+            // Commit the Generate action even if the dialog was closed while
+            // the worker ran; otherwise the real-time click can double the new
+            // playback track.
+            self->engine.getClickEngine().setEnabled (false);
+            self->lastTrackCount = -1;
+            self->showStatus ("Click track generated at "
+                              + juce::String (generatedBpm, 1) + " BPM");
+            if (self->editPage != nullptr)
+                self->editPage->setClickTrackPresent (true, generatedTrackIndex);
+            if (completion) completion (true);
+        });
+    });
 }
 
 void MainComponent::togglePunchMode()
@@ -540,8 +459,8 @@ void MainComponent::runQcAnalysis()
         exportDir.createDirectory();
         const auto stamp = juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H%M%S");
         const auto reportTxt = exportDir.getChildFile ("QC Report " + stamp + ".txt");
-        reportTxt.replaceWithText (
-            zynforge::qc::reportText (sessionDir.getFileName(), results, missed));
+        const bool reportSaved = zynforge::atomicfile::writeText (
+            reportTxt, zynforge::qc::reportText (sessionDir.getFileName(), results, missed));
 
         int clipped = 0, totalEvents = 0;
         for (const auto& q : results)
@@ -553,7 +472,8 @@ void MainComponent::runQcAnalysis()
                               + juce::String (totalEvents) + " events)")
             + (missed > 0 ? juce::String (", DROPOUTS: ") + juce::String (missed) + " samples"
                           : juce::String())
-            + ". Saved " + reportTxt.getFileName() + ".";
+            + (reportSaved ? ". Saved " + reportTxt.getFileName() + "."
+                           : ". WARNING: report file could not be saved.");
 
         juce::MessageManager::callAsync ([self, summary, results]() mutable
         {
@@ -599,11 +519,12 @@ void MainComponent::promptConsoleConnect()
     aw->addButton ("Connect", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel",  0, juce::KeyPress (juce::KeyPress::escapeKey));
 
+    juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true,
-        juce::ModalCallbackFunction::create ([this, aw, profiles] (int result)
+        juce::ModalCallbackFunction::create ([self, aw, profiles] (int result)
         {
             std::unique_ptr<juce::AlertWindow> dispose (aw);
-            if (result != 1) return;
+            if (result != 1 || self == nullptr) return;
             const auto host = aw->getTextEditorContents ("host").trim();
             if (host.isEmpty()) return;
 
@@ -611,9 +532,10 @@ void MainComponent::promptConsoleConnect()
                 ? juce::jlimit (0, (int) profiles.size() - 1,
                                 aw->getComboBoxComponent ("console")->getSelectedItemIndex())
                 : 0;
-            consoleLink.setProfile (profiles[(size_t) profileIdx].kind);
+            self->consoleLink.setProfile (profiles[(size_t) profileIdx].kind);
 
-            consoleLink.onStatus = [this] (const juce::String& s) { showStatus (s); };
+            self->consoleLink.onStatus = [self] (const juce::String& s)
+            { if (self != nullptr) self->showStatus (s); };
 
             // ── READ TIER ────────────────────────────────────────────────
             // The two things a recorder actually wants from a console, both
@@ -623,32 +545,32 @@ void MainComponent::promptConsoleConnect()
             // labelled instead of "1, 2, 3". Routed through the engine's
             // capture-aware path so "New session from console" can also
             // collect names for channels that don't exist yet.
-            consoleLink.onChannelName = [this] (int ch1, const juce::String& name)
+            self->consoleLink.onChannelName = [self] (int ch1, const juce::String& name)
             {
-                if (name.trim().isEmpty()) return;
-                engine.onConsoleChannelName (ch1, name.trim());
+                if (self == nullptr || name.trim().isEmpty()) return;
+                self->engine.onConsoleChannelName (ch1, name.trim());
             };
 
             // A scene / snapshot recall drops a marker. This is what makes a
             // show navigable the next morning -- jump straight to the song.
             // Markers need a session context; if there isn't one yet the recall
             // is simply ignored rather than dropped at a meaningless position.
-            consoleLink.onSceneRecalled = [this] (int sceneIdx, const juce::String& sceneName)
+            self->consoleLink.onSceneRecalled = [self] (int sceneIdx, const juce::String& sceneName)
             {
-                if (! engine.getMarkers().hasContext()) return;
+                if (self == nullptr || ! self->engine.getMarkers().hasContext()) return;
                 const auto label = sceneName.trim().isNotEmpty()
                                      ? sceneName.trim()
                                      : "Scene " + juce::String (sceneIdx);
-                if (engine.dropMarkerAtCurrentPosition (label) >= 0)
-                    showStatus ("Console scene \"" + label + "\" -- marker dropped");
+                if (self->engine.dropMarkerAtCurrentPosition (label) >= 0)
+                    self->showStatus ("Console scene \"" + label + "\" -- marker dropped");
             };
 
-            if (! consoleLink.connect (host))
+            if (! self->consoleLink.connect (host))
             {
-                showStatus ("Console link failed -- check the IP and the network");
+                self->showStatus ("Console link failed -- check the IP and the network");
                 return;
             }
-            if (auto* p = engine.getAppProps())
+            if (auto* p = self->engine.getAppProps())
             {
                 p->setValue ("consoleHost", host);
                 p->setValue ("consoleProfile", profileIdx);
@@ -656,23 +578,23 @@ void MainComponent::promptConsoleConnect()
             }
             // Pull the channel names straight away so the session labels
             // itself the moment the desk is reachable.
-            if (consoleLink.getProfile().canReadNames)
+            if (self->consoleLink.getProfile().canReadNames)
             {
                 const int n = juce::jlimit (1, 64,
-                    juce::jmax (8, engine.getRecorder().getNumTracks()));
-                consoleLink.requestChannelNames (n);
+                    juce::jmax (8, self->engine.getRecorder().getNumTracks()));
+                self->consoleLink.requestChannelNames (n);
             }
 
             // For a native-VSC desk, point the engineer at the console.
-            if (! consoleLink.getProfile().canRepatch
-                && consoleLink.getProfile().note.isNotEmpty())
-                showStatus (consoleLink.getProfile().displayName + " -- "
-                            + consoleLink.getProfile().note);
+            if (! self->consoleLink.getProfile().canRepatch
+                && self->consoleLink.getProfile().note.isNotEmpty())
+                self->showStatus (self->consoleLink.getProfile().displayName + " -- "
+                            + self->consoleLink.getProfile().note);
             // Show-night state saved with the session (stage patch +
             // gains) comes back automatically on VSC day.
-            const auto sess = engine.getActiveSessionDir();
-            if (sess.isDirectory() && consoleLink.loadFrom (sess))
-                showStatus ("Console link up: " + host
+            const auto sess = self->engine.getActiveSessionDir();
+            if (sess.isDirectory() && self->consoleLink.loadFrom (sess))
+                self->showStatus ("Console link up: " + host
                             + " -- loaded saved patch + gains from session");
         }), false);
 }
@@ -996,8 +918,10 @@ void MainComponent::writeSoundcheckReport()
     root->setProperty ("strips", juce::var (arr));
 
     const auto reportFile = sessionDir.getChildFile ("soundcheck.report.json");
-    reportFile.replaceWithText (juce::JSON::toString (juce::var (root.get())));
-    showStatus ("Soundcheck report -> " + reportFile.getFileName());
+    showStatus (zynforge::atomicfile::writeText (
+                    reportFile, juce::JSON::toString (juce::var (root.get())))
+                    ? "Soundcheck report -> " + reportFile.getFileName()
+                    : "Soundcheck report NOT saved -- check permissions / free space");
 }
 
 void MainComponent::showSessionProperties()
@@ -1009,16 +933,7 @@ void MainComponent::showSessionProperties()
         return;
     }
 
-    // Find the .zfproj inside the active session folder. If there's
-    // more than one (shouldn't happen), pick the first match.
-    juce::File proj;
-    for (auto& f : sessionDir.findChildFiles (juce::File::findFiles, false, "*.zfproj"))
-    {
-        proj = f;
-        break;
-    }
-    if (! proj.existsAsFile())
-        proj = sessionDir.getChildFile (sessionDir.getFileName() + ".zfproj");
+    const auto proj = findSessionProj (sessionDir);
 
     juce::var parsed;
     if (proj.existsAsFile())
@@ -1077,9 +992,11 @@ void MainComponent::showSessionProperties()
                                                                                                                           : "24-bit";
     }
 
+    juce::Component::SafePointer<MainComponent> self (this);
     SessionPropertiesDialog::launch (fields,
-        [this, proj, sessionDir, obj] (const SessionPropertiesDialog::Fields& edited)
+        [self, proj, sessionDir, obj] (const SessionPropertiesDialog::Fields& edited)
         {
+            if (self == nullptr) return;
             // Merge back into the existing JSON (preserves sampleRate /
             // captureFormat / createdAt that the dialog doesn't edit).
             juce::DynamicObject::Ptr merged = obj;
@@ -1094,7 +1011,9 @@ void MainComponent::showSessionProperties()
             merged->setProperty ("updatedAt",
                                  juce::Time::getCurrentTime().toISO8601 (true));
 
-            proj.replaceWithText (juce::JSON::toString (juce::var (merged.get())));
-            showStatus ("Saved session properties -- " + sessionDir.getFileName());
+            self->showStatus (zynforge::atomicfile::writeText (
+                                  proj, juce::JSON::toString (juce::var (merged.get())))
+                                ? "Saved session properties -- " + sessionDir.getFileName()
+                                : "Session properties NOT saved -- check permissions / free space");
         });
 }

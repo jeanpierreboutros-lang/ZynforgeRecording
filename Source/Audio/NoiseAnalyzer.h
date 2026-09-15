@@ -5,6 +5,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include <vector>
 #include "MultiPartReader.h"
+#include "AtomicFile.h"
 
 namespace zynforge
 {
@@ -229,8 +230,8 @@ namespace zynforge
             juce::DynamicObject::Ptr root (new juce::DynamicObject());
             root->setProperty ("generatedAt", juce::Time::getCurrentTime().toISO8601 (true));
             root->setProperty ("tracks", juce::var (arr));
-            sessionDir.getChildFile ("noise_report.json")
-                      .replaceWithText (juce::JSON::toString (juce::var (root.get())));
+            atomicfile::writeText (sessionDir.getChildFile ("noise_report.json"),
+                                   juce::JSON::toString (juce::var (root.get())));
 
             return findings;
         }

@@ -658,6 +658,20 @@ namespace zynforge
             if (w != nullptr) os.release();
             return w;
         }
+
+        juce::File bounceTemporary (const juce::File& destination)
+        {
+            return destination.getSiblingFile ("." + destination.getFileNameWithoutExtension()
+                                               + "-" + juce::Uuid().toString()
+                                               + ".partial.wav");
+        }
+
+        bool installBounce (const juce::File& temporary, const juce::File& destination)
+        {
+            if (temporary.replaceFileIn (destination)) return true;
+            temporary.deleteFile();
+            return false;
+        }
     }
 
     bool AudioEngine::forEachArrangementWindow (int track, juce::int64 startSample, juce::int64 endSample,
@@ -710,8 +724,9 @@ namespace zynforge
                                                    juce::int64 totalSamples, double sampleRate,
                                                    const std::atomic<bool>* cancel)
     {
-        auto writer = createWav24Writer (dest, sampleRate, 1);
-        if (writer == nullptr) return false;
+        const auto temporary = bounceTemporary (dest);
+        auto writer = createWav24Writer (temporary, sampleRate, 1);
+        if (writer == nullptr) { temporary.deleteFile(); return false; }
         const bool ok = forEachArrangementWindow (track, 0, totalSamples,
             [&] (const float* data, juce::int64, int winLen)
             {
@@ -720,8 +735,8 @@ namespace zynforge
                 return writer->writeFromFloatArrays (chans, 1, winLen);
             });
         writer.reset();
-        if (! ok) dest.deleteFile();
-        return ok;
+        if (! ok) { temporary.deleteFile(); return false; }
+        return installBounce (temporary, dest);
     }
 
     bool AudioEngine::forEachStereoMixWindow (juce::int64 totalSamples,
@@ -870,8 +885,9 @@ namespace zynforge
                                             juce::int64 totalSamples, double sampleRate,
                                             const std::atomic<bool>* cancel)
     {
-        auto writer = createWav24Writer (dest, sampleRate, 2);
-        if (writer == nullptr) return false;
+        const auto temporary = bounceTemporary (dest);
+        auto writer = createWav24Writer (temporary, sampleRate, 2);
+        if (writer == nullptr) { temporary.deleteFile(); return false; }
         const bool ok = forEachStereoMixWindow (totalSamples,
             [&] (const juce::AudioBuffer<float>& w, juce::int64, int winLen)
             {
@@ -879,8 +895,8 @@ namespace zynforge
                 return writer->writeFromAudioSampleBuffer (w, 0, winLen);
             });
         writer.reset();
-        if (! ok) dest.deleteFile();
-        return ok;
+        if (! ok) { temporary.deleteFile(); return false; }
+        return installBounce (temporary, dest);
     }
 
     bool AudioEngine::bounceStereoPairToWav (int trackL, const juce::File& dest,
@@ -902,8 +918,9 @@ namespace zynforge
         const bool okR = R.open (audioDir, trackL + 1, clipsR);
         if (! okL && ! okR) return false;   // neither side has audio
 
-        auto writer = createWav24Writer (dest, sampleRate, 2);
-        if (writer == nullptr) return false;
+        const auto temporary = bounceTemporary (dest);
+        auto writer = createWav24Writer (temporary, sampleRate, 2);
+        if (writer == nullptr) { temporary.deleteFile(); return false; }
 
         const juce::int64 len = totalSamples;
         juce::AudioBuffer<float> stereo (2, kRenderWindowSamples), tmp (1, 0);
@@ -919,8 +936,8 @@ namespace zynforge
             ok = writer->writeFromAudioSampleBuffer (stereo, 0, winLen);
         }
         writer.reset();
-        if (! ok) dest.deleteFile();
-        return ok;
+        if (! ok) { temporary.deleteFile(); return false; }
+        return installBounce (temporary, dest);
     }
 
     bool AudioEngine::splitTrackAtPlayhead (int track)

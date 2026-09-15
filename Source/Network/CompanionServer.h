@@ -96,6 +96,36 @@ namespace zynforge
         // most a couple of audition streams; 32 is generous headroom.
         static constexpr std::size_t kMaxConcurrentWorkers = 32;
 
+        // A transport request is accepted on a worker, executed on JUCE's
+        // message thread, then acknowledged to the worker.  stop() must wake
+        // workers whose message-thread callback has not run yet; otherwise
+        // closing the app from that callback's queue stalls for the full
+        // five-second command timeout while joining the worker.
+        struct CommandResult
+        {
+            juce::WaitableEvent finished;
+            std::atomic<bool> completed { false };
+            bool ok { false };
+            juce::String error;
+
+            bool complete (bool succeeded, const juce::String& message)
+            {
+                bool expected = false;
+                if (! completed.compare_exchange_strong (expected, true,
+                                                          std::memory_order_acq_rel))
+                    return false;
+                ok = succeeded;
+                error = message;
+                finished.signal();
+                return true;
+            }
+        };
+        std::mutex pendingCommandsLock;
+        std::vector<std::weak_ptr<CommandResult>> pendingCommands;
+        void registerPendingCommand (const std::shared_ptr<CommandResult>&);
+        void unregisterPendingCommand (const std::shared_ptr<CommandResult>&);
+        void cancelPendingCommands();
+
         // Ring buffer for the streaming WAV endpoint. Single producer
         // (audio thread), single consumer (per-stream worker thread).
         struct StreamRing

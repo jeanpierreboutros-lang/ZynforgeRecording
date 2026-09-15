@@ -1,4 +1,5 @@
 #include "Markers.h"
+#include "AtomicFile.h"
 
 #include <algorithm>
 
@@ -128,7 +129,7 @@ namespace zynforge
         root->setProperty ("markers", arr);
 
         const auto json = juce::JSON::toString (juce::var (root.get()), true);
-        return markersFileFor (sessionDir).replaceWithText (json);
+        return atomicfile::writeText (markersFileFor (sessionDir), json);
     }
 
     bool MarkersManager::load()

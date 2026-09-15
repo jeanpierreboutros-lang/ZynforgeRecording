@@ -1,12 +1,36 @@
 #include "TrackExporter.h"
 #include "MultiPartReader.h"
+#include "ProcessSearch.h"
 
 namespace zynforge
 {
+    namespace
+    {
+        juce::File temporarySibling (const juce::File& finalFile,
+                                     const juce::String& extension)
+        {
+            return finalFile.getSiblingFile ("." + finalFile.getFileNameWithoutExtension()
+                                             + "-" + juce::Uuid().toString()
+                                             + ".partial" + extension);
+        }
+
+        bool installCompletedExport (const juce::File& temporary,
+                                     const juce::File& destination,
+                                     juce::String& error)
+        {
+            if (temporary.replaceFileIn (destination)) return true;
+            temporary.deleteFile();
+            error = "Could not install completed export; previous file was preserved";
+            return false;
+        }
+    }
+
     TrackExporter::TrackExporter()
     {
-        formatManager.registerBasicFormats();   // WAV + AIFF
-        formatManager.registerFormat (new juce::FlacAudioFormat(), false);
+        // JUCE's basic set already includes FLAC when JUCE_USE_FLAC is
+        // enabled (as it is for this target). Registering it again trips a
+        // Debug assertion and leaves a duplicate handler in Release builds.
+        formatManager.registerBasicFormats();
     }
 
     juce::String TrackExporter::extensionFor (ExportFormat f)
@@ -34,18 +58,11 @@ namespace zynforge
             if (f.existsAsFile()) return f;
         }
 
-        juce::ChildProcess which;
-        if (which.start (juce::StringArray ({ "/usr/bin/which", "lame" })))
-        {
-            which.waitForProcessToFinish (2000);
-            const auto out = which.readAllProcessOutput().trim();
-            if (out.isNotEmpty())
-            {
-                juce::File f (out);
-                if (f.existsAsFile()) return f;
-            }
-        }
-        return {};
+        // Inspect PATH directly. A previous `which` subprocess ignored its
+        // timeout result and then called readAllProcessOutput(), which can
+        // block forever if path lookup stalls on an unavailable volume.
+        return processsearch::findExecutableInPath (
+            "lame", juce::SystemStats::getEnvironmentVariable ("PATH", {}));
     }
 
     // Bit depth the chosen container can actually write. FLAC tops out at
@@ -128,11 +145,8 @@ namespace zynforge
         // For MP3 we first render to a temp WAV at the chosen sample rate,
         // then call out to lame.
         const bool isMp3   = (opts.format == ExportFormat::Mp3);
-        auto destPcmFile   = isMp3
-                              ? destWithoutExt.withFileExtension (".tmp.wav")
-                              : destWithoutExt.withFileExtension (extensionFor (opts.format));
-
-        destPcmFile.deleteFile();
+        const auto finalPcmFile = destWithoutExt.withFileExtension (extensionFor (opts.format));
+        const auto destPcmFile = temporarySibling (finalPcmFile, ".wav");
         std::unique_ptr<juce::FileOutputStream> outStream (destPcmFile.createOutputStream());
         if (outStream == nullptr) { outError = "Cannot write to destination"; return false; }
 
@@ -141,7 +155,13 @@ namespace zynforge
         auto writer = makePcmWriter (isMp3 ? ExportFormat::Wav24 : opts.format,
                                      outStream.get(), destSR, (unsigned int) channels,
                                      bits);
-        if (writer == nullptr) { outError = "Cannot create writer"; return false; }
+        if (writer == nullptr)
+        {
+            outStream.reset();
+            destPcmFile.deleteFile();
+            outError = "Cannot create writer";
+            return false;
+        }
         outStream.release(); // writer owns the stream now
 
         // Same-rate export: copy straight through. Running a rate-1.0 export
@@ -173,7 +193,8 @@ namespace zynforge
                 pos += n;
             }
             writer = nullptr;   // flush + close
-            if (! isMp3) return true;
+            if (! isMp3)
+                return installCompletedExport (destPcmFile, finalPcmFile, outError);
             return encodeMp3 (destPcmFile, destWithoutExt, opts, outError);
         }
 
@@ -210,7 +231,8 @@ namespace zynforge
         writer = nullptr;     // flush + close
         resampler.releaseResources();
 
-        if (! isMp3) return true;
+        if (! isMp3)
+            return installCompletedExport (destPcmFile, finalPcmFile, outError);
         return encodeMp3 (destPcmFile, destWithoutExt, opts, outError);
     }
 
@@ -238,18 +260,21 @@ namespace zynforge
         const auto destLen = (juce::int64) ((double) srcLen * destSR / srcSR);
 
         const bool isMp3 = (opts.format == ExportFormat::Mp3);
-        auto destPcmFile = isMp3
-                            ? destWithoutExt.withFileExtension (".tmp.wav")
-                            : destWithoutExt.withFileExtension (extensionFor (opts.format));
-
-        destPcmFile.deleteFile();
+        const auto finalPcmFile = destWithoutExt.withFileExtension (extensionFor (opts.format));
+        const auto destPcmFile = temporarySibling (finalPcmFile, ".wav");
         std::unique_ptr<juce::FileOutputStream> outStream (destPcmFile.createOutputStream());
         if (outStream == nullptr) { outError = "Cannot write to destination"; return false; }
 
         const int bits = isMp3 ? 24 : bitsForFormat (opts.format, opts.bitsPerSample);
         auto writer = makePcmWriter (isMp3 ? ExportFormat::Wav24 : opts.format,
                                      outStream.get(), destSR, 2, bits);   // 2 channels
-        if (writer == nullptr) { outError = "Cannot create writer"; return false; }
+        if (writer == nullptr)
+        {
+            outStream.reset();
+            destPcmFile.deleteFile();
+            outError = "Cannot create writer";
+            return false;
+        }
         outStream.release();
 
         // Each mono source resamples independently; we interleave the two
@@ -290,7 +315,8 @@ namespace zynforge
         resL.releaseResources();
         resR.releaseResources();
 
-        if (! isMp3) return true;
+        if (! isMp3)
+            return installCompletedExport (destPcmFile, finalPcmFile, outError);
         return encodeMp3 (destPcmFile, destWithoutExt, opts, outError);
     }
 
@@ -308,7 +334,7 @@ namespace zynforge
         }
 
         const auto destMp3 = destWithoutExt.withFileExtension (".mp3");
-        destMp3.deleteFile();
+        const auto temporaryMp3 = temporarySibling (destMp3, ".mp3");
 
         juce::ChildProcess proc;
         const juce::StringArray cmd {
@@ -316,7 +342,7 @@ namespace zynforge
             "-b", juce::String (opts.mp3Bitrate),
             "--quiet",
             tempWav.getFullPathName(),
-            destMp3.getFullPathName()
+            temporaryMp3.getFullPathName()
         };
 
         const bool started = proc.start (cmd);
@@ -328,7 +354,7 @@ namespace zynforge
             proc.kill();
             proc.waitForProcessToFinish (5000);
             tempWav.deleteFile();
-            destMp3.deleteFile();
+            temporaryMp3.deleteFile();
             outError = "lame timed out";
             return false;
         }
@@ -337,10 +363,10 @@ namespace zynforge
 
         if (code != 0)
         {
-            destMp3.deleteFile();
+            temporaryMp3.deleteFile();
             outError = "lame exited with code " + juce::String (code);
             return false;
         }
-        return true;
+        return installCompletedExport (temporaryMp3, destMp3, outError);
     }
 }

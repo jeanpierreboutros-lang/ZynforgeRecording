@@ -194,32 +194,39 @@ namespace zynforge
                 const auto json = juce::JSON::toString (juce::var (proj.get()));
 
                 const auto reparsed = juce::JSON::parse (json);
-                auto* arr = reparsed.getDynamicObject()->getProperty ("setlist").getArray();
-                expect (arr != nullptr && arr->size() == 2, "setlist round-trip");
-                const auto reA = (*arr)[0].getDynamicObject()->getProperty ("automation");
-                const auto reB = (*arr)[1].getDynamicObject()->getProperty ("automation");
-                expect (reA.isArray() && reB.isArray(), "cue automation survives JSON");
+                auto* root = reparsed.getDynamicObject();
+                auto* arr = root != nullptr ? root->getProperty ("setlist").getArray() : nullptr;
+                const bool validSetlist = arr != nullptr && arr->size() == 2
+                                       && (*arr)[0].getDynamicObject() != nullptr
+                                       && (*arr)[1].getDynamicObject() != nullptr;
+                expect (validSetlist, "setlist round-trip");
+                if (validSetlist)
+                {
+                    const auto reA = (*arr)[0].getDynamicObject()->getProperty ("automation");
+                    const auto reB = (*arr)[1].getDynamicObject()->getProperty ("automation");
+                    expect (reA.isArray() && reB.isArray(), "cue automation survives JSON");
 
-                // --- Trash live state, then jump to Song A ---
-                eng.clearAutomation (P::Volume);
-                eng.clearAutomation (P::Pan);
-                eng.loadAutomationFromJson (reA);
-                expectEquals ((int) eng.getAutomation (0, P::Volume).size(), 2);
-                expectWithinAbsoluteError (eng.getAutomation (0, P::Volume).back().value, -9.0f, 0.01f);
-                expectEquals ((int) eng.getAutomation (1, P::Pan).size(), 1);
-                expectWithinAbsoluteError (eng.getAutomation (1, P::Pan)[0].value, -0.8f, 0.01f);
+                    // --- Trash live state, then jump to Song A ---
+                    eng.clearAutomation (P::Volume);
+                    eng.clearAutomation (P::Pan);
+                    eng.loadAutomationFromJson (reA);
+                    expectEquals ((int) eng.getAutomation (0, P::Volume).size(), 2);
+                    expectWithinAbsoluteError (eng.getAutomation (0, P::Volume).back().value, -9.0f, 0.01f);
+                    expectEquals ((int) eng.getAutomation (1, P::Pan).size(), 1);
+                    expectWithinAbsoluteError (eng.getAutomation (1, P::Pan)[0].value, -0.8f, 0.01f);
 
-                // --- Jump to Song B: volume swaps, pan must CLEAR (B had none) ---
-                eng.loadAutomationFromJson (reB);
-                expectWithinAbsoluteError (eng.getAutomation (0, P::Volume).front().value, -20.0f, 0.01f);
-                expectWithinAbsoluteError (eng.getAutomation (0, P::Volume).back().value,  +6.0f, 0.01f);
-                expect (eng.getAutomation (1, P::Pan).empty(), "Song B has no pan -> lane cleared on recall");
+                    // --- Jump to Song B: volume swaps, pan must CLEAR (B had none) ---
+                    eng.loadAutomationFromJson (reB);
+                    expectWithinAbsoluteError (eng.getAutomation (0, P::Volume).front().value, -20.0f, 0.01f);
+                    expectWithinAbsoluteError (eng.getAutomation (0, P::Volume).back().value,  +6.0f, 0.01f);
+                    expect (eng.getAutomation (1, P::Pan).empty(), "Song B has no pan -> lane cleared on recall");
 
-                // --- Back to Song A: must restore exactly (per-cue recall) ---
-                eng.loadAutomationFromJson (reA);
-                expectWithinAbsoluteError (eng.getAutomation (0, P::Volume).back().value, -9.0f, 0.01f);
-                expectEquals ((int) eng.getAutomation (1, P::Pan).size(), 1);
-                expectWithinAbsoluteError (eng.getAutomation (1, P::Pan)[0].value, -0.8f, 0.01f);
+                    // --- Back to Song A: must restore exactly (per-cue recall) ---
+                    eng.loadAutomationFromJson (reA);
+                    expectWithinAbsoluteError (eng.getAutomation (0, P::Volume).back().value, -9.0f, 0.01f);
+                    expectEquals ((int) eng.getAutomation (1, P::Pan).size(), 1);
+                    expectWithinAbsoluteError (eng.getAutomation (1, P::Pan)[0].value, -0.8f, 0.01f);
+                }
             }
 
             beginTest ("Cue recall clears lanes a later cue automated (partial snapshot)");

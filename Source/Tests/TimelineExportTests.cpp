@@ -33,6 +33,16 @@ namespace zynforge
                 expectEquals (csvField ("a,b"),         juce::String ("\"a,b\""));
             }
 
+            beginTest ("csvField neutralises spreadsheet formula injection");
+            {
+                expectEquals (csvField ("=WEBSERVICE(\"https://example.invalid\")"),
+                              juce::String ("\"'=WEBSERVICE(\"\"https://example.invalid\"\")\""));
+                expectEquals (csvField ("+cmd|' /C calc'!A0"),
+                              juce::String ("\"'+cmd|' /C calc'!A0\""));
+                expectEquals (csvField ("@SUM(1,2)"), juce::String ("\"'@SUM(1,2)\""));
+                expectEquals (csvField ("-6 dB"),     juce::String ("\"'-6 dB\""));
+            }
+
             beginTest ("buildCsv emits header, tracks, markers, cues sections");
             {
                 std::vector<TrackEntry> tracks { { 1, "Kick", "Track_01.wav" },

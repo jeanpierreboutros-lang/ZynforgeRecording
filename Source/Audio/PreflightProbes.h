@@ -76,4 +76,36 @@ namespace zynforge::preflight
         if (freeBytes <= 0 || requiredMBps <= 0.0) return 0.0;
         return ((double) freeBytes / 1.0e6) / requiredMBps / 60.0;
     }
+
+    inline juce::File storageRoot (const juce::File& activeSession,
+                                   const juce::File& configuredSessionsRoot)
+    {
+        return activeSession.isDirectory() ? activeSession.getParentDirectory()
+                                           : configuredSessionsRoot;
+    }
+
+    enum class RedundancyReadiness
+    {
+        NotConfigured,
+        ConfiguredWritable,
+        ConfiguredUnavailable,
+        Active,
+        ExpectedButInactive
+    };
+
+    // At idle, configuration means a mounted, writable destination. During a
+    // take, the only truthful signal is whether a writer is actually active;
+    // never run a write probe against a drive already serving live audio.
+    inline RedundancyReadiness redundancyReadiness (bool recording,
+                                                     bool configured,
+                                                     bool writable,
+                                                     bool writerActive)
+    {
+        if (! configured) return RedundancyReadiness::NotConfigured;
+        if (recording)
+            return writerActive ? RedundancyReadiness::Active
+                                : RedundancyReadiness::ExpectedButInactive;
+        return writable ? RedundancyReadiness::ConfiguredWritable
+                        : RedundancyReadiness::ConfiguredUnavailable;
+    }
 }

@@ -1,6 +1,13 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/TrackFileTransaction.h"
+#include "../Audio/PathSafety.h"
+#include "../Audio/AtomicFile.h"
 #include "../Audio/MultiPartReader.h"
+#include "../Network/CloudUpload.h"
+#include "../UI/SessionProjPath.h"
+
+#include <algorithm>
+#include <thread>
 
 namespace zynforge
 {
@@ -39,6 +46,52 @@ public:
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
+        beginTest ("Overlapping atomic metadata writes never publish torn text or collide on staging files");
+        {
+            Directory dir;
+            const auto target = dir.file.getChildFile ("session.report.json");
+            std::vector<juce::String> payloads;
+            std::vector<std::thread> writers;
+            for (int i = 0; i < 8; ++i)
+            {
+                payloads.push_back ("writer-" + juce::String (i) + ":"
+                                    + juce::String::repeatedString (
+                                        juce::String::charToString ((juce::juce_wchar) ('A' + i)),
+                                        65536));
+                writers.emplace_back ([target, payload = payloads.back()]
+                {
+                    for (int pass = 0; pass < 4; ++pass)
+                        atomicfile::writeText (target, payload);
+                });
+            }
+            for (auto& writer : writers) writer.join();
+            const auto finalText = target.loadFileAsString();
+            expect (std::find (payloads.begin(), payloads.end(), finalText) != payloads.end());
+            expectEquals (dir.file.findChildFiles (juce::File::findFiles, false, ".*.tmp").size(), 0);
+        }
+        beginTest ("Atomic metadata staging failure is returned without asserting or leaving debris");
+        {
+            Directory dir;
+            // This exceeds the per-component filename limit on supported macOS
+            // filesystems, so the staging stream cannot be created.
+            const auto target = dir.file.getChildFile (
+                juce::String::repeatedString ("x", 300) + ".json");
+            expect (! atomicfile::writeText (target, "must not be published"));
+            expect (! target.exists());
+            expectEquals (dir.file.findChildFiles (juce::File::findFiles, false, ".*.tmp").size(), 0);
+        }
+        beginTest ("Session project lookup distinguishes a missing file and prefers the canonical project");
+        {
+            Directory dir;
+            const auto canonical = dir.file.getChildFile (dir.file.getFileName() + ".zfproj");
+            expect (findSessionProj (dir.file) == canonical);
+            expect (! findSessionProj (dir.file).existsAsFile());
+            const auto legacy = dir.file.getChildFile ("old-name.zfproj");
+            expect (legacy.replaceWithText ("{}"));
+            expect (findSessionProj (dir.file) == legacy);
+            expect (canonical.replaceWithText ("{}"));
+            expect (findSessionProj (dir.file) == canonical);
+        }
         beginTest ("Backup collision refuses start without touching existing audio");
         {
             Directory dir; expect (write (dir.track (1), 0.3f));
@@ -177,6 +230,66 @@ public:
             expect (TrackFileTransaction::recover (dir.file));
             expectWithinAbsoluteError (sample (dir.track (1)), 0.1f, 0.001f);
             expectWithinAbsoluteError (sample (dir.track (2)), 0.2f, 0.001f);
+        }
+        beginTest ("Track transaction refuses session symlinks that escape the session");
+        {
+            Directory dir;
+            const auto outside = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getChildFile ("zf-outside-" + juce::Uuid().toString());
+            expect (outside.createDirectory());
+            const auto outside1 = outside.getChildFile ("Track_01.wav");
+            const auto outside2 = outside.getChildFile ("Track_02.wav");
+            expect (write (outside1, 0.1f));
+            expect (write (outside2, 0.2f));
+
+            const auto audioLink = dir.file.getChildFile ("Audio Files");
+            expect (audioLink.deleteRecursively());
+            expect (outside.createSymbolicLink (audioLink, false), "could not create test symlink");
+
+            TrackFileTransaction tx;
+            expect (! tx.begin (dir.file,
+                                { { audioLink.getChildFile ("Track_01.wav"),
+                                    audioLink.getChildFile ("Track_02.wav") } }),
+                    "lexically in-session symlink was allowed to mutate outside media");
+            expectWithinAbsoluteError (sample (outside1), 0.1f, 0.001f);
+            expectWithinAbsoluteError (sample (outside2), 0.2f, 0.001f);
+            outside.deleteRecursively();
+        }
+        beginTest ("Canonical path boundaries detect symlink aliases in both directions");
+        {
+            Directory dir;
+            const auto outside = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getChildFile ("zf-path-boundary-" + juce::Uuid().toString());
+            expect (outside.createDirectory());
+            const auto nested = dir.file.getChildFile ("Nested");
+            expect (nested.createDirectory());
+
+            const auto aliasIntoSession = outside.getChildFile ("inside-link");
+            expect (nested.createSymbolicLink (aliasIntoSession, false));
+            expect (pathsafety::isSameOrDescendant (dir.file, aliasIntoSession),
+                    "a destination symlink into the source was not detected");
+
+            const auto aliasOutOfSession = dir.file.getChildFile ("outside-link");
+            expect (outside.createSymbolicLink (aliasOutOfSession, false));
+            expect (! pathsafety::isSameOrDescendant (dir.file,
+                                                       aliasOutOfSession.getChildFile ("private.wav")),
+                    "a source symlink escape was treated as session-contained");
+            expect (pathsafety::isStrictDescendant (dir.file, nested));
+            expect (! pathsafety::isStrictDescendant (dir.file, dir.file));
+            outside.deleteRecursively();
+        }
+        beginTest ("Cloud uploader receives the exact session path and survives its process wrapper");
+        {
+            const auto root = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                  .getChildFile ("zf upload \"" + juce::Uuid().toString());
+            expect (root.createDirectory());
+            expect (cloud::launchUpload ("/usr/bin/touch {SESSION}/upload-finished", root));
+            const auto marker = root.getChildFile ("upload-finished");
+            for (int waited = 0; waited < 2000 && ! marker.existsAsFile(); waited += 20)
+                juce::Thread::sleep (20);
+            expect (marker.existsAsFile(),
+                    "uploader did not receive the exact quoted path or exited with its wrapper");
+            root.deleteRecursively();
         }
         beginTest ("Loop boundary fills the entire device block without inserted silence");
         {

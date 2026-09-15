@@ -1,6 +1,8 @@
 #include "CompanionServer.h"
+#include "CompanionStreamFormat.h"
 #include "../Theme/BrandColors.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <thread>
@@ -50,17 +52,37 @@ namespace zynforge
                 scanned = size;
                 if (hdrEnd < 0) continue;
 
-                // Decode only the header region (not the whole buffer).
+                // HTTP request lines and the small set of headers we support
+                // are ASCII. Reject control/high bytes before converting;
+                // String::fromUTF8 asserts on malformed input in Debug builds.
+                for (int i = 0; i < hdrEnd; ++i)
+                {
+                    const auto c = (unsigned char) data[i];
+                    if (c != '\r' && c != '\n' && c != '\t'
+                        && (c < 0x20u || c > 0x7eu))
+                        return {};
+                }
                 const auto headers = juce::String::fromUTF8 (data, hdrEnd);
                 int contentLength = 0;
+                bool sawContentLength = false;
                 for (auto& line : juce::StringArray::fromLines (headers))
                     if (line.startsWithIgnoreCase ("Content-Length:"))
-                        contentLength = line.fromFirstOccurrenceOf (":", false, false).trim().getIntValue();
-                contentLength = juce::jlimit (0, kMaxBodyBytes, contentLength);   // clamp attacker-large lengths
+                    {
+                        if (sawContentLength) return {}; // reject ambiguous framing
+                        const auto value = line.fromFirstOccurrenceOf (":", false, false).trim();
+                        if (value.isEmpty() || ! value.containsOnly ("0123456789")) return {};
+                        const auto parsed = value.getLargeIntValue();
+                        if (parsed < 0 || parsed > kMaxBodyBytes) return {};
+                        contentLength = (int) parsed;
+                        sawContentLength = true;
+                    }
 
-                int bodyHave = size - (hdrEnd + 4);
-                bodyOut = juce::String::fromUTF8 (data + hdrEnd + 4, juce::jmax (0, bodyHave));
-                while (bodyHave < contentLength
+                juce::MemoryBlock body;
+                const int initiallyAvailable = juce::jmax (0, size - (hdrEnd + 4));
+                const int initiallyNeeded = juce::jmin (initiallyAvailable, contentLength);
+                if (initiallyNeeded > 0)
+                    body.append (data + hdrEnd + 4, (size_t) initiallyNeeded);
+                while ((int) body.getSize() < contentLength
                        && (juce::uint32) (juce::Time::getMillisecondCounter() - started) < 5000u)
                 {
                     const int r2 = s.waitUntilReady (true, 200);
@@ -68,9 +90,17 @@ namespace zynforge
                     if (r2 == 0) continue;
                     const int got2 = s.read (buf, sizeof (buf), false);
                     if (got2 <= 0) break;
-                    bodyOut += juce::String::fromUTF8 (buf, got2);
-                    bodyHave += got2;
+                    const int remaining = contentLength - (int) body.getSize();
+                    body.append (buf, (size_t) juce::jmin (remaining, got2));
                 }
+                if ((int) body.getSize() != contentLength) return {};
+                if (contentLength > 0
+                    && ! juce::CharPointer_UTF8::isValidString (
+                            static_cast<const char*> (body.getData()), contentLength))
+                    return {};
+                bodyOut = contentLength > 0
+                        ? juce::String::fromUTF8 (static_cast<const char*> (body.getData()), contentLength)
+                        : juce::String();
                 return headers;
             }
         }
@@ -264,6 +294,7 @@ setInterval(tick, 500); tick();
         // clears this flag today, so it was safe -- but the console TCP
         // transports proved how quickly that stops being true.
         running.store (false);
+        cancelPendingCommands();
         if (listener != nullptr) listener->close();
         if (acceptThread.joinable()) acceptThread.join();
 
@@ -293,6 +324,44 @@ setInterval(tick, 500); tick();
             std::lock_guard<std::mutex> g (tokenLock);
             accessToken.clear();
         }
+    }
+
+    void CompanionServer::registerPendingCommand (const std::shared_ptr<CommandResult>& result)
+    {
+        std::lock_guard<std::mutex> g (pendingCommandsLock);
+        pendingCommands.erase (
+            std::remove_if (pendingCommands.begin(), pendingCommands.end(),
+                            [] (const auto& p) { return p.expired(); }),
+            pendingCommands.end());
+        pendingCommands.emplace_back (result);
+    }
+
+    void CompanionServer::unregisterPendingCommand (const std::shared_ptr<CommandResult>& result)
+    {
+        std::lock_guard<std::mutex> g (pendingCommandsLock);
+        pendingCommands.erase (
+            std::remove_if (pendingCommands.begin(), pendingCommands.end(),
+                            [&result] (const auto& p)
+                            {
+                                const auto live = p.lock();
+                                return live == nullptr || live == result;
+                            }),
+            pendingCommands.end());
+    }
+
+    void CompanionServer::cancelPendingCommands()
+    {
+        std::vector<std::shared_ptr<CommandResult>> live;
+        {
+            std::lock_guard<std::mutex> g (pendingCommandsLock);
+            live.reserve (pendingCommands.size());
+            for (const auto& p : pendingCommands)
+                if (auto result = p.lock())
+                    live.push_back (std::move (result));
+            pendingCommands.clear();
+        }
+        for (const auto& result : live)
+            result->complete (false, "server is stopping");
     }
 
     juce::String CompanionServer::getAccessToken() const
@@ -523,59 +592,44 @@ setInterval(tick, 500); tick();
         // stay inline -- they're safe off-thread.
         if (action == "play" || action == "stop" || action == "record")
         {
-            struct CommandResult
-            {
-                juce::WaitableEvent finished;
-                bool ok { false };
-                juce::String error;
-            };
             auto result = std::make_shared<CommandResult>();
-            auto* eng = &engine;
+            registerPendingCommand (result);
+            const auto engineHandle = engine.getAsyncHandle();
             const auto act = action;
-            const bool queued = juce::MessageManager::callAsync ([eng, act, result]
+            const bool queued = juce::MessageManager::callAsync ([engineHandle, act, result]
             {
+                // stop() may already have cancelled and signalled this request.
+                // Never execute a stale transport command after restart/quit.
+                if (result->completed.load (std::memory_order_acquire))
+                    return;
+                auto* eng = engineHandle->load (std::memory_order_acquire);
+                if (eng == nullptr)
+                {
+                    result->complete (false, "application is shutting down");
+                    return;
+                }
+
+                AudioEngine::RemoteTransportAction actionToRun;
                 if (act == "play")
-                {
-                    if (eng->getPlayer().isPlaying()) eng->stopPlayback(); else eng->startPlayback();
-                    result->ok = true;
-                }
+                    actionToRun = AudioEngine::RemoteTransportAction::TogglePlay;
                 else if (act == "stop")
-                {
-                    eng->stopPlayback(); if (eng->isRecording()) eng->stopRecording(); eng->getPlayer().rewind();
-                    result->ok = true;
-                }
-                else if (act == "record")
-                {
-                    if (eng->isRecording())
-                    {
-                        eng->stopRecording();
-                        result->ok = true;
-                    }
-                    else if (! eng->hasUsableArmedInput())
-                        result->error = "no armed track has a live input";
-                    else
-                    {
-                        // Start a FRESH timestamped session (never start into
-                        // the open session -- the companion has no access to the
-                        // UI's continue/append logic, so a plain startRecording
-                        // there would TRUNCATE existing takes). Matches the OSC
-                        // remote-start path. This makes the RECORD button real
-                        // instead of a dead control that reports success.
-                        // makeTimestampedSessionDir honours the engineer's
-                        // "Local Storage" override; hardcoding the Music folder
-                        // put remote-started takes on the wrong drive.
-                        result->ok = eng->startRecording (eng->makeTimestampedSessionDir());
-                        if (! result->ok) result->error = "recording could not start";
-                    }
-                }
-                result->finished.signal();
+                    actionToRun = AudioEngine::RemoteTransportAction::StopAll;
+                else
+                    actionToRun = AudioEngine::RemoteTransportAction::ToggleRecord;
+
+                juce::String error;
+                const bool ok = eng->performRemoteTransport (actionToRun, error);
+                result->complete (ok, error);
             });
             if (! queued || ! result->finished.wait (5000))
             {
+                result->complete (false, "command timed out");
+                unregisterPendingCommand (result);
                 writeRaw (s, "503 Service Unavailable", "application/json",
                           "{\"ok\":false,\"error\":\"command timed out\"}");
                 return;
             }
+            unregisterPendingCommand (result);
             if (! result->ok)
             {
                 juce::DynamicObject::Ptr reply (new juce::DynamicObject());
@@ -620,10 +674,8 @@ setInterval(tick, 500); tick();
         const int    sr           = devSr > 0.0 ? (int) (devSr + 0.5) : 48000;
         const int    bitsPerSamp  = 16;
         const int    numChannels  = 2;
-        const juce::uint32 fakeBytes = (juce::uint32) (sr * numChannels * (bitsPerSamp / 8) * 60 * 60 * 24);
-
-        auto u32 = [] (juce::uint32 v) { return juce::String ((juce::int64) v); };
-        juce::ignoreUnused (u32);
+        const juce::uint32 fakeBytes = companionstream::placeholderDataBytes (
+            sr, numChannels, bitsPerSamp);
 
         juce::String head =
             "HTTP/1.1 200 OK\r\n"

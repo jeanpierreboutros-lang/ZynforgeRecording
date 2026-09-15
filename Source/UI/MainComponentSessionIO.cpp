@@ -15,7 +15,10 @@
 // report; onDeviceClicked launches the audio-device dialog).
 
 #include "MainComponent.h"
+#include "../Audio/AudioImport.h"
+#include "../Audio/AtomicFile.h"
 #include "../Audio/TrackFileTransaction.h"
+#include "../Audio/PathSafety.h"
 #include "../Theme/DialogChrome.h"
 #include "../Audio/TimelineExport.h"
 #include "NewSessionDialog.h"
@@ -32,7 +35,12 @@ namespace
 bool copyDirectoryCancellable (const juce::File& source, const juce::File& dest,
                                const std::atomic<bool>& cancel)
 {
-    if (! source.isDirectory() || dest.isAChildOf (source) || dest == source)
+    // Never follow links while cloning a session. Apart from leaking files
+    // outside the session, a link back into the source makes this recursion
+    // unbounded. Canonical containment also catches a destination alias that
+    // File::isAChildOf's lexical comparison misses.
+    if (! source.isDirectory() || source.isSymbolicLink() || dest.isSymbolicLink()
+        || pathsafety::isSameOrDescendant (source, dest))
         return false;
     if ((! dest.isDirectory() && dest.createDirectory().failed()) || cancel.load())
         return false;
@@ -40,6 +48,7 @@ bool copyDirectoryCancellable (const juce::File& source, const juce::File& dest,
     for (const auto& child : source.findChildFiles (juce::File::findFilesAndDirectories, false))
     {
         if (cancel.load (std::memory_order_relaxed)) return false;
+        if (child.isSymbolicLink()) return false;
         const auto target = dest.getChildFile (child.getFileName());
         if (child.isDirectory())
         {
@@ -85,12 +94,13 @@ bool ensureSessionScaffold (const juce::File& dest)
         || ! ensureDir (dest.getChildFile ("Session File Backups")))
         return false;
 
-    if (findSessionProj (dest) != juce::File{}) return true;
+    if (findSessionProj (dest).existsAsFile()) return true;
     juce::DynamicObject::Ptr root (new juce::DynamicObject());
     root->setProperty ("name", dest.getFileName());
     root->setProperty ("createdAt", juce::Time::getCurrentTime().toISO8601 (true));
-    return dest.getChildFile (dest.getFileName() + ".zfproj")
-               .replaceWithText (juce::JSON::toString (juce::var (root.get())));
+    return zynforge::atomicfile::writeText (
+        dest.getChildFile (dest.getFileName() + ".zfproj"),
+        juce::JSON::toString (juce::var (root.get())));
 }
 }
 
@@ -324,7 +334,8 @@ bool MainComponent::saveSessionStateTo (const juce::File& dir)
     root->setProperty ("tracks", trackArr);
 
     const auto json = juce::JSON::toString (juce::var (root.get()), true);
-    const bool wroteSettings = dir.getChildFile ("session_settings.json").replaceWithText (json);
+    const bool wroteSettings = zynforge::atomicfile::writeText (
+        dir.getChildFile ("session_settings.json"), json);
 
     // Persist the FULL per-strip mixer state WITH the session (name, colour,
     // gain, pan, mute, solo, monitor, arm, routing, stereo, VCA + edit group)
@@ -445,7 +456,8 @@ bool MainComponent::saveUILayoutToActiveSession()
     ui->setProperty ("editZoom",     editPage != nullptr ? (double) editPage->getZoom() : 1.0);
     obj->setProperty ("ui", juce::var (ui.get()));
     obj->setProperty ("updatedAt", juce::Time::getCurrentTime().toISO8601 (true));
-    return proj.replaceWithText (juce::JSON::toString (juce::var (obj.get())));
+    return zynforge::atomicfile::writeText (
+        proj, juce::JSON::toString (juce::var (obj.get())));
 }
 
 void MainComponent::startExportTracksTo (const juce::File& destDir,
@@ -552,6 +564,11 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
     // ── Phase 2 (BACKGROUND): decode / resample / encode ───────────────────
     // Owned + joinable thread (same pattern as the bounce) so a quit mid-export
     // can't leave a detached worker running against freed state.
+    if (sessionIoBusy.exchange (true))
+    {
+        showStatus ("Another session file operation is already running");
+        return;
+    }
     joinExportThread();   // one export at a time
     showStatus ("Exporting " + juce::String ((int) jobs.size()) + " track(s)...");
 
@@ -579,7 +596,9 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
         juce::MessageManager::callAsync (
             [self, succeeded, attempted, firstError, destName, cancelled]
         {
-            if (self == nullptr || cancelled) return;
+            if (self == nullptr) return;
+            self->sessionIoBusy.store (false);
+            if (cancelled) return;
             // Surface PARTIAL failures too -- e.g. the destination runs out of
             // space mid-batch. A run that wrote 10 of 32 files must not read as
             // success and ship an incomplete deliverable.
@@ -607,10 +626,12 @@ void MainComponent::onBounceStems()
     const auto exportDir = sessionDir.getChildFile ("Export Files");
     exportDir.createDirectory();
     chooser = std::make_unique<juce::FileChooser> ("Bounce edited stems to...", exportDir, "");
+    juce::Component::SafePointer<MainComponent> chooserSelf (this);
     chooser->launchAsync (juce::FileBrowserComponent::saveMode
                           | juce::FileBrowserComponent::canSelectDirectories,
-        [this] (const juce::FileChooser& fc)
+        [chooserSelf, this] (const juce::FileChooser& fc)
     {
+        if (chooserSelf == nullptr) return;
         auto dest = fc.getResult();
         if (dest.getFullPathName().isEmpty()) return;
         dest.createDirectory();
@@ -683,11 +704,13 @@ void MainComponent::onBounceStereoMix()
     exportDir.createDirectory();
     const auto suggested = exportDir.getChildFile (sessionDir.getFileName() + " - Mix.wav");
     chooser = std::make_unique<juce::FileChooser> ("Bounce stereo mix to...", suggested, "*.wav");
+    juce::Component::SafePointer<MainComponent> chooserSelf (this);
     chooser->launchAsync (juce::FileBrowserComponent::saveMode
                           | juce::FileBrowserComponent::canSelectFiles
                           | juce::FileBrowserComponent::warnAboutOverwriting,
-        [this] (const juce::FileChooser& fc)
+        [chooserSelf, this] (const juce::FileChooser& fc)
     {
+        if (chooserSelf == nullptr) return;
         auto dest = fc.getResult();
         if (dest.getFullPathName().isEmpty()) return;
         if (! dest.hasFileExtension ("wav")) dest = dest.withFileExtension ("wav");
@@ -762,45 +785,44 @@ void MainComponent::onImportAudioFiles()
         juce::File::getSpecialLocation (juce::File::userMusicDirectory),
         filters);
 
+    juce::Component::SafePointer<MainComponent> self (this);
     chooser->launchAsync (juce::FileBrowserComponent::openMode
                           | juce::FileBrowserComponent::canSelectFiles
                           | juce::FileBrowserComponent::canSelectMultipleItems,
-        [this] (const juce::FileChooser& fc)
+        [self, this] (const juce::FileChooser& fc)
     {
+        if (self == nullptr) return;
         const auto picks = fc.getResults();
         if (picks.isEmpty()) return;
 
-        // Convert each picked file into one or two Track_NN.wav files
-        // (mono per track) inside the active session's Audio Files/ dir.
-        // Stereo source files become a stereo PAIR -- two consecutive
-        // mono WAVs whose L track gets isStereo=true so the UI collapses
-        // them into one strip. The session is then loaded for VSC playback.
+        if (sessionIoBusy.exchange (true))
+        {
+            showStatus ("Another session file operation is already running");
+            return;
+        }
+
+        // Prepare the destination on the message thread, then leave every
+        // potentially multi-hour decode/resample/write operation to the owned
+        // session-I/O worker below.
         auto sessionDir = makeNewSessionDir();
-        sessionDir.createDirectory();
+        if (! sessionDir.createDirectory().wasOk())
+        {
+            sessionIoBusy.store (false);
+            showStatus ("Import failed -- session folder is not writable");
+            return;
+        }
 
-        // Pro Tools-style: imported audio lives under Audio Files/.
-        // makeNewSessionDir() either returns the engineer-named session
-        // (from appProps) or freshly auto-stamps one -- either way we
-        // want Track files inside the subfolder, not loose at the root.
         auto audioFilesDir = sessionDir.getChildFile ("Audio Files");
-        audioFilesDir.createDirectory();
-        // Also seed the rest of the Pro Tools-style layout so loose
-        // imports look like a real session if the engineer hadn't
-        // already created one via File ▸ New Session....
-        sessionDir.getChildFile ("Export Files")       .createDirectory();
-        sessionDir.getChildFile ("Session File Backups").createDirectory();
+        const bool layoutReady = audioFilesDir.createDirectory().wasOk()
+            && sessionDir.getChildFile ("Export Files").createDirectory().wasOk()
+            && sessionDir.getChildFile ("Session File Backups").createDirectory().wasOk();
+        if (! layoutReady)
+        {
+            sessionIoBusy.store (false);
+            showStatus ("Import failed -- session folders are not writable");
+            return;
+        }
         engine.setActiveSessionDir (sessionDir);
-
-        juce::AudioFormatManager fm;
-        fm.registerBasicFormats();
-
-        // Per imported file: remember (start_strip_index, was_stereo).
-        struct ImportRecord { int trackIndex; bool stereo; juce::String name; };
-        std::vector<ImportRecord> records;
-        // Start *after* the existing strips so multi-file import APPENDS
-        // to the session instead of overwriting Track_01.wav onwards.
-        int nextTrack = engine.getRecorder().getNumTracks();
-        int failed    = 0;
 
         // Every imported file is written at the SESSION's sample rate, not its
         // own. Writing each source at `reader->sampleRate` left a session with
@@ -816,179 +838,87 @@ void MainComponent::onImportAudioFiles()
                 if (d->getCurrentSampleRate() > 0.0) return d->getCurrentSampleRate();
             return pendingSampleRate > 0.0 ? pendingSampleRate : 48000.0;
         }();
-        int converted = 0;
 
-        // Write `reader` to dst as a 24-bit WAV at targetSr.
-        //   outChannels 1 = mono (takes monoSourceChannel), 2 = interleaved stereo.
-        // A same-rate source takes the straight copy path so an import that
-        // needs no conversion stays sample-exact (no resampler in the way).
-        auto writeConverted = [] (juce::AudioFormatReader& reader,
-                                  const juce::File& dst, double targetRate,
-                                  int outChannels, int monoSourceChannel) -> bool
+        const int firstTrack = engine.getRecorder().getNumTracks();
+        engine.setSessionTransitionActive (true);
+        if (editPage != nullptr) editPage->setEnabled (false);
+        showStatus ("Importing " + juce::String (picks.size()) + " audio file(s)...");
+
+        joinExportThread();
+        exportThread = std::thread ([this, self, picks, sessionDir, audioFilesDir,
+                                     firstTrack, targetSr]
         {
-            dst.deleteFile();
-            const int    srcChans = juce::jmax (1, (int) reader.numChannels);
-            const double srcSr    = reader.sampleRate > 0.0 ? reader.sampleRate : targetRate;
+            const auto result = zynforge::audioimport::importFiles (
+                picks, audioFilesDir, firstTrack, targetSr, &exportCancel);
 
-            juce::WavAudioFormat wav;
-            std::unique_ptr<juce::FileOutputStream> out (dst.createOutputStream());
-            if (out == nullptr) return false;
-            juce::StringPairArray meta;
-            std::unique_ptr<juce::AudioFormatWriter> writer (
-                wav.createWriterFor (out.get(), targetRate,
-                                     (unsigned int) outChannels, 24, meta, 0));
-            if (writer == nullptr) return false;
-            out.release();
-
-            // Stream in chunks so we never allocate a whole-file buffer.
-            constexpr int chunk = 16384;
-            juce::AudioBuffer<float> buf (srcChans, chunk);
-
-            auto writeBlock = [&] (int n) -> bool
+            juce::MessageManager::callAsync ([self, result, sessionDir, targetSr]
             {
-                if (outChannels == 2)
+                if (self == nullptr) return;
+                self->sessionIoBusy.store (false);
+                self->engine.setSessionTransitionActive (false);
+                if (self->editPage != nullptr) self->editPage->setEnabled (true);
+                if (result.cancelled) return;
+                if (self->engine.getActiveSessionDir() != sessionDir)
                 {
-                    const int srcR = juce::jmin (1, srcChans - 1);
-                    const float* chans[2] = { buf.getReadPointer (0),
-                                              buf.getReadPointer (srcR) };
-                    return writer->writeFromFloatArrays (chans, 2, n);
+                    self->showStatus ("Import finished for the previous session; current session was not changed");
+                    return;
                 }
-                const float* mono[1] = {
-                    buf.getReadPointer (juce::jlimit (0, srcChans - 1, monoSourceChannel)) };
-                return writer->writeFromFloatArrays (mono, 1, n);
-            };
-
-            if (juce::approximatelyEqual (srcSr, targetRate))
-            {
-                juce::int64 pos = 0;
-                while (pos < reader.lengthInSamples)
+                if (result.tracks.empty())
                 {
-                    const int n = (int) juce::jmin ((juce::int64) chunk,
-                                                    reader.lengthInSamples - pos);
-                    if (! reader.read (&buf, 0, n, pos, true, true)) return false;
-                    if (! writeBlock (n)) return false;
-                    pos += n;
+                    self->showStatus ("Import failed -- no readable audio files");
+                    return;
                 }
-                return true;
-            }
 
-            // Rate conversion -- same pipeline TrackExporter uses on the way out.
-            juce::AudioFormatReaderSource src (&reader, false);
-            juce::ResamplingAudioSource   res (&src, false, srcChans);
-            res.setResamplingRatio (srcSr / targetRate);
-            res.prepareToPlay (chunk, targetRate);
+                int nextTrack = self->engine.getRecorder().getNumTracks();
+                for (const auto& record : result.tracks)
+                    nextTrack = juce::jmax (nextTrack,
+                                            record.trackIndex + (record.stereo ? 2 : 1));
+                if (nextTrack > self->engine.getRecorder().getNumTracks())
+                    self->engine.setStripCount (nextTrack);
 
-            const juce::int64 destLen =
-                (juce::int64) ((double) reader.lengthInSamples * targetRate / srcSr);
-            juce::int64 written = 0;
-            bool ok = true;
-            while (written < destLen && ok)
-            {
-                const int n = (int) juce::jmin ((juce::int64) chunk, destLen - written);
-                buf.clear();
-                juce::AudioSourceChannelInfo info (&buf, 0, n);
-                res.getNextAudioBlock (info);
-                ok = writeBlock (n);
-                written += n;
-            }
-            res.releaseResources();
-            return ok;
-        };
+                for (const auto& record : result.tracks)
+                {
+                    self->engine.setTrackName (record.trackIndex, record.name);
+                    self->engine.setTrackStereo (record.trackIndex, record.stereo);
+                    if (record.stereo)
+                    {
+                        self->engine.setTrackName (record.trackIndex + 1, record.name + " R");
+                        self->engine.setTrackStereo (record.trackIndex + 1, false);
+                        self->engine.setTrackPan (record.trackIndex, -1.0f);
+                        self->engine.setTrackPan (record.trackIndex + 1, 1.0f);
+                        self->engine.setTrackLinkedRouting (record.trackIndex, record.trackIndex);
+                        self->engine.setTrackLinkedRouting (record.trackIndex + 1,
+                                                            record.trackIndex + 1);
+                    }
+                    else
+                    {
+                        self->engine.setTrackLinkedRouting (record.trackIndex, record.trackIndex);
+                    }
+                }
 
-        for (int i = 0; i < picks.size(); ++i)
-        {
-            const auto& src = picks.getReference (i);
-            std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (src));
-            if (reader == nullptr) { ++failed; continue; }
+                self->lastTrackCount = -1;
+                const auto savedEdits = self->engine.playlistsToJson();
+                const int loaded = self->engine.loadSession (sessionDir, true);
+                self->engine.loadPlaylistsFromJson (savedEdits);
+                const bool saved = self->saveSessionStateTo (sessionDir);
 
-            const bool isStereoFile = (reader->numChannels >= 2);
-            const auto baseName = src.getFileNameWithoutExtension();
-
-            const int lTrack = nextTrack;
-            const auto lDst = audioFilesDir.getChildFile (
-                "Track_" + juce::String (lTrack + 1).paddedLeft ('0', 2) + ".wav");
-
-            // Stereo source -> ONE interleaved 2-ch file in the L slot (no
-            // separate R file). Mono source -> one mono file. Both reserve
-            // their strip count below so the pair still spans two strips.
-            // Everything is written at the session rate (see writeConverted).
-            if (reader->sampleRate > 0.0
-                && ! juce::approximatelyEqual (reader->sampleRate, targetSr))
-                ++converted;
-            const bool ok = writeConverted (*reader, lDst, targetSr,
-                                            isStereoFile ? 2 : 1, /*monoSourceChannel*/ 0);
-
-            if (! ok) { ++failed; continue; }
-
-            records.push_back ({ lTrack, isStereoFile, baseName });
-            nextTrack += isStereoFile ? 2 : 1;
-        }
-
-        if (records.empty())
-        {
-            showStatus ("Import failed -- no readable audio files");
-            return;
-        }
-
-        // Resize the mixer to fit every imported strip.
-        if (nextTrack > engine.getRecorder().getNumTracks())
-            engine.setStripCount (nextTrack);
-
-        // Apply stereo pair flags + names + routing to each imported strip.
-        for (auto& rec : records)
-        {
-            engine.setTrackName    (rec.trackIndex, rec.name);
-            engine.setTrackStereo  (rec.trackIndex, rec.stereo);
-            if (rec.stereo)
-            {
-                engine.setTrackName  (rec.trackIndex + 1, rec.name + " R");
-                engine.setTrackStereo (rec.trackIndex + 1, false);
-
-                // Full stereo image: L hard-left, R hard-right so the pair
-                // reproduces the source's stereo field instead of summing
-                // toward mono at centre pan.
-                engine.setTrackPan (rec.trackIndex,     -1.0f);
-                engine.setTrackPan (rec.trackIndex + 1,  1.0f);
-
-                // Route the stereo pair to a sensible pair of inputs +
-                // outputs so the strip's combos read 'In 1-2' / 'Out 1-2'
-                // rather than (unrouted). L gets the even slot, R gets
-                // the next one up.
-                engine.setTrackLinkedRouting (rec.trackIndex,     rec.trackIndex);
-                engine.setTrackLinkedRouting (rec.trackIndex + 1, rec.trackIndex + 1);
-            }
-            else
-            {
-                engine.setTrackLinkedRouting (rec.trackIndex, rec.trackIndex);
-            }
-        }
-
-        // setTrackStereo doesn't change the track count, so the mixer
-        // wouldn't otherwise rebuild -- force the next timer tick to
-        // re-iterate logical strips (collapse stereo pairs into one).
-        lastTrackCount = -1;
-
-        const auto savedEdits = engine.playlistsToJson();
-        const int loaded = engine.loadSession (sessionDir, true);
-        engine.loadPlaylistsFromJson (savedEdits);
-
-        // Persist the mixer state NOW -- otherwise the stereo-pair flags
-        // (and names / routing) set above are RAM-only, and reopening the
-        // session would size the mixer from the audio files as plain mono,
-        // splitting every imported stereo track back into two strips.
-        saveSessionStateTo (sessionDir);
-
-        const int stereoCount = (int) std::count_if (records.begin(), records.end(),
-                                                     [] (const ImportRecord& r) { return r.stereo; });
-        showStatus ("Imported " + juce::String ((int) records.size())
+                const int stereoCount = (int) std::count_if (
+                    result.tracks.begin(), result.tracks.end(),
+                    [] (const auto& record) { return record.stereo; });
+                self->showStatus ("Imported " + juce::String ((int) result.tracks.size())
                     + " file(s), " + juce::String (stereoCount) + " stereo, "
-                    + juce::String ((int) records.size() - stereoCount) + " mono"
-                    + (converted > 0 ? " (" + juce::String (converted) + " resampled to "
-                                       + juce::String (targetSr / 1000.0, 1) + " kHz)"
-                                     : juce::String())
-                    + (failed > 0 ? " (skipped " + juce::String (failed) + ")"
-                                  : juce::String())
-                    + " -- loaded " + juce::String (loaded) + " for playback");
+                    + juce::String ((int) result.tracks.size() - stereoCount) + " mono"
+                    + (result.converted > 0
+                        ? " (" + juce::String (result.converted) + " resampled to "
+                            + juce::String (targetSr / 1000.0, 1) + " kHz)"
+                        : juce::String())
+                    + (result.failed > 0
+                        ? " (skipped " + juce::String (result.failed) + ")"
+                        : juce::String())
+                    + " -- loaded " + juce::String (loaded) + " for playback"
+                    + (saved ? juce::String() : juce::String ("; WARNING: session state was not saved")));
+            });
+        });
     });
 }
 
@@ -1018,8 +948,10 @@ void MainComponent::onSaveSessionAs()
     const auto flags = juce::FileBrowserComponent::saveMode
                      | juce::FileBrowserComponent::canSelectDirectories;
 
-    chooser->launchAsync (flags, [this, source] (const juce::FileChooser& fc)
+    juce::Component::SafePointer<MainComponent> chooserSelf (this);
+    chooser->launchAsync (flags, [chooserSelf, this, source] (const juce::FileChooser& fc)
     {
+        if (chooserSelf == nullptr) return;
         auto dest = fc.getResult();
         if (dest.getFullPathName().isEmpty()) { sessionIoBusy.store (false); return; }
 
@@ -1039,7 +971,7 @@ void MainComponent::onSaveSessionAs()
 
         // Refuse a destination INSIDE the source: copyDirectoryTo would copy
         // the growing destination into itself.
-        if (source.isDirectory() && dest.isAChildOf (source))
+        if (source.isDirectory() && pathsafety::isSameOrDescendant (source, dest))
         {
             sessionIoBusy.store (false);
             showStatus ("Save As failed -- pick a folder outside the current session");
@@ -1129,10 +1061,11 @@ void MainComponent::onExportAllTracks()
     const auto source = engine.getActiveSessionDir();
     if (! source.isDirectory()) { showStatus ("No active session"); return; }
 
+    juce::Component::SafePointer<MainComponent> self (this);
     zynforge::ExportDialog::launch ("Export all tracks", sessionAudioRateFor (engine),
-        [this] (std::optional<zynforge::ExportOptions> opts)
+        [self, this] (std::optional<zynforge::ExportOptions> opts)
     {
-        if (! opts.has_value()) return;
+        if (self == nullptr || ! opts.has_value()) return;
         const auto chosenOpts = *opts;
 
         const auto activeSession = engine.getActiveSessionDir();
@@ -1147,8 +1080,9 @@ void MainComponent::onExportAllTracks()
                          | juce::FileBrowserComponent::canSelectDirectories;
 
         chooser->launchAsync (flags,
-            [this, chosenOpts] (const juce::FileChooser& fc)
+            [self, this, chosenOpts] (const juce::FileChooser& fc)
         {
+            if (self == nullptr) return;
             auto dest = fc.getResult();
             if (dest.getFullPathName().isEmpty()) return;
             if (! dest.exists()) dest.createDirectory();
@@ -1168,10 +1102,11 @@ void MainComponent::onExportIndividualTrack (int channelIndex)
     const auto source = engine.getActiveSessionDir();
     if (! source.isDirectory()) { showStatus ("No active session"); return; }
 
+    juce::Component::SafePointer<MainComponent> self (this);
     zynforge::ExportDialog::launch ("Export track", sessionAudioRateFor (engine),
-        [this, channelIndex] (std::optional<zynforge::ExportOptions> opts)
+        [self, this, channelIndex] (std::optional<zynforge::ExportOptions> opts)
     {
-        if (! opts.has_value()) return;
+        if (self == nullptr || ! opts.has_value()) return;
         const auto chosenOpts = *opts;
 
         const auto activeSession = engine.getActiveSessionDir();
@@ -1186,8 +1121,9 @@ void MainComponent::onExportIndividualTrack (int channelIndex)
                          | juce::FileBrowserComponent::canSelectDirectories;
 
         chooser->launchAsync (flags,
-            [this, channelIndex, chosenOpts] (const juce::FileChooser& fc)
+            [self, this, channelIndex, chosenOpts] (const juce::FileChooser& fc)
         {
+            if (self == nullptr) return;
             auto dest = fc.getResult();
             if (dest.getFullPathName().isEmpty()) return;
             if (! dest.exists()) dest.createDirectory();
@@ -1222,10 +1158,11 @@ void MainComponent::onExportIndividualTracks()
         else        { rowChannels.push_back ({ i });        i += 1; }
     }
 
+    juce::Component::SafePointer<MainComponent> self (this);
     zynforge::TrackSelectDialog::launch ("Export individual tracks", names,
-        [this, rowChannels] (std::optional<std::vector<int>> picked)
+        [self, this, rowChannels] (std::optional<std::vector<int>> picked)
     {
-        if (! picked.has_value() || picked->empty()) return;
+        if (self == nullptr || ! picked.has_value() || picked->empty()) return;
 
         // Map picked dialog rows back to physical channel indices (a stereo
         // row expands to both halves; exportTracksTo writes them as one file).
@@ -1238,9 +1175,9 @@ void MainComponent::onExportIndividualTracks()
 
         // Step 2: format / sample-rate / bit-depth (or MP3 bitrate).
         zynforge::ExportDialog::launch ("Export format", sessionAudioRateFor (engine),
-            [this, chosenTracks] (std::optional<zynforge::ExportOptions> opts)
+            [self, this, chosenTracks] (std::optional<zynforge::ExportOptions> opts)
         {
-            if (! opts.has_value()) return;
+            if (self == nullptr || ! opts.has_value()) return;
             const auto chosenOpts = *opts;
 
             // Step 3: choose the destination folder, then export.
@@ -1256,8 +1193,9 @@ void MainComponent::onExportIndividualTracks()
                              | juce::FileBrowserComponent::canSelectDirectories;
 
             chooser->launchAsync (flags,
-                [this, chosenTracks, chosenOpts] (const juce::FileChooser& fc)
+                [self, this, chosenTracks, chosenOpts] (const juce::FileChooser& fc)
             {
+                if (self == nullptr) return;
                 auto dest = fc.getResult();
                 if (dest.getFullPathName().isEmpty()) return;
                 if (! dest.exists()) dest.createDirectory();
@@ -1377,15 +1315,19 @@ void MainComponent::exportTimelineCsv()
     const auto def = dir.getChildFile ("Export Files")
                         .getChildFile (dir.getFileName() + "_timeline.csv");
     chooser = std::make_unique<juce::FileChooser> ("Export session timeline (CSV)", def, "*.csv");
+    juce::Component::SafePointer<MainComponent> self (this);
     chooser->launchAsync (juce::FileBrowserComponent::saveMode
                           | juce::FileBrowserComponent::warnAboutOverwriting,
-        [this, csv] (const juce::FileChooser& fc)
+        [self, this, csv] (const juce::FileChooser& fc)
         {
+            if (self == nullptr) return;
             const auto f = fc.getResult();
             if (f == juce::File()) return;
             f.getParentDirectory().createDirectory();
-            showStatus (f.replaceWithText (csv) ? "Timeline exported: " + f.getFileName()
-                                                : "Couldn't write " + f.getFileName());
+            showStatus (zynforge::atomicfile::writeText (f, csv)
+                            ? "Timeline exported: " + f.getFileName()
+                            : "Couldn't write " + f.getFileName()
+                                + "; previous export was preserved");
         });
 }
 
@@ -1414,17 +1356,20 @@ void MainComponent::relocateActiveSession()
         "Choose a new location for this session",
         oldDir.getParentDirectory(), "");
 
+    juce::Component::SafePointer<MainComponent> chooserSelf (this);
     chooser->launchAsync (juce::FileBrowserComponent::canSelectDirectories
                           | juce::FileBrowserComponent::openMode,
-        [this, oldDir] (const juce::FileChooser& fc)
+        [chooserSelf, this, oldDir] (const juce::FileChooser& fc)
         {
+            if (chooserSelf == nullptr) return;
             const auto newParent = fc.getResult();
             if (! newParent.isDirectory()) { sessionIoBusy.store (false); return; }
 
             const auto newDir = newParent.getChildFile (oldDir.getFileName());
             if (newDir == oldDir)
             { sessionIoBusy.store (false); showStatus ("That's already the session's location."); return; }
-            if (newParent == oldDir || newParent.isAChildOf (oldDir) || newDir.isAChildOf (oldDir))
+            if (pathsafety::isSameOrDescendant (oldDir, newParent)
+                || pathsafety::isSameOrDescendant (oldDir, newDir))
             {
                 sessionIoBusy.store (false);
                 showStatus ("Move failed -- the destination cannot be inside the session");
@@ -1507,8 +1452,10 @@ void MainComponent::onLoadSessionClicked()
     const auto flags = juce::FileBrowserComponent::openMode
                      | juce::FileBrowserComponent::canSelectDirectories;
 
-    chooser->launchAsync (flags, [this] (const juce::FileChooser& fc)
+    juce::Component::SafePointer<MainComponent> self (this);
+    chooser->launchAsync (flags, [self, this] (const juce::FileChooser& fc)
     {
+        if (self == nullptr) return;
         const auto dir = fc.getResult();
         if (! dir.isDirectory()) return;
 
@@ -1596,8 +1543,10 @@ void MainComponent::promptSaveSessionTemplate()
 
         const auto safeName = name.replaceCharacters ("/:\\?*<>|\"", "         ").trim();
         const auto out = self->templatesDir().getChildFile (safeName + ".zftemplate");
-        out.replaceWithText (juce::JSON::toString (juce::var (obj.get())));
-        self->showStatus ("Template saved -> " + out.getFileName());
+        self->showStatus (zynforge::atomicfile::writeText (
+                              out, juce::JSON::toString (juce::var (obj.get())))
+                            ? "Template saved -> " + out.getFileName()
+                            : "Template NOT saved -- check permissions / free space");
     }));
 }
 
@@ -1795,8 +1744,9 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
         m->setProperty ("captureFormat",   (int) r.captureFormat);
         m->setProperty ("interleaved",     r.interleaved);
         m->setProperty ("ioPreset",        r.ioSettings);
-        if (! sessionFolder.getChildFile (safeName + ".zfproj")
-                            .replaceWithText (juce::JSON::toString (juce::var (m.get()))))
+        if (! zynforge::atomicfile::writeText (
+                sessionFolder.getChildFile (safeName + ".zfproj"),
+                juce::JSON::toString (juce::var (m.get()))))
         {
             sessionFolder.deleteRecursively();
             return {};

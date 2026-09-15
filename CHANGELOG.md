@@ -17,6 +17,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Security — bounded remote input, 2026-09-15
+
+- Companion HTTP now validates bounded raw request framing before decoding UTF-8, rejects duplicate/malformed/oversized content lengths, and survives malformed unauthenticated bytes.
+- Timeline CSV exports neutralize spreadsheet formula prefixes. Session-copy and track-transaction path checks resolve symlinks and refuse traversal outside the session.
+
+### Fixed — whole-project audit, 2026-09-15
+
+- Daemon mode is authoritative for every transport, including OSC, Companion, STOP and Stop & Quit. Shutdown and metadata-finalization errors are reported rather than leaving a take rolling or presenting false success.
+- Session/project/cue/report/journal text saves, track export, bounces, click rendering and audio import now stage to unique siblings and publish atomically; failures preserve the previous file and remove partial output.
+- Save As is symlink-safe and cancellable. Session identity is pinned on load. Canonical `.zfproj` creation/selection is deterministic.
+- Audio import and click rendering run on owned cancellable workers. Tempo changes render at exact sample boundaries; imports convert to the session rate and refuse destination collisions.
+- Optional live stereo-mix recording has a user control and surfaces open/FIFO failure without sacrificing multitracks.
+- Companion shutdown cancels queued commands; live WAV sizes cannot overflow RIFF fields; binary-response tests no longer decode PCM as UTF-8.
+- MP3 encoder discovery no longer spawns a potentially blocking `which` process. Oversized experimental AAF properties fail by exception in every build.
+- JUCE 8.0.4's bundled FLAC null-pointer arithmetic is patched deterministically with the current upstream guard.
+- The capture helper is embedded and the final local bundle is sealed after embedding, so deep/strict signature verification succeeds.
+- Guarded test preconditions that previously allowed a failed non-fatal expectation to become a null dereference; removed analyzer-confirmed dead code and narrowed the X32 route-setter closure while adding direct callback coverage.
+- Raised the deployment target to macOS 12.0 because Xcode 27 rejects macOS 11 projects, and moved all macOS toolchain settings before `project()` so clean builds really target their documented floor.
+
+### Validation — 2026-09-15
+
+- A fresh macOS-12 universal Release build passes **350 test groups, 0 failures on arm64 and x86_64**; ASan+UBSan Debug passes 350/0. Xcode static analysis has no app-owned diagnostics. The 27-rule invariant audit and design audit are clean; deep/strict bundle verification passes.
+- The candidate is not installed, committed or pushed. Hardware/show acceptance and Developer ID notarization remain pending. Full evidence: [2026-09-15 audit report](AUDIT_REPORT_2026-09-15.md).
+
 ### Fixed — recording and session integrity, 2026-09-12
 
 - Reject primary/backup path collisions, including filesystem aliases. Freeze capture arms and protect session/input changes during local or daemon recording.
@@ -810,6 +834,7 @@ A full audit found and fixed 72 defects. Build green, 264 test groups / 0 failur
 - **Test harness** (`Source/Tests/AutomationTests.cpp`). 9 automation lane tests cover insert/sort, kSnap collapse, Mute discretisation, tension interpolation, Safe-lock blocking, write thinning, punch gating, JSON round-trip, and legacy curve migration. Run with `ZYNFORGE_RUN_TESTS=1` or `--run-tests`; results go to stderr + `~/Library/Logs/Zynforge/test-report.log`. Exit code is the failure count. `AudioEngine::setTestModeSkipAudioInit(true)` lets tests construct an engine without opening a 256-channel audio device.
 
 ### Fixed
+
 - **Write paths silently no-op'd on uninitialised lane storage.** `addAutomationPoint`, `removeAutomationPointNear`, `clearAutomationRange`, `pasteAutomationRange`, and `writeAutomationPointThinned` all early-returned when `track >= automationData.size()` -- which was usually true on a fresh strip since `setStripCount` doesn't pre-populate per-strip lane storage. Caught by the new test harness on its first run. Now auto-resizes (consistent with `findLane` / `setAutomationTrim` / `setTrackAutomationSafe` / `loadAutomationFromJson`).
 - **`writeAutomationPointThinned` duplicated `addAutomationPoint`'s body** (kSnap, Mute snap, sort). Both now share an `addPointLocked` helper. The misleading "we drop ours first / CriticalSection is recursive" comment is gone.
 - **Curve-picker "Reset bend -- none" label hack** -- the "-- none" suffix was a workaround for the fact that the item was already disabled by the boolean param. Label is now just "Reset bend (handle)"; enabled state continues to encode the rest.

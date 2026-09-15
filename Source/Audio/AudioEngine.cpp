@@ -1,5 +1,6 @@
 #include "AudioEngine.h"
 #include "TrackFileTransaction.h"
+#include "AtomicFile.h"
 #include "OscRemote.h"
 #include "MidiControlSurface.h"
 #include <juce_osc/juce_osc.h>
@@ -171,6 +172,7 @@ namespace zynforge
 
     bool AudioEngine::startRecording (const juce::File& sessionDir)
     {
+        stereoMixWriteFailed.store (false, std::memory_order_relaxed);
         if (isRecording() || sessionTransitionActive.load (std::memory_order_acquire))
             return false;
         // Bypass-proof guard: refuse to capture if the device clock disagrees
@@ -230,7 +232,8 @@ namespace zynforge
             // Stereo bus mix lands in Export Files/ -- the location for any
             // rendered mix / stem export.
             auto exportDir = sessionDir.getChildFile ("Export Files");
-            exportDir.createDirectory();
+            const bool exportDirectoryReady = exportDir.isDirectory()
+                                           || exportDir.createDirectory().wasOk();
             // NEVER overwrite a previous take's mix. startRecording runs again
             // for every continue / second take into the SAME session, and the
             // old code deleteFile()d StereoMix.wav each time -- silently
@@ -243,19 +246,24 @@ namespace zynforge
                                                + juce::String (take).paddedLeft ('0', 2) + ".wav");
 
             juce::WavAudioFormat wav;
-            if (auto* out = path.createOutputStream().release())
+            if (exportDirectoryReady)
             {
-                juce::StringPairArray meta;
-                if (auto* w = wav.createWriterFor (out, sr, 2, 24, meta, 0))
+                if (auto* out = path.createOutputStream().release())
                 {
-                    stereoMixWriter = std::make_unique<juce::AudioFormatWriter::ThreadedWriter>
-                                          (w, mixWriterThread, 32768);
-                }
-                else
-                {
-                    delete out;
+                    juce::StringPairArray meta;
+                    if (auto* w = wav.createWriterFor (out, sr, 2, 24, meta, 0))
+                    {
+                        stereoMixWriter = std::make_unique<juce::AudioFormatWriter::ThreadedWriter>
+                                              (w, mixWriterThread, 32768);
+                    }
+                    else
+                    {
+                        delete out;
+                    }
                 }
             }
+            stereoMixWriteFailed.store (stereoMixWriter == nullptr,
+                                        std::memory_order_relaxed);
         }
         return true;
     }
@@ -346,6 +354,63 @@ namespace zynforge
     int AudioEngine::getCompanionServerPort() const noexcept
     {
         return companion != nullptr ? companion->getPort() : -1;
+    }
+
+    bool AudioEngine::performRemoteTransport (RemoteTransportAction action,
+                                              juce::String& error)
+    {
+        error.clear();
+
+        // MainComponent installs this while capture-daemon mode is selected.
+        // std::nullopt means "use the ordinary in-process implementation";
+        // true/false means the host handled (or explicitly refused) it.
+        if (remoteTransportHandler)
+            if (auto handled = remoteTransportHandler (action, error))
+                return *handled;
+
+        switch (action)
+        {
+            case RemoteTransportAction::TogglePlay:
+                if (player.isPlaying()) stopPlayback(); else startPlayback();
+                return true;
+            case RemoteTransportAction::StartPlay:
+                startPlayback();
+                return true;
+            case RemoteTransportAction::StopPlay:
+                stopPlayback();
+                return true;
+            case RemoteTransportAction::StopAll:
+                stopPlayback();
+                if (recorder.isRecording()) stopRecording();
+                player.rewind();
+                return true;
+            case RemoteTransportAction::ToggleRecord:
+                if (recorder.isRecording())
+                {
+                    stopRecording();
+                    return true;
+                }
+                break;
+            case RemoteTransportAction::StartRecord:
+                if (recorder.isRecording()) return true; // idempotent OSC "1"
+                break;
+            case RemoteTransportAction::StopRecord:
+                if (recorder.isRecording()) stopRecording();
+                return true;
+        }
+
+        if (! hasUsableArmedInput())
+        {
+            error = "no armed track has a live input";
+            return false;
+        }
+
+        if (! startRecording (makeTimestampedSessionDir()))
+        {
+            error = "recording could not start";
+            return false;
+        }
+        return true;
     }
 
     void AudioEngine::setMasterGainDb (float dB)
@@ -650,6 +715,11 @@ namespace zynforge
         const auto n = player.loadSession (sessionDir);
         if (n > 0)
         {
+            // Loading through the engine is a session switch, not a temporary
+            // player preview. Keep the explicit pin in sync so subsequent
+            // Save/Export/edit operations cannot continue targeting the
+            // previously active session.
+            setActiveSessionDir (sessionDir);
             markers.setContext (sessionDir, player.getSampleRate());
             rememberRecentSession (sessionDir);
             seedDefaultClips (preserveEdits);
@@ -832,8 +902,9 @@ namespace zynforge
         }
         root->setProperty ("tempoMap", tmap);
 
-        return sessionDir.getChildFile ("session_mix.json")
-                         .replaceWithText (juce::JSON::toString (juce::var (root.get()), true));
+        return atomicfile::writeText (
+            sessionDir.getChildFile ("session_mix.json"),
+            juce::JSON::toString (juce::var (root.get()), true));
     }
 
     bool AudioEngine::loadSessionMixFrom (const juce::File& sessionDir)
@@ -1134,7 +1205,7 @@ namespace zynforge
             // there tracks?" bug. A cleared/new session is empty; callers that
             // build real strips (New-from-CSV/console, or opening a session
             // with a saved mix) set the count explicitly afterward.
-            appProps->setValue ("stripCount", 0);
+            appProps->setValue ("stripCount", juce::var (0));
             appProps->saveIfNeeded();
         }
 
@@ -1544,7 +1615,8 @@ namespace zynforge
                 mix.getDynamicObject()->setProperty ("trackCount", (int) order.size());
                 if (auto* arr = mix["strips"].getArray())
                     while (arr->size() > (int) order.size()) arr->removeLast();
-                saved = session.getChildFile ("session_mix.json").replaceWithText (juce::JSON::toString (mix));
+                saved = atomicfile::writeText (session.getChildFile ("session_mix.json"),
+                                               juce::JSON::toString (mix));
             }
             for (const auto& f : session.findChildFiles (juce::File::findFiles, false, "*.zfproj"))
             {
@@ -1569,7 +1641,7 @@ namespace zynforge
                                     }
                                     object->setProperty ("automation", remapped);
                                 }
-                    saved = f.replaceWithText (juce::JSON::toString (project)) && saved;
+                    saved = atomicfile::writeText (f, juce::JSON::toString (project)) && saved;
                 }
                 else saved = false;
             }
@@ -1630,6 +1702,7 @@ namespace zynforge
     }
 
     AudioEngine::AudioEngine()
+        : asyncHandle (std::make_shared<std::atomic<AudioEngine*>> (this))
     {
         juce::PropertiesFile::Options opts;
         opts.applicationName     = "Zynforge Recording";
@@ -1755,6 +1828,10 @@ namespace zynforge
 
     AudioEngine::~AudioEngine()
     {
+        // Invalidate every MessageManager::callAsync callback before any
+        // member teardown begins.  The shared handle itself stays alive in
+        // queued lambdas, but they will observe nullptr and become no-ops.
+        asyncHandle->store (nullptr, std::memory_order_release);
         if (! s_testSkipAudioInit.load (std::memory_order_acquire))
             deviceManager.removeAudioCallback (this);
     }
@@ -1824,10 +1901,18 @@ namespace zynforge
     {
         if (recorder.isRecording())
             return recorder.getActiveSessionDir();
+
+        // An explicitly pinned session is authoritative even when an older
+        // session remains loaded in the player.  This matters for daemon
+        // recording: the local recorder is idle while activeSession points at
+        // the new take, and the player may still contain the preceding take.
+        // Keep returning the pin if its volume disappears too, so callers can
+        // report the missing target instead of silently falling back to a
+        // stale player session and writing metadata into the wrong folder.
+        if (activeSession != juce::File())
+            return activeSession;
         if (player.isLoaded())
             return player.getSessionDir();
-        if (activeSession.isDirectory())
-            return activeSession;
         return {};
     }
 
@@ -2668,7 +2753,8 @@ namespace zynforge
         {
             const float* chans[2] = { stereoMixScratch.getReadPointer (0),
                                       stereoMixScratch.getReadPointer (1) };
-            stereoMixWriter->write (chans, numSamples);
+            if (! stereoMixWriter->write (chans, numSamples))
+                stereoMixWriteFailed.store (true, std::memory_order_relaxed);
         }
         }   // release stereoMixLock
 

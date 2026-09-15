@@ -9,6 +9,7 @@
 // printSetlist (browser-printable HTML).
 
 #include "MainComponent.h"
+#include "../Audio/AtomicFile.h"
 #include "../Theme/DialogChrome.h"
 #include "../Audio/SpectralClassifier.h"
 #include "../Audio/SessionBackup.h"
@@ -231,7 +232,8 @@ bool MainComponent::saveSetlistToActiveSession() const
     obj->setProperty ("formatVersion", 3);
     obj->setProperty ("updatedAt",     juce::Time::getCurrentTime().toISO8601 (true));
 
-    const bool ok = proj.replaceWithText (juce::JSON::toString (juce::var (obj.get())));
+    const bool ok = zynforge::atomicfile::writeText (
+        proj, juce::JSON::toString (juce::var (obj.get())));
 
     // Drop a full backup session into Session File Backups/ so a misclicked
     // cue / accidental delete / file corruption is recoverable from the show.
@@ -254,6 +256,8 @@ void MainComponent::jumpToCue (int index)
 
     auto& player = engine.getPlayer();
     player.setPositionSamples (cue.samplePos);
+    const bool hadTempoMap = ! engine.getTempoMap().empty();
+    bool clickNeedsRefresh = false;
 
     // Restore the cue's tempo if it has one (older cues stored 0 →
     // skip so the engineer doesn't get yanked to 0 BPM).
@@ -264,14 +268,8 @@ void MainComponent::jumpToCue (int index)
         tempoBar.setBpm (engine.getSessionTempoBpm());
         // Click track is tempo-locked -- regenerate on tempo change so
         // the metronome lines up with the recalled cue.
-        if (clickTrackIndex >= 0 && std::abs (oldBpm - cue.tempoBpm) > 0.05f)
-        {
-            generateOrRefreshClickTrack();
-            // generateOrRefreshClickTrack reloads the session, which rewinds
-            // the player to 0 -- re-seek so the cue jump lands ON the cue and
-            // not back at 0:00.
-            player.setPositionSamples (cue.samplePos);
-        }
+        clickNeedsRefresh = clickTrackIndex >= 0
+                         && std::abs (oldBpm - cue.tempoBpm) > 0.05f;
     }
 
     // Per-cue tempo curve -- install the cue's tempo map (offsets
@@ -295,6 +293,23 @@ void MainComponent::jumpToCue (int index)
         // clock run the wrong ramp). Same clear-first rule as the automation
         // lanes below.
         engine.setTempoMap ({});
+    }
+
+    // Capture the new map, not the previous cue's map. A curve-only change
+    // matters even when both cue headers have the same BPM. The asynchronous
+    // reload rewinds playback, so restore the requested cue position on
+    // successful completion.
+    clickNeedsRefresh = clickTrackIndex >= 0
+                     && (clickNeedsRefresh || hadTempoMap || ! cue.tempoCurve.empty());
+    if (clickNeedsRefresh)
+    {
+        const auto cuePosition = cue.samplePos;
+        juce::Component::SafePointer<MainComponent> self (this);
+        generateOrRefreshClickTrack ([self, cuePosition] (bool generated)
+        {
+            if (generated && self != nullptr)
+                self->engine.getPlayer().setPositionSamples (cuePosition);
+        });
     }
 
     // Reinstall this cue's automation lanes so the song plays back with its
@@ -413,11 +428,12 @@ void MainComponent::promptCueName (const juce::String& title,
     aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
+    juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true,
-        juce::ModalCallbackFunction::create ([aw, accept = std::move (onAccept)] (int result)
+        juce::ModalCallbackFunction::create ([self, aw, accept = std::move (onAccept)] (int result)
         {
             std::unique_ptr<juce::AlertWindow> dispose (aw);
-            if (result != 1) return;
+            if (result != 1 || self == nullptr) return;
             const auto name = aw->getTextEditorContents ("cueName").trim();
             if (accept) accept (name);
         }),
@@ -664,11 +680,12 @@ void MainComponent::promptMirrorHost()
     aw->addButton ("Start", 1, juce::KeyPress (juce::KeyPress::returnKey));
     aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
 
+    juce::Component::SafePointer<MainComponent> self (this);
     aw->enterModalState (true,
-        juce::ModalCallbackFunction::create ([this, aw] (int result)
+        juce::ModalCallbackFunction::create ([self, aw] (int result)
         {
             std::unique_ptr<juce::AlertWindow> dispose (aw);
-            if (result != 1) return;
+            if (result != 1 || self == nullptr) return;
             const auto addr = aw->getTextEditorContents ("addr").trim();
             const auto colon = addr.indexOfChar (':');
             const auto host = (colon > 0) ? addr.substring (0, colon) : addr;
@@ -679,12 +696,13 @@ void MainComponent::promptMirrorHost()
             if (tok.contains ("?t=")) tok = tok.fromLastOccurrenceOf ("?t=", false, false).trim();
             if (tok.isEmpty())
             {
-                showStatus ("Mirror needs the primary's access token -- nothing started");
+                self->showStatus ("Mirror needs the primary's access token -- nothing started");
                 return;
             }
-            sessionMirror.onBeforeTrackCountChange = [this] { condemnAllStrips(); };
-            sessionMirror.start (host, port, tok);
-            showStatus ("Mirroring " + host + ":" + juce::String (port));
+            self->sessionMirror.onBeforeTrackCountChange = [self]
+            { if (self != nullptr) self->condemnAllStrips(); };
+            self->sessionMirror.start (host, port, tok);
+            self->showStatus ("Mirroring " + host + ":" + juce::String (port));
         }), false);
 }
 
@@ -746,7 +764,11 @@ void MainComponent::printSetlist()
     }
     html << "</tbody></table></body></html>";
 
-    target.replaceWithText (html);
-    target.startAsProcess();    // open in default browser
-    showStatus ("Setlist -> " + target.getFileName() + " (printable)");
+    if (zynforge::atomicfile::writeText (target, html))
+    {
+        target.startAsProcess();    // open in default browser
+        showStatus ("Setlist -> " + target.getFileName() + " (printable)");
+    }
+    else
+        showStatus ("Setlist export failed -- previous file was preserved");
 }

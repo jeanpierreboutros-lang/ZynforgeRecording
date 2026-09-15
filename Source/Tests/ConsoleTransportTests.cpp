@@ -110,6 +110,12 @@ namespace zynforge
                     auto h = d.parse (msg ("/info", { juce::String ("X32") }));
                     expect (h.type == ConsoleEvent::Type::HandshakeOk);
 
+                    auto route = d.setInBlock (2, 7);
+                    expectEquals (route.address, juce::String ("/config/routing/IN/17-24"));
+                    expectEquals ((int) route.args.size(), 1);
+                    expectEquals (route.intArg(), 7,
+                                  "returned dialect must retain a working route setter");
+
                     expect (d.parse (msg ("/nonsense")).type == ConsoleEvent::Type::None);
                 }
                 {   // WING

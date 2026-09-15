@@ -211,7 +211,7 @@ components:
 
 The September remediation changes behavior, not the visual token system. Recording state must reflect the actual local or daemon capture: arm/input/session changes are blocked while rolling, and STOP is not shown as complete until acknowledged. Empty edited tracks stay silent; missing sources never silently become a different take. Track deletion retains media, while reorder clears stale index-based undo and clipboard state. Recovery counts media under `Audio Files` and preserves transaction recovery material.
 
-Communicate software validation and show acceptance separately. The current 320-test Release baseline is rehearsal-ready; the planned SD5/56-input rig still needs hardware and three-hour acceptance checks. See [SHOW-READINESS.md](SHOW-READINESS.md). Existing visual specifications and historical contrast results below are not a fresh accessibility or hardware certification.
+Communicate software validation and show acceptance separately. The current 350-test universal Release/sanitizer candidate is ready for rehearsal; it is not yet installed, and the planned SD5/56-input rig still needs hardware and three-hour acceptance checks. See [AUDIT_REPORT_2026-09-15.md](AUDIT_REPORT_2026-09-15.md) and [SHOW-READINESS.md](SHOW-READINESS.md). Existing visual specifications and historical contrast results below are not a fresh accessibility or hardware certification.
 
 > Engineer-first dark UI for live and recording audio applications.
 > Built so the operator can scan critical state at a glance under stage

@@ -315,6 +315,14 @@ namespace zynforge
         // Any mirror failed during the active take? Cleared at start.
         bool anyMirrorFailed() const noexcept;
         bool       hasBackupFailed() const noexcept         { return backupFailed.load (std::memory_order_relaxed); }
+        bool hasRecoveryMarkerFailed() const noexcept
+        {
+            return recoveryMarkerFailed.load (std::memory_order_relaxed);
+        }
+        bool hasReportWriteFailed() const noexcept
+        {
+            return reportWriteFailed.load (std::memory_order_relaxed);
+        }
 
     private:
         // Inherited but no longer used directly -- drain logic moves into
@@ -626,6 +634,11 @@ namespace zynforge
         juce::File backupDir;
         std::atomic<bool> backupActive  { false };
         std::atomic<bool> backupFailed  { false };
+        // Metadata failures do not stop audio capture, but must be visible:
+        // without the marker crash recovery is unavailable; without the report
+        // the operator loses the take's integrity manifest.
+        std::atomic<bool> recoveryMarkerFailed { false };
+        std::atomic<bool> reportWriteFailed { false };
 
         // Primary-writer failure. Drain thread sets true when a
         // writeFromFloatArrays returns false (disk full, path gone).

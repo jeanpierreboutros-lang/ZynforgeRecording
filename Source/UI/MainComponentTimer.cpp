@@ -305,6 +305,8 @@ void MainComponent::timerCallback()
     if (rec)
     {
         const bool primFail   = recorder.hasPrimaryFailed();
+        const bool recoveryFail = recorder.hasRecoveryMarkerFailed();
+        const bool mixFail = engine.hasStereoMixWriteFailed();
         const bool diskTrouble = recorder.isDiskStruggling();
         const bool smartBad = (smartPrimaryStatus == (int) MultitrackRecorder::SmartStatus::Failing)
                            || (smartBackupStatus  == (int) MultitrackRecorder::SmartStatus::Failing);
@@ -313,11 +315,13 @@ void MainComponent::timerCallback()
         // -- which walks the entries -- structurally cannot see it. Without this
         // the engineer runs the whole show believing they have a copy they don't.
         const int mirrorsSkipped = recorder.getMirrorsSkippedAtStart();
-        if (primFail || diskTrouble || smartBad || mirrorsSkipped > 0)
+        if (primFail || recoveryFail || mixFail || diskTrouble || smartBad || mirrorsSkipped > 0)
         {
             juce::String warn;
             if (smartBad)    warn << "! SMART FAILING -- replace this drive  ";
             if (primFail)    warn << "! PRIMARY WRITE FAILED -- recording on backup/mirror  ";
+            if (recoveryFail) warn << "! CRASH-RECOVERY MARKER NOT WRITING -- protect power  ";
+            if (mixFail)      warn << "! STEREO MIX NOT WRITING -- multitracks continue  ";
             if (mirrorsSkipped > 0)
                 warn << "! " << mirrorsSkipped << " MIRROR"
                      << (mirrorsSkipped == 1 ? "" : "S") << " NOT WRITING -- drive missing "
