@@ -24,10 +24,10 @@ namespace zynforge::clickrender
 
         const auto temporary = destination.getNonexistentSibling (false);
         bool installed = false;
-        const juce::ScopeGuard removeTemporary ([&]
+        const juce::ScopeGuard removeTemporary { [&]
         {
             if (! installed) temporary.deleteFile();
-        });
+        } };
 
         std::unique_ptr<juce::FileOutputStream> output (temporary.createOutputStream());
         if (output == nullptr) return Result::failed;

@@ -26,10 +26,10 @@ namespace zynforge::audioimport
                 + juce::Uuid().toString() + ".partial.wav");
 
             bool complete = false;
-            const juce::ScopeGuard removePartial ([&]
+            const juce::ScopeGuard removePartial { [&]
             {
                 if (! complete) temporary.deleteFile();
-            });
+            } };
 
             const int sourceChannels = juce::jmax (1, (int) reader.numChannels);
             const double sourceRate = reader.sampleRate > 0.0 ? reader.sampleRate : targetRate;

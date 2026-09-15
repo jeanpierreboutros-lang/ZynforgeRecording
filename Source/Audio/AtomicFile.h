@@ -12,7 +12,7 @@ namespace zynforge::atomicfile
         if (! target.getParentDirectory().isDirectory()) return false;
         const auto temporary = target.getSiblingFile (
             "." + target.getFileName() + "." + juce::Uuid().toString() + ".tmp");
-        const juce::ScopeGuard cleanup ([&] { temporary.deleteFile(); });
+        const juce::ScopeGuard cleanup { [&] { temporary.deleteFile(); } };
 
         // File::replaceWithText() asserts in Debug builds if it cannot create
         // its own internal temporary file.  Write the unique staging file
