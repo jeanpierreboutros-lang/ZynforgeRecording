@@ -33,6 +33,15 @@ The goal of this document is to keep the codebase consistent enough that any con
 
 ## Preferred Patterns and Anti-Patterns
 
+### Recording-integrity contracts (2026-09-12)
+
+- Check `AudioEngine::isRecording()` where either local or external capture must block an action. The local recorder flag alone misses daemon takes. Freeze writer participation at take start; UI arm changes must not change FIFO participation mid-take.
+- Reorder/delete through `reorderTracks`, not independent renames. Move complete stereo blocks and all identity/state together, check every filesystem result, retain journals on failure and archive removed audio. Invalidate index-based undo/clipboard state after the mapping changes.
+- Preserve authoritative empty playlists and replace automation snapshots, including empty ones. Resolve whole takes via `getTrackAudioFile`/`ConcatReader`; preserve `sourceChannel` and session-relative references. Never substitute own-track media for a missing explicit source.
+- Persist UUIDs in session mix state. Existing index-keyed formats remain compatibility contracts: remap them explicitly, and commit UUID property writes after other shared-store operations.
+- Daemon configuration and STOP require acknowledgements. Publish status in command order; no optimistic success or shutdown escalation based on cached idle. UI components must detach before mirror-driven structure changes too.
+- Automated regression results must be labeled separately from actual hardware acceptance. Do not claim crash/power-loss guarantees from simulated filesystem tests.
+
 ### Always
 
 - Use `brand::*` tokens for every colour, font, spacing, radius, shadow.
@@ -49,7 +58,7 @@ The goal of this document is to keep the codebase consistent enough that any con
 - When you add a menu item whose enabled/greyed state depends on app state, add that condition to `MainComponent::refreshMenuStateIfChanged()`'s signature (`MainComponentMenu.cpp`). macOS caches the native menu's enabled states until `menuItemsChanged()` fires; that polled signature is the only thing that triggers the refresh. Miss it and your item freezes in whatever state it had at launch.
 - Compute a strip's effective gain (own gain + VCA-bus gain) **once** per audio block and share it; don't re-derive it per consumer inside the callback.
 - Resolve stereo logical ↔ physical strip mapping through `AudioEngine::physicalFromLogical` / `logicalFromPhysical` — it's model topology, not UI state. Don't re-implement the stereo-collapse walk in a view.
-- **Put record-safety guards at the ENGINE, not (only) the UI.** `startPlayback`/`stopRecording`/`setTrackStereo` refuse or fail-closed based on `recorder.isRecording()` themselves. OSC, MCU, the companion server, and timecode chase all reach the engine directly and bypass any UI-only guard. A new transport or track-layout entry point that only guards in the button is reachable from the network unguarded.
+- **Put record-safety guards at the ENGINE, not (only) the UI.** `startPlayback`/`stopRecording`/`setTrackStereo` refuse or fail-closed based on recording/transition state themselves (use `isRecording()` when external capture must also be guarded). OSC, MCU, the companion server, and timecode chase all reach the engine directly and bypass any UI-only guard. A new transport or track-layout entry point that only guards in the button is reachable from the network unguarded.
 - **A same-session reload must PRESERVE clip/comp edits.** Reloading the player in place (click-track regen, strip reorder, stop-recording) goes through `loadSession(dir, /*preserveEdits*/ true)` / `seedDefaultClips(true)`, never the wiping session-OPEN path. Only a genuine open (whose `.zfproj` restore repopulates) passes `false`. And any code that reads a WHOLE take stitches its `Track_NN_partXX` parts via `ConcatReader` (playback, EDIT thumbnail, export, analysis) and globs every audio extension — matching `Track_NN.wav` alone drops continuations and FLAC/AIFF takes.
 - **A whole take is complete or it fails.** Resolve parts numerically (`part100` follows `part99`, not `part10`), require the main file and every enumerated continuation to open, and reject missing leading, middle, or trailing parts. Silently returning a shorter `ConcatReader` turns corruption into a plausible but incomplete export/bounce/QC result.
 - **Session replacement is one guarded funnel.** Every New/Open/CSV/Console/template/document path calls `confirmSessionReplacement`, then `openSessionFolder` for the new directory. A save failure cancels the action. On open, clear session state before load, treat persisted `trackCount` as exact, and restore playlists only after default clips are seeded.
@@ -68,7 +77,7 @@ The goal of this document is to keep the codebase consistent enough that any con
 - Call `juce::LookAndFeel::setDefaultLookAndFeel(...)`. The app's global default is JUCE's, by design: a global ZynForge default crashes JUCE text shaping (`SimpleShapedText::shape`). Set the LAF **per window** instead (see the AlertWindow rule above).
 - Inline a `withAlpha(0.xx)` literal. Use a named step from `brand::alpha::` (`subtle`/`dimmed`/`ghost`/`scrim`/`muted`/`prominent`/`bold`). If none fits, add a line to the ad-hoc catalog in `BrandColors.h` rather than leaving the magic number undocumented.
 - Pass a raw corner-radius float to `fill/drawRoundedRectangle`. Use `brand::radius::{sm,md,lg,xl}`. Sub-2 px micro-radii on meter segments / icon glyphs are the only exception (geometry-forced, radius < half the element height).
-- Reference a strip by its array index in any persisted form. Use `TrackState::stripId`.
+- Introduce new identity-sensitive persistence keyed only by array index. Prefer `TrackState::stripId`; existing index-based automation and compatibility formats require explicit remapping.
 - Add a plugin hosting hook. See `decisions.md` *No plugin hosting*.
 - Credit Harrison LiveTrax / Waves Tracks Live anywhere.
 - `--force` push or amend a pushed commit.

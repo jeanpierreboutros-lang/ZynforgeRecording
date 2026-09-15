@@ -59,6 +59,8 @@ ChannelStrip (int index, TrackState& state,
 
 ## States
 
+The host wires `canChangeArm` to recording eligibility. If a take is active (local or daemon), an arm click is refused and the toggle is restored to the actual state; `onAfterArmedToggle` is not a way to bypass this guard. The recorder independently freezes capture participation at take start. Before a mirror-driven track-count shrink, the host condemns strips, edit rows and floating meters before releasing `TrackState` references.
+
 | State | Visual | Behaviour |
 |---|---|---|
 | Default | Strip wash in personality colour, neutral chrome | Hover lift on `mouseEnter` |

@@ -8,6 +8,8 @@ It is **not** a mixer or DAW. No plugins, no effects, no talkback. Architectural
 
 ## 2. Technology Stack
 
+Current validation: universal Release at `44a309e`, 320 test groups / zero failures (2026-09-12). Hardware acceptance remains separate; see [testing.md](testing.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
+
 | Component | Version / Notes |
 |---|---|
 | Language | C++20 |
@@ -103,7 +105,7 @@ ZynforgeRecording/
 │   │   ├── DialogChrome.h             — unified modal chrome helpers
 │   │   └── ZynForgeLookAndFeel.{h,cpp}— JUCE LookAndFeel override
 │   └── Network/                       — non-audio I/O
-│       ├── CompanionServer.{h,cpp}    — embedded HTTP + 48 kHz WAV audio stream
+│       ├── CompanionServer.{h,cpp}    — embedded HTTP + device-rate WAV audio stream
 │       ├── NDIBridge.h                — runtime-loaded NDI broadcast
 │       ├── OscRemote.{h,cpp}          — 5-dialect inbound console OSC parser
 │       ├── ConsoleLink.{h,cpp}        — outbound console VSC (profile-based; X32 reference)
@@ -163,6 +165,7 @@ Single source of truth for visual identity. `ZynForgeLookAndFeel` overrides butt
 The companion runs an accept thread + per-connection writes off the message thread; **the app ignores `SIGPIPE` at startup** (`Main.cpp::initialise`) so a browser closing the page / aborting the `/stream.wav` element makes the write fail with `EPIPE` instead of killing the process. Every request needs the per-session token (`?t=` or `Authorization: Bearer`); the served page threads that token onto its own sub-requests. Started from Session ▸ Start companion server (menu id **950** — kept outside every `menuItemSelected` dispatch range; the old id 270 sat inside the 261–289 template range, which made the handler dead code). Wired end-to-end and regression-tested in `CompanionServerTests` (token gate + state reflects engine + `/cmd` mutates engine + `/stream.wav` serves WAV).
 
 ### Capture-integrity + backup helpers
+- **`Source/Audio/TrackFileTransaction.h`** — checked, staged media renames with `journal.json` and original metadata copies under `Session File Backups/reorder_<uuid>`. Incomplete transactions are recovered before session load; failure is surfaced without deleting recovery material. Removed tracks' media is retained under `Removed Tracks/<uuid>`.
 - **`Source/Audio/FastHash.h`** — `fileSha256()`, hardware-accelerated via `CC_SHA256` (ARMv8 crypto), used by the recorder's post-stop manifest (parallel-per-file, utility QoS). `shasum`-identical output.
 - **`Source/Audio/SessionBackup.h`** — `writeSnapshot()` copies the session-defining files (`.zfproj`, `session_mix.json`, `session_settings.json`, `markers.json` — never the audio) into a pruned, timestamped `Session File Backups/<Name>_<stamp>/`. Driven by manual Save, cue edits, and the auto-save timer (`MainComponent::serviceAutosave`, interval in appProps `autosaveMinutes`).
 - **`Source/Audio/Aaf/CompoundFile.h`** — native MS-CFB (OLE2 structured-storage) container writer, the envelope layer of the in-progress native AAF export. Phase 1 (container + round-trip oracle) complete; object model is future work. See `decisions.md` *AAF export built natively…*.
@@ -174,6 +177,24 @@ The companion runs an accept thread + per-connection writes off the message thre
 `McuProtocol.h` is a header-only, hardware-free set of Mackie Control Universal encode/decode helpers (fader law, button notes, V-pot relative encoders + ring, channel-pressure meters, scribble-strip SysEx, **master fader on MIDI ch 9, jog wheel on CC 0x3C, and the 10-digit time display**) — fully unit-tested in `Source/Tests/McuProtocolTests.cpp`. `MidiControlSurface` opens a paired MIDI in/out, runs a 15 Hz echo timer, and is bidirectional: inbound faders/V-pots/buttons/jog drive channel + transport state (channel writes are plain atomic stores off the MIDI thread; transport is marshalled to the message thread), and the timer pushes faders, LEDs, meters, names, the master fader and the playhead time display back to the surface. Banked 8 strips at a time. Wired from the Control Surfaces dialog (`enableControlSurface`/`disableControlSurface` on the engine).
 
 ## 6. Data Flow / Core Workflows
+
+### Capture daemon — current protocol v2
+
+The optional `CaptureDaemon` owns its own device callback and recorder. `CaptureSupervisor` discovers the sibling build executable or bundled `Contents/MacOS/ZynforgeCapture`; local installation must package both targets. The newline-delimited JSON contract in `CaptureProtocol.h` includes `ConfigureCapture`: device XML, sample rate, channel routing/arms/stereo/name/UUID state, pre-roll and backup/mirror configuration are acknowledged before starting. Failed repeated idle configuration is backed off; unchanged track count does not reset pre-roll.
+
+Capture maps physical inputs through the configured routes and freezes capture arms for the take. Repeated daemon starts create continuation parts. Start/Stop status publication is ordered with command acknowledgement; the GUI does not clear recording or reload completed audio until STOP succeeds. `EngineStatus` supplies active session path, recording state, timeline position/rate and backup state. `AudioEngine::isRecording()` includes external capture so GUI guards see the daemon take. The supervisor may escalate shutdown only after an accepted Quit response, never on a stale idle snapshot. A separate daemon is process isolation, not protection against computer/power/interface failure; rehearse the chosen mode explicitly.
+
+### Reorder and deletion transaction
+
+`AudioEngine::reorderTracks(oldIndicesInNewOrder)` is shared by move/swap/delete. UI moves operate on complete mono/stereo blocks; deletion omits those blocks. The transaction stages all affected media, reindexes survivors and archives removed files, remaps explicit source references, copies track settings/identity, reorders clips/takes/automation/sends and saves mix/project metadata. `onTracksReordered` remaps in-memory cue automation and invalidates old index-based undo/clipboard state. Shared settings are written through their actual zero-based stores; UUID writes are committed after other stores' reloads.
+
+Recovery runs before destructive session clearing. A pending journal is not temporary trash; preserve it and its audio/metadata if recovery fails. Simulated failures/interruption are tested; physical power-loss durability is not certified.
+
+### Clip and session identity
+
+An initialized empty playlist is authoritative silence, distinct from a missing/uninitialized list. Imports snapshot and restore existing playlists. Explicit sources carry `sourceChannel`, `fadeCurve` and session-relative `sessionAudioFile`; old `audioFile` basenames remain readable. Missing explicit media renders silence rather than substituting destination audio. Clips can extend playback length and populate unrecorded destination tracks. Loops render boundary-spanning chunks within the same callback.
+
+`session_mix.json` now persists strip UUIDs; legacy cue snapshots without authoritative session IDs can be rebound by saved physical order. `session_settings.json` restores capture format, pre-roll, loop region and sample rate; loaded media rate is authoritative, with project rate as legacy/empty-session fallback. Snapshot loading replaces automation, including empty snapshots. Autosave pauses during session I/O jobs. Default-template menu IDs are 2000–2099, separate from analysis commands.
 
 ### Recording a take
 
@@ -228,10 +249,10 @@ Bounce stems, bounce stereo mix, and Consolidate all run through a **windowed** 
 
 - **`AudioEngine` is still one ~255-method hub.** Interface segregation has begun — `ITransport` (`Source/Audio/ITransport.h`) is the first extracted facet the engine implements — but current consumers (TransportBar, EditPage) still hold a full `AudioEngine&` because they reach through `getPlayer()`/`getRecorder()`. Migrating consumers to narrow interfaces (`ITransport`, future `IClipEditor`/`IRouting`) is incremental, per-consumer work.
 - **`MainComponent.cpp` is already split** along functional lines (`MainComponentTimer/Keys/Layout/Cues/Edit/SessionIO/Menu/Strips/Help/Tools/...`); see §5. Stereo logical↔physical mapping now lives on `AudioEngine`, not the UI.
-- **Headless unit tests exist** (`Source/Tests/`, `juce::UnitTest`, run via `--run-tests` / `ZYNFORGE_RUN_TESTS=1`; **306 groups** as of 2026-08-18): recorder/player state, clip edits, recording integrity, exact session reset/load, multipart completeness and numeric ordering, audio-callback routing, transients, automation, markers, pre-flight probes, post-show QC, song detection, crash-report scan, network/OSC security, the X32 console link, and EDIT mapping. **CI runs the full suite on every push/PR** (`.github/workflows/ci.yml`, macos-14). See `testing.md`. UI paint/hit-test/modal flow is still out of scope for the suite and must be eyeballed.
-- **Capture and UI share one process.** A UI crash or wedge takes the take down. The phased fix (boundary hygiene → headless `zynforge-capture` daemon → mid-take reattach) is ADR'd in `decisions.md` (2026-06-10) and scoped in `tasks.md`; the biggest open reliability bet. **Phase 0 has started:** `EngineStatus` (`Source/Audio/EngineStatus.h`) is the serialisable status boundary — `AudioEngine::captureStatus()` fills it and the companion `/state.json` serves it; migrating the UI readouts onto it is the next increment.
+- **Headless unit tests exist** (`Source/Tests/`, `juce::UnitTest`, run via `--run-tests` / `ZYNFORGE_RUN_TESTS=1`; **320 groups** as of 2026-09-12): recorder/player state, clip edits, recording integrity, exact session reset/load, multipart completeness and numeric ordering, audio-callback routing, transients, automation, markers, pre-flight probes, post-show QC, song detection, crash-report scan, network/OSC security, the X32 console link, and EDIT mapping. **CI runs the full suite on every push/PR** (`.github/workflows/ci.yml`, macos-14). See `testing.md`. UI paint/hit-test/modal flow is still out of scope for the suite and must be eyeballed.
+- **Capture isolation is optional.** In-process mode shares GUI failure risk; daemon mode supports separate capture and reattachment as described above. Neither mode has completed the planned SD5 rig's acceptance rehearsal on this build.
 - **Companion server is loopback-only HTTP.** Every endpoint is token-gated, and off-machine use must put a trusted TLS tunnel (Tailscale, Cloudflare Tunnel, or SSH forwarding) in front of `127.0.0.1`; raw LAN exposure is not supported.
 - **iOS / iPad companion is web-only** today. Native client is a future consideration (and the intended push-alarm channel for pre-flight / write-latency warnings).
-- **Dante support depends on Audinate's Dante Virtual Soundcard** being installed and selected as the system audio device — no native Dante API integration.
+- **Dante reaches the app through CoreAudio**, using an appropriate hardware driver (such as the RME AoX-D) or a software soundcard. Dante Virtual Soundcard is not required when a hardware interface supplies the channels. The app does not implement native Dante routing/control.
 - **Workspace layout per show** is persisted globally, not per session yet. Edge case: an engineer with multiple regular gigs may want layouts saved alongside `.zfproj`.
 - **LSP diagnostics are unreliable** — the project's `clangd` setup does not see JUCE module headers, so "undeclared identifier 'juce'" warnings are stale. The build is authoritative.

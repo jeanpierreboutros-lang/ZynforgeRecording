@@ -17,6 +17,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed — recording and session integrity, 2026-09-12
+
+- Reject primary/backup path collisions, including filesystem aliases. Freeze capture arms and protect session/input changes during local or daemon recording.
+- Journal track moves/deletions across audio and metadata, retain removed audio, preserve stereo topology, UUIDs, sends, clips, takes and automation, and recover interrupted transactions. Clear stale undo/clipboard state after reorder.
+- Preserve edits on import and empty arrangements on reload/export. Correct extended/cross-track playback, source-channel persistence, missing-media silence, take deletion, clip locks and automation snapshot replacement.
+- Restore session capture settings/sample rate and portable UUIDs; correct marker naming, analysis menu dispatch, multipart/format analysis and loop-boundary rendering. Keep captured console gains stable during live updates.
+- Configure the capture daemon explicitly; preserve earlier takes, acknowledge STOP truthfully, display daemon time/state and gate shutdown escalation on accepted Quit. Recovery lists now count media in `Audio Files`.
+
+### Changed — validation and installation, 2026-09-12
+
+- Capture protocol is **2**; GUI and daemon must be upgraded together. Local packaging includes `ZynforgeCapture` in the app's `Contents/MacOS` directory.
+- Commit `44a309e` was pushed and installed locally with a rollback backup. Universal Release passed **320 test groups, 0 failures**. No new numbered public release was created.
+- Added installation/rollback and planned SD5/56-input show-readiness guides. Hardware acceptance and a three-hour rehearsal remain pending; automated success is not sole-recorder show certification.
+- Complete item-by-item resolution: [September audit report](AUDIT_FIXES_2026-09-12.md).
+
 ### Fixed (whole-codebase remediation — 2026-08-18)
 
 - **Session switches can no longer silently discard the open show.** New, Open, CSV, Console, templates and `.zfproj` document opens now share Save & Continue / Continue Without Saving / Cancel. A failed save cancels the switch, Close, Stop & Quit, or Save & Quit. Finder/command-line documents open their containing session, including when the app is already running.

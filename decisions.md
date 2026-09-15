@@ -6,6 +6,34 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## September recording-integrity decisions — 2026-09-12
+
+For the current September additions, see the following decisions; older entries retain their historical context.
+
+### Journal track topology changes and retain removed audio — 2026-09-12
+
+**Context.** Independent swap/delete paths could mismatch audio, stereo topology, UUIDs, edits and automation, and unchecked renames could leave partial state.
+
+**Decision.** Use one `reorderTracks` permutation and `TrackFileTransaction` for media and metadata. Stage/check moves, retain recovery journals and archive removed media. Remap index-based consumers; clear old undo and clipboard state after reorder.
+
+**Consequences.** Deleted-track recordings remain recoverable on disk and consume space. Recovery folders must not be swept as caches. Reorder is not exposed as an ordinary undoable edit. Simulated rollback coverage does not certify physical power-loss durability.
+
+### Explicit capture configuration and acknowledged transport — 2026-09-12
+
+**Context.** A separate recorder is unsafe if it uses different device/routing settings, overwrites prior takes or reports STOP before capture stops.
+
+**Decision.** Protocol 2 transfers capture configuration and orders status with command acknowledgement. Freeze take arms, create continuation parts, include external capture in engine guards and require an accepted Quit before shutdown escalation.
+
+**Consequences.** Install GUI and daemon together. Process isolation does not replace an independent recording system or hardware rehearsal.
+
+### Software validation is not show acceptance — 2026-09-12
+
+**Context.** The 320-group automated pass cannot exercise the user's SD5, RME AoX-D, chosen clock/network/storage path or two-hour workload.
+
+**Decision.** Keep software completion and rig acceptance separate. Require a three-hour, 56-input rehearsal at 48 kHz with the selected redundancy and recorded results; maintain an independent recorder for important shows.
+
+**Consequences.** The current build is rehearsal-ready. Unselected hardware/routing/storage remain open decisions; no show sign-off is implied by commit, installation or a green test report. See SHOW-READINESS.md.
+
 ## A run flag decides whether to work, never whether to join — 2026-08-14
 
 **Context.** The Network audit's worst finding was a process abort. `TextLineTransport` / `MidiTcpTransport` (Yamaha, Allen & Heath) run a reader thread that clears `running` **itself** when the peer closes. `disconnect()` began `if (! running.exchange(false)) return;` — so once the desk dropped the link, teardown skipped the join, the destructor destroyed a joinable `std::thread`, and `std::terminate()` took the process out. No crash dialog, no chance to save. Trigger: a desk power-cycle, a switch reboot, an idle TCP timeout — then the next Connect, profile change, or quit.

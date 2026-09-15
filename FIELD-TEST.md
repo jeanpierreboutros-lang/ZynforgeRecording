@@ -1,6 +1,8 @@
-# ZynForge Recording — Field-Test Checklist (2026-05-24 build)
+# ZynForge Recording — Field-Test Checklist (updated 2026-09-12)
 
-Run this with a real audio interface plugged in. 20 minutes if nothing breaks. Tick boxes as you go; the failure column tells you whether to stop and report or keep going.
+Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak. Tick boxes only after performing them; the failure column tells you when to stop and report. Current build: `44a309e`, 320 automated test groups passing. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run.
+
+Never force-quit, unplug hardware or delete sessions during production recording. Crash tests require a disposable rig/session and a recovery plan. In daemon mode, killing only the GUI is a reattachment test; it does not necessarily stop the recording or create an orphan. Stop both processes gracefully before installing or rolling back.
 
 **Severity legend:** 🟥 = data-loss class (stop, report immediately) · 🟧 = audio-path class (stop if reproducible) · 🟨 = UX / stage-readiness · ⬜ = cosmetic.
 
@@ -142,7 +144,7 @@ full-length files) and the RF64 split policy. Two things still need a real
 rig + real time:
 
 1. **>4 GiB single take (RF64).** Record one mono WAV past 4 GiB:
-   - ≈ 8.3 h mono @ 24-bit/48k, or ~16 min × 32ch.
+   - Approximately 8.3 h for one mono file at 24-bit/48 kHz, or 4.1 h for one stereo file. Adding separate mono tracks does not shorten this per-file threshold.
    - Verify: (a) one continuous `Track_01.wav` (no `_part02`); (b) it opens
      full-length in Pro Tools / Reaper / Logic; (c) `xxd -l 16 Track_01.wav`
      shows `RF64` + a `ds64` chunk; (d) hard-kill mid-take (Activity Monitor →
@@ -150,33 +152,41 @@ rig + real time:
 2. **High channel count at high rate, under real disk load.** 96–128 ch @
    96k to a single drive (+ backup), full set length. Watch
    `session.report.json` → `missedSamples: 0`, all files identical length,
-   and the live disk-health flag never trips. Use the external monitor
-   (`/tmp/zynforge_*.sh` pattern) to confirm overloads = 0, spread = 0.
+   and the live disk-health flag never trips. Record the monitoring method
+   and confirm no overloads and equal expected durations; do not depend on untracked `/tmp` scripts.
 
 ### Turnkey verification — `tools/verify_take.sh`
 
-The manual half of checks (1a–1c) and (2) is automated. After stopping the
-take, run:
+The helper provides partial WAV diagnostics, not complete acceptance. It assumes a single uninterrupted take and currently rejects intentional continuation parts. It can exit 0 while hashing is pending and does not prove channel mapping or equal expected durations. See [helper limitations](SHOW-READINESS.md#verification-helper-limitations). After stopping a disposable single-take session, run:
 
 ```bash
 tools/verify_take.sh                       # newest session under ~/Music/Zynforge Sessions
 tools/verify_take.sh "/path/to/Session"    # or a specific session folder
 ```
 
-It checks every recorded WAV in one pass and **exits non-zero on any
-problem**:
+Its implemented checks include:
 
 - no `Track_NN_partNN.wav` split files exist (RF64 = one continuous file);
 - each WAV opens at full length (`ffprobe` duration + frame count);
 - header is `RIFF` (<4 GiB) or `RF64` + `ds64` (>4 GiB) — and it **flags any
   file that crossed 4 GiB without RF64 promotion** (the exact failure mode);
-- `session.report.json` exists, `missedSamples: 0`, track count matches;
+- `session.report.json` exists and reports `missedSamples: 0`; the displayed track count still needs manual reconciliation;
 - every file's on-disk sha256 matches the report's manifest (once the report
   flips `sha256Pending:false` — re-run if it's still hashing).
 
 Still do by hand: (1b) open in another DAW, and (1d) the hard-kill-mid-take
-crash-safety check — then run `verify_take.sh` on the survivor. Requires
-`ffprobe`, `xxd`, `shasum`, `jq`, `python3` (stock on a dev Mac).
+crash-safety check on disposable data. A survivor without a clean-stop report will not pass the helper even when audio is recoverable. Requires `ffprobe`, `xxd`, `shasum`, `jq`, `python3`; these are not all stock macOS tools. Hash-pending output is incomplete verification, even if the exit code is 0.
+
+## September regression acceptance
+
+- [ ] With primary/backup roots aliased or overlapping, recording refuses before primary files are touched.
+- [ ] During local and daemon takes, arm/input/session replacement attempts leave capture unchanged; STOP completes only after acknowledgement.
+- [ ] Two daemon takes preserve the first audio and create correctly routed continuation parts; status/time and session path agree after GUI reattachment.
+- [ ] Move/delete mixed mono/stereo tracks; reopen and verify media, UUID-linked cues, sends, clips/takes and automation. Removed audio remains archived, and old undo/clipboard state is cleared.
+- [ ] Import into an edited session; verify splits/fades/comps and intentionally empty tracks survive. Paste a stereo source channel to an unrecorded track beyond the original duration; verify playback/export and missing-source silence.
+- [ ] Check locked split/ripple/crop behavior, earlier inactive-take deletion, empty automation restore, sorted marker naming and analysis menu commands.
+- [ ] Reopen capture settings/sample rate and check recovery file counts. Exercise loop boundaries for audible gaps.
+- [ ] Follow the exact-rig rehearsal and backup checks in SHOW-READINESS.md. Record results; no checkbox is pre-passed by the automated suite.
 
 ## Control Surfaces — bench verification (hardware-only)
 

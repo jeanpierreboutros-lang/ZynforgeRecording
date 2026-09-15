@@ -2,13 +2,15 @@
 
 Live multitrack recorder + virtual soundcheck for macOS. Built on JUCE 8 / C++20.
 
-A focused recording surface for engineers running front-of-house or monitors: capture every input on the desk, play those tracks back through the same outputs during soundcheck, never lose a take. **Not a DAW** — no plugins, no in-the-box effects.
+A focused recording surface for engineers running front-of-house or monitors: capture console inputs and play those tracks back through the same outputs during soundcheck. **Not a DAW** — no plugins, no in-the-box effects. No recording system can guarantee against every failure; use independent redundancy for important shows.
 
 ## Status
 
 Active development, pre-1.0. Ships **multitrack recording**, **virtual-soundcheck playback**, a non-destructive **clip/region editor with take comping**, **bounce to stems + stereo mix**, and **live OSC console integration** as a single coherent surface.
 
 ## Build
+
+As of 2026-09-12, fixes for all 32 September audit findings are in commit `44a309e`. The universal Release build passed **320 test groups, 0 failures**. The updated app and matching capture daemon were installed locally and signature-verified. This is **rehearsal-ready, not yet validated as the sole recorder for the planned show**. Hardware, storage, clocking and a three-hour rehearsal remain acceptance gates; see [Show readiness](SHOW-READINESS.md).
 
 ```bash
 cmake -B build -G Xcode
@@ -18,13 +20,7 @@ open "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
 
 First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 11.0+ Universal (Apple Silicon + Intel).
 
-To install the verified Release build locally, quit the running app, preserve the old copy, and copy the bundle into `/Applications`:
-
-```bash
-mv "/Applications/Zynforge Recording.app" "/Applications/Zynforge Recording.app.backup"
-ditto "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app" "/Applications/Zynforge Recording.app"
-codesign --verify --deep --strict "/Applications/Zynforge Recording.app"
-```
+For local installation, follow [INSTALL.md](INSTALL.md). The app needs the matching `ZynforgeCapture` executable bundled in `Contents/MacOS`; copying the GUI bundle alone omits it. Stop all takes and quit both processes before replacement. Capture protocol is version **2**.
 
 ## Documentation
 
@@ -38,6 +34,17 @@ codesign --verify --deep --strict "/Applications/Zynforge Recording.app"
 | Coding conventions + brand-token rules | [`coding-standards.md`](coding-standards.md) |
 | Build / smoke-test / field-test strategy | [`testing.md`](testing.md) |
 | User-visible changes | [`CHANGELOG.md`](CHANGELOG.md) |
+| Local installation, verification and rollback | [`INSTALL.md`](INSTALL.md) |
+| Planned SD5 / 56-input show and acceptance gates | [`SHOW-READINESS.md`](SHOW-READINESS.md) |
+| September audit: all 32 fixes and validation limits | [`AUDIT_FIXES_2026-09-12.md`](AUDIT_FIXES_2026-09-12.md) |
+| Manual regression and hardware checklists | [`FIELD-TEST.md`](FIELD-TEST.md), [`FIELD-TEST-AUDIT.md`](FIELD-TEST-AUDIT.md) |
+
+### September safety changes
+
+- Capture arms are frozen for each take. Session switching and input reconfiguration are refused while local or daemon capture is active.
+- Track moves/deletions share a journaled transaction across media and track state. Deleted-track audio is retained under `Removed Tracks`; track-order changes clear stale index-based undo history and the clip clipboard.
+- Imported media preserves existing edits. Empty arrangements stay silent, missing explicit media never substitutes another take, and cross-track clips retain source-channel identity.
+- Session UUIDs, capture settings and sample rate round-trip. Daemon configuration is acknowledged before recording; STOP waits for acknowledgement and consecutive takes preserve earlier audio.
 
 ## Feature highlights
 

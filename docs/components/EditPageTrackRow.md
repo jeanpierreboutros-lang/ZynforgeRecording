@@ -60,6 +60,8 @@ Switching mode: per-row VIEW menu in the header. The toolbar's `Param` choice AL
 
 ## Tools (per-mouse-event)
 
+Recording arm changes go through the engine and are refused during a take. Locked clips are protected from split/ripple/crop movement. Reordering delegates to the shared track transaction so stereo pairs and media/state move together; successful topology changes clear old index-based undo and clipboard state. Empty initialized arrangements stay silent after reload/export, and pasted clips retain source-file/channel identity even on previously unrecorded tracks. These behaviors are covered by the September engine regressions; mouse/hit-test workflows still require native UI checks.
+
 Reads `EditToolsBar::getTool()` and `AutomationToolbar::getTool()` to bias hit-testing:
 
 | Tool | Behaviour |

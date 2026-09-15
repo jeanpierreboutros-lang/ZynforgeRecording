@@ -6,6 +6,8 @@ The format follows `/design-system document` output: description, when-to-use, v
 
 ## Index
 
+September 2026 behavior updates are reflected in ChannelStrip, TransportBar, BigClockPanel, EditPageTrackRow and SessionRecoveryDialog. Other component visual contracts were not changed by the recording-integrity fixes. For the current test baseline and operating limits, see [testing](../../testing.md), [architecture](../../architecture.md) and [show readiness](../../SHOW-READINESS.md); component descriptions are not proof of field validation.
+
 ### Shipped
 
 - [`ChannelStrip`](ChannelStrip.md) — per-channel vertical strip (MIXER view)

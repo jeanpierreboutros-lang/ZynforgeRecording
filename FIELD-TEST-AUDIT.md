@@ -1,11 +1,13 @@
-# ZynForge Recording — Field-Test Checklist: Audit + Session Changes (2026-06-14)
+# ZynForge Recording — Field-Test Checklist: Audit + Session Changes (updated 2026-09-12)
+
+Historical hardware cases below remain useful, but are not passed results for the current build. Start with [SHOW-READINESS.md](SHOW-READINESS.md) and the September regression section in [FIELD-TEST.md](FIELD-TEST.md). Confirmed show plan: SD5, RME HDSPe AoX-D, 56 inputs, 48 kHz, about two hours; connection, Mac/chassis and storage are undecided. Never run crash/unplug/delete tests on production recordings.
 
 Turnkey verification of the **hardware-gated audit items** and **everything changed since the 2026-05-24 build** (native stereo capture, console link, the compact/GRID mixer UI, prompt chrome, the design re-tone). Run on the real rig. The general first-launch/recording/takes flow lives in `FIELD-TEST.md` — this file is the delta.
 
 The 2026-08-18 session-integrity/security remediation has its canonical manual matrix in `FIELD-TEST.md` §9. Run that section before this hardware-only delta; it covers guarded session replacement, transactional Save As/relocation, default templates, `.zfproj` document launch, incomplete multipart refusal, authenticated Generic OSC and truthful companion errors without duplicating the steps here.
 
 **Severity:** 🟥 data-loss (stop + report now) · 🟧 audio-path (stop if reproducible) · 🟨 stage-readiness · ⬜ cosmetic.
-**Turnkey helper:** after any take, `tools/verify_take.sh [session]` checks RF64/split/length/sha/missedSamples in one pass (exit 0 = green).
+**Diagnostic helper:** `tools/verify_take.sh [session]` checks a subset of WAV/report properties. It rejects intentional continuation parts, can exit 0 with hashes pending and does not certify backups or routing. See SHOW-READINESS.md for limitations; exit 0 alone is not acceptance.
 
 ---
 
@@ -15,11 +17,11 @@ Goal: one continuous `Track_NN.wav` past 4 GiB that opens full-length in a real 
 
 | # | Gesture | Expect | Failure indicator |
 |---|---|---|---|
-| ☐ A.1 | Record a take that crosses **4 GiB in one file** (≈8.3 h mono, or ~16 min × 32ch @ 24-bit/48k, or push channel count). | Single `Track_NN.wav` — **no** `Track_NN_partNN` split files. | Any `_part02` file appeared. |
+| ☐ A.1 | Record a single uninterrupted take crossing **4 GiB in one file** (about 8.3 h mono or 4.1 h stereo at 24-bit/48 kHz). Separate mono track count does not shorten this. | Single file per mono track/stereo pair, with RF64 promotion. | Automatic size-split part appeared; intentional stop/restart continuation is a separate case. |
 | ☐ A.2 | Run `tools/verify_take.sh` on the session. | Exit 0; reports RF64 + `ds64` header on the >4 GiB file, `missedSamples: 0`, sha manifest match. | Non-zero exit; "crossed 4 GiB but NOT RF64". |
 | ☐ A.3 | Open the >4 GiB `Track_NN.wav` in **Pro Tools / Reaper / Logic**. | Imports at full length, plays start-to-end, no truncation/garbage tail. | DAW reports corrupt header or short length. |
 | ☐ A.4 | Start a fresh long take; **hard-kill** (`kill -9` / power) mid-take. Re-launch. | Recovery dialog lists the orphan; recovered file opens to ~the last 5-s header flush. | File opens to 0 length / won't open. |
-| ☐ A.5 | After A.4 recovery, `verify_take.sh` again. | Green (length ≈ pre-kill, header valid). | — |
+| ☐ A.5 | After A.4 recovery, inspect the file and run the helper as a diagnostic. | Audio opens with the recoverable duration and valid header; a missing clean-stop report is recorded separately. | Truncated/unreadable audio; do not confuse missing report with proof of lost audio. |
 
 > ⚠️ Do **not** force-kill with the HDSPe as the live device unless you can power-cycle it — a hard kill can wedge the CoreAudio device (use a throwaway device for A.4 if possible).
 
@@ -105,4 +107,4 @@ Verifies the OSC routing/gain paths + the **new reply-timeout watchdog** (this s
 
 For any 🟥/🟧: note **gesture, build commit (`git rev-parse --short HEAD`), device, channel count, sample rate**, and attach `session.report.json` + the `verify_take.sh` output. Drop it back here and we triage.
 
-When A–D pass on the rig, the **trust gap from the audit is closed** and this is 1.0-ready for live use.
+Passing applicable cases provides evidence only for the tested build and rig. It does not certify 1.0 readiness or eliminate failure risk. Complete the exact-rig acceptance in SHOW-READINESS.md and retain independent recording redundancy for important shows.
