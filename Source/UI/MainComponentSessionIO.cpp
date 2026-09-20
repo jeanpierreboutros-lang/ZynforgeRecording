@@ -346,17 +346,24 @@ bool MainComponent::saveSessionStateTo (const juce::File& dir)
     // Persist cues + comp playlists (Takes) + automation lanes into the
     // .zfproj. These were only auto-saved on cue edits before, so drawing
     // automation and hitting Save (without touching a cue) used to lose it.
-    const bool wroteSetlist = saveSetlistToActiveSession();
+    const bool wroteSetlist = saveSetlistToActiveSession (false);
 
     // Also persist the UI layout into the session's .zfproj so reopening
     // the show brings back the engineer's view choice, strip width,
     // VCA-panel visibility, and EDIT zoom.
     const bool wroteLayout = saveUILayoutToActiveSession();
 
-    // Re-baseline the auto-save dirty signal: after any save (manual or auto)
-    // there are no unsaved edits, so the next auto-save waits for a real change.
-    lastSavedUndoUnits = undoManager.getNumberOfUnitsTakenUpByStoredCommands();
-    return wroteSettings && wroteMix && wroteSetlist && wroteLayout;
+    // Take the recoverable snapshot only after every live metadata file has
+    // been updated, and include snapshot copy failures in the save result.
+    const bool wroteBackup = wroteSettings && wroteMix && wroteSetlist && wroteLayout
+                          && writeSessionBackupSnapshot();
+
+    const bool ok = wroteSettings && wroteMix && wroteSetlist && wroteLayout && wroteBackup;
+    // Re-baseline only after every mandatory artifact landed. Marking a failed
+    // save as clean hides unsaved edits from later dirty checks.
+    if (ok)
+        lastSavedUndoUnits = undoManager.getNumberOfUnitsTakenUpByStoredCommands();
+    return ok;
 }
 
 void MainComponent::serviceAutosave()
@@ -374,19 +381,29 @@ void MainComponent::serviceAutosave()
     const auto now = juce::Time::getMillisecondCounter();
     if (lastAutosaveMs == 0)                                        // first tick -> start the clock
     {
-        lastAutosaveMs     = now;
-        lastSavedUndoUnits = undoManager.getNumberOfUnitsTakenUpByStoredCommands();
+        lastAutosaveMs = now;
         return;
     }
     if (now - lastAutosaveMs < (juce::uint32) mins * 60000) return;
-    lastAutosaveMs = now;
-
     // A number of session mutations are deliberately not represented by the
     // undo manager (recording, routing, cue recall, imports).  Saving on each
     // configured interval is the only reliable way not to miss those changes.
     if (saveSessionStateTo (dir))   // writes mix + .zfproj + a timestamped backup snapshot (10 kept)
+    {
+        lastAutosaveMs = now;
         statusLabel.setText ("Auto-saved " + juce::Time::getCurrentTime().formatted ("%H:%M:%S"),
                              juce::dontSendNotification);
+    }
+    else
+    {
+        // Retry soon, but not on every 24 Hz timer tick. Most failures are a
+        // full/unmounted/read-only volume and require an explicit operator
+        // warning rather than silently waiting another full interval.
+        const auto intervalMs = (juce::uint32) mins * 60000u;
+        const auto retryMs = juce::jmin ((juce::uint32) 15000u, intervalMs);
+        lastAutosaveMs = now - intervalMs + retryMs;
+        showStatus ("AUTO-SAVE FAILED -- check session volume permissions and free space; retrying shortly");
+    }
 }
 
 void MainComponent::showAutosaveSettings()
@@ -1463,7 +1480,17 @@ void MainComponent::onLoadSessionClicked()
         // loads audio, sizes the mixer incl. the no-session_mix.json fallback).
         const int n = openSessionFolder (dir);
         if (n <= 0)
-            statusLabel.setText ("No Track_*.wav found in folder", juce::dontSendNotification);
+        {
+            const auto audioDir = dir.getChildFile ("Audio Files");
+            const auto scanDir = audioDir.isDirectory() ? audioDir : dir;
+            const bool hasMedia = ! scanDir.findChildFiles (
+                juce::File::findFiles, false,
+                "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff").isEmpty();
+            statusLabel.setText (hasMedia
+                ? "Session audio is unreadable. Existing files are protected; Record will append safely."
+                : "No Track_* audio found in folder",
+                juce::dontSendNotification);
+        }
         playButton.setButtonText ("PLAY");
         updateTransportLabels();
     });

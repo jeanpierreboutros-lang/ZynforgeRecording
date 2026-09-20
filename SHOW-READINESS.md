@@ -1,8 +1,8 @@
 # Show readiness — planned SD5 recording
 
-## Decision as of 2026-09-15
+## Decision as of 2026-09-20
 
-The latest build is installed and ready for exact-rig rehearsal; **not yet approved as the sole recorder for this show**. It fixes 41 additional confirmed audit issues. Application code through `df5ad36` is pushed to `origin/main`; its macOS-12 universal Release passed 350 test groups on arm64 and x86_64, ASan+UBSan Debug passed 350/0, GitHub Debug/Release CI is green, Xcode analysis has no app-owned diagnostics, and the installed bundle passed strict ad-hoc verification plus its own 350/0 test run. No software result certifies physical hardware, clock stability, disk endurance or uninterrupted show-length capture. See [the current audit](AUDIT_REPORT_2026-09-15.md) and [installation record](INSTALL.md).
+The latest build is installed and ready for exact-rig rehearsal; **not yet approved as the sole recorder for this show**. The 2026-09-20 follow-up fixes 16 additional failures in fresh-take protection, daemon/redundancy truth, StereoMix, edit correctness/responsiveness, persistence, and autosave. Its macOS-12 universal Release passes 358 test groups with zero failures, and the invariant/design audits are clean. No software result certifies physical hardware, clock stability, disk endurance or uninterrupted show-length capture. See [the current fixes](AUDIT_FIXES_2026-09-20.md) and [installation record](INSTALL.md).
 
 ## Confirmed plan and open choices
 
@@ -40,9 +40,9 @@ RF64 limits apply **per file**, not to the session total. At 24-bit/48 kHz one m
 2. Confirm the intended clock source and stable synchronization throughout the chosen MADI/Dante path. Confirm the received audio really is 48 kHz. Do not assume the SD5's internal operating rate is the recording feed's rate.
 3. Identify all 56 inputs individually with known signal. Check names, physical input assignments, stereo pairs if used, and saved session settings. Keep virtual-soundcheck returns from changing the live desk patch.
 4. Run the app's pre-flight checks before recording. Verify primary and backup destinations are separate and writable. Disable computer sleep and protect power/cables. A 512-sample buffer is only a starting point for rehearsal when monitoring through the console; choose the setting that passes on this rig.
-5. Record **three continuous hours** of signal on all 56 inputs with the actual backup/mirror configuration and capture mode. Monitor missed samples, write errors, device sync, free space and application responsiveness.
-6. Stop normally; wait for the final report and hashing. Require zero missed samples and no primary/backup/mirror failures. Inspect every file's duration and channel mapping, audition beginning/middle/end, and open the recording in another DAW. Check the backup independently; a successful primary does not prove its backup.
-7. Separately test repeated takes, session reopen, playback and export on disposable sessions. If using the daemon, test acknowledgement, routing and GUI reattachment. Run [FIELD-TEST.md](FIELD-TEST.md) and the applicable [hardware delta](FIELD-TEST-AUDIT.md).
+5. Record **three continuous hours** of signal on all 56 inputs with the actual backup/mirror configuration and capture mode. Monitor missed samples, write errors, device sync, free space, per-volume time remaining and application responsiveness. If StereoMix is required, confirm its stream sends and file before the soak.
+6. Stop normally; wait for the final report and hashing. Require zero missed samples and no primary/backup/mirror/recovery/report failures. Inspect every file's duration and channel mapping, audition beginning/middle/end, and open the recording in another DAW. Check the backup independently; a successful primary does not prove its backup. Unplug/fail a redundant destination only in a separate disposable run and verify the warning remains visible through stop.
+7. Separately test repeated takes, unreadable-session collision protection, session reopen, playback and export on disposable sessions. If using the daemon, test protocol-v3 acknowledgement, failed reconfiguration, truthful STOP/finalization status, routing and GUI reattachment. Run [FIELD-TEST.md](FIELD-TEST.md) and the applicable [hardware delta](FIELD-TEST-AUDIT.md).
 8. Test device-loss and crash recovery only on disposable recordings, away from show time, with a hardware recovery plan. Stop testing if the interface becomes unstable.
 
 Record actual results and reviewer acceptance; leave unperformed checks open. Any dropped samples, missing/wrong channels, unstable clock, short/corrupt files or failed redundancy is a no-go until diagnosed and the rehearsal passes again.

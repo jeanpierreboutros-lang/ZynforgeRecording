@@ -19,7 +19,7 @@ namespace zynforge::capture
     // it and it's testable in isolation -- the same transport-seam-first
     // approach used for ConsoleLink before any hardware existed.
 
-    inline constexpr int kProtocolVersion = 2;
+    inline constexpr int kProtocolVersion = 3;
 
     enum class Action
     {
@@ -127,6 +127,11 @@ namespace zynforge::capture
     struct Reply
     {
         bool         ok       { false };
+        // True when the requested operation itself completed even if its
+        // final integrity checks failed. StopRecording uses this to tell the
+        // GUI "the take stopped, but finalisation was not clean" rather than
+        // leaving it believing the daemon may still be rolling.
+        bool         completed { false };
         int          version  { kProtocolVersion };
         juce::String error;
         int          id       { 0 };   // echoes the Command::id this replies to
@@ -136,6 +141,7 @@ namespace zynforge::capture
             auto* o = new juce::DynamicObject();
             o->setProperty ("type",    "reply");
             o->setProperty ("ok",      ok);
+            o->setProperty ("completed", completed);
             o->setProperty ("version", version);
             if (error.isNotEmpty()) o->setProperty ("error", error);
             if (id > 0)             o->setProperty ("id", id);
@@ -146,6 +152,7 @@ namespace zynforge::capture
         {
             Reply r;
             r.ok      = (bool) v.getProperty ("ok", false);
+            r.completed = (bool) v.getProperty ("completed", r.ok);
             r.version = (int) v.getProperty ("version", kProtocolVersion);
             r.error   = v.getProperty ("error", "").toString();
             r.id      = (int) v.getProperty ("id", 0);

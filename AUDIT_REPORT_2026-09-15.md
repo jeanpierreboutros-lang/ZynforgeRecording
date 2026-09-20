@@ -1,5 +1,7 @@
 # Whole-project audit — 2026-09-15
 
+> Historical verification snapshot. For the current protocol-v3 build and the later 16-finding reliability pass, see [AUDIT_FIXES_2026-09-20.md](AUDIT_FIXES_2026-09-20.md).
+
 ## Outcome
 
 The audit found **41 confirmed issues: 0 critical, 12 high, 26 medium and 3 low**. All 41 were fixed and each fix is covered by a focused unit/integration test, an invariant gate, or a build/package/CI verification gate. A fresh macOS-12 universal Release build passed **350 test groups with zero failures on arm64 and x86_64**, and the final ASan+UBSan Debug build passed 350/0. Xcode static analysis has no app-owned diagnostics. The 27-rule invariant audit and design audit are clean. GitHub's clean Debug/Release workflow and final native launch/render smoke test passed.

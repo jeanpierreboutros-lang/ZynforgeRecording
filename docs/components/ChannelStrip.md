@@ -83,7 +83,7 @@ The host wires `canChangeArm` to recording eligibility. If a take is active (loc
 
 ## Right-click menu
 
-Surfaces the per-strip actions that don't fit in the strip header: Rename, Add channel, Delete channel, Link/Unlink stereo pair, Change/Reset colour, Reset name, Send to STREAM bus, Mute physical output, Automation Safe toggle, Assign to VCA submenu, Assign to Edit Group submenu, Send to bus submenu.
+Surfaces the per-strip actions that don't fit in the strip header: Rename, Add channel, Delete channel, Link/Unlink stereo pair, Change/Reset colour, Reset name, Send to STREAM bus, Mute physical output, Automation Safe toggle, Assign to VCA submenu, Assign to Edit Group submenu, Send to bus submenu. STREAM-send and physical-output-mute state are session-authoritative: they persist in `session_mix.json`, reset on session replacement, and participate in mixer undo like the visible fader/pan/mute controls.
 
 ## Accessibility
 

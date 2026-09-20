@@ -206,7 +206,7 @@ namespace zynforge
 
         // Live telemetry for the CPU/disk dashboard:
         //   - bytesPerSec: rolling 1 s window of bytes pushed to disk
-        //     (across primary + backup writers, all channels).
+        //     (across primary, backup, and mirror writers, all channels).
         //   - ringFillPct: 0..100, max over channels of FIFO occupancy.
         // Both are updated by drainOnce() on the writer thread(s); the UI
         // polls them via these accessors.
@@ -634,6 +634,10 @@ namespace zynforge
         juce::File backupDir;
         std::atomic<bool> backupActive  { false };
         std::atomic<bool> backupFailed  { false };
+        // Latched for the whole take. WriterChannel::Mirror objects disappear
+        // when stopRecording closes the writers, but status/report consumers
+        // still need to know that a mirror failed during finalisation.
+        std::atomic<bool> mirrorFailed  { false };
         // Metadata failures do not stop audio capture, but must be visible:
         // without the marker crash recovery is unavailable; without the report
         // the operator loses the take's integrity manifest.

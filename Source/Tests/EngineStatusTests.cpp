@@ -26,6 +26,9 @@ namespace zynforge
                 s.missedSamples = 0; s.numTracks = 2; s.armedTracks = 1;
                 s.integratedLufs = -14.2f; s.momentaryLufs = -11.7f; s.truePeakDb = -1.3f;
                 s.backupActive = true; s.captureFormat = 3;
+                s.primaryFailed = true; s.backupFailed = true; s.mirrorFailed = true;
+                s.mirrorsSkipped = 2; s.recoveryMarkerFailed = true;
+                s.reportWriteFailed = true; s.diskStruggling = true;
 
                 TrackStatus a; a.name = "Kick"; a.peak = 0.8f; a.rms = 0.3f;
                 a.armed = true; a.muted = false; a.soloed = true; a.monitor = true;
@@ -49,6 +52,13 @@ namespace zynforge
                 expectEquals (back.numTracks, s.numTracks);
                 expectEquals (back.armedTracks, s.armedTracks);
                 expect (back.backupActive == s.backupActive);
+                expect (back.primaryFailed == s.primaryFailed);
+                expect (back.backupFailed == s.backupFailed);
+                expect (back.mirrorFailed == s.mirrorFailed);
+                expectEquals (back.mirrorsSkipped, s.mirrorsSkipped);
+                expect (back.recoveryMarkerFailed == s.recoveryMarkerFailed);
+                expect (back.reportWriteFailed == s.reportWriteFailed);
+                expect (back.diskStruggling == s.diskStruggling);
                 expectEquals (back.captureFormat, s.captureFormat);
                 expectEquals ((int) back.tracks.size(), 2);
                 if (back.tracks.size() == 2)

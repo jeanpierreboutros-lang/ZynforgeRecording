@@ -6,6 +6,42 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Capture truth and background-edit decisions — 2026-09-20
+
+### Redundancy health is latched truth, not current object shape
+
+**Context.** Backup and mirror failures disappeared when failed writers were cleared, and a configured path was enough to make the UI/report call a copy active. A STOP reply could therefore look clean after losing redundancy or failing final metadata.
+
+**Decision.** Separate requested, opened, active, failed, and completed states. A destination becomes active only after directory and writer creation. Open/runtime failures latch for the whole take and cross `EngineStatus`/protocol v3. STOP reports command acceptance and capture completion separately, then lists finalization failures. Disk endurance groups byte rates by physical volume rather than by configured destination.
+
+**Consequences.** The UI can remain alarming after capture stops; that is intentional until the next take resets the latches. New status fields require matching GUI/helper builds. A redundant copy on the same physical disk consumes throughput and capacity but is not independent endurance.
+
+### Existing media requires explicit continuation
+
+**Context.** The UI inferred whether to continue from a successfully loaded session. If media existed but was unreadable, the recorder opened the base filenames as a fresh take and replaced them.
+
+**Decision.** The recorder is the final guard: before opening any fresh writer it scans all supported base-container names and refuses on collision. Only explicit continue or punch paths may write alongside an existing take. The UI treats unreadable media as protected, not absent.
+
+**Consequences.** A damaged session may require repair or a new session before recording can resume; it will not trade existing audio for convenience. The guard is intentionally below the UI so daemon/direct callers cannot bypass it.
+
+### Analysis edits are optimistic background transactions
+
+**Context.** Strip Silence, Normalize, Consolidate, and transient analysis could monopolize the message thread and could be invoked while daemon capture was rolling. Strip Silence also analyzed raw files, which no longer represented the audible arrangement after clip edits.
+
+**Decision.** Snapshot the session identity and source clip lists on the message thread, render the arrangement on a worker, then apply only if the same session and inputs still exist. Local or external recording and another session operation block destructive work. Strip Silence analyzes the rendered arrangement (source channel, multipart/cross-track media, gain and fades), preserves locked clips, and treats all-silent output as an explicit empty arrangement.
+
+**Consequences.** Results can be discarded if the engineer edits while a worker runs; this is safer than applying stale geometry. Callbacks must use the engine invalidation handle / component `SafePointer`. Temporary Consolidate files are removed when stale and final names are allocated without a numeric ceiling.
+
+### Autosave success is transactional
+
+**Context.** Autosave advanced its timing and clean marker even if a metadata write or backup snapshot failed, then waited a full interval before trying again. A snapshot taken too early could preserve a mixed generation of files.
+
+**Decision.** Write every live metadata file first, then create the snapshot. Advance autosave timestamps and undo baselines only after both phases succeed; otherwise warn and retry after 15 seconds.
+
+**Consequences.** Repeated storage failure produces repeated bounded warnings instead of silent false cleanliness. Snapshot creation must check every copy and remove a partial snapshot.
+
+---
+
 ## September recording-integrity decisions — 2026-09-12
 
 For the current September additions, see the following decisions; older entries retain their historical context.

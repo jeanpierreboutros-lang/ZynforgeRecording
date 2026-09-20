@@ -288,18 +288,33 @@ namespace zynforge
             // file length (pre-roll used to be written to the primary only and
             // counted nowhere, leaving the destinations divergent + the report
             // short).
-            auto fanOut = [&w] (const float* const* arr, int chans, int got) noexcept
+            auto fanOut = [this, &w] (const float* const* arr, int chans, int got) noexcept
             {
-                if (w.writer != nullptr && w.writer->writeFromFloatArrays (arr, chans, got))
+                if (w.writer != nullptr)
                 {
-                    w.bytesWrittenPrimary += (juce::int64) got * chans * w.bytesPerSamplePrimary;
-                    w.totalSamplesPrimary += got;
+                    if (w.writer->writeFromFloatArrays (arr, chans, got))
+                    {
+                        w.bytesWrittenPrimary += (juce::int64) got * chans * w.bytesPerSamplePrimary;
+                        w.totalSamplesPrimary += got;
+                    }
+                    else
+                    {
+                        w.writer.reset();
+                        primaryFailed.store (true, std::memory_order_relaxed);
+                    }
                 }
-                if (w.backupWriter != nullptr
-                    && w.backupWriter->writeFromFloatArrays (arr, chans, got))
+                if (w.backupWriter != nullptr)
                 {
-                    w.bytesWrittenBackup += (juce::int64) got * chans * w.bytesPerSampleBackup;
-                    w.totalSamplesBackup += got;
+                    if (w.backupWriter->writeFromFloatArrays (arr, chans, got))
+                    {
+                        w.bytesWrittenBackup += (juce::int64) got * chans * w.bytesPerSampleBackup;
+                        w.totalSamplesBackup += got;
+                    }
+                    else
+                    {
+                        w.backupWriter.reset();
+                        backupFailed.store (true, std::memory_order_relaxed);
+                    }
                 }
                 for (auto& m : w.mirrors)
                 {
@@ -308,6 +323,12 @@ namespace zynforge
                     {
                         m.bytesWritten += (juce::int64) got * chans * m.bytesPerSample;
                         m.totalSamples += got;
+                    }
+                    else
+                    {
+                        m.writer.reset();
+                        m.failed = true;
+                        mirrorFailed.store (true, std::memory_order_relaxed);
                     }
                 }
             };
@@ -581,6 +602,10 @@ namespace zynforge
     {
         recoveryMarkerFailed.store (false, std::memory_order_relaxed);
         reportWriteFailed.store (false, std::memory_order_relaxed);
+        primaryFailed.store (false, std::memory_order_relaxed);
+        backupFailed.store (false, std::memory_order_relaxed);
+        mirrorFailed.store (false, std::memory_order_relaxed);
+        backupActive.store (false, std::memory_order_relaxed);
         const juce::ScopedLock structureGuard (structureLock);
         if (recording.load()) return false;
         if (tracks.empty())   return false;
@@ -643,6 +668,14 @@ namespace zynforge
                     ++skipped;              // drive not mounted / not writable
                     continue;
                 }
+                const auto takeAudioDir = mc.root.getChildFile (sessionDir.getFileName())
+                                                  .getChildFile ("Audio Files");
+                if ((! takeAudioDir.isDirectory() && ! takeAudioDir.createDirectory().wasOk())
+                    || ! takeAudioDir.isDirectory())
+                {
+                    ++skipped;
+                    continue;
+                }
                 accepted.push_back (mc.root);
                 activeMirrors.push_back (mc);
             }
@@ -678,6 +711,41 @@ namespace zynforge
             return ! tracks[k]->isBus .load (std::memory_order_relaxed)
                    &&  tracks[k]->armed.load (std::memory_order_relaxed);
         };
+
+        // A fresh take must never truncate media that is already present. The
+        // UI normally recognises an existing take and selects continuation or
+        // punch mode, but this recorder-level guard also protects daemon/API
+        // callers and damaged sessions that could not be loaded by the player.
+        if (! continueAsPart && ! punchInActive)
+        {
+            for (std::size_t i = 0; i < tracks.size(); ++i)
+            {
+                if (! isArmedCapture (i)) continue;
+                if (i > 0 && tracks[i - 1]->isStereo.load (std::memory_order_relaxed)
+                          && isArmedCapture (i - 1))
+                    continue;
+                const auto name = juce::String::formatted ("Track_%02d", (int) i + 1);
+                for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
+                    if (audioFilesDir.getChildFile (name + ext).existsAsFile())
+                        return false;
+            }
+        }
+
+        const bool backupRequested = backupDir.getFullPathName().isNotEmpty();
+        juce::File backupAudioDir;
+        bool backupReady = false;
+        if (backupRequested)
+        {
+            if (! backupDir.isDirectory() && ! backupDir.createDirectory().wasOk())
+                backupFailed.store (true, std::memory_order_relaxed);
+            backupAudioDir = backupDir.getChildFile (sessionDir.getFileName())
+                                      .getChildFile ("Audio Files");
+            backupReady = ! backupFailed.load (std::memory_order_relaxed)
+                          && (backupAudioDir.isDirectory()
+                              || backupAudioDir.createDirectory().wasOk());
+            if (! backupReady || ! backupAudioDir.isDirectory())
+                backupFailed.store (true, std::memory_order_relaxed);
+        }
 
         // Punch-in: move the existing take -- AND its continuation parts -- aside
         // to sidecars BEFORE the writer truncates the target, so the WHOLE base
@@ -843,27 +911,26 @@ namespace zynforge
             // main drive AND FLAC/24 to the backup drive simultaneously.
             // Backups mirror the same Audio Files/ layout under the chosen
             // backup root.
-            if (backupDir.isDirectory())
+            if (backupReady)
             {
-                auto backupSession = backupDir.getChildFile (sessionDir.getFileName())
-                                              .getChildFile ("Audio Files");
-                backupSession.createDirectory();
-                auto backupFile = backupSession.getChildFile (trackName + backup.ext);
+                auto backupFile = backupAudioDir.getChildFile (trackName + backup.ext);
                 if (continueAsPart)
                 {
-                    auto [bf, bn] = nextContinuationPart (backupSession, trackName, backup.ext);
+                    auto [bf, bn] = nextContinuationPart (backupAudioDir, trackName, backup.ext);
                     backupFile = bf;
                     w.partNumberBackup = bn;
                 }
                 stashForPunch (backupFile);
                 w.backupWriter.reset (openWriterAtPath (backupFile, backup.container, backup.bitDepth, chans));
-                w.backupBaseFile       = backupSession.getChildFile (trackName);
+                w.backupBaseFile       = backupAudioDir.getChildFile (trackName);
                 w.backupExt            = backup.ext;
                 w.backupBitDepth       = backup.bitDepth;
                 w.backupContainer      = backup.container;
                 w.bytesPerSampleBackup = backup.bitDepth / 8;
                 if (w.backupWriter != nullptr)
                     w.partFilesBackup.add (backupFile.getFileName());
+                else
+                    backupFailed.store (true, std::memory_order_relaxed);
             }
 
             // Extra N-way mirror destinations beyond primary + backup.
@@ -897,6 +964,11 @@ namespace zynforge
                 m.bytesPerSample = mFmt.bitDepth / 8;
                 if (m.writer != nullptr)
                     m.partFiles.add (mFile.getFileName());
+                else
+                {
+                    m.failed = true;
+                    mirrorFailed.store (true, std::memory_order_relaxed);
+                }
                 w.mirrors.push_back (std::move (m));
             }
 
@@ -925,8 +997,10 @@ namespace zynforge
             return false;
         }
 
-        backupActive.store (backupDir.isDirectory(), std::memory_order_relaxed);
-        backupFailed.store (false, std::memory_order_relaxed);
+        backupActive.store (backupRequested
+                            && backupReady
+                            && ! backupFailed.load (std::memory_order_relaxed),
+                            std::memory_order_relaxed);
         // Surface a PARTIAL primary-open failure (some armed tracks opened,
         // some didn't) via the existing flag so the UI + report show it.
         primaryFailed.store (primaryAttempts > 0 && primaryOpened < primaryAttempts,
@@ -1092,6 +1166,7 @@ namespace zynforge
 
     bool MultitrackRecorder::anyMirrorFailed() const noexcept
     {
+        if (mirrorFailed.load (std::memory_order_relaxed)) return true;
         for (const auto& w : writers)
             for (const auto& m : w.mirrors)
                 if (m.failed) return true;
@@ -1198,7 +1273,7 @@ namespace zynforge
         const auto totalSamples     = samplesSinceStart.load (std::memory_order_relaxed);
         const auto totalMissed      = missedSamples    .load (std::memory_order_relaxed);
         const auto totalSeconds     = sampleRate > 0.0 ? (double) totalSamples / sampleRate : 0.0;
-        const bool backupWasRunning = backupDir.isDirectory();
+        const bool backupWasRunning = backupActive.load (std::memory_order_relaxed);
         const bool backupHadFailure = backupFailed.load (std::memory_order_relaxed);
 
         // Snapshot per-writer file-part info BEFORE closeWriters clears
@@ -1744,13 +1819,22 @@ namespace zynforge
         };
         const int bytesPerSampPrimary = bitsFor (captureFormat)       / 8;
         const int bytesPerSampBackup  = bitsFor (backupCaptureFormat) / 8;
-        const bool backupOn = backupDir.isDirectory();
+        const bool backupOn = isRecording()
+                                ? (backupActive.load (std::memory_order_relaxed)
+                                   && ! backupFailed.load (std::memory_order_relaxed))
+                                : backupDir.isDirectory();
 
-        int armedCount = 0;
-        for (const auto& t : tracks)
-            if (t->armed.load (std::memory_order_relaxed)
-                && ! t->isBus.load (std::memory_order_relaxed))
-                ++armedCount;
+        int captureChannels = 0;
+        for (std::size_t i = 0; i < tracks.size(); ++i)
+        {
+            if (tracks[i]->isBus.load (std::memory_order_relaxed)
+                || ! tracks[i]->armed.load (std::memory_order_relaxed)) continue;
+            if (i > 0 && tracks[i - 1]->isStereo.load (std::memory_order_relaxed)
+                      && tracks[i - 1]->armed.load (std::memory_order_relaxed))
+                continue;
+            captureChannels += tracks[i]->isStereo.load (std::memory_order_relaxed)
+                                && i + 1 < tracks.size() ? 2 : 1;
+        }
 
         // Every configured MIRROR is another full parallel copy of every armed
         // track, in its own format. Omitting them under-reported the real write
@@ -1759,38 +1843,113 @@ namespace zynforge
         // the disk warning fired late (or not at all) on a mirrored rig.
         // While a take is rolling the honest count is what actually opened;
         // before it starts, the configured list is the right (pessimistic) one.
-        int bytesPerSampMirrors = 0;
-        for (const auto& mc : (isRecording() ? activeMirrors : mirrorConfigs))
-            bytesPerSampMirrors += bitsFor (mc.format) / 8;
+        int mirrorChannelBytes = 0;
+        if (isRecording())
+        {
+            for (const auto& writer : writers)
+                for (size_t mi = 0; mi < writer.mirrors.size() && mi < activeMirrors.size(); ++mi)
+                    if (writer.mirrors[mi].writer != nullptr && ! writer.mirrors[mi].failed)
+                        mirrorChannelBytes += writer.numChannels
+                                           * (bitsFor (activeMirrors[mi].format) / 8);
+        }
+        else
+        {
+            for (const auto& mc : mirrorConfigs)
+                mirrorChannelBytes += captureChannels * (bitsFor (mc.format) / 8);
+        }
 
         // FLAC compresses ~50% typical; treat its byte rate as the
         // worst case (uncompressed equivalent) to keep the estimate
         // pessimistic. Engineers don't want a "you have 6 h" estimate
         // that turns into 3 h because today's audio compressed poorly.
         return (juce::int64) (sampleRate
-                              * (juce::int64) armedCount
-                              * (bytesPerSampPrimary
-                                 + (backupOn ? bytesPerSampBackup : 0)
-                                 + bytesPerSampMirrors));
+                              * (captureChannels * (bytesPerSampPrimary
+                                                   + (backupOn ? bytesPerSampBackup : 0))
+                                 + mirrorChannelBytes));
     }
 
     int MultitrackRecorder::estimateMinutesRemaining (const juce::File& primaryVolume,
                                                       const juce::File& backupVolume) const noexcept
     {
-        const auto rate = estimateBytesPerSecondForArmedTracks();
-        if (rate <= 0) return 0;
+        auto bitsFor = [] (CaptureFormat f) -> int
+        {
+            switch (f)
+            {
+                case CaptureFormat::Wav16: case CaptureFormat::Aiff16: case CaptureFormat::Flac16: return 16;
+                case CaptureFormat::Wav32Float: case CaptureFormat::Aiff32Float: return 32;
+                default: return 24;
+            }
+        };
+        int captureChannels = 0;
+        for (std::size_t i = 0; i < tracks.size(); ++i)
+        {
+            if (tracks[i]->isBus.load (std::memory_order_relaxed)
+                || ! tracks[i]->armed.load (std::memory_order_relaxed)) continue;
+            if (i > 0 && tracks[i - 1]->isStereo.load (std::memory_order_relaxed)
+                      && tracks[i - 1]->armed.load (std::memory_order_relaxed))
+                continue;
+            captureChannels += tracks[i]->isStereo.load (std::memory_order_relaxed)
+                                && i + 1 < tracks.size() ? 2 : 1;
+        }
+        if (sampleRate <= 0.0 || captureChannels <= 0) return 0;
+
+        const auto rateFor = [&] (CaptureFormat f, int channels = -1) -> juce::int64
+        {
+            return (juce::int64) (sampleRate
+                                  * (channels >= 0 ? channels : captureChannels)
+                                  * (bitsFor (f) / 8));
+        };
         constexpr int kEffectivelyUnbounded = std::numeric_limits<int>::max() / 2;
 
-        auto minutesForVolume = [&] (const juce::File& vol) -> int
+        auto minutesForVolume = [&] (const juce::File& vol, juce::int64 rate) -> int
         {
-            if (! vol.exists()) return kEffectivelyUnbounded;
+            if (! vol.exists() || rate <= 0) return kEffectivelyUnbounded;
             const auto free = vol.getBytesFreeOnVolume();
             if (free <= 0) return kEffectivelyUnbounded;       // unknown -> don't pessimize
             return (int) (free / (rate * (juce::int64) 60));
         };
-        int minutes = minutesForVolume (primaryVolume);
-        if (backupVolume.exists() && backupDir.isDirectory())
-            minutes = juce::jmin (minutes, minutesForVolume (backupVolume));
+        // Combine rates that land on the SAME filesystem. Primary + backup on
+        // one volume drain that volume twice as fast; mirrors on other drives
+        // must not reduce the primary drive's estimate.
+        struct VolumeRate { juce::File file; int serial { 0 }; juce::int64 rate { 0 }; };
+        std::vector<VolumeRate> volumes;
+        auto addVolumeRate = [&] (const juce::File& file, juce::int64 rate)
+        {
+            if (! file.exists() || rate <= 0) return;
+            const int serial = file.getVolumeSerialNumber();
+            if (serial != 0)
+                for (auto& volume : volumes)
+                    if (volume.serial == serial) { volume.rate += rate; return; }
+            volumes.push_back ({ file, serial, rate });
+        };
+
+        addVolumeRate (primaryVolume, rateFor (captureFormat));
+        const bool rolling = isRecording();
+        if (backupVolume.exists()
+            && (rolling ? backupActive.load (std::memory_order_relaxed)
+                        : backupDir.isDirectory()))
+            addVolumeRate (backupVolume, rateFor (backupCaptureFormat));
+
+        const auto& mirrors = rolling ? activeMirrors : mirrorConfigs;
+        for (size_t mi = 0; mi < mirrors.size(); ++mi)
+        {
+            int channels = captureChannels;
+            if (rolling)
+            {
+                channels = 0;
+                for (const auto& writer : writers)
+                    if (mi < writer.mirrors.size()
+                        && writer.mirrors[mi].writer != nullptr
+                        && ! writer.mirrors[mi].failed)
+                        channels += writer.numChannels;
+            }
+            addVolumeRate (mirrors[mi].root, rateFor (mirrors[mi].format, channels));
+        }
+
+        int minutes = kEffectivelyUnbounded;
+        for (const auto& volume : volumes)
+            minutes = juce::jmin (minutes, minutesForVolume (volume.file, volume.rate));
+        if (minutes == kEffectivelyUnbounded) return 0;
         return minutes;
     }
 
@@ -1936,7 +2095,10 @@ namespace zynforge
                         if (m.writer != nullptr)
                             m.partFiles.add (nextFile.getFileName());
                         else
+                        {
                             m.failed = true;   // next mirror part wouldn't open
+                            mirrorFailed.store (true, std::memory_order_relaxed);
+                        }
                     }
                 }
             };
@@ -1995,6 +2157,7 @@ namespace zynforge
                         {
                             m.writer.reset();
                             m.failed = true;
+                            mirrorFailed.store (true, std::memory_order_relaxed);
                             continue;
                         }
                         m.bytesWritten += (juce::int64) chunk * chans * m.bytesPerSample;
@@ -2072,6 +2235,7 @@ namespace zynforge
                         {
                             m.writer.reset();
                             m.failed = true;
+                            mirrorFailed.store (true, std::memory_order_relaxed);
                             continue;
                         }
                         m.bytesWritten += (juce::int64) avail * 2 * m.bytesPerSample;
@@ -2137,6 +2301,7 @@ namespace zynforge
                     {
                         m.writer.reset();
                         m.failed = true;
+                        mirrorFailed.store (true, std::memory_order_relaxed);
                         continue;
                     }
                     m.bytesWritten += (juce::int64) scope.blockSize1 * m.bytesPerSample;
@@ -2180,6 +2345,7 @@ namespace zynforge
                     {
                         m.writer.reset();
                         m.failed = true;
+                        mirrorFailed.store (true, std::memory_order_relaxed);
                         continue;
                     }
                     m.bytesWritten += (juce::int64) scope.blockSize2 * m.bytesPerSample;
@@ -2235,8 +2401,13 @@ namespace zynforge
         const int  bytesPerSampPrimary = bitsForFormat (captureFormat)       / 8;
         const int  bytesPerSampBackup  = bitsForFormat (backupCaptureFormat) / 8;
         const bool backupActiveNow     = backupActive.load (std::memory_order_relaxed) && ! backupFailed.load (std::memory_order_relaxed);
-        const juce::int64 bytesThisDrain = totalWritten *
-                                           (bytesPerSampPrimary + (backupActiveNow ? bytesPerSampBackup : 0));
+        int bytesPerSampMirrors = 0;
+        for (const auto& mc : activeMirrors)
+            bytesPerSampMirrors += bitsForFormat (mc.format) / 8;
+        const juce::int64 bytesThisDrain = totalWritten
+                                           * (bytesPerSampPrimary
+                                              + (backupActiveNow ? bytesPerSampBackup : 0)
+                                              + bytesPerSampMirrors);
         shard.throughputAccumBytes += bytesThisDrain;
 
         const auto now = juce::Time::getMillisecondCounterHiRes();

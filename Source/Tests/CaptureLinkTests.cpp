@@ -136,6 +136,32 @@ namespace zynforge
                 server.stop();
             }
 
+            beginTest ("loopback: commands are rejected until Hello succeeds");
+            {
+                CaptureServer server;
+                std::atomic<int> delivered { 0 };
+                server.onCommand = [&] (const Command&) { delivered.fetch_add (1); };
+                const int port = listenSomewhere (server);
+                expect (port > 0);
+                if (port <= 0) return;
+
+                CaptureClient client;
+                expect (client.connect ("127.0.0.1", port));
+                Command ping; ping.action = Action::Ping;
+                const auto refused = client.request (ping, 2000);
+                expect (! refused.ok, "pre-handshake command must be rejected");
+                expect (refused.error.containsIgnoreCase ("handshake"));
+                expectEquals (delivered.load(), 0,
+                              "a rejected pre-handshake command reached the daemon");
+
+                expect (client.hello (2000).ok);
+                expect (client.send (ping));
+                expect (waitUntil ([&] { return delivered.load() >= 2; }, 2000),
+                        "Hello + post-handshake Ping were not delivered");
+                client.disconnect();
+                server.stop();
+            }
+
             beginTest ("a second GUI connection supersedes the first (no accept-loop wedge)");
             {
                 CaptureServer server;

@@ -10,7 +10,7 @@ Active development, pre-1.0. Ships **multitrack recording**, **virtual-soundchec
 
 ## Build
 
-As of 2026-09-15, the latest audit fixes **41 additional confirmed issues**. Application code through `df5ad36` is pushed to `origin/main`, and that exact macOS-12 universal Release is installed at `/Applications/Zynforge Recording.app` with its matching capture helper. It passes **350 test groups, 0 failures on both arm64 and x86_64**, ASan+UBSan Debug passes 350/0, Xcode static analysis has no app-owned diagnostics, and the 27-rule invariant gate, design audit, strict bundle-signature check and GitHub Debug/Release workflow are clean. It is ready for exact-rig rehearsal, not validated as the sole recorder for the planned show. Hardware, storage, clocking and a three-hour rehearsal remain acceptance gates; see [the current audit](AUDIT_REPORT_2026-09-15.md), [installation record](INSTALL.md) and [Show readiness](SHOW-READINESS.md).
+As of 2026-09-20, the latest follow-up audit fixes **16 additional recording, daemon, edit, and persistence failures**. The current macOS-12 universal Release passes **358 test groups with 0 failures**; the invariant and design audits and final diff checks are clean. It is installed at `/Applications/Zynforge Recording.app` with its matching protocol-v3 capture helper. It is ready for exact-rig rehearsal, not validated as the sole recorder for the planned show. Hardware, storage, clocking and a three-hour rehearsal remain acceptance gates; see [the current fixes](AUDIT_FIXES_2026-09-20.md), [installation record](INSTALL.md) and [Show readiness](SHOW-READINESS.md).
 
 ```bash
 cmake -B build -G Xcode
@@ -20,7 +20,7 @@ open "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
 
 First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 12.0+ Universal (Apple Silicon + Intel).
 
-For local installation, follow [INSTALL.md](INSTALL.md). The app needs the matching `ZynforgeCapture` executable bundled in `Contents/MacOS`; copying the GUI bundle alone omits it. Stop all takes and quit both processes before replacement. Capture protocol is version **2**.
+For local installation, follow [INSTALL.md](INSTALL.md). The app needs the matching `ZynforgeCapture` executable bundled in `Contents/MacOS`; copying the GUI bundle alone omits it. Stop all takes and quit both processes before replacement. Capture protocol is version **3** and requires a successful compatible Hello before any command is accepted.
 
 ## Documentation
 
@@ -36,6 +36,7 @@ For local installation, follow [INSTALL.md](INSTALL.md). The app needs the match
 | User-visible changes | [`CHANGELOG.md`](CHANGELOG.md) |
 | Local installation, verification and rollback | [`INSTALL.md`](INSTALL.md) |
 | Planned SD5 / 56-input show and acceptance gates | [`SHOW-READINESS.md`](SHOW-READINESS.md) |
+| 2026-09-20 recording-reliability audit fixes and acceptance gaps | [`AUDIT_FIXES_2026-09-20.md`](AUDIT_FIXES_2026-09-20.md) |
 | 2026-09-15 whole-project audit and verification limits | [`AUDIT_REPORT_2026-09-15.md`](AUDIT_REPORT_2026-09-15.md) |
 | September audit: all 32 fixes and validation limits | [`AUDIT_FIXES_2026-09-12.md`](AUDIT_FIXES_2026-09-12.md) |
 | Manual regression and hardware checklists | [`FIELD-TEST.md`](FIELD-TEST.md), [`FIELD-TEST-AUDIT.md`](FIELD-TEST-AUDIT.md) |
@@ -46,6 +47,9 @@ For local installation, follow [INSTALL.md](INSTALL.md). The app needs the match
 - Track moves/deletions share a journaled transaction across media and track state. Deleted-track audio is retained under `Removed Tracks`; track-order changes clear stale index-based undo history and the clip clipboard.
 - Imported media preserves existing edits. Empty arrangements stay silent, missing explicit media never substitutes another take, and cross-track clips retain source-channel identity.
 - Session UUIDs, capture settings and sample rate round-trip. Daemon configuration is acknowledged before recording; STOP waits for acknowledgement and consecutive takes preserve earlier audio.
+- Fresh recording refuses every existing `Track_NN` container unless the user explicitly continues or punches, including when the session cannot be read normally.
+- Primary, backup, mirror, daemon-finalization and report failures remain latched and visible. Protocol-v3 commands require a compatible handshake.
+- Expensive EDIT analysis/render operations run in the background and refuse stale results; playback and destructive edits are blocked for both local and daemon takes.
 
 ## Feature highlights
 
@@ -58,6 +62,8 @@ For local installation, follow [INSTALL.md](INSTALL.md). The app needs the match
 - **Punch-in recording — anywhere, any take** — click the EDIT timeline (or select a region) to set the drop-in point, then RECORD to re-record a *section*, keeping the audio before the punch-in and after the punch-out. Works on **multi-part takes** built up by continue-recording (the whole take is read via a concat reader and flattened into one spliced file). Capture-safe: the recorder writes a clean fresh file and the section is spliced into the take on stop (temp + atomic swap, original + its parts moved aside first), so a failure reverts to the original rather than corrupting it. Primary + backup + every mirror are spliced together so all drives stay identical
 - Formats: WAV / AIFF (16 / 24 / 32-float), FLAC (16 / 24)
 - **Multi-format simultaneous capture** — primary in one format, parallel backup writer in another
+- **Fail-visible redundancy** — configured backup/mirror paths must open before they count as active; open/write failures stay latched through stop, skipped copies are counted, and disk-time estimates aggregate writers that share a physical volume
+- **StereoMix file capture is independent of physical stream outputs** — live stream sends are recorded even when no hardware stream bus is assigned; an empty stream mix or unsupported daemon StereoMix configuration is refused before RECORD
 - Auto-recover orphan sessions on next launch; `session.report.json` written on clean stop
 
 ### Playback / virtual soundcheck
@@ -65,6 +71,7 @@ For local installation, follow [INSTALL.md](INSTALL.md). The app needs the match
 - Clip-aware playback: per-clip mute / lock / gain / fade (linear **or equal-power**), all applied on the audio thread
 - Cross-track clips read from a file-keyed reader cache, so a clip pasted onto another track plays the copied audio
 - Loop region between markers; Spacebar global play/pause
+- Playback refuses while either the local engine or capture daemon owns a live take, including remote, MCU, and timecode entry points
 
 ### Mixer / EDIT / PATCH (linked views)
 - **Compact, console-style strips** — the dB ruler + fader + meter hug each other (no wasted gutter). Width presets **XS / S / M / L** (M ≈ 12 per page, L = 8 with the **full channel name on its own row**), plus a **GRID** view: 12 strips per row × 2 rows = **24 faders on one page** (scrolls vertically). Channels default to neutral grey and recolour from a hue×shade **gradient** swatch picker
@@ -74,7 +81,7 @@ For local installation, follow [INSTALL.md](INSTALL.md). The app needs the match
 - Pro Tools-style EDIT view: per-row size menu, custom heights, captioned **Smart / Range / Trim / Move / Fade / Scrub** tools with single-key shortcuts (**S / R / T / G / F / B**, Cmd+E to separate), a row header that stays pinned to the left when you scroll the timeline, a graduated DAW time ruler (playhead time bubble, edit cursor that merges with the playhead when stopped, loop shading) and a draggable timeline minimap when zoomed
 - **Pro Tools-style waveform** — each recorded clip is a light, **channel-coloured block with the waveform drawn DARK on top** (loud fills dark, quiet lets the colour show), at honest levels (no over-amplified hiss). While recording, each armed lane builds a live forge-orange envelope in real time (from the captured audio, no disk reads) — including while **continuing** or **punching** a take — and the clean file waveform draws in on stop. **Clip gain just scales the waveform** (no gain line); the clip is uncluttered at rest (gain handle on hover)
 - **Region editing** — Separate (`Cmd+E`), Heal Separation (`Cmd+H`), Clear / ripple Clear (`Delete` / `Shift+Delete`, with a confirm), multi-clip selection (Shift+click), Duplicate (`D`) / Nudge (`Alt+←/→`, numpad, configurable step via `N`), Zoom to Selection (`E`), a clip clipboard (`Cmd+X/C/V`) that pastes at the playhead — including **cross-track** — plus a numeric selection readout in the ruler. All clip edits are non-destructive and Cmd+Z-undoable
-- **Cleanup & delivery tools (Pro Tools-style)** — **Strip Silence** (slider settings box: threshold / min-silence / min-clip / pad) separates a take around its silent gaps; **Consolidate** flattens a range or clip to one new flat file; a **clip-gain corner fader** rides each clip's level (drag, Alt-click resets to 0 dB) and the waveform scales with the gain. Mixer moves (fader / pan / mute / solo / rename / colour / routing) are Cmd+Z-undoable too; recordings are not (delete them explicitly, with a confirm)
+- **Cleanup & delivery tools (Pro Tools-style)** — **Strip Silence** analyzes the current rendered arrangement (edits, fades, gain, stereo/multipart and cross-track sources) and separates it around silent gaps; **Consolidate** flattens a range or clip to a uniquely numbered flat file; Normalize, Consolidate, Strip Silence and transient detection run off the UI thread and reject stale results. A **clip-gain corner fader** rides each clip's level (drag, Alt-click resets to 0 dB) and the waveform scales with the gain. Mixer moves (fader / pan / mute / solo / rename / colour / routing / output mute / stream send) are Cmd+Z-undoable too; recordings are not (delete them explicitly, with a confirm)
 - **Edit groups** keep clip edits phase-coherent — split / trim / move / fade and selection propagate across grouped tracks
 - **Take comping** — capture takes, then either menu-comp (*Comp selection from ▸ Take N*) or the visual **swipe-comp lanes** (a sub-lane per take; drag across a take to pull that section into the active comp)
 - **Per-track automation lanes** (Volume / Pan / Mute) with curve-aware rendering (Hold / Linear+continuous tension / S-Curve), draggable per-segment tension handles, copy / paste / clear range, undo-aware drag coalesce, persisted in `.zfproj`
@@ -141,6 +148,7 @@ Why no built-in HTTPS: JUCE has no server-side TLS, so in-app HTTPS would mean b
 - Redundant-write to a second drive in parallel, plus N-way mirrors — all of which count toward the "minutes remaining" estimate and the DISK STRUGGLING warning. The free-space readout tracks the volume the take actually lands on, including a custom Local Storage location
 - Recording always **pre-fader** — fader / pan / mute / solo are monitoring concerns only
 - **Auto-save + backup session** — Session ▸ *Auto-Save & Backup…* (Off / 1 / 2 / 5 / 10 / 15 min) periodically saves the session and drops a complete, restorable **backup session** (all session-defining files, not the multi-GB audio) into `Session File Backups/<Name>_<stamp>/`, keeping the 10 newest. Recordings are always written live and crash-safe independent of this
+- Auto-save only marks a session clean after every metadata file and the backup snapshot succeeds. Failure is shown immediately and retried after 15 seconds instead of delaying until the next normal interval
 - Device settings, mirror drives and click-track generation are all locked while a take is rolling — each one would otherwise stop or silence something mid-show, and each now says so rather than failing quietly
 - **RF64** large takes (one continuous file past 4 GiB) + a fast, hardware-accelerated SHA-256 integrity manifest written on stop. Field-verified with a 6 h+ overnight soak (0 crashes, flat RAM). Validate any take with `tools/verify_take.sh`
 
@@ -154,6 +162,7 @@ Why no built-in HTTPS: JUCE has no server-side TLS, so in-app HTTPS would mean b
 - **Save As is a clone, not a merge:** it requires a new or empty destination, saves the source first, copies on a cancellable worker, and switches to the clone only after a complete copy. A failed/cancelled copy leaves the source session active and removes a newly-created partial destination
 - Moving a session is similarly transactional. Recording, playback start, strip changes, bounces, and competing session operations are gated while a move/copy/bounce owns the session; a cross-volume move keeps the complete destination authoritative and warns if the old copy could not be removed
 - Opening a session clears all previous session state, loads audio and the exact mixer track count (including shrinking), then restores playlists/automation after default clips are seeded. A malformed or missing `session_mix.json` falls back to the audio count instead of leaking the previous session's strips
+- `session_mix.json` also owns output-mute and stream-send state; both reset on session replacement and participate in undo
 - `.zfproj` files are real macOS documents: double-clicking one or sending it to an already-running app opens its containing session through the same guarded path
 - A configured default template is applied to every new session, including the Welcome flow. Choosing **New Session from Template** creates a new session; it never destructively applies a template over the open show
 

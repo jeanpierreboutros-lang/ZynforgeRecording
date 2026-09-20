@@ -130,28 +130,31 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // The Edit menu is now strictly about editing the *audio on the
         // timeline*. Channel / mixer-strip management moved to its own
         // "Track" menu (below), the way a real DAW separates the two.
-        const bool playerLoaded  = engine.getPlayer().isLoaded();
+        const bool canEdit = engine.getPlayer().isLoaded()
+                          && ! engine.isRecording()
+                          && ! sessionIoBusy.load()
+                          && ! sessionLocked;
 
-        menu.addItem (300, "Undo\tCmd+Z",       undoManager.canUndo());
-        menu.addItem (301, "Redo\tCmd+R",       undoManager.canRedo());
+        menu.addItem (300, "Undo\tCmd+Z",       canEdit && undoManager.canUndo());
+        menu.addItem (301, "Redo\tCmd+R",       canEdit && undoManager.canRedo());
         menu.addSeparator();
         menu.addItem (310, "Separate Clip (split at selection / playhead)\tCmd+E",
-                      playerLoaded);
-        menu.addItem (315, "Heal Separation\tCmd+H", playerLoaded);
+                      canEdit);
+        menu.addItem (315, "Heal Separation\tCmd+H", canEdit);
         menu.addItem (306, "Crop to Loop Range\tCtrl+Cmd+C",
-                      playerLoaded && engine.getPlayer().hasLoopRegion());
+                      canEdit && engine.getPlayer().hasLoopRegion());
         menu.addItem (317, "Consolidate Selection",
-                      playerLoaded && engine.getPlayer().hasLoopRegion());
-        menu.addItem (316, "Strip Silence", playerLoaded);
+                      canEdit && engine.getPlayer().hasLoopRegion());
+        menu.addItem (316, "Strip Silence", canEdit);
         menu.addSeparator();
-        menu.addItem (311, "Start Range at Playhead\t,",  playerLoaded);
-        menu.addItem (312, "Finish Range at Playhead\t.", playerLoaded);
-        menu.addItem (308, "Set Range to Loop Range", playerLoaded);
+        menu.addItem (311, "Start Range at Playhead\t,",  canEdit);
+        menu.addItem (312, "Finish Range at Playhead\t.", canEdit);
+        menu.addItem (308, "Set Range to Loop Range", canEdit);
         menu.addSeparator();
         menu.addItem (309, "Toggle Snap\t4", true, snapToMarkers);
         menu.addItem (318, "Snap edits to zero-crossing (click-free)", true, zeroCrossSnap);
         menu.addItem (314, "Punch In/Out Mode",
-                      playerLoaded, engine.isPunchModeOn());
+                      canEdit, engine.isPunchModeOn());
         menu.addSeparator();
         menu.addItem (313, "Remove Last Capture", ! engine.isRecording());
     }

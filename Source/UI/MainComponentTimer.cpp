@@ -237,6 +237,15 @@ void MainComponent::timerCallback()
     const auto status = useCaptureDaemon && captureSupervisor.isDaemonRecording()
                           ? captureSupervisor.lastStatus() : engine.captureStatus();
     const bool rec = status.recording;
+    // Timeline edits can trigger long disk scans/renders and mutate the clip
+    // graph. Keep the editor read-only for local and daemon capture, and while
+    // another session job owns the files.
+    if (editPage != nullptr)
+    {
+        const bool enableEditor = ! rec && ! sessionIoBusy.load();
+        if (editPage->isEnabled() != enableEditor)
+            editPage->setEnabled (enableEditor);
+    }
     formatButton .setEnabled (! rec);
     preRollButton.setEnabled (! rec);
 
@@ -304,22 +313,27 @@ void MainComponent::timerCallback()
     // disk catches back up). Status bar is the engineer's first read.
     if (rec)
     {
-        const bool primFail   = recorder.hasPrimaryFailed();
-        const bool recoveryFail = recorder.hasRecoveryMarkerFailed();
-        const bool mixFail = engine.hasStereoMixWriteFailed();
-        const bool diskTrouble = recorder.isDiskStruggling();
+        const bool primFail   = status.primaryFailed;
+        const bool backupFail = status.backupFailed;
+        const bool mirrorFail = status.mirrorFailed;
+        const bool recoveryFail = status.recoveryMarkerFailed;
+        const bool mixFail = ! useCaptureDaemon && engine.hasStereoMixWriteFailed();
+        const bool diskTrouble = status.diskStruggling;
         const bool smartBad = (smartPrimaryStatus == (int) MultitrackRecorder::SmartStatus::Failing)
                            || (smartBackupStatus  == (int) MultitrackRecorder::SmartStatus::Failing);
         // A mirror that never OPENED (drive absent, or a root that would have
         // collided with the take) creates no Mirror entry, so anyMirrorFailed()
         // -- which walks the entries -- structurally cannot see it. Without this
         // the engineer runs the whole show believing they have a copy they don't.
-        const int mirrorsSkipped = recorder.getMirrorsSkippedAtStart();
-        if (primFail || recoveryFail || mixFail || diskTrouble || smartBad || mirrorsSkipped > 0)
+        const int mirrorsSkipped = status.mirrorsSkipped;
+        if (primFail || backupFail || mirrorFail || recoveryFail || mixFail
+            || diskTrouble || smartBad || mirrorsSkipped > 0)
         {
             juce::String warn;
             if (smartBad)    warn << "! SMART FAILING -- replace this drive  ";
             if (primFail)    warn << "! PRIMARY WRITE FAILED -- recording on backup/mirror  ";
+            if (backupFail)  warn << "! BACKUP WRITE FAILED -- primary recording continues  ";
+            if (mirrorFail)  warn << "! MIRROR WRITE FAILED -- check mirror drive  ";
             if (recoveryFail) warn << "! CRASH-RECOVERY MARKER NOT WRITING -- protect power  ";
             if (mixFail)      warn << "! STEREO MIX NOT WRITING -- multitracks continue  ";
             if (mirrorsSkipped > 0)

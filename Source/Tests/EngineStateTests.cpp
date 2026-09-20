@@ -211,6 +211,8 @@ namespace zynforge
                 eng.setTrackPan      (1, -0.5f);
                 eng.getRecorder().getTrack (2).muted.store (true);
                 eng.getRecorder().getTrack (3).soloed.store (true);
+                eng.getRecorder().getTrack (1).outputMuted.store (true);
+                eng.getRecorder().getTrack (2).streamSend.store (true);
                 eng.setTrackVcaGroup (0, 2);
                 eng.setTrackVcaGroup (1, 2);
                 eng.setTrackEditGroup (3, 1);
@@ -229,6 +231,8 @@ namespace zynforge
                 eng.setTrackGainDb (0, 0.0f);
                 eng.setTrackPan    (1, 0.0f);
                 eng.getRecorder().getTrack (2).muted.store (false);
+                eng.getRecorder().getTrack (1).outputMuted.store (false);
+                eng.getRecorder().getTrack (2).streamSend.store (false);
                 eng.setTrackVcaGroup (2, 5);
                 eng.setTrackIsBus (3, false);                 // un-bus it
                 eng.setTrackSend  (0, 0, -1, 0.0f, false);    // clear the send
@@ -245,6 +249,8 @@ namespace zynforge
                 expectWithinAbsoluteError (eng.getRecorder().getTrack (1).pan.load(), -0.5f, 0.01f);
                 expect (eng.getRecorder().getTrack (2).muted.load());
                 expect (eng.getRecorder().getTrack (3).soloed.load());
+                expect (eng.getRecorder().getTrack (1).outputMuted.load());
+                expect (eng.getRecorder().getTrack (2).streamSend.load());
                 expectEquals (eng.getRecorder().getTrack (0).vcaGroup.load(), 2);
                 expectEquals (eng.getTrackEditGroup (3), 1);
                 // Strip 2 was ungrouped in the file -> the leaked VCA 5 is overwritten.
@@ -261,6 +267,12 @@ namespace zynforge
                 expectEquals (eng.getTimeSignatureNumerator(),   6);
                 expectEquals (eng.getTimeSignatureDenominator(), 8);
                 expectEquals ((int) eng.getTempoMap().size(), 2);
+
+                eng.clearSessionState();
+                expect (! eng.getRecorder().getTrack (1).outputMuted.load(),
+                        "output mute leaked into the next session");
+                expect (! eng.getRecorder().getTrack (2).streamSend.load(),
+                        "stream send leaked into the next session");
 
                 tmp.deleteRecursively();
             }

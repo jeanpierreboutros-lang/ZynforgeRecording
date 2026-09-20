@@ -1,4 +1,4 @@
-# ZynForge Recording — Field-Test Checklist (updated 2026-09-15)
+# ZynForge Recording — Field-Test Checklist (updated 2026-09-20)
 
 Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak. Tick boxes only after performing them; the failure column tells you when to stop and report. Current installed build: application code `df5ad36`, 350 automated test groups passing on both slices of the macOS-12 universal Release and in ASan+UBSan Debug, no app-owned Xcode-analysis diagnostics, and green GitHub Debug/Release CI. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run.
 
@@ -187,6 +187,20 @@ crash-safety check on disposable data. A survivor without a clean-stop report wi
 - [ ] Check locked split/ripple/crop behavior, earlier inactive-take deletion, empty automation restore, sorted marker naming and analysis menu commands.
 - [ ] Reopen capture settings/sample rate and check recovery file counts. Exercise loop boundaries for audible gaps.
 - [ ] Follow the exact-rig rehearsal and backup checks in SHOW-READINESS.md. Record results; no checkbox is pre-passed by the automated suite.
+
+### 2026-09-20 reliability follow-up
+
+- [ ] Put an existing `Track_01.wav`, `.flac`, `.aif`, or `.aiff` in a disposable session whose project metadata cannot be read. Press RECORD as a fresh take: it must refuse without changing the file. Explicit Continue must create a continuation instead.
+- [ ] Configure a missing/unwritable backup and one valid mirror. RECORD must either refuse an unsafe primary or roll with the valid primary while showing the unavailable copy. The warning must remain visible after STOP; the selected backup path must survive relaunch.
+- [ ] During a disposable take, disconnect a redundant drive. Primary capture must continue, the runtime failure must latch, and STOP/report must not claim clean redundancy. Reconnect and confirm the next take resets health only after writers open.
+- [ ] Put primary, backup, and mirrors on combinations of the same and separate physical volumes. Confirm minutes remaining reflects aggregate byte rate per volume and does not count failed/skipped copies.
+- [ ] Locally arm StereoMix, assign stream sends, leave physical stream outputs unassigned, and capture known signal. The StereoMix file must be audible. Remove all stream sends and confirm RECORD refuses the empty mix. Daemon mode must refuse StereoMix with a clear explanation.
+- [ ] While daemon recording is active, try Play from the toolbar, keyboard, MCU, OSC, Companion, and timecode chase. Every path must leave playback stopped. Strip Silence, Normalize, Consolidate, and transient rebuild/navigation must also refuse.
+- [ ] Force a daemon configuration error, correct it, then record. The callback must be restored and the valid configuration must capture. STOP must distinguish a completed take with a finalization warning from a take that may still be rolling.
+- [ ] On an edited stereo/multipart session with fades, gain, and cross-track clips, run Strip Silence and compare against the audible arrangement. Locked clips must remain unchanged; a fully silent unlocked track must become empty. The UI must remain responsive.
+- [ ] Run Normalize, Strip Silence, transient detection, and Consolidate on long material, then change session/source state before completion. Stale results must not apply. Pre-create `_999`; Consolidate must create `_1000` or later without replacement.
+- [ ] Change output mute and stream sends, Save/reopen, undo/redo, and then create/open another session. State must round-trip in the original and reset in the replacement.
+- [ ] Make one autosave metadata/snapshot destination fail. Confirm an immediate warning, no false clean marker, and a retry after about 15 seconds. A failed snapshot must not leave a partial backup folder.
 
 ## Control Surfaces — bench verification (hardware-only)
 

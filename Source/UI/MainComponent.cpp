@@ -68,6 +68,16 @@ void MainComponent::onRecordClicked()
         return;
     }
 
+    // StereoMix is produced by the in-process audio callback. The capture
+    // daemon intentionally owns the device exclusively and cannot produce
+    // that auxiliary file yet, so fail before arming rather than silently
+    // completing a take with the requested deliverable missing.
+    if (daemonModeActive() && engine.getRecordStereoMix())
+    {
+        showStatus ("Stereo stream-mix recording is unavailable in capture-daemon mode; disable it or use in-process capture");
+        return;
+    }
+
     // Phase 1d: a rolling daemon take stops over the wire.
     if (daemonModeActive() && captureSupervisor.isDaemonRecording())
     {
@@ -150,6 +160,19 @@ void MainComponent::onRecordClicked()
         return;
     }
 
+    if (! daemonModeActive() && engine.getRecordStereoMix())
+    {
+        bool hasStreamSource = false;
+        for (int i = 0; i < numTracks; ++i)
+            hasStreamSource = hasStreamSource
+                           || recorder.getTrack (i).streamSend.load (std::memory_order_relaxed);
+        if (! hasStreamSource)
+        {
+            showStatus ("StereoMix is enabled but no channel is sent to STREAM; enable a STREAM send before recording");
+            return;
+        }
+    }
+
     // HARD GUARD: never start a take while the device clock disagrees with
     // the session rate. A silent mismatch captures every track at the wrong
     // speed + pitch -- unrecoverable -- so we refuse to arm the writers and
@@ -187,8 +210,13 @@ void MainComponent::onRecordClicked()
     // the punch-in and after the punch-out is preserved. A fresh, no-session
     // record (or daemon mode, which can't punch) still starts a new session.
     const auto activeDir = engine.getActiveSessionDir();
+    const auto activeAudioDir = activeDir.getChildFile ("Audio Files");
+    const auto takeScanDir = activeAudioDir.isDirectory() ? activeAudioDir : activeDir;
+    const bool existingTakeMedia = takeScanDir.isDirectory()
+        && ! takeScanDir.findChildFiles (juce::File::findFiles, false,
+                                         "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff").isEmpty();
     bool continueTake = activeDir.isDirectory()
-                        && engine.getPlayer().isLoaded()
+                        && (engine.getPlayer().isLoaded() || existingTakeMedia)
                         && ! daemonModeActive();
     juce::int64 punchAt = -1;
     // Where does the take continue from? The EDIT cursor if you set one (click
@@ -442,9 +470,14 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind)
     const bool externalCapture = engine.isRecording() && ! localRecording;
 
     bool sessionStateSaved = true;
+    juce::String finalizationError;
     if (captureSupervisor.isDaemonRecording() || externalCapture)
     {
-        if (! captureSupervisor.isAttached() || ! captureSupervisor.stopRecording())
+        bool daemonStopped = false;
+        juce::String daemonStopError;
+        const bool cleanStop = captureSupervisor.isAttached()
+                            && captureSupervisor.stopRecording (&daemonStopped, &daemonStopError);
+        if (! cleanStop && ! daemonStopped)
         {
             showStatus ("Daemon did not confirm STOP; take may still be recording");
             return false;
@@ -462,6 +495,13 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind)
             // has an open media descriptor. The audio stop may succeed, but
             // there is nowhere to persist the project state; that is not a
             // clean finalisation and must block quit/report failure.
+            sessionStateSaved = false;
+        }
+        if (! cleanStop)
+        {
+            finalizationError = daemonStopError.isNotEmpty()
+                                  ? daemonStopError
+                                  : juce::String ("Recording stopped, but daemon finalisation failed");
             sessionStateSaved = false;
         }
     }
@@ -484,9 +524,11 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind)
                          juce::dontSendNotification);
     if (! sessionStateSaved)
     {
-        showStatus (recorder.hasReportWriteFailed()
-            ? "Recording stopped, but the integrity report could not be saved -- check disk permissions / free space"
-            : "Recording stopped, but session state could not be saved -- check disk permissions / free space");
+        showStatus (finalizationError.isNotEmpty()
+            ? finalizationError
+            : recorder.hasReportWriteFailed()
+                ? "Recording stopped, but the integrity report could not be saved -- check disk permissions / free space"
+                : "Recording stopped, but session state could not be saved -- check disk permissions / free space");
         return false;
     }
     if (localRecording && engine.hasStereoMixWriteFailed())
@@ -674,6 +716,21 @@ void MainComponent::onBackupClicked()
         if (self == nullptr) return;
         auto dir = fc.getResult();
         if (dir.getFullPathName().isEmpty()) return;
+        if ((! dir.isDirectory() && ! dir.createDirectory().wasOk())
+            || ! zynforge::preflight::volumeWritable (dir))
+        {
+            self->backupButton.setButtonText ("BACKUP !");
+            self->showStatus ("Backup folder is not writable");
+            return;
+        }
+        const auto rejection = MultitrackRecorder::mirrorRootRejection (
+            dir, self->engine.getActiveSessionDir(), {}, {});
+        if (rejection.isNotEmpty())
+        {
+            self->backupButton.setButtonText ("BACKUP !");
+            self->showStatus ("Backup folder rejected: " + rejection);
+            return;
+        }
         self->engine.setBackupDirectory (dir);
         self->backupButton.setButtonText ("BACKUP OK");
         self->showStatus ("Backup folder -> " + dir.getFileName());

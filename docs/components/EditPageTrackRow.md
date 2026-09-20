@@ -1,12 +1,12 @@
 # EditPage::TrackRow
 
-`Source/UI/EditPage.cpp` (inner class, 2600+ lines) — the per-track horizontal row in the EDIT view.
+`Source/UI/EditTrackRow.h` (`EditPage::TrackRow`, included only by `EditPage.cpp`) — the per-track horizontal row in the EDIT view.
 
 ## Description
 
 Each row has a fixed-width header on the left (colour wash, name, R / MUTE / SOLO mirrors, lane-mode picker, size handle) and a scrollable content pane on the right (waveform, automation lane overlay, clip handles, fades, crossfades, transient ticks, edit cursor, playhead, marker ticks). Painted at 24 Hz when visible, gated off when neither visible nor recording.
 
-**This is the largest single class in the codebase** (~2600 lines, nested inside `EditPage`). Slated for promotion to a file-scope class with its own `EditPageTrackRow.h` in a future refactor — needed first because the class definition is inline in `EditPage.cpp`, blocking any sane split.
+The row and shared timeline mapping/constants were extracted from the former `EditPage.cpp` god file into `EditTrackRow.h`. It remains a nested class for access/layout compatibility, but its 4,000+ lines no longer obscure the owning page implementation.
 
 ## When to use
 
@@ -48,19 +48,21 @@ Switching mode: per-row VIEW menu in the header. The toolbar's `Param` choice AL
 
 | Preset | Pixels |
 |---|---|
-| XS | 36 |
-| S  | 48 |
-| M  | 64 |
-| L  | 96 |
-| XL | 128 |
-| XXL| 192 |
-| Mega | 320 |
+| Micro | 28 |
+| Mini | 50 |
+| Small | 80 |
+| Medium | 110 |
+| Large | 160 |
+| Jumbo | 220 |
+| Extreme | 320 |
 | FitToWindow | viewport / row count |
 | Custom (drag-resize) | engineer-set |
 
 ## Tools (per-mouse-event)
 
 Recording arm changes go through the engine and are refused during a take. Locked clips are protected from split/ripple/crop movement. Reordering delegates to the shared track transaction so stereo pairs and media/state move together; successful topology changes clear old index-based undo and clipboard state. Empty initialized arrangements stay silent after reload/export, and pasted clips retain source-file/channel identity even on previously unrecorded tracks. These behaviors are covered by the September engine regressions; mouse/hit-test workflows still require native UI checks.
+
+Normalize and per-clip Consolidate launch the engine's asynchronous arrangement workers. The row disables itself while work is active, applies undo only after a successful current-session result, and uses a `SafePointer` for completion. Main-menu Strip Silence/Consolidate follow the same contract. Local or daemon recording and an existing session-I/O job disable destructive editing.
 
 Reads `EditToolsBar::getTool()` and `AutomationToolbar::getTool()` to bias hit-testing:
 
@@ -115,12 +117,12 @@ Only one drag-in-progress at a time:
 
 ## Accessibility
 
-- Mouse-driven; keyboard navigation through automation points isn't wired
+- Automation points support keyboard previous/next, value nudge, and delete through the EDIT focus model
 - Tooltips on the per-row VIEW menu
 - Edit cursor doubles as visual focus indicator when no audio is loaded (engineer can drop markers on an empty timeline)
 
 ## Known limits
 
-- The class is huge. Splitting requires moving to file-scope first.
+- The class remains large and nested, even after extraction to `EditTrackRow.h`; a later split still requires a clearer row-model/component boundary.
 - Drag-edit gestures are mouse-only; tablets are second-class.
 - Per-row visibility (Memory Location recall) shows/hides via `setVisible` but doesn't reflow the row above/below — they stay in place.

@@ -133,7 +133,24 @@ namespace zynforge::capture
             case Action::StopRecording:
             {
                 recorder.stopRecording();
-                Reply r; r.ok = true; r.id = c.id;
+                const bool clean = ! recorder.hasPrimaryFailed()
+                                && ! recorder.hasBackupFailed()
+                                && ! recorder.anyMirrorFailed()
+                                && recorder.getMirrorsSkippedAtStart() == 0
+                                && ! recorder.hasRecoveryMarkerFailed()
+                                && ! recorder.hasReportWriteFailed();
+                Reply r; r.ok = clean; r.completed = true; r.id = c.id;
+                if (! clean)
+                {
+                    juce::StringArray failures;
+                    if (recorder.hasPrimaryFailed()) failures.add ("primary audio write failed");
+                    if (recorder.hasBackupFailed()) failures.add ("backup audio write failed");
+                    if (recorder.anyMirrorFailed()) failures.add ("mirror audio write failed");
+                    if (recorder.getMirrorsSkippedAtStart() > 0) failures.add ("configured mirror did not open");
+                    if (recorder.hasRecoveryMarkerFailed()) failures.add ("recovery marker failed");
+                    if (recorder.hasReportWriteFailed()) failures.add ("integrity report failed");
+                    r.error = "recording stopped, but finalisation failed: " + failures.joinIntoString (", ");
+                }
                 server.sendStatus (buildStatus());
                 server.sendReply (r);
                 break;
@@ -197,12 +214,20 @@ namespace zynforge::capture
                     if (xml == nullptr) { r.error = "missing device configuration"; server.sendReply (r); break; }
                     deviceManager.removeAudioCallback (this);
                     const auto error = deviceManager.initialise (256, 0, xml.get(), false);
-                    if (error.isNotEmpty()) { r.error = error; server.sendReply (r); break; }
-                    deviceManager.addAudioCallback (this);
-                    deviceManager.removeAudioCallback (this);
+                    if (error.isNotEmpty())
+                    {
+                        // Keep the previously usable callback alive after a
+                        // rejected reconfiguration. The device manager may
+                        // have retained/recovered its old device.
+                        deviceManager.addAudioCallback (this);
+                        r.error = error; server.sendReply (r); break;
+                    }
                     auto* device = deviceManager.getCurrentAudioDevice();
                     if (device == nullptr || std::abs (device->getCurrentSampleRate() - (double) cfg["sampleRate"]) > 0.5)
-                    { r.error = "requested capture sample rate unavailable"; server.sendReply (r); break; }
+                    {
+                        deviceManager.addAudioCallback (this);
+                        r.error = "requested capture sample rate unavailable"; server.sendReply (r); break;
+                    }
                 }
                 recorder.setTrackCount (tracks->size());
                 for (int i = 0; i < tracks->size(); ++i)
@@ -258,6 +283,17 @@ namespace zynforge::capture
 
     EngineStatus CaptureDaemon::buildStatus()
     {
+        const auto nowMs = juce::Time::getMillisecondCounterHiRes();
+        if (! recorder.isRecording())
+        {
+            recorder.updateDiskHealth (0);
+            lastDiskHealthUpdateMs = nowMs;
+        }
+        else if (nowMs - lastDiskHealthUpdateMs >= 1000.0)
+        {
+            recorder.updateDiskHealth (recorder.estimateBytesPerSecondForArmedTracks());
+            lastDiskHealthUpdateMs = nowMs;
+        }
         EngineStatus s;
         s.recording      = recorder.isRecording();
         s.sessionPath    = recorder.getActiveSessionDir().getFullPathName();
@@ -272,6 +308,13 @@ namespace zynforge::capture
         s.numTracks      = recorder.getNumTracks();
         s.captureFormat  = (int) recorder.getCaptureFormat();
         s.backupActive   = recorder.isBackupActive();
+        s.primaryFailed  = recorder.hasPrimaryFailed();
+        s.backupFailed   = recorder.hasBackupFailed();
+        s.mirrorFailed   = recorder.anyMirrorFailed();
+        s.mirrorsSkipped = recorder.getMirrorsSkippedAtStart();
+        s.recoveryMarkerFailed = recorder.hasRecoveryMarkerFailed();
+        s.reportWriteFailed = recorder.hasReportWriteFailed();
+        s.diskStruggling = recorder.isDiskStruggling();
         s.tracks.reserve ((size_t) s.numTracks);
         for (int i = 0; i < s.numTracks; ++i)
         {

@@ -87,6 +87,13 @@ namespace zynforge
         int           numTracks   { 0 };
         int           armedTracks { 0 };
         bool          backupActive { false };
+        bool          primaryFailed { false };
+        bool          backupFailed { false };
+        bool          mirrorFailed { false };
+        int           mirrorsSkipped { 0 };
+        bool          recoveryMarkerFailed { false };
+        bool          reportWriteFailed { false };
+        bool          diskStruggling { false };
         int           captureFormat { 0 };     // CaptureFormat as int
         std::vector<TrackStatus> tracks;
 
@@ -112,6 +119,13 @@ namespace zynforge
             o->setProperty ("numTracks",   numTracks);
             o->setProperty ("armedTracks", armedTracks);
             o->setProperty ("backupActive", backupActive);
+            o->setProperty ("primaryFailed", primaryFailed);
+            o->setProperty ("backupFailed", backupFailed);
+            o->setProperty ("mirrorFailed", mirrorFailed);
+            o->setProperty ("mirrorsSkipped", mirrorsSkipped);
+            o->setProperty ("recoveryMarkerFailed", recoveryMarkerFailed);
+            o->setProperty ("reportWriteFailed", reportWriteFailed);
+            o->setProperty ("diskStruggling", diskStruggling);
             o->setProperty ("captureFormat", captureFormat);
             juce::Array<juce::var> arr;
             for (const auto& t : tracks) arr.add (t.toJson());
@@ -141,6 +155,13 @@ namespace zynforge
             s.numTracks   = (int) v.getProperty ("numTracks", 0);
             s.armedTracks = (int) v.getProperty ("armedTracks", 0);
             s.backupActive = (bool) v.getProperty ("backupActive", false);
+            s.primaryFailed = (bool) v.getProperty ("primaryFailed", false);
+            s.backupFailed = (bool) v.getProperty ("backupFailed", false);
+            s.mirrorFailed = (bool) v.getProperty ("mirrorFailed", false);
+            s.mirrorsSkipped = (int) v.getProperty ("mirrorsSkipped", 0);
+            s.recoveryMarkerFailed = (bool) v.getProperty ("recoveryMarkerFailed", false);
+            s.reportWriteFailed = (bool) v.getProperty ("reportWriteFailed", false);
+            s.diskStruggling = (bool) v.getProperty ("diskStruggling", false);
             s.captureFormat = (int) v.getProperty ("captureFormat", 0);
             if (auto* a = v.getProperty ("tracks", {}).getArray())
                 for (const auto& tv : *a)

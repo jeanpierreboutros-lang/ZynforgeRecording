@@ -2,11 +2,11 @@
 
 ## Philosophy and Goals
 
-**Latest verified build (2026-09-15):** application code through `df5ad36` is pushed and installed. A fresh macOS-12 universal Release passes **350 test groups / 0 failures** on arm64 and x86_64, ASan+UBSan Debug passes 350/0, and [GitHub run 34986170067](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/34986170067) passes clean Debug/Release builds and tests; Xcode static analysis has no app-owned diagnostics, while the design audit, 27 invariant checks, deep/strict bundle verification and final diff checks are clean. The exact installed binary also passes 350/0 and launches natively. Deeper native UI automation, physical devices, actual power loss and the planned three-hour/56-input rehearsal remain unverified. See [AUDIT_REPORT_2026-09-15.md](AUDIT_REPORT_2026-09-15.md), [SHOW-READINESS.md](SHOW-READINESS.md) and [INSTALL.md](INSTALL.md).
+**Latest verified build (2026-09-20):** the universal Release build and matching protocol-v3 helper are installed locally. The in-app runner passes **358 test groups / 0 failures**; the design audit, invariant audit and final diff checks are clean. Deeper native UI automation, physical devices, actual power loss and the planned three-hour/56-input rehearsal remain unverified. See [AUDIT_FIXES_2026-09-20.md](AUDIT_FIXES_2026-09-20.md), [SHOW-READINESS.md](SHOW-READINESS.md) and [INSTALL.md](INSTALL.md).
 
-**September regression coverage:** `SeptemberRegressionTests.cpp` covers backup collision, frozen capture arms, empty arrangements, extended cross-track playback, missing sources, locks/takes, replacement automation snapshots, session UUID round-trip, reorder/delete persistence, mixed stereo topology, rollback/interrupted transactions, seamless loops, canonical project lookup and concurrent/failing atomic writes. Dedicated import and click-render suites cover cancellation, collision and transactional installation. Companion tests cover malformed pre-auth input; AAF tests cover both 16-bit limits; packaging is gated by strict code-sign verification. The current 41 findings are mapped in [the 2026-09-15 report](AUDIT_REPORT_2026-09-15.md); the prior 32 remain mapped in [the 2026-09-12 report](AUDIT_FIXES_2026-09-12.md).
+**September regression coverage:** `SeptemberRegressionTests.cpp` covers backup collision, frozen capture arms, empty arrangements, extended cross-track playback, missing sources, locks/takes, replacement automation snapshots, session UUID round-trip, reorder/delete persistence, mixed stereo topology, rollback/interrupted transactions, seamless loops, canonical project lookup and concurrent/failing atomic writes. `AuditFixTests.cpp` additionally covers cross-container fresh-take protection, explicit continue, unavailable/persisted backups, edited-arrangement and all-silent Strip Silence, daemon-record playback refusal, and consolidation beyond `_999`. Capture protocol/link tests cover completion state and command rejection before Hello; audio-callback tests cover StereoMix without physical stream outputs. Dedicated import and click-render suites cover cancellation, collision and transactional installation. Companion tests cover malformed pre-auth input; AAF tests cover both 16-bit limits; packaging is gated by strict code-sign verification. The latest 16 findings are mapped in [the 2026-09-20 fixes](AUDIT_FIXES_2026-09-20.md); earlier passes remain in [the 2026-09-15 report](AUDIT_REPORT_2026-09-15.md) and [the 2026-09-12 report](AUDIT_FIXES_2026-09-12.md).
 
-The current harness total is **350 test groups**. Historical paragraphs below retain the counts that were accurate for their dated audit passes.
+The current harness total is **358 test groups**. Historical paragraphs below retain the counts that were accurate for their dated audit passes.
 
 ZynForge Recording is a live-stage tool. The cost of a regression discovered in front of an audience is qualitatively higher than the cost of a regression in a typical desktop app. The testing strategy reflects that: **catch crashes and data loss before the audience does, even at the cost of some manual effort.**
 
@@ -81,11 +81,12 @@ log show --process "Zynforge Recording" \
 ```bash
 # Stop takes and quit GUI + daemon gracefully before this isolated test run.
 # Never run process-name-wide kill commands on a recording workstation.
-BIN="build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app/Contents/MacOS/Zynforge Recording"
-"$BIN" --run-tests
-# Results stream to stderr AND ~/Library/Logs/Zynforge/test-report.log.
-# Check the report's mtime before trusting the pass count -- a stale
-# report means the run didn't actually fire (e.g. LaunchServices intercept).
+APP="build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
+open -W -n "$APP" --args --run-tests
+# Launch the bundle through LaunchServices. On newer macOS, invoking the raw
+# GUI executable can abort in NSApplication registration before tests start.
+# Results land in ~/Library/Logs/Zynforge/test-report.log. Check its mtime and
+# final summary; a stale report means the run did not actually fire.
 tail -1 "$HOME/Library/Logs/Zynforge/test-report.log"   # "[zynforge tests] N test groups, 0 failure(s)"
 ```
 
@@ -118,7 +119,7 @@ This is the same failure mode as the stale test-report mtime below, one layer do
 
 **Test isolation:** the suite is safe to run on your own machine — a test-mode `AudioEngine` points its `appProps` at a throwaway `zynforge-test.settings` in the temp dir, so recording/pref-mutating tests can't corrupt your real `.settings` (`activeSessionDir`, recent list). This was a real bug (tests left the app reopening a deleted scratch session); `EngineStateTests` asserts the test engine's settings file lives under the temp dir. Tests that touch the engine should set `AudioEngine::setTestModeSkipAudioInit(true)` before constructing it.
 
-Notable suites: `CompanionServerTests` (loopback server end-to-end), `MenuDispatchTests` (id-collision + dispatch-range guard), `CompoundFileTests`/`FastHashTests`/`SessionBackupTests` (capture-side helpers), `AudioCallbackTests` (audio-thread integration, incl. RF64 policy + 64-ch throughput + the windowed offline-render equivalence), `PreflightTests` (measured disk-speed/writability/headroom), `QcAnalyzerTests` (peak/clip/floor against synthesized WAVs), `SongDetectorTests` (multi-track quorum, incl. an always-hot ambient mic detecting nothing alone), `CrashScanTests` (.ips filter + summary), and `ConsoleLinkTests` (full X32 query→stash→flip→restore state machine through a transport seam, plus a real connect→disconnect→reconnect socket-rebind regression).
+Notable suites: `CompanionServerTests` (loopback server end-to-end), `MenuDispatchTests` (id-collision + dispatch-range guard), `CompoundFileTests`/`FastHashTests`/`SessionBackupTests` (capture-side helpers), `AudioCallbackTests` (audio-thread integration, including RF64 policy, 64-channel throughput, StereoMix capture without physical stream outputs, and windowed offline-render equivalence), `AuditFixTests` (record collision, redundancy, Strip Silence, external-record transport, and filename boundaries), `CaptureLinkTests`/`CaptureDaemonTests` (protocol handshake, completion and daemon failure paths), `PreflightTests` (measured disk-speed/writability/headroom), `QcAnalyzerTests` (peak/clip/floor against synthesized WAVs), `SongDetectorTests` (multi-track quorum, incl. an always-hot ambient mic detecting nothing alone), `CrashScanTests` (.ips filter + summary), and `ConsoleLinkTests` (full X32 query→stash→flip→restore state machine through a transport seam, plus a real connect→disconnect→reconnect socket-rebind regression).
 
 ## Code Coverage Expectations
 

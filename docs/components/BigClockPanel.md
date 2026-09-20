@@ -12,7 +12,7 @@ Exactly one instance per `MainComponent`. The host's 10 Hz timer pushes state vi
 
 ## Constructor
 
-When daemon capture is active, the host supplies the daemon's timeline position and sample rate from `EngineStatus`, not the idle local player's counters. The panel formats the values; it does not infer capture success or synchronization. Local and external capture use the same recording-state guard.
+When daemon capture is active, the host supplies the daemon's timeline position and sample rate from `EngineStatus`, not the idle local player's counters. The panel formats the values; it does not infer capture success or synchronization. The host separately surfaces protocol-v3 primary/backup/mirror/recovery/report and disk-health fields, including latched failures after stop. Local and external capture use the same recording-state guard.
 
 ```cpp
 BigClockPanel();

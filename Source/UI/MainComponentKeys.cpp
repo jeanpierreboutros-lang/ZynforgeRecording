@@ -99,6 +99,11 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
     if (key == juce::KeyPress::tabKey
         && dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) == nullptr)
     {
+        if (engine.isRecording())
+        {
+            showStatus ("Transient analysis is unavailable while recording");
+            return true;
+        }
         const auto pos = engine.getPlayer().getPositionSamples();
         // Active-row aware. If the engineer clicked a TrackRow
         // recently, restrict Tab to that one track's onsets;
@@ -108,25 +113,41 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         const int activeRow = editPage != nullptr
                                  ? editPage->getActiveRowTrackIndex() : -1;
         const int restrict  = (activeRow >= 0) ? activeRow + 1 : -1;
-        const auto target = key.getModifiers().isShiftDown()
-                              ? engine.prevTransientSample (pos, restrict)
-                              : engine.nextTransientSample (pos, restrict);
-        if (target >= 0)
+        const bool backwards = key.getModifiers().isShiftDown();
+        auto jump = [this, pos, restrict, backwards]
         {
+            const auto target = backwards ? engine.prevTransientSample (pos, restrict)
+                                          : engine.nextTransientSample (pos, restrict);
+            if (target < 0)
+            {
+                showStatus (backwards ? "No earlier transient"
+                                      : "No later transient (load a session first?)");
+                return;
+            }
             engine.getPlayer().setPositionSamples (target);
             const double tsr = engine.getPlayer().getSampleRate() > 0.0
                                  ? engine.getPlayer().getSampleRate() : 48000.0;
-            showStatus ((key.getModifiers().isShiftDown() ? "Prev transient" : "Next transient")
+            showStatus ((backwards ? "Prev transient" : "Next transient")
                         + juce::String (restrict > 0 ? " (track " + juce::String (restrict) + ")"
                                                       : " (all)")
                         + " -> "
-                        + juce::String ((double) target / tsr, 2) + "s");   // real SR, not hardcoded 48k
-        }
+                        + juce::String ((double) target / tsr, 2) + "s");
+        };
+
+        if (engine.isTransientCacheReady())
+            jump();
+        else if (engine.isTransientCacheBuilding())
+            showStatus ("Analyzing transients in the background...");
         else
         {
-            showStatus (key.getModifiers().isShiftDown()
-                          ? "No earlier transient"
-                          : "No later transient (load a session first?)");
+            showStatus ("Analyzing transients in the background...");
+            juce::Component::SafePointer<MainComponent> self (this);
+            engine.buildTransientCacheAsync ([self, jump = std::move (jump)] (bool ready) mutable
+            {
+                if (self == nullptr) return;
+                if (ready) jump();
+                else       self->showStatus ("Transient analysis cancelled because the session changed");
+            });
         }
         return true;
     }

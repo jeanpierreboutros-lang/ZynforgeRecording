@@ -212,6 +212,182 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
+            beginTest ("Fresh recording refuses every existing Track container and preserves it");
+            {
+                auto dir = scratchDir ("fresh_collision");
+                const auto audio = dir.getChildFile ("Audio Files");
+                audio.createDirectory();
+                const auto take = audio.getChildFile ("Track_01.flac");
+                {
+                    juce::FlacAudioFormat flac;
+                    std::unique_ptr<juce::FileOutputStream> os (take.createOutputStream());
+                    std::unique_ptr<juce::AudioFormatWriter> writer (
+                        flac.createWriterFor (os.get(), 48000.0, 1, 24, {}, 5));
+                    expect (writer != nullptr);
+                    if (writer != nullptr)
+                    {
+                        os.release();
+                        juce::AudioBuffer<float> b (1, 1024);
+                        juce::FloatVectorOperations::fill (b.getWritePointer (0), 0.35f, 1024);
+                        expect (writer->writeFromAudioSampleBuffer (b, 0, 1024));
+                    }
+                }
+                const auto bytesBefore = take.getSize();
+
+                MultitrackRecorder rec;
+                rec.prepare (48000.0, 256, 1);
+                rec.getTrack (0).armed.store (true);
+                rec.setCaptureFormat (CaptureFormat::Wav24); // different extension must still collide
+                expect (! rec.startRecording (dir), "fresh start must not create a rival Track_01.wav");
+                expectEquals (take.getSize(), bytesBefore);
+                expect (! audio.getChildFile ("Track_01.wav").existsAsFile());
+
+                rec.armContinue (0);
+                expect (rec.startRecording (dir), "explicit continuation should remain allowed");
+                std::vector<float> samples (256, 0.2f);
+                const float* input[] = { samples.data() };
+                rec.processBlock (input, 1, 256);
+                rec.stopRecording();
+                expect (audio.getChildFile ("Track_01_part02.flac").existsAsFile());
+                expectEquals (take.getSize(), bytesBefore, "continuation must not rewrite the base take");
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Unavailable backup fails loud while primary capture remains valid");
+            {
+                auto root = scratchDir ("backup_open_failure");
+                const auto session = root.getChildFile ("Take");
+                const auto badBackup = root.getChildFile ("not-a-folder");
+                expect (badBackup.replaceWithText ("occupied by a file"));
+
+                MultitrackRecorder rec;
+                rec.prepare (48000.0, 256, 1);
+                rec.getTrack (0).armed.store (true);
+                rec.setBackupDirectory (badBackup);
+                expect (rec.startRecording (session), "primary should still start");
+                expect (rec.hasBackupFailed(), "backup open failure must be latched");
+                expect (! rec.isBackupActive(), "a failed backup must not be shown as active");
+                std::vector<float> samples (256, 0.2f);
+                const float* input[] = { samples.data() };
+                rec.processBlock (input, 1, 256);
+                rec.stopRecording();
+                expect (session.getChildFile ("Audio Files/Track_01.wav").existsAsFile());
+                root.deleteRecursively();
+            }
+
+            beginTest ("Backup destination persists across engine restart");
+            {
+                auto chosen = scratchDir ("persisted_backup");
+                juce::File previous;
+                {
+                    AudioEngine eng;
+                    eng.prepareForTests (48000.0, 256);
+                    previous = eng.getRecorder().getBackupDirectory();
+                    eng.setBackupDirectory (chosen);
+                    expect (eng.getRecorder().getBackupDirectory() == chosen);
+                }
+                {
+                    AudioEngine restarted;
+                    restarted.prepareForTests (48000.0, 256);
+                    expect (restarted.getRecorder().getBackupDirectory() == chosen,
+                            "backup folder was forgotten after restart");
+                    restarted.setBackupDirectory (previous);
+                }
+                chosen.deleteRecursively();
+            }
+
+            beginTest ("Strip Silence analyzes the edited arrangement and commits all-silent emptiness");
+            {
+                auto dir = scratchDir ("strip_arrangement");
+                const auto audio = dir.getChildFile ("Audio Files");
+                audio.createDirectory();
+                const auto own = audio.getChildFile ("Track_01.wav");
+                const auto cross = audio.getChildFile ("cross.wav");
+                expect (writeWav (own, 48000.0, 4800, 0.5f));
+                expect (writeWav (cross, 48000.0, 4800, 0.7f));
+
+                AudioEngine eng;
+                eng.prepareForTests (48000.0, 256);
+                eng.setActiveSessionDir (dir);
+                expect (eng.loadSession (dir) > 0);
+                Clip first;
+                first.timelineStartSamples = 0;
+                first.fileLengthSamples = 4800;
+                first.gainDb = -3.0f;
+                Clip second;
+                second.audioFile = cross;
+                second.sourceChannel = 0;
+                second.timelineStartSamples = 9600;
+                second.fileLengthSamples = 4800;
+                second.gainDb = -6.0f;
+                eng.clipsFor (0) = { first, second };
+                eng.getPlayer().setTrackClips (0, eng.clipsFor (0));
+                eng.syncActiveTake (0);
+
+                expectEquals (eng.stripSilence (0, -40.0f, 1000, 100, 0), 2);
+                expectEquals ((int) eng.clipsFor (0).size(), 2);
+                expect (eng.clipsFor (0)[1].audioFile == cross,
+                        "cross-track source must survive Strip Silence");
+                expectEquals (eng.clipsFor (0)[1].sourceChannel, 0);
+                expectWithinAbsoluteError (eng.clipsFor (0)[1].gainDb, -6.0f, 0.001f);
+
+                auto silentDir = scratchDir ("strip_all_silent");
+                const auto silentAudio = silentDir.getChildFile ("Audio Files");
+                silentAudio.createDirectory();
+                expect (writeWav (silentAudio.getChildFile ("Track_01.wav"),
+                                  48000.0, 4800, 0.0f));
+                AudioEngine silent;
+                silent.prepareForTests (48000.0, 256);
+                silent.setActiveSessionDir (silentDir);
+                silent.loadSession (silentDir);
+                expectEquals (silent.stripSilence (0, -40.0f, 100, 100, 0), 0);
+                expect (silent.isTrackArrangementEmpty (0),
+                        "an all-silent result must be an explicit empty arrangement");
+                silentDir.deleteRecursively();
+                dir.deleteRecursively();
+            }
+
+            beginTest ("External capture blocks local playback starts");
+            {
+                auto dir = scratchDir ("external_record_playback_guard");
+                const auto audio = dir.getChildFile ("Audio Files");
+                audio.createDirectory();
+                expect (writeWav (audio.getChildFile ("Track_01.wav"), 48000.0, 4800));
+                AudioEngine eng;
+                eng.prepareForTests (48000.0, 256);
+                eng.setActiveSessionDir (dir);
+                eng.loadSession (dir);
+                eng.setExternalRecording (true);
+                eng.startPlayback();
+                expect (! eng.isPlaying());
+                eng.setExternalRecording (false);
+                eng.startPlayback();
+                expect (eng.isPlaying());
+                eng.stopPlayback();
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Consolidation numbering never overwrites slot 999");
+            {
+                auto dir = scratchDir ("consolidate_1000");
+                const auto audio = dir.getChildFile ("Audio Files");
+                audio.createDirectory();
+                expect (writeWav (audio.getChildFile ("Track_01.wav"), 48000.0, 4800, 0.4f));
+                AudioEngine eng;
+                eng.prepareForTests (48000.0, 256);
+                eng.setActiveSessionDir (dir);
+                eng.loadSession (dir);
+
+                for (int i = 1; i <= 999; ++i)
+                    expect (audio.getChildFile ("Track_01_consolidated_" + juce::String (i) + ".wav")
+                                  .replaceWithText ("occupied"));
+                const auto sentinel = audio.getChildFile ("Track_01_consolidated_999.wav");
+                expect (eng.consolidateRange (0, 0, 100));
+                expectEquals (sentinel.loadFileAsString(), juce::String ("occupied"));
+                expect (audio.getChildFile ("Track_01_consolidated_1000.wav").existsAsFile());
+                dir.deleteRecursively();
+            }
+
             // ── takeIsMultiPart must ignore .punchbase sidecars ──────────────
             beginTest ("takeIsMultiPart ignores punchbase sidecars");
             {

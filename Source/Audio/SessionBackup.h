@@ -28,12 +28,20 @@ namespace zynforge::sessionbackup
         if (! snap.createDirectory().wasOk()) return {};
 
         for (auto& proj : sessionDir.findChildFiles (juce::File::findFiles, false, "*.zfproj"))
-            proj.copyFileTo (snap.getChildFile (proj.getFileName()));
+            if (! proj.copyFileTo (snap.getChildFile (proj.getFileName())))
+            {
+                snap.deleteRecursively();
+                return {};
+            }
 
         for (const auto* n : { "session_mix.json", "session_settings.json", "markers.json" })
         {
             const auto f = sessionDir.getChildFile (n);
-            if (f.existsAsFile()) f.copyFileTo (snap.getChildFile (n));
+            if (f.existsAsFile() && ! f.copyFileTo (snap.getChildFile (n)))
+            {
+                snap.deleteRecursively();
+                return {};
+            }
         }
 
         // Keep the N most recent backup folders; prune older ones.

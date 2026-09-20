@@ -92,9 +92,10 @@ namespace zynforge
                 expect (! versionsCompatible (kProtocolVersion, kProtocolVersion + 1),
                         "mismatched versions must be incompatible (fail loud)");
 
-                Reply r; r.ok = true; r.version = kProtocolVersion;
+                Reply r; r.ok = true; r.completed = true; r.version = kProtocolVersion;
                 const auto rb = Reply::fromJson (r.toJson());
                 expect (rb.ok);
+                expect (rb.completed);
                 expectEquals (rb.version, kProtocolVersion);
                 expectEquals (messageType (r.toJson()), juce::String ("reply"));
 
@@ -102,6 +103,7 @@ namespace zynforge
                 const auto bb = Reply::fromJson (bad.toJson());
                 expect (! bb.ok);
                 expectEquals (bb.error, juce::String ("version mismatch"));
+                expect (! bb.completed);
             }
 
             beginTest ("status messages wrap EngineStatus and round-trip");

@@ -43,6 +43,8 @@ namespace
         obj->setProperty ("pan",      (double) t.pan        .load (std::memory_order_relaxed));
         obj->setProperty ("in",       t.inputRouting .load (std::memory_order_relaxed));
         obj->setProperty ("out",      t.outputRouting.load (std::memory_order_relaxed));
+        obj->setProperty ("outMute",  t.outputMuted.load (std::memory_order_relaxed));
+        obj->setProperty ("stream",   t.streamSend .load (std::memory_order_relaxed));
         obj->setProperty ("mute",     t.muted   .load (std::memory_order_relaxed));
         obj->setProperty ("solo",     t.soloed  .load (std::memory_order_relaxed));
         obj->setProperty ("mon",      t.monitor .load (std::memory_order_relaxed));
@@ -62,6 +64,8 @@ namespace
         eng.setTrackPan   (physical, (float) (double) obj->getProperty ("pan"));
         eng.setTrackInputRouting  (physical, (int) obj->getProperty ("in"));
         eng.setTrackOutputRouting (physical, (int) obj->getProperty ("out"));
+        t.outputMuted.store ((bool) obj->getProperty ("outMute"), std::memory_order_relaxed);
+        t.streamSend .store ((bool) obj->getProperty ("stream"),  std::memory_order_relaxed);
         t.muted   .store ((bool) obj->getProperty ("mute"), std::memory_order_relaxed);
         t.soloed  .store ((bool) obj->getProperty ("solo"), std::memory_order_relaxed);
         t.monitor .store ((bool) obj->getProperty ("mon"),  std::memory_order_relaxed);
@@ -806,6 +810,8 @@ void MainComponent::editZoomToSelection()
 // take around the silence.
 void MainComponent::editStripSilence()
 {
+    if (engine.isRecording()) { showStatus ("Stop recording before running Strip Silence"); return; }
+    if (sessionIoBusy.load()) { showStatus ("Wait for the session operation to finish"); return; }
     auto& player = engine.getPlayer();
     if (! player.isLoaded()) { showStatus ("Load or record a session first"); return; }
 
@@ -873,18 +879,33 @@ void MainComponent::editStripSilence()
         const float  thr = (float) panel->thr.getValue();
         const double sr  = juce::jmax (1.0, self->engine.getPlayer().getSampleRate());
         auto ms = [sr] (juce::Slider& s) { return (juce::int64) (sr * s.getValue() / 1000.0); };
+        const auto targets = self->tracksToEditPhysical();
+        if (targets.empty()) { self->showStatus ("Select at least one track"); return; }
+        if (self->sessionIoBusy.exchange (true))
+        { self->showStatus ("Wait for the session operation to finish"); return; }
         const auto before = self->engine.playlistsToJson();
-        int tracks = 0, clips = 0;
-        for (int phys : self->tracksToEditPhysical())
+        if (self->editPage != nullptr) self->editPage->setEnabled (false);
+        self->showStatus ("Analyzing silence in the background...");
+        self->engine.stripSilenceAsync (
+            targets, thr, ms (panel->sil), ms (panel->clip), ms (panel->pad),
+            [self, before] (int tracks, int clips, bool complete)
         {
-            const int n = self->engine.stripSilence (phys, thr, ms (panel->sil), ms (panel->clip), ms (panel->pad));
-            if (n > 0) { ++tracks; clips += n; }
-        }
-        if (tracks > 0) self->pushClipUndo ("Strip silence", before);
-        if (self->editPage != nullptr) self->editPage->repaint();
-        self->showStatus (tracks > 0 ? "Strip silence: " + juce::String (clips) + " clip(s) on "
-                                        + juce::String (tracks) + " track(s)"
-                                     : juce::String ("Strip silence found nothing to separate"));
+            if (self == nullptr) return;
+            self->sessionIoBusy.store (false);
+            if (self->editPage != nullptr)
+            {
+                self->editPage->setEnabled (! self->engine.isRecording());
+                self->editPage->repaint();
+            }
+            if (tracks > 0) self->pushClipUndo ("Strip silence", before);
+            if (! complete)
+                self->showStatus (tracks > 0
+                    ? "Strip silence completed only part of the selection"
+                    : "Strip silence failed; the arrangement was not changed");
+            else
+                self->showStatus ("Strip silence: " + juce::String (clips)
+                                  + " audible clip(s) on " + juce::String (tracks) + " track(s)");
+        });
     }));
 }
 
@@ -892,16 +913,34 @@ void MainComponent::editStripSilence()
 // file (bakes in gains / fades / clip order).
 void MainComponent::editConsolidateSelection()
 {
+    if (engine.isRecording()) { showStatus ("Stop recording before consolidating audio"); return; }
+    if (sessionIoBusy.load()) { showStatus ("Wait for the session operation to finish"); return; }
     auto& player = engine.getPlayer();
     if (! player.hasLoopRegion()) { showStatus ("Select a range first, then Consolidate"); return; }
     const auto a = player.getLoopStart(), b = player.getLoopEnd();
+    const auto targets = tracksToEditPhysical();
+    if (targets.empty()) { showStatus ("Select at least one track"); return; }
+    if (sessionIoBusy.exchange (true))
+    { showStatus ("Wait for the session operation to finish"); return; }
     const auto before = engine.playlistsToJson();
-    int n = 0;
-    for (int phys : tracksToEditPhysical()) if (engine.consolidateRange (phys, a, b)) ++n;
-    if (n > 0) pushClipUndo ("Consolidate", before);
-    if (editPage != nullptr) editPage->repaint();
-    showStatus (n > 0 ? "Consolidated " + juce::String (n) + " track(s)"
-                      : juce::String ("Nothing to consolidate in the selection"));
+    if (editPage != nullptr) editPage->setEnabled (false);
+    showStatus ("Consolidating audio in the background...");
+    juce::Component::SafePointer<MainComponent> self (this);
+    engine.consolidateRangeAsync (targets, a, b, [self, before] (int n, bool complete)
+    {
+        if (self == nullptr) return;
+        self->sessionIoBusy.store (false);
+        if (self->editPage != nullptr)
+        {
+            self->editPage->setEnabled (! self->engine.isRecording());
+            self->editPage->repaint();
+        }
+        if (n > 0) self->pushClipUndo ("Consolidate", before);
+        self->showStatus (! complete
+            ? (n > 0 ? "Consolidation completed only part of the selection"
+                     : "Consolidation failed; the arrangement was not changed")
+            : "Consolidated " + juce::String (n) + " track(s)");
+    });
 }
 
 // Clear (Delete): remove the audio inside the selected range on every

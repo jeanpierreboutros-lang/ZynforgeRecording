@@ -65,7 +65,7 @@ namespace zynforge::capture
         // first (track count, format, per-track arms), then starts.
         bool startRecording (const juce::File& sessionDir, int trackCount,
                              int captureFormat, const juce::BigInteger& armedTracks);
-        bool stopRecording();
+        bool stopRecording (bool* didStop = nullptr, juce::String* error = nullptr);
         bool configureCapture (const juce::var&);
         juce::String configuredCapture;
         juce::String failedCapture;

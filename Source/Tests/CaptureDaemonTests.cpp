@@ -79,7 +79,22 @@ namespace zynforge
                     }
                 }
                 expect (! audio.getChildFile ("Track_02.wav").existsAsFile());
-                client.disconnect(); daemon.stop(); dir.deleteRecursively();
+
+                const auto failed = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                        .getChildFile ("zf-daemon-finalize-" + juce::Uuid().toString());
+                expect (failed.createDirectory().wasOk());
+                expect (failed.getChildFile ("recording.session").createDirectory().wasOk());
+                expect (failed.getChildFile ("session.report.json").createDirectory().wasOk());
+                Command startFailed; startFailed.action = Action::StartRecording;
+                startFailed.sessionDir = failed.getFullPathName();
+                expect (client.request (startFailed, 3000).ok);
+                Command stopFailed; stopFailed.action = Action::StopRecording;
+                const auto finalised = client.request (stopFailed, 5000);
+                expect (! finalised.ok, "mandatory metadata failure reported a clean stop");
+                expect (finalised.completed, "GUI must know capture actually stopped");
+                expect (finalised.error.containsIgnoreCase ("finalisation"));
+
+                client.disconnect(); daemon.stop(); dir.deleteRecursively(); failed.deleteRecursively();
             }
 
             auto sessionDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
@@ -183,6 +198,8 @@ namespace zynforge
                 { const std::lock_guard<std::mutex> l (mx); if (! r.ok) lastErr = r.error; replies.fetch_add (1); };
 
                 expect (client.connect ("127.0.0.1", daemon.getPort()));
+                expect (client.hello (2000).ok, "handshake failed");
+                replies.store (0);
                 Command play; play.action = Action::StartPlayback;
                 expect (client.send (play));
                 expect (waitUntil ([&] { return replies.load() > 0; }, 2000), "no refusal reply");

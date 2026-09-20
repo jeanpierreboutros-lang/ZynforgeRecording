@@ -3455,43 +3455,44 @@ namespace zynforge
                     case 401: withUndo (locked ? "Unlock clip" : "Lock clip",   [&]{ for (int p : self->editGroupPeers()) self->engine.setClipLocked (p, clipIdx, ! locked); }); return;
                     case 410: withUndo ("Duplicate clip", [&]{ for (int p : self->editGroupPeers()) self->engine.duplicateClip (p, clipIdx); });           return;
                     case 411: withUndo ("Delete clip",    [&]{ for (int p : self->editGroupPeers()) self->engine.deleteClip    (p, clipIdx); });           return;
-                    case 414: withUndo ("Normalize clip", [&]
-                              {
-                                  // One shared gain for the whole (possibly stereo)
-                                  // clip: take the most conservative gain across
-                                  // peers (min => the loudest channel lands at
-                                  // target, the stereo image stays balanced), then
-                                  // apply it to every peer. For a native-stereo
-                                  // pair the L's 2-ch file already spans both
-                                  // channels, so its gain alone covers the pair.
-                                  float g = 0.0f; bool found = false;
-                                  for (int p : self->editGroupPeers())
-                                  {
-                                      const float pg = self->engine.clipNormalizeGainDb (p, clipIdx);
-                                      if (std::isfinite (pg)) { g = found ? juce::jmin (g, pg) : pg; found = true; }
-                                  }
-                                  if (found)
-                                      for (int p : self->editGroupPeers())
-                                          self->engine.setClipGainDb (p, clipIdx, g);
-                              }); return;
-                    case 413: withUndo ("Consolidate clip", [&]
-                              {
-                                  // Flatten the SAME timeline range on every peer.
-                                  // For a native-stereo pair each channel renders
-                                  // to its own mono consolidated file (the R reads
-                                  // file channel 1 via ArrangementSource), so the
-                                  // pair stays stereo instead of collapsing to the
-                                  // LEFT channel only.
-                                  if (auto* cl = self->engine.tryClipsFor (self->index))
-                                      if (clipIdx < (int) cl->size())
-                                      {
-                                          const auto& cc = (*cl)[(size_t) clipIdx];
-                                          const auto s = cc.timelineStartSamples;
-                                          const auto e = cc.timelineStartSamples + cc.fileLengthSamples;
-                                          for (int p : self->editGroupPeers())
-                                              self->engine.consolidateRange (p, s, e);
-                                      }
-                              }); return;
+                    case 414:
+                    {
+                        auto* page = self->findParentComponentOfClass<EditPage>();
+                        if (page != nullptr) page->beginClipEdit();
+                        self->setEnabled (false);
+                        self->engine.normalizeClipGroupAsync (
+                            self->editGroupPeers(), clipIdx, -0.3f,
+                            [self] (bool)
+                        {
+                            if (self == nullptr) return;
+                            self->setEnabled (true);
+                            if (auto* pageNow = self->findParentComponentOfClass<EditPage>())
+                                pageNow->commitClipEdit ("Normalize clip");
+                            self->repaint();
+                        });
+                        return;
+                    }
+                    case 413:
+                    {
+                        auto* clips = self->engine.tryClipsFor (self->index);
+                        if (clips == nullptr || clipIdx >= (int) clips->size()) return;
+                        const auto start = (*clips)[(size_t) clipIdx].timelineStartSamples;
+                        const auto end = start + (*clips)[(size_t) clipIdx].fileLengthSamples;
+                        if (auto* page = self->findParentComponentOfClass<EditPage>())
+                            page->beginClipEdit();
+                        self->setEnabled (false);
+                        self->engine.consolidateRangeAsync (
+                            self->editGroupPeers(), start, end,
+                            [self] (int, bool)
+                        {
+                            if (self == nullptr) return;
+                            self->setEnabled (true);
+                            if (auto* pageNow = self->findParentComponentOfClass<EditPage>())
+                                pageNow->commitClipEdit ("Consolidate clip");
+                            self->repaint();
+                        });
+                        return;
+                    }
                     case 412:
                     {
                         juce::String cur;

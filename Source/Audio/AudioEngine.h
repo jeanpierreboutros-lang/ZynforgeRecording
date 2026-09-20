@@ -218,7 +218,7 @@ namespace zynforge
             // record is always wrong. The UI PLAY button guards this, but
             // network/remote entry points (OSC play, MCU Play) and timecode
             // chase reach here directly, so the guard belongs at the engine.
-            if (recorder.isRecording()) return;
+            if (isRecording()) return;
             const bool wasPlaying = player.isPlaying();
             player.start();
             if (! wasPlaying) midiClockOut.sendStart();
@@ -497,6 +497,14 @@ namespace zynforge
         juce::int64 nextTransientSample (juce::int64 fromSample, int restrictToTrack = -1);
         juce::int64 prevTransientSample (juce::int64 fromSample, int restrictToTrack = -1);
         void invalidateTransientCache();
+        bool isTransientCacheReady() const noexcept
+        { return transientCacheValid.load (std::memory_order_acquire); }
+        bool isTransientCacheBuilding() const noexcept
+        { return transientBuildInProgress.load (std::memory_order_acquire); }
+        // Build the cache without blocking the message thread. completion is
+        // delivered on the message thread and is false if the session changed
+        // (or the engine was invalidated) while analysis was running.
+        void buildTransientCacheAsync (std::function<void (bool)> completion);
 
         // Returns the transient list for a single track index
         // (1-based, matching Track_NN.wav). Empty if not detected
@@ -863,10 +871,24 @@ namespace zynforge
         int  stripSilence (int track, float thresholdDb,
                            juce::int64 minSilenceSamples, juce::int64 minClipSamples,
                            juce::int64 padSamples = 0);
+        // Multi-track background variant used by the UI. File analysis happens
+        // off the message thread; the resulting clip lists are committed back
+        // on it only if the same session is still active. completion receives
+        // (tracksProcessed, audibleClips, fullySuccessful).
+        void stripSilenceAsync (std::vector<int> tracks, float thresholdDb,
+                                juce::int64 minSilenceSamples, juce::int64 minClipSamples,
+                                juce::int64 padSamples,
+                                std::function<void (int, int, bool)> completion);
         // Consolidate [start, end) on one track into a single new flat file
         // (Audio Files/Track_NN_consolidated_K.wav) referenced by one clip,
         // baking in gains / fades / clip order. Returns true on success.
         bool consolidateRange (int track, juce::int64 start, juce::int64 end);
+        // Background multi-track consolidation. Rendering and file writes run
+        // off the message thread; clip-list changes are committed atomically
+        // back on it for the still-active session.
+        void consolidateRangeAsync (std::vector<int> tracks,
+                                    juce::int64 start, juce::int64 end,
+                                    std::function<void (int, bool)> completion);
         // Remove the audio inside [start, end) on one track: split at both
         // edges, then drop every clip that falls fully inside the range
         // (locked clips are spared). Leaves a gap -- non-destructive, the
@@ -945,6 +967,11 @@ namespace zynforge
         // at target, the image is preserved) instead of two independent gains
         // that would skew it. Returns NaN if the clip has no scannable audio.
         float clipNormalizeGainDb (int track, int clipIndex, float targetDbFS = -0.3f);
+        // Peak-scan a mono/stereo edit group off the message thread, then apply
+        // one conservative gain to every unchanged peer clip.
+        void normalizeClipGroupAsync (std::vector<int> tracks, int clipIndex,
+                                      float targetDbFS,
+                                      std::function<void (bool)> completion);
         // Offline (read-only) nearest-zero-crossing search around a timeline
         // sample on a track, within ±windowSamples. Returns the adjusted
         // timeline sample (or the original if no crossing / no audio). Used to
@@ -987,7 +1014,7 @@ namespace zynforge
         void resetAllStripState();
 
         // Forwards to MultitrackRecorder.
-        void setBackupDirectory (const juce::File& dir) { recorder.setBackupDirectory (dir); }
+        void setBackupDirectory (const juce::File& dir);
 
         // N-way mirror destinations. Wraps recorder.setMirrors and
         // persists via appProps so the engineer's mirror setup
@@ -1202,7 +1229,9 @@ namespace zynforge
         // Track_NN.wav). Populated alongside `transientCache` so
         // track-restricted Tab can search the relevant lane only.
         std::vector<std::vector<juce::int64>> transientPerTrack;
-        bool                     transientCacheValid { false };
+        std::atomic<bool>        transientCacheValid { false };
+        std::atomic<bool>        transientBuildInProgress { false };
+        std::atomic<juce::uint64> transientCacheGeneration { 0 };
 
         // Per-track, per-parameter automation. UI-thread only for now
         // (audio thread doesn't yet consume these -- the engineer reads

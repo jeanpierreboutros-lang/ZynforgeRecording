@@ -2402,6 +2402,39 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
+            beginTest ("StereoMix captures live stream sends without physical stream outputs");
+            {
+                auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                               .getChildFile ("zynforge-stereomix-" + juce::Uuid().toString());
+                dir.createDirectory();
+                {
+                    CallbackFixture f (1, 1, 2);
+                    auto& track = f.engine.getRecorder().getTrack (0);
+                    track.armed.store (true);
+                    track.streamSend.store (true);
+                    f.engine.setStreamOutputs (-1, -1); // file capture must not depend on hardware routing
+                    f.engine.setRecordStereoMix (true);
+                    expect (f.engine.startRecording (dir));
+                    f.writeInput (0, 0.5f, 256);
+                    for (int block = 0; block < 32; ++block) f.process (256);
+                    f.engine.stopRecording();
+                }
+
+                const auto mix = dir.getChildFile ("Export Files/StereoMix.wav");
+                expect (mix.existsAsFile(), "StereoMix.wav missing");
+                juce::AudioFormatManager fm; fm.registerBasicFormats();
+                std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (mix));
+                expect (reader != nullptr);
+                if (reader != nullptr)
+                {
+                    juce::AudioBuffer<float> data (2, (int) reader->lengthInSamples);
+                    reader->read (&data, 0, data.getNumSamples(), 0, true, true);
+                    expect (data.getMagnitude (0, 0, data.getNumSamples()) > 0.1f);
+                    expect (data.getMagnitude (1, 0, data.getNumSamples()) > 0.1f);
+                }
+                dir.deleteRecursively();
+            }
+
             beginTest ("Loop region wraps playback from end back to start");
             {
                 const auto dir = recordTestSession (1, 0.5f, 192);   // ~49152 samples

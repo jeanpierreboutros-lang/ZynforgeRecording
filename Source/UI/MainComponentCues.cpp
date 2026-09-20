@@ -157,7 +157,7 @@ void MainComponent::loadSetlistFromActiveSession()
     }
 }
 
-bool MainComponent::saveSetlistToActiveSession() const
+bool MainComponent::saveSetlistToActiveSession (bool writeBackup) const
 {
     const auto proj = findSessionProj (engine.getActiveSessionDir());
     if (proj == juce::File{}) return false;
@@ -237,13 +237,12 @@ bool MainComponent::saveSetlistToActiveSession() const
 
     // Drop a full backup session into Session File Backups/ so a misclicked
     // cue / accidental delete / file corruption is recoverable from the show.
-    writeSessionBackupSnapshot();
-    return ok;
+    return ok && (! writeBackup || writeSessionBackupSnapshot());
 }
 
-void MainComponent::writeSessionBackupSnapshot() const
+bool MainComponent::writeSessionBackupSnapshot() const
 {
-    zynforge::sessionbackup::writeSnapshot (engine.getActiveSessionDir());
+    return zynforge::sessionbackup::writeSnapshot (engine.getActiveSessionDir()).isDirectory();
 }
 
 void MainComponent::jumpToCue (int index)

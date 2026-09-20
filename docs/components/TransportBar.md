@@ -34,7 +34,7 @@ TransportBar (AudioEngine& engine);
 
 ### Capture-daemon host contract
 
-`engine.isRecording()` includes external capture. The host routes STOP, keyboard stop and the recording button's stop action through the same protected stop handler. In daemon mode it waits for acknowledgement before clearing the recording display, reloading completed media or saving the stopped session. A click alone is not evidence that capture has stopped. This does not certify every remote-control path; rehearse any remote surface used at the show.
+`engine.isRecording()` includes external capture. The host routes STOP, keyboard stop and the recording button's stop action through the same protected stop handler. In protocol-v3 daemon mode it waits for a reply that distinguishes command acceptance, capture completion and clean finalization before clearing the recording display, reloading completed media or saving the stopped session. If capture stopped but report/recovery/redundancy finalization failed, the transport resets but the error remains visible; if completion is uncertain, recording state stays armed. A click alone is not evidence that capture has stopped. Playback also refuses at the engine boundary while local or daemon capture is active, covering remote surfaces as well as this bar.
 
 Each transport button is an `IconButton` — a custom-painted button that draws a vector glyph (target ring for RECORD, triangle for PLAY, square for STOP) coloured by the button's "base colour." State logic:
 

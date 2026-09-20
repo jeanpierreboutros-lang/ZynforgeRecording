@@ -15,7 +15,12 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Current Priorities
 
-### Show acceptance — current as of 2026-09-15
+### Show acceptance — current as of 2026-09-20
+
+- [x] Fix all 16 findings from the 2026-09-20 recording-reliability follow-up: fresh-take collision protection, truthful daemon/redundancy failures, backup persistence, StereoMix capture, external-record transport guards, CaptureLink synchronization/handshake, arrangement-aware background edits, mixer-state persistence, disk telemetry, daemon reconfiguration recovery, autosave transactions, and unbounded Consolidate naming. See [AUDIT_FIXES_2026-09-20.md](AUDIT_FIXES_2026-09-20.md).
+- [x] Pass the universal Release build, 358 test groups with zero failures, invariant audit, design audit and final diff checks.
+- [x] Install the current bundle and matching protocol-v3 helper at `/Applications/Zynforge Recording.app`, preserving the prior installation at `/Applications/Zynforge Recording.app.backup-20260920-before-protocol-v3`. See [INSTALL.md](INSTALL.md).
+- [x] Update the living architecture, workflow, testing, field-test, show-readiness, component, changelog and installation documentation for the new behavior.
 
 - [x] Fix all 41 findings from the 2026-09-15 audit; pass 350 test groups on both slices of a fresh macOS-12 universal Release build and in ASan+UBSan Debug; pass Xcode analysis with no app-owned diagnostics, 27 invariants, design audit, strict bundle verification and GitHub Debug/Release CI. See [AUDIT_REPORT_2026-09-15.md](AUDIT_REPORT_2026-09-15.md).
 - [x] Accept the local Xcode 27 license and verify the universal arm64+x86_64 build, both architecture test runs, static analyzer, deployment load commands and final diff.

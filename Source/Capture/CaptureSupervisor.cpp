@@ -194,13 +194,21 @@ namespace zynforge::capture
         return true;
     }
 
-    bool CaptureSupervisor::stopRecording()
+    bool CaptureSupervisor::stopRecording (bool* didStop, juce::String* error)
     {
-        if (! isAttached()) return false;
+        if (didStop != nullptr) *didStop = false;
+        if (error != nullptr) error->clear();
+        if (! isAttached())
+        {
+            if (error != nullptr) *error = "capture daemon is not attached";
+            return false;
+        }
         Command stop; stop.action = Action::StopRecording;
         // Await the daemon's ack (bounded). Closing files + manifest can take a
         // moment, so allow a generous timeout.
         const auto reply = client.request (stop, 10000);
+        if (didStop != nullptr) *didStop = reply.completed;
+        if (error != nullptr) *error = reply.error;
         return reply.ok;
     }
 

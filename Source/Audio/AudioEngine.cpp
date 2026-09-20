@@ -241,7 +241,7 @@ namespace zynforge
             // (StereoMix.wav, StereoMix_02.wav, ...); the first take keeps the
             // historic name so existing workflows are unchanged.
             auto path = exportDir.getChildFile ("StereoMix.wav");
-            for (int take = 2; path.existsAsFile() && take < 1000; ++take)
+            for (int take = 2; path.existsAsFile(); ++take)
                 path = exportDir.getChildFile ("StereoMix_"
                                                + juce::String (take).paddedLeft ('0', 2) + ".wav");
 
@@ -807,6 +807,13 @@ namespace zynforge
         s.truePeakDb       = getTruePeakDb();
         s.numTracks        = recorder.getNumTracks();
         s.backupActive     = recorder.isBackupActive();
+        s.primaryFailed    = recorder.hasPrimaryFailed();
+        s.backupFailed     = recorder.hasBackupFailed();
+        s.mirrorFailed     = recorder.anyMirrorFailed();
+        s.mirrorsSkipped   = recorder.getMirrorsSkippedAtStart();
+        s.recoveryMarkerFailed = recorder.hasRecoveryMarkerFailed();
+        s.reportWriteFailed = recorder.hasReportWriteFailed();
+        s.diskStruggling   = recorder.isDiskStruggling();
         s.captureFormat    = (int) recorder.getCaptureFormat();
 
         constexpr juce::uint32 kDefaultSwatch = 0xff3a3f44;   // neutral graphite
@@ -859,6 +866,8 @@ namespace zynforge
             o->setProperty ("armed",     t.armed  .load (std::memory_order_relaxed));
             o->setProperty ("inRoute",   t.inputRouting .load (std::memory_order_relaxed));
             o->setProperty ("outRoute",  t.outputRouting.load (std::memory_order_relaxed));
+            o->setProperty ("outputMuted", t.outputMuted.load (std::memory_order_relaxed));
+            o->setProperty ("streamSend",  t.streamSend .load (std::memory_order_relaxed));
             o->setProperty ("stereo",    t.isStereo .load (std::memory_order_relaxed));
             o->setProperty ("isBus",     t.isBus    .load (std::memory_order_relaxed));
             o->setProperty ("vcaGroup",  t.vcaGroup .load (std::memory_order_relaxed));
@@ -883,7 +892,7 @@ namespace zynforge
         // (adds isBus to the per-strip record). Absence => pre-v1 (legacy):
         // every field is still read with hasProperty guards, so old files
         // load fine and missing fields fall back to safe defaults.
-        root->setProperty ("formatVersion", 1);
+        root->setProperty ("formatVersion", 2);
         root->setProperty ("trackCount", recorder.getNumTracks());
         root->setProperty ("strips", arr);
 
@@ -977,6 +986,12 @@ namespace zynforge
                     t.soloed .store (o->hasProperty ("soloed")  && (bool) o->getProperty ("soloed"),  std::memory_order_relaxed);
                     t.monitor.store (o->hasProperty ("monitor") && (bool) o->getProperty ("monitor"), std::memory_order_relaxed);
                     t.armed  .store (o->hasProperty ("armed")   && (bool) o->getProperty ("armed"),   std::memory_order_relaxed);
+                    t.outputMuted.store (o->hasProperty ("outputMuted")
+                                           && (bool) o->getProperty ("outputMuted"),
+                                         std::memory_order_relaxed);
+                    t.streamSend.store (o->hasProperty ("streamSend")
+                                          && (bool) o->getProperty ("streamSend"),
+                                        std::memory_order_relaxed);
 
                     // Aux sends (per-session, authoritative). Absent on an
                     // older session_mix.json -> leave the slots at their
@@ -1022,17 +1037,16 @@ namespace zynforge
 
     void AudioEngine::invalidateTransientCache()
     {
-        transientCacheValid = false;
+        transientCacheGeneration.fetch_add (1, std::memory_order_acq_rel);
+        transientCacheValid.store (false, std::memory_order_release);
         transientCache.clear();
         transientPerTrack.clear();
     }
 
-    // Lazy build. Scans every Track_NN.wav (in either Audio Files/
-    // or the session root) and stores onsets BOTH per-track AND
-    // pooled+dedupe into one sorted list. Sequential, no threading
-    // -- the engineer presses Tab once and the first hit pays the
-    // analysis cost (typically sub-second for a 24-track 5-min
-    // session); the cache survives for the rest of the session.
+    // Cache builder. Scans every Track_NN file (in either Audio Files/
+    // or the session root) and stores onsets BOTH per-track AND pooled +
+    // deduped. The UI invokes it through buildTransientCacheAsync; the
+    // synchronous query fallback remains useful to non-UI callers/tests.
     static void
     buildTransientCacheInto (const juce::File& sessionDir,
                              std::vector<juce::int64>& pooledOut,
@@ -1082,12 +1096,56 @@ namespace zynforge
 
     static const std::vector<juce::int64> emptyTransients;
 
+    void AudioEngine::buildTransientCacheAsync (std::function<void (bool)> completion)
+    {
+        if (transientCacheValid.load (std::memory_order_acquire))
+        {
+            if (completion) completion (true);
+            return;
+        }
+
+        bool expected = false;
+        if (! transientBuildInProgress.compare_exchange_strong (
+                expected, true, std::memory_order_acq_rel))
+            return; // The first request owns completion; repeated Tab is harmless.
+
+        const auto sessionDir = getActiveSessionDir();
+        const auto generation = transientCacheGeneration.load (std::memory_order_acquire);
+        const auto handle = asyncHandle;
+        juce::Thread::launch ([handle, sessionDir, generation,
+                               completion = std::move (completion)] () mutable
+        {
+            std::vector<juce::int64> pooled;
+            std::vector<std::vector<juce::int64>> perTrack;
+            buildTransientCacheInto (sessionDir, pooled, perTrack);
+
+            juce::MessageManager::callAsync (
+                [handle, sessionDir, generation, pooled = std::move (pooled),
+                 perTrack = std::move (perTrack), completion = std::move (completion)] () mutable
+            {
+                auto* engine = handle->load (std::memory_order_acquire);
+                if (engine == nullptr) return;
+
+                const bool current = engine->getActiveSessionDir() == sessionDir
+                                  && engine->transientCacheGeneration.load (std::memory_order_acquire) == generation;
+                if (current)
+                {
+                    engine->transientCache = std::move (pooled);
+                    engine->transientPerTrack = std::move (perTrack);
+                    engine->transientCacheValid.store (true, std::memory_order_release);
+                }
+                engine->transientBuildInProgress.store (false, std::memory_order_release);
+                if (completion) completion (current);
+            });
+        });
+    }
+
     const std::vector<juce::int64>& AudioEngine::getTransientsForTrack (int trackIdx)
     {
-        if (! transientCacheValid)
+        if (! transientCacheValid.load (std::memory_order_acquire))
         {
             buildTransientCacheInto (getActiveSessionDir(), transientCache, transientPerTrack);
-            transientCacheValid = true;
+            transientCacheValid.store (true, std::memory_order_release);
         }
         if (trackIdx < 1 || trackIdx > (int) transientPerTrack.size()) return emptyTransients;
         return transientPerTrack[(size_t) trackIdx - 1];
@@ -1095,10 +1153,10 @@ namespace zynforge
 
     juce::int64 AudioEngine::nextTransientSample (juce::int64 fromSample, int restrictToTrack)
     {
-        if (! transientCacheValid)
+        if (! transientCacheValid.load (std::memory_order_acquire))
         {
             buildTransientCacheInto (getActiveSessionDir(), transientCache, transientPerTrack);
-            transientCacheValid = true;
+            transientCacheValid.store (true, std::memory_order_release);
         }
         const auto* list = (restrictToTrack >= 1 && restrictToTrack <= (int) transientPerTrack.size())
                               ? &transientPerTrack[(size_t) restrictToTrack - 1]
@@ -1110,10 +1168,10 @@ namespace zynforge
 
     juce::int64 AudioEngine::prevTransientSample (juce::int64 fromSample, int restrictToTrack)
     {
-        if (! transientCacheValid)
+        if (! transientCacheValid.load (std::memory_order_acquire))
         {
             buildTransientCacheInto (getActiveSessionDir(), transientCache, transientPerTrack);
-            transientCacheValid = true;
+            transientCacheValid.store (true, std::memory_order_release);
         }
         const auto* list = (restrictToTrack >= 1 && restrictToTrack <= (int) transientPerTrack.size())
                               ? &transientPerTrack[(size_t) restrictToTrack - 1]
@@ -1734,6 +1792,15 @@ namespace zynforge
         autoArmOnInputFlag.store (appProps->getBoolValue ("autoArmOnInput", false),
                                    std::memory_order_release);
 
+        // Keep the configured path even while a removable backup drive is
+        // offline. Readiness can then report it as unavailable, and recording
+        // resumes using it automatically when the volume returns.
+        {
+            const auto savedBackup = appProps->getValue ("backupDirectory", {});
+            if (savedBackup.isNotEmpty())
+                recorder.setBackupDirectory (juce::File (savedBackup));
+        }
+
         // Restore N-way mirror destinations from prefs. Skip any whose
         // root no longer exists (drive unplugged); the engineer can
         // re-add it via the UI when it's back.
@@ -1942,6 +2009,14 @@ namespace zynforge
             automationData.clear();
         }
         clearAllAutomationTrims();
+        // These controls are session routing, not installation preferences.
+        // Reset them before a missing/legacy session_mix.json is loaded so the
+        // previous show's physical-output safety state cannot leak forward.
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+        {
+            recorder.getTrack (i).outputMuted.store (false, std::memory_order_relaxed);
+            recorder.getTrack (i).streamSend .store (false, std::memory_order_relaxed);
+        }
         markers.clearContext();
         invalidateTransientCache();
         editCursorSample.store (-1, std::memory_order_release);
@@ -2071,6 +2146,17 @@ namespace zynforge
     {
         streamOutL.store (l, std::memory_order_relaxed);
         streamOutR.store (r, std::memory_order_relaxed);
+    }
+
+    void AudioEngine::setBackupDirectory (const juce::File& dir)
+    {
+        recorder.setBackupDirectory (dir);
+        if (appProps != nullptr)
+        {
+            reloadAppPropsBeforeWrite();
+            appProps->setValue ("backupDirectory", dir.getFullPathName());
+            appProps->saveIfNeeded();
+        }
     }
 
     void AudioEngine::setTrackStream (int channelIndex, bool enabled)
@@ -2707,7 +2793,11 @@ namespace zynforge
             stereoMixScratch.clear();
         }
 
-        if (sL >= 0 && sR >= 0 && sL < numOutputs && sR < numOutputs)
+        const bool haveStreamOutputs = sL >= 0 && sR >= 0 && sL < numOutputs && sR < numOutputs;
+        // File capture must not depend on physical stream outputs being
+        // configured. A recording-only rig often has no spare output pair but
+        // still expects StereoMix.wav to contain the selected live inputs.
+        if (haveStreamOutputs || wantMixCapture)
         {
             for (int i = 0; i < trackCount; ++i)
             {
@@ -2729,13 +2819,17 @@ namespace zynforge
                 const double gR = gain * std::sin (panNorm * juce::MathConstants<double>::halfPi);
 
                 const float* src = playerScratch.getReadPointer (i);
+                if (recorder.isRecording()
+                    && ! t.isBus.load (std::memory_order_relaxed)
+                    && i < kMaxStrips && routedInputs[i] != nullptr)
+                    src = routedInputs[i];
                 // Stream bus also goes through the 64-bit accumulator
                 // so the L/R sum stays full precision across N strips.
                 // Same NEON helper as the per-channel sum above.
-                if (sL < numOutputs && gL > 0.00001)
+                if (haveStreamOutputs && gL > 0.00001)
                     fastaccum::addFloatScaledIntoDouble (outputAccum.getWritePointer (sL),
                                                          src, gL, numSamples);
-                if (sR < numOutputs && gR > 0.00001)
+                if (haveStreamOutputs && gR > 0.00001)
                     fastaccum::addFloatScaledIntoDouble (outputAccum.getWritePointer (sR),
                                                          src, gR, numSamples);
 

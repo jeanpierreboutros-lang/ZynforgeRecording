@@ -18,7 +18,7 @@ Zynforge Recording.app/Contents/MacOS/
   ZynforgeCapture
 ```
 
-Capture protocol version 2 requires matching builds. After a successful build/test run, first verify that the built bundle already contains and seals both executables, then stage it in a temporary directory:
+Capture protocol version 3 requires matching builds and a compatible Hello before commands are accepted. After a successful build/test run, first verify that the built bundle already contains and seals both executables, then stage it in a temporary directory:
 
 ```bash
 install_stage=$(mktemp -d /private/tmp/zynforge-install.XXXXXX)
@@ -58,6 +58,14 @@ If copying or verification fails, do not launch the partial installation. Preser
 - Previous app: `/Applications/Zynforge Recording.app.backup-20260915-before-df5ad36`.
 - Xcode static analysis has no app-owned diagnostics; 27 invariants and the design audit are clean.
 - Developer ID signing/notarization is not configured; Gatekeeper rejects this ad-hoc development bundle for distribution.
+
+## Installation record — 2026-09-20
+
+- Current working tree includes all 16 fixes in [the recording-reliability follow-up](AUDIT_FIXES_2026-09-20.md); the changes are not represented by the previous `5ca3156` commit alone.
+- Universal Release build: succeeded. In-app runner: 358 test groups, zero failures. Invariant audit, design audit and final diff checks: clean.
+- Installed: `/Applications/Zynforge Recording.app`, with the matching protocol-v3 `ZynforgeCapture` helper. The built, staged and installed bundles pass deep/strict signature verification and the installed copy matches the stage.
+- Previous installed app retained at `/Applications/Zynforge Recording.app.backup-20260920-before-protocol-v3` for rollback.
+- Developer ID signing/notarization and the exact-rig hardware rehearsal remain pending.
 
 ## Rollback
 

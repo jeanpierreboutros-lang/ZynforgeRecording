@@ -118,11 +118,11 @@ namespace zynforge::capture
         running.store (false);
         if (listener != nullptr) listener->close();
         {
-            std::shared_ptr<juce::StreamingSocket> live;
-            {
-                std::unique_lock<std::timed_mutex> g (writeLock, kWriteLockWait);
-                live = client;
-            }
+            // shared_ptr's atomic free functions let shutdown obtain a safe
+            // owning reference even when a writer currently holds writeLock.
+            // Reading the shared_ptr after a timed lock failure was a data race
+            // with readLoop resetting it.
+            auto live = std::atomic_load_explicit (&client, std::memory_order_acquire);
             if (live != nullptr) live->close();       // unblock the reader's wait
         }
         if (acceptThread.joinable()) acceptThread.join();
@@ -158,10 +158,9 @@ namespace zynforge::capture
             {
                 // Grab a reference under the lock if we can get it quickly; a
                 // wedged writer must not stop us superseding the connection.
-                std::shared_ptr<juce::StreamingSocket> old;
+                auto old = std::atomic_load_explicit (&client, std::memory_order_acquire);
                 {
                     std::unique_lock<std::timed_mutex> g (writeLock, kWriteLockWait);
-                    old = client;
                     if (g.owns_lock() && old != nullptr)
                         writeAll (*old, frame (encodeBye ("superseded")));
                 }
@@ -183,14 +182,17 @@ namespace zynforge::capture
         std::shared_ptr<juce::StreamingSocket> shared (std::move (sock));
         {
             const std::lock_guard<std::timed_mutex> g (writeLock);
-            client = shared;
+            std::atomic_store_explicit (&client, shared, std::memory_order_release);
         }
         clientConnected.store (true);
 
         juce::MemoryBlock scratch;
+        bool handshakeAccepted = false;
+        bool rejectConnection = false;
         while (running.load())
         {
-            const bool keep = pumpLines (*shared, scratch, [this] (const juce::String& line)
+            const bool keep = pumpLines (*shared, scratch,
+                [this, &handshakeAccepted, &rejectConnection] (const juce::String& line)
             {
                 const auto v = juce::JSON::parse (line);
                 if (messageType (v) != "cmd") return;
@@ -210,15 +212,29 @@ namespace zynforge::capture
                     if (! r.ok) r.error = "version mismatch (gui " + juce::String (cmd.version)
                                             + " vs daemon " + juce::String (kProtocolVersion) + ")";
                     sendReply (r);
+                    handshakeAccepted = r.ok;
+                    rejectConnection = ! r.ok;
+                    if (r.ok && onCommand) onCommand (cmd);
+                    return;
+                }
+                if (! handshakeAccepted)
+                {
+                    Reply r;
+                    r.id = cmd.id;
+                    r.error = "hello handshake required before commands";
+                    sendReply (r);
+                    return;
                 }
                 if (onCommand) onCommand (cmd);
             });
-            if (! keep) break;
+            if (! keep || rejectConnection) break;
         }
 
         {
             const std::lock_guard<std::timed_mutex> g (writeLock);
-            client = nullptr;
+            std::atomic_store_explicit (&client,
+                                        std::shared_ptr<juce::StreamingSocket>(),
+                                        std::memory_order_release);
         }
         clientConnected.store (false);
     }
@@ -229,8 +245,10 @@ namespace zynforge::capture
         // peer -- that queueing is what let one dozing GUI stall the daemon's
         // whole status pump.
         std::unique_lock<std::timed_mutex> g (writeLock, kWriteLockWait);
-        if (! g.owns_lock() || client == nullptr) return false;
-        return writeAll (*client, frame (v));
+        if (! g.owns_lock()) return false;
+        auto live = std::atomic_load_explicit (&client, std::memory_order_acquire);
+        if (live == nullptr) return false;
+        return writeAll (*live, frame (v));
     }
 
     bool CaptureServer::sendStatus (const EngineStatus& s) { return writeLine (encodeStatus (s)); }

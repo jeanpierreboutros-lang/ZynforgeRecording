@@ -6,7 +6,7 @@ The format follows `/design-system document` output: description, when-to-use, v
 
 ## Index
 
-September 2026 behavior updates are reflected in ChannelStrip, TransportBar, BigClockPanel, EditPageTrackRow and SessionRecoveryDialog. Other component visual contracts were not changed by the recording-integrity fixes. For the current test baseline and operating limits, see [testing](../../testing.md), [architecture](../../architecture.md) and [show readiness](../../SHOW-READINESS.md); component descriptions are not proof of field validation.
+September 2026 behavior updates are reflected in ChannelStrip, TransportBar, BigClockPanel, EditPageTrackRow and SessionRecoveryDialog. The 2026-09-20 reliability follow-up adds protocol-v3 stop/failure semantics, session persistence for output/stream switches, and background edit ownership; it does not change the visual-token contracts of the other components. For the current test baseline and operating limits, see [testing](../../testing.md), [architecture](../../architecture.md) and [show readiness](../../SHOW-READINESS.md); component descriptions are not proof of field validation.
 
 ### Shipped
 

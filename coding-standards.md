@@ -33,13 +33,16 @@ The goal of this document is to keep the codebase consistent enough that any con
 
 ## Preferred Patterns and Anti-Patterns
 
-### Recording-integrity contracts (2026-09-12)
+### Recording-integrity contracts (updated 2026-09-20)
 
 - Check `AudioEngine::isRecording()` where either local or external capture must block an action. The local recorder flag alone misses daemon takes. Freeze writer participation at take start; UI arm changes must not change FIFO participation mid-take.
 - Reorder/delete through `reorderTracks`, not independent renames. Move complete stereo blocks and all identity/state together, check every filesystem result, retain journals on failure and archive removed audio. Invalidate index-based undo/clipboard state after the mapping changes.
 - Preserve authoritative empty playlists and replace automation snapshots, including empty ones. Resolve whole takes via `getTrackAudioFile`/`ConcatReader`; preserve `sourceChannel` and session-relative references. Never substitute own-track media for a missing explicit source.
 - Persist UUIDs in session mix state. Existing index-keyed formats remain compatibility contracts: remap them explicitly, and commit UUID property writes after other shared-store operations.
-- Daemon configuration and STOP require acknowledgements. Publish status in command order; no optimistic success or shutdown escalation based on cached idle. UI components must detach before mirror-driven structure changes too.
+- Protocol-v3 daemon commands require a compatible Hello. Configuration and STOP require acknowledgements; STOP must distinguish accepted, completed, and cleanly finalized. Publish status in command order; no optimistic success or shutdown escalation based on cached idle. UI components must detach before mirror-driven structure changes too.
+- Before fresh capture, reject an existing base `Track_NN` in every supported audio container. Never infer “safe to replace” from a failed session load. Continue and punch are the only paths allowed to coexist with an existing take.
+- A backup/mirror is active only after its directory and writer open. Keep take-level failure latches after writer cleanup, and surface them through local and daemon status. Aggregate disk rates per physical volume.
+- Background edits capture immutable input, render without engine/UI access, and apply only if the session and source clips still match. Local and external recording both block destructive edits.
 - Automated regression results must be labeled separately from actual hardware acceptance. Do not claim crash/power-loss guarantees from simulated filesystem tests.
 
 ### Always
@@ -65,6 +68,7 @@ The goal of this document is to keep the codebase consistent enough that any con
 - **Save As clones into a new or empty destination; it never merges.** Save the source before copying, keep the source active until the complete clone reopens, make the copy cancellable and destructor-joined, and clean only destinations created by the failed operation. Relocation follows the same transactional rule and must distinguish “destination complete, old cleanup failed” from copy failure.
 - **Save/close/quit propagate failure.** A `bool` save result is not advisory: do not close, switch, or quit after a requested save fails. Surface the error and leave the user's session open.
 - **Long session operations own structure explicitly.** Set `sessionIoBusy` and the engine transition flag before copy/move/bounce work, hold the recorder structure lock around offline reads, and release/re-enable the UI on every completion/cancel path. Record/play/strip mutations fail closed while that ownership is active.
+- **A save is clean only when all artifacts succeed.** Write live metadata before taking its backup snapshot. Do not advance autosave timestamps or undo baselines after a partial failure; warn and use the short retry interval.
 - When a consumer needs only a slice of the engine, depend on a segregated interface (`ITransport`, with more facets to follow) rather than the whole `AudioEngine&`. New facets keep the same shape: pure-virtual contract, `AudioEngine` implements it.
 - Use `PlaceholderView` for any loading / empty / error surface — don't hand-roll an empty `juce::Label`. Overlay it on the content area in `resized()`, drive it with `showLoading` / `showEmpty` / `showError` / `clear`, and transition **only on a state change** (compare `getState()` or a small `lastKind`) so VoiceOver isn't re-announced each tick. An empty state with a remedy should pass a CTA label + callback (e.g. MIXER's "Add tracks", PATCH's "Audio settings…").
 - Give every interactive or informational component an accessible identity: `setTitle` / `setDescription` (and `setHelpText` where useful), make actionable controls real focusable buttons, and `postAnnouncement` on a meaningful state change. The app shipped with **zero** accessibility; `PlaceholderView` is the reference implementation. New UI should not regress this — building "for millions" includes VoiceOver users.
@@ -112,7 +116,7 @@ g.setColour (brand::shadow::elev2());
 See `testing.md` for the full strategy. High level:
 
 - Every change is **build-tested** (`cmake --build build --config Release`).
-- Every change runs the **headless test suite** (`Source/Tests/`, `juce::UnitTest`): `ZYNFORGE_RUN_TESTS=1 "…/Zynforge Recording.app/Contents/MacOS/Zynforge Recording"` (or `--run-tests`). Report lands at `~/Library/Logs/Zynforge/test-report.log`. **Quit any running GUI instance first** — otherwise LaunchServices re-focuses it and the test process exits without running (the log isn't rewritten; check its mtime before trusting the pass count).
+- Every change runs the **headless test suite** (`Source/Tests/`, `juce::UnitTest`) by launching the bundle through LaunchServices: `open -W -n "…/Zynforge Recording.app" --args --run-tests`. Report lands at `~/Library/Logs/Zynforge/test-report.log`; check its fresh mtime and final zero-failure summary. **Quit any running GUI instance first.** Directly invoking the raw GUI executable can abort during `NSApplication` registration on newer macOS before the tests start.
 - New `Source/Audio/` behaviour gets a test. Clip edits + recording integrity are covered (`RecorderPlayerTests`, `RecordingIntegrityTests`, `AudioCallbackTests`); add to them rather than starting a parallel harness.
 - Every change is **smoke-tested** (launch, confirm no new crash report, RSS / CPU healthy).
 - UI-only behaviour (paint, hit-test, modal flow) isn't covered by the headless suite — say so explicitly and eyeball it; don't claim UI correctness from a green build.

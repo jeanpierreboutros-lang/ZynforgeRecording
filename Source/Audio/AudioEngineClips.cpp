@@ -647,6 +647,134 @@ namespace zynforge
             }
         };
 
+        bool computeStripSilence (const juce::File& audioDir, int track,
+                                  const std::vector<Clip>& original, double sr,
+                                  float thresholdDb, juce::int64 minSilenceSamples,
+                                  juce::int64 minClipSamples, juce::int64 padSamples,
+                                  std::vector<Clip>& out)
+        {
+            juce::int64 total = 0;
+            for (const auto& c : original)
+                total = juce::jmax (total, c.timelineStartSamples + c.fileLengthSamples);
+            if (total <= 0) { out.clear(); return true; }
+
+            ArrangementSource src;
+            if (! src.open (audioDir, track, &original)) return false;
+
+            const float thresh = juce::Decibels::decibelsToGain (thresholdDb, -120.0f);
+            const int win = juce::jmax (64, (int) (sr * 0.010));
+            std::vector<char> loud;
+            loud.reserve ((size_t) (total / win + 1));
+            float peak = 0.0f;
+            int inWindow = 0;
+            juce::AudioBuffer<float> window (1, kRenderWindowSamples), tmp (1, 0);
+            for (juce::int64 winStart = 0; winStart < total; winStart += kRenderWindowSamples)
+            {
+                const int winLen = (int) juce::jmin<juce::int64> (
+                    kRenderWindowSamples, total - winStart);
+                window.clear (0, 0, winLen);
+                src.mixWindow (window.getWritePointer (0), winStart, winLen, tmp);
+                const auto* data = window.getReadPointer (0);
+                for (int n = 0; n < winLen; ++n)
+                {
+                    peak = juce::jmax (peak, std::abs (data[n]));
+                    if (++inWindow == win)
+                    {
+                        loud.push_back (peak >= thresh ? 1 : 0);
+                        peak = 0.0f;
+                        inWindow = 0;
+                    }
+                }
+            }
+            if (inWindow > 0) loud.push_back (peak >= thresh ? 1 : 0);
+
+            const juce::int64 minSilWin = juce::jmax<juce::int64> (
+                1, (minSilenceSamples + win - 1) / win);
+            std::vector<std::pair<juce::int64, juce::int64>> runs;
+            int i = 0;
+            const int nw = (int) loud.size();
+            while (i < nw)
+            {
+                while (i < nw && ! loud[(size_t) i]) ++i;
+                if (i >= nw) break;
+                const int runStart = i;
+                while (i < nw)
+                {
+                    if (loud[(size_t) i]) { ++i; continue; }
+                    int sil = i;
+                    while (sil < nw && ! loud[(size_t) sil]) ++sil;
+                    if ((juce::int64) (sil - i) >= minSilWin) break;
+                    i = sil;
+                }
+                runs.emplace_back ((juce::int64) runStart, (juce::int64) i);
+            }
+
+            std::vector<std::pair<juce::int64, juce::int64>> ranges;
+            for (const auto& r : runs)
+            {
+                const auto a = juce::jmax<juce::int64> (0, r.first * win - padSamples);
+                const auto b = juce::jmin<juce::int64> (total, r.second * win + padSamples);
+                if (! ranges.empty() && a <= ranges.back().second)
+                    ranges.back().second = juce::jmax (ranges.back().second, b);
+                else
+                    ranges.emplace_back (a, b);
+            }
+
+            out.clear();
+            const juce::int64 fade = juce::jmin<juce::int64> (
+                (juce::int64) (sr * 0.005), (juce::int64) win);
+            for (const auto& c : original)
+            {
+                if (c.locked) { out.push_back (c); continue; }
+                const auto clipA = c.timelineStartSamples;
+                const auto clipB = clipA + c.fileLengthSamples;
+                for (const auto& r : ranges)
+                {
+                    if (r.second - r.first < juce::jmax<juce::int64> (1, minClipSamples)) continue;
+                    const auto a = juce::jmax (clipA, r.first);
+                    const auto b = juce::jmin (clipB, r.second);
+                    if (b <= a) continue;
+                    Clip slice = c;
+                    slice.timelineStartSamples = a;
+                    slice.fileStartSamples = c.fileStartSamples + (a - clipA);
+                    slice.fileLengthSamples = b - a;
+                    slice.fadeInSamples = (a == clipA)
+                        ? juce::jmin (c.fadeInSamples, slice.fileLengthSamples / 2)
+                        : juce::jmin (fade, slice.fileLengthSamples / 2);
+                    slice.fadeOutSamples = (b == clipB)
+                        ? juce::jmin (c.fadeOutSamples, slice.fileLengthSamples / 2)
+                        : juce::jmin (fade, slice.fileLengthSamples / 2);
+                    out.push_back (std::move (slice));
+                }
+            }
+            std::stable_sort (out.begin(), out.end(), [] (const Clip& a, const Clip& b)
+            {
+                return a.timelineStartSamples < b.timelineStartSamples;
+            });
+            return true;
+        }
+
+        bool sameClipList (const std::vector<Clip>& a, const std::vector<Clip>& b)
+        {
+            if (a.size() != b.size()) return false;
+            for (size_t i = 0; i < a.size(); ++i)
+            {
+                const auto& x = a[i];
+                const auto& y = b[i];
+                if (x.name != y.name || x.audioFile != y.audioFile
+                    || x.sourceChannel != y.sourceChannel
+                    || x.timelineStartSamples != y.timelineStartSamples
+                    || x.fileStartSamples != y.fileStartSamples
+                    || x.fileLengthSamples != y.fileLengthSamples
+                    || x.fadeInSamples != y.fadeInSamples
+                    || x.fadeOutSamples != y.fadeOutSamples
+                    || x.fadeCurve != y.fadeCurve || x.gainDb != y.gainDb
+                    || x.muted != y.muted || x.locked != y.locked)
+                    return false;
+            }
+            return true;
+        }
+
         std::unique_ptr<juce::AudioFormatWriter> createWav24Writer (const juce::File& f, double sr, int channels)
         {
             f.deleteFile();
@@ -687,7 +815,9 @@ namespace zynforge
         ArrangementSource src;
         const std::vector<Clip>* engineClips = (track < (int) trackClips.size())
                                                  ? &trackClips[(size_t) track] : nullptr;
-        if (! src.open (sessionDir.getChildFile ("Audio Files"), track, engineClips)) return false;
+        auto audioDir = sessionDir.getChildFile ("Audio Files");
+        if (! audioDir.isDirectory()) audioDir = sessionDir;
+        if (! src.open (audioDir, track, engineClips)) return false;
 
         juce::AudioBuffer<float> window (1, kRenderWindowSamples), tmp (1, 0);
         for (juce::int64 winStart = startSample; winStart < endSample; winStart += kRenderWindowSamples)
@@ -1017,99 +1147,122 @@ namespace zynforge
     {
         const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
         if (track < 0 || track >= maxTracks) return -1;
+        const auto sessionDir = getActiveSessionDir();
+        if (! sessionDir.isDirectory() || ! ensureClipList (track)) return -1;
 
-        auto sessionDir = getActiveSessionDir();
-        if (! sessionDir.isDirectory()) return -1;
-        const auto audioDir = sessionDir.getChildFile ("Audio Files");
-        juce::File src;
-        for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
-        {
-            auto f = audioDir.getChildFile (juce::String::formatted ("Track_%02d", track + 1) + ext);
-            if (f.existsAsFile()) { src = f; break; }
-        }
-        if (! src.existsAsFile()) return -1;
-
-        juce::AudioFormatManager fm; fm.registerBasicFormats();
-        std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (src));
-        if (reader == nullptr || reader->lengthInSamples <= 0) return -1;
-
-        const juce::int64 total = reader->lengthInSamples;
-        const float thresh = juce::Decibels::decibelsToGain (thresholdDb, -120.0f);
-
-        // Scan a peak envelope in ~10 ms windows; a window is "silent" when its
-        // peak sits below the threshold.
-        const int win = juce::jmax (64, (int) (reader->sampleRate * 0.010));
-        juce::AudioBuffer<float> buf (1, win);
-        std::vector<char> loud;                         // 1 = audible window
-        loud.reserve ((size_t) (total / win + 1));
-        for (juce::int64 p = 0; p < total; p += win)
-        {
-            const int n = (int) juce::jmin<juce::int64> (win, total - p);
-            buf.clear();
-            reader->read (&buf, 0, n, p, true, true);
-            loud.push_back (buf.getMagnitude (0, 0, n) >= thresh ? 1 : 0);
-        }
-
-        // Build audible runs, requiring a silent gap of >= minSilenceSamples to
-        // break, and dropping audible runs shorter than minClipSamples.
-        const juce::int64 minSilWin  = juce::jmax<juce::int64> (1, minSilenceSamples / win);
-        std::vector<std::pair<juce::int64, juce::int64>> runs;   // [startWin, endWin)
-        int i = 0; const int nw = (int) loud.size();
-        while (i < nw)
-        {
-            while (i < nw && ! loud[(size_t) i]) ++i;            // skip leading silence
-            if (i >= nw) break;
-            int runStart = i;
-            while (i < nw)
-            {
-                if (loud[(size_t) i]) { ++i; continue; }
-                int sil = i; while (sil < nw && ! loud[(size_t) sil]) ++sil;   // measure gap
-                if ((juce::int64) (sil - i) >= minSilWin) break;               // real gap -> end run
-                i = sil;                                                        // short gap -> keep going
-            }
-            runs.emplace_back ((juce::int64) runStart, (juce::int64) i);
-        }
-
-        // Apply the start/end pad (PT "Clip Start/End Pad"): extend each kept
-        // run outward by padSamples so transients aren't clipped, then merge
-        // any runs the padding made overlap.
-        std::vector<std::pair<juce::int64, juce::int64>> ranges;
-        for (auto& r : runs)
-        {
-            juce::int64 a = juce::jmax<juce::int64> (0,     r.first  * win - padSamples);
-            juce::int64 b = juce::jmin<juce::int64> (total, r.second * win + padSamples);
-            if (! ranges.empty() && a <= ranges.back().second)
-                ranges.back().second = juce::jmax (ranges.back().second, b);   // merge
-            else
-                ranges.emplace_back (a, b);
-        }
+        const auto original = clipsFor (track);
+        auto audioDir = sessionDir.getChildFile ("Audio Files");
+        if (! audioDir.isDirectory()) audioDir = sessionDir;
+        const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
 
         std::vector<Clip> out;
-        const juce::int64 fade = juce::jmin<juce::int64> ((juce::int64) (reader->sampleRate * 0.005),
-                                                          (juce::int64) win);
-        for (auto& r : ranges)
-        {
-            const juce::int64 a = r.first;
-            const juce::int64 b = r.second;
-            if (b - a < juce::jmax<juce::int64> (1, minClipSamples)) continue;
-            Clip c;
-            c.name                 = juce::String::formatted ("Track_%02d", track + 1);
-            c.timelineStartSamples = a;
-            c.fileStartSamples     = a;
-            c.fileLengthSamples    = b - a;
-            c.fadeInSamples        = juce::jmin (fade, c.fileLengthSamples / 2);
-            c.fadeOutSamples       = juce::jmin (fade, c.fileLengthSamples / 2);
-            out.push_back (c);
-        }
-        if (out.empty()) return 0;
+        if (! computeStripSilence (audioDir, track, original, sr, thresholdDb,
+                                   minSilenceSamples, minClipSamples, padSamples, out))
+            return -1;
 
-        if (! ensureClipList (track)) { /* still proceed -- we're replacing */ }
+        // An all-silent result is an authoritative EMPTY arrangement.
         clipsFor (track) = out;
         player.setTrackClips (track, out);
         syncActiveTake (track);
         return (int) out.size();
     }
 
+    void AudioEngine::stripSilenceAsync (std::vector<int> tracks, float thresholdDb,
+                                         juce::int64 minSilenceSamples,
+                                         juce::int64 minClipSamples,
+                                         juce::int64 padSamples,
+                                         std::function<void (int, int, bool)> completion)
+    {
+        if (isRecording())
+        {
+            if (completion) completion (0, 0, false);
+            return;
+        }
+
+        std::sort (tracks.begin(), tracks.end());
+        tracks.erase (std::unique (tracks.begin(), tracks.end()), tracks.end());
+
+        struct Job
+        {
+            int track { -1 };
+            std::vector<Clip> original;
+            std::vector<Clip> result;
+            bool succeeded { false };
+        };
+
+        const auto sessionDir = getActiveSessionDir();
+        if (! sessionDir.isDirectory())
+        {
+            if (completion) completion (0, 0, false);
+            return;
+        }
+        auto audioDir = sessionDir.getChildFile ("Audio Files");
+        if (! audioDir.isDirectory()) audioDir = sessionDir;
+        const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
+
+        std::vector<Job> jobs;
+        const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
+        for (const int track : tracks)
+        {
+            if (track < 0 || track >= maxTracks || ! ensureClipList (track)) continue;
+            jobs.push_back ({ track, clipsFor (track), {}, false });
+        }
+        if (jobs.empty())
+        {
+            if (completion) completion (0, 0, false);
+            return;
+        }
+
+        const auto handle = asyncHandle;
+        juce::Thread::launch (
+            [handle, sessionDir, audioDir, sr, thresholdDb, minSilenceSamples,
+             minClipSamples, padSamples, jobs = std::move (jobs),
+             completion = std::move (completion)] () mutable
+        {
+            bool allSucceeded = true;
+            for (auto& job : jobs)
+            {
+                job.succeeded = computeStripSilence (
+                    audioDir, job.track, job.original, sr, thresholdDb,
+                    minSilenceSamples, minClipSamples, padSamples, job.result);
+                allSucceeded = allSucceeded && job.succeeded;
+            }
+
+            juce::MessageManager::callAsync (
+                [handle, sessionDir, jobs = std::move (jobs), allSucceeded,
+                 completion = std::move (completion)] () mutable
+            {
+                auto* engine = handle->load (std::memory_order_acquire);
+                if (engine == nullptr) return;
+
+                const bool current = engine->getActiveSessionDir() == sessionDir
+                                  && ! engine->isRecording();
+                int processed = 0;
+                int clips = 0;
+                if (current)
+                {
+                    for (auto& job : jobs)
+                    {
+                        if (! job.succeeded) continue;
+                        if (job.track < 0 || job.track >= (int) engine->trackClips.size()
+                            || ! sameClipList (engine->trackClips[(size_t) job.track],
+                                              job.original))
+                        {
+                            allSucceeded = false;
+                            continue;
+                        }
+                        engine->clipsFor (job.track) = job.result;
+                        engine->player.setTrackClips (job.track, job.result);
+                        engine->syncActiveTake (job.track);
+                        ++processed;
+                        clips += (int) job.result.size();
+                    }
+                }
+                if (completion)
+                    completion (processed, clips, current && allSucceeded);
+            });
+        });
+    }
     bool AudioEngine::consolidateRange (int track, juce::int64 start, juce::int64 end)
     {
         if (end <= start) return false;
@@ -1125,7 +1278,7 @@ namespace zynforge
         const auto audioDir = sessionDir.getChildFile ("Audio Files");
         audioDir.createDirectory();
         juce::File dst;
-        for (int k = 1; k < 1000; ++k)
+        for (int k = 1; ; ++k)
         {
             dst = audioDir.getChildFile (juce::String::formatted ("Track_%02d_consolidated_%d.wav", track + 1, k));
             if (! dst.existsAsFile()) break;
@@ -1161,6 +1314,167 @@ namespace zynforge
         player.setTrackClips (track, list);
         syncActiveTake (track);
         return true;
+    }
+
+    void AudioEngine::consolidateRangeAsync (std::vector<int> tracks,
+                                             juce::int64 start, juce::int64 end,
+                                             std::function<void (int, bool)> completion)
+    {
+        if (isRecording() || end <= start)
+        {
+            if (completion) completion (0, false);
+            return;
+        }
+
+        std::sort (tracks.begin(), tracks.end());
+        tracks.erase (std::unique (tracks.begin(), tracks.end()), tracks.end());
+
+        struct Job
+        {
+            int track { -1 };
+            std::vector<Clip> original;
+            juce::File temporary;
+            bool rendered { false };
+        };
+
+        const auto sessionDir = getActiveSessionDir();
+        if (! sessionDir.isDirectory())
+        {
+            if (completion) completion (0, false);
+            return;
+        }
+        auto audioDir = sessionDir.getChildFile ("Audio Files");
+        if (! audioDir.isDirectory() && ! audioDir.createDirectory().wasOk())
+        {
+            if (completion) completion (0, false);
+            return;
+        }
+        const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
+        const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
+
+        std::vector<Job> jobs;
+        for (const int track : tracks)
+        {
+            if (track < 0 || track >= maxTracks || ! ensureClipList (track)) continue;
+            Job job;
+            job.track = track;
+            job.original = clipsFor (track);
+            job.temporary = audioDir.getChildFile ("." + juce::Uuid().toString()
+                                                   + ".consolidating.wav");
+            jobs.push_back (std::move (job));
+        }
+        if (jobs.empty())
+        {
+            if (completion) completion (0, false);
+            return;
+        }
+
+        const auto handle = asyncHandle;
+        juce::Thread::launch (
+            [handle, sessionDir, audioDir, sr, start, end,
+             jobs = std::move (jobs), completion = std::move (completion)] () mutable
+        {
+            bool allRendered = true;
+            for (auto& job : jobs)
+            {
+                ArrangementSource src;
+                if (! src.open (audioDir, job.track, &job.original))
+                {
+                    allRendered = false;
+                    continue;
+                }
+                auto writer = createWav24Writer (job.temporary, sr, 1);
+                if (writer == nullptr)
+                {
+                    allRendered = false;
+                    continue;
+                }
+
+                juce::AudioBuffer<float> window (1, kRenderWindowSamples), tmp (1, 0);
+                job.rendered = true;
+                for (juce::int64 winStart = start; winStart < end; winStart += kRenderWindowSamples)
+                {
+                    const int winLen = (int) juce::jmin<juce::int64> (
+                        kRenderWindowSamples, end - winStart);
+                    window.clear (0, 0, winLen);
+                    src.mixWindow (window.getWritePointer (0), winStart, winLen, tmp);
+                    const float* channels[1] = { window.getReadPointer (0) };
+                    if (! writer->writeFromFloatArrays (channels, 1, winLen))
+                    {
+                        job.rendered = false;
+                        break;
+                    }
+                }
+                writer.reset();
+                if (! job.rendered) job.temporary.deleteFile();
+                allRendered = allRendered && job.rendered;
+            }
+
+            juce::MessageManager::callAsync (
+                [handle, sessionDir, start, end, jobs = std::move (jobs), allRendered,
+                 completion = std::move (completion)] () mutable
+            {
+                auto* engine = handle->load (std::memory_order_acquire);
+                if (engine == nullptr)
+                {
+                    for (auto& job : jobs) job.temporary.deleteFile();
+                    return;
+                }
+
+                const bool current = engine->getActiveSessionDir() == sessionDir
+                                  && ! engine->isRecording();
+                int completed = 0;
+                for (auto& job : jobs)
+                {
+                    if (! current || ! job.rendered)
+                    {
+                        job.temporary.deleteFile();
+                        continue;
+                    }
+                    if (job.track < 0 || job.track >= (int) engine->trackClips.size()
+                        || ! sameClipList (engine->trackClips[(size_t) job.track],
+                                          job.original))
+                    {
+                        job.temporary.deleteFile();
+                        continue;
+                    }
+
+                    const auto audioDirNow = sessionDir.getChildFile ("Audio Files");
+                    juce::File destination;
+                    for (int k = 1; ; ++k)
+                    {
+                        destination = audioDirNow.getChildFile (
+                            juce::String::formatted ("Track_%02d_consolidated_%d.wav",
+                                                     job.track + 1, k));
+                        if (! destination.existsAsFile()) break;
+                    }
+                    if (! job.temporary.moveFileTo (destination))
+                    {
+                        job.temporary.deleteFile();
+                        continue;
+                    }
+
+                    engine->clearTrackRange (job.track, start, end);
+                    auto& list = engine->clipsFor (job.track);
+                    Clip clip;
+                    clip.name = destination.getFileNameWithoutExtension();
+                    clip.audioFile = destination;
+                    clip.timelineStartSamples = start;
+                    clip.fileStartSamples = 0;
+                    clip.fileLengthSamples = end - start;
+                    auto where = std::lower_bound (list.begin(), list.end(), start,
+                        [] (const Clip& c, juce::int64 pos)
+                        { return c.timelineStartSamples < pos; });
+                    list.insert (where, std::move (clip));
+                    engine->player.setTrackClips (job.track, list);
+                    engine->syncActiveTake (job.track);
+                    ++completed;
+                }
+                if (completion)
+                    completion (completed, current && allRendered
+                                             && completed == (int) jobs.size());
+            });
+        });
     }
 
     bool AudioEngine::splitTrackAtSample (int track, juce::int64 timelineSample)
@@ -1527,6 +1841,132 @@ namespace zynforge
         if (peak <= 0.0f) return kFail;   // silent -> nothing to normalize
 
         return targetDbFS - juce::Decibels::gainToDecibels (peak);
+    }
+
+    void AudioEngine::normalizeClipGroupAsync (std::vector<int> tracks, int clipIndex,
+                                               float targetDbFS,
+                                               std::function<void (bool)> completion)
+    {
+        if (isRecording())
+        {
+            if (completion) completion (false);
+            return;
+        }
+
+        struct Job
+        {
+            int track { -1 };
+            Clip clip;
+            juce::File file;
+            int firstChannel { 0 };
+            int channelCount { 1 };
+            bool analyze { true };
+            float gainDb { std::numeric_limits<float>::quiet_NaN() };
+        };
+
+        std::sort (tracks.begin(), tracks.end());
+        tracks.erase (std::unique (tracks.begin(), tracks.end()), tracks.end());
+        std::vector<Job> jobs;
+        for (const int track : tracks)
+        {
+            auto* list = validClipList (trackClips, track, clipIndex);
+            if (list == nullptr || (*list)[(size_t) clipIndex].locked) continue;
+            Job job;
+            job.track = track;
+            job.clip = (*list)[(size_t) clipIndex];
+            job.file = job.clip.audioFile;
+            if (job.file == juce::File())
+            {
+                int nativeChannel = 0;
+                job.file = getTrackAudioFile (track, &nativeChannel);
+                if (nativeChannel == 1) job.analyze = false; // L scans both native-stereo channels.
+                else                    job.channelCount = 2;
+            }
+            else if (job.clip.sourceChannel >= 0)
+            {
+                job.firstChannel = job.clip.sourceChannel;
+                job.channelCount = 1;
+            }
+            if (! job.file.existsAsFile() && job.analyze) continue;
+            jobs.push_back (std::move (job));
+        }
+        if (jobs.empty())
+        {
+            if (completion) completion (false);
+            return;
+        }
+
+        const auto sessionDir = getActiveSessionDir();
+        const auto handle = asyncHandle;
+        juce::Thread::launch ([handle, sessionDir, clipIndex, targetDbFS,
+                               jobs = std::move (jobs),
+                               completion = std::move (completion)] () mutable
+        {
+            float sharedGain = 0.0f;
+            bool found = false;
+            for (auto& job : jobs)
+            {
+                if (! job.analyze) continue;
+                juce::AudioFormatManager fm;
+                fm.registerBasicFormats();
+                auto reader = ConcatReader::create (fm, findTakeParts (job.file));
+                if (reader == nullptr || reader->numChannels == 0) continue;
+
+                const auto start = juce::jmax ((juce::int64) 0, job.clip.fileStartSamples);
+                const auto len = juce::jmin (job.clip.fileLengthSamples,
+                                             (juce::int64) reader->lengthInSamples - start);
+                if (len <= 0) continue;
+
+                float peak = 0.0f;
+                constexpr int block = 1 << 16;
+                juce::AudioBuffer<float> buffer ((int) reader->numChannels, block);
+                for (juce::int64 pos = 0; pos < len; pos += block)
+                {
+                    const int count = (int) juce::jmin ((juce::int64) block, len - pos);
+                    if (! reader->read (&buffer, 0, count, start + pos, true, true)) break;
+                    const int first = juce::jlimit (0, buffer.getNumChannels() - 1,
+                                                    job.firstChannel);
+                    const int last = juce::jmin (buffer.getNumChannels(),
+                                                 first + job.channelCount);
+                    for (int channel = first; channel < last; ++channel)
+                        peak = juce::jmax (peak, buffer.getMagnitude (channel, 0, count));
+                }
+                if (peak <= 0.0f) continue;
+                job.gainDb = targetDbFS - juce::Decibels::gainToDecibels (peak);
+                sharedGain = found ? juce::jmin (sharedGain, job.gainDb) : job.gainDb;
+                found = true;
+            }
+
+            juce::MessageManager::callAsync (
+                [handle, sessionDir, clipIndex, jobs = std::move (jobs), sharedGain, found,
+                 completion = std::move (completion)] () mutable
+            {
+                auto* engine = handle->load (std::memory_order_acquire);
+                if (engine == nullptr) return;
+                bool applied = found && engine->getActiveSessionDir() == sessionDir
+                                    && ! engine->isRecording();
+                if (applied)
+                {
+                    // Do not apply a stale scan to a clip that was moved,
+                    // trimmed, or replaced while the worker was running.
+                    for (const auto& job : jobs)
+                    {
+                        auto* list = validClipList (engine->trackClips, job.track, clipIndex);
+                        if (list == nullptr) { applied = false; break; }
+                        const auto& current = (*list)[(size_t) clipIndex];
+                        if (current.audioFile != job.clip.audioFile
+                            || current.timelineStartSamples != job.clip.timelineStartSamples
+                            || current.fileStartSamples != job.clip.fileStartSamples
+                            || current.fileLengthSamples != job.clip.fileLengthSamples)
+                        { applied = false; break; }
+                    }
+                }
+                if (applied)
+                    for (const auto& job : jobs)
+                        engine->setClipGainDb (job.track, clipIndex, sharedGain);
+                if (completion) completion (applied);
+            });
+        });
     }
 
     bool AudioEngine::normalizeClip (int track, int clipIndex, float targetDbFS)

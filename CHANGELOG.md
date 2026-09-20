@@ -17,6 +17,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Security — capture handshake, 2026-09-20
+
+- Capture protocol v3 requires a compatible Hello before the daemon delivers any command. Pre-handshake commands and version mismatches are rejected and disconnected.
+- CaptureLink publishes connection state with atomic shared-pointer operations, removing the race between the server thread and command/status callers.
+
+### Fixed — recording reliability follow-up, 2026-09-20
+
+- Fresh recording refuses existing `Track_NN` media in every supported container unless continue/punch was explicitly selected, including unreadable-session recovery paths.
+- Primary, backup, mirror, recovery-marker, report-write and disk-health failures remain visible through daemon status and STOP. STOP no longer reports clean success when finalization failed or capture may still be active.
+- Backup/mirror destinations must open before being reported active; start-time skips and runtime write failures are latched. The backup path persists across relaunch, and disk-time estimates aggregate writers by physical volume.
+- StereoMix records live stream sends even without physical stream outputs. An empty local stream mix and unsupported daemon StereoMix configuration fail before the take starts.
+- Playback and destructive editing are blocked during local or daemon recording, including remote, MCU and timecode entry points. Failed daemon reconfiguration restores its audio callback.
+- Strip Silence now analyzes the edited arrangement with gain/fades/source channels, stereo, multipart, and cross-track media; all-silent material becomes an explicit empty arrangement and locked clips remain untouched.
+- Transient detection, Strip Silence, Normalize and Consolidate run on background workers and discard results if the session or source arrangement changed. Consolidate uses unbounded collision numbering instead of overwriting `_999`.
+- Output mute and stream-send state persist per session, reset between sessions, and participate in mixer undo.
+- Auto-save only advances its clean baseline after all metadata and the backup snapshot succeed; failures warn and retry after 15 seconds.
+
+### Validation — 2026-09-20
+
+- The universal Release build succeeds and the in-app runner passes **358 test groups with 0 failures**. The invariant audit, design audit and `git diff --check` are clean.
+- The current bundle and matching protocol-v3 helper are installed at `/Applications/Zynforge Recording.app`. Hardware/show acceptance and Developer ID notarization remain pending. Full evidence: [2026-09-20 reliability fixes](AUDIT_FIXES_2026-09-20.md).
+
 ### Security — bounded remote input, 2026-09-15
 
 - Companion HTTP now validates bounded raw request framing before decoding UTF-8, rejects duplicate/malformed/oversized content lengths, and survives malformed unauthenticated bytes.
