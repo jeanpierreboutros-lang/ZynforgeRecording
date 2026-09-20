@@ -38,7 +38,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 - The universal Release build succeeds and the in-app runner passes **358 test groups with 0 failures**. The invariant audit, design audit and `git diff --check` are clean.
 - The current bundle and matching protocol-v3 helper are installed at `/Applications/Zynforge Recording.app`. Hardware/show acceptance and Developer ID notarization remain pending. Full evidence: [2026-09-20 reliability fixes](AUDIT_FIXES_2026-09-20.md).
-- Application code commit `fe5280d` and its documentation-only delivery follow-up were pushed to `origin/main` on 2026-09-21.
+- Application code commit `fe5280d` and its documentation-only delivery follow-up were pushed to `origin/main` on 2026-09-21. [GitHub run 35538818050](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/35538818050) passed every Debug/Release build, test, audit and bundled-helper gate.
 
 ### Security — bounded remote input, 2026-09-15
 

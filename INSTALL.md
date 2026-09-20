@@ -62,7 +62,7 @@ If copying or verification fails, do not launch the partial installation. Preser
 ## Installation record — 2026-09-20
 
 - Application code commit `fe5280d`, pushed to `origin/main` on 2026-09-21, contains all 16 fixes in [the recording-reliability follow-up](AUDIT_FIXES_2026-09-20.md). The following documentation-only delivery commit does not change the installed executables.
-- Universal Release build: succeeded. In-app runner: 358 test groups, zero failures. Invariant audit, design audit and final diff checks: clean.
+- Universal Release build: succeeded. In-app runner: 358 test groups, zero failures. Invariant audit, design audit and final diff checks: clean. [GitHub run 35538818050](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/35538818050) passed Debug/Release builds and tests plus bundled-helper verification.
 - Installed: `/Applications/Zynforge Recording.app`, with the matching protocol-v3 `ZynforgeCapture` helper. The built, staged and installed bundles pass deep/strict signature verification and the installed copy matches the stage.
 - Previous installed app retained at `/Applications/Zynforge Recording.app.backup-20260920-before-protocol-v3` for rollback.
 - Developer ID signing/notarization and the exact-rig hardware rehearsal remain pending.

@@ -44,6 +44,7 @@ This is software validation, not acceptance of the planned SD5 / RME / 56-input 
 - `tools/invariants_audit.sh`: clean.
 - `tools/design_audit.sh`: clean.
 - `git diff --check`: clean.
+- [GitHub run 35538818050](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/35538818050): clean Debug/Release builds and tests, both audits, bundled-helper verification, and report upload passed.
 
 New regression coverage includes cross-container collision protection, explicit continuation, unavailable backup reporting, backup persistence, arrangement-aware Strip Silence, all-silent deletion, external-record playback refusal, `_1000` consolidation, StereoMix capture without hardware stream outputs, protocol-v3 completion state, and pre-Hello command rejection.
 
