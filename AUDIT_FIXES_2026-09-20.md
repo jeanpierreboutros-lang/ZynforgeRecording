@@ -47,6 +47,8 @@ This is software validation, not acceptance of the planned SD5 / RME / 56-input 
 
 New regression coverage includes cross-container collision protection, explicit continuation, unavailable backup reporting, backup persistence, arrangement-aware Strip Silence, all-silent deletion, external-record playback refusal, `_1000` consolidation, StereoMix capture without hardware stream outputs, protocol-v3 completion state, and pre-Hello command rejection.
 
+Application code commit `fe5280d` and its documentation-only delivery follow-up were pushed to `origin/main` on 2026-09-21. The installed bundle was built from the application-code commit; the follow-up changes documentation only.
+
 ## Manual acceptance still required
 
 1. Record to the planned primary, backup, and mirror volumes; unplug one redundant destination mid-take and verify the warning, surviving files, report, and time-remaining display.

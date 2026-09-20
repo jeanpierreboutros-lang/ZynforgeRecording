@@ -8,7 +8,7 @@ It is **not** a mixer or DAW. No plugins, no effects, no talkback. Architectural
 
 ## 2. Technology Stack
 
-Current validation (2026-09-20): the universal Release build and matching protocol-v3 helper are installed locally. The in-app runner passes 358 test groups with zero failures; the invariant and design audits and final diff checks are clean. Physical hardware acceptance remains separate and pending; see [AUDIT_FIXES_2026-09-20.md](AUDIT_FIXES_2026-09-20.md), [testing.md](testing.md), [INSTALL.md](INSTALL.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
+Current validation (2026-09-21): application code through `fe5280d` is pushed to `origin/main`; the universal Release build and matching protocol-v3 helper are installed locally. The in-app runner passes 358 test groups with zero failures; the invariant and design audits and final diff checks are clean. Physical hardware acceptance remains separate and pending; see [AUDIT_FIXES_2026-09-20.md](AUDIT_FIXES_2026-09-20.md), [testing.md](testing.md), [INSTALL.md](INSTALL.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
 
 | Component | Version / Notes |
 |---|---|

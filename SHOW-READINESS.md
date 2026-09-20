@@ -1,8 +1,8 @@
 # Show readiness — planned SD5 recording
 
-## Decision as of 2026-09-20
+## Decision as of 2026-09-21
 
-The latest build is installed and ready for exact-rig rehearsal; **not yet approved as the sole recorder for this show**. The 2026-09-20 follow-up fixes 16 additional failures in fresh-take protection, daemon/redundancy truth, StereoMix, edit correctness/responsiveness, persistence, and autosave. Its macOS-12 universal Release passes 358 test groups with zero failures, and the invariant/design audits are clean. No software result certifies physical hardware, clock stability, disk endurance or uninterrupted show-length capture. See [the current fixes](AUDIT_FIXES_2026-09-20.md) and [installation record](INSTALL.md).
+Application code through `fe5280d` is pushed to `origin/main`; the matching build is installed and ready for exact-rig rehearsal, but **not yet approved as the sole recorder for this show**. The 2026-09-20 follow-up fixes 16 additional failures in fresh-take protection, daemon/redundancy truth, StereoMix, edit correctness/responsiveness, persistence, and autosave. Its macOS-12 universal Release passes 358 test groups with zero failures, and the invariant/design audits are clean. No software result certifies physical hardware, clock stability, disk endurance or uninterrupted show-length capture. See [the current fixes](AUDIT_FIXES_2026-09-20.md) and [installation record](INSTALL.md).
 
 ## Confirmed plan and open choices
 

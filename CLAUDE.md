@@ -18,7 +18,7 @@ JUCE 8 / C++20 / CMake, macOS-first (Universal) multitrack recording + playback 
 
 ## Documentation & References
 
-**Current build (2026-09-20):** 16 additional recording, daemon, edit and persistence findings are fixed. The macOS-12 universal Release and matching protocol-v3 helper are installed locally. The in-app runner passes 358 test groups with zero failures; the invariant and design audits and final diff checks are clean. Physical rig acceptance remains pending. Read [AUDIT_FIXES_2026-09-20.md](AUDIT_FIXES_2026-09-20.md), [INSTALL.md](INSTALL.md) and [SHOW-READINESS.md](SHOW-READINESS.md). Do not equate tests or older field-soak history with approval for the new SD5/56-input rig. Unchanged visual token specs remain authoritative; this remediation does not retheme the app.
+**Current build (2026-09-21):** application code through `fe5280d` is pushed to `origin/main`; 16 additional recording, daemon, edit and persistence findings are fixed. The macOS-12 universal Release and matching protocol-v3 helper are installed locally. The in-app runner passes 358 test groups with zero failures; the invariant and design audits and final diff checks are clean. Physical rig acceptance remains pending. Read [AUDIT_FIXES_2026-09-20.md](AUDIT_FIXES_2026-09-20.md), [INSTALL.md](INSTALL.md) and [SHOW-READINESS.md](SHOW-READINESS.md). Do not equate tests or older field-soak history with approval for the new SD5/56-input rig. Unchanged visual token specs remain authoritative; this remediation does not retheme the app.
 
 ### September implementation invariants
 
