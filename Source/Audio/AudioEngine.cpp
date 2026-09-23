@@ -3068,15 +3068,15 @@ namespace zynforge
                 dstL[i] += accL[i] * mGain;
         }
 
-        if (stereo && numOutputs > 0)
+        const int outR = stereo && numOutputs > 0
+                       ? juce::jlimit (0, numOutputs - 1,
+                                       masterOutR.load (std::memory_order_relaxed))
+                       : -1;
+        if (outR >= 0 && outR != outL)
         {
-            const int outR = juce::jlimit (0, numOutputs - 1, masterOutR.load (std::memory_order_relaxed));
-            if (outR < numOutputs && outR != outL)
-            {
-                double* dstR = outputAccum.getWritePointer (outR);
-                for (int i = 0; i < blk; ++i)
-                    dstR[i] += accR[i] * mGain;
-            }
+            double* dstR = outputAccum.getWritePointer (outR);
+            for (int i = 0; i < blk; ++i)
+                dstR[i] += accR[i] * mGain;
         }
 
         // Final downcast: the 64-bit accumulator → device-output float
@@ -3086,6 +3086,16 @@ namespace zynforge
         for (int ch = 0; ch < numOutputs; ++ch)
         {
             if (outputs[ch] == nullptr) continue;
+            // Master mute is the emergency kill for the selected speaker pair.
+            // Per-strip and stream routes are accumulated before the master bus;
+            // when one shares this pair, multiplying only the master sum by zero
+            // leaves that earlier contribution audible. Silence the pair at the
+            // device boundary while preserving unrelated direct/FOH outputs.
+            if (mMute && (ch == outL || ch == outR))
+            {
+                juce::FloatVectorOperations::clear (outputs[ch], numSamples);
+                continue;
+            }
             fastaccum::downcastDoubleToFloat (outputs[ch],
                                                outputAccum.getReadPointer (ch),
                                                numSamples);

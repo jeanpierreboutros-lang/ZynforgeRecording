@@ -2219,6 +2219,47 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
+            beginTest ("Master mute kills direct routes that share the selected speaker pair");
+            {
+                const auto dir = recordTestSession (1, 0.5f);
+                {
+                    CallbackFixture f (1, 1, 4);
+                    expect (f.engine.getPlayer().loadSession (dir) == 1);
+                    f.engine.setMasterOutputs (0, 1);
+                    f.engine.setTrackOutputRouting (0, 0);
+                    f.engine.startPlayback();
+                    expect (fillPlaybackBuffer (f) > 0.20f);
+
+                    f.engine.getMasterState().muted.store (true);
+                    f.engine.getPlayer().setPositionSamples (0);
+                    f.process (256);
+                    expectEquals (f.peakOut (0, 256), 0.0f);
+                    expectEquals (f.peakOut (1, 256), 0.0f);
+                }
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Master mute preserves direct routes outside the selected speaker pair");
+            {
+                const auto dir = recordTestSession (1, 0.5f);
+                {
+                    CallbackFixture f (1, 1, 4);
+                    expect (f.engine.getPlayer().loadSession (dir) == 1);
+                    f.engine.setMasterOutputs (0, 1);
+                    f.engine.setTrackOutputRouting (0, 2);
+                    f.engine.startPlayback();
+                    expect (fillPlaybackBuffer (f) > 0.20f);
+
+                    f.engine.getMasterState().muted.store (true);
+                    f.engine.getPlayer().setPositionSamples (0);
+                    f.process (256);
+                    expectEquals (f.peakOut (0, 256), 0.0f);
+                    expectEquals (f.peakOut (1, 256), 0.0f);
+                    expect (f.peakOut (2, 256) > 0.20f);
+                }
+                dir.deleteRecursively();
+            }
+
             beginTest ("VCA gain attenuates playback end-to-end on the monitor sum");
             {
                 const auto dir = recordTestSession (1, 0.5f);

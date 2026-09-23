@@ -17,6 +17,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed — master output mute, 2026-09-23
+
+- Master mute now silences the selected speaker pair even when a direct strip or stream route shares those hardware outputs; unrelated direct/FOH outputs remain live.
+
 ### Security — capture handshake, 2026-09-20
 
 - Capture protocol v3 requires a compatible Hello before the daemon delivers any command. Pre-handshake commands and version mismatches are rejected and disconnected.

@@ -115,6 +115,7 @@ For local installation, follow [INSTALL.md](INSTALL.md). The app needs the match
 ### VCA + aux sends
 - 8 VCA groups with per-bus gain / mute / solo / colour / name
 - VCA gain + mute applied on **both** the routed per-strip outputs and the stereo monitor / master sum; stereo pairs read the left track's lane so both halves follow the curve
+- Master mute is a hard kill for the selected speaker pair, including any direct strip or stream route that overlaps it; unrelated FOH/direct outputs remain live
 - 4 aux sends per strip with pre/post-fader switch and bus targeting
 - Right-click any strip → Assign to VCA. VCA + edit-group assignments save **per session** (live in `session_mix.json`), no longer leak across sessions
 
