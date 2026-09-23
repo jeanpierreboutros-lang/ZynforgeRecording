@@ -140,6 +140,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/AafTests.cpp
     Source/Tests/FastHashTests.cpp
     Source/Tests/SessionBackupTests.cpp
+    Source/Tests/ShowHandoffTests.cpp
     Source/Tests/PreflightTests.cpp
     Source/Tests/QcAnalyzerTests.cpp
     Source/Tests/SongDetectorTests.cpp

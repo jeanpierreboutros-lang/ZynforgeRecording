@@ -82,6 +82,8 @@ private:
     void onBounceStereoMix();  // render the edited arrangement summed to stereo
     void onExportIndividualTrack (int channelIndex);
     void onExportIndividualTracks();   // tick-box picker → format → destination → export
+    void exportShowHandoff();
+    juce::String buildTimelineCsv();
     void closeSession();               // unload to the empty/Welcome state without quitting
     void confirmSessionReplacement (std::function<void()> continuation);
     void onImportAudioFiles();

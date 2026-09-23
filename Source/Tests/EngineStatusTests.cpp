@@ -28,7 +28,7 @@ namespace zynforge
                 s.backupActive = true; s.captureFormat = 3;
                 s.primaryFailed = true; s.backupFailed = true; s.mirrorFailed = true;
                 s.mirrorsSkipped = 2; s.recoveryMarkerFailed = true;
-                s.reportWriteFailed = true; s.diskStruggling = true;
+                s.reportWriteFailed = true; s.stereoMixFailed = true; s.diskStruggling = true;
 
                 TrackStatus a; a.name = "Kick"; a.peak = 0.8f; a.rms = 0.3f;
                 a.armed = true; a.muted = false; a.soloed = true; a.monitor = true;
@@ -58,6 +58,7 @@ namespace zynforge
                 expectEquals (back.mirrorsSkipped, s.mirrorsSkipped);
                 expect (back.recoveryMarkerFailed == s.recoveryMarkerFailed);
                 expect (back.reportWriteFailed == s.reportWriteFailed);
+                expect (back.stereoMixFailed == s.stereoMixFailed);
                 expect (back.diskStruggling == s.diskStruggling);
                 expectEquals (back.captureFormat, s.captureFormat);
                 expectEquals ((int) back.tracks.size(), 2);
@@ -82,6 +83,7 @@ namespace zynforge
                 s.tracks = { t };
 
                 const auto v = s.toJson();
+                expectEquals (v.getProperty ("source", "").toString(), juce::String ("local"));
                 expect ((bool) v.getProperty ("recording", false));
                 expect ((bool) v.getProperty ("playing", false));
                 auto* arr = v.getProperty ("tracks", {}).getArray();

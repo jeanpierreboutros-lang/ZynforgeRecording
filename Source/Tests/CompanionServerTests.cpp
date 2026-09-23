@@ -141,6 +141,7 @@ namespace zynforge
                     // (a) No token -> 401 on the stream and the state poll.
                     expect (httpGet (port, "/stream.wav").contains ("401"), "tokenless stream not rejected");
                     expect (httpGet (port, "/state.json").contains ("401"), "tokenless state not rejected");
+                    expect (httpGet (port, "/confidence").contains ("401"), "tokenless confidence page not rejected");
 
                     // (b) The tokened page is served and carries the JS that
                     //     threads the token onto its sub-requests + the stream.
@@ -148,6 +149,13 @@ namespace zynforge
                     expect (page.contains ("200"), "tokened page not served");
                     expect (page.contains ("URLSearchParams"), "page does not read the token from the URL");
                     expect (page.contains ("/stream.wav\" + _q"), "page does not thread the token to the stream");
+                    expect (page.contains ("/confidence\" + _q"), "page does not link to tokened confidence monitor");
+
+                    const auto confidence = httpGet (port, "/confidence?t=" + tok);
+                    expect (confidence.contains ("200"), "tokened confidence page not served");
+                    expect (confidence.contains ("READ ONLY"), "confidence page does not identify itself as read-only");
+                    expect (confidence.contains ("/state.json?t="), "confidence page does not use the status feed");
+                    expect (! confidence.contains ("/cmd"), "confidence page must not expose command controls");
 
                     // (c) The stream is reachable WITH a valid token.
                     expect (! httpGet (port, "/stream.wav?t=" + tok).contains ("401"),
@@ -201,6 +209,26 @@ namespace zynforge
                             "state.json doesn't reflect the armed track");
                     expect (state.contains ("\"recording\":false") || state.contains ("\"recording\": false"),
                             "state.json missing transport state");
+
+                    EngineStatus daemon;
+                    daemon.recording = true;
+                    daemon.missedSamples = 17;
+                    daemon.numTracks = 56;
+                    engine.setExternalCaptureStatus (daemon);
+                    engine.setExternalRecording (true);
+                    const auto daemonState = httpGet (port, "/state.json?t=" + tok);
+                    expect (daemonState.contains ("\"source\":\"daemon\"")
+                            || daemonState.contains ("\"source\": \"daemon\""),
+                            "daemon status was not selected for remote confidence");
+                    expect (daemonState.contains ("\"missedSamples\":17")
+                            || daemonState.contains ("\"missedSamples\": 17"),
+                            "remote confidence did not carry daemon capture metrics");
+                    engine.setExternalRecording (false);
+                    engine.setExternalRecording (true);
+                    const auto unavailable = httpGet (port, "/state.json?t=" + tok);
+                    expect (unavailable.contains ("daemon-unavailable"),
+                            "a new daemon take reused stale metrics from the prior take");
+                    engine.setExternalRecording (false);
 
                     // /cmd actually mutates engine state (mute ch 1 on, then off).
                     expect (! engine.getRecorder().getTrack (0).muted.load(), "precondition: ch1 not muted");

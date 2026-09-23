@@ -15,6 +15,14 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Current Priorities
 
+### Confidence monitor and handoff — 2026-09-23
+
+- [x] Add a token-protected read-only confidence page with stale/disconnected and writer-health alarms. The status feed selects daemon metrics during external capture; an optional sound requires an explicit tap in the observer browser.
+- [x] Add a cancellable, background show-handoff export into a new/empty folder, with channel-map/timeline CSVs, per-file source/copy SHA-256 comparison, an incomplete marker and an explicitly scoped manifest.
+- [x] Pass the local universal Release build, 364 test groups with zero failures, and both static audits for these changes. The build launches without a new crash report; manual phone and full-size handoff checks remain open.
+- [ ] Field-test the read-only page on an actual phone through the documented TLS tunnel, including device sleep, network loss and daemon disconnect. A remote observer is not a replacement for the local recording dashboard.
+- [ ] Run a large real-session handoff to a separate volume, independently inspect the package in a second DAW, and confirm the source backup/mirror drives separately. A transfer-verified manifest is not show-readiness approval.
+
 ### Show acceptance — current as of 2026-09-20
 
 - [x] Fix all 16 findings from the 2026-09-20 recording-reliability follow-up: fresh-take collision protection, truthful daemon/redundancy failures, backup persistence, StereoMix capture, external-record transport guards, CaptureLink synchronization/handshake, arrangement-aware background edits, mixer-state persistence, disk telemetry, daemon reconfiguration recovery, autosave transactions, and unbounded Consolidate naming. See [AUDIT_FIXES_2026-09-20.md](AUDIT_FIXES_2026-09-20.md).

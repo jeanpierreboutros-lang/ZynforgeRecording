@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
+#include <atomic>
 #if JUCE_MAC
  #include <CommonCrypto/CommonDigest.h>
 #endif
@@ -14,7 +15,8 @@
 // off macOS.
 namespace zynforge::hashing
 {
-    inline juce::String fileSha256 (const juce::File& f)
+    inline juce::String fileSha256 (const juce::File& f,
+                                  const std::atomic<bool>* cancel = nullptr)
     {
         if (! f.existsAsFile()) return {};
         juce::FileInputStream in (f);
@@ -27,6 +29,7 @@ namespace zynforge::hashing
         juce::HeapBlock<char> buf (bufBytes);
         for (;;)
         {
+            if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return {};
             const int n = in.read (buf.getData(), bufBytes);
             if (n < 0) return {};                      // read error -> fail, don't hash a partial prefix
             if (n == 0)
@@ -44,6 +47,7 @@ namespace zynforge::hashing
         for (auto b : out) hex += juce::String::formatted ("%02x", (int) b);
         return hex;
        #else
+        if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return {};
         const juce::SHA256 digest (in);
         return digest.toHexString();
        #endif

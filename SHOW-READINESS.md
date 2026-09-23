@@ -54,3 +54,5 @@ Use an independent recorder for an important show, especially before this valida
 ## Verification-helper limitations
 
 `tools/verify_take.sh` is a legacy WAV/single-continuous-take diagnostic, not a show-readiness certificate. It currently treats intentional `_partXX` continuation files as errors, can return success while hashes are pending, and does not prove routing, equal expected durations or all backup copies. A crash survivor may lack a clean-stop report. Install its external prerequisites (`ffprobe`, `jq`, `xxd`, `shasum`, `python3`) explicitly; they are not all supplied by macOS. Use its output alongside manual checks, and retain both output and `session.report.json` with rehearsal evidence.
+
+The new verified show-handoff export compares the session's copied files to their originals and flags incomplete capture-report evidence. It does **not** close the acceptance gaps above or verify the separate backup/mirror drives; still inspect those independently before signing off a show.

@@ -25,6 +25,7 @@
 #include "TimecodeChase.h"
 
 #include <memory>
+#include <mutex>
 #include <optional>
 
 namespace zynforge
@@ -174,7 +175,8 @@ namespace zynforge
         bool startRecording (const juce::File& sessionDir) override;
         void stopRecording() override;
         bool isRecording() const noexcept override { return recorder.isRecording() || externalRecording.load(); }
-        void setExternalRecording (bool active) noexcept { externalRecording.store (active); }
+        void setExternalRecording (bool active) noexcept;
+        void setExternalCaptureStatus (const EngineStatus& status);
         void setSessionTransitionActive (bool active) noexcept
         { sessionTransitionActive.store (active, std::memory_order_release); }
         bool isSessionTransitionActive() const noexcept
@@ -1086,6 +1088,9 @@ namespace zynforge
         juce::File               activeSession;
         std::atomic<bool>        sessionTransitionActive { false };
         std::atomic<bool>        externalRecording { false };
+        std::mutex               externalStatusLock;
+        EngineStatus             externalStatus;
+        juce::int64              externalStatusAtMs { 0 };
         StripColours             stripColours;
         StripNames               stripNames;
         StripGains               stripGains;

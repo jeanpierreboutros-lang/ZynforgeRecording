@@ -68,6 +68,8 @@ namespace zynforge
 
     struct EngineStatus
     {
+        juce::String source { "local" };  // local, daemon, or daemon-unavailable
+        juce::int64  statusAgeMs { 0 };    // daemon snapshot age; -1 means unavailable
         juce::String sessionPath;
         bool          recording   { false };
         bool          playing     { false };
@@ -93,6 +95,7 @@ namespace zynforge
         int           mirrorsSkipped { 0 };
         bool          recoveryMarkerFailed { false };
         bool          reportWriteFailed { false };
+        bool          stereoMixFailed { false };
         bool          diskStruggling { false };
         int           captureFormat { 0 };     // CaptureFormat as int
         std::vector<TrackStatus> tracks;
@@ -100,6 +103,8 @@ namespace zynforge
         juce::var toJson() const
         {
             auto* o = new juce::DynamicObject();
+            o->setProperty ("source", source);
+            o->setProperty ("statusAgeMs", statusAgeMs);
             o->setProperty ("recording", recording);
             o->setProperty ("sessionPath", sessionPath);
             o->setProperty ("playing",   playing);
@@ -125,6 +130,7 @@ namespace zynforge
             o->setProperty ("mirrorsSkipped", mirrorsSkipped);
             o->setProperty ("recoveryMarkerFailed", recoveryMarkerFailed);
             o->setProperty ("reportWriteFailed", reportWriteFailed);
+            o->setProperty ("stereoMixFailed", stereoMixFailed);
             o->setProperty ("diskStruggling", diskStruggling);
             o->setProperty ("captureFormat", captureFormat);
             juce::Array<juce::var> arr;
@@ -136,6 +142,8 @@ namespace zynforge
         static EngineStatus fromJson (const juce::var& v)
         {
             EngineStatus s;
+            s.source = v.getProperty ("source", "local").toString();
+            s.statusAgeMs = (juce::int64) v.getProperty ("statusAgeMs", 0);
             s.sessionPath = v.getProperty ("sessionPath", "").toString();
             s.recording   = (bool) v.getProperty ("recording", false);
             s.playing     = (bool) v.getProperty ("playing", false);
@@ -161,6 +169,7 @@ namespace zynforge
             s.mirrorsSkipped = (int) v.getProperty ("mirrorsSkipped", 0);
             s.recoveryMarkerFailed = (bool) v.getProperty ("recoveryMarkerFailed", false);
             s.reportWriteFailed = (bool) v.getProperty ("reportWriteFailed", false);
+            s.stereoMixFailed = (bool) v.getProperty ("stereoMixFailed", false);
             s.diskStruggling = (bool) v.getProperty ("diskStruggling", false);
             s.captureFormat = (int) v.getProperty ("captureFormat", 0);
             if (auto* a = v.getProperty ("tracks", {}).getArray())

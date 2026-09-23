@@ -6,6 +6,16 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Observer truth and portable handoff — 2026-09-23
+
+**Context.** A remote observer needs recording-health data without the risk of transport controls. During daemon capture the existing companion read the GUI's local recorder metrics, which could look healthy while the daemon was writing elsewhere. A copied show folder can also appear deliverable before the copy or source hash report finishes.
+
+**Decision.** Serve a separate token-protected `/confidence` page with no command controls. Feed `/state.json` the cached daemon `EngineStatus` whenever external capture is active, including source and age so stale status alarms. For handoff, copy only to a new/empty folder on the owned export worker, retain an incomplete marker until every source/copy file hash matches, and publish a manifest last. The manifest distinguishes verified transfer from original-capture evidence and explicitly excludes external backup disks.
+
+**Consequences.** A phone remains a supplementary observer, not a failsafe alarm path; sleep or network loss can prevent warnings. The handoff may consume substantial storage and time and must not be run during recording. A clean transfer cannot certify channel mapping, dropped samples, power-loss survival or separate backups; the exact-rig acceptance plan remains authoritative.
+
+---
+
 ## Capture truth and background-edit decisions — 2026-09-20
 
 ### Redundancy health is latched truth, not current object shape

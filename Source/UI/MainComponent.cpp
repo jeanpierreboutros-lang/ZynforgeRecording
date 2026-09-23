@@ -290,6 +290,7 @@ void MainComponent::onRecordClicked()
         if (captureSupervisor.startRecording (dir, numTracks,
                                               (int) recorder.getCaptureFormat(), arms))
         {
+            engine.setExternalCaptureStatus (captureSupervisor.lastStatus());
             engine.setExternalRecording (true);
             engine.setActiveSessionDir (dir);
             statusLabel.setText ("DAEMON recording " + juce::String (armed) + "/"

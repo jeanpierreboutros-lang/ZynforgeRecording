@@ -151,7 +151,8 @@ header .status { color:var(--muted); font-size:13px; }
 </style></head>
 <body>
 <header><span class="brand">ZYNFORGE  RECORDING</span>
-        <span class="status" id="status">connecting...</span></header>
+        <span class="status" id="status">connecting...</span>
+        <a id="confidenceLink" style="color:var(--accent);margin-left:auto" href="#">READ-ONLY CONFIDENCE</a></header>
 <div class="transport">
   <button id="playBtn" class="play">▶ PLAY</button>
   <button id="stopBtn">■ STOP</button>
@@ -172,6 +173,7 @@ let lastTag = "";
 // header, so the token rides in the query string for all of them.
 const _t = new URLSearchParams(location.search).get("t") || "";
 const _q = _t ? ("?t=" + encodeURIComponent(_t)) : "";
+document.getElementById("confidenceLink").href = "/confidence" + _q;
 // Point the remote-audition stream at the tokened URL (preload="none"
 // means nothing is fetched until the engineer hits play, by which time
 // this src is set).
@@ -237,6 +239,133 @@ async function tick() {
     } catch (e) { document.getElementById("status").textContent = "disconnected"; }
 }
 setInterval(tick, 500); tick();
+</script></body></html>)HTML";
+
+        // Separate observer surface: no transport, arm, mute, solo, or audio
+        // controls. It deliberately uses the same authenticated status feed as
+        // the companion, but cannot send a command by clicking anything here.
+        const char* kConfidencePage = R"HTML(<!doctype html>
+<html><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>ZynForge Confidence</title>
+<style>
+:root { --bg:#0d0d12; --panel:#1e1e1e; --text:#fff; --muted:#aab3bc;
+        --good:#4ad878; --warn:#ffd64d; --bad:#ff3b3b; --accent:#ff7733; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,system-ui,sans-serif; }
+header { padding:16px; border-bottom:1px solid #303038; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+h1 { margin:0; color:var(--accent); font-size:18px; letter-spacing:.04em; }
+main { max-width:1100px; margin:auto; padding:16px; }
+#banner { padding:22px; border-radius:8px; font-size:28px; font-weight:800; background:var(--panel); }
+#banner.good { background:#12301e; color:var(--good); }
+#banner.warn { background:#382e13; color:var(--warn); }
+#banner.bad { background:#421719; color:var(--bad); }
+#details { margin:14px 0; line-height:1.6; color:var(--muted); }
+#warnings { margin:14px 0; padding-left:24px; color:var(--bad); font-weight:700; }
+#metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+.metric,.track { background:var(--panel); border:1px solid #303038; border-radius:7px; padding:12px; }
+.metric small { display:block; color:var(--muted); }
+.metric strong { display:block; font-size:24px; margin-top:5px; }
+#tracks { display:grid; grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:8px; margin-top:16px; }
+.track .label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.meter { margin-top:8px; height:8px; background:#35353b; border-radius:4px; overflow:hidden; }
+.meter span { display:block; height:100%; background:var(--good); }
+button { border:1px solid #50505a; border-radius:6px; padding:9px 12px; background:var(--panel);
+         color:var(--text); font:inherit; min-height:44px; }
+.note { color:var(--muted); font-size:13px; }
+</style></head><body>
+<header><h1>ZYNFORGE CONFIDENCE</h1><span>READ ONLY</span>
+<button id="sound">Enable audible alerts</button></header>
+<main><div id="banner" class="warn">CONNECTING</div>
+<div id="details">Waiting for the recorder.</div><ul id="warnings"></ul>
+<section id="metrics"></section><section id="tracks"></section>
+<p class="note">Supplementary monitor only. Keep the recorder and console in view; a sleeping phone or lost network cannot warn you.</p>
+</main><script>
+const token = new URLSearchParams(location.search).get("t") || "";
+const stateUrl = "/state.json?t=" + encodeURIComponent(token);
+const banner = document.getElementById("banner");
+const details = document.getElementById("details");
+const warningsEl = document.getElementById("warnings");
+const metrics = document.getElementById("metrics");
+const tracks = document.getElementById("tracks");
+let audio = null, soundOn = false, lastAlarm = "", lastBeep = 0;
+document.getElementById("sound").onclick = async () => {
+    if (!soundOn) {
+        try { audio = new (window.AudioContext || window.webkitAudioContext)(); await audio.resume(); }
+        catch (_) { return; }
+    }
+    soundOn = !soundOn;
+    document.getElementById("sound").textContent = soundOn ? "Mute audible alerts" : "Enable audible alerts";
+};
+function beep() {
+    if (!soundOn || !audio) return;
+    const osc = audio.createOscillator(), gain = audio.createGain();
+    osc.type = "square"; osc.frequency.value = 740; gain.gain.value = .06;
+    osc.connect(gain); gain.connect(audio.destination);
+    osc.start(); osc.stop(audio.currentTime + .22);
+}
+function alarm(key) {
+    const now = Date.now();
+    if (key && (key !== lastAlarm || now - lastBeep > 15000)) { beep(); lastBeep = now; }
+    lastAlarm = key;
+}
+function metric(label, value) {
+    const card = document.createElement("div"), small = document.createElement("small");
+    const strong = document.createElement("strong");
+    card.className = "metric"; small.textContent = label; strong.textContent = value;
+    card.append(small, strong); metrics.append(card);
+}
+function render(state) {
+    const issues = [];
+    if (state.source === "daemon-unavailable" || (state.source === "daemon" && state.statusAgeMs > 3000))
+        issues.push("Capture-daemon status is unavailable or stale");
+    if (state.primaryFailed) issues.push("PRIMARY WRITE FAILED");
+    if (state.backupFailed) issues.push("Backup write failed");
+    if (state.mirrorFailed || state.mirrorsSkipped > 0) issues.push("Mirror destination missing or failed");
+    if (state.recoveryMarkerFailed) issues.push("Recovery marker failed");
+    if (state.reportWriteFailed) issues.push("Take report write failed");
+    if (state.stereoMixFailed) issues.push("Stereo mix write failed");
+    if (state.diskStruggling) issues.push("Disk struggling");
+    if (state.missedSamples > 0) issues.push("Missed samples: " + state.missedSamples);
+    if (state.recording && state.ringFillPct >= 85) issues.push("Writer ring nearly full");
+    banner.className = issues.length ? "bad" : state.recording ? "good" : "warn";
+    banner.textContent = issues.length ? "ATTENTION — CHECK RECORDER" : state.recording ? "RECORDING" : "IDLE — NOT RECORDING";
+    details.textContent = (state.source === "daemon" ? "Capture daemon" : "Local recorder")
+        + " · " + (state.armedTracks || 0) + "/" + (state.numTracks || 0) + " tracks armed"
+        + " · " + (state.sampleRate || 0) + " Hz · updated " + new Date().toLocaleTimeString();
+    warningsEl.replaceChildren();
+    for (const issue of issues) { const li = document.createElement("li"); li.textContent = issue; warningsEl.append(li); }
+    metrics.replaceChildren();
+    metric("Time remaining", state.minutesRemaining > 0 ? state.minutesRemaining + " min" : "—");
+    metric("Missed samples", String(state.missedSamples || 0));
+    metric("Audio load", Math.round(state.audioLoadPct || 0) + "%");
+    metric("Writer ring", Math.round(state.ringFillPct || 0) + "%");
+    metric("Disk write", Number(state.diskMBPerSec || 0).toFixed(1) + " MB/s");
+    metric("Backup", state.backupActive ? "ACTIVE" : "not active");
+    tracks.replaceChildren();
+    for (let i = 0; i < (state.tracks || []).length; ++i) {
+        const t = state.tracks[i], card = document.createElement("div"), label = document.createElement("div");
+        const meter = document.createElement("div"), bar = document.createElement("span");
+        card.className = "track"; label.className = "label"; meter.className = "meter";
+        label.textContent = (i + 1) + "  " + t.name + (t.armed ? " · ARMED" : "");
+        bar.style.width = Math.round(Math.min(1, Math.max(0, Number(t.peak) || 0)) * 100) + "%";
+        meter.append(bar); card.append(label, meter); tracks.append(card);
+    }
+    alarm(issues.join("|"));
+}
+async function poll() {
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 3000);
+    try {
+        const response = await fetch(stateUrl, {cache:"no-store", signal:controller.signal});
+        if (!response.ok) throw new Error("status " + response.status);
+        render(await response.json());
+    } catch (_) {
+        banner.className = "bad"; banner.textContent = "DISCONNECTED — CHECK RECORDER";
+        details.textContent = "No current status from the recorder.";
+        alarm("disconnected");
+    } finally { clearTimeout(timer); setTimeout(poll, 1000); }
+}
+poll();
 </script></body></html>)HTML";
     }
 
@@ -543,6 +672,9 @@ setInterval(tick, 500); tick();
 
         if (method == "GET" && (path == "/" || path == "/index.html"))
             return writeHtmlPage (client);
+        if (method == "GET" && (path == "/confidence" || path == "/confidence.html"))
+            return writeRaw (client, "200 OK", "text/html; charset=utf-8",
+                             juce::String::fromUTF8 (kConfidencePage));
         if (method == "GET" && path == "/state.json")
             return writeStateJson (client);
         if (method == "GET" && path == "/stream.wav")

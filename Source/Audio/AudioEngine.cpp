@@ -787,8 +787,42 @@ namespace zynforge
     bool AudioEngine::toggleTrackArmed (int i)
     { return ! isRecording() && togglePair (recorder, i, &TrackState::armed, recorder.getStructureLock()); }
 
+    void AudioEngine::setExternalRecording (bool active) noexcept
+    {
+        if (! active)
+        {
+            std::lock_guard<std::mutex> lock (externalStatusLock);
+            externalStatusAtMs = 0;
+        }
+        externalRecording.store (active, std::memory_order_release);
+    }
+
+    void AudioEngine::setExternalCaptureStatus (const EngineStatus& status)
+    {
+        std::lock_guard<std::mutex> lock (externalStatusLock);
+        externalStatus = status;
+        externalStatusAtMs = juce::Time::currentTimeMillis();
+    }
+
     EngineStatus AudioEngine::captureStatus()
     {
+        if (externalRecording.load (std::memory_order_acquire))
+        {
+            std::lock_guard<std::mutex> lock (externalStatusLock);
+            if (externalStatusAtMs != 0 && externalStatus.recording)
+            {
+                auto status = externalStatus;
+                status.source = "daemon";
+                status.statusAgeMs = juce::jmax ((juce::int64) 0,
+                    juce::Time::currentTimeMillis() - externalStatusAtMs);
+                return status;
+            }
+            EngineStatus unavailable;
+            unavailable.source = "daemon-unavailable";
+            unavailable.statusAgeMs = -1;
+            unavailable.recording = true;
+            return unavailable;
+        }
         EngineStatus s;
         s.recording        = isRecording();
         s.playing          = player.isPlaying();
@@ -813,6 +847,7 @@ namespace zynforge
         s.mirrorsSkipped   = recorder.getMirrorsSkippedAtStart();
         s.recoveryMarkerFailed = recorder.hasRecoveryMarkerFailed();
         s.reportWriteFailed = recorder.hasReportWriteFailed();
+        s.stereoMixFailed = hasStereoMixWriteFailed();
         s.diskStruggling   = recorder.isDiskStruggling();
         s.captureFormat    = (int) recorder.getCaptureFormat();
 

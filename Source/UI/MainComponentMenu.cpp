@@ -76,6 +76,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         exportMenu.addItem (13, "Bounce Stereo Mix...",            canExport && n > 0);
         exportMenu.addSeparator();
         exportMenu.addItem (14, "Export Timeline (markers/cues/tracks) as CSV...", canExport && n > 0);
+        exportMenu.addItem (962, "Create Verified Show Handoff...", canExport && n > 0);
         menu.addSubMenu ("Export", exportMenu);
         menu.addSeparator();
 
@@ -256,6 +257,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             m.addItem (950, compRunning
                                ? juce::String ("Stop companion (port " + juce::String (engine.getCompanionServerPort()) + ")")
                                : juce::String ("Start companion server on :9000..."));
+            m.addItem (961, "Copy read-only confidence URL", compRunning);
             menu.addSubMenu ("Network & Surfaces", m);
         }
 
@@ -342,6 +344,7 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << engine.getRecorder().getNumTracks()
         << '|' << (int) selectedLogical.size()
         << '|' << (int) engine.isRecording()
+        << '|' << (int) sessionIoBusy.load()
         << '|' << (int) sessionLocked
         << '|' << (int) player.hasLoopRegion()
         << '|' << (int) engine.getActiveSessionDir().isDirectory()
@@ -361,6 +364,7 @@ void MainComponent::refreshMenuStateIfChanged()
         // unrelated state change happens to refresh the menu.
         << '|' << (int) consoleLink.canWrite()
         << '|' << (int) useCaptureDaemon
+        << '|' << (int) engine.isCompanionServerRunning()
         << '|' << (int) captureSupervisor.isAttached()
         << '|' << (int) (useCaptureDaemon && captureSupervisor.isDaemonRecording());
 
@@ -387,6 +391,18 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     else if (id == 956)  consoleCaptureGains();
     else if (id == 957)  consoleRestoreGains();
     else if (id == 958)  toggleCaptureDaemon();
+    else if (id == 961)
+    {
+        const auto url = engine.getCompanionAccessUrl().replace ("/?t=", "/confidence?t=");
+        if (engine.isCompanionServerRunning() && url.isNotEmpty())
+        {
+            juce::SystemClipboard::copyTextToClipboard (url);
+            showStatus ("Read-only confidence URL copied. Use a TLS tunnel for another device.");
+        }
+        else
+            showStatus ("Start the companion server before copying its confidence URL");
+    }
+    else if (id == 962)  exportShowHandoff();
     else if (id == 3)    onSaveSessionAs();
     else if (id == 4)    onImportAudioFiles();
     else if (id == 7)    confirmSessionReplacement ([this] { createSessionFromCsv(); });

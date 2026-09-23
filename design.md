@@ -207,11 +207,17 @@ components:
 
 # ZynForge — Design System
 
+## Read-only observer and handoff — 2026-09-23
+
+The confidence page is intentionally a separate observer surface: large recording/idle/alarm states first, health figures second, per-track activity last, and no arm, mute, solo or transport buttons. Network loss and stale capture-daemon status are alarms, not a healthy-looking last frame. Audible alerts require an explicit user gesture and remain supplementary to the local recording dashboard.
+
+The post-show handoff is a background, cancellable transfer into a new/empty folder. Its incomplete marker remains until copying, source/copy hashing, sidecars and the manifest all finish. The completion message distinguishes a verified file transfer from a source capture report that still needs review; neither visual state implies that the planned physical rig passed show-readiness acceptance.
+
 ## Recording safety interaction update — 2026-09-12
 
 The September remediation changes behavior, not the visual token system. Recording state must reflect the actual local or daemon capture: arm/input/session changes are blocked while rolling, and STOP is not shown as complete until acknowledged. Empty edited tracks stay silent; missing sources never silently become a different take. Track deletion retains media, while reorder clears stale index-based undo and clipboard state. Recovery counts media under `Audio Files` and preserves transaction recovery material.
 
-Communicate software validation and show acceptance separately. The current universal Release and protocol-v3 helper are installed, and the in-app runner passes 358 test groups with zero failures; the planned SD5/56-input rig still needs hardware and three-hour acceptance checks. See [AUDIT_FIXES_2026-09-20.md](AUDIT_FIXES_2026-09-20.md), [INSTALL.md](INSTALL.md) and [SHOW-READINESS.md](SHOW-READINESS.md). Existing visual specifications and historical contrast results below are not a fresh accessibility or hardware certification.
+Communicate software validation and show acceptance separately. The 2026-09-23 local Release passes 364 test groups; the newly built app has not replaced the previously installed protocol-v3 bundle, and the planned SD5/56-input rig still needs hardware and three-hour acceptance checks. See [AUDIT_FIXES_2026-09-20.md](AUDIT_FIXES_2026-09-20.md), [INSTALL.md](INSTALL.md) and [SHOW-READINESS.md](SHOW-READINESS.md). Existing visual specifications and historical contrast results below are not a fresh accessibility or hardware certification.
 
 > Engineer-first dark UI for live and recording audio applications.
 > Built so the operator can scan critical state at a glance under stage

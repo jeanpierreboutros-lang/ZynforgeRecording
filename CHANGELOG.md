@@ -17,6 +17,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Added — confidence monitoring and show handoff, 2026-09-23
+
+- Added a token-protected, read-only confidence page for recording status, track activity, missed samples, writer health, and stale/disconnected warnings, with opt-in audible alerts. Daemon takes display daemon metrics rather than local-recorder figures.
+- Added a background, cancellable verified show-handoff export with channel-map and timeline CSVs, per-file source/copy SHA-256 manifest, and an incomplete marker for interrupted copies. Source capture-report gaps remain explicitly flagged; the export does not certify the original take or external backup disks.
+- Local universal Release build passes 364 test groups with zero failures and both static audits; phone/tunnel and full-size handoff field tests remain open.
+
 ### Fixed — master output mute, 2026-09-23
 
 - Master mute now silences the selected speaker pair even when a direct strip or stream route shares those hardware outputs; unrelated direct/FOH outputs remain live.

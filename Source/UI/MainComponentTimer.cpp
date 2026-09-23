@@ -19,7 +19,9 @@ void MainComponent::timerCallback()
     if (useCaptureDaemon)
     {
         captureSupervisor.tick();
-        engine.setExternalRecording (captureSupervisor.isDaemonRecording());
+        const auto daemonStatus = captureSupervisor.lastStatus();
+        engine.setExternalCaptureStatus (daemonStatus);
+        engine.setExternalRecording (daemonStatus.recording);
         // Keep idle capture pre-roll following the GUI's device/arm layout.
         // Identical configurations are cached and cause no IPC or reinitialisation.
         if (! engine.isRecording() && captureSupervisor.isAttached()) configureCaptureDaemon();

@@ -691,8 +691,9 @@ void MainComponent::connectCaptureDaemon (bool announceReattach)
     juce::Thread::sleep (250);   // let the first status push land
     if (captureSupervisor.isDaemonRecording())
     {
-        engine.setExternalRecording (true);
         const auto status = captureSupervisor.lastStatus();
+        engine.setExternalCaptureStatus (status);
+        engine.setExternalRecording (true);
         if (status.sessionPath.isNotEmpty()) engine.setActiveSessionDir (juce::File (status.sessionPath));
         recordButton.setButtonText ("STOP");
         if (announceReattach)

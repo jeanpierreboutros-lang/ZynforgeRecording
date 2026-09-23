@@ -19,6 +19,7 @@
 #include "../Audio/AtomicFile.h"
 #include "../Audio/TrackFileTransaction.h"
 #include "../Audio/PathSafety.h"
+#include "../Audio/ShowHandoff.h"
 #include "../Theme/DialogChrome.h"
 #include "../Audio/TimelineExport.h"
 #include "NewSessionDialog.h"
@@ -1289,10 +1290,10 @@ void MainComponent::applySessionSampleRate (double sr)
         showStatus ("Session sample rate set to " + khz (sr));
 }
 
-void MainComponent::exportTimelineCsv()
+juce::String MainComponent::buildTimelineCsv()
 {
     const auto dir = engine.getActiveSessionDir();
-    if (! dir.isDirectory()) { showStatus ("No active session to export."); return; }
+    if (! dir.isDirectory()) return {};
 
     namespace tx = zynforge::timelineexport;
     std::vector<tx::TrackEntry> tracks;
@@ -1327,7 +1328,14 @@ void MainComponent::exportTimelineCsv()
 
     const double sr = engine.getSessionSampleRate() > 0.0 ? engine.getSessionSampleRate()
                                                           : pendingSampleRate;
-    const auto csv = tx::buildCsv (dir.getFileName(), sr, 30, tracks, markers, cueList);
+    return tx::buildCsv (dir.getFileName(), sr, 30, tracks, markers, cueList);
+}
+
+void MainComponent::exportTimelineCsv()
+{
+    const auto dir = engine.getActiveSessionDir();
+    if (! dir.isDirectory()) { showStatus ("No active session to export."); return; }
+    const auto csv = buildTimelineCsv();
 
     const auto def = dir.getChildFile ("Export Files")
                         .getChildFile (dir.getFileName() + "_timeline.csv");
@@ -1346,6 +1354,102 @@ void MainComponent::exportTimelineCsv()
                             : "Couldn't write " + f.getFileName()
                                 + "; previous export was preserved");
         });
+}
+
+void MainComponent::exportShowHandoff()
+{
+    const auto source = engine.getActiveSessionDir();
+    if (! source.isDirectory() || engine.isRecording() || sessionLocked)
+    { showStatus ("Stop recording and unlock the session before creating a handoff"); return; }
+    if (sessionIoBusy.exchange (true))
+    { showStatus ("Another session operation is already running"); return; }
+
+    chooser = std::make_unique<juce::FileChooser> (
+        "Create a new show handoff folder...",
+        source.getSiblingFile (source.getFileName() + " Handoff"), "");
+    const auto flags = juce::FileBrowserComponent::saveMode
+                     | juce::FileBrowserComponent::canSelectDirectories;
+    juce::Component::SafePointer<MainComponent> self (this);
+    chooser->launchAsync (flags, [self, source] (const juce::FileChooser& fc)
+    {
+        if (self == nullptr) return;
+        const auto dest = fc.getResult();
+        if (dest == juce::File()) { self->sessionIoBusy.store (false); return; }
+        if (pathsafety::isSameOrDescendant (source, dest) || dest.isSymbolicLink())
+        {
+            self->sessionIoBusy.store (false);
+            self->showStatus ("Choose a new handoff folder outside the source session");
+            return;
+        }
+        if (dest.exists() && (! dest.isDirectory()
+                              || ! dest.findChildFiles (juce::File::findFilesAndDirectories, false).isEmpty()))
+        {
+            self->sessionIoBusy.store (false);
+            self->showStatus ("Handoff needs a new or empty folder; nothing was overwritten");
+            return;
+        }
+        if (! dest.isDirectory() && dest.createDirectory().failed())
+        {
+            self->sessionIoBusy.store (false);
+            self->showStatus ("Could not create the handoff folder");
+            return;
+        }
+        if (! self->saveSessionStateTo (source))
+        {
+            self->sessionIoBusy.store (false);
+            self->showStatus ("Handoff cancelled: session metadata could not be saved");
+            return;
+        }
+        const auto timelineCsv = self->buildTimelineCsv();
+        if (timelineCsv.isEmpty())
+        {
+            self->sessionIoBusy.store (false);
+            self->showStatus ("Handoff cancelled: session timeline is unavailable");
+            return;
+        }
+        // A crash or quit mid-copy must leave a visible incomplete marker,
+        // not a plausible-looking folder with a few truncated recordings.
+        const auto incomplete = dest.getChildFile ("HANDOFF INCOMPLETE.txt");
+        if (! atomicfile::writeText (incomplete,
+             "This show handoff was interrupted or failed. Do not deliver it as verified.\n"))
+        {
+            self->sessionIoBusy.store (false);
+            self->showStatus ("Could not create the handoff safety marker");
+            return;
+        }
+
+        self->joinExportThread();
+        self->engine.setSessionTransitionActive (true);
+        self->showStatus ("Creating handoff in background: " + dest.getFileName());
+        self->exportThread = std::thread ([self, source, dest, incomplete, timelineCsv]
+        {
+            showhandoff::Result result;
+            if (self != nullptr && copyDirectoryCancellable (source, dest, self->exportCancel))
+                result = showhandoff::verifyAndWrite (source, dest, timelineCsv, self->exportCancel);
+            else
+                result = { false, "Copy cancelled or failed" };
+
+            if (result.ok && ! incomplete.deleteFile())
+                result = { false, "Could not remove the incomplete marker" };
+
+            if (! result.ok)
+                atomicfile::writeText (incomplete,
+                    "This show handoff is incomplete: " + result.message + "\nDo not deliver it as verified.\n");
+            juce::MessageManager::callAsync ([self, dest, result]
+            {
+                if (self == nullptr) return;
+                self->engine.setSessionTransitionActive (false);
+                self->sessionIoBusy.store (false);
+                if (result.ok)
+                    self->showStatus ((result.captureReportWarning
+                        ? "! Handoff copy verified; CAPTURE REPORT NEEDS REVIEW: "
+                        : "Verified handoff ready: ") + dest.getFullPathName());
+                else
+                    self->showStatus ("Handoff incomplete at " + dest.getFullPathName()
+                                      + " -- " + result.message);
+            });
+        });
+    });
 }
 
 void MainComponent::relocateActiveSession()
