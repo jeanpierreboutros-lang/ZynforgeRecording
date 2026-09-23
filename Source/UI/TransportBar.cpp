@@ -253,10 +253,8 @@ namespace zynforge
             auto& p = engine.getPlayer();
             p.setPositionSamples (p.getTotalLengthSamples());
         };
-        // Delegate transport actions to the host (MainComponent) when
-        // a hook is wired -- that path runs the pre-flight checks
-        // (armed tracks, valid routing, status messages, ...). Fall
-        // back to a direct engine call when no hook is set.
+        // Recording actions require the host's pre-flight and STOP guard.
+        // A standalone bar without hooks may control playback, not a take.
         play     ->onClick = [this]
         {
             if (onRequestPlay) { onRequestPlay(); return; }
@@ -267,23 +265,14 @@ namespace zynforge
         stop     ->onClick = [this]
         {
             if (onRequestStop) { onRequestStop(); return; }
-            if (engine.isRecording()) engine.stopRecording();
+            if (engine.isRecording()) return;
             engine.stopPlayback();
             engine.getPlayer().rewind();
         };
         record   ->onClick = [this]
         {
             if (onRequestRecord) { onRequestRecord(); return; }
-            if (engine.isRecording())
-            {
-                engine.stopRecording();
-                return;
-            }
-            // Honour the engineer's "Local Storage" override like every other
-            // record entry point. (Unreachable today -- the host always wires
-            // onRequestRecord above -- but a hardcoded Music-folder path is
-            // exactly the fallback that goes live unnoticed later.)
-            engine.startRecording (engine.makeTimestampedSessionDir());
+            // No host means no way to choose/verify the session or confirm STOP.
         };
         loop     ->onClick = [this]
         {

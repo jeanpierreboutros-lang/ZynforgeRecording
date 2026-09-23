@@ -56,13 +56,18 @@ namespace zynforge
                         .getChildFile ("zf-main-transport-" + juce::Uuid().toString());
                 };
 
-                beginTest ("remote STOP reaches and finalises the capture daemon");
+                beginTest ("remote STOP needs confirmation before finalising the capture daemon");
                 auto first = makeSession();
                 expect (main.captureSupervisor.startRecording (first, 2, 0, armed));
                 expect (waitUntil ([&] { return main.captureSupervisor.isDaemonRecording(); }, 3000));
                 main.engine.setExternalRecording (true);
                 main.engine.setActiveSessionDir (first);
                 juce::String error;
+                expect (! main.engine.performRemoteTransport (
+                            AudioEngine::RemoteTransportAction::StopRecord, error));
+                expect (error.containsIgnoreCase ("armed"), error);
+                expect (main.engine.isRecording(), "first remote STOP ended the take");
+                error.clear();
                 expect (main.engine.performRemoteTransport (
                             AudioEngine::RemoteTransportAction::StopRecord, error), error);
                 expect (waitUntil ([&] { return main.captureSupervisor.hasStatus()
@@ -76,6 +81,15 @@ namespace zynforge
                 expect (waitUntil ([&] { return main.captureSupervisor.isDaemonRecording(); }, 3000));
                 main.engine.setExternalRecording (true);
                 main.engine.setActiveSessionDir (second);
+                const auto stale = main.captureSupervisor.lastStatus();
+                main.captureSupervisor.disconnect();
+                main.engine.setExternalCaptureStatus (stale, juce::Time::currentTimeMillis() - 5000);
+                main.timerCallback();
+                expectEquals (main.engine.captureStatus().source, juce::String ("daemon-unavailable"));
+                expect (main.statusLabel.getText().containsIgnoreCase ("DAEMON STATUS UNAVAILABLE"),
+                        "main dashboard bypassed status age and showed cached healthy metrics");
+                expect (main.captureSupervisor.connectOrLaunch (port), "could not reattach to rolling daemon");
+                expect (waitUntil ([&] { return main.captureSupervisor.isDaemonRecording(); }, 3000));
                 expect (main.stopActiveCapture (false));
                 expect (waitUntil ([&] { return main.captureSupervisor.hasStatus()
                                              && ! main.captureSupervisor.isDaemonRecording(); }, 3000));
@@ -111,6 +125,13 @@ namespace zynforge
                             AudioEngine::RemoteTransportAction::StartRecord, error));
                 expect (error.containsIgnoreCase ("daemon"));
                 expect (! main.engine.getRecorder().isRecording());
+
+                beginTest ("local remote RECORD uses host preflight, not a new timestamped session");
+                main.useCaptureDaemon = false;
+                error.clear();
+                expect (! main.engine.performRemoteTransport (
+                            AudioEngine::RemoteTransportAction::StartRecord, error));
+                expect (error.containsIgnoreCase ("pre-flight"), error);
 
                 first.deleteRecursively();
                 second.deleteRecursively();

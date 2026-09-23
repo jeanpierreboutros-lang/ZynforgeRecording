@@ -176,7 +176,8 @@ namespace zynforge
         void stopRecording() override;
         bool isRecording() const noexcept override { return recorder.isRecording() || externalRecording.load(); }
         void setExternalRecording (bool active) noexcept;
-        void setExternalCaptureStatus (const EngineStatus& status);
+        void setExternalCaptureStatus (const EngineStatus& status, juce::int64 receivedAtMs = 0);
+        void invalidateExternalCaptureStatus();
         void setSessionTransitionActive (bool active) noexcept
         { sessionTransitionActive.store (active, std::memory_order_release); }
         bool isSessionTransitionActive() const noexcept
@@ -996,17 +997,9 @@ namespace zynforge
         // Where new sessions are created. Honours the engineer's "Local
         // Storage" override (appProps "sessionsRoot", set from the New Session
         // / Welcome dialog), falling back to ~/Music/Zynforge Sessions.
-        // The NETWORK remote-record paths (OSC, companion server) must use
-        // this: they used to hardcode the Music folder, so a take triggered
-        // from the desk or a tablet landed on the internal drive instead of the
-        // external the engineer had configured for the show.
+        // Used by New Session / Welcome; remote capture is routed through the
+        // host's active-session preflight instead of creating a hidden folder.
         juce::File getSessionsRoot() const;
-        // Timestamped session folder under getSessionsRoot(), for the remote
-        // record entry points that always start a FRESH session.
-        juce::File makeTimestampedSessionDir() const;
-        // Remote controls have no device dialog in front of them. Refuse a
-        // take unless at least one armed, non-bus strip maps to a live input.
-        bool hasUsableArmedInput();
 
         // Wipe every per-strip persisted override so all strips read
         // their defaults (name = '1', '2', '3' ..., no colour override,

@@ -44,8 +44,22 @@ namespace zynforge::sessionbackup
             }
         }
 
-        // Keep the N most recent backup folders; prune older ones.
-        auto snaps = backupsDir.findChildFiles (juce::File::findDirectories, false, "*");
+        // Transaction journals share this directory and are NOT disposable
+        // snapshots. Only our own timestamped session snapshots may be pruned.
+        juce::Array<juce::File> snaps;
+        const auto prefix = sessionDir.getFileName() + "_";
+        for (const auto& folder : backupsDir.findChildFiles (juce::File::findDirectories, false, "*"))
+        {
+            const auto suffix = folder.getFileName().substring (prefix.length());
+            bool timestamp = suffix.length() >= 19;
+            for (int i = 0; timestamp && i < 19; ++i)
+                timestamp = (i == 4 || i == 7) ? suffix[i] == '-'
+                          : i == 10 ? suffix[i] == '_'
+                          : (i == 13 || i == 16) ? suffix[i] == '-'
+                          : juce::CharacterFunctions::isDigit (suffix[i]);
+            if (folder.getFileName().startsWith (prefix) && timestamp)
+                snaps.add (folder);
+        }
         if (snaps.size() > keepNewest)
         {
             snaps.sort();   // "<Session>_<stamp>" -> alphabetical == chronological

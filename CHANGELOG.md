@@ -17,6 +17,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed — audit follow-up, 2026-09-23
+
+- Stale or disconnected daemon status no longer looks like fresh healthy capture; the companion reflects host-side mute, solo, naming and colour during daemon takes.
+- Remote RECORD follows the active-session preflight and remote STOP uses the two-tap safety guard. The companion displays refusal/confirmation reasons; refused mute, solo and arm commands return an error instead of success.
+- Backup pruning preserves reorder recovery journals. Huge multipart/track indices are bounded, and multipart read failures reach callers.
+- Skipped mirrors appear in the capture report and trigger handoff review; legacy root-level audio can be verified. MP3 export timeout scales with take duration, and repeated clip sources open only once per update.
+- Universal Release build passed 371 test groups with zero failures; invariant and design audits are clean. Physical-rig acceptance is still pending.
+
 ### Added — confidence monitoring and show handoff, 2026-09-23
 
 - Added a token-protected, read-only confidence page for recording status, track activity, missed samples, writer health, and stale/disconnected warnings, with opt-in audible alerts. Daemon takes display daemon metrics rather than local-recorder figures.

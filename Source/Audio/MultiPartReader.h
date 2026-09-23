@@ -28,11 +28,18 @@ namespace zynforge
         // the reader (ConcatReader::create) sees the hole and refuses instead
         // of seamlessly concatenating the survivors.
         int highest = 1;
+        constexpr int kMaxTakeParts = 4096;
         for (const auto& f : dir.findChildFiles (juce::File::findFiles, false,
                                                  stem + "_part*" + ext))
         {
-            const int pn = f.getFileNameWithoutExtension()
-                            .fromLastOccurrenceOf ("_part", false, false).getIntValue();
+            const auto suffix = f.getFileNameWithoutExtension()
+                                 .fromLastOccurrenceOf ("_part", false, false);
+            if (suffix.isEmpty() || suffix.length() > 4
+                || ! suffix.containsOnly ("0123456789")
+                || suffix.getLargeIntValue() > kMaxTakeParts
+                || suffix.getLargeIntValue() < 2)
+                return { mainFile, juce::File() }; // invalid take: fail closed, bounded work
+            const int pn = suffix.getIntValue();
             if (pn > highest) highest = pn;
         }
 
@@ -128,7 +135,8 @@ namespace zynforge
                 const int chunk = (int) juce::jmin ((juce::int64) numSamples,
                                                     parts[(size_t) pi]->lengthInSamples - local);
                 if (chunk <= 0) break;
-                parts[(size_t) pi]->readSamples (dest, numDest, destOffset + written, local, chunk);
+                if (! parts[(size_t) pi]->readSamples (dest, numDest, destOffset + written, local, chunk))
+                    return false;
                 written    += chunk;
                 pos        += chunk;
                 numSamples -= chunk;

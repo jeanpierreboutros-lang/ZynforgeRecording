@@ -38,7 +38,8 @@ namespace zynforge::capture
 
         client.onStatus = [this] (const EngineStatus& s)
         {
-            { const std::lock_guard<std::mutex> g (statusLock); status = s; }
+            { const std::lock_guard<std::mutex> g (statusLock);
+              status = s; statusAtMs = juce::Time::currentTimeMillis(); }
             statusSeen.store (true);
         };
 
@@ -98,6 +99,7 @@ namespace zynforge::capture
     {
         client.disconnect();
         statusSeen.store (false);
+        { const std::lock_guard<std::mutex> g (statusLock); statusAtMs = 0; }
         everAttached = false;   // an intentional detach must not read as a death
     }
 
@@ -150,6 +152,12 @@ namespace zynforge::capture
     {
         const std::lock_guard<std::mutex> g (statusLock);
         return status;
+    }
+
+    juce::int64 CaptureSupervisor::lastStatusAtMs() const
+    {
+        const std::lock_guard<std::mutex> g (statusLock);
+        return statusAtMs;
     }
 
     bool CaptureSupervisor::startRecording (const juce::File& sessionDir, int trackCount,

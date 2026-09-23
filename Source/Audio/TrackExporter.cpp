@@ -2,6 +2,8 @@
 #include "MultiPartReader.h"
 #include "ProcessSearch.h"
 
+#include <cmath>
+
 namespace zynforge
 {
     namespace
@@ -320,6 +322,14 @@ namespace zynforge
         return encodeMp3 (destPcmFile, destWithoutExt, opts, outError);
     }
 
+    int TrackExporter::mp3EncodeTimeoutMs (double durationSeconds)
+    {
+        if (! std::isfinite (durationSeconds) || durationSeconds < 0.0)
+            return 120000;
+        return (int) juce::jlimit (120000.0, 2147483647.0,
+                                   30000.0 + durationSeconds * 2000.0);
+    }
+
     bool TrackExporter::encodeMp3 (const juce::File& tempWav,
                                    const juce::File& destWithoutExt,
                                    const ExportOptions& opts,
@@ -348,7 +358,11 @@ namespace zynforge
         const bool started = proc.start (cmd);
         if (! started) { outError = "Failed to launch lame"; tempWav.deleteFile(); return false; }
 
-        const bool finished = proc.waitForProcessToFinish (120000);
+        double durationSeconds = 0.0;
+        if (std::unique_ptr<juce::AudioFormatReader> wav { formatManager.createReaderFor (tempWav) })
+            if (wav->sampleRate > 0.0)
+                durationSeconds = (double) wav->lengthInSamples / wav->sampleRate;
+        const bool finished = proc.waitForProcessToFinish (mp3EncodeTimeoutMs (durationSeconds));
         if (! finished)
         {
             proc.kill();

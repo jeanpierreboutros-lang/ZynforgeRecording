@@ -182,11 +182,16 @@ document.getElementById("confidenceLink").href = "/confidence" + _q;
     if (src) { src.src = "/stream.wav" + _q;
                const a = src.parentElement; if (a && a.load) a.load(); }
 })();
+let commandNotice = "", commandNoticeUntil = 0;
 async function cmd(action, channel, value) {
     try {
-        await fetch("/cmd" + _q, { method:"POST", headers:{"Content-Type":"application/json"},
+        const response = await fetch("/cmd" + _q, { method:"POST", headers:{"Content-Type":"application/json"},
                               body: JSON.stringify({action, channel, value}) });
-    } catch (e) { document.getElementById("status").textContent = "send failed"; }
+        const result = await response.json();
+        commandNotice = response.ok ? "" : (result.error || "command refused");
+    } catch (e) { commandNotice = "send failed"; }
+    commandNoticeUntil = Date.now() + 2500;
+    if (commandNotice) document.getElementById("status").textContent = commandNotice;
 }
 document.getElementById("playBtn").onclick = () => cmd("play");
 document.getElementById("stopBtn").onclick = () => cmd("stop");
@@ -229,6 +234,7 @@ function renderStrips(state) {
         if (btns[2]) btns[2].classList.toggle("on", t.soloed);
     }
     document.getElementById("status").textContent =
+        commandNotice && Date.now() < commandNoticeUntil ? commandNotice :
         (state.recording?"REC ":"") + (state.playing?"PLAY ":"") +
         state.tracks.length + " channels";
 }
@@ -772,9 +778,18 @@ poll();
                 return;
             }
         }
-        else if (action == "mute")   engine.setTrackMuted  (trackIdx, value);
-        else if (action == "solo")   engine.setTrackSoloed (trackIdx, value);
-        else if (action == "arm")    engine.setTrackArmed  (trackIdx, value);
+        else if (action == "mute" || action == "solo" || action == "arm")
+        {
+            const bool applied = action == "mute" ? engine.setTrackMuted (trackIdx, value)
+                               : action == "solo" ? engine.setTrackSoloed (trackIdx, value)
+                                                  : engine.setTrackArmed (trackIdx, value);
+            if (! applied)
+            {
+                writeRaw (s, "409 Conflict", "application/json",
+                          "{\"ok\":false,\"error\":\"channel unavailable or change refused while recording\"}");
+                return;
+            }
+        }
         else
         {
             // An unknown action used to fall through to 200 OK, so a client

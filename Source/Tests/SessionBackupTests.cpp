@@ -55,12 +55,22 @@ namespace zynforge
             {
                 auto session = makeSession ("Show");
                 const auto backupsDir = session.getChildFile ("Session File Backups");
+                const auto journal = backupsDir.getChildFile ("reorder_" + juce::Uuid().toString());
+                expect (journal.createDirectory().wasOk());
+                expect (journal.getChildFile ("recovery.json").replaceWithText ("keep me"));
+                const auto unrelated = backupsDir.getChildFile ("Show_notes");
+                expect (unrelated.createDirectory().wasOk());
 
                 for (int i = 0; i < 14; ++i)
                     sessionbackup::writeSnapshot (session, 10);   // keep 10
 
-                const auto folders = backupsDir.findChildFiles (juce::File::findDirectories, false, "*");
-                expectEquals (folders.size(), 10, "pruning did not cap backup folders at 10");
+                int snapshotCount = 0;
+                for (const auto& folder : backupsDir.findChildFiles (juce::File::findDirectories, false, "Show_2*"))
+                    ++snapshotCount;
+                expectEquals (snapshotCount, 10, "pruning did not cap snapshots at 10");
+                expectEquals (journal.getChildFile ("recovery.json").loadFileAsString(),
+                              juce::String ("keep me"), "backup pruning deleted a reorder journal");
+                expect (unrelated.isDirectory(), "backup pruning deleted a non-snapshot folder");
 
                 session.getParentDirectory().deleteRecursively();
             }

@@ -66,8 +66,11 @@ namespace zynforge
 
                 // Status flows: the supervisor sees the daemon's state.
                 expect (waitUntil ([&] { return sup.hasStatus(); }, 3000), "no status received");
+                expect (sup.lastStatusAtMs() > 0, "status push has no receive timestamp");
 
                 sup.disconnect();
+                expectEquals (sup.lastStatusAtMs(), (juce::int64) 0,
+                              "detached supervisor retained a fresh status timestamp");
                 existing.stop();
             }
 

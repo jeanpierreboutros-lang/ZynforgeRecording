@@ -53,6 +53,9 @@ namespace zynforge
         // an invalid File if unavailable.
         static juce::File findLameBinary();
 
+        // Long show exports need longer than the historical fixed 120 s.
+        static int mp3EncodeTimeoutMs (double durationSeconds);
+
     private:
         // Shared MP3 tail: encodes an already-written temp WAV to .mp3 via
         // lame, then deletes the temp. False (+ outError) if lame is missing

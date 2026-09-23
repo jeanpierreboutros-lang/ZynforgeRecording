@@ -28,6 +28,11 @@ namespace zynforge
 
         void runTest() override
         {
+            beginTest ("MP3 encode timeout scales with show length");
+            expectEquals (TrackExporter::mp3EncodeTimeoutMs (10.0), 120000);
+            expect (TrackExporter::mp3EncodeTimeoutMs (7200.0) > 120000,
+                    "two-hour export still has a fixed two-minute timeout");
+
             auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
                            .getChildFile ("zf-stereoexp-" + juce::Uuid().toString());
             dir.createDirectory();

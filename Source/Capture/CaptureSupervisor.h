@@ -58,6 +58,7 @@ namespace zynforge::capture
 
         // Latest status push (thread-safe copy) + whether one ever arrived.
         EngineStatus lastStatus() const;
+        juce::int64  lastStatusAtMs() const;
         bool         hasStatus()  const noexcept { return statusSeen.load(); }
         bool         isDaemonRecording() const   { return lastStatus().recording; }
 
@@ -89,6 +90,7 @@ namespace zynforge::capture
 
         mutable std::mutex statusLock;
         EngineStatus       status;
+        juce::int64        statusAtMs { 0 };
         std::atomic<bool>  statusSeen { false };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CaptureSupervisor)

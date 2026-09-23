@@ -1514,6 +1514,7 @@ namespace zynforge
         const int        fmt        = (int) captureFormat;
         const int        preRoll    = preRollSeconds;
         const bool       primFailed = primaryFailed.load (std::memory_order_relaxed);
+        const int        mirrorsSkipped = mirrorsSkippedAtStart.load (std::memory_order_relaxed);
 
         // Build the report JSON. `withHashes == false` skips the (expensive,
         // GB-scale) SHA-256 pass and marks the report "sha256Pending":true,
@@ -1523,7 +1524,7 @@ namespace zynforge
         auto buildReportJson =
             [sessionDir, bDir, sr, fmt, preRoll, primFailed, stoppedAt,
              totalSamples, totalSeconds, totalMissed, backupWasRunning,
-             backupHadFailure]
+             backupHadFailure, mirrorsSkipped]
             (const std::vector<TrackMeta>&   trackMetas,
              const std::vector<WriterReport>& writerSnaps,
              bool withHashes,
@@ -1539,6 +1540,7 @@ namespace zynforge
             report->setProperty ("backupActive",   backupWasRunning);
             report->setProperty ("backupFailed",   backupHadFailure);
             report->setProperty ("primaryFailed",  primFailed);
+            report->setProperty ("mirrorsSkipped", mirrorsSkipped);
             report->setProperty ("captureFormat",  fmt);
             report->setProperty ("preRollSeconds", preRoll);
             report->setProperty ("sha256Pending",  ! withHashes);

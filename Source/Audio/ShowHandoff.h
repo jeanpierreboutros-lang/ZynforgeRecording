@@ -101,6 +101,30 @@ namespace zynforge::showhandoff
         std::map<juce::String, juce::String> audioHashes;
         juce::int64 totalBytes = 0;
         int audioCount = 0;
+        const auto supportedTake = [] (const juce::String& name)
+        {
+            const auto ext = juce::File (name).getFileExtension().toLowerCase();
+            if (! (ext == ".wav" || ext == ".flac" || ext == ".aif" || ext == ".aiff"))
+                return false;
+            const auto stem = juce::File (name).getFileNameWithoutExtension();
+            if (! stem.startsWith ("Track_")) return false;
+            const auto rest = stem.substring (6);
+            const auto digits = rest.upToFirstOccurrenceOf ("_", false, false);
+            if (digits.isEmpty() || digits.length() > 3
+                || ! digits.containsOnly ("0123456789")
+                || digits.getIntValue() < 1 || digits.getIntValue() > 256)
+                return false;
+            if (rest == digits) return true;
+            const auto suffix = rest.substring (digits.length());
+            return suffix.startsWith ("_part")
+                && suffix.substring (5).isNotEmpty()
+                && suffix.substring (5).containsOnly ("0123456789");
+        };
+        bool folderHasAudio = false;
+        for (const auto& [relative, file] : originals)
+            if (relative.startsWith ("Audio Files/")
+                && supportedTake (relative.substring (12)))
+                { folderHasAudio = true; break; }
         for (const auto& [relative, original] : originals)
         {
             if (cancel.load (std::memory_order_relaxed)) return { false, "Handoff cancelled" };
@@ -122,9 +146,11 @@ namespace zynforge::showhandoff
             entry->setProperty ("kind", "copied-and-verified");
             fileEntries.add (juce::var (entry.get()));
             totalBytes += size;
-            if (relative.startsWith ("Audio Files/"))
+            const bool inAudioFolder = relative.startsWith ("Audio Files/");
+            const auto name = inAudioFolder ? relative.substring (12) : relative;
+            if ((folderHasAudio ? inAudioFolder : ! inAudioFolder) && supportedTake (name))
             {
-                audioHashes.emplace (relative.substring (12), originalSha);
+                audioHashes.emplace (name, originalSha);
                 ++audioCount;
             }
         }
@@ -181,6 +207,7 @@ namespace zynforge::showhandoff
                                  || (juce::int64) report.getProperty ("missedSamples", 0) > 0
                                  || (bool) report.getProperty ("primaryFailed", false)
                                  || (bool) report.getProperty ("backupFailed", false)
+                                 || (int) report.getProperty ("mirrorsSkipped", 0) > 0
                                  || mirrorReportedFailed;
 
         juce::DynamicObject::Ptr capture (new juce::DynamicObject());
@@ -191,6 +218,7 @@ namespace zynforge::showhandoff
         capture->setProperty ("unreportedAudioFiles", unreported);
         capture->setProperty ("missedSamplesReported", report.getProperty ("missedSamples", {}));
         capture->setProperty ("mirrorFailureReported", mirrorReportedFailed);
+        capture->setProperty ("mirrorsSkippedReported", report.getProperty ("mirrorsSkipped", 0));
         capture->setProperty ("requiresManualReview", captureWarning);
         capture->setProperty ("externalBackupsIncluded", false);
 

@@ -150,6 +150,8 @@ namespace zynforge
                     expect (page.contains ("URLSearchParams"), "page does not read the token from the URL");
                     expect (page.contains ("/stream.wav\" + _q"), "page does not thread the token to the stream");
                     expect (page.contains ("/confidence\" + _q"), "page does not link to tokened confidence monitor");
+                    expect (page.contains ("result.error") && page.contains ("commandNotice"),
+                            "remote STOP/refusal reason is hidden by the companion page");
 
                     const auto confidence = httpGet (port, "/confidence?t=" + tok);
                     expect (confidence.contains ("200"), "tokened confidence page not served");
@@ -213,9 +215,12 @@ namespace zynforge
                     EngineStatus daemon;
                     daemon.recording = true;
                     daemon.missedSamples = 17;
-                    daemon.numTracks = 56;
+                    daemon.numTracks = 4;
+                    daemon.tracks.resize (4);
                     engine.setExternalCaptureStatus (daemon);
                     engine.setExternalRecording (true);
+                    engine.setTrackMuted (0, true);
+                    engine.setTrackSoloed (0, true);
                     const auto daemonState = httpGet (port, "/state.json?t=" + tok);
                     expect (daemonState.contains ("\"source\":\"daemon\"")
                             || daemonState.contains ("\"source\": \"daemon\""),
@@ -223,6 +228,20 @@ namespace zynforge
                     expect (daemonState.contains ("\"missedSamples\":17")
                             || daemonState.contains ("\"missedSamples\": 17"),
                             "remote confidence did not carry daemon capture metrics");
+                    expect (daemonState.contains ("KickTest"), "daemon status lost the GUI track name");
+                    expect (daemonState.contains ("\"muted\":true") || daemonState.contains ("\"muted\": true"),
+                            "daemon companion state hid the GUI mute");
+                    expect (daemonState.contains ("\"soloed\":true") || daemonState.contains ("\"soloed\": true"),
+                            "daemon companion state hid the GUI solo");
+                    engine.setTrackMuted (0, false);
+                    engine.setTrackSoloed (0, false);
+                    const auto refusedArm = httpPost (port, "/cmd?t=" + tok,
+                        "{\"action\":\"arm\",\"channel\":1,\"value\":true}");
+                    expect (refusedArm.contains ("409"), "refused arm was ACKed as success");
+                    engine.setExternalCaptureStatus (daemon, juce::Time::currentTimeMillis() - 5000);
+                    expectEquals (engine.captureStatus().source, juce::String ("daemon-unavailable"),
+                                  "stale daemon status was presented as fresh");
+                    engine.setExternalCaptureStatus (daemon);
                     engine.setExternalRecording (false);
                     engine.setExternalRecording (true);
                     const auto unavailable = httpGet (port, "/state.json?t=" + tok);
@@ -236,6 +255,9 @@ namespace zynforge
                     expect (engine.getRecorder().getTrack (0).muted.load(), "/cmd mute did not reach the engine");
                     httpPost (port, "/cmd?t=" + tok, "{\"action\":\"mute\",\"channel\":1,\"value\":false}");
                     expect (! engine.getRecorder().getTrack (0).muted.load(), "/cmd unmute did not reach the engine");
+                    const auto invalidMute = httpPost (port, "/cmd?t=" + tok,
+                        "{\"action\":\"mute\",\"channel\":999,\"value\":true}");
+                    expect (invalidMute.contains ("409"), "invalid channel was ACKed as success");
 
                     // /cmd arm on a different channel.
                     httpPost (port, "/cmd?t=" + tok, "{\"action\":\"arm\",\"channel\":3,\"value\":true}");

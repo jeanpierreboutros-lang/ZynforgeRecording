@@ -79,6 +79,40 @@ namespace zynforge
             result = showhandoff::verifyAndWrite (source, dest, "timeline,marker\r\n", cancel);
             expect (result.ok, result.message);
             expect (result.captureReportWarning, "a mismatched source capture hash was presented as clean");
+
+            beginTest ("Skipped mirrors remain visible in the verified handoff");
+            dest.getChildFile ("Handoff Manifest.json").deleteFile();
+            dest.getChildFile ("Handoff Channel Map.csv").deleteFile();
+            dest.getChildFile ("Handoff Timeline.csv").deleteFile();
+            const auto skippedReport = "{\"sha256Pending\":false,\"missedSamples\":0,\"mirrorsSkipped\":1,\"tracks\":[{\"files\":[\"Track_01.wav\"],\"sha256\":[\""
+                + hash + "\"]}]}";
+            expect (source.getChildFile ("session.report.json").replaceWithText (skippedReport));
+            expect (dest.getChildFile ("session.report.json").replaceWithText (skippedReport));
+            result = showhandoff::verifyAndWrite (source, dest, "timeline,marker\r\n", cancel);
+            expect (result.ok, result.message);
+            expect (result.captureReportWarning, "skipped mirror was presented as clean");
+            const auto skippedManifest = juce::JSON::parse (dest.getChildFile ("Handoff Manifest.json"));
+            expectEquals ((int) skippedManifest.getProperty ("captureReport", {})
+                              .getProperty ("mirrorsSkippedReported", 0), 1);
+
+            beginTest ("Legacy root-level take is accepted and hash-verified");
+            const auto legacy = root.getChildFile ("Legacy");
+            const auto legacyCopy = root.getChildFile ("Legacy Handoff");
+            expect (legacy.createDirectory().wasOk());
+            expect (legacyCopy.createDirectory().wasOk());
+            const auto legacyAudio = legacy.getChildFile ("Track_01.wav");
+            expect (legacyAudio.replaceWithText ("legacy audio"));
+            expect (legacyCopy.getChildFile ("Track_01.wav").replaceWithText ("legacy audio"));
+            expect (legacy.getChildFile ("session_mix.json").replaceWithText (mix));
+            expect (legacyCopy.getChildFile ("session_mix.json").replaceWithText (mix));
+            const auto legacyHash = hashing::fileSha256 (legacyAudio);
+            const auto legacyReport = "{\"sha256Pending\":false,\"tracks\":[{\"files\":[\"Track_01.wav\"],\"sha256\":[\""
+                + legacyHash + "\"]}]}";
+            expect (legacy.getChildFile ("session.report.json").replaceWithText (legacyReport));
+            expect (legacyCopy.getChildFile ("session.report.json").replaceWithText (legacyReport));
+            result = showhandoff::verifyAndWrite (legacy, legacyCopy, "timeline,marker\r\n", cancel);
+            expect (result.ok, result.message);
+            expect (! result.captureReportWarning, "legacy take was not matched to its report hash");
         }
     };
 

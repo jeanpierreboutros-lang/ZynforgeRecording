@@ -144,9 +144,13 @@ void MainComponent::onRecordClicked()
     for (int i = 0; i < numTracks; ++i)
     {
         auto& t = recorder.getTrack (i);
-        if (t.armed.load (std::memory_order_relaxed)) ++armed;
+        const bool isArmed = t.armed.load (std::memory_order_relaxed);
+        if (isArmed) ++armed;
         const int dev = t.inputRouting.load (std::memory_order_relaxed);
-        if (dev < 0 || dev >= numInputs)
+        // Playback-only strips (notably the generated Click) and buses have
+        // no input by design. Never turn them into live-input strips here.
+        if (isArmed && ! t.isBus.load (std::memory_order_relaxed)
+            && i != clickTrackIndex && (dev < 0 || dev >= numInputs))
         {
             const int target = numInputs > 0 ? (i % numInputs) : 0;
             engine.setTrackInputRouting (i, target);
@@ -290,7 +294,8 @@ void MainComponent::onRecordClicked()
         if (captureSupervisor.startRecording (dir, numTracks,
                                               (int) recorder.getCaptureFormat(), arms))
         {
-            engine.setExternalCaptureStatus (captureSupervisor.lastStatus());
+            engine.setExternalCaptureStatus (captureSupervisor.lastStatus(),
+                                             captureSupervisor.lastStatusAtMs());
             engine.setExternalRecording (true);
             engine.setActiveSessionDir (dir);
             statusLabel.setText ("DAEMON recording " + juce::String (armed) + "/"
@@ -544,33 +549,35 @@ std::optional<bool> MainComponent::handleRemoteTransport (
     zynforge::AudioEngine::RemoteTransportAction action, juce::String& error)
 {
     using A = zynforge::AudioEngine::RemoteTransportAction;
-    if (! useCaptureDaemon) return std::nullopt;
-
     if (action == A::TogglePlay || action == A::StartPlay || action == A::StopPlay)
         return std::nullopt;
 
-    const bool recording = engine.isRecording() || captureSupervisor.isDaemonRecording();
-    if (action == A::StopAll)
+    const bool recording = engine.isRecording();
+    if (action == A::StopAll || action == A::StopRecord
+        || (action == A::ToggleRecord && recording))
     {
-        // With no active capture, this is just an ordinary playback STOP.
-        if (! recording) return std::nullopt;
-        if (! stopActiveCapture (true))
-        { error = "capture stop or session finalization failed; check the host"; return false; }
-        return true;
-    }
-
-    if (action == A::StopRecord || (action == A::ToggleRecord && recording))
-    {
-        if (! recording) return true;
-        if (! stopActiveCapture (false))
-        { error = "capture stop or session finalization failed; check the host"; return false; }
+        if (! recording)
+        {
+            if (action == A::StopAll) onStopClicked();
+            return true;
+        }
+        // Every remote surface uses the same two-tap guard as the local STOP.
+        // A first tap is not a successful stop and must not be ACKed as one.
+        onStopClicked();
+        if (engine.isRecording())
+        {
+            error = stopArmedAtMs != 0
+                      ? "STOP armed; send STOP again within 2 seconds"
+                      : "capture stop or session finalization failed; check the host";
+            return false;
+        }
         return true;
     }
 
     if (action == A::StartRecord || action == A::ToggleRecord)
     {
         if (recording) return true;
-        if (! captureSupervisor.isAttached())
+        if (useCaptureDaemon && ! captureSupervisor.isAttached())
         {
             error = "capture daemon is unavailable";
             showStatus ("Remote RECORD refused -- capture daemon is unavailable");
@@ -579,7 +586,7 @@ std::optional<bool> MainComponent::handleRemoteTransport (
 
         onRecordClicked();
         if (engine.isRecording()) return true;
-        error = "daemon recording could not start";
+        error = "recording could not start; check the host pre-flight message";
         return false;
     }
 

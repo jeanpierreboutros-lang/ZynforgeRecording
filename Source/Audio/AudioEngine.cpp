@@ -66,30 +66,6 @@ namespace zynforge
                    .getChildFile ("Zynforge Sessions");
     }
 
-    juce::File AudioEngine::makeTimestampedSessionDir() const
-    {
-        const auto stamp = juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S");
-        return getSessionsRoot().getNonexistentChildFile ("Session_" + stamp, {}, false);
-    }
-
-    bool AudioEngine::hasUsableArmedInput()
-    {
-        auto* device = deviceManager.getCurrentAudioDevice();
-        if (device == nullptr) return false;
-        const auto active = device->getActiveInputChannels();
-        const juce::ScopedLock sl (recorder.getStructureLock());
-        for (int i = 0; i < recorder.getNumTracks(); ++i)
-        {
-            const auto& t = recorder.getTrack (i);
-            const int input = t.inputRouting.load (std::memory_order_relaxed);
-            if (t.armed.load (std::memory_order_relaxed)
-                && ! t.isBus.load (std::memory_order_relaxed)
-                && input >= 0 && active[input])
-                return true;
-        }
-        return false;
-    }
-
     void AudioEngine::clearRecentSessions()
     {
         if (appProps == nullptr) return;
@@ -361,7 +337,7 @@ namespace zynforge
     {
         error.clear();
 
-        // MainComponent installs this while capture-daemon mode is selected.
+        // MainComponent installs this for both local and daemon capture.
         // std::nullopt means "use the ordinary in-process implementation";
         // true/false means the host handled (or explicitly refused) it.
         if (remoteTransportHandler)
@@ -380,37 +356,17 @@ namespace zynforge
                 stopPlayback();
                 return true;
             case RemoteTransportAction::StopAll:
+                if (isRecording()) break; // no host: cannot bypass two-tap STOP
                 stopPlayback();
-                if (recorder.isRecording()) stopRecording();
                 player.rewind();
                 return true;
             case RemoteTransportAction::ToggleRecord:
-                if (recorder.isRecording())
-                {
-                    stopRecording();
-                    return true;
-                }
-                break;
             case RemoteTransportAction::StartRecord:
-                if (recorder.isRecording()) return true; // idempotent OSC "1"
-                break;
             case RemoteTransportAction::StopRecord:
-                if (recorder.isRecording()) stopRecording();
-                return true;
+                break;
         }
-
-        if (! hasUsableArmedInput())
-        {
-            error = "no armed track has a live input";
-            return false;
-        }
-
-        if (! startRecording (makeTimestampedSessionDir()))
-        {
-            error = "recording could not start";
-            return false;
-        }
-        return true;
+        error = "record transport requires host pre-flight and STOP confirmation";
+        return false;
     }
 
     void AudioEngine::setMasterGainDb (float dB)
@@ -797,24 +753,54 @@ namespace zynforge
         externalRecording.store (active, std::memory_order_release);
     }
 
-    void AudioEngine::setExternalCaptureStatus (const EngineStatus& status)
+    void AudioEngine::setExternalCaptureStatus (const EngineStatus& status, juce::int64 receivedAtMs)
     {
         std::lock_guard<std::mutex> lock (externalStatusLock);
         externalStatus = status;
-        externalStatusAtMs = juce::Time::currentTimeMillis();
+        externalStatusAtMs = receivedAtMs != 0 ? receivedAtMs : juce::Time::currentTimeMillis();
+    }
+
+    void AudioEngine::invalidateExternalCaptureStatus()
+    {
+        std::lock_guard<std::mutex> lock (externalStatusLock);
+        externalStatusAtMs = 0;
     }
 
     EngineStatus AudioEngine::captureStatus()
     {
+        constexpr juce::uint32 kDefaultSwatch = 0xff3a3f44;
         if (externalRecording.load (std::memory_order_acquire))
         {
-            std::lock_guard<std::mutex> lock (externalStatusLock);
-            if (externalStatusAtMs != 0 && externalStatus.recording)
+            EngineStatus status;
+            juce::int64 receivedAt;
             {
-                auto status = externalStatus;
+                std::lock_guard<std::mutex> lock (externalStatusLock);
+                status = externalStatus;
+                receivedAt = externalStatusAtMs;
+            }
+            if (receivedAt != 0 && status.recording
+                && juce::Time::currentTimeMillis() - receivedAt <= 2000)
+            {
                 status.source = "daemon";
                 status.statusAgeMs = juce::jmax ((juce::int64) 0,
-                    juce::Time::currentTimeMillis() - externalStatusAtMs);
+                    juce::Time::currentTimeMillis() - receivedAt);
+                // The daemon owns the capture meters and writer health, but
+                // mute/solo/name/colour are controlled by this GUI. Overlay
+                // those fields so companion controls reflect their true state.
+                const juce::ScopedLock sl (recorder.getStructureLock());
+                const int count = juce::jmin ((int) status.tracks.size(), recorder.getNumTracks());
+                for (int i = 0; i < count; ++i)
+                {
+                    const auto& t = recorder.getTrack (i);
+                    auto& ts = status.tracks[(size_t) i];
+                    ts.name = t.getNameThreadSafe();
+                    ts.muted = t.muted.load (std::memory_order_relaxed);
+                    ts.soloed = t.soloed.load (std::memory_order_relaxed);
+                    ts.monitor = t.monitor.load (std::memory_order_relaxed);
+                    ts.stereoLeft = t.isStereo.load (std::memory_order_relaxed);
+                    const auto argb = (juce::uint32) t.colourARGB.load (std::memory_order_relaxed);
+                    ts.colourARGB = argb != 0 ? argb : kDefaultSwatch;
+                }
                 return status;
             }
             EngineStatus unavailable;
@@ -851,7 +837,6 @@ namespace zynforge
         s.diskStruggling   = recorder.isDiskStruggling();
         s.captureFormat    = (int) recorder.getCaptureFormat();
 
-        constexpr juce::uint32 kDefaultSwatch = 0xff3a3f44;   // neutral graphite
         // The companion server calls this from a WORKER thread every 500 ms per
         // client. numTracks was snapshotted above and then used to index -- a
         // TOCTOU against the message thread shrinking the vector, i.e. a read of

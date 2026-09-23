@@ -103,6 +103,16 @@ namespace zynforge
                         "OSC bypassed the host and started the local recorder");
             }
 
+            beginTest ("record transport without a host fails closed");
+            {
+                AudioEngine engine;
+                juce::String error;
+                expect (! engine.performRemoteTransport (
+                    AudioEngine::RemoteTransportAction::StartRecord, error));
+                expect (error.containsIgnoreCase ("host"), error);
+                expect (! engine.getRecorder().isRecording());
+            }
+
             beginTest ("queued-callback handle is invalidated before engine teardown");
             {
                 AudioEngine::AsyncHandle handle;

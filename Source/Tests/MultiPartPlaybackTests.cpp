@@ -15,6 +15,13 @@ namespace zynforge
     public:
         MultiPartPlaybackTests() : juce::UnitTest ("Multi-part playback", "zynforge") {}
 
+        struct FailingReader final : juce::AudioFormatReader
+        {
+            FailingReader() : juce::AudioFormatReader (nullptr, "failing")
+            { sampleRate = 48000.0; numChannels = 1; lengthInSamples = 8; bitsPerSample = 24; }
+            bool readSamples (int* const*, int, int, juce::int64, int) override { return false; }
+        };
+
         static void writeDc (const juce::File& f, float value, int len, double sr)
         {
             std::vector<float> s ((size_t) len, value);
@@ -134,6 +141,36 @@ namespace zynforge
                 AudioEngine eng;
                 expectEquals (eng.loadSession (broken), 0);
                 broken.deleteRecursively();
+            }
+
+            beginTest ("absurd part and track indices cannot allocate unbounded readers");
+            {
+                const auto main = af.getChildFile ("Track_03.wav");
+                writeDc (main, 0.1f, 64, sr);
+                const auto hugePart = af.getChildFile ("Track_03_part999999999.wav");
+                writeDc (hugePart, 0.2f, 64, sr);
+                juce::AudioFormatManager fm; fm.registerBasicFormats();
+                const auto parts = findTakeParts (main);
+                expectEquals ((int) parts.size(), 2, "huge part index expanded into millions of paths");
+                expect (ConcatReader::create (fm, parts) == nullptr, "invalid take loaded as complete");
+                main.deleteFile(); hugePart.deleteFile();
+
+                const auto hugeTrack = af.getChildFile ("Track_999999999.wav");
+                writeDc (hugeTrack, 0.2f, 64, sr);
+                AudioEngine eng;
+                expectEquals (eng.loadSession (dir), 1, "huge track index expanded player slots");
+                hugeTrack.deleteFile();
+            }
+
+            beginTest ("a failing continuation reader propagates read failure");
+            {
+                std::vector<std::unique_ptr<juce::AudioFormatReader>> readers;
+                readers.push_back (std::make_unique<FailingReader>());
+                readers.push_back (std::make_unique<FailingReader>());
+                ConcatReader joined (std::move (readers));
+                int samples[8] {};
+                int* channels[1] { samples };
+                expect (! joined.readSamples (channels, 1, 0, 0, 8));
             }
 
             beginTest ("unload() fully empties the player (new session can't inherit it)");

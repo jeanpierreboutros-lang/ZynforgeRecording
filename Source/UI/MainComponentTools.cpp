@@ -672,11 +672,14 @@ void MainComponent::connectCaptureDaemon (bool announceReattach)
 {
     captureSupervisor.onDaemonDied = [this] (bool wasRecording)
     {
-        engine.setExternalRecording (false);
+        // The link may have dropped while the daemon continues to capture.
+        // Retain the transport guard, but never show its old metrics as live.
+        engine.invalidateExternalCaptureStatus();
+        engine.setExternalRecording (wasRecording);
         showStatus (wasRecording
-            ? "!! CAPTURE DAEMON DIED MID-TAKE -- audio up to the last flush is on disk. NOT relaunching automatically."
-            : "Capture daemon exited.");
-        recordButton.setButtonText ("RECORD");
+            ? "!! CAPTURE DAEMON UNAVAILABLE MID-TAKE -- may still be recording. Reconnect and verify before touching storage."
+            : "Capture daemon connection lost or process exited.");
+        recordButton.setButtonText (wasRecording ? "REC ?" : "RECORD");
     };
 
     if (! captureSupervisor.connectOrLaunch (kCaptureDaemonPort))
@@ -692,7 +695,7 @@ void MainComponent::connectCaptureDaemon (bool announceReattach)
     if (captureSupervisor.isDaemonRecording())
     {
         const auto status = captureSupervisor.lastStatus();
-        engine.setExternalCaptureStatus (status);
+        engine.setExternalCaptureStatus (status, captureSupervisor.lastStatusAtMs());
         engine.setExternalRecording (true);
         if (status.sessionPath.isNotEmpty()) engine.setActiveSessionDir (juce::File (status.sessionPath));
         recordButton.setButtonText ("STOP");

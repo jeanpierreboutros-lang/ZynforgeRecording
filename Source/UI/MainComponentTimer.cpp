@@ -19,9 +19,16 @@ void MainComponent::timerCallback()
     if (useCaptureDaemon)
     {
         captureSupervisor.tick();
-        const auto daemonStatus = captureSupervisor.lastStatus();
-        engine.setExternalCaptureStatus (daemonStatus);
-        engine.setExternalRecording (daemonStatus.recording);
+        const auto receivedAt = captureSupervisor.lastStatusAtMs();
+        if (captureSupervisor.isAttached() && receivedAt != 0)
+        {
+            const auto daemonStatus = captureSupervisor.lastStatus();
+            engine.setExternalCaptureStatus (daemonStatus, receivedAt);
+            // A delayed status must not turn a disconnected/unknown take into
+            // a healthy recording or clear a take whose state is unknown.
+            if (juce::Time::currentTimeMillis() - receivedAt <= 2000)
+                engine.setExternalRecording (daemonStatus.recording);
+        }
         // Keep idle capture pre-roll following the GUI's device/arm layout.
         // Identical configurations are cached and cause no IPC or reinitialisation.
         if (! engine.isRecording() && captureSupervisor.isAttached()) configureCaptureDaemon();
@@ -236,8 +243,10 @@ void MainComponent::timerCallback()
     // Capture-daemon watchdog (Phase 1d/2): cheap when inactive.
     if (useCaptureDaemon) captureSupervisor.tick();
 
-    const auto status = useCaptureDaemon && captureSupervisor.isDaemonRecording()
-                          ? captureSupervisor.lastStatus() : engine.captureStatus();
+    // captureStatus applies the daemon's receive timestamp and link-loss
+    // invalidation. Reading lastStatus directly here would bypass both and
+    // paint a dead daemon's final healthy metrics indefinitely.
+    const auto status = engine.captureStatus();
     const bool rec = status.recording;
     // Timeline edits can trigger long disk scans/renders and mutate the clip
     // graph. Keep the editor read-only for local and daemon capture, and while
@@ -321,6 +330,7 @@ void MainComponent::timerCallback()
         const bool recoveryFail = status.recoveryMarkerFailed;
         const bool mixFail = ! useCaptureDaemon && engine.hasStereoMixWriteFailed();
         const bool diskTrouble = status.diskStruggling;
+        const bool daemonUnavailable = status.source == "daemon-unavailable";
         const bool smartBad = (smartPrimaryStatus == (int) MultitrackRecorder::SmartStatus::Failing)
                            || (smartBackupStatus  == (int) MultitrackRecorder::SmartStatus::Failing);
         // A mirror that never OPENED (drive absent, or a root that would have
@@ -328,10 +338,11 @@ void MainComponent::timerCallback()
         // -- which walks the entries -- structurally cannot see it. Without this
         // the engineer runs the whole show believing they have a copy they don't.
         const int mirrorsSkipped = status.mirrorsSkipped;
-        if (primFail || backupFail || mirrorFail || recoveryFail || mixFail
+        if (daemonUnavailable || primFail || backupFail || mirrorFail || recoveryFail || mixFail
             || diskTrouble || smartBad || mirrorsSkipped > 0)
         {
             juce::String warn;
+            if (daemonUnavailable) warn << "!! DAEMON STATUS UNAVAILABLE -- take may still be rolling; reconnect and verify  ";
             if (smartBad)    warn << "! SMART FAILING -- replace this drive  ";
             if (primFail)    warn << "! PRIMARY WRITE FAILED -- recording on backup/mirror  ";
             if (backupFail)  warn << "! BACKUP WRITE FAILED -- primary recording continues  ";

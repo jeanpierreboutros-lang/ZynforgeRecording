@@ -15,6 +15,12 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Current Priorities
 
+### Whole-codebase audit follow-up — 2026-09-23
+
+- [x] Fix the 13 reported failure paths across daemon status truth, remote transport, backup retention, multipart/session bounds, handoff evidence, companion commands and long MP3 exports; add focused regressions. Universal Release build, 371 test groups / 0 failures, invariant and design audits clean.
+- [ ] Rehearse daemon link loss and two-tap remote STOP on the actual control rig; automated tests do not certify physical capture or monitor routing.
+- [ ] Trace transient AppKit "Invalid view geometry: width/height is negative" runtime faults seen during the 2026-09-23 smoke launch. The window rendered normally and no crash report appeared, but the startup layout warning needs a native UI pass.
+
 ### Confidence monitor and handoff — 2026-09-23
 
 - [x] Add a token-protected read-only confidence page with stale/disconnected and writer-health alarms. The status feed selects daemon metrics during external capture; an optional sound requires an explicit tap in the observer browser.
@@ -145,7 +151,7 @@ Ten-area parallel read-only audit of the whole codebase → 120 findings (7 Bloc
   - **SessionMirror cross-machine transport** — the schema parse is fixed (works over localhost/tunnel), but true cross-machine mirroring needs the **LAN-companion + access-token wiring** (deliberately unwired per the 2026-06 ADR) — a feature, not a bug.
   - ~~**Capture-daemon `SetTrackCount` race**~~ — **FIXED 2026-08-11**: `handleCommand` now brackets the resize with `removeAudioCallback`/`addAudioCallback` (as `AudioEngine::setStripCount` already did) and refuses mid-take with a real error reply. **The companion `getTrack` read is still open** — the worker threads read `getTrack` with no guard against `setStripCount`'s rebuild; it needs a recorder-vector snapshot rather than a callback detach (there's no audio callback to detach on that path). Still deferred.
   - **Reorder across a mono/stereo boundary (High, from the re-audit)** — currently REFUSES the pair-splitting step (safe, no corruption); a proper block-rotation to actually move a logical strip past a pair is a follow-up.
-  - **Remaining cosmetic / intentional Lows** — EDIT-view fit-to-window custom-row height, memory-location recall centering (~380 px), renamed-marker ruler idle staleness, MiniSpectrum lowest bins, beyond-end marker stacking; MCU motor-fader touch echo; LTC 29.97 NDF drift; loop-wrap silence gap; deleted-middle-part playback shift; recovery double-open (openSessionFolder runs twice, no data harm); bare-`4` shadows toggle-snap; remote RECORD → fresh session + lossy audition stream (both intentional). Low user impact; batch when convenient.
+  - **Remaining cosmetic / intentional Lows** — EDIT-view fit-to-window custom-row height, memory-location recall centering (~380 px), renamed-marker ruler idle staleness, MiniSpectrum lowest bins, beyond-end marker stacking; MCU motor-fader touch echo; LTC 29.97 NDF drift; loop-wrap silence gap; deleted-middle-part playback shift; recovery double-open (openSessionFolder runs twice, no data harm); bare-`4` shadows toggle-snap; lossy audition stream. Remote RECORD → fresh session was removed by the 2026-09-23 audit follow-up. Low user impact; batch when convenient.
   - **Noise-report semantics (3 Mediums)** — "noise floor" is whole-take program RMS (flags loud music), single-frame hum test flags sustained bass, 4096-sample/0.5 s hop examines ~10% of audio. Analyzer **redesign** needing acoustic calibration; deferred so the report isn't made differently-wrong.
 
 ### WHOLE-CODEBASE BUG-HUNT + HARDENING PASS — 2026-07-05

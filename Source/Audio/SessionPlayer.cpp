@@ -1,6 +1,8 @@
 #include "SessionPlayer.h"
 #include "MultiPartReader.h"
 
+#include <set>
+
 namespace zynforge
 {
     static constexpr int  kReaderBufferSeconds = 2;
@@ -136,10 +138,15 @@ namespace zynforge
         {
             // "Track_04.wav" -> 4 ; "Track_04_part02.wav" -> 4 (getIntValue
             // stops at the underscore). 1-based on disk, so index = num - 1.
-            const int num = f.getFileNameWithoutExtension()
-                              .fromFirstOccurrenceOf ("Track_", false, false)
-                              .getIntValue();
-            if (num < 1) continue;
+            const auto digits = f.getFileNameWithoutExtension()
+                                 .fromFirstOccurrenceOf ("Track_", false, false)
+                                 .upToFirstOccurrenceOf ("_", false, false);
+            if (digits.isEmpty() || digits.length() > 3
+                || ! digits.containsOnly ("0123456789")) continue;
+            const int num = digits.getIntValue();
+            // A hostile or corrupt filename must not size the track vector to
+            // millions of entries. The mixer/session schema accepts 256 slots.
+            if (num < 1 || num > 256) continue;
             byIndex[num - 1].push_back (f);
         }
 
@@ -154,6 +161,7 @@ namespace zynforge
             if (reader == nullptr) continue; // incomplete/corrupt take: never play a silent truncation
             const double fileSR = reader->sampleRate;
             const bool stereo = reader->numChannels >= 2;
+            if (stereo && idx >= 255) continue;
             const auto takeLen = reader->lengthInSamples;
 
             const auto bufferSamples = (int) (fileSR * kReaderBufferSeconds);
@@ -312,10 +320,12 @@ namespace zynforge
         // Build readers for any clip that references a file other than its
         // track's own -- OUTSIDE the lock, since opening a file is slow.
         std::vector<std::pair<juce::String, std::unique_ptr<juce::BufferingAudioReader>>> built;
+        std::set<juce::String> queued;
         for (const auto& c : clips)
         {
             if (c.audioFile == juce::File()) continue;
             const auto key = c.audioFile.getFullPathName();
+            if (! queued.insert (key).second) continue;
             {
                 const juce::ScopedLock sl (clipsLock);
                 if (extraReaders.find (key) != extraReaders.end()) continue;

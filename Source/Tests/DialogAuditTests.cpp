@@ -100,6 +100,9 @@ namespace zynforge
                 expectEquals (rec.getMirrorsSkippedAtStart(), 1,
                               "the colliding mirror must be dropped AND counted -- a mirror that "
                               "never opens creates no entry, so anyMirrorFailed() cannot see it");
+                const auto report = juce::JSON::parse (sessionDir.getChildFile ("session.report.json"));
+                expectEquals ((int) report.getProperty ("mirrorsSkipped", 0), 1,
+                              "integrity report omitted a mirror skipped at start");
                 expect (goodDrive.getChildFile ("Gig").getChildFile ("Audio Files")
                                  .getChildFile ("Track_01.wav").existsAsFile(),
                         "the usable mirror must still have written");
