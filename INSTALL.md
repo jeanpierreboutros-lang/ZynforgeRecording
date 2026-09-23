@@ -67,6 +67,14 @@ If copying or verification fails, do not launch the partial installation. Preser
 - Previous installed app retained at `/Applications/Zynforge Recording.app.backup-20260920-before-protocol-v3` for rollback.
 - Developer ID signing/notarization and the exact-rig hardware rehearsal remain pending.
 
+## Installation record — 2026-09-23
+
+- Application code commit `ccd755e` was built from `origin/main`. [GitHub run 35841647969](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/35841647969) passed its Debug/Release matrix for that commit.
+- The fresh universal Release build and the installed app each passed 371 test groups with zero failures. The GUI and bundled protocol-v3 `ZynforgeCapture` are both arm64+x86_64. Built, staged and installed bundles passed deep/strict signature verification; the installed bundle matched the signed stage exactly.
+- Installed at `/Applications/Zynforge Recording.app`. The previous complete app remains at `/Applications/Zynforge Recording.app.backup-20260923-before-ccd755e` for rollback. The older 2026-09-20 backup was not changed.
+- The installed app launched to an idle window with no new ZynForge `.ips` crash report (about 120 MB RSS / 3.7% CPU after 57 seconds). AppKit still logged transient negative-view-geometry faults; this native-UI follow-up remains open. No microphone, selected-device, capture-daemon, disposable-recording or exact-rig hardware acceptance test was performed during installation.
+- This is a local ad-hoc-signed development install, not a notarized public release or show-readiness approval.
+
 ## Rollback
 
 Stop capture and quit both processes first. Preserve current session data and the current app; then move the named backup back to `/Applications/Zynforge Recording.app`. Verify the restored signature before launch. Restore GUI and bundled daemon together, never just one executable. A prior build may not understand new session metadata: test with a duplicate session, not the only recording copy. Rolling back the app does not undo session-file changes or recover audio overwritten before the fixes.

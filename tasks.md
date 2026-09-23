@@ -18,6 +18,7 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 ### Whole-codebase audit follow-up — 2026-09-23
 
 - [x] Fix the 13 reported failure paths across daemon status truth, remote transport, backup retention, multipart/session bounds, handoff evidence, companion commands and long MP3 exports; add focused regressions. Universal Release build, 371 test groups / 0 failures, invariant and design audits clean.
+- [x] Build and install `ccd755e` with its matching protocol-v3 helper; pass 371/0 tests from both built and installed bundles, strict signature/copy checks and idle launch. Preserve the previous installation at `/Applications/Zynforge Recording.app.backup-20260923-before-ccd755e` (2026-09-23). See [INSTALL.md](INSTALL.md).
 - [ ] Rehearse daemon link loss and two-tap remote STOP on the actual control rig; automated tests do not certify physical capture or monitor routing.
 - [ ] Trace transient AppKit "Invalid view geometry: width/height is negative" runtime faults seen during the 2026-09-23 smoke launch. The window rendered normally and no crash report appeared, but the startup layout warning needs a native UI pass.
 
