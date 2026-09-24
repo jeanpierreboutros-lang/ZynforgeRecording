@@ -45,7 +45,7 @@ Reads `engine.getMarkers().getAll()`. Each marker paints as a brand-orange downw
 
 ## Strip 2 — Min:Secs (bottom, ~26 px)
 
-Adaptive tick density: a 1-2-5 progression (`[0.1 … 7200]` s) picks the labelled **major** interval whose labels won't collide (≥ 64 px apart), subdivided into mid + minor ticks of graduated height. Ticks are walked by an integer index (not a float accumulator) so a second never duplicates / skips from drift, and labels switch to tenths below 1 s/major and to H:MM:SS past an hour. The transport playhead draws a bright line + a time bubble (red while recording, on a grow-to-fit timebase); the edit cursor draws its own line; the loop region shades as a band.
+Adaptive tick density: a 1-2-5 progression (`[0.1 … 7200]` s) picks the labelled **major** interval whose labels won't collide (≥ 64 px apart), subdivided into mid + minor ticks of graduated height. Ticks are walked by an integer index (not a float accumulator) so a second never duplicates / skips from drift, and labels switch to tenths below 1 s/major and to H:MM:SS past an hour. The transport playhead draws a bright line + a time bubble (red while recording). Its span covers both the loaded take and growing live position; during a selected punch, the bubble follows the rolling player rather than the pre-opened recorder's pinned start position. The edit cursor draws its own line; the loop region shades as a band.
 
 ## Punch range overlay
 

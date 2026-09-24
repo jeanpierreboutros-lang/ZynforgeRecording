@@ -49,7 +49,7 @@ The static `launch` instantiates the dialog and wires async modal behaviour. `on
 
 Track-file counts are taken from the session's `Audio Files` directory, with a legacy root-directory fallback. This is a media-file count, not necessarily the number of logical mixer strips (stereo and multipart layouts differ).
 
-Recovery of an interrupted track-order transaction is handled by the session-open path through `TrackFileTransaction`, separately from this orphan-recording dialog. Preserve `Session File Backups/reorder_*` and `Removed Tracks` when diagnosing a failed recovery. Recover is not a guarantee that every recorded sample survived a crash.
+Recovery of an interrupted track-order transaction is handled by the session-open path through `TrackFileTransaction`, separately from this orphan-recording dialog. The session-open path also restores interrupted punch originals from `.punchbase` sidecars and archives any partial replacement under `Session File Backups/Interrupted Punch*`; configured backup/mirror copies are checked before another punch start. Preserve those folders, `Session File Backups/reorder_*` and `Removed Tracks` when diagnosing a failed recovery. Recover is not a guarantee that every recorded sample survived a crash.
 
 `juce::TableListBoxModel`-backed. Columns sort on click. Default sort is **modified-time, newest first** — engineers almost always want the session they just crashed out of, which is the most-recently-modified.
 

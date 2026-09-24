@@ -34,7 +34,7 @@ TransportBar (AudioEngine& engine);
 
 ### Capture-daemon host contract
 
-`engine.isRecording()` includes external capture. The host routes STOP, keyboard stop and the recording button's stop action through the same protected stop handler. In protocol-v3 daemon mode it waits for a reply that distinguishes command acceptance, capture completion and clean finalization before clearing the recording display, reloading completed media or saving the stopped session. If capture stopped but report/recovery/redundancy finalization failed, the transport resets but the error remains visible; if completion is uncertain, recording state stays armed. A click alone is not evidence that capture has stopped. Playback also refuses at the engine boundary while local or daemon capture is active, covering remote surfaces as well as this bar.
+`engine.isRecording()` includes external capture. Normal live capture keeps the two-tap STOP guard; a deliberate local manual or selected punch ends on one RECORD or STOP press. The host routes these controls through its capture-finalization path. In protocol-v3 daemon mode it waits for a reply that distinguishes command acceptance, capture completion and clean finalization before clearing the recording display, reloading completed media or saving the stopped session. If capture stopped but report/recovery/redundancy finalization failed, the transport resets but the error remains visible; if completion is uncertain, recording state stays armed. A click alone is not evidence that capture has stopped. Playback refuses at the engine boundary during ordinary local/daemon capture; the explicitly gated selected-punch window is the exception that allows pre/punch/post-roll playback.
 
 Each transport button is an `IconButton` — a custom-painted button that draws a vector glyph (target ring for RECORD, triangle for PLAY, square for STOP) coloured by the button's "base colour." State logic:
 
@@ -61,6 +61,6 @@ Per a 2026-05-23 UX audit, the RECORD button has a **permanent brand-red 2 px bo
 
 | ✅ Do | ❌ Don't |
 |---|---|
-| Wire `onStop` to the host's two-tap STOP-while-recording guard | Stop a rolling recording without the guard — engineers will fat-finger it under pressure |
+| Wire `onStop` to the host's normal two-tap guard and deliberate-punch one-press path | Stop an ordinary live take with one accidental press |
 | Trust the bar's own 10 Hz poll for visual state | Push transport state in via setters — the bar reads engine atomics directly |
 | Use the same RECORD shape language elsewhere if you build a new record button | Make a square RECORD or a red triangle — breaks the silhouette agreement |

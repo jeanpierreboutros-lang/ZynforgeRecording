@@ -8,7 +8,7 @@ It is **not** a mixer or DAW. No plugins, no effects, no talkback. Architectural
 
 ## 2. Technology Stack
 
-Current validation (2026-09-21): application code through `fe5280d` is pushed to `origin/main`; the universal Release build and matching protocol-v3 helper are installed locally. The in-app runner passes 358 test groups with zero failures; the invariant and design audits and final diff checks are clean. [GitHub run 35538818050](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/35538818050) passed clean Debug/Release builds and tests plus bundled-helper verification. Physical hardware acceptance remains separate and pending; see [AUDIT_FIXES_2026-09-20.md](AUDIT_FIXES_2026-09-20.md), [testing.md](testing.md), [INSTALL.md](INSTALL.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
+Current validation (2026-09-24): application code `b2c1991` is pushed to `origin/main`, builds as a universal macOS-12 Release, passes 387 local test groups with zero failures and [GitHub run 36017363562](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/36017363562). Its local DMG contains the matching protocol-v3 helper and passed checksum, read-only mount, exact bundle comparison and signature checks. The installed app is still the earlier `ccd755e` build; no real-device capture acceptance was done for `b2c1991`. See [testing.md](testing.md), [INSTALL.md](INSTALL.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
 
 | Component | Version / Notes |
 |---|---|
@@ -54,8 +54,8 @@ graph TB
 The hub is `AudioEngine`. It owns `juce::AudioDeviceManager`, registers as the `AudioIODeviceCallback`, and on each audio block:
 
 1. Clears outputs
-2. Runs `MultitrackRecorder::processBlock` (input → ring buffers)
-3. Runs `SessionPlayer::processBlock` into a per-track scratch buffer
+2. Runs `SessionPlayer::processBlock` into a per-track scratch buffer and observes the played sample span
+3. Runs `MultitrackRecorder::processBlock` (input → ring buffers); for a selected punch, only the overlapping `[in,out)` sub-block enters capture and the armed track's live input replaces old playback in monitor/direct routes
 4. Applies mute / solo / VCA / aux-send routing into a 64-bit accumulator (`juce::AudioBuffer<double>`)
 5. Downcasts and writes to outputs, the stream bus, the optional `StereoMix.wav` writer, and the companion audio ring
 6. Drives meters and the FFT FIFO from the in-flight buffers
@@ -220,11 +220,13 @@ sequenceDiagram
 
 Before opening a fresh writer, the recorder checks for an existing base `Track_NN` in WAV, FLAC, AIFF, or AIF form. Existing media requires an explicit continue/punch path; an unreadable session is never treated as permission to replace it. Redundant destinations are counted only after their nested session/audio directory and writers open. Start-time skips and runtime failures are latched for status/reporting, while free-space estimates group writer byte rates by physical volume so two copies on one disk do not claim twice the endurance.
 
+For a punch, all active copies must have a matching base before any file is stashed; every stash is completed before a writer opens. Originals remain as `.punchbase` until splice commit. Session reopen restores interrupted originals and archives partial replacements under that session's `Session File Backups/Interrupted Punch*`; recording start also checks configured backup/mirror copies. Capture history pre-roll applies only to fresh takes. A newly armed track in a punch or continuation gets a silent lead-in to align its flat file with the session timeline. A selected punch opens capture before pre-roll, gates input exactly in the audio callback, disables loop wrapping temporarily and lets the timer handle only finalization/post-roll.
+
 ### Virtual soundcheck playback
 1. `SessionPlayer::loadSession(dir)` scans `Track_NN.wav`, wraps each in a `BufferingAudioReader`.
 2. UI calls `engine.startPlayback()`.
 3. Per-block: player reads each track at the current position, applies clip-aware gain / fade, emits to a scratch buffer.
-4. `AudioEngine` routes scratch → per-channel outputs through mute / solo / VCA / aux send → 64-bit accumulator → downcast → device outs. Playback start refuses while local or external capture is active, so every transport adapter shares the same guard.
+4. `AudioEngine` routes scratch → per-channel outputs through mute / solo / VCA / aux send → 64-bit accumulator → downcast → device outs. Playback start refuses while ordinary local or external capture is active; the explicit selected-punch capture window permits playback for its pre/punch/post-roll and switches armed tracks to live input only inside the captured span.
 
 ### Offline render (bounce / consolidate / QC)
 Bounce stems, bounce stereo mix, Strip Silence, and Consolidate all run through a **windowed** arrangement render core in `AudioEngineClips.cpp` so memory stays O(window) regardless of show length (a multi-hour mono track no longer needs a ~2 GB flat buffer). `forEachArrangementWindow(track, start, end, consume)` and `forEachStereoMixWindow(total, consume)` render fixed 64 k-sample windows (a multiple of the 512-sample automation step, so output is sample-identical to a whole-buffer render) and hand each window to a callback. `bounceTrackArrangementToWav` / `bounceStereoMixToWav` stream those windows straight to a 24-bit WAV writer (used by File ▸ Bounce); `renderTrackArrangement` / `renderStereoMix` are thin buffer-returning wrappers over the same core for tests and short material. Strip Silence, Consolidate, Normalize, and transient detection work on background threads, capture immutable input state first, and publish only if the session and source clips are unchanged. Post-show QC (`QcAnalyzer.h`) and song detection (`SongDetector.h`) likewise stream the recorded files in blocks rather than loading tracks into RAM.

@@ -6,7 +6,7 @@ The format follows `/design-system document` output: description, when-to-use, v
 
 ## Index
 
-September 2026 behavior updates are reflected in ChannelStrip, TransportBar, BigClockPanel, EditPageTrackRow and SessionRecoveryDialog. The 2026-09-20 reliability follow-up adds protocol-v3 stop/failure semantics, session persistence for output/stream switches, and background edit ownership; it does not change the visual-token contracts of the other components. For the current test baseline and operating limits, see [testing](../../testing.md), [architecture](../../architecture.md) and [show readiness](../../SHOW-READINESS.md); component descriptions are not proof of field validation.
+September 2026 behavior updates are reflected in ChannelStrip, TransportBar, BigClockPanel, EditPageTrackRow, EditTimeRuler, EditToolsBar and SessionRecoveryDialog. The 2026-09-24 source/DMG changes include exact selected-punch capture, one-press deliberate punch-out, crash-safe punch recovery and live EDIT zoom/follow navigation; they do not turn the component descriptions into proof of field validation. For the current test baseline, packaging status and operating limits, see [testing](../../testing.md), [installation](../../INSTALL.md), [architecture](../../architecture.md) and [show readiness](../../SHOW-READINESS.md).
 
 ### Shipped
 
@@ -19,7 +19,7 @@ September 2026 behavior updates are reflected in ChannelStrip, TransportBar, Big
 - [`EditToolsBar`](EditToolsBar.md) — Smart / Selector / Trim / Grabber / Fade / Scrubber tool palette
 - [`BigClockPanel`](BigClockPanel.md) — transport state + timer + armed-ready indicator
 - [`TransportBar`](TransportBar.md) — record / play / stop / skip buttons
-- [`EditTimeRuler`](EditTimeRuler.md) — three-strip ruler (markers / Bars\|Beats / Min:Secs)
+- [`EditTimeRuler`](EditTimeRuler.md) — two-strip ruler (markers / Min:Secs)
 - [`EditPage::TrackRow`](EditPageTrackRow.md) — the per-track EDIT row with waveform, automation lane, clip-edit handles
 - [`Toast`](Toast.md) — non-modal feedback pill
 - [`PeakTally`](PeakTally.md) — global clip indicator

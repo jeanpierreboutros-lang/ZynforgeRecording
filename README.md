@@ -10,7 +10,7 @@ Active development, pre-1.0. Ships **multitrack recording**, **virtual-soundchec
 
 ## Build
 
-As of 2026-09-24, the source macOS-12 universal Release includes the EDIT live-navigation and punch/import audit fixes and passes **387 test groups with 0 failures** locally. The previously verified `ccd755e` app remains installed at `/Applications/Zynforge Recording.app` with its matching protocol-v3 capture helper; that installation and the transfer DMG do **not** yet include these fixes. [GitHub run 35841647969](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/35841647969) passed for the earlier code. Real-device punch/navigation and the exact-rig rehearsal remain unverified. Native AppKit geometry warnings remain under investigation. See [the installation record](INSTALL.md) and [Show readiness](SHOW-READINESS.md).
+As of 2026-09-24, source commit `b2c1991` includes the EDIT live-navigation and punch/import audit fixes. Its macOS-12 universal Release passed **387 test groups with 0 failures** locally and [GitHub CI run 36017363562](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/36017363562). A verified local drag-to-Applications DMG containing that build is at `dist/Zynforge-Recording-b2c1991-macOS-universal.dmg`; the older `0.2.0` DMG remains unchanged. The installed app at `/Applications/Zynforge Recording.app` is still the earlier `ccd755e` build. The new DMG is ad-hoc signed, **not Developer ID notarized**; real-device punch/navigation and exact-rig rehearsal remain unverified. See [installation and DMG details](INSTALL.md) and [show readiness](SHOW-READINESS.md).
 
 ```bash
 cmake -B build -G Xcode
@@ -20,7 +20,7 @@ open "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
 
 First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 12.0+ Universal (Apple Silicon + Intel).
 
-For local installation, follow [INSTALL.md](INSTALL.md). The app needs the matching `ZynforgeCapture` executable bundled in `Contents/MacOS`; copying the GUI bundle alone omits it. Stop all takes and quit both processes before replacement. Capture protocol is version **3** and requires a successful compatible Hello before any command is accepted.
+For local installation, follow [INSTALL.md](INSTALL.md). The current DMG contains both the GUI and matching `ZynforgeCapture` executable under `Contents/MacOS`; copying a GUI executable alone omits the helper. Stop all takes and quit both processes before replacement. Capture protocol is version **3** and requires a successful compatible Hello before any command is accepted.
 
 ## Documentation
 

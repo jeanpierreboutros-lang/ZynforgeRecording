@@ -1,6 +1,6 @@
-# ZynForge Recording — Field-Test Checklist: Audit + Session Changes (updated 2026-09-20)
+# ZynForge Recording — Field-Test Checklist: Audit + Session Changes (updated 2026-09-24)
 
-Historical hardware cases below remain useful, but are not passed results for the current installed build. Start with [SHOW-READINESS.md](SHOW-READINESS.md), [the 2026-09-20 reliability fixes](AUDIT_FIXES_2026-09-20.md) and the September regression section in [FIELD-TEST.md](FIELD-TEST.md). Confirmed show plan: SD5, RME HDSPe AoX-D, 56 inputs, 48 kHz, about two hours; connection, Mac/chassis and storage are undecided. Never run crash/unplug/delete tests on production recordings.
+Historical hardware cases below remain useful, but are not passed results for the currently installed `ccd755e` build or the newer, not-yet-installed `b2c1991` DMG. Start with [SHOW-READINESS.md](SHOW-READINESS.md), [the 2026-09-20 reliability fixes](AUDIT_FIXES_2026-09-20.md) and the 2026-09-24 DMG/punch/import delta in [FIELD-TEST.md](FIELD-TEST.md). Confirmed show plan: SD5, RME HDSPe AoX-D, 56 inputs, 48 kHz, about two hours; connection, Mac/chassis and storage are undecided. Never run crash/unplug/delete tests on production recordings.
 
 Turnkey verification of the **hardware-gated audit items** and **everything changed since the 2026-05-24 build** (native stereo capture, console link, the compact/GRID mixer UI, prompt chrome, the design re-tone). Run on the real rig. The general first-launch/recording/takes flow lives in `FIELD-TEST.md` — this file is the delta.
 
@@ -62,6 +62,7 @@ Verifies the OSC routing/gain paths + the **new reply-timeout watchdog** (this s
 | ☐ D.3 | Bounce the stereo pair (Export). | One interleaved stereo stem, both channels present, opens in the DAW. | R channel silent. |
 | ☐ D.4 | **Routing-mapping regression:** create 2 empty mono strips (don't record), then **import** a stereo file. | Stereo plays from **its own strip** + meters; the empty mono strips stay silent; muting them does nothing to the stereo. | Stereo plays out of the mono strips / no meter (the bug fixed `3b0b857`). |
 | ☐ D.5 | Open a **legacy** session (two-mono-file stereo pair). | Plays/edits/exports exactly as before. | Anything broken for old sessions. |
+| ☐ D.6 | Import a known four-channel source and inspect playback/export. | Four mono strips in source order, all channels present and sample-rate-converted together if needed. | Only L/R land, channels are swapped, or an incomplete import is reported as success. |
 
 ---
 

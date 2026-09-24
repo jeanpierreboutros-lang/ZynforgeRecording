@@ -1,10 +1,10 @@
 # EditToolsBar
 
-`Source/UI/EditToolsBar.h` — Pro Tools-style edit-mode tool palette pinned to the right of the EDIT view's automation toolbar.
+`Source/UI/EditToolsBar.h` — edit-mode tool palette pinned to the right of the EDIT view's automation toolbar. Timeline and waveform zoom live on the EDIT view edge, not in this toolbar.
 
 ## Description
 
-A horizontal row of six tool-selection buttons + zoom controls. Each button is a vector-painted glyph (no bitmaps). The active tool biases hit-testing in `EditPage::TrackRow::mouseDown` — e.g. Selector treats clicks as loop-region drags, Trim biases clip-edge zones, Grabber biases clip-body movement.
+A horizontal row of six tool-selection buttons with vector-painted glyphs and captions. The active tool biases hit-testing in `EditPage::TrackRow::mouseDown` — e.g. Selector treats clicks as range drags, Trim biases clip-edge zones, Grabber biases clip-body movement.
 
 ## When to use
 
@@ -14,8 +14,9 @@ One instance per `EditPage`, owned by EditPage but laid out by MainComponent on 
 
 ```cpp
 enum class Tool {
-    None,        // Smart mode -- edge zones trim, body moves
-    Selector,    // Drag a loop region
+    None,        // no forced tool; automatic hit-testing
+    Smart,       // explicit Smart mode
+    Selector,    // Drag a range
     Trim,        // Edge drag = trim, body click = no-op
     Grabber,     // Body drag = move
     Fade,        // Click a clip = fade dialog
@@ -23,7 +24,7 @@ enum class Tool {
 };
 ```
 
-`None` is the default. Engineers learn to leave it on `None` (which is effectively "Smart") and only switch to a specific tool for a targeted operation.
+`None` is the default. Clicking an active tool again returns to `None`; Smart is an explicit selectable tool.
 
 ## API
 
@@ -31,17 +32,16 @@ enum class Tool {
 EditToolsBar();
 Tool getTool() const noexcept;
 std::function<void(Tool)>  onToolChanged;
-std::function<void(float)> onZoomChanged;
-void setZoom (float z);
+void setTool (Tool t);
 ```
 
-Host wires `onZoomChanged` to `EditPage::setZoom`; the bar itself owns the tool radio-group state.
+The bar owns the tool radio-group state. `EditPage` owns timeline/waveform zoom and the FOLLOW control.
 
 ## Layout
 
 ```
-┌─ Smart ─ Selector ─ Trim ─ Grabber ─ Fade ─ Scrubber ─┐  ◀ ▶ ─[──●────] ─
-│  pointer   I-beam   ◀▶    hand       /\   scrub-tool │  zoom buttons + slider
+┌─ Smart ─ Range ─ Trim ─ Move ─ Fade ─ Scrub ─┐
+│ pointer  I-beam   ◀▶    hand     /\    scrub  │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -56,16 +56,14 @@ Tool buttons use `brand::toolActive()` (cool-teal `featureEngaged`) as the activ
 | Active | Solid `toolActive()` fill, glyph via `onSignal(toolActive())` | Other tools deselect |
 | Disabled | Bg `controlBg` faded, glyph at 30 % | Not yet wired — all tools always enabled |
 
-## Zoom controls
+## Zoom and live navigation (owned by EditPage)
 
-- Two arrow buttons: `◀ ▶` decrement / increment zoom in `1.0 / 2.0 / 4.0 / 8.0 / 16.0` steps
-- A horizontal slider for continuous zoom between `1.0` (fit) and `16.0` (16× zoom)
-- `Alt+1..4` recall stored zoom presets (handled by MainComponentKeys, not this bar)
+The EDIT view overlays `H+ / H-` for reciprocal timeline zoom, `V+ / V-` for waveform-height zoom, and `FOLLOW` to resume playhead following after a manual horizontal scroll/zoom. Wheel scrolls tracks; Shift+wheel or a horizontal trackpad gesture pans time; Cmd+wheel zooms time; Cmd+Shift+wheel zooms waveform height. These controls remain active during recording and playback. This toolbar has no zoom slider or zoom callbacks.
 
 ## Tokens used
 
 - **Colours**: `brand::toolActive()` (active tool, = `featureEngaged`), `brand::bgPanel` / `controlBgHover` / `controlBg` for bg states, `brand::textSecondary` for inactive glyph, `brand::onSignal(toolActive())` for active glyph, `brand::edge` for button outlines
-- **Typography**: zoom percentage label uses `brand::type::caption()` (mono variant if showing decimals)
+- **Typography**: captions use the theme's UI text tokens
 - **Radius**: `brand::radius::md` on each button
 - **Spacing**: `brand::space::sm` between buttons; `brand::space::md` between tool block and zoom block
 
@@ -75,9 +73,9 @@ Tool buttons use `brand::toolActive()` (cool-teal `featureEngaged`) as the activ
 |---|---|
 | Default to `None` (Smart) — covers 90 % of gestures | Default to a specific tool — engineers will tool-switch every action |
 | Use `toolActive()` for the active state — deliberate to avoid colliding with signal colours | Use `accentRecord` / `accentPlay` for tool selection — those mean signal state, not edit mode |
-| Wire `onZoomChanged` to `EditPage::setZoom`; the bar doesn't know about content width | Compute scrollbar position inside the bar — that's EditPage's concern |
+| Leave zoom and follow to `EditPage` | Reintroduce a separate zoom state in this toolbar — ruler and lanes would drift |
 
 ## Accessibility
 
-- Each button has a `setTooltip` describing the tool's behaviour
-- Keyboard: not yet wired (tools are mouse-selected); planned for the keyboard-nav pass
+- Each button has a spoken title, description and press action, plus a tooltip describing its behaviour.
+- Return and Space activate a focused tool button; tool shortcuts are handled by the host.

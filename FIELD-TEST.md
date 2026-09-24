@@ -1,6 +1,6 @@
-# ZynForge Recording — Field-Test Checklist (updated 2026-09-20)
+# ZynForge Recording — Field-Test Checklist (updated 2026-09-24)
 
-Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak. Tick boxes only after performing them; the failure column tells you when to stop and report. Current installed build: application code `df5ad36`, 350 automated test groups passing on both slices of the macOS-12 universal Release and in ASan+UBSan Debug, no app-owned Xcode-analysis diagnostics, and green GitHub Debug/Release CI. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run.
+Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak. Tick boxes only after performing them; the failure column tells you when to stop and report. Current source/DMG: `b2c1991`, 387 local test groups and [GitHub CI](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/36017363562) passing; its DMG is packaged but **not installed or field-tested**. The installed app remains `ccd755e`, whose installed bundle passed 371 test groups. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run.
 
 Never force-quit, unplug hardware or delete sessions during production recording. Crash tests require a disposable rig/session and a recovery plan. In daemon mode, killing only the GUI is a reattachment test; it does not necessarily stop the recording or create an orphan. Stop both processes gracefully before installing or rolling back.
 
@@ -178,6 +178,16 @@ Still do by hand: (1b) open in another DAW, and (1d) the hard-kill-mid-take
 crash-safety check on disposable data. A survivor without a clean-stop report will not pass the helper even when audio is recoverable. Requires `ffprobe`, `xxd`, `shasum`, `jq`, `python3`; these are not all stock macOS tools. Hash-pending output is incomplete verification, even if the exit code is 0.
 
 ## September regression acceptance
+
+### 2026-09-24 DMG, punch and import delta (run after installing this exact build)
+
+- [ ] Stop all captures, back up the existing app, install the `b2c1991` DMG, verify both GUI and `ZynforgeCapture` are present and signed, and note the installed app path/commit. Opening the DMG or passing CI does not satisfy this row.
+- [ ] On a disposable session, start with loop playback enabled and select a very short punch range. RECORD must pass through playback pre-roll, replace only the selected samples, continue post-roll and stop; the loop must not wrap before punch-out, and its former enabled state must return afterward.
+- [ ] While punching a known existing take, listen to both master and any configured direct outputs at safe level: hear the old take before/after and the live input **instead of old + live together** inside the punch. Manually punch in/out with RECORD or STOP once, reopen the same session, and compare before/new/after audio and original file path.
+- [ ] Punch and continue with a newly armed track after an existing take. The new track must be silent before its start and sample-aligned on playback/export. Repeat on a long disposable session and note any start delay or disk-space pressure from the silent lead-in.
+- [ ] On disposable primary + backup/mirror copies, attempt a punch with a newly configured copy missing the original base. Capture must refuse without changing the primary. After populating the copy, punch again and inspect every result independently.
+- [ ] Simulate an interrupted punch only on a disposable copy: retain `.punchbase`, leave a partial replacement, reopen, and confirm the original is restored and the partial is archived under that session's `Session File Backups/Interrupted Punch*`. Never perform this test on show material.
+- [ ] Import a known four-channel source into a disposable session. Confirm four separate mono tracks, correct channel order, sample rate, playback routing and export, with no channels silently dropped.
 
 - [ ] With primary/backup roots aliased or overlapping, recording refuses before primary files are touched.
 - [ ] During local and daemon takes, arm/input/session replacement attempts leave capture unchanged; STOP completes only after acknowledgement.

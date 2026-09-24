@@ -15,6 +15,11 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Current Priorities
 
+### Current build packaging and installation — 2026-09-24
+
+- [x] Package `b2c1991` as a local universal DMG with its matching protocol-v3 helper. Verify CI, source tests, DMG checksum/read-only mount, exact bundle comparison, both architectures and deep/strict signatures. Preserve the older `0.2.0` DMG and the installed `ccd755e` app; see [INSTALL.md](INSTALL.md).
+- [ ] Install the new DMG only after stopping all takes and backing up the installed app. Verify the installed copy and perform a disposable capture/punch/playback/backup check before using it for important material. Developer ID notarization and exact-rig acceptance remain open.
+
 ### Punch, capture and import audit remediation — 2026-09-24
 
 - [x] Restore interrupted punch originals without deleting sidecars; fail closed on missing backup/mirror bases or occupied stashes; keep pre-roll out of punch/continue; align newly armed tracks; gate selection capture at sample boundaries, suspend loop, preserve post-roll and switch monitoring to live input; import every channel from multichannel files. Universal Release build and 387/0 headless tests pass; both static audits are clean.
@@ -250,6 +255,7 @@ Ten-area parallel read-only audit of the whole codebase → 120 findings (7 Bloc
 - [x] **Docs sweep** (S) — README / CLAUDE / design.md / architecture / coding-standards / FIELD-TEST + component docs synced for flat design, the PT waveform, continue/punch, and the tightened gate; stale gradient / `setHeatWaveFill` language removed.
 
 ### 2026-06-14 (later) — punch-in recording + cold-load parallel scan + EDIT fixes
+Historical implementation note: the 2026-06-14 punch limitations below were superseded by the 2026-09-24 punch/recovery work in Current Priorities; use [decisions.md](decisions.md) and [testing.md](testing.md) for the current contract.
 - [x] **Punch-in recording** (L) — record into a region and **keep the audio before the punch-in and after the punch-out**, replacing only the punched middle. Capture-safe by design: the real-time recorder is unchanged (records a clean fresh `Track_NN`), the existing take is stashed to a sidecar before the writer truncates, and on stop an **offline splice** (`Source/Audio/PunchSplice.h`) rebuilds `base[0,punchIn) + newTake + base[after]` via temp + atomic swap — a failure reverts to the pre-punch take, never corrupts it. **Every copy is spliced** (primary + backup + each mirror) so all drives stay byte-identical (JP decision); the splice runs after `closeWriters()` but before the async SHA thread, so the session report's length + SHA describe the spliced file with no JSON surgery. Multi-part (auto-split) bases are refused. Tested: `PunchSpliceTests` (5) + `PunchRecordTests` (2 — on-disk before+new+after, report length+SHA match). 252/0. **Trigger (2026-06-14 follow-up):** the **normal RECORD button** now continues into a loaded session — `onRecordClicked` punches at the edit cursor / appends at the end instead of always spinning up a new session (the original complaint: "can't continue recording in an existing file"). PUNCH mode + loop region is the second, position-windowed path. **Deferred:** pre-roll monitoring of the existing track; a new empty track armed during a continue lands at 0 (no base to offset); "redo from scratch" = New Session.
 - [x] **Waveforms no longer vanish when recording other tracks** (S) — arming + rolling kept only the armed rows on the live envelope; the rest keep their existing waveform.
 - [x] **Faster cold session LOAD** (M) — waveform cache sharded across 4 parallel scan threads (`Track_NN % 4`); ~up to 4× faster first-paint on an un-cached multitrack session. `WaveCache.wfm` rev 3 (one section per shard).

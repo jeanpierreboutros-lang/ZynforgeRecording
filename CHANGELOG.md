@@ -17,25 +17,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Packaged — local macOS DMG, 2026-09-24
+
+- Packaged commit `b2c1991` as a verified, ad-hoc-signed universal DMG containing the GUI and matching protocol-v3 capture helper. The old `0.2.0` DMG and installed `ccd755e` app were not replaced. SHA-256 and installation limits are in [INSTALL.md](INSTALL.md); this is not a notarized public release or physical-rig acceptance.
+
 ### Fixed — punch/recovery/import audit, 2026-09-24
 
 - An interrupted punch restores the original track on reopen and archives a partial replacement instead of deleting the `.punchbase` safeguard. Punch start now refuses occupied sidecars and backup/mirror copies that lack the original take.
 - Punches and continuations no longer prepend pre-roll audio; newly armed tracks get a silent lead-in so their audio starts at the correct session position.
 - Selected-range punches capture at sample boundaries even for ranges shorter than one UI timer tick, suspend loop playback through punch-out, preserve post-roll and monitor the new input in place of the old take.
 - Importing a source with more than two channels retains every channel as a separate mono track and rolls back that source if a channel fails.
-- The source Release build and headless tests pass; real-device punch and physical-output acceptance remain pending. The installed app and transfer DMG still contain the earlier build.
+- The source Release build and headless tests pass; real-device punch and physical-output acceptance remain pending. The installed app and **older `0.2.0` transfer DMG** still contain the earlier build; the separate `b2c1991` DMG above contains these fixes.
 
 ### Fixed — manual punch file/session persistence, 2026-09-24
 
 - A rolling in-app RECORD now punches at the live playhead rather than a stale edit cursor; a manual punch ends on one RECORD or STOP press. Normal live recording still requires two presses to stop.
 - Punching keeps the original take's container/bit depth even if capture settings changed, so it does not create a second `Track_NN` base file. The splice keeps originals until all copies commit and reports rollback instead of presenting it as a successful punch.
 - Local punch-out and normal local STOP now save the session project and mix metadata alongside the recorded audio. End-of-take continuation still creates a separate part by design.
-- The universal source build passes 378 test groups with no failures, including primary/backup/mirror format-change punches. The installed app and transfer DMG still contain the earlier build; real-device punch acceptance remains pending.
+- At this stage the universal source build passed 378 test groups with no failures, including primary/backup/mirror format-change punches. The installed app and older `0.2.0` transfer DMG still contain the earlier build; the later `b2c1991` DMG above includes this fix. Real-device punch acceptance remains pending.
 
 ### Fixed — live EDIT navigation, 2026-09-24
 
 - Manual left/right timeline scrolling and horizontal zoom during recording or playback now pause playhead auto-follow instead of snapping back immediately. A visible FOLLOW control returns to the live edge; vertical track scrolling and waveform-height zoom remain independent. Enlarged the H/V zoom controls, made H+/H- reciprocal so they return exactly to fit-to-take, and documented the gestures in the in-app guide.
-- Added regressions for manual versus automatic scrolling, follow reset on a new transport pass, and reciprocal H zoom. The source build passes 373 test groups with zero failures; the currently installed app and transfer DMG still contain the prior build.
+- Added regressions for manual versus automatic scrolling, follow reset on a new transport pass, and reciprocal H zoom. At this stage the source build passed 373 test groups with zero failures; the installed app and older `0.2.0` DMG still contain the prior build. The later `b2c1991` DMG above includes this fix.
 
 ### Fixed — audit follow-up, 2026-09-23
 

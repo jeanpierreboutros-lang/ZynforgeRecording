@@ -8,6 +8,16 @@ This procedure installs a locally built macOS app; it does not create a notarize
 2. Build and run the tests described in [testing.md](testing.md). Check the fresh report and process exit status, not an old pass count.
 3. Preserve the existing installed app at a unique backup path. Do not overwrite an earlier backup.
 
+## Current local DMG — 2026-09-24
+
+`dist/Zynforge-Recording-b2c1991-macOS-universal.dmg` packages source commit `b2c1991` for macOS 12.0+ on Apple Silicon and Intel. It includes the matching protocol-v3 `ZynforgeCapture` helper. The previous `dist/Zynforge-Recording-0.2.0-macOS-universal.dmg` is a separate older artifact and was not replaced.
+
+SHA-256: `a4c926dd59d74a0f8cba9d20c44781e47db976758301784fdb5328b38af9f778`.
+
+The source Release build passed 387 test groups with zero failures and [GitHub run 36017363562](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/36017363562). The DMG checksum verified; after mounting read-only, the app matched the built bundle byte-for-byte, both executables were `arm64` + `x86_64`, and deep/strict code-sign verification passed. These are packaging checks, **not** a real-device recording test. The currently installed `/Applications/Zynforge Recording.app` remains `ccd755e` and was not replaced by creating the DMG.
+
+To install from this DMG on a Mac: stop every take, wait for report finalization, quit the GUI and capture helper, and copy the existing `/Applications/Zynforge Recording.app` to a uniquely named rollback location. Open the DMG, then drag `Zynforge Recording.app` onto the `Applications` shortcut. Verify the new app and helper before deleting any backup. The DMG and app are ad-hoc signed, **not Developer ID signed or notarized**; macOS Gatekeeper may block a transferred/downloaded copy, and this is not a public distribution or show-readiness approval. Do not disable system-wide security settings to install it. After installation, use a disposable session to test the selected audio device, permissions, capture, punch, backup/mirror and playback before using it for important material.
+
 ## Package both executables
 
 The build produces the GUI bundle and a separate `ZynforgeCapture` artefact, then automatically embeds the matching helper and seals the local app after the copy. The installed layout requires:
