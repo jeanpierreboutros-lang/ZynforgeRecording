@@ -17,6 +17,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Packaged — two-Mac test DMG, 2026-09-24
+
+- Packaged source commit `3e6104c` as a universal macOS 12.0+ DMG containing the exact tested installed app, matching capture helper, Applications shortcut and installation notes. The image checksum, mounted contents and app signature verified. The package is ad-hoc signed and unnotarized; real-device long-take testing remains outstanding. See [INSTALL.md](INSTALL.md).
+
 ### Fixed — codebase audit, 2026-09-24
 
 - Import appends to the active session; with no active session it creates a unique folder and discards stale clip edits. Cancelled or unreadable imports roll back without redirecting the session. A continued recording exposes its new audio after existing splits, comps and trims; named, locked and end-trimmed clips survive same-session reloads.

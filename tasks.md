@@ -23,6 +23,7 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ### Current build packaging and installation — 2026-09-24
 
+- [x] Package the audit-fix `3e6104c` installed build as a new universal two-Mac test DMG with checksum and in-image instructions. Verify the read-only mount, exact app match, both architectures and deep signature. Retain older DMGs.
 - [x] Package `b2c1991` as a local universal DMG with its matching protocol-v3 helper. Verify CI, source tests, DMG checksum/read-only mount, exact bundle comparison, both architectures and deep/strict signatures. Preserve the older `0.2.0` DMG; see [INSTALL.md](INSTALL.md).
 - [x] Install the newer local working-tree build with the long-take EDIT fix after confirming both processes stopped and preserving the old app. Verify exact copy, both architectures, signatures, 391 installed test groups and idle launch. Existing DMGs remain unchanged; see [INSTALL.md](INSTALL.md).
 - [ ] Perform a disposable capture/punch/playback/backup check and long-take navigation check before using the new installation for important material. Developer ID notarization and exact-rig acceptance remain open.

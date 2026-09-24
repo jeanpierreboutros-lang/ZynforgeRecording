@@ -8,6 +8,14 @@ This procedure installs a locally built macOS app; it does not create a notarize
 2. Build and run the tests described in [testing.md](testing.md). Check the fresh report and process exit status, not an old pass count.
 3. Preserve the existing installed app at a unique backup path. Do not overwrite an earlier backup.
 
+## Current two-Mac test DMG — 2026-09-24
+
+[`dist/Zynforge-Recording-3e6104c-macOS-universal.dmg`](dist/Zynforge-Recording-3e6104c-macOS-universal.dmg) packages the tested installed build from source commit `3e6104c`. It runs on macOS 12.0+ on Apple Silicon or Intel and includes the matching protocol-v3 `ZynforgeCapture` helper, an Applications shortcut and a `READ ME.txt`. SHA-256: `3acfe9d93165b4f59d80089f5bcd214fbd19924c2d8be12a6ef5c12fb70c432f`. A matching [checksum file](dist/Zynforge-Recording-3e6104c-macOS-universal.dmg.sha256) is provided for transfer verification.
+
+From the `dist` directory, run `shasum -a 256 -c Zynforge-Recording-3e6104c-macOS-universal.dmg.sha256` on each Mac after copying both files. Stop and save any take, quit the app and capture helper, and back up the existing app. Open the DMG and drag `Zynforge Recording.app` to the Applications shortcut. After replacement, launch the app from Applications and make a disposable recording and playback check with the selected device and backup/mirror paths.
+
+The image checksum verified. A read-only mount contained the expected shortcut, instructions and app; that app matched the tested installed bundle byte for byte and passed deep/strict ad-hoc signature verification. The GUI and helper are both `arm64` + `x86_64`. The installed bundle passed 397 test groups with zero failures before packaging. The DMG is **not Developer ID signed or notarized**. If macOS blocks the transferred app, use Finder's Control-click > Open or System Settings > Privacy & Security > Open Anyway for this app; do not disable system-wide security settings. Real-device capture and long-take navigation still need testing on each target Mac.
+
 ## Earlier local DMG — 2026-09-24
 
 `dist/Zynforge-Recording-b2c1991-macOS-universal.dmg` packages source commit `b2c1991` for macOS 12.0+ on Apple Silicon and Intel. It includes the matching protocol-v3 `ZynforgeCapture` helper. The previous `dist/Zynforge-Recording-0.2.0-macOS-universal.dmg` is a separate older artifact and was not replaced.
