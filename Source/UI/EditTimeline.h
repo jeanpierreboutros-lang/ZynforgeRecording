@@ -29,6 +29,45 @@ namespace zynforge
         return (juce::int64) (juce::jmax (8000.0, sampleRate) * kNotionalEmptyLaneSec);
     }
 
+    inline float steppedTimelineZoom (float current, bool zoomIn) noexcept
+    {
+        constexpr float step = 1.41f;
+        return juce::jlimit (1.0f, 16.0f, zoomIn ? current * step : current / step);
+    }
+
+    // Auto-follow must yield to an engineer browsing a rolling take. Keep this
+    // small state machine independent of the viewport so the distinction
+    // between a manual pan and our own page-scroll can be regression-tested.
+    class TimelineFollowState
+    {
+    public:
+        void transportChanged (bool active) noexcept
+        {
+            if (active && ! transportActive)
+                following = true;  // each new play/record pass starts at the live edge
+            transportActive = active;
+        }
+
+        void horizontalScroll (int beforeX, int afterX, bool programmatic) noexcept
+        {
+            if (transportActive && ! programmatic && beforeX != afterX)
+                following = false;
+        }
+
+        void userZoom() noexcept
+        {
+            if (transportActive) following = false;
+        }
+
+        void setFollowing (bool shouldFollow) noexcept { following = shouldFollow; }
+        bool isFollowing() const noexcept { return following; }
+        bool isTransportActive() const noexcept { return transportActive; }
+
+    private:
+        bool following { true };
+        bool transportActive { false };
+    };
+
     // Which clip on `dst` corresponds to the clip [start, start+len) on another
     // track. Clip INDICES are per-track, so an edit-group broadcast that reuses
     // the source index edits whichever clip happens to sit at that position on

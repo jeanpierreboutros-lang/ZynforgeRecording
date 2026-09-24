@@ -30,6 +30,34 @@ namespace zynforge
 
         void runTest() override
         {
+            beginTest ("Horizontal zoom steps return exactly to fit-to-take");
+            {
+                const float in = steppedTimelineZoom (1.0f, true);
+                expect (in > 1.0f);
+                expectEquals (steppedTimelineZoom (in, false), 1.0f);
+                expectEquals (steppedTimelineZoom (1.0f, false), 1.0f);
+            }
+
+            beginTest ("Manual timeline navigation yields to a rolling take, but vertical scroll does not");
+            {
+                TimelineFollowState follow;
+                expect (follow.isFollowing());
+                follow.transportChanged (true);
+                follow.horizontalScroll (0, 0, false);  // vertical-only scroll
+                expect (follow.isFollowing());
+                follow.horizontalScroll (0, 100, true); // automatic page follow
+                expect (follow.isFollowing());
+                follow.horizontalScroll (100, 40, false); // manual trackpad/minimap pan
+                expect (! follow.isFollowing());
+                follow.setFollowing (true);              // FOLLOW button
+                expect (follow.isFollowing());
+                follow.userZoom();                       // H+ / Cmd-wheel
+                expect (! follow.isFollowing());
+                follow.transportChanged (false);
+                follow.transportChanged (true);          // next pass follows by default
+                expect (follow.isFollowing());
+            }
+
             // ── The empty-session lane span is ONE number ────────────────────
             // The ruler drew 300 s while laneTimelineSamples() returned 60 s and
             // the tempo lane hardcoded 48000*60, so on a session with no audio

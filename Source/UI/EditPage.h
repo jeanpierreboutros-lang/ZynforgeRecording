@@ -258,6 +258,8 @@ namespace zynforge
         class TrackList;
 
         void timerCallback() override;
+        void syncFollowButton();
+        void pauseFollowForZoom();
 
         // Viewport that reports scroll changes so the EDIT rows can re-pin
         // their header column to the left edge when the timeline scrolls
@@ -284,6 +286,9 @@ namespace zynforge
         static constexpr int               kNumScanShards = 4;
         std::vector<std::unique_ptr<juce::AudioThumbnailCache>> thumbnailCaches;
         ScrollViewport                     viewport;
+        TimelineFollowState                followState;
+        bool                               programmaticViewportChange { false };
+        int                                lastViewportX { 0 };
         std::unique_ptr<TrackList>         list;
         PlaceholderView                    placeholder;
         TimelineMinimap                    minimap;   // overview navigator (zoomed)
@@ -320,6 +325,7 @@ namespace zynforge
         // does". V↑/V↓ change waveform height; H+/H− change time scale.
         juce::TextButton zoomVIn  { "V+" }, zoomVOut { "V-" };
         juce::TextButton zoomHIn  { "H+" }, zoomHOut { "H-" };
+        juce::TextButton followButton { "FOLLOW" };
         bool clickPresent { false };
         int  clickTrackIdx { -1 };
 

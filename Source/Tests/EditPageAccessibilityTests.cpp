@@ -46,7 +46,8 @@ namespace zynforge
                     });
 
                     for (auto* expected : { "Vertical zoom in", "Vertical zoom out",
-                                            "Horizontal zoom in", "Horizontal zoom out" })
+                                            "Horizontal zoom in", "Horizontal zoom out",
+                                            "Follow playhead" })
                         expect (names.count (expected) > 0,
                                 juce::String (expected) + " has no spoken accessible name");
                 }

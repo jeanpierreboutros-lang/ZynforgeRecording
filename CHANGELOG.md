@@ -17,6 +17,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed — live EDIT navigation, 2026-09-24
+
+- Manual left/right timeline scrolling and horizontal zoom during recording or playback now pause playhead auto-follow instead of snapping back immediately. A visible FOLLOW control returns to the live edge; vertical track scrolling and waveform-height zoom remain independent. Enlarged the H/V zoom controls, made H+/H- reciprocal so they return exactly to fit-to-take, and documented the gestures in the in-app guide.
+- Added regressions for manual versus automatic scrolling, follow reset on a new transport pass, and reciprocal H zoom. The source build passes 373 test groups with zero failures; the currently installed app and transfer DMG still contain the prior build.
+
 ### Fixed — audit follow-up, 2026-09-23
 
 - Stale or disconnected daemon status no longer looks like fresh healthy capture; the companion reflects host-side mute, solo, naming and colour during daemon takes.

@@ -15,6 +15,11 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Current Priorities
 
+### EDIT live navigation — 2026-09-24
+
+- [x] Stop the recording/playback playhead from overriding manual timeline pan or horizontal zoom; add an explicit FOLLOW return, keep vertical navigation independent, and document the controls. Source Release build and 373 tests pass locally.
+- [ ] On a disposable multitrack take, verify vertical wheel/scrollbar, horizontal trackpad and Shift+wheel, H+/H-, V+/V-, Cmd+wheel, minimap drag, FOLLOW resume, and switching MIXER↔EDIT mid-take. Check GUI responsiveness and capture integrity on the actual rig before installation/show use.
+
 ### Whole-codebase audit follow-up — 2026-09-23
 
 - [x] Fix the 13 reported failure paths across daemon status truth, remote transport, backup retention, multipart/session bounds, handoff evidence, companion commands and long MP3 exports; add focused regressions. Universal Release build, 371 test groups / 0 failures, invariant and design audits clean.

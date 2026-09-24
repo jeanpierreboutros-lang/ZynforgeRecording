@@ -435,13 +435,19 @@ namespace zynforge
         // scroll so the meter / routing / R-I-S-M controls never slide away.
         viewport.onScroll = [this]
         {
+            const int viewX = viewport.getViewPositionX();
+            const bool wasFollowing = followState.isFollowing();
+            followState.horizontalScroll (lastViewportX, viewX,
+                                          programmaticViewportChange);
+            lastViewportX = viewX;
+            if (wasFollowing != followState.isFollowing()) syncFollowButton();
             if (list != nullptr) list->relayoutHeaders();
             // Keep the fixed-width ruler aligned with the scrolling wave lanes.
             // visibleAreaChanged fires for manual AND programmatic scrolls
             // (auto-scroll while playing, zoom-to-selection), so this one hook
             // covers them all -- without it the ruler ticks/playhead drift right
             // of the audio by the scroll amount when zoomed in.
-            if (ruler != nullptr) ruler->setScrollOffsetX (viewport.getViewPositionX());
+            if (ruler != nullptr) ruler->setScrollOffsetX (viewX);
         };
         addAndMakeVisible (viewport);
 
@@ -476,8 +482,26 @@ namespace zynforge
         zoomHOut.setTitle ("Horizontal zoom out"); zoomHOut.setHelpText (zoomHOut.getTooltip());
         zoomVIn .onClick = [this] { setVerticalZoom (vZoom * 1.41f); };
         zoomVOut.onClick = [this] { setVerticalZoom (vZoom * 0.71f); };
-        zoomHIn .onClick = [this] { setZoom (zoom * 1.41f); };
-        zoomHOut.onClick = [this] { setZoom (zoom * 0.71f); };
+        // While rolling, manual horizontal navigation switches to BROWSE.
+        // The engineer can return to the live edge explicitly with FOLLOW;
+        // vertical scrolling and amplitude zoom do not change this state.
+        followButton.setClickingTogglesState (true);
+        followButton.setTitle ("Follow playhead");
+        followButton.setHelpText ("Follow the playhead while recording or playing; horizontal scroll or zoom pauses follow.");
+        followButton.setColour (juce::TextButton::buttonColourId, brand::controlBg);
+        followButton.setColour (juce::TextButton::buttonOnColourId, brand::toolActive());
+        followButton.setColour (juce::TextButton::textColourOffId, brand::textPrimary);
+        followButton.setColour (juce::TextButton::textColourOnId, brand::onSignal (brand::toolActive()));
+        followButton.onClick = [this]
+        {
+            followState.setFollowing (followButton.getToggleState());
+            syncFollowButton();
+        };
+        addAndMakeVisible (followButton);
+        syncFollowButton();
+
+        zoomHIn .onClick = [this] { pauseFollowForZoom(); setZoom (steppedTimelineZoom (zoom, true)); };
+        zoomHOut.onClick = [this] { pauseFollowForZoom(); setZoom (steppedTimelineZoom (zoom, false)); };
 
         // Pro Tools-style Min:Secs time ruler perched above the track
         // list. Reads session length + sample rate from the engine via
@@ -769,6 +793,13 @@ namespace zynforge
         // session loaded, session changed, ...
         const bool loaded = engine.getPlayer().isLoaded();
         const bool rec    = engine.isRecording();
+        const bool transportActive = rec || engine.getPlayer().isPlaying();
+        const bool wasFollowing = followState.isFollowing();
+        const bool wasTransportActive = followState.isTransportActive();
+        followState.transportChanged (transportActive);
+        if (wasFollowing != followState.isFollowing()
+            || wasTransportActive != followState.isTransportActive())
+            syncFollowButton();
         const bool recJustStopped = (! rec && lastRecording);
 
         // Live capture envelope: arming is now SELF-DRIVEN per row inside
@@ -878,7 +909,7 @@ namespace zynforge
         // audio that's coming up. Only while playing and only when zoomed in
         // (content wider than the view) -- so a stopped engineer can scroll
         // freely.
-        if ((player.isPlaying() || rec) && total > 0 && list != nullptr)
+        if (followState.isFollowing() && transportActive && total > 0 && list != nullptr)
         {
             constexpr int kHeaderW = brand::space::editHeaderW;   // == TrackRow::headerW (same token)
             const int viewW = viewport.getViewWidth();
@@ -896,7 +927,10 @@ namespace zynforge
                     int newX = playheadContentX - kHeaderW - (int) (viewW * 0.10);
                     newX = juce::jlimit (0, maxX, newX);
                     if (newX != viewX)
+                    {
+                        juce::ScopedValueSetter<bool> scrolling (programmaticViewportChange, true);
                         viewport.setViewPosition (newX, viewport.getViewPositionY());
+                    }
                 }
             }
         }
@@ -914,6 +948,7 @@ namespace zynforge
 
     void EditPage::resized()
     {
+        juce::ScopedValueSetter<bool> scrolling (programmaticViewportChange, true);
         auto bounds = getLocalBounds();
 
         // Time ruler perches across the top, 46 px tall:
@@ -931,7 +966,7 @@ namespace zynforge
         if (showMinimap)
         {
             auto mmRow = bounds.removeFromBottom (18);
-            mmRow.removeFromRight (70);   // clear the zoom clusters
+            mmRow.removeFromRight (160);  // clear FOLLOW + zoom controls
             minimap.setBounds (mmRow.reduced (4, 1));
             minimap.setVisible (true);
         }
@@ -964,15 +999,18 @@ namespace zynforge
         //   V+        (vertical / amplitude, stacked)
         //   V-
         //   H- H+     (horizontal / timeline, side by side)
-        const int zb = 26, pad = 8;
-        const int rightX = bounds.getRight()  - zb - pad;
-        const int botY   = bounds.getBottom() - zb - pad;
-        zoomVIn .setBounds (rightX,            botY - 2 * (zb + 4), zb, zb);
-        zoomVOut.setBounds (rightX,            botY -     (zb + 4), zb, zb);
-        zoomHOut.setBounds (rightX - zb - 4,   botY,                zb, zb);
-        zoomHIn .setBounds (rightX,            botY,                zb, zb);
+        const int zoomW = 36, zoomH = 26, followW = 72, gap = 4, pad = 8;
+        const int rightX = bounds.getRight()  - zoomW - pad;
+        const int botY   = bounds.getBottom() - zoomH - pad;
+        zoomVIn .setBounds (rightX,                 botY - 2 * (zoomH + gap), zoomW, zoomH);
+        zoomVOut.setBounds (rightX,                 botY -     (zoomH + gap), zoomW, zoomH);
+        zoomHOut.setBounds (rightX - zoomW - gap,  botY,                      zoomW, zoomH);
+        zoomHIn .setBounds (rightX,                 botY,                      zoomW, zoomH);
+        followButton.setBounds (rightX - zoomW - 2 * gap - followW,
+                                botY, followW, zoomH);
         for (auto* b : { &zoomVIn, &zoomVOut, &zoomHIn, &zoomHOut })
             b->toFront (false);
+        followButton.toFront (false);
     }
 
     void EditPage::setLogicalRowsVisible (const std::vector<int>& visibleRows)
@@ -1002,6 +1040,7 @@ namespace zynforge
         const auto& player = engine.getPlayer();
         const auto total = player.isLoaded() ? player.getTotalLengthSamples() : 0;
         if (total <= 0 || b <= a) return;
+        pauseFollowForZoom();
         // Zoom so the selection ~fills the viewport (a little headroom), then
         // centre on it. setZoom clamps to [1, 16].
         const double frac = (double) (b - a) / (double) total;
@@ -1012,7 +1051,10 @@ namespace zynforge
     void EditPage::setZoom (float z)
     {
         z = juce::jlimit (1.0f, 16.0f, z);
-        if (std::abs (z - zoom) < 0.01f) return;
+        // A deadband here can strand the view just above 1x, leaving the
+        // minimap visible even after another H- click. Exact equality only
+        // rejects a clamped no-op at the zoom limits.
+        if (z == zoom) return;
         zoom = z;
         resized();
         if (onZoomChanged) onZoomChanged (zoom);
@@ -1029,6 +1071,7 @@ namespace zynforge
     void EditPage::wheelZoomHorizontal (float delta)
     {
         if (list == nullptr) return;
+        pauseFollowForZoom();
         // Keep the time under the viewport centre stable across the zoom.
         const double centreFrac = (viewport.getViewPositionX()
                                    + viewport.getWidth() * 0.5)
@@ -1043,5 +1086,21 @@ namespace zynforge
     void EditPage::wheelZoomVertical (float delta)
     {
         setVerticalZoom (vZoom * (delta > 0.0f ? 1.18f : 1.0f / 1.18f));
+    }
+
+    void EditPage::pauseFollowForZoom()
+    {
+        const bool wasFollowing = followState.isFollowing();
+        followState.userZoom();
+        if (wasFollowing != followState.isFollowing()) syncFollowButton();
+    }
+
+    void EditPage::syncFollowButton()
+    {
+        followButton.setToggleState (followState.isFollowing(), juce::dontSendNotification);
+        followButton.setVisible (followState.isTransportActive());
+        followButton.setTooltip (followState.isFollowing()
+            ? "Following the live playhead; scroll left/right or zoom in to browse"
+            : "Browsing the timeline; click to return to the live playhead");
     }
 }
