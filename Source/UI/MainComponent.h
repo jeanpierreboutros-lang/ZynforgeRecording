@@ -446,6 +446,9 @@ private:
     // timestamp of the first arming tap; second tap within 2 s fires
     // the stop. Zero = not armed.
     juce::uint32 stopArmedAtMs { 0 };
+    // A manual RECORD into an existing take is a short punch, not a new live
+    // take: its next RECORD/STOP press should punch out in one action.
+    bool manualPunchActive { false };
     // Held during a multi-tick automation drag so endAutomationTransaction
     // can compare against the pre-drag state.
     juce::var pendingAutomationBefore;

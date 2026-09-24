@@ -18,6 +18,7 @@
 #include "../Audio/SpectralClassifier.h"
 #include "SessionPropertiesDialog.h"
 #include "SessionProjPath.h"
+#include "RecordPosition.h"
 
 using namespace zynforge;
 
@@ -48,16 +49,23 @@ void MainComponent::onRecordClicked()
     // (splices the take), then stop the transport and tear down.
     if (punchSessionActive)
     {
-        if (engine.isRecording()) engine.stopRecording();
+        const bool saved = ! engine.isRecording() || stopActiveCapture (false);
         restoreArmStateAfterPunch();   // put the pre-punch arm layout back
         engine.stopPlayback();
         engine.setPunchModeOn (false);
         punchSessionActive = false;
         recordButton.setButtonText ("RECORD");
-        statusLabel.setText (engine.isRecording() ? "Idle" : "Punch ended",
-                             juce::dontSendNotification);
+        if (saved) statusLabel.setText ("Punch ended", juce::dontSendNotification);
         return;
     }
+
+    if (manualPunchActive && engine.isRecording())
+    {
+        stopArmedAtMs = 0;
+        stopActiveCapture (false);
+        return;
+    }
+    if (! engine.isRecording()) manualPunchActive = false;
 
     // The engineer selected crash-surviving daemon capture.  If that daemon
     // dies or disconnects, never silently fall back to the in-process recorder
@@ -106,9 +114,7 @@ void MainComponent::onRecordClicked()
         }
         stopArmedAtMs = 0;
 
-        engine.stopRecording();
-        statusLabel.setText ("Idle", juce::dontSendNotification);
-        recordButton.setButtonText ("RECORD");
+        stopActiveCapture (false);
         return;
     }
 
@@ -223,18 +229,22 @@ void MainComponent::onRecordClicked()
                         && (engine.getPlayer().isLoaded() || existingTakeMedia)
                         && ! daemonModeActive();
     juce::int64 punchAt = -1;
-    // Where does the take continue from? The EDIT cursor if you set one (click
-    // in the timeline), otherwise the PLAYHEAD (play / scrub to a spot and stop).
+    // While playback rolls, a manual punch uses its CURRENT playhead. The EDIT
+    // cursor may still hold the place where playback began; using it here
+    // silently turns an intended punch into an append/new part. When stopped,
+    // the explicitly placed EDIT cursor remains the insertion point.
     // INSIDE the take -> record OVER from there (mid-take punch / splice). At the
-    // start or end -> APPEND a NEW PART (Track_NN_partXX) -- the safe live model
-    // that never touches the existing file (and works on multi-part takes).
+    // end (or a stopped, unplaced playhead at 0) -> APPEND a NEW PART
+    // (Track_NN_partXX), which never touches the existing file. An explicitly
+    // placed cursor at 0 is a deliberate punch from the start.
     bool continueAppend = false;
     if (continueTake)
     {
         const auto cur   = engine.getEditCursorSample();
-        const auto pos   = cur >= 0 ? cur : engine.getPlayer().getPositionSamples();
+        const auto pos   = manualRecordPosition (engine.getPlayer().isPlaying(),
+                                                 engine.getPlayer().getPositionSamples(), cur);
         const auto total = juce::jmax ((juce::int64) 0, engine.getPlayer().getTotalLengthSamples());
-        if (pos > 0 && pos < total)
+        if (pos < total && (pos > 0 || cur >= 0 || engine.getPlayer().isPlaying()))
         {
             // Mid-take "record OVER from here" -- punch-in at the cursor/playhead.
             // Works on MULTI-PART takes too: the splice reads the whole take
@@ -364,6 +374,7 @@ void MainComponent::onRecordClicked()
 
     if (engine.startRecording (dir))
     {
+        manualPunchActive = continueTake && ! continueAppend;
         const double sr = engine.getPlayer().getSampleRate() > 0.0
                               ? engine.getPlayer().getSampleRate() : 48000.0;
         auto msg = ! continueTake
@@ -389,7 +400,9 @@ void MainComponent::onRecordClicked()
     }
     else
     {
-        statusLabel.setText ("Failed to start recording -- could not open writer files.",
+        statusLabel.setText (continueTake && ! continueAppend
+                             ? "Punch refused -- could not safely open the existing take or writer files"
+                             : "Failed to start recording -- could not open writer files.",
                              juce::dontSendNotification);
     }
 }
@@ -439,12 +452,10 @@ void MainComponent::onPlayClicked()
 
 void MainComponent::onStopClicked()
 {
-    // STOP-while-recording is a take-killing action. A fat-fingered
-    // keystroke or stray touch must not end a live recording. First
-    // tap arms (flash + toast); a second tap within 2 s fires for
-    // real. Any other state -- playback, idle -- stops immediately
-    // because there's nothing irreversible to protect.
-    if (engine.isRecording())
+    // A normal live take gets a two-tap STOP guard against accidental cuts.
+    // A deliberate manual punch is different: one press punches out at the
+    // chosen point, preserving the rest of the original take.
+    if (engine.isRecording() && ! manualPunchActive)
     {
         const auto now = juce::Time::getMillisecondCounter();
         constexpr juce::uint32 kArmWindowMs = 2000;
@@ -514,7 +525,11 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind)
     else if (localRecording)
     {
         engine.stopRecording();
-        if (recorder.hasReportWriteFailed())
+        manualPunchActive = false;
+        if (recorder.hasReportWriteFailed() || recorder.hasPunchSpliceFailed())
+            sessionStateSaved = false;
+        const auto session = engine.getActiveSessionDir();
+        if (! session.isDirectory() || ! saveSessionStateTo (session))
             sessionStateSaved = false;
     }
 
@@ -532,6 +547,8 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind)
     {
         showStatus (finalizationError.isNotEmpty()
             ? finalizationError
+            : recorder.hasPunchSpliceFailed()
+                ? "Punch could not be spliced into the take -- original audio was retained; check disk and session files"
             : recorder.hasReportWriteFailed()
                 ? "Recording stopped, but the integrity report could not be saved -- check disk permissions / free space"
                 : "Recording stopped, but session state could not be saved -- check disk permissions / free space");

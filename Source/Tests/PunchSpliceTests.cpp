@@ -120,6 +120,16 @@ namespace zynforge
                 expect (! out.existsAsFile());   // refused, nothing written
             }
 
+            beginTest ("missing fresh punch audio is refused, never treated as a no-op success");
+            {
+                const auto base = dir.getChildFile ("missing_insert_base.wav");
+                const auto insert = dir.getChildFile ("missing_insert.wav");
+                const auto out = dir.getChildFile ("missing_insert_out.wav");
+                writeDc (base, 0.25f, 12000, sr, 1);
+                expect (! splicePunchFile (fm, base, insert, 4000, out));
+                expect (! out.existsAsFile());
+            }
+
             beginTest ("stereo punch preserves both channels");
             {
                 const int baseLen = 24000, insLen = 8000;

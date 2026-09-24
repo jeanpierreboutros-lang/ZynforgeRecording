@@ -17,6 +17,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed — manual punch file/session persistence, 2026-09-24
+
+- A rolling in-app RECORD now punches at the live playhead rather than a stale edit cursor; a manual punch ends on one RECORD or STOP press. Normal live recording still requires two presses to stop.
+- Punching keeps the original take's container/bit depth even if capture settings changed, so it does not create a second `Track_NN` base file. The splice keeps originals until all copies commit and reports rollback instead of presenting it as a successful punch.
+- Local punch-out and normal local STOP now save the session project and mix metadata alongside the recorded audio. End-of-take continuation still creates a separate part by design.
+- The universal source build passes 378 test groups with no failures, including primary/backup/mirror format-change punches. The installed app and transfer DMG still contain the earlier build; real-device punch acceptance remains pending.
+
 ### Fixed — live EDIT navigation, 2026-09-24
 
 - Manual left/right timeline scrolling and horizontal zoom during recording or playback now pause playhead auto-follow instead of snapping back immediately. A visible FOLLOW control returns to the live edge; vertical track scrolling and waveform-height zoom remain independent. Enlarged the H/V zoom controls, made H+/H- reciprocal so they return exactly to fit-to-take, and documented the gestures in the in-app guide.

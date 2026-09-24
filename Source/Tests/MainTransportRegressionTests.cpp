@@ -133,9 +133,32 @@ namespace zynforge
                             AudioEngine::RemoteTransportAction::StartRecord, error));
                 expect (error.containsIgnoreCase ("pre-flight"), error);
 
+                beginTest ("one manual punch-out saves media and project in the same session");
+                auto local = makeSession();
+                auto& recorder = main.engine.getRecorder();
+                recorder.prepare (48000.0, 256, 1);
+                recorder.getTrack (0).armed.store (true, std::memory_order_relaxed);
+                expect (recorder.startRecording (local));
+                std::vector<float> audio (256, 0.2f);
+                const float* input = audio.data();
+                for (int b = 0; b < 20; ++b)
+                    recorder.processBlock (&input, 1, 256);
+                main.manualPunchActive = true;
+                main.onStopClicked();
+                expect (! recorder.isRecording(), "manual punch-out still needed a second STOP tap");
+                expect (! main.manualPunchActive, "manual punch state survived stop");
+                expect (local.getChildFile ("Audio Files/Track_01.wav").existsAsFile());
+                expect (local.getChildFile (local.getFileName() + ".zfproj").existsAsFile(),
+                        "local stop did not persist the session document");
+                expect (local.getChildFile ("session_mix.json").existsAsFile(),
+                        "local stop did not persist track/mixer state");
+                expect (main.engine.getActiveSessionDir() == local,
+                        "local stop switched away from the recorded session");
+
                 first.deleteRecursively();
                 second.deleteRecursively();
                 third.deleteRecursively();
+                local.deleteRecursively();
             }
 
             daemon.stop();

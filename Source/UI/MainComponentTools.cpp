@@ -205,9 +205,9 @@ void MainComponent::togglePunchMode()
     }
     else
     {
-        if (engine.isRecording()) engine.stopRecording();
+        const bool saved = ! engine.isRecording() || stopActiveCapture (false);
         restoreArmStateAfterPunch();   // leaving punch mode must not keep the forced arms
-        showStatus ("Punch mode OFF");
+        if (saved) showStatus ("Punch mode OFF");
     }
 }
 
@@ -293,8 +293,14 @@ void MainComponent::servicePunch()
         // Crossed out -- stop recording cleanly (the splice replaces the
         // punched region; audio after the punch-out is preserved), then put the
         // engineer's arm layout back exactly as it was before the punch.
-        engine.stopRecording();
+        const bool saved = stopActiveCapture (false);
         restoreArmStateAfterPunch();
+        if (! saved)
+        {
+            engine.stopPlayback();
+            engine.setPunchModeOn (false);
+            punchSessionActive = false;
+        }
     }
     wasInsidePunch = inside;
 }
@@ -314,13 +320,13 @@ void MainComponent::servicePunchSession()
                    || (pos >= player.getTotalLengthSamples());
     if (! done) return;
 
-    if (engine.isRecording()) engine.stopRecording();   // safety net
+    const bool saved = ! engine.isRecording() || stopActiveCapture (false);   // safety net
     restoreArmStateAfterPunch();   // no-op if servicePunch already restored it
     engine.stopPlayback();
     engine.setPunchModeOn (false);
     punchSessionActive = false;
     recordButton.setButtonText ("RECORD");
-    showStatus ("Punch complete");
+    if (saved) showStatus ("Punch complete");
 }
 
 void MainComponent::runNoiseAnalysis()

@@ -19,16 +19,15 @@ namespace zynforge
                                        const juce::File&          outFile)
     {
         std::unique_ptr<juce::AudioFormatReader> insR (fm.createReaderFor (insert));
+        if (insR == nullptr) return false;  // never report an unchanged base as a successful punch
 
         const int         chans   = (int) baseR.numChannels;
         const juce::int64 baseLen = baseR.lengthInSamples;
-        const juce::int64 insLen  = insR != nullptr ? insR->lengthInSamples : 0;
+        const juce::int64 insLen  = insR->lengthInSamples;
+        if (insLen <= 0) return false;
 
-        if (insR != nullptr)
-        {
-            if ((int) insR->numChannels != chans)                      return false;
-            if (std::abs (insR->sampleRate - baseR.sampleRate) > 1.0)  return false;
-        }
+        if ((int) insR->numChannels != chans)                      return false;
+        if (std::abs (insR->sampleRate - baseR.sampleRate) > 1.0)  return false;
 
         const juce::int64 punchIn    = juce::jlimit ((juce::int64) 0, baseLen, punchInSample);
         const juce::int64 afterStart = juce::jmin (baseLen, punchIn + insLen);
@@ -54,7 +53,7 @@ namespace zynforge
 
         bool ok = true;
         if (punchIn > 0)                      ok = w->writeFromAudioReader (baseR, 0,          punchIn);
-        if (ok && insR != nullptr && insLen)  ok = w->writeFromAudioReader (*insR, 0,          insLen);
+        if (ok && insLen)                     ok = w->writeFromAudioReader (*insR, 0,          insLen);
         if (ok && afterLen > 0)               ok = w->writeFromAudioReader (baseR, afterStart, afterLen);
 
         w.reset();

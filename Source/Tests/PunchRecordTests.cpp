@@ -10,6 +10,7 @@
 #include "../Audio/MultitrackRecorder.h"
 #include "../Audio/AudioEngine.h"
 #include "../Audio/FastHash.h"
+#include "../UI/RecordPosition.h"
 
 namespace zynforge
 {
@@ -51,6 +52,12 @@ namespace zynforge
 
         void runTest() override
         {
+            beginTest ("rolling punch uses live playhead, not stale edit cursor");
+            expectEquals (manualRecordPosition (true, 24000, 0), (juce::int64) 24000);
+            expectEquals (manualRecordPosition (true, 24000, 12000), (juce::int64) 24000);
+            expectEquals (manualRecordPosition (false, 24000, 12000), (juce::int64) 12000);
+            expectEquals (manualRecordPosition (false, 24000, -1), (juce::int64) 24000);
+
             const double sr = 48000.0;
             const int    block = 512;
             juce::AudioFormatManager fm; fm.registerBasicFormats();
@@ -93,6 +100,86 @@ namespace zynforge
                         "punch sidecar leaked");
                 expect (! track.getSiblingFile ("Track_01.punchtmp.wav").existsAsFile(),
                         "punch temp leaked");
+            }
+
+            beginTest ("punch keeps the original file when capture format changed");
+            {
+                const auto changedDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                    .getChildFile ("zf-punch-format-" + juce::Uuid().toString());
+                const auto original = changedDir.getChildFile ("Audio Files/Track_01.wav");
+                recordDc (changedDir, baseVal, baseBlocks, block, sr, -1);
+
+                MultitrackRecorder rec;
+                rec.prepare (sr, block, 1);
+                rec.setCaptureFormat (CaptureFormat::Flac16);
+                rec.getTrack (0).armed.store (true, std::memory_order_relaxed);
+                rec.armPunchIn (punchIn);
+                expect (rec.startRecording (changedDir), "format-changed punch did not start");
+                std::vector<float> samples ((size_t) block, punchVal);
+                const float* data = samples.data();
+                for (int b = 0; b < punchBlocks; ++b)
+                    rec.processBlock (&data, 1, block);
+                rec.stopRecording();
+
+                expect (original.existsAsFile(), "original WAV went missing");
+                expect (! changedDir.getChildFile ("Audio Files/Track_01.flac").existsAsFile(),
+                        "punch created a second base file instead of splicing the WAV");
+                expectWithinAbsoluteError (regionMean (fm, original, punchIn + 64,
+                                                       punchLen - 128), punchVal, 0.02f);
+                changedDir.deleteRecursively();
+            }
+
+            beginTest ("format-changed punch keeps primary, backup and mirror in their original files");
+            {
+                const auto id = juce::Uuid().toString();
+                const auto copyDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                    .getChildFile ("zf-punch-copies-" + id);
+                const auto backupRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                    .getChildFile ("zf-punch-backup-" + id);
+                const auto mirrorRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                    .getChildFile ("zf-punch-mirror-" + id);
+                backupRoot.createDirectory();
+                mirrorRoot.createDirectory();
+
+                auto capture = [&] (bool punch)
+                {
+                    MultitrackRecorder rec;
+                    rec.prepare (sr, block, 1);
+                    rec.setCaptureFormat (punch ? CaptureFormat::Flac24 : CaptureFormat::Wav24);
+                    rec.setBackupDirectory (backupRoot);
+                    rec.setBackupCaptureFormat (punch ? CaptureFormat::Wav16 : CaptureFormat::Flac16);
+                    expect (rec.setMirrors ({ { mirrorRoot, punch ? CaptureFormat::Flac16
+                                                            : CaptureFormat::Aiff24 } }));
+                    rec.getTrack (0).armed.store (true, std::memory_order_relaxed);
+                    if (punch) rec.armPunchIn (punchIn);
+                    expect (rec.startRecording (copyDir));
+                    std::vector<float> samples ((size_t) block, punch ? punchVal : baseVal);
+                    const float* data = samples.data();
+                    for (int b = 0; b < (punch ? punchBlocks : baseBlocks); ++b)
+                        rec.processBlock (&data, 1, block);
+                    rec.stopRecording();
+                    expect (! rec.hasPunchSpliceFailed(), "copy splice rolled back");
+                };
+                capture (false);
+                capture (true);
+
+                const auto primary = copyDir.getChildFile ("Audio Files/Track_01.wav");
+                const auto backup = backupRoot.getChildFile (copyDir.getFileName())
+                                               .getChildFile ("Audio Files/Track_01.flac");
+                const auto mirror = mirrorRoot.getChildFile (copyDir.getFileName())
+                                               .getChildFile ("Audio Files/Track_01.aif");
+                for (const auto& file : { primary, backup, mirror })
+                {
+                    expect (file.existsAsFile(), "original copy file missing: " + file.getFileName());
+                    expectWithinAbsoluteError (regionMean (fm, file, punchIn + 64,
+                                                           punchLen - 128), punchVal, 0.03f);
+                }
+                expect (! copyDir.getChildFile ("Audio Files/Track_01.flac").existsAsFile());
+                expect (! backup.getSiblingFile ("Track_01.wav").existsAsFile());
+                expect (! mirror.getSiblingFile ("Track_01.flac").existsAsFile());
+                copyDir.deleteRecursively();
+                backupRoot.deleteRecursively();
+                mirrorRoot.deleteRecursively();
             }
 
             beginTest ("session report length + SHA describe the SPLICED file");

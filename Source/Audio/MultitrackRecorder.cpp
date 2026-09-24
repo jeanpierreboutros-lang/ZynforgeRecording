@@ -602,6 +602,7 @@ namespace zynforge
     {
         recoveryMarkerFailed.store (false, std::memory_order_relaxed);
         reportWriteFailed.store (false, std::memory_order_relaxed);
+        punchSpliceFailed.store (false, std::memory_order_relaxed);
         primaryFailed.store (false, std::memory_order_relaxed);
         backupFailed.store (false, std::memory_order_relaxed);
         mirrorFailed.store (false, std::memory_order_relaxed);
@@ -703,7 +704,7 @@ namespace zynforge
             return { 0, 24, ".wav" };
         };
         auto       primary = resolve (captureFormat);
-        const auto backup  = resolve (backupCaptureFormat);
+        auto       backup  = resolve (backupCaptureFormat);
 
         // True when track k is one we open a writer for: not a bus, and armed.
         auto isArmedCapture = [this] (std::size_t k)
@@ -711,6 +712,52 @@ namespace zynforge
             return ! tracks[k]->isBus .load (std::memory_order_relaxed)
                    &&  tracks[k]->armed.load (std::memory_order_relaxed);
         };
+
+        // A punch must reopen the SAME container as the existing take. If the
+        // capture format changed between passes, stashing only the newly
+        // selected extension leaves the old Track_NN.wav untouched and writes
+        // a separate Track_NN.flac instead of replacing the punched region.
+        // Continue already inherited the base format; apply that policy to
+        // punch and to every configured copy. Mixed/unreadable existing media
+        // is refused before any file is moved or writer opened.
+        auto adoptExistingTakeFormat = [&] (const juce::File& copyAudioDir,
+                                            Resolved& selected) -> bool
+        {
+            if (! copyAudioDir.isDirectory()) return true;
+            juce::AudioFormatManager fm; fm.registerBasicFormats();
+            bool found = false;
+            for (std::size_t i = 0; i < tracks.size(); ++i)
+            {
+                if (! isArmedCapture (i)) continue;
+                const auto name = juce::String::formatted ("Track_%02d", (int) i + 1);
+                for (auto* ext : { ".wav", ".aif", ".aiff", ".flac" })
+                {
+                    const auto file = copyAudioDir.getChildFile (name + ext);
+                    if (! file.existsAsFile()) continue;
+                    std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (file));
+                    if (reader == nullptr) return false;
+                    Resolved actual { juce::String (ext) == ".flac" ? 2
+                                           : juce::String (ext) == ".wav" ? 0 : 1,
+                                      reader->usesFloatingPointData ? 32 : (int) reader->bitsPerSample,
+                                      ext };
+                    if (found && (selected.container != actual.container
+                                  || selected.bitDepth != actual.bitDepth
+                                  || juce::String (selected.ext) != actual.ext))
+                        return false;
+                    selected = actual;
+                    found = true;
+                }
+            }
+            return true;
+        };
+
+        if ((continueAsPart || punchInActive)
+            && ! adoptExistingTakeFormat (audioFilesDir, primary))
+        {
+            cancelPunchIn();
+            continueAsPart = false;
+            return false;
+        }
 
         // A fresh take must never truncate media that is already present. The
         // UI normally recognises an existing take and selects continuation or
@@ -747,6 +794,33 @@ namespace zynforge
                 backupFailed.store (true, std::memory_order_relaxed);
         }
 
+        if ((continueAsPart || punchInActive) && backupReady
+            && ! adoptExistingTakeFormat (backupAudioDir, backup))
+        {
+            cancelPunchIn();
+            continueAsPart = false;
+            return false;
+        }
+
+        std::vector<Resolved> mirrorFormats;
+        mirrorFormats.reserve (activeMirrors.size());
+        for (const auto& mc : activeMirrors)
+        {
+            auto format = resolve (mc.format);
+            if (continueAsPart || punchInActive)
+            {
+                const auto mirrorAudioDir = mc.root.getChildFile (sessionDir.getFileName())
+                                                   .getChildFile ("Audio Files");
+                if (! adoptExistingTakeFormat (mirrorAudioDir, format))
+                {
+                    cancelPunchIn();
+                    continueAsPart = false;
+                    return false;
+                }
+            }
+            mirrorFormats.push_back (format);
+        }
+
         // Punch-in: move the existing take -- AND its continuation parts -- aside
         // to sidecars BEFORE the writer truncates the target, so the WHOLE base
         // (a take built up by continue-recording is multi-part) survives to be
@@ -781,39 +855,6 @@ namespace zynforge
         if (continueAsPart)
         {
             juce::AudioFormatManager fm; fm.registerBasicFormats();
-
-            // A CONTINUE must extend the take in the container it's already in.
-            // The scan below used to look only for `primary.ext`, so if the
-            // engineer changed the capture format between takes (WAV -> FLAC,
-            // say) it found nothing: recordBaseSamples stayed 0 and the
-            // "continuation" was written as Track_NN.flac PART 1 alongside the
-            // existing Track_NN.wav -- two files claiming the same track index,
-            // which SessionPlayer then globs as one confused take. Adopt the
-            // existing take's container + bit depth for this take instead.
-            static const char* kContainerExts[] = { ".wav", ".aif", ".aiff", ".flac" };
-            for (std::size_t i = 0; i < tracks.size() && continueAsPart; ++i)
-            {
-                if (tracks[i]->isBus .load (std::memory_order_relaxed)) continue;
-                if (! tracks[i]->armed.load (std::memory_order_relaxed)) continue;
-                const auto name = juce::String::formatted ("Track_%02d", (int) i + 1);
-                if (audioFilesDir.getChildFile (name + primary.ext).existsAsFile())
-                    break;                       // already the right container
-                for (auto* ext : kContainerExts)
-                {
-                    const auto f = audioFilesDir.getChildFile (name + ext);
-                    if (! f.existsAsFile()) continue;
-                    if (std::unique_ptr<juce::AudioFormatReader> r { fm.createReaderFor (f) })
-                    {
-                        const juce::String e (ext);
-                        primary.container = e == ".flac" ? 2 : (e == ".wav" ? 0 : 1);
-                        primary.ext       = ext;
-                        primary.bitDepth  = r->usesFloatingPointData
-                                              ? 32 : (int) r->bitsPerSample;
-                    }
-                    break;
-                }
-                break;   // one armed take is enough to pin the container
-            }
 
             juce::int64 takeLen = 0;
             for (std::size_t i = 0; i < tracks.size(); ++i)
@@ -939,12 +980,13 @@ namespace zynforge
             // and every remaining root exists. Do NOT iterate mirrorConfigs
             // here -- that is what let a colliding root open a writer on the
             // take's own file.
-            for (const auto& mc : activeMirrors)
+            for (std::size_t mirrorIndex = 0; mirrorIndex < activeMirrors.size(); ++mirrorIndex)
             {
+                const auto& mc = activeMirrors[mirrorIndex];
                 const auto mirrorSession = mc.root.getChildFile (sessionDir.getFileName())
                                                     .getChildFile ("Audio Files");
                 mirrorSession.createDirectory();
-                const auto mFmt = resolve (mc.format);
+                const auto mFmt = mirrorFormats[mirrorIndex];
                 auto mFile = mirrorSession.getChildFile (trackName + mFmt.ext);
                 int  mPart = 1;
                 if (continueAsPart)
@@ -1430,23 +1472,39 @@ namespace zynforge
                 for (auto& c : copies)
                     if (c.attempted && ! c.spliced) allOk = false;
 
-                for (auto& c : copies)
+                if (allOk)
                 {
-                    if (! c.attempted) { c.tmp.deleteFile(); continue; }
-                    if (allOk)
+                    // Keep every original .punchbase until EVERY destination
+                    // has installed its spliced result. A late backup/mirror
+                    // move failure must still be able to roll the primary
+                    // back to the exact pre-punch file.
+                    for (auto& c : copies)
                     {
-                        // Success: the spliced tmp holds the WHOLE flattened take.
-                        c.fresh.deleteFile();
-                        c.tmp.moveFileTo (c.fresh);
-                        for (auto& s : c.baseParts) s.deleteFile();   // folded into `fresh`
+                        if (! c.attempted) continue;
+                        if ((c.fresh.existsAsFile() && ! c.fresh.deleteFile())
+                            || ! c.tmp.moveFileTo (c.fresh))
+                        {
+                            allOk = false;
+                            break;
+                        }
                     }
-                    else
+                }
+
+                if (allOk)
+                {
+                    for (auto& c : copies)
+                        for (auto& s : c.baseParts) s.deleteFile();
+                }
+                else
+                {
+                    punchSpliceFailed.store (true, std::memory_order_relaxed);
+                    for (auto& c : copies)
                     {
-                        // Roll back: discard the temp AND the fresh punch file,
-                        // restore the original (possibly multi-part) base take.
+                        if (! c.attempted) { c.tmp.deleteFile(); continue; }
                         c.tmp.deleteFile();
                         c.fresh.deleteFile();
-                        for (auto& s : c.baseParts) s.moveFileTo (sidecarToTake (s));
+                        for (auto& s : c.baseParts)
+                            s.moveFileTo (sidecarToTake (s));
                     }
                 }
 
@@ -1514,6 +1572,7 @@ namespace zynforge
         const int        fmt        = (int) captureFormat;
         const int        preRoll    = preRollSeconds;
         const bool       primFailed = primaryFailed.load (std::memory_order_relaxed);
+        const bool       punchFailed = punchSpliceFailed.load (std::memory_order_relaxed);
         const int        mirrorsSkipped = mirrorsSkippedAtStart.load (std::memory_order_relaxed);
 
         // Build the report JSON. `withHashes == false` skips the (expensive,
@@ -1522,7 +1581,7 @@ namespace zynforge
         // fill the hashes in afterwards. Captures only scalars by value, so
         // it's copyable into the background thread below.
         auto buildReportJson =
-            [sessionDir, bDir, sr, fmt, preRoll, primFailed, stoppedAt,
+            [sessionDir, bDir, sr, fmt, preRoll, primFailed, punchFailed, stoppedAt,
              totalSamples, totalSeconds, totalMissed, backupWasRunning,
              backupHadFailure, mirrorsSkipped]
             (const std::vector<TrackMeta>&   trackMetas,
@@ -1540,6 +1599,7 @@ namespace zynforge
             report->setProperty ("backupActive",   backupWasRunning);
             report->setProperty ("backupFailed",   backupHadFailure);
             report->setProperty ("primaryFailed",  primFailed);
+            report->setProperty ("punchSpliceFailed", punchFailed);
             report->setProperty ("mirrorsSkipped", mirrorsSkipped);
             report->setProperty ("captureFormat",  fmt);
             report->setProperty ("preRollSeconds", preRoll);

@@ -57,9 +57,8 @@ namespace zynforge
         // mirror copy is moved aside to a sidecar before the writer truncates,
         // then on stop spliced back as base[0,punchIn) + newTake + base[after],
         // via a temp file + atomic swap, so a failure can't corrupt the take.
-        // Cleared automatically after each stopRecording(). The CALLER must
-        // ensure the existing take is single-file (not RF64/ceiling-split) --
-        // a multi-part base isn't spliced and would be silently lost.
+        // Cleared automatically after each stopRecording(). Existing multi-part
+        // takes are read as one base and flattened into the spliced result.
         void armPunchIn (juce::int64 punchInSample) noexcept
         {
             punchInActive = true;
@@ -322,6 +321,10 @@ namespace zynforge
         bool hasReportWriteFailed() const noexcept
         {
             return reportWriteFailed.load (std::memory_order_relaxed);
+        }
+        bool hasPunchSpliceFailed() const noexcept
+        {
+            return punchSpliceFailed.load (std::memory_order_relaxed);
         }
 
     private:
@@ -643,6 +646,7 @@ namespace zynforge
         // the operator loses the take's integrity manifest.
         std::atomic<bool> recoveryMarkerFailed { false };
         std::atomic<bool> reportWriteFailed { false };
+        std::atomic<bool> punchSpliceFailed { false };
 
         // Primary-writer failure. Drain thread sets true when a
         // writeFromFloatArrays returns false (disk full, path gone).

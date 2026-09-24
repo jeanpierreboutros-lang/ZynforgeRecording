@@ -15,6 +15,11 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Current Priorities
 
+### Manual punch persistence — 2026-09-24
+
+- [x] Fix rolling playhead targeting, one-press manual punch-out, original-container reuse across copies, splice rollback reporting, and local session-metadata save. Universal Release build and 378 tests pass locally.
+- [ ] Verify the in-app manual punch fix on a disposable take: play from a stale cursor, press RECORD mid-take, press RECORD or STOP once to punch out, reopen the same session and confirm the original track file contains before/new/after audio and session metadata. Repeat with a changed capture format and with backup/mirrors before using it on irreplaceable material.
+
 ### EDIT live navigation — 2026-09-24
 
 - [x] Stop the recording/playback playhead from overriding manual timeline pan or horizontal zoom; add an explicit FOLLOW return, keep vertical navigation independent, and document the controls. Source Release build and 373 tests pass locally.
