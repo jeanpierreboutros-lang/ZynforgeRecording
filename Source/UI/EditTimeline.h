@@ -7,6 +7,7 @@
 // hardcoded 48 kHz in the tempo lane on top of that.
 
 #include <juce_core/juce_core.h>
+#include <limits>
 #include <vector>
 
 #include "../Audio/ClipModel.h"
@@ -27,6 +28,29 @@ namespace zynforge
     inline juce::int64 notionalEmptyLaneSamples (double sampleRate) noexcept
     {
         return (juce::int64) (juce::jmax (8000.0, sampleRate) * kNotionalEmptyLaneSec);
+    }
+
+    inline juce::int64 recordingTimelineSpanSamples (juce::int64 recordHead,
+                                                     juce::int64 loadedTake,
+                                                     double sampleRate) noexcept
+    {
+        return juce::jmax (notionalEmptyLaneSamples (sampleRate),
+                           juce::jmax (recordHead, loadedTake));
+    }
+
+    // Keep a fixed time scale as a fresh take grows. At 1x, one viewport
+    // initially spans five minutes; after that, content widens instead of
+    // squeezing the entire take into the same pixels and pinning the head at
+    // the right edge. The viewport can then genuinely follow a long take.
+    inline int recordingContentWidth (int viewportWidth, float zoom,
+                                      juce::int64 timelineSpan,
+                                      juce::int64 initialSpan) noexcept
+    {
+        const double ratio = (double) juce::jmax (timelineSpan, initialSpan)
+                           / (double) juce::jmax ((juce::int64) 1, initialSpan);
+        return (int) juce::jlimit ((double) juce::jmax (1, viewportWidth),
+                                  (double) (std::numeric_limits<int>::max() / 4),
+                                  (double) viewportWidth * (double) zoom * ratio);
     }
 
     inline float steppedTimelineZoom (float current, bool zoomIn) noexcept

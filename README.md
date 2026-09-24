@@ -8,9 +8,11 @@ A focused recording surface for engineers running front-of-house or monitors: ca
 
 Active development, pre-1.0. Ships **multitrack recording**, **virtual-soundcheck playback**, a non-destructive **clip/region editor with take comping**, **bounce to stems + stereo mix**, and **live OSC console integration** as a single coherent surface.
 
+The latest source fixes active-session import, edited-take continuation playback, recording-time EDIT controls, daemon timeline display, LOCK coverage, incomplete export/bounce reporting and take verification. Snap uses **Ctrl+4** so bare **4** can recall cue 4. A real long-take and physical-rig rehearsal remain outstanding.
+
 ## Build
 
-As of 2026-09-24, source commit `b2c1991` includes the EDIT live-navigation and punch/import audit fixes. Its macOS-12 universal Release passed **387 test groups with 0 failures** locally and [GitHub CI run 36017363562](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/36017363562). A verified local drag-to-Applications DMG containing that build is at `dist/Zynforge-Recording-b2c1991-macOS-universal.dmg`; the older `0.2.0` DMG remains unchanged. The installed app at `/Applications/Zynforge Recording.app` is still the earlier `ccd755e` build. The new DMG is ad-hoc signed, **not Developer ID notarized**; real-device punch/navigation and exact-rig rehearsal remain unverified. See [installation and DMG details](INSTALL.md) and [show readiness](SHOW-READINESS.md).
+As of 2026-09-24, `/Applications/Zynforge Recording.app` contains the universal Release build with the long-take EDIT and codebase-audit fixes, plus its matching protocol-v3 capture helper. The built and installed apps each passed **397 test groups with 0 failures**; the built app passed an idle smoke launch, and the installed bundle matches that signed build byte for byte. The previous installed app is retained at `/Applications/Zynforge Recording.app.backup-20260924-before-audit-fixes`, with another verified copy under `/Users/jeanpierre/Zynforge-App-Backups/`. The `dist/Zynforge-Recording-b2c1991-macOS-universal.dmg` and older `0.2.0` DMG remain unchanged and contain earlier code. The installation is ad-hoc signed, **not Developer ID notarized**; real-device punch/navigation and exact-rig rehearsal remain unverified. See [installation details](INSTALL.md) and [show readiness](SHOW-READINESS.md).
 
 ```bash
 cmake -B build -G Xcode

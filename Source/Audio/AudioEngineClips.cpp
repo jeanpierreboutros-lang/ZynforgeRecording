@@ -43,7 +43,7 @@ namespace zynforge
         return {};
     }
 
-    void AudioEngine::seedDefaultClips (bool preserveEdits)
+    void AudioEngine::seedDefaultClips (bool preserveEdits, bool appendRecordedAudio)
     {
         // Give every track a single full-range clip so the EDIT tools
         // (Trim / Grabber / Fade / Selector / Scrubber) have something
@@ -57,7 +57,7 @@ namespace zynforge
         const int n = player.getNumTracks();
         if (n <= 0)
         {
-            if (! preserveEdits) { trackClips.clear(); trackPlaylists.clear(); }
+            if (! preserveEdits) { trackClips.clear(); trackPlaylists.clear(); sourceTrackLengths.clear(); }
             return;
         }
 
@@ -66,25 +66,22 @@ namespace zynforge
         // full-range default (split, front-trimmed, faded, gained, muted,
         // moved, or repointed at a cross-track file).
         //
-        // NOTE: do NOT require the clip length to equal the current file length
-        // here. A continue-record / length-changing punch GROWS the file, so an
-        // unedited default clip left at the OLD length would then be classified
-        // "edited" and preserved short -- silencing the appended audio (a real
-        // regression this comment guards against). Treating a plain full-from-
-        // zero clip as refreshable reseeds it to the new length. The only cost
-        // is that a pure END-trim (single clip, fs=0, ts=0, no fades) reloaded
-        // in place is refreshed back to full -- the recorded audio is never
-        // lost, and an end-trim is trivially redoable, so for a live recorder
-        // that is the correct trade vs. dropping captured audio.
-        const auto isPlainDefault = [] (const Clip& c)
+        // Compare against the PREVIOUS source length, not the newly loaded
+        // file length. This distinguishes a default clip from a deliberate
+        // end trim, even when a continuation has grown the source file.
+        const auto isPlainDefault = [&] (const Clip& c, int i)
         {
             return c.timelineStartSamples == 0
                 && c.fileStartSamples     == 0
+                && c.fileLengthSamples == (i < (int) sourceTrackLengths.size()
+                    ? sourceTrackLengths[(size_t) i] : c.fileLengthSamples)
                 && c.fadeInSamples        == 0
                 && c.fadeOutSamples       == 0
                 && ! c.muted
+                && ! c.locked
                 && std::abs (c.gainDb) < 0.001f
-                && c.audioFile == juce::File();
+                && c.audioFile == juce::File()
+                && c.name == juce::String::formatted ("Track_%02d", i + 1);
         };
         const auto trackIsEdited = [&] (int i) -> bool
         {
@@ -93,13 +90,14 @@ namespace zynforge
             const auto& list = trackClips[(size_t) i];
             if (list.empty())    return ! trackPlaylists[(size_t) i].takes.empty();
             if (list.size() > 1) return true;    // split into multiple clips
-            return ! isPlainDefault (list[0]);
+            return ! isPlainDefault (list[0], i);
         };
 
         if (! preserveEdits)
         {
             trackClips.clear();
             trackPlaylists.clear();
+            sourceTrackLengths.clear();
         }
         // GROW ONLY. A plain resize(n) SHRANK the lists to the player's track
         // count, destroying the clip list of every strip above the highest
@@ -108,15 +106,32 @@ namespace zynforge
         // edit silently vanished even though preserveEdits was true.
         if ((int) trackClips.size()     < n) trackClips.resize     ((size_t) n);
         if ((int) trackPlaylists.size() < n) trackPlaylists.resize ((size_t) n);
+        if ((int) sourceTrackLengths.size() < n) sourceTrackLengths.resize ((size_t) n);
 
         for (int i = 0; i < n; ++i)
         {
+            const auto oldLength = sourceTrackLengths[(size_t) i];
+            const auto newLength = player.getTrackLengthSamples (i);
             if (preserveEdits && trackIsEdited (i))
             {
+                // A continuation adds source media after the prior end. Keep
+                // every existing split/trim/comp verbatim and expose only the
+                // newly recorded span as a new clip on the active take.
+                if (appendRecordedAudio && oldLength > 0 && newLength > oldLength)
+                {
+                    Clip appended;
+                    appended.name = juce::String::formatted ("Track_%02d continued", i + 1);
+                    appended.timelineStartSamples = oldLength;
+                    appended.fileStartSamples = oldLength;
+                    appended.fileLengthSamples = newLength - oldLength;
+                    trackClips[(size_t) i].push_back (std::move (appended));
+                    syncActiveTake (i);
+                }
                 // Keep the engineer's edits verbatim. player.loadSession
                 // cleared the player-side clip lists, so republish what we
                 // already hold rather than reseeding a default over them.
                 player.setTrackClips (i, trackClips[(size_t) i]);
+                sourceTrackLengths[(size_t) i] = newLength;
                 continue;
             }
 
@@ -125,6 +140,7 @@ namespace zynforge
             c.timelineStartSamples = 0;
             c.fileStartSamples     = 0;
             c.fileLengthSamples    = player.getTrackLengthSamples (i);
+            sourceTrackLengths[(size_t) i] = c.fileLengthSamples;
 
             trackClips[(size_t) i].clear();
             trackPlaylists[(size_t) i] = {};

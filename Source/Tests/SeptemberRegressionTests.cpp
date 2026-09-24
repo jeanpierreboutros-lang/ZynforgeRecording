@@ -302,6 +302,78 @@ public:
             expectWithinAbsoluteError (data.getSample (0, 255), 0.3f, 0.001f);
             expectEquals (p.getPositionSamples(), (juce::int64) 56);
         }
+        beginTest ("End trim, renamed clip and lock survive a same-session reload");
+        {
+            Directory dir; expect (write (dir.track (1), 0.3f));
+            AudioEngine e; expect (e.loadSession (dir.file) > 0);
+            expect (e.editClip (0, 0, AudioEngine::ClipEdit::TrimRight, -1000));
+            expect (e.setClipName (0, 0, "keeper"));
+            expect (e.setClipLocked (0, 0, true));
+            expect (e.loadSession (dir.file, true) > 0);
+            expectEquals (e.clipsFor (0)[0].fileLengthSamples, (juce::int64) 3800);
+            expectEquals (e.clipsFor (0)[0].name, juce::String ("keeper"));
+            expect (e.clipsFor (0)[0].locked);
+        }
+        beginTest ("A pure end trim survives a same-session reload");
+        {
+            Directory dir; expect (write (dir.track (1), 0.3f));
+            AudioEngine e; expect (e.loadSession (dir.file) > 0);
+            expect (e.editClip (0, 0, AudioEngine::ClipEdit::TrimRight, -1000));
+            expect (e.loadSession (dir.file, true) > 0);
+            expectEquals (e.clipsFor (0)[0].fileLengthSamples, (juce::int64) 3800);
+        }
+        beginTest ("Edited take exposes newly appended continuation audio without losing its split");
+        {
+            Directory dir; expect (write (dir.track (1), 0.3f));
+            AudioEngine e; expect (e.loadSession (dir.file) > 0);
+            expect (e.splitTrackAtSample (0, 2400));
+            const auto part = dir.file.getChildFile ("Audio Files/Track_01_part02.wav");
+            expect (write (part, 0.7f, 2400));
+            expect (e.getPlayer().loadSession (dir.file) > 0);
+            e.seedDefaultClips (true, true); // same path used after a recording stop
+            expectEquals ((int) e.clipsFor (0).size(), 3);
+            expectEquals (e.clipsFor (0)[0].fileLengthSamples, (juce::int64) 2400);
+            expectEquals (e.clipsFor (0)[2].timelineStartSamples, (juce::int64) 4800);
+            expectEquals (e.clipsFor (0)[2].fileLengthSamples, (juce::int64) 2400);
+            float peak = 0.0f;
+            expect (e.forEachArrangementWindow (0, 4800, 7200,
+                [&] (const float* samples, juce::int64, int count)
+                {
+                    for (int i = 0; i < count; ++i) peak = juce::jmax (peak, std::abs (samples[i]));
+                    return true;
+                }));
+            expectWithinAbsoluteError (peak, 0.7f, 0.02f);
+            expectEquals ((int) e.getTakeClips (0, e.getActiveTakeIdx (0)).size(), 3);
+        }
+        beginTest ("Orphan continuation refuses capture before creating another part");
+        {
+            Directory dir;
+            const auto part = dir.file.getChildFile ("Audio Files/Track_01_part02.wav");
+            expect (write (part, 0.4f));
+            MultitrackRecorder rec; rec.prepare (48000, 256, 1);
+            rec.getTrack (0).armed.store (true);
+            rec.armContinue (0);
+            expect (! rec.startRecording (dir.file));
+            expect (! dir.file.getChildFile ("Audio Files/Track_01_part03.wav").existsAsFile());
+            expectWithinAbsoluteError (sample (part), 0.4f, 0.001f);
+        }
+        beginTest ("Daemon marker follows fresh capture position and rejects a stale snapshot");
+        {
+            Directory dir; expect (write (dir.track (1), 0.3f));
+            AudioEngine e; expect (e.loadSession (dir.file) > 0);
+            EngineStatus status;
+            status.recording = true;
+            status.positionSamples = 3200;
+            e.setExternalRecording (true);
+            e.setExternalCaptureStatus (status, juce::Time::currentTimeMillis());
+            expectEquals (e.getRecordTimelineSamples(), (juce::int64) 3200);
+            expectEquals (e.dropMarkerAtCurrentPosition ("daemon"), 1);
+            expectEquals (e.getMarkers().getAll()[0].sampleOffset, (juce::int64) 3200);
+            e.setExternalCaptureStatus (status, juce::Time::currentTimeMillis() - 5000);
+            expectEquals (e.dropMarkerAtCurrentPosition ("stale"), -1);
+            expectEquals (e.getMarkers().getCount(), 1);
+            e.setExternalRecording (false);
+        }
     }
 };
 static SeptemberRegressionTests septemberRegressionTests;

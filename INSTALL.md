@@ -8,13 +8,13 @@ This procedure installs a locally built macOS app; it does not create a notarize
 2. Build and run the tests described in [testing.md](testing.md). Check the fresh report and process exit status, not an old pass count.
 3. Preserve the existing installed app at a unique backup path. Do not overwrite an earlier backup.
 
-## Current local DMG — 2026-09-24
+## Earlier local DMG — 2026-09-24
 
 `dist/Zynforge-Recording-b2c1991-macOS-universal.dmg` packages source commit `b2c1991` for macOS 12.0+ on Apple Silicon and Intel. It includes the matching protocol-v3 `ZynforgeCapture` helper. The previous `dist/Zynforge-Recording-0.2.0-macOS-universal.dmg` is a separate older artifact and was not replaced.
 
 SHA-256: `a4c926dd59d74a0f8cba9d20c44781e47db976758301784fdb5328b38af9f778`.
 
-The source Release build passed 387 test groups with zero failures and [GitHub run 36017363562](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/36017363562). The DMG checksum verified; after mounting read-only, the app matched the built bundle byte-for-byte, both executables were `arm64` + `x86_64`, and deep/strict code-sign verification passed. These are packaging checks, **not** a real-device recording test. The currently installed `/Applications/Zynforge Recording.app` remains `ccd755e` and was not replaced by creating the DMG.
+That older source Release build passed 387 test groups with zero failures and [GitHub run 36017363562](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/36017363562). The DMG checksum verified; after mounting read-only, the app matched the built bundle byte-for-byte, both executables were `arm64` + `x86_64`, and deep/strict code-sign verification passed. These are packaging checks, **not** a real-device recording test. The DMG was not used for the later installation below and does not contain the long-take or codebase-audit fixes.
 
 To install from this DMG on a Mac: stop every take, wait for report finalization, quit the GUI and capture helper, and copy the existing `/Applications/Zynforge Recording.app` to a uniquely named rollback location. Open the DMG, then drag `Zynforge Recording.app` onto the `Applications` shortcut. Verify the new app and helper before deleting any backup. The DMG and app are ad-hoc signed, **not Developer ID signed or notarized**; macOS Gatekeeper may block a transferred/downloaded copy, and this is not a public distribution or show-readiness approval. Do not disable system-wide security settings to install it. After installation, use a disposable session to test the selected audio device, permissions, capture, punch, backup/mirror and playback before using it for important material.
 
@@ -84,6 +84,20 @@ If copying or verification fails, do not launch the partial installation. Preser
 - Installed at `/Applications/Zynforge Recording.app`. The previous complete app remains at `/Applications/Zynforge Recording.app.backup-20260923-before-ccd755e` for rollback. The older 2026-09-20 backup was not changed.
 - The installed app launched to an idle window with no new ZynForge `.ips` crash report (about 120 MB RSS / 3.7% CPU after 57 seconds). AppKit still logged transient negative-view-geometry faults; this native-UI follow-up remains open. No microphone, selected-device, capture-daemon, disposable-recording or exact-rig hardware acceptance test was performed during installation.
 - This is a local ad-hoc-signed development install, not a notarized public release or show-readiness approval.
+
+## Installation record — 2026-09-24, long-take EDIT fix
+
+- Installed the local universal Release bundle built from the current working tree based on `b2c1991`, including the long-take EDIT fix and matching protocol-v3 `ZynforgeCapture`. The change is not committed and is not in either existing DMG.
+- Confirmed both Zynforge processes were stopped before replacement. Preserved the former installed app at `/Applications/Zynforge Recording.app.backup-20260924-215108-before-live-nav`; its deep/strict signature still verifies.
+- The built, staged and installed bundles matched byte-for-byte. Both installed executables are `x86_64` + `arm64`; the installed bundle passed deep/strict ad-hoc signature verification. GUI SHA-256: `3783001b14675985e79ea7f2215f5f638076892853dfb8bbaa52cc3158d693f9`; helper SHA-256: `e8a5929e7ae4bc619315ebc1ddff7633035031ecb58dcecb9922fd5d7aa6fefc`.
+- The installed app passed 391 test groups with zero failures. The first ordinary launch ended without a new crash report or an established cause; a second fresh launch remained running idle for over one minute with no capture helper active and no new ZynForge crash report.
+- A disposable real-device capture, rolling EDIT navigation beyond 45 minutes/three hours, punch, playback and backup/mirror check remains required before relying on the build for important material. This is not a notarized public release or exact-rig show acceptance.
+
+## Installation record — 2026-09-24, codebase-audit fixes
+
+- Installed the universal Release bundle with the long-take EDIT and thirteen audit fixes plus its matching protocol-v3 helper. The built and installed apps each passed **397 test groups / 0 failures**; both executables contain `x86_64` and `arm64`. The built app launched idle at about 94 MB RSS and 0.3% CPU after 34 seconds, with no new Zynforge crash report. No real-device take was run.
+- Verified the signed stage, copied it into `/Applications`, and compared the installed bundle byte for byte with that stage. Both the installed bundle and the prior app pass deep/strict signature verification. Installed GUI SHA-256: `d1044b61516735b7de6f99f3033fe1e2f2e580e2209ae4fc12fbd3deb4141235`; helper SHA-256: `9fc07d5d93ac0adf2afb74fe1ef999d77eea8189154b7aa5ef9aa56fd431ada6`.
+- Preserved the prior installed app at `/Applications/Zynforge Recording.app.backup-20260924-before-audit-fixes` and an exact verified copy under `/Users/jeanpierre/Zynforge-App-Backups/before-audit-fixes-bYakSr/`. Neither existing DMG was changed; both contain older code. This installation remains ad-hoc signed and unnotarized.
 
 ## Rollback
 

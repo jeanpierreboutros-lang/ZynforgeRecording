@@ -9,9 +9,9 @@
 #   • opens at full length (ffprobe duration + frame count)
 #   • header is RIFF (<4 GiB) or RF64 + ds64 (>4 GiB) — and flags any file
 #     that crossed 4 GiB but did NOT get promoted to RF64 (the failure mode)
-#   • NO multi-part split files (Track_NN_partNN) — RF64 = one continuous file
-#   • matches session.report.json: track count, per-file sha256 (when the
-#     report has finished hashing), and reports `missedSamples`
+#   • continuation/split parts have a playable Track_NN base
+#   • matches session.report.json: track count, complete per-file sha256,
+#     and reports `missedSamples`
 #
 # Usage:
 #   tools/verify_take.sh [SESSION_DIR]
@@ -51,15 +51,21 @@ REPORT="$SESSION/session.report.json"
 
 hdr "Session: $SESSION"
 
-# ── Multi-part split detection (must be NONE for RF64 WAV) ───────────────────
-hdr "1. Split-file check (RF64 should never split a WAV)"
+# ── Continuation parts need a playable base file ────────────────────────────
+hdr "1. Continuation-part check"
 parts=$(find "$AUDIO" -name 'Track_*_part*.wav' 2>/dev/null | sort)
 if [[ -n "$parts" ]]; then
-    red "FOUND multi-part split WAVs — RF64 promotion did NOT happen:"
-    echo "$parts" | sed 's/^/    /'
-    fail=1
+    while IFS= read -r part; do
+        name=$(basename "$part")
+        base="${name%%_part*}.wav"
+        if [[ ! -f "$AUDIO/$base" ]]; then
+            red "orphan continuation part: $name (missing $base)"
+            fail=1
+        fi
+    done <<< "$parts"
+    (( fail == 0 )) && grn "OK — every continuation part has a base file."
 else
-    grn "OK — no Track_NN_partNN.wav split files."
+    grn "OK — no continuation parts."
 fi
 
 # ── Per-file: header + length ───────────────────────────────────────────────
@@ -104,24 +110,53 @@ hdr "3. session.report.json cross-check"
 if [[ ! -f "$REPORT" ]]; then
     red "no session.report.json — the report must be written on stop."; fail=1
 else
+    if ! jq -e 'type == "object" and (.tracks | type == "array")' "$REPORT" >/dev/null 2>&1; then
+        red "session.report.json is invalid or has no track manifest"
+        exit 1
+    fi
     pending=$(jq -r '.sha256Pending // false' "$REPORT")
     ntracks=$(jq -r '.numTracks // 0' "$REPORT")
+    manifestTracks=$(jq -r '.tracks | length' "$REPORT")
     missed=$(jq -r '.missedSamples // 0' "$REPORT")
     echo "  numTracks=$ntracks  missedSamples=$missed  sha256Pending=$pending"
+    if [[ "$ntracks" != "$manifestTracks" ]]; then
+        red "  track manifest has $manifestTracks entries, report says $ntracks"
+        fail=1
+    fi
     [[ "$missed" == "0" ]] && grn "  OK — missedSamples = 0" || { red "  missedSamples = $missed (DROPPED AUDIO)"; fail=1; }
 
     if [[ "$pending" == "true" ]]; then
-        ylw "  sha256 still hashing — re-run once the report flips sha256Pending:false to verify hashes."
+        red "  sha256 still hashing — verification is incomplete; re-run after it finishes."
+        fail=1
     else
         # Re-hash each listed primary file and compare to the manifest.
         # The inner read loop uses process substitution (not a pipe) so it
         # runs in THIS shell and a mismatch marker actually propagates.
         hdr "4. sha256 manifest match (re-hashing on disk)"
         marker=$(mktemp)
+        listed=0
         n=$(jq '.tracks | length' "$REPORT")
         for ((i=0; i<n; i++)); do
+            fileCount=$(jq ".tracks[$i].files // [] | length" "$REPORT")
+            hashCount=$(jq ".tracks[$i].sha256 // [] | length" "$REPORT")
+            if [[ "$fileCount" != "$hashCount" ]]; then
+                red "  track $((i + 1)): $fileCount files but $hashCount hashes"
+                echo x >> "$marker"
+                continue
+            fi
             while IFS=$'\t' read -r f expect; do
                 [[ -z "$f" ]] && continue
+                ((listed+=1))
+                if [[ ! "$expect" =~ ^[0-9a-fA-F]{64}$ ]]; then
+                    red "  missing/invalid SHA-256 for $f"
+                    echo x >> "$marker"
+                    continue
+                fi
+                if [[ "$f" == */* || "$f" == *..* ]]; then
+                    red "  invalid manifest filename: $f"
+                    echo x >> "$marker"
+                    continue
+                fi
                 path="$AUDIO/$f"
                 [[ -f "$path" ]] || { red "  missing file from manifest: $f"; echo x >> "$marker"; continue; }
                 got=$(shasum -a 256 "$path" | awk '{print $1}')
@@ -129,6 +164,10 @@ else
             done < <(paste <(jq -r ".tracks[$i].files // [] | .[]" "$REPORT") \
                            <(jq -r ".tracks[$i].sha256 // [] | .[]" "$REPORT"))
         done
+        if (( listed == 0 )); then
+            red "  no primary files listed in the final manifest"
+            echo x >> "$marker"
+        fi
         [[ -s "$marker" ]] && fail=1
         rm -f "$marker"
     fi

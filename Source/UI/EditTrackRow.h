@@ -9,6 +9,7 @@
 #include "AutomationToolbar.h"
 #include "EditToolsBar.h"
 #include "EditTimeRuler.h"
+#include "LivePeakHistory.h"
 #include "../Audio/MultiPartReader.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
@@ -616,7 +617,7 @@ namespace zynforge
         // before live capture begins -- used for a CONTINUE take so the new
         // audio draws AFTER the existing take (at the base position) instead of
         // from the left edge, matching the playhead.
-        void setLiveRecording (bool on, int prefillSilentPoints = 0)
+        void setLiveRecording (bool on, juce::int64 prefillSilentPoints = 0)
         {
             if (on && ! liveRecording)
             {
@@ -624,9 +625,8 @@ namespace zynforge
                 // the new audio draws AFTER the existing take (continue) or AT the
                 // punch point (punch) -- the silent run encodes the timeline
                 // offset; drawRecEnvelope confines the whole thing to its share.
-                recPeakL.assign ((size_t) juce::jmax (0, prefillSilentPoints), 0.0f);
-                recPeakR.assign ((size_t) juce::jmax (0, prefillSilentPoints), 0.0f);
-                recBinSamples = TrackState::kLiveBinSamples;   // reset resolution for the new take
+                recPeakL.reset (prefillSilentPoints);
+                recPeakR.reset (prefillSilentPoints);
                 liveHold = false;           // a new take supersedes any held envelope
             }
             liveRecording = on;
@@ -674,20 +674,32 @@ namespace zynforge
         void appendLivePeakL (float p)
         {
             if (! liveRecording) return;
-            constexpr size_t kMaxPoints = 1 << 15;
-            if (recPeakL.size() >= kMaxPoints)
-            {
-                decimateInPlace (recPeakL);
-                recBinSamples *= 2;   // each entry now spans twice as many samples
-            }
-            recPeakL.push_back (juce::jlimit (0.0f, 1.0f, p));
+            recPeakL.append (p);
         }
         void appendLivePeakR (float p)
         {
             if (! liveRecording || ! stereo) return;
-            constexpr size_t kMaxPoints = 1 << 15;
-            if (recPeakR.size() >= kMaxPoints) decimateInPlace (recPeakR);
-            recPeakR.push_back (juce::jlimit (0.0f, 1.0f, p));
+            recPeakR.append (p);
+        }
+
+        // Daemon snapshots carry meter peaks rather than the local fine
+        // FIFO. Fill the elapsed bins with that coarse peak so the waveform
+        // and playhead still advance on the daemon's capture clock.
+        void appendRemotePeakL (float peak, juce::int64 absoluteBin)
+        {
+            if (! liveRecording) return;
+            if (absoluteBin - recPeakL.spanSamples() / TrackState::kLiveBinSamples > 8192)
+                recPeakL.reset (absoluteBin - 1);
+            while (recPeakL.spanSamples() / TrackState::kLiveBinSamples < absoluteBin)
+                recPeakL.append (peak);
+        }
+        void appendRemotePeakR (float peak, juce::int64 absoluteBin)
+        {
+            if (! liveRecording || ! stereo) return;
+            if (absoluteBin - recPeakR.spanSamples() / TrackState::kLiveBinSamples > 8192)
+                recPeakR.reset (absoluteBin - 1);
+            while (recPeakR.spanSamples() / TrackState::kLiveBinSamples < absoluteBin)
+                recPeakR.append (peak);
         }
 
         void mouseEnter (const juce::MouseEvent&) override
@@ -1412,8 +1424,8 @@ namespace zynforge
             // still show the NEW audio building live instead of only the static
             // clips. The clip-block renderer below is suppressed while showLive
             // for the same reason, then takes over on stop once the file scans.
-            // Live-capture placement on the timeline. The envelope (recPeakL)
-            // covers [0, recPos] where recPos = recPeakL.size() * recBinSamples;
+            // Live-capture placement on the timeline. The envelope covers
+            // [0, recPos], including a silent prefix for continue/punch.
             // the lane covers [0, total] = max(existing take length, recPos).
             //   CONTINUE: total == recPos -> liveFrac 1 (envelope fills the lane,
             //             existing take is the [0, takeEnd) prefix).
@@ -1421,12 +1433,13 @@ namespace zynforge
             //             liveFrac so the drop-in sits AT the punch point instead
             //             of stretching to the lane's right edge (which looked
             //             like it recorded at the END), existing take fills [0,W].
-            // recBinSamples (not the fixed kLiveBinSamples) is the true samples
-            // per entry -- it doubles on each decimation, so this stays correct
-            // for takes past the ~2.9 min first-overflow point.
-            const juce::int64 liveRecSamples = (juce::int64) recPeakL.size() * recBinSamples;
+            // The overview retains the actual count of input bins even after
+            // downsampling, so long takes never drift ahead of the recorder.
+            const juce::int64 liveRecSamples = recPeakL.spanSamples();
             const juce::int64 playerTotalS   = engine.getPlayer().getTotalLengthSamples();
-            const juce::int64 timelineTotalS = juce::jmax (playerTotalS, liveRecSamples);
+            const juce::int64 timelineTotalS = engine.isRecording()
+                ? juce::jmax (liveRecSamples, laneTimelineSamples())
+                : juce::jmax (playerTotalS, liveRecSamples);
             const double liveFrac     = timelineTotalS > 0
                 ? juce::jlimit (0.0, 1.0, (double) liveRecSamples / (double) timelineTotalS) : 1.0;
             const double existingFrac = timelineTotalS > 0
@@ -2133,6 +2146,16 @@ namespace zynforge
         juce::int64 laneTimelineSamples() const
         {
             const auto& player = engine.getPlayer();
+            if (engine.isRecording())
+            {
+                const double sr = engine.getDeviceSampleRate() > 0.0
+                    ? engine.getDeviceSampleRate()
+                    : (player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0);
+                const auto recPos = engine.isCaptureWindowActive() && player.isPlaying()
+                    ? player.getPositionSamples()
+                    : engine.getRecordTimelineSamples();
+                return recordingTimelineSpanSamples (recPos, player.getTotalLengthSamples(), sr);
+            }
             if (player.isLoaded() && player.getTotalLengthSamples() > 0)
                 return player.getTotalLengthSamples();
             const double sr = engine.getDeviceManager().getCurrentAudioDevice() != nullptr
@@ -4112,21 +4135,6 @@ namespace zynforge
             return brand::stripColour (index);
         }
 
-        // Halve the resolution of an envelope in place, keeping the louder
-        // of each adjacent pair so the silhouette survives the downsample.
-        static void decimateInPlace (std::vector<float>& v)
-        {
-            const size_t half = v.size() / 2;
-            for (size_t i = 0; i < half; ++i)
-                v[i] = juce::jmax (v[2 * i], v[2 * i + 1]);
-            // Carry an ODD tail element instead of dropping it. Safe today only
-            // because the cap is hit at exactly 32768, but a silent one-column
-            // loss per decimation is the kind of thing that starts biting the
-            // moment the growth becomes batched.
-            if (v.size() % 2 != 0) { v[half] = v.back(); v.resize (half + 1); }
-            else                     v.resize (half);
-        }
-
         // Draw the live capture envelope across `area`: one mirrored
         // min/max bar per pixel column, max-pooled from the peak history,
         // in the record colour. `vz` is the same vertical zoom the file
@@ -4134,27 +4142,29 @@ namespace zynforge
         // at the same scale.
         static void drawRecEnvelope (juce::Graphics& g,
                                      juce::Rectangle<int> area,
-                                     const std::vector<float>& peaks,
+                                     const LivePeakHistory& peaks,
                                      float vz)
         {
             const int w = area.getWidth();
             const int n = (int) peaks.size();
             if (w <= 0 || n <= 0) return;
+            const auto visible = area.getIntersection (g.getClipBounds());
+            if (visible.isEmpty()) return;
             const float midY = area.getCentreY();
             const float halfH = area.getHeight() * 0.5f;
-            for (int x = 0; x < w; ++x)
+            for (int drawX = visible.getX(); drawX < visible.getRight(); ++drawX)
             {
+                const int x = drawX - area.getX();
                 // Map this column to a span of the history and take the
                 // loudest peak in it (so the envelope never thins out when
                 // there are more samples than pixels).
                 const int a = (int) ((juce::int64) x       * n / w);
                 const int b = juce::jmax (a + 1, (int) ((juce::int64) (x + 1) * n / w));
                 float pk = 0.0f;
-                for (int i = a; i < b && i < n; ++i) pk = juce::jmax (pk, peaks[(size_t) i]);
+                for (int i = a; i < b && i < n; ++i) pk = juce::jmax (pk, peaks.at ((size_t) i));
                 const float h = juce::jlimit (0.0f, halfH, pk * vz * halfH);
                 if (h <= 0.0f) continue;
-                const float cx = (float) (area.getX() + x);
-                g.drawVerticalLine ((int) cx, midY - h, midY + h);
+                g.drawVerticalLine (drawX, midY - h, midY + h);
             }
         }
 
@@ -4201,13 +4211,8 @@ namespace zynforge
         // input meter (TrackState::peak), never the disk file, so it
         // costs nothing against capture integrity. recPeakR carries the
         // R partner on a stereo pair.
-        std::vector<float>        recPeakL, recPeakR;
-        // Effective number of captured samples each recPeakL entry represents.
-        // Starts at kLiveBinSamples; DOUBLES every time the envelope overflows
-        // and is decimated in place (max-pooled by 2). Timeline placement uses
-        // this instead of a fixed kLiveBinSamples, so a continue/punch take
-        // past the first decimation (~2.9 min @48k) stays correctly positioned.
-        int                       recBinSamples         { TrackState::kLiveBinSamples };
+        LivePeakHistory           recPeakL { TrackState::kLiveBinSamples };
+        LivePeakHistory           recPeakR { TrackState::kLiveBinSamples };
         bool                      liveRecording         { false };
         // Provisional hand-off: when a take stops, keep the just-built live
         // envelope on screen as a coarse waveform until the real file

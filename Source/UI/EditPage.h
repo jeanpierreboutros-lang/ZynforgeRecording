@@ -53,6 +53,7 @@ namespace zynforge
         // Horizontal zoom -- content widens past the viewport so the
         // engineer can navigate a 90-min show. 1.0 = fit, 16.0 = 16×.
         void  setZoom (float z);
+        void  userSetZoom (float z);
         float getZoom() const noexcept { return zoom; }
 
         // Vertical (amplitude) zoom for the waveforms. 1.0 = true level
@@ -61,6 +62,10 @@ namespace zynforge
         // TrackRow when it draws its thumbnail.
         void  setVerticalZoom (float z);
         float getVerticalZoom() const noexcept { return vZoom; }
+
+        // Lock timeline and track mutations during capture without disabling
+        // the viewport, zoom controls, minimap, or FOLLOW navigation.
+        void setReadOnlyWhileRecording (bool readOnly);
 
         // Wheel-zoom helpers, called from the row list. Horizontal zooms
         // around the viewport centre (keeps the visible time stable);
@@ -267,9 +272,20 @@ namespace zynforge
         struct ScrollViewport final : public juce::Viewport
         {
             std::function<void()> onScroll;
+            std::function<void (float, bool)> onZoomWheel;
             void visibleAreaChanged (const juce::Rectangle<int>&) override
             {
                 if (onScroll) onScroll();
+            }
+            void mouseWheelMove (const juce::MouseEvent& e,
+                                 const juce::MouseWheelDetails& w) override
+            {
+                if ((e.mods.isCommandDown() || e.mods.isCtrlDown()) && onZoomWheel)
+                {
+                    onZoomWheel (w.deltaY, e.mods.isShiftDown());
+                    return;
+                }
+                juce::Viewport::mouseWheelMove (e, w);
             }
         };
 
@@ -288,6 +304,7 @@ namespace zynforge
         ScrollViewport                     viewport;
         TimelineFollowState                followState;
         bool                               programmaticViewportChange { false };
+        bool                               readOnlyWhileRecording { false };
         int                                lastViewportX { 0 };
         std::unique_ptr<TrackList>         list;
         PlaceholderView                    placeholder;
@@ -297,6 +314,7 @@ namespace zynforge
         int        lastTrackGen    { -1 };   // rebuild on a stereo link/unlink (count unchanged, generation bumps)
         bool       lastLoaded      { false };
         bool       lastRecording   { false };
+        juce::int64 recordingBaseSpanSamples { 0 };
         bool       waveCacheSaved  { false };   // WaveCache.wfm written for this session yet?
         juce::File lastSessionDir;
         // Session whose WaveCache.wfm has already been pulled into the

@@ -44,6 +44,16 @@ namespace zynforge
 
             {
                 MainComponent main;
+                beginTest ("LOCK disables EDIT controls and refuses remote playback");
+                main.onLockToggled();
+                expect (main.editPage != nullptr && ! main.editPage->isEnabled());
+                expect (main.automationToolbar != nullptr && ! main.automationToolbar->isEnabled());
+                juce::String lockError;
+                expect (! main.engine.performRemoteTransport (
+                            AudioEngine::RemoteTransportAction::StartPlay, lockError));
+                expect (lockError.containsIgnoreCase ("locked"), lockError);
+                main.onLockToggled();
+
                 main.useCaptureDaemon = true;
                 expect (main.captureSupervisor.connectOrLaunch (port), "supervisor attach failed");
                 expect (waitUntil ([&] { return main.captureSupervisor.hasStatus(); }, 3000));

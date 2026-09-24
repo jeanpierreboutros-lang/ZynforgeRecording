@@ -273,10 +273,12 @@ namespace zynforge
             const juce::int64 recSamples = recording
                 ? (engine.isCaptureWindowActive() && player.isPlaying()
                        ? player.getPositionSamples()
-                       : engine.getRecorder().getRecordTimelineSamples()) : 0;
+                       : engine.getRecordTimelineSamples()) : 0;
             const auto total = player.getTotalLengthSamples();
-            const double sr  = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
-            const double totalSec = recording ? juce::jmax ((double) juce::jmax (recSamples, total) / sr, 1.0)
+            const double sr  = engine.getDeviceSampleRate() > 0.0
+                ? engine.getDeviceSampleRate()
+                : (player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0);
+            const double totalSec = recording ? (double) recordingTimelineSpanSamples (recSamples, total, sr) / sr
                                               : (total > 0 ? (double) total / sr : kNotionalEmptyLaneSec);
             const double pxPerSec = rulerPxPerSec (totalSec);
             const double rulerBottom = (double) (rulerTop + rulerH);

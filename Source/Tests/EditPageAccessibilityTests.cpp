@@ -53,6 +53,47 @@ namespace zynforge
                 }
                 AudioEngine::setTestModeSkipAudioInit (false);
             }
+
+            beginTest ("Recording locks row edits while zoom stays clickable");
+            {
+                AudioEngine::setTestModeSkipAudioInit (true);
+                {
+                    AudioEngine engine;
+                    EditPage page (engine);
+                    page.setBounds (0, 0, 900, 500);
+
+                    juce::Viewport* viewport = nullptr;
+                    juce::Button* horizontalIn = nullptr;
+                    juce::Button* verticalIn = nullptr;
+                    walk (page, [&] (juce::Component& c)
+                    {
+                        if (auto* v = dynamic_cast<juce::Viewport*> (&c)) viewport = v;
+                        if (auto* b = dynamic_cast<juce::Button*> (&c))
+                        {
+                            if (b->getTitle() == "Horizontal zoom in") horizontalIn = b;
+                            if (b->getTitle() == "Vertical zoom in") verticalIn = b;
+                        }
+                    });
+                    expect (viewport != nullptr && horizontalIn != nullptr && verticalIn != nullptr);
+                    if (viewport != nullptr && horizontalIn != nullptr && verticalIn != nullptr)
+                    {
+                        page.setReadOnlyWhileRecording (true);
+                        bool selfClicks = true, childClicks = true;
+                        viewport->getViewedComponent()->getInterceptsMouseClicks (selfClicks, childClicks);
+                        expect (! selfClicks && ! childClicks, "Rows must reject edits during capture");
+                        expect (page.isEnabled() && horizontalIn->isEnabled() && verticalIn->isEnabled());
+                        expect (horizontalIn->getWidth() >= 44 && verticalIn->getWidth() >= 44);
+                        horizontalIn->onClick();
+                        verticalIn->onClick();
+                        expect (page.getZoom() > 1.0f && page.getVerticalZoom() > 1.0f);
+
+                        page.setReadOnlyWhileRecording (false);
+                        viewport->getViewedComponent()->getInterceptsMouseClicks (selfClicks, childClicks);
+                        expect (selfClicks && childClicks, "Row edits must return after capture");
+                    }
+                }
+                AudioEngine::setTestModeSkipAudioInit (false);
+            }
         }
     };
 

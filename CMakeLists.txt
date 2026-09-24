@@ -115,6 +115,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/PunchRecordTests.cpp
     Source/Tests/MultiPartPlaybackTests.cpp
     Source/Tests/LiveWaveTests.cpp
+    Source/Tests/LivePeakHistoryTests.cpp
     Source/Tests/LiveWaveContinueTests.cpp
     Source/Tests/SessionRecoverySortTests.cpp
     Source/Tests/TransientTests.cpp

@@ -58,6 +58,22 @@ namespace zynforge
                 expect (follow.isFollowing());
             }
 
+            beginTest ("A three-hour recording extends the scrollable timeline");
+            {
+                constexpr juce::int64 sr = 48000;
+                const auto base = recordingTimelineSpanSamples (0, 0, (double) sr);
+                expectEquals (base, 5LL * 60 * sr);
+                const int viewW = 1000;
+                expectEquals (recordingContentWidth (viewW, 1.0f, base, base), viewW);
+                const auto threeHours = 3LL * 3600 * sr;
+                const auto span = recordingTimelineSpanSamples (threeHours, 0, (double) sr);
+                const int contentW = recordingContentWidth (viewW, 1.0f, span, base);
+                expectEquals (contentW, viewW * 36);
+                expect (contentW - viewW > viewW,
+                        "the viewport needs room to follow a long take");
+                expectEquals (recordingTimelineSpanSamples (sr * 60, 0, (double) sr), base);
+            }
+
             // ── The empty-session lane span is ONE number ────────────────────
             // The ruler drew 300 s while laneTimelineSamples() returned 60 s and
             // the tempo lane hardcoded 48000*60, so on a session with no audio

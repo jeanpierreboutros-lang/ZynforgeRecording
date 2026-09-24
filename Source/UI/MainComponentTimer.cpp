@@ -191,8 +191,9 @@ void MainComponent::timerCallback()
             ? player.getPositionSamples() : recorder.getRecordTimelineSamples();
         if (useCaptureDaemon && captureSupervisor.isDaemonRecording())
         {
-            const auto remote = captureSupervisor.lastStatus();
-            elapsed = remote.positionSamples; timerSR = remote.sampleRate;
+            const auto remote = engine.captureStatus();
+            if (remote.source == "daemon")
+            { elapsed = remote.positionSamples; timerSR = remote.sampleRate; }
         }
 
         // Refresh the free-space estimate every ~2 s of timer ticks
@@ -249,17 +250,19 @@ void MainComponent::timerCallback()
     // paint a dead daemon's final healthy metrics indefinitely.
     const auto status = engine.captureStatus();
     const bool rec = status.recording;
-    // Timeline edits can trigger long disk scans/renders and mutate the clip
-    // graph. Keep the editor read-only for local and daemon capture, and while
-    // another session job owns the files.
+    // Capture locks timeline mutations, but navigation must remain available
+    // to inspect a rolling take. Session jobs still own the entire editor.
     if (editPage != nullptr)
     {
-        const bool enableEditor = ! rec && ! sessionIoBusy.load();
+        editPage->setReadOnlyWhileRecording (rec || engine.isRecording());
+        const bool enableEditor = ! sessionIoBusy.load() && ! sessionLocked;
         if (editPage->isEnabled() != enableEditor)
             editPage->setEnabled (enableEditor);
     }
-    formatButton .setEnabled (! rec);
-    preRollButton.setEnabled (! rec);
+    if (automationToolbar != nullptr)
+        automationToolbar->setEnabled (! rec && ! sessionIoBusy.load() && ! sessionLocked);
+    formatButton .setEnabled (! rec && ! sessionLocked);
+    preRollButton.setEnabled (! rec && ! sessionLocked);
 
     // Free space on the volume the take ACTUALLY lands on. This used to
     // hardcode ~/Music/Zynforge Sessions, so an engineer recording to an
@@ -275,24 +278,10 @@ void MainComponent::timerCallback()
                                               : juce::File ("/").getBytesFreeOnVolume();
     const double freeGB = (double) bytesFree / (1024.0 * 1024.0 * 1024.0);
 
-    // Ask the recorder for the real write rate: it knows the capture format's
-    // bit depth and counts backup + every mirror destination. The old inline
-    // maths assumed 24-bit and ALL tracks (not just armed), so the "remaining"
-    // readout was wrong in both directions depending on the rig.
-    double bytesPerSec = (double) recorder.estimateBytesPerSecondForArmedTracks();
-    if (bytesPerSec <= 0.0)
-    {
-        // Nothing armed yet -- show a pre-show estimate at the current format
-        // across every strip so the number isn't just blank/infinite.
-        const auto fmt = recorder.getCaptureFormat();
-        const int bytesPerSamp =
-              (fmt == zynforge::CaptureFormat::Wav16 || fmt == zynforge::CaptureFormat::Aiff16
-               || fmt == zynforge::CaptureFormat::Flac16)                                            ? 2
-            : (fmt == zynforge::CaptureFormat::Wav32Float || fmt == zynforge::CaptureFormat::Aiff32Float) ? 4
-            : 3;
-        bytesPerSec = deviceSR * bytesPerSamp * juce::jmax (1, status.numTracks);
-    }
-    const double remainingSec = bytesPerSec > 0.0 ? (double) bytesFree / bytesPerSec : 0.0;
+    // This estimate groups copies by physical volume and selects the first
+    // volume to fill. Dividing one drive's free space by the aggregate write
+    // rate makes independent backup/mirror drives look needlessly scarce.
+    const double remainingSec = (double) status.minutesRemaining * 60.0;
 
     bigClock.setDiskInfo (freeGB,
                           status.lastWriteMs,

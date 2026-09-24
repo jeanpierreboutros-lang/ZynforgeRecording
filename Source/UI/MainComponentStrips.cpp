@@ -370,7 +370,8 @@ void MainComponent::condemnAllStrips()
 
 void MainComponent::deleteSelectedStrips()
 {
-    if (sessionIoBusy.load() || engine.isRecording() || selectedLogical.empty()) return;
+    if (sessionIoBusy.load() || engine.isRecording() || sessionLocked
+        || selectedLogical.empty()) return;
     std::vector<int> order;
     auto& rec = engine.getRecorder();
     for (int p = 0, logical = 0; p < rec.getNumTracks(); ++logical)

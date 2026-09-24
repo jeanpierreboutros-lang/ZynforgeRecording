@@ -484,6 +484,8 @@ MainComponent::MainComponent()
     // onClearAll wipes the active parameter across every track.
     automationToolbar->onClearAll = [this]
     {
+        if (engine.isRecording() || sessionIoBusy.load() || sessionLocked)
+        { showStatus ("Stop recording or unlock the session before clearing automation"); return; }
         const auto p = automationToolbar->getParam();
         const auto engineParam =
             p == zynforge::AutomationToolbar::Param::Volume ? zynforge::AudioEngine::AutomationParam::Volume
@@ -647,8 +649,13 @@ MainComponent::MainComponent()
     editPage->automationDragBegin = [this] { beginAutomationTransaction(); };
     editPage->automationDragEnd   = [this] (const juce::String& label)
                                     { endAutomationTransaction (label); };
-    // Autosave per-session zoom into .zfproj on every change.
-    editPage->onZoomChanged = [this] (float) { saveUILayoutToActiveSession(); };
+    // Save per-session zoom into .zfproj on every idle change.
+    // A zoom click during capture changes only the view. The normal stop-save
+    // persists its final value without writing to the active take volume.
+    editPage->onZoomChanged = [this] (float)
+    {
+        if (! engine.isRecording()) saveUILayoutToActiveSession();
+    };
 
     // EDIT-view channel selection feeds the SAME shared selection set the
     // MIXER uses, so a click in either view drives Option+R bulk arm and

@@ -15,10 +15,17 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Current Priorities
 
+### Whole-codebase audit fixes — 2026-09-24
+
+- [x] Address the thirteen reviewed import, edited-continuation, recording-control, daemon EDIT, LOCK, export, bounce, verifier, disk estimate, FOLLOW, orphan-part and snap issues. Add regression coverage for continued clips, same-session trim preservation, daemon markers, LOCK and orphan parts, plus verifier fixtures. Universal Release build, source and installed suites: 397/0; invariant and design audits clean.
+- [x] Install the verified audit-fix bundle with its matching helper after preserving the previous app in `/Applications/Zynforge Recording.app.backup-20260924-before-audit-fixes` and `/Users/jeanpierre/Zynforge-App-Backups/`. Exact bundle and deep-signature checks passed; existing DMGs remain unchanged.
+- [ ] Validate the rebuilt installed app with a disposable active-session import, edited continuation, daemon waveform/marker, partial export/bounce and long rolling EDIT navigation on the target rig.
+
 ### Current build packaging and installation — 2026-09-24
 
-- [x] Package `b2c1991` as a local universal DMG with its matching protocol-v3 helper. Verify CI, source tests, DMG checksum/read-only mount, exact bundle comparison, both architectures and deep/strict signatures. Preserve the older `0.2.0` DMG and the installed `ccd755e` app; see [INSTALL.md](INSTALL.md).
-- [ ] Install the new DMG only after stopping all takes and backing up the installed app. Verify the installed copy and perform a disposable capture/punch/playback/backup check before using it for important material. Developer ID notarization and exact-rig acceptance remain open.
+- [x] Package `b2c1991` as a local universal DMG with its matching protocol-v3 helper. Verify CI, source tests, DMG checksum/read-only mount, exact bundle comparison, both architectures and deep/strict signatures. Preserve the older `0.2.0` DMG; see [INSTALL.md](INSTALL.md).
+- [x] Install the newer local working-tree build with the long-take EDIT fix after confirming both processes stopped and preserving the old app. Verify exact copy, both architectures, signatures, 391 installed test groups and idle launch. Existing DMGs remain unchanged; see [INSTALL.md](INSTALL.md).
+- [ ] Perform a disposable capture/punch/playback/backup check and long-take navigation check before using the new installation for important material. Developer ID notarization and exact-rig acceptance remain open.
 
 ### Punch, capture and import audit remediation — 2026-09-24
 
@@ -33,7 +40,9 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 ### EDIT live navigation — 2026-09-24
 
 - [x] Stop the recording/playback playhead from overriding manual timeline pan or horizontal zoom; add an explicit FOLLOW return, keep vertical navigation independent, and document the controls. Source Release build and 373 tests pass locally.
+- [x] Keep H/V zoom, minimap and FOLLOW usable during recording while row/ruler edits remain locked. Grow the live timeline horizontally after five minutes and preserve real elapsed time in the bounded waveform history across a three-hour take. Local universal Release build and 391 headless test groups pass.
 - [ ] On a disposable multitrack take, verify vertical wheel/scrollbar, horizontal trackpad and Shift+wheel, H+/H-, V+/V-, Cmd+wheel, minimap drag, FOLLOW resume, and switching MIXER↔EDIT mid-take. Check GUI responsiveness and capture integrity on the actual rig before installation/show use.
+- [ ] In a disposable long take, confirm the red waveform and playhead remain visible and FOLLOW keeps scrolling after 45 minutes and past three hours; reopen the session to compare the final file waveform and duration. Verify a long continuation starts at the correct position.
 
 ### Whole-codebase audit follow-up — 2026-09-23
 

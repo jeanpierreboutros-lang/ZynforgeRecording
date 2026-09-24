@@ -434,7 +434,7 @@ private:
     juce::TextButton gridButton    { "GRID" };
     bool             mixerGridView { false };
 
-    bool sessionLocked { false };
+    std::atomic<bool> sessionLocked { false };
     bool explicitDocumentOpened { false };
 
     std::unique_ptr<juce::FileChooser> chooser;

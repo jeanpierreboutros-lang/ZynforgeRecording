@@ -152,7 +152,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (312, "Finish Range at Playhead\t.", canEdit);
         menu.addItem (308, "Set Range to Loop Range", canEdit);
         menu.addSeparator();
-        menu.addItem (309, "Toggle Snap\t4", true, snapToMarkers);
+        menu.addItem (309, "Toggle Snap\tCtrl+4", ! sessionLocked, snapToMarkers);
         menu.addItem (318, "Snap edits to zero-crossing (click-free)", true, zeroCrossSnap);
         menu.addItem (314, "Punch In/Out Mode",
                       canEdit, engine.isPunchModeOn());
@@ -377,6 +377,8 @@ void MainComponent::refreshMenuStateIfChanged()
 
 void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
 {
+    if (sessionLocked)
+    { showStatus ("LOCKED -- click UNLOCK to resume control"); return; }
     if (sessionIoBusy.load())
     { showStatus ("Wait for the session operation to finish"); return; }
     juce::Logger::writeToLog ("[ZF] menuItemSelected id=" + juce::String (id));

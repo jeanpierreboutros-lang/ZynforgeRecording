@@ -598,6 +598,11 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind)
 std::optional<bool> MainComponent::handleRemoteTransport (
     zynforge::AudioEngine::RemoteTransportAction action, juce::String& error)
 {
+    if (sessionLocked)
+    {
+        error = "session is locked; unlock on the host";
+        return false;
+    }
     using A = zynforge::AudioEngine::RemoteTransportAction;
     if (action == A::TogglePlay || action == A::StartPlay || action == A::StopPlay)
         return std::nullopt;
@@ -713,12 +718,23 @@ void MainComponent::applyLockState()
     playButton   .setEnabled (e);
     stopButton   .setEnabled (e);
     backupButton .setEnabled (e);
+    vscButton    .setEnabled (e);
     patchButton  .setEnabled (e);
     metersButton .setEnabled (e);
     oscButton    .setEnabled (e);
     addChannelButton.setEnabled (e && ! engine.isRecording());
+    setlistBar.setEnabled (e);
+    tempoBar.setEnabled (e);
+    if (transportBar != nullptr) transportBar->setEnabled (e);
+    if (masterStrip != nullptr) masterStrip->setEnabled (e);
 
     for (auto& s : strips) if (s != nullptr) s->setEnabled (e);
+    if (editPage != nullptr)
+    {
+        editPage->setEnabled (e && ! sessionIoBusy.load());
+        if (auto* tools = editPage->getEditToolsBar()) tools->setEnabled (e);
+    }
+    if (automationToolbar != nullptr) automationToolbar->setEnabled (e);
 
     lockButton.setButtonText (sessionLocked ? "UNLOCK" : "LOCK");
     showStatus (sessionLocked ? "LOCKED -- click UNLOCK to resume control"

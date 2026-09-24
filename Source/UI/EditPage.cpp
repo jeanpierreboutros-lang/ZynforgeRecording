@@ -272,7 +272,7 @@ namespace zynforge
         // (each tick) feed every armed row its current input peak so the
         // lane grows a red waveform during the take. Reads only the live
         // meter atomics -- no disk I/O, so capture integrity is untouched.
-        void setLiveRecording (bool on, int prefillSilentPoints = 0)
+        void setLiveRecording (bool on, juce::int64 prefillSilentPoints = 0)
         {
             for (auto& r : rows) r->setLiveRecording (on, prefillSilentPoints);
         }
@@ -294,16 +294,32 @@ namespace zynforge
         {
             auto& rec = engine.getRecorder();
             const int nTracks = rec.getNumTracks();
+            const auto remote = engine.captureStatus();
+            const bool daemon = remote.source == "daemon";
+            if (engine.isRecording() && ! rec.isRecording() && ! daemon) return;
             // Where the new audio anchors: a CONTINUE seeds the live envelope
             // with the existing take's length (in overview columns) so the
             // capture draws AFTER the take, not from the left edge. Stable for
             // the whole pass (recordBaseSamples doesn't move mid-take).
-            const auto base    = rec.getRecordBaseSamples();
-            const int  prefill = base > 0 ? (int) (base / TrackState::kLiveBinSamples) : 0;
+            const auto base    = daemon ? remote.positionSamples - remote.elapsedSamples
+                                        : rec.getRecordBaseSamples();
+            const juce::int64 prefill = base > 0 ? base / TrackState::kLiveBinSamples : 0;
             for (auto& r : rows)
             {
                 const int idx = r->getTrackIndex();
                 if (idx < 0 || idx >= nTracks) continue;
+                if (daemon)
+                {
+                    if (idx >= (int) remote.tracks.size() || ! remote.tracks[(size_t) idx].armed)
+                        continue;
+                    r->setLiveRecording (true, prefill);
+                    const auto bins = remote.positionSamples / TrackState::kLiveBinSamples;
+                    r->appendRemotePeakL (remote.tracks[(size_t) idx].peak, bins);
+                    if (r->isStereoPair() && idx + 1 < (int) remote.tracks.size())
+                        r->appendRemotePeakR (remote.tracks[(size_t) idx + 1].peak, bins);
+                    r->repaint();
+                    continue;
+                }
                 if (! rec.getTrack (idx).armed.load (std::memory_order_relaxed)) continue;
                 // SELF-ARM the live draw from the current recording+armed state,
                 // every tick -- never a one-shot "record just started" event.
@@ -431,6 +447,13 @@ namespace zynforge
         // is gone, but the scroll gesture is not.
         viewport.setScrollBarsShown (true, false, /*allowVertWithoutBar*/ false,
                                      /*allowHorizWithoutBar*/ true);
+        // While the row list is click-through during capture, the viewport
+        // receives wheel events directly. Keep the same Cmd-wheel zoom paths.
+        viewport.onZoomWheel = [this] (float delta, bool vertical)
+        {
+            if (vertical) wheelZoomVertical (delta);
+            else          wheelZoomHorizontal (delta);
+        };
         // Re-pin every row's header column to the left edge on horizontal
         // scroll so the meter / routing / R-I-S-M controls never slide away.
         viewport.onScroll = [this]
@@ -793,6 +816,14 @@ namespace zynforge
         // session loaded, session changed, ...
         const bool loaded = engine.getPlayer().isLoaded();
         const bool rec    = engine.isRecording();
+        const auto& player = engine.getPlayer();
+        const double liveRate = engine.getDeviceSampleRate() > 0.0
+            ? engine.getDeviceSampleRate()
+            : (player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0);
+        if (rec && ! lastRecording)
+            recordingBaseSpanSamples = recordingTimelineSpanSamples (
+                0, player.getTotalLengthSamples(), liveRate);
+        setReadOnlyWhileRecording (rec);
         const bool transportActive = rec || engine.getPlayer().isPlaying();
         const bool wasFollowing = followState.isFollowing();
         const bool wasTransportActive = followState.isTransportActive();
@@ -822,6 +853,11 @@ namespace zynforge
             lastSessionDir = engine.getActiveSessionDir();
             lastRecording  = rec;
             refresh();
+        }
+        if (recJustStopped)
+        {
+            recordingBaseSpanSamples = 0;
+            resized(); // restore fit-to-take width after live scrolling
         }
 
         // Persist WaveCache.wfm as soon as the background scan finishes for the
@@ -876,19 +912,26 @@ namespace zynforge
         // count on a grow-to-fit timeline (same timebase as the ruler + the
         // live capture envelope) -- gig-one field report: the engineer must
         // see the take rolling in EDIT, not a parked view.
-        const auto& player = engine.getPlayer();
         // Timeline position: on a CONTINUE this is the take end + samples so far,
         // so the playhead carries on past the existing take instead of jumping
         // back to 0.
         const auto  recPos  = rec
             ? (engine.isCaptureWindowActive() && player.isPlaying()
                    ? player.getPositionSamples()
-                   : engine.getRecorder().getRecordTimelineSamples()) : 0;
-        const auto  total   = rec ? juce::jmax (player.getTotalLengthSamples(), recPos)
+                   : engine.getRecordTimelineSamples()) : 0;
+        const auto  total   = rec ? recordingTimelineSpanSamples (
+                                      recPos, player.getTotalLengthSamples(), liveRate)
                                   : player.getTotalLengthSamples();
         const auto  pos     = rec ? recPos : player.getPositionSamples();
         int playheadX = -1;
         if (list == nullptr) return;   // every other use in this function guards; these two didn't
+        if (rec && recordingBaseSpanSamples > 0)
+        {
+            const int desiredW = recordingContentWidth (viewport.getWidth(), zoom,
+                                                        total, recordingBaseSpanSamples);
+            if (desiredW > list->getWidth() + 8)
+                resized();
+        }
         if (total > 0 && list->rowCount() > 0)
         {
             constexpr int kHeaderW = brand::space::editHeaderW;   // == TrackRow::headerW (same token)
@@ -965,11 +1008,22 @@ namespace zynforge
         // Overview navigator strip along the bottom -- only when zoomed in
         // (content wider than the view), leaving room for the H/V zoom
         // clusters at the bottom-right.
-        const bool showMinimap = (zoom > 1.001f);
+        const bool rec = engine.isRecording();
+        const auto& player = engine.getPlayer();
+        const double liveRate = engine.getDeviceSampleRate() > 0.0
+            ? engine.getDeviceSampleRate()
+            : (player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0);
+        const auto liveSpan = recordingTimelineSpanSamples (
+            engine.getRecordTimelineSamples(),
+            player.getTotalLengthSamples(), liveRate);
+        const auto baseSpan = recordingBaseSpanSamples > 0
+            ? recordingBaseSpanSamples
+            : recordingTimelineSpanSamples (0, player.getTotalLengthSamples(), liveRate);
+        const bool showMinimap = zoom > 1.001f || (rec && liveSpan > baseSpan);
         if (showMinimap)
         {
             auto mmRow = bounds.removeFromBottom (18);
-            mmRow.removeFromRight (160);  // clear FOLLOW + zoom controls
+            mmRow.removeFromRight (185);  // clear FOLLOW + wider zoom controls
             minimap.setBounds (mmRow.reduced (4, 1));
             minimap.setVisible (true);
         }
@@ -983,8 +1037,10 @@ namespace zynforge
         list->setViewportHeight (viewport.getHeight());
         // Apply the zoom factor -- content widens past the viewport when
         // zoom > 1; the horizontal scrollbar lights up to navigate.
-        const int contentW = juce::jmax (viewport.getWidth(),
-                                         (int) (viewport.getWidth() * zoom));
+        const int contentW = rec
+            ? recordingContentWidth (viewport.getWidth(), zoom, liveSpan, baseSpan)
+            : juce::jmax (viewport.getWidth(),
+                          (int) ((float) viewport.getWidth() * zoom));
         list->setSize (contentW, list->getHeight());
         list->resized();
 
@@ -1002,7 +1058,9 @@ namespace zynforge
         //   V+        (vertical / amplitude, stacked)
         //   V-
         //   H- H+     (horizontal / timeline, side by side)
-        const int zoomW = 36, zoomH = 26, followW = 72, gap = 4, pad = 8;
+        // The default JUCE button font needs this much room for "V+"/"H+";
+        // narrower buttons draw those labels as "..." on macOS.
+        const int zoomW = 44, zoomH = 26, followW = 72, gap = 4, pad = 8;
         const int rightX = bounds.getRight()  - zoomW - pad;
         const int botY   = bounds.getBottom() - zoomH - pad;
         zoomVIn .setBounds (rightX,                 botY - 2 * (zoomH + gap), zoomW, zoomH);
@@ -1063,12 +1121,30 @@ namespace zynforge
         if (onZoomChanged) onZoomChanged (zoom);
     }
 
+    void EditPage::userSetZoom (float z)
+    {
+        pauseFollowForZoom();
+        setZoom (z);
+    }
+
     void EditPage::setVerticalZoom (float z)
     {
         z = juce::jlimit (0.25f, 32.0f, z);
         if (std::abs (z - vZoom) < 0.001f) return;
         vZoom = z;
         if (list != nullptr) list->repaint();
+    }
+
+    void EditPage::setReadOnlyWhileRecording (bool readOnly)
+    {
+        if (readOnlyWhileRecording == readOnly) return;
+        readOnlyWhileRecording = readOnly;
+        // Passing mouse events through the rows keeps the viewport's pan and
+        // scroll gestures available. The ruler's marker/range edits stay inert.
+        // No component is disabled, so waveform paint and zoom chrome retain
+        // their normal appearance and hit targets.
+        if (list != nullptr) list->setInterceptsMouseClicks (! readOnly, ! readOnly);
+        if (ruler != nullptr) ruler->setInterceptsMouseClicks (! readOnly, ! readOnly);
     }
 
     void EditPage::wheelZoomHorizontal (float delta)

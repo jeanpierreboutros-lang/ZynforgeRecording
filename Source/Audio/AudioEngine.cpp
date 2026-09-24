@@ -287,7 +287,7 @@ namespace zynforge
             // during soundcheck. A stop after a punch or continue must not
             // wipe edits on OTHER tracks; only the just-captured track's
             // plain default clip is refreshed to the new take length.
-            seedDefaultClips (/*preserveEdits*/ true);
+            seedDefaultClips (/*preserveEdits*/ true, /*appendRecordedAudio*/ true);
             // loadSession() rewinds the player to 0; park the playhead back
             // at the take's end so the engineer can hit RECORD again and
             // continue seamlessly (or PLAY to review from this point).
@@ -1210,6 +1210,8 @@ namespace zynforge
     int AudioEngine::dropMarkerAtCurrentPosition (const juce::String& name)
     {
         if (! markers.hasContext()) return -1;
+        if (externalRecording.load (std::memory_order_acquire)
+            && captureStatus().source != "daemon") return -1;
 
         // Pro Tools-style: when the engineer has placed the edit
         // cursor in the EDIT view, the marker lands there. Otherwise
@@ -1223,14 +1225,17 @@ namespace zynforge
         // where the recording actually is. Record start also clears it below.
         juce::int64 pos = -1;
         const auto cursor = editCursorSample.load (std::memory_order_acquire);
-        if (recorder.isRecording())
+        if (isRecording())
+        {
             // Timeline position (recordBaseSamples + samplesSinceStart), NOT the
             // 0-based getSamplesSinceStart(): on a continue/punch the take starts
             // at recordBaseSamples, so the raw offset would drop every marker
             // recordBaseSamples too early. See MultitrackRecorder.h.
             pos = isCaptureWindowActive() && player.isPlaying()
                 ? player.getPositionSamples()
-                : recorder.getRecordTimelineSamples();
+                : getRecordTimelineSamples();
+            if (pos < 0) return -1;
+        }
         else if (cursor >= 0)
             pos = cursor;
         else if (player.isLoaded())
@@ -1745,6 +1750,9 @@ namespace zynforge
             persist ((int) order.size());
         }
         if (disk) player.loadSession (session);
+        sourceTrackLengths.clear();
+        for (int i = 0; i < player.getNumTracks(); ++i)
+            sourceTrackLengths.push_back (player.getTrackLengthSamples (i));
         player.clearAllClips();
         for (int i = 0; i < (int) trackClips.size(); ++i) player.setTrackClips (i, trackClips[(size_t) i]);
         invalidateTransientCache();
@@ -2030,6 +2038,7 @@ namespace zynforge
 
         trackClips.clear();
         trackPlaylists.clear();
+        sourceTrackLengths.clear();
         {
             const juce::ScopedLock sl (automationLock);
             automationData.clear();

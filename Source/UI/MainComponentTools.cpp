@@ -148,7 +148,7 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
             if (self == nullptr) return;
             self->sessionIoBusy.store (false);
             self->engine.setSessionTransitionActive (false);
-            if (self->editPage != nullptr) self->editPage->setEnabled (true);
+            if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
 
             const bool sameSession = self->engine.getActiveSessionDir() == sessionDir;
             if (result != clickrender::Result::succeeded || ! sameSession)

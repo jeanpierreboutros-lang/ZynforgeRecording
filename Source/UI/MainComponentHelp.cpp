@@ -66,7 +66,7 @@ namespace
                     { "S",            "Split clip at playhead" },
                     { ",",            "Set range start at playhead" },
                     { ".",            "Set range end at playhead" },
-                    { "4",            "Toggle snap mode" },
+                    { "Ctrl + 4",     "Toggle snap mode" },
                     { "Cmd + Z",      "Undo last clip edit" },
                     { "Cmd + R",      "Redo" },
                     { "Cmd + X",      "Cut selected strips" },

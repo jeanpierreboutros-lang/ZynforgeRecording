@@ -17,9 +17,24 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed — codebase audit, 2026-09-24
+
+- Import appends to the active session; with no active session it creates a unique folder and discards stale clip edits. Cancelled or unreadable imports roll back without redirecting the session. A continued recording exposes its new audio after existing splits, comps and trims; named, locked and end-trimmed clips survive same-session reloads.
+- EDIT keyboard and toolbar mutations refuse changes during recording while navigation stays available. Daemon capture drives the EDIT clock, ruler, marker position and a coarse live waveform from fresh daemon status. LOCK also blocks editor, toolbar, cue, transport, master and remote transport controls.
+- Export All reports missing expected sources, and stem bounce reports failed stems. The disk-time display uses the limiting physical volume. Keyboard time zoom and preset recall pause FOLLOW; snap moves from bare 4 to Ctrl+4 so cue 4 remains reachable.
+- Capture refuses orphan continuation parts before opening writers. `verify_take.sh` accepts valid parts, rejects pending or incomplete SHA-256 manifests, and reports missing bases.
+- The rebuilt source and exact installed app each passed 397 headless test groups with zero failures. The signed universal installation preserves the previous app for rollback; the existing DMGs were not replaced. Physical long-take and daemon interaction checks remain open.
+
+### Fixed — long-take EDIT navigation, 2026-09-24
+
+- EDIT zoom and FOLLOW remain clickable during a take while row and ruler edits stay locked. The H+/V+ controls have room for their full labels.
+- A fresh recording keeps a stable time scale after the initial five-minute viewport and grows the timeline horizontally, so FOLLOW can continue scrolling on long takes.
+- The live waveform now aggregates new peak bins at its current downsampled resolution. Three-hour takes keep their true sample position without overflowing the old display counter, and long continuations no longer allocate millions of silent display points.
+- The local macOS universal Release build and installed app each passed 391 headless test groups. The installed app was updated with its matching helper after preserving the old bundle; existing DMGs were not replaced. A disposable real-device long take remains to be checked.
+
 ### Packaged — local macOS DMG, 2026-09-24
 
-- Packaged commit `b2c1991` as a verified, ad-hoc-signed universal DMG containing the GUI and matching protocol-v3 capture helper. The old `0.2.0` DMG and installed `ccd755e` app were not replaced. SHA-256 and installation limits are in [INSTALL.md](INSTALL.md); this is not a notarized public release or physical-rig acceptance.
+- Packaged commit `b2c1991` as a verified, ad-hoc-signed universal DMG containing the GUI and matching protocol-v3 capture helper. The old `0.2.0` DMG was not replaced. This DMG predates the installed long-take fix. SHA-256 and installation limits are in [INSTALL.md](INSTALL.md); this is not a notarized public release or physical-rig acceptance.
 
 ### Fixed — punch/recovery/import audit, 2026-09-24
 
@@ -27,19 +42,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - Punches and continuations no longer prepend pre-roll audio; newly armed tracks get a silent lead-in so their audio starts at the correct session position.
 - Selected-range punches capture at sample boundaries even for ranges shorter than one UI timer tick, suspend loop playback through punch-out, preserve post-roll and monitor the new input in place of the old take.
 - Importing a source with more than two channels retains every channel as a separate mono track and rolls back that source if a channel fails.
-- The source Release build and headless tests pass; real-device punch and physical-output acceptance remain pending. The installed app and **older `0.2.0` transfer DMG** still contain the earlier build; the separate `b2c1991` DMG above contains these fixes.
+- The source Release build and headless tests pass; real-device punch and physical-output acceptance remain pending. The **older `0.2.0` transfer DMG** still contains the earlier build; the separate `b2c1991` DMG and newer local installation contain these fixes.
 
 ### Fixed — manual punch file/session persistence, 2026-09-24
 
 - A rolling in-app RECORD now punches at the live playhead rather than a stale edit cursor; a manual punch ends on one RECORD or STOP press. Normal live recording still requires two presses to stop.
 - Punching keeps the original take's container/bit depth even if capture settings changed, so it does not create a second `Track_NN` base file. The splice keeps originals until all copies commit and reports rollback instead of presenting it as a successful punch.
 - Local punch-out and normal local STOP now save the session project and mix metadata alongside the recorded audio. End-of-take continuation still creates a separate part by design.
-- At this stage the universal source build passed 378 test groups with no failures, including primary/backup/mirror format-change punches. The installed app and older `0.2.0` transfer DMG still contain the earlier build; the later `b2c1991` DMG above includes this fix. Real-device punch acceptance remains pending.
+- At this stage the universal source build passed 378 test groups with no failures, including primary/backup/mirror format-change punches. The older `0.2.0` transfer DMG still contains the earlier build; the later `b2c1991` DMG and newer local installation include this fix. Real-device punch acceptance remains pending.
 
 ### Fixed — live EDIT navigation, 2026-09-24
 
 - Manual left/right timeline scrolling and horizontal zoom during recording or playback now pause playhead auto-follow instead of snapping back immediately. A visible FOLLOW control returns to the live edge; vertical track scrolling and waveform-height zoom remain independent. Enlarged the H/V zoom controls, made H+/H- reciprocal so they return exactly to fit-to-take, and documented the gestures in the in-app guide.
-- Added regressions for manual versus automatic scrolling, follow reset on a new transport pass, and reciprocal H zoom. At this stage the source build passed 373 test groups with zero failures; the installed app and older `0.2.0` DMG still contain the prior build. The later `b2c1991` DMG above includes this fix.
+- Added regressions for manual versus automatic scrolling, follow reset on a new transport pass, and reciprocal H zoom. At this stage the source build passed 373 test groups with zero failures. The `b2c1991` DMG and newer local installation include this fix; the older `0.2.0` DMG does not.
 
 ### Fixed — audit follow-up, 2026-09-23
 

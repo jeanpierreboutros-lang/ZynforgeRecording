@@ -408,7 +408,17 @@ namespace zynforge
         void armContinue (juce::int64 baseSamples) noexcept { recorder.armContinue (baseSamples); }
         // Recording position on the timeline (take base + samples so far) -- for
         // the playhead / clock, so a continue carries on from where it stopped.
-        juce::int64 getRecordTimelineSamples() const noexcept { return recorder.getRecordTimelineSamples(); }
+        // The last daemon position holds the view steady during a link loss;
+        // captureStatus separately marks that snapshot unavailable.
+        juce::int64 getRecordTimelineSamples()
+        {
+            if (! externalRecording.load (std::memory_order_acquire))
+                return recorder.getRecordTimelineSamples();
+            const auto status = captureStatus();
+            if (status.source == "daemon") return status.positionSamples;
+            std::lock_guard<std::mutex> lock (externalStatusLock);
+            return externalStatus.positionSamples;
+        }
         // True if `channel`'s existing take in `sessionDir` is auto-split into
         // parts -- punch-in must refuse those (the single-file splice can't
         // represent a multi-part base).
@@ -780,7 +790,7 @@ namespace zynforge
         //     strip reorder): keep every edited track's splits/fades/comps
         //     verbatim and only (re)seed tracks that are still the plain
         //     full-range default -- never silently discard edits.
-        void seedDefaultClips (bool preserveEdits = false);
+        void seedDefaultClips (bool preserveEdits = false, bool appendRecordedAudio = false);
         // Lazy single-track bootstrap of the above: ensure `track` has at
         // least a full-range clip. Returns false if no audio backs it.
         bool ensureClipList (int track);
@@ -1312,6 +1322,8 @@ namespace zynforge
         // splits or trims, the entry has one or more Clips covering
         // the audible regions.
         std::vector<std::vector<Clip>> trackClips;
+        // Source lengths at the last seed, before a continuation grows files.
+        std::vector<juce::int64> sourceTrackLengths;
         // Per-track Playlist storing every Take (named clip list). The
         // active take's clips mirror trackClips above so the player
         // path doesn't need to know about takes. setActiveTake swaps

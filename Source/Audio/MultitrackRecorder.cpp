@@ -904,6 +904,37 @@ namespace zynforge
             mirrorFormats.push_back (format);
         }
 
+        // A continuation part without its Track_NN base is invisible to the
+        // session player. Refuse before opening any writer so the next part
+        // cannot make an already damaged take harder to recover.
+        if (continueAsPart)
+        {
+            const auto orphaned = [] (const juce::File& dir, const juce::String& stem,
+                                      const juce::String& ext)
+            {
+                if (dir.getChildFile (stem + ext).existsAsFile()) return false;
+                for (const auto& file : dir.findChildFiles (juce::File::findFiles, false,
+                                                            stem + "_part*" + ext))
+                    if (file.getFileNameWithoutExtension().startsWith (stem + "_part"))
+                        return true;
+                return false;
+            };
+            for (std::size_t i = 0; i < tracks.size(); ++i)
+            {
+                if (! isArmedCapture (i)) continue;
+                if (i > 0 && tracks[i - 1]->isStereo.load (std::memory_order_relaxed)
+                          && isArmedCapture (i - 1)) continue;
+                const auto stem = juce::String::formatted ("Track_%02d", (int) i + 1);
+                if (orphaned (audioFilesDir, stem, primary.ext)
+                    || (backupReady && orphaned (backupAudioDir, stem, backup.ext)))
+                    return false;
+                for (std::size_t mi = 0; mi < activeMirrors.size(); ++mi)
+                    if (orphaned (activeMirrors[mi].root.getChildFile (sessionDir.getFileName())
+                                     .getChildFile ("Audio Files"), stem, mirrorFormats[mi].ext))
+                        return false;
+            }
+        }
+
         std::vector<bool> hadPrimaryBase (tracks.size(), false);
         for (std::size_t i = 0; i < tracks.size(); ++i)
         {

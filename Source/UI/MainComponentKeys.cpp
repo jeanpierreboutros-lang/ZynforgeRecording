@@ -73,8 +73,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         // Cmd+] zoom IN on the timeline, Cmd+[ zoom OUT (EDIT view only).
         if (currentView == View::Edit && editPage != nullptr)
         {
-            if (kc == ']') { editPage->setZoom (editPage->getZoom() * 1.41f); return true; }
-            if (kc == '[') { editPage->setZoom (editPage->getZoom() * 0.71f); return true; }
+            if (kc == ']') { editPage->userSetZoom (editPage->getZoom() * 1.41f); return true; }
+            if (kc == '[') { editPage->userSetZoom (editPage->getZoom() * 0.71f); return true; }
         }
     }
 
@@ -442,7 +442,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
                         const double z = props->getDoubleValue (storeKey, -1.0);
                         if (z > 0.0)
                         {
-                            editPage->setZoom ((float) z);
+                            editPage->userSetZoom ((float) z);
                             showStatus ("EDIT zoom preset " + juce::String (slot)
                                         + " -> " + juce::String (z, 2) + "x");
                         }
@@ -492,7 +492,9 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         { editCycleNudgeValue(); return true; }                // cycle the nudge step
     if (c == ',') { editStartRange();       return true; }
     if (c == '.') { editFinishRange();      return true; }
-    if (c == '4') { editToggleSnap();       return true; }
+    if (key.getKeyCode() == '4' && key.getModifiers().isCtrlDown()
+        && ! key.getModifiers().isCommandDown() && ! key.getModifiers().isAltDown())
+        { editToggleSnap(); return true; }
     // Cmd+X / Cmd+C / Cmd+V / Cmd+E keyboard shortcuts. (Cmd+Z / Cmd+R undo /
     // redo are handled early, near the top of this method.) Matched on the
     // physical key code -- getTextCharacter() is unreliable under Cmd on macOS
