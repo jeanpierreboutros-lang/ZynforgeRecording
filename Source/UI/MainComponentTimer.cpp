@@ -187,7 +187,8 @@ void MainComponent::timerCallback()
         m = BigClockPanel::Mode::Recording;
         // Timeline position (continues from the take end on a continue), not the
         // new file's raw length, so the clock carries on instead of restarting.
-        elapsed = recorder.getRecordTimelineSamples();
+        elapsed = punchSessionActive && player.isPlaying()
+            ? player.getPositionSamples() : recorder.getRecordTimelineSamples();
         if (useCaptureDaemon && captureSupervisor.isDaemonRecording())
         {
             const auto remote = captureSupervisor.lastStatus();

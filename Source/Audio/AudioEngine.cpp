@@ -263,6 +263,7 @@ namespace zynforge
         // of looking like it starts over from the beginning.
         const auto recordEnd = recorder.getRecordTimelineSamples();
         recorder.stopRecording();
+        clearCaptureWindow();
         // Fresh audio on disk -- the transient cache from the last
         // session is now stale.
         invalidateTransientCache();
@@ -668,6 +669,9 @@ namespace zynforge
     int AudioEngine::loadSession (const juce::File& sessionDir, bool preserveEdits)
     {
         if (! TrackFileTransaction::recover (sessionDir)) return -1;
+        const auto audioDir = sessionDir.getChildFile ("Audio Files");
+        if (! MultitrackRecorder::recoverInterruptedPunches (
+                audioDir.isDirectory() ? audioDir : sessionDir)) return -1;
         const auto n = player.loadSession (sessionDir);
         if (n > 0)
         {
@@ -1224,7 +1228,9 @@ namespace zynforge
             // 0-based getSamplesSinceStart(): on a continue/punch the take starts
             // at recordBaseSamples, so the raw offset would drop every marker
             // recordBaseSamples too early. See MultitrackRecorder.h.
-            pos = recorder.getRecordTimelineSamples();
+            pos = isCaptureWindowActive() && player.isPlaying()
+                ? player.getPositionSamples()
+                : recorder.getRecordTimelineSamples();
         else if (cursor >= 0)
             pos = cursor;
         else if (player.isLoaded())
@@ -2568,8 +2574,6 @@ namespace zynforge
             routedInputs[i] = (dev >= 0 && dev < numInputs) ? inputs[dev] : nullptr;
         }
 
-        recorder.processBlock (routedInputs, juce::jmin (numTracks, kMaxStrips), numSamples);
-
         // Soft-takeover ramps (cue recall) -- step gain / pan per block
         // toward their target values before they're read downstream by
         // the monitor / per-channel output / stream-bus loops.
@@ -2581,9 +2585,57 @@ namespace zynforge
             playerScratch.setSize (juce::jmax (numTracks, 1), juce::jmax (numSamples, 64),
                                    false, false, true);
         playerScratch.clear (0, numSamples);
+        const bool playerWasRolling = player.isPlaying();
+        const auto playbackBlockStart = player.getPositionSamples();
         player.processBlock (playerScratch.getArrayOfWritePointers(),
                              juce::jmin (playerScratch.getNumChannels(), numTracks),
                              numSamples);
+        const auto playbackBlockEnd = player.getPositionSamples();
+
+        const bool windowedPunch = captureWindowEnabled.load (std::memory_order_acquire)
+                                && recorder.isRecording();
+        int punchOffset = 0, punchSamples = numSamples;
+        if (windowedPunch)
+        {
+            const auto in  = captureWindowStart.load (std::memory_order_relaxed);
+            const auto out = captureWindowEnd.load (std::memory_order_relaxed);
+            const auto played = playerWasRolling
+                ? juce::jlimit ((juce::int64) 0, (juce::int64) numSamples,
+                                playbackBlockEnd - playbackBlockStart)
+                : (juce::int64) 0;
+            const auto first = juce::jmax (playbackBlockStart, in);
+            const auto last  = juce::jmin (playbackBlockStart + played, out);
+            punchOffset = (int) juce::jlimit ((juce::int64) 0, played,
+                                              first - playbackBlockStart);
+            punchSamples = last > first ? (int) (last - first) : 0;
+        }
+
+        if (punchSamples > 0)
+        {
+            const float* captureInputs[kMaxStrips] {};
+            for (int i = 0; i < numTracks && i < kMaxStrips; ++i)
+                captureInputs[i] = routedInputs[i] != nullptr
+                    ? routedInputs[i] + punchOffset : nullptr;
+            recorder.processBlock (captureInputs, juce::jmin (numTracks, kMaxStrips),
+                                   punchSamples);
+        }
+
+        // While punching, the recorded input replaces the old take on armed
+        // tracks in every monitor/direct/stream route. Outside a scheduled
+        // window the old take remains audible for pre/post-roll. This also
+        // prevents the master from summing old + live performances together.
+        if (playerWasRolling && recorder.isRecording())
+            for (int i = 0; i < numTracks && i < kMaxStrips; ++i)
+            {
+                if (! recorder.getTrack (i).armed.load (std::memory_order_relaxed)) continue;
+                auto* dst = playerScratch.getWritePointer (i) + punchOffset;
+                if (punchSamples <= 0) continue;
+                if (routedInputs[i] != nullptr)
+                    juce::FloatVectorOperations::copy (dst,
+                        routedInputs[i] + punchOffset, punchSamples);
+                else
+                    juce::FloatVectorOperations::clear (dst, punchSamples);
+            }
 
         // Strip's effective dB = its own gain + its VCA bus gain. Defined
         // once here so every consumer below (aux sends, per-channel mix,
@@ -2839,7 +2891,7 @@ namespace zynforge
                 const double gR = gain * std::sin (panNorm * juce::MathConstants<double>::halfPi);
 
                 const float* src = playerScratch.getReadPointer (i);
-                if (recorder.isRecording()
+                if (recorder.isRecording() && ! playerWasRolling
                     && ! t.isBus.load (std::memory_order_relaxed)
                     && i < kMaxStrips && routedInputs[i] != nullptr)
                     src = routedInputs[i];
@@ -3002,8 +3054,11 @@ namespace zynforge
             // (b) Live input -- reaches the master when the channel is
             //     armed (so the engineer hears what's about to hit disk)
             //     OR monitor is on (live audition without recording).
-            const bool wantInput = t.armed  .load (std::memory_order_relaxed)
-                                || t.monitor.load (std::memory_order_relaxed);
+            const bool punchedInputIsInPlayback = playerWasRolling && recorder.isRecording()
+                && t.armed.load (std::memory_order_relaxed);
+            const bool wantInput = ! punchedInputIsInPlayback
+                && (t.armed.load (std::memory_order_relaxed)
+                    || t.monitor.load (std::memory_order_relaxed));
             if (wantInput)
             {
                 const float* isrc = (ch < kMaxStrips) ? routedInputs[ch] : nullptr;

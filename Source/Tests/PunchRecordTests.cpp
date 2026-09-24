@@ -277,6 +277,169 @@ namespace zynforge
             auto mdir = juce::File::getSpecialLocation (juce::File::tempDirectory)
                             .getChildFile ("zf-mppunch-" + juce::Uuid().toString());
             mdir.deleteRecursively();
+
+            beginTest ("interrupted punch restores original and archives partial replacement");
+            {
+                const auto recoveryDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                    .getChildFile ("zf-punch-recovery-" + juce::Uuid().toString());
+                const auto partialDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                    .getChildFile ("zf-punch-partial-" + juce::Uuid().toString());
+                recordDc (recoveryDir, baseVal, baseBlocks, block, sr, -1);
+                recordDc (partialDir, punchVal, punchBlocks, block, sr, -1);
+                const auto audio = recoveryDir.getChildFile ("Audio Files");
+                const auto original = audio.getChildFile ("Track_01.wav");
+                const auto sidecar = audio.getChildFile ("Track_01.punchbase.wav");
+                const auto originalHash = juce::String (hashing::fileSha256 (original));
+                expect (original.moveFileTo (sidecar));
+                expect (partialDir.getChildFile ("Audio Files/Track_01.wav").copyFileTo (original));
+                int restored = 0;
+                expect (MultitrackRecorder::recoverInterruptedPunches (audio, &restored));
+                expectEquals (restored, 1);
+                expectEquals (juce::String (hashing::fileSha256 (original)), originalHash);
+                expect (! sidecar.exists());
+                const auto archive = recoveryDir.getChildFile ("Session File Backups");
+                expectEquals (archive.findChildFiles (juce::File::findFiles, true,
+                                                      "Track_01.wav").size(), 1);
+                recoveryDir.deleteRecursively();
+                partialDir.deleteRecursively();
+            }
+
+            beginTest ("legacy root-level punch recovery archives inside its session");
+            {
+                const auto legacyDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                    .getChildFile ("zf-punch-legacy-" + juce::Uuid().toString());
+                recordDc (legacyDir, baseVal, baseBlocks, block, sr, -1);
+                const auto base = legacyDir.getChildFile ("Track_01.wav");
+                const auto sidecar = legacyDir.getChildFile ("Track_01.punchbase.wav");
+                expect (legacyDir.getChildFile ("Audio Files/Track_01.wav").moveFileTo (sidecar));
+                expect (sidecar.copyFileTo (base)); // interrupted replacement placeholder
+                int restored = 0;
+                expect (MultitrackRecorder::recoverInterruptedPunches (legacyDir, &restored));
+                expectEquals (restored, 1);
+                expect (base.existsAsFile());
+                expectEquals (legacyDir.getChildFile ("Session File Backups")
+                                  .findChildFiles (juce::File::findFiles, true,
+                                                   "Track_01.wav").size(), 1);
+                legacyDir.deleteRecursively();
+            }
+
+            beginTest ("occupied punch sidecar refuses start without touching original");
+            {
+                const auto safeDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                    .getChildFile ("zf-punch-sidecar-" + juce::Uuid().toString());
+                recordDc (safeDir, baseVal, baseBlocks, block, sr, -1);
+                const auto original = safeDir.getChildFile ("Audio Files/Track_01.wav");
+                const auto hash = juce::String (hashing::fileSha256 (original));
+                const auto occupied = safeDir.getChildFile ("Audio Files/Track_01.punchbase.wav");
+                expect (occupied.createDirectory().wasOk());
+                MultitrackRecorder rec;
+                rec.prepare (sr, block, 1);
+                rec.getTrack (0).armed.store (true);
+                rec.armPunchIn (punchIn);
+                expect (! rec.startRecording (safeDir));
+                expectEquals (juce::String (hashing::fileSha256 (original)), hash);
+                safeDir.deleteRecursively();
+            }
+
+            beginTest ("new backup without original take refuses punch");
+            {
+                const auto copyDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                    .getChildFile ("zf-punch-missingcopy-" + juce::Uuid().toString());
+                const auto backupRoot = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                    .getChildFile ("zf-punch-newbackup-" + juce::Uuid().toString());
+                recordDc (copyDir, baseVal, baseBlocks, block, sr, -1);
+                const auto original = copyDir.getChildFile ("Audio Files/Track_01.wav");
+                const auto hash = juce::String (hashing::fileSha256 (original));
+                MultitrackRecorder rec;
+                rec.prepare (sr, block, 1);
+                rec.setBackupDirectory (backupRoot);
+                rec.getTrack (0).armed.store (true);
+                rec.armPunchIn (punchIn);
+                expect (! rec.startRecording (copyDir));
+                expectEquals (juce::String (hashing::fileSha256 (original)), hash);
+                copyDir.deleteRecursively();
+                backupRoot.deleteRecursively();
+            }
+
+            beginTest ("capture pre-roll does not shift a punch splice");
+            {
+                const auto preDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                    .getChildFile ("zf-punch-preroll-" + juce::Uuid().toString());
+                recordDc (preDir, baseVal, baseBlocks, block, sr, -1);
+                MultitrackRecorder rec;
+                rec.prepare (sr, block, 1);
+                rec.setPreRollSeconds (1);
+                rec.getTrack (0).armed.store (true);
+                std::vector<float> history ((size_t) block, 0.8f);
+                const float* h = history.data();
+                for (int b = 0; b < 10; ++b) rec.processBlock (&h, 1, block);
+                rec.armPunchIn (punchIn);
+                expect (rec.startRecording (preDir));
+                std::vector<float> fresh ((size_t) block, punchVal);
+                const float* p = fresh.data();
+                for (int b = 0; b < punchBlocks; ++b) rec.processBlock (&p, 1, block);
+                rec.stopRecording();
+                const auto file = preDir.getChildFile ("Audio Files/Track_01.wav");
+                std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (file));
+                expect (r != nullptr);
+                if (r != nullptr) expectEquals ((int) r->lengthInSamples, baseLen);
+                expectWithinAbsoluteError (regionMean (fm, file, punchIn + 64,
+                                                       punchLen - 128), punchVal, 0.02f);
+                expectWithinAbsoluteError (regionMean (fm, file, punchIn + punchLen + 64,
+                                                       baseLen - punchIn - punchLen - 128), baseVal, 0.02f);
+                preDir.deleteRecursively();
+            }
+
+            beginTest ("newly armed continuation track begins at the existing take end");
+            {
+                const auto alignedDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                    .getChildFile ("zf-continue-newtrack-" + juce::Uuid().toString());
+                recordDc (alignedDir, baseVal, baseBlocks, block, sr, -1);
+                MultitrackRecorder rec;
+                rec.prepare (sr, block, 2);
+                rec.getTrack (1).armed.store (true);
+                rec.armContinue (0); // daemon's no-player-hint path
+                expect (rec.startRecording (alignedDir));
+                expectEquals ((int) rec.getRecordBaseSamples(), baseLen);
+                std::vector<float> silence ((size_t) block, 0.0f);
+                std::vector<float> fresh ((size_t) block, punchVal);
+                const float* inputs[2] { silence.data(), fresh.data() };
+                for (int b = 0; b < 4; ++b) rec.processBlock (inputs, 2, block);
+                rec.stopRecording();
+                const auto file = alignedDir.getChildFile ("Audio Files/Track_02.wav");
+                std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (file));
+                expect (r != nullptr);
+                if (r != nullptr) expectEquals ((int) r->lengthInSamples, baseLen + 4 * block);
+                expectWithinAbsoluteError (regionMean (fm, file, baseLen - block, block), 0.0f, 0.001f);
+                expectWithinAbsoluteError (regionMean (fm, file, baseLen + 64,
+                                                       4 * block - 128), punchVal, 0.02f);
+                alignedDir.deleteRecursively();
+            }
+
+            beginTest ("new track punched into a session has a silent lead-in");
+            {
+                const auto alignedDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                    .getChildFile ("zf-punch-newtrack-" + juce::Uuid().toString());
+                recordDc (alignedDir, baseVal, baseBlocks, block, sr, -1);
+                MultitrackRecorder rec;
+                rec.prepare (sr, block, 2);
+                rec.getTrack (1).armed.store (true);
+                rec.armPunchIn (punchIn);
+                expect (rec.startRecording (alignedDir));
+                std::vector<float> silence ((size_t) block, 0.0f);
+                std::vector<float> fresh ((size_t) block, punchVal);
+                const float* inputs[2] { silence.data(), fresh.data() };
+                for (int b = 0; b < 4; ++b) rec.processBlock (inputs, 2, block);
+                rec.stopRecording();
+                const auto file = alignedDir.getChildFile ("Audio Files/Track_02.wav");
+                std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (file));
+                expect (r != nullptr);
+                if (r != nullptr) expectEquals ((int) r->lengthInSamples, (int) punchIn + 4 * block);
+                expectWithinAbsoluteError (regionMean (fm, file, punchIn - block, block), 0.0f, 0.001f);
+                expectWithinAbsoluteError (regionMean (fm, file, punchIn + 64,
+                                                       4 * block - 128), punchVal, 0.02f);
+                alignedDir.deleteRecursively();
+            }
             auto mTrack = mdir.getChildFile ("Audio Files").getChildFile ("Track_01.wav");
             auto mPart2 = mdir.getChildFile ("Audio Files").getChildFile ("Track_01_part02.wav");
 

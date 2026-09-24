@@ -112,6 +112,15 @@ int MainComponent::openSessionFolder (const juce::File& dir)
     if (! dir.isDirectory()) return 0;
     if (! zynforge::TrackFileTransaction::recover (dir))
     { showStatus ("Session has an incomplete file move; recovery files were retained in Session File Backups"); return -1; }
+    int interruptedPunches = 0;
+    const auto audioDirForRecovery = dir.getChildFile ("Audio Files");
+    if (! zynforge::MultitrackRecorder::recoverInterruptedPunches (
+            audioDirForRecovery.isDirectory() ? audioDirForRecovery : dir,
+            &interruptedPunches))
+    {
+        showStatus ("Interrupted punch could not be recovered; original sidecars were retained");
+        return -1;
+    }
 
     // Condemn the current strips before loading -- a smaller session shrinks
     // the recorder vector and frees TrackStates the live strips still point at.
@@ -178,6 +187,10 @@ int MainComponent::openSessionFolder (const juce::File& dir)
         statusLabel.setText ("Loaded " + juce::String (n) + " tracks", juce::dontSendNotification);
         warnIfSampleRateMismatch();
     }
+    if (interruptedPunches > 0)
+        toast.show ("Recovered " + juce::String (interruptedPunches)
+                    + " interrupted punch file(s); partial audio is in Session File Backups",
+                    Toast::Kind::Warning);
     return n;
 }
 
@@ -923,8 +936,9 @@ void MainComponent::onImportAudioFiles()
                 const int stereoCount = (int) std::count_if (
                     result.tracks.begin(), result.tracks.end(),
                     [] (const auto& record) { return record.stereo; });
-                self->showStatus ("Imported " + juce::String ((int) result.tracks.size())
-                    + " file(s), " + juce::String (stereoCount) + " stereo, "
+                self->showStatus ("Imported " + juce::String (result.importedFiles)
+                    + " file(s) as " + juce::String ((int) result.tracks.size())
+                    + " track(s), " + juce::String (stereoCount) + " stereo, "
                     + juce::String ((int) result.tracks.size() - stereoCount) + " mono"
                     + (result.converted > 0
                         ? " (" + juce::String (result.converted) + " resampled to "

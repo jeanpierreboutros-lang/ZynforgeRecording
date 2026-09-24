@@ -2576,6 +2576,45 @@ namespace zynforge
                 }
                 sessionDir.deleteRecursively();
             }
+
+            beginTest ("Selection punch is sample-exact inside one callback and replaces old monitoring");
+            {
+                const auto dir = recordTestSession (1, 0.5f, 16);
+                {
+                    CallbackFixture f (1, 1, 2);
+                    expect (f.engine.loadSession (dir) > 0);
+                    auto& track = f.engine.getRecorder().getTrack (0);
+                    track.armed.store (true);
+                    constexpr juce::int64 start = 950, punchIn = 1000, punchOut = 1100;
+                    f.engine.setCaptureWindow (punchIn, punchOut);
+                    f.engine.armPunchIn (punchIn);
+                    expect (f.engine.startRecording (dir));
+                    f.engine.getPlayer().setPositionSamples (start);
+                    f.engine.startPlayback();
+                    f.writeInput (0, -0.3f, 256);
+                    f.process (256);
+                    expectEquals (f.engine.getRecorder().getSamplesSinceStart(),
+                                  (juce::int64) (punchOut - punchIn));
+                    // The monitor must hear the new performance, not the old
+                    // + new takes summed together in the punch interval.
+                    expect (f.outBuf.getSample (0, 100) < -0.1f);
+                    f.engine.stopRecording();
+                }
+
+                const auto wav = dir.getChildFile ("Audio Files/Track_01.wav");
+                juce::AudioFormatManager fm; fm.registerBasicFormats();
+                std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (wav));
+                expect (reader != nullptr);
+                if (reader != nullptr)
+                {
+                    juce::AudioBuffer<float> data (1, (int) reader->lengthInSamples);
+                    reader->read (&data, 0, data.getNumSamples(), 0, true, false);
+                    expectWithinAbsoluteError (data.getSample (0, 900), 0.5f, 0.01f);
+                    expectWithinAbsoluteError (data.getSample (0, 1050), -0.3f, 0.01f);
+                    expectWithinAbsoluteError (data.getSample (0, 1200), 0.5f, 0.01f);
+                }
+                dir.deleteRecursively();
+            }
         }
     };
 

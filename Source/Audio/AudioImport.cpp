@@ -138,16 +138,44 @@ namespace zynforge::audioimport
                 continue;
             }
 
-            const bool stereo = reader->numChannels >= 2;
-            if (reader->sampleRate > 0.0
-                && ! juce::approximatelyEqual (reader->sampleRate, targetSampleRate))
-                ++result.converted;
-
-            const auto destination = audioFilesDir.getChildFile (
-                "Track_" + juce::String (nextTrack + 1).paddedLeft ('0', 2) + ".wav");
-            if (! writeConverted (*reader, destination, targetSampleRate,
-                                  stereo ? 2 : 1, 0, cancel))
+            const int sourceChannels = (int) reader->numChannels;
+            if (sourceChannels < 1 || nextTrack + sourceChannels > 256)
             {
+                ++result.failed;
+                continue;
+            }
+            const bool stereo = sourceChannels == 2;
+            const bool converted = reader->sampleRate > 0.0
+                && ! juce::approximatelyEqual (reader->sampleRate, targetSampleRate);
+
+            // Files with more than two channels are split into one mono take
+            // per source channel. Importing only L/R silently discarded the
+            // rest of a console multitrack. Stage the whole source as a unit;
+            // on a failed channel, remove only the files created for this source.
+            std::vector<juce::File> created;
+            std::vector<ImportedTrack> staged;
+            const int outputTracks = sourceChannels > 2 ? sourceChannels : 1;
+            bool failedSource = false;
+            for (int channel = 0; channel < outputTracks; ++channel)
+            {
+                const int index = nextTrack + channel;
+                const auto destination = audioFilesDir.getChildFile (
+                    "Track_" + juce::String (index + 1).paddedLeft ('0', 2) + ".wav");
+                if (! writeConverted (*reader, destination, targetSampleRate,
+                                      stereo ? 2 : 1, channel, cancel))
+                {
+                    failedSource = true;
+                    break;
+                }
+                created.push_back (destination);
+                staged.push_back ({ index, stereo,
+                    sourceChannels > 2
+                        ? source.getFileNameWithoutExtension() + " Ch " + juce::String (channel + 1)
+                        : source.getFileNameWithoutExtension() });
+            }
+            if (failedSource)
+            {
+                for (const auto& f : created) f.deleteFile();
                 if (cancelled (cancel))
                 {
                     result.cancelled = true;
@@ -156,10 +184,10 @@ namespace zynforge::audioimport
                 ++result.failed;
                 continue;
             }
-
-            result.tracks.push_back ({ nextTrack, stereo,
-                                       source.getFileNameWithoutExtension() });
-            nextTrack += stereo ? 2 : 1;
+            result.tracks.insert (result.tracks.end(), staged.begin(), staged.end());
+            ++result.importedFiles;
+            if (converted) ++result.converted;
+            nextTrack += sourceChannels > 2 ? sourceChannels : (stereo ? 2 : 1);
         }
         return result;
     }

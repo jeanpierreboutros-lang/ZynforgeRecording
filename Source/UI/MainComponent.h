@@ -209,6 +209,10 @@ private:
     bool        punchSessionActive { false };
     juce::int64 punchOutSample     { 0 };
     juce::int64 punchPostRollEnd   { 0 };
+    bool        punchLoopWasEnabled { false };
+    bool        punchLoopNeedsRestore { false };
+    void suspendLoopForPunch();
+    void restoreLoopAfterPunch();
 
     // Snap modes -- cycled by the '4' key (also surfaced in the
     // Edit menu). Off / Markers / Bars; Bars uses the engine's

@@ -221,7 +221,7 @@ namespace zynforge
             // record is always wrong. The UI PLAY button guards this, but
             // network/remote entry points (OSC play, MCU Play) and timecode
             // chase reach here directly, so the guard belongs at the engine.
-            if (isRecording()) return;
+            if (isRecording() && ! captureWindowEnabled.load (std::memory_order_acquire)) return;
             const bool wasPlaying = player.isPlaying();
             player.start();
             if (! wasPlaying) midiClockOut.sendStart();
@@ -389,6 +389,19 @@ namespace zynforge
         // before the punch-in and after the punch-out is preserved). Forwarded
         // to the recorder; auto-cleared on stop. See MultitrackRecorder.
         void armPunchIn (juce::int64 punchInSample) noexcept { recorder.armPunchIn (punchInSample); }
+        // A selection punch opens its writers before transport rolls, then the
+        // audio callback admits only samples inside [start, end). This avoids
+        // 10 Hz UI-timer quantisation and permits sub-block punch windows.
+        void setCaptureWindow (juce::int64 start, juce::int64 end) noexcept
+        {
+            captureWindowStart.store (start, std::memory_order_relaxed);
+            captureWindowEnd.store (end, std::memory_order_relaxed);
+            captureWindowEnabled.store (end > start, std::memory_order_release);
+        }
+        void clearCaptureWindow() noexcept
+        { captureWindowEnabled.store (false, std::memory_order_release); }
+        bool isCaptureWindowActive() const noexcept
+        { return captureWindowEnabled.load (std::memory_order_acquire); }
         // Arm the next startRecording to CONTINUE the take as a new part file
         // (append, existing files untouched), continuing the timeline from
         // `baseSamples` (the existing take length). See armContinue.
@@ -1169,6 +1182,9 @@ namespace zynforge
         // 0-100 % units.
         std::atomic<double> deviceSampleRate { 0.0 };
         std::atomic<double> sessionSampleRate { 0.0 };   // 0 = unset (no record guard)
+        std::atomic<juce::int64> captureWindowStart { 0 };
+        std::atomic<juce::int64> captureWindowEnd   { 0 };
+        std::atomic<bool>        captureWindowEnabled { false };
         std::atomic<bool>   trimFollowEnabled { false };  // virtual-soundcheck gain compensation
         std::atomic<int>    deviceBlockSize  { 0 };
         std::atomic<float>  audioLoadPct     { 0.0f };

@@ -24,7 +24,10 @@ namespace
 {
     juce::int64 currentPlayheadSamples (zynforge::AudioEngine& eng)
     {
-        if (eng.isRecording()) return eng.getRecorder().getRecordTimelineSamples();
+        if (eng.isRecording())
+            return eng.isCaptureWindowActive() && eng.getPlayer().isPlaying()
+                ? eng.getPlayer().getPositionSamples()
+                : eng.getRecorder().getRecordTimelineSamples();
         if (eng.getPlayer().isLoaded()) return eng.getPlayer().getPositionSamples();
         return 0;
     }

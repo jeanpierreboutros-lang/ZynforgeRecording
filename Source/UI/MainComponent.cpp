@@ -53,6 +53,7 @@ void MainComponent::onRecordClicked()
         restoreArmStateAfterPunch();   // put the pre-punch arm layout back
         engine.stopPlayback();
         engine.setPunchModeOn (false);
+        restoreLoopAfterPunch();
         punchSessionActive = false;
         recordButton.setButtonText ("RECORD");
         if (saved) statusLabel.setText ("Punch ended", juce::dontSendNotification);
@@ -341,14 +342,32 @@ void MainComponent::onRecordClicked()
             const juce::int64 preRollS  = (juce::int64) (preRollSec * sr);
             const juce::int64 postRollS = (juce::int64) (2.0 * sr);
 
+            engine.stopPlayback();
+            player.setPositionSamples (juce::jmax ((juce::int64) 0, in - preRollS));
+            suspendLoopForPunch();
+            snapshotArmStateForPunch();
             for (int i = 0; i < numTracks; ++i)
                 engine.setTrackPunchArmed (i, recorder.getTrack (i).armed.load (std::memory_order_relaxed));
             engine.setPunchModeOn (true);
             punchOutSample    = out;
             punchPostRollEnd  = out + postRollS;
+            // Open the take before transport rolls. The audio callback admits
+            // only input samples in [in,out), including a sub-block range, so
+            // message-thread timer jitter cannot miss or extend the punch.
+            engine.setCaptureWindow (in, out);
+            engine.armPunchIn (in);
+            if (! engine.startRecording (dir))
+            {
+                engine.clearCaptureWindow();
+                recorder.cancelPunchIn();
+                restoreArmStateAfterPunch();
+                engine.setPunchModeOn (false);
+                restoreLoopAfterPunch();
+                showStatus ("Selection punch refused -- check take and backup/mirror copies");
+                return;
+            }
             punchSessionActive = true;
-            wasInsidePunch    = false;   // let servicePunch see the crossing
-            player.setPositionSamples (juce::jmax ((juce::int64) 0, in - preRollS));
+            wasInsidePunch    = false;
             engine.startPlayback();
             recordButton.setButtonText ("STOP");
             statusLabel.setText ("Punch-in armed -- in " + juce::String (in / sr, 1)
@@ -452,6 +471,11 @@ void MainComponent::onPlayClicked()
 
 void MainComponent::onStopClicked()
 {
+    if (punchSessionActive)
+    {
+        onRecordClicked(); // a deliberate selection punch ends in one press
+        return;
+    }
     // A normal live take gets a two-tap STOP guard against accidental cuts.
     // A deliberate manual punch is different: one press punches out at the
     // chosen point, preserving the rest of the original take.
@@ -485,6 +509,9 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind)
     auto& recorder = engine.getRecorder();
     const bool localRecording = recorder.isRecording();
     const bool externalCapture = engine.isRecording() && ! localRecording;
+    const bool resumeManualPlayback = localRecording && manualPunchActive
+        && ! stopPlaybackAndRewind && engine.getPlayer().isPlaying();
+    const auto resumeAt = engine.getPlayer().getPositionSamples();
 
     bool sessionStateSaved = true;
     juce::String finalizationError;
@@ -558,6 +585,12 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind)
     {
         showStatus ("Recording stopped; multitracks were saved, but the optional stereo mix is incomplete");
         return false;
+    }
+    if (resumeManualPlayback)
+    {
+        engine.getPlayer().setPositionSamples (resumeAt);
+        engine.startPlayback();
+        playButton.setButtonText ("PAUSE");
     }
     return true;
 }

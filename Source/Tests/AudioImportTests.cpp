@@ -22,7 +22,7 @@ namespace zynforge
             output.release();
             juce::AudioBuffer<float> buffer (channels, 512);
             for (int channel = 0; channel < channels; ++channel)
-                buffer.setSample (channel, 0, channel == 0 ? 0.5f : -0.5f);
+                buffer.setSample (channel, 0, (float) (channel + 1) * 0.1f);
             juce::int64 written = 0;
             while (written < samples)
             {
@@ -58,6 +58,7 @@ namespace zynforge
             expect (result.tracks[1].stereo);
             expectEquals (result.converted, 1);
             expectEquals (result.failed, 1);
+            expectEquals (result.importedFiles, 2);
 
             juce::AudioFormatManager formats;
             formats.registerBasicFormats();
@@ -69,6 +70,34 @@ namespace zynforge
             expect (stereoReader != nullptr && stereoReader->numChannels == 2);
             if (monoReader != nullptr)
                 expectWithinAbsoluteError ((double) monoReader->lengthInSamples, 4800.0, 2.0);
+
+            beginTest ("four-channel source imports all four mono channels");
+            const auto quad = sourceDir.getChildFile ("Console 4ch.wav");
+            expect (writeWav (quad, 48000.0, 4, 512));
+            const auto split = audioimport::importFiles ({ quad }, audioDir, 10, 48000.0);
+            expectEquals (split.importedFiles, 1);
+            expectEquals ((int) split.tracks.size(), 4);
+            expectEquals (split.failed, 0);
+            for (int channel = 0; channel < 4; ++channel)
+            {
+                if (channel < (int) split.tracks.size())
+                {
+                    expectEquals (split.tracks[(size_t) channel].trackIndex, 10 + channel);
+                    expect (! split.tracks[(size_t) channel].stereo);
+                }
+                const auto file = audioDir.getChildFile (
+                    "Track_" + juce::String (11 + channel).paddedLeft ('0', 2) + ".wav");
+                std::unique_ptr<juce::AudioFormatReader> chReader (formats.createReaderFor (file));
+                expect (chReader != nullptr);
+                if (chReader != nullptr)
+                {
+                    expectEquals ((int) chReader->numChannels, 1);
+                    juce::AudioBuffer<float> sample (1, 1);
+                    expect (chReader->read (&sample, 0, 1, 0, true, false));
+                    expectWithinAbsoluteError (sample.getSample (0, 0),
+                                               (float) (channel + 1) * 0.1f, 0.001f);
+                }
+            }
 
             beginTest ("unexpected destination collision preserves existing session media");
             const auto collision = audioDir.getChildFile ("Track_09.wav");

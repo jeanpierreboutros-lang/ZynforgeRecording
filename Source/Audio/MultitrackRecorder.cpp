@@ -266,7 +266,10 @@ namespace zynforge
 
     void MultitrackRecorder::dumpPreRollToWriters()
     {
-        if (preRollSeconds <= 0) return;
+        // Pre-record history belongs only to a fresh take. A punch inserts
+        // its new file at punchInPos, and a continuation starts at the old
+        // take's end; prepending history to either shifts the edit boundary.
+        if (preRollSeconds <= 0 || punchInActive || continueAsPart) return;
 
         const int wanted = (int) (sampleRate * preRollSeconds);
         std::vector<float> tmp ((std::size_t) wanted, 0.0f);
@@ -553,6 +556,64 @@ namespace zynforge
     // continue/overdub at the edit cursor, append at the end by default), and
     // the PUNCH-mode position window (MainComponent::servicePunch). Either way
     // this recorder just stashes + splices; it doesn't know which path armed it.
+    bool MultitrackRecorder::recoverInterruptedPunches (const juce::File& audioDir,
+                                                        int* recovered)
+    {
+        if (recovered != nullptr) *recovered = 0;
+        if (! audioDir.isDirectory()) return true;
+
+        juce::Array<juce::File> sidecars;
+        for (const auto& file : audioDir.findChildFiles (juce::File::findFiles, false,
+                                                        "Track_*.punchbase.*"))
+        {
+            const auto ext = file.getFileExtension().toLowerCase();
+            if (ext != ".wav" && ext != ".aif" && ext != ".aiff" && ext != ".flac")
+                continue;
+            const auto stem = file.getFileNameWithoutExtension();
+            if (! stem.endsWith (".punchbase")) continue;
+            const auto realStem = stem.dropLastCharacters (10);
+            auto suffix = realStem.fromFirstOccurrenceOf ("Track_", false, false);
+            if (! realStem.startsWith ("Track_")) continue;
+            const auto partAt = suffix.indexOf ("_part");
+            const auto digits = partAt >= 0 ? suffix.substring (0, partAt) : suffix;
+            if (digits.isEmpty() || ! digits.containsOnly ("0123456789")) continue;
+            if (partAt >= 0)
+            {
+                const auto part = suffix.substring (partAt + 5);
+                if (part.isEmpty() || ! part.containsOnly ("0123456789")) continue;
+            }
+            sidecars.add (file);
+        }
+        if (sidecars.isEmpty()) return true;
+
+        // Archive a partially written replacement instead of overwriting it:
+        // it may contain a useful performance even though the original must
+        // win the interrupted transaction. The archive is outside Audio Files
+        // so neither playback nor export mistakes it for a continuation part.
+        const auto sessionRoot = audioDir.getFileName() == "Audio Files"
+            ? audioDir.getParentDirectory() : audioDir;
+        const auto archiveRoot = sessionRoot
+            .getChildFile ("Session File Backups")
+            .getNonexistentChildFile ("Interrupted Punch", {}, false);
+        if (! archiveRoot.createDirectory().wasOk()) return false;
+        sidecars.sort();
+        for (const auto& sidecar : sidecars)
+        {
+            const auto stem = sidecar.getFileNameWithoutExtension()
+                .dropLastCharacters (10);
+            const auto target = audioDir.getChildFile (stem + sidecar.getFileExtension());
+            const auto archived = archiveRoot.getChildFile (target.getFileName());
+            if (target.exists() && ! target.moveFileTo (archived)) return false;
+            if (! sidecar.moveFileTo (target))
+            {
+                if (archived.existsAsFile()) archived.moveFileTo (target);
+                return false;
+            }
+            if (recovered != nullptr) ++*recovered;
+        }
+        return true;
+    }
+
     bool MultitrackRecorder::takeIsMultiPart (const juce::File& sessionDir, int trackIndex)
     {
         const auto audioFiles = sessionDir.getChildFile ("Audio Files");
@@ -682,6 +743,28 @@ namespace zynforge
             }
             mirrorsSkippedAtStart.store (skipped, std::memory_order_relaxed);
         }
+
+        // An earlier process may have died after moving a base take aside but
+        // before splicing it back. Restore every configured copy first; do not
+        // start another pass against a partial replacement still on disk.
+        int recovered = 0, copyRecovered = 0;
+        if (! recoverInterruptedPunches (audioFilesDir, &copyRecovered)) return false;
+        recovered += copyRecovered;
+        if (backupDir.getFullPathName().isNotEmpty())
+        {
+            const auto copyDir = backupDir.getChildFile (sessionDir.getFileName())
+                                          .getChildFile ("Audio Files");
+            if (! recoverInterruptedPunches (copyDir, &copyRecovered)) return false;
+            recovered += copyRecovered;
+        }
+        for (const auto& mc : activeMirrors)
+        {
+            const auto copyDir = mc.root.getChildFile (sessionDir.getFileName())
+                                        .getChildFile ("Audio Files");
+            if (! recoverInterruptedPunches (copyDir, &copyRecovered)) return false;
+            recovered += copyRecovered;
+        }
+        if (recovered > 0) return false; // caller must reopen the restored take
 
         // Resolves a CaptureFormat to its container code + bit-depth +
         // file extension. Container codes match the integer scheme used
@@ -821,53 +904,126 @@ namespace zynforge
             mirrorFormats.push_back (format);
         }
 
+        std::vector<bool> hadPrimaryBase (tracks.size(), false);
+        for (std::size_t i = 0; i < tracks.size(); ++i)
+        {
+            const auto name = juce::String::formatted ("Track_%02d", (int) i + 1);
+            hadPrimaryBase[i] = audioFilesDir.getChildFile (name + primary.ext).existsAsFile();
+        }
+
         // Punch-in: move the existing take -- AND its continuation parts -- aside
         // to sidecars BEFORE the writer truncates the target, so the WHOLE base
         // (a take built up by continue-recording is multi-part) survives to be
         // spliced + flattened back on stop. No-op when not punching or no take.
         std::vector<std::pair<juce::File, juce::File>> punchStashes;
-        auto stashForPunch = [this, &punchStashes] (const juce::File& target)
+        auto stashForPunch = [this, &punchStashes] (const juce::File& target) -> bool
         {
-            if (! punchInActive) return;
+            if (! punchInActive) return true;
+            // Even when there is no main file, a sidecar may be all that
+            // survived a previous interrupted punch. Never delete it.
+            if (punchSidecar (target).exists()) return false;
             for (auto& part : findTakeParts (target))   // [Track_NN, _part02, ...]
             {
                 const auto sidecar = punchSidecar (part);
-                sidecar.deleteFile();
-                if (part.moveFileTo (sidecar))
-                    punchStashes.emplace_back (part, sidecar);
+                if (sidecar.exists() || ! part.moveFileTo (sidecar)) return false;
+                punchStashes.emplace_back (part, sidecar);
             }
+            return true;
         };
 
         auto restorePunchStashes = [this, &punchStashes]
         {
             for (auto it = punchStashes.rbegin(); it != punchStashes.rend(); ++it)
             {
-                it->first.deleteFile();
+                if (it->first.exists() && ! it->first.deleteFile())
+                    continue; // keep the original in its sidecar
                 it->second.moveFileTo (it->first);
             }
             cancelPunchIn();
         };
 
+        // Complete ALL renames before opening ANY writer. A failed rename
+        // must not be followed by openWriterAtPath's target deletion, and a
+        // failure on track 2 must restore track 1 before returning.
+        if (punchInActive)
+        {
+            juce::AudioFormatManager punchFm; punchFm.registerBasicFormats();
+            auto sameBase = [&punchFm] (const juce::File& primaryFile,
+                                       const juce::File& copyFile) -> bool
+            {
+                const bool primaryExists = primaryFile.existsAsFile();
+                if (primaryExists != copyFile.existsAsFile()) return false;
+                if (! primaryExists) return true; // wholly new track on both copies
+                const auto primaryReader = ConcatReader::create (
+                    punchFm, findTakeParts (primaryFile));
+                const auto copyReader = ConcatReader::create (
+                    punchFm, findTakeParts (copyFile));
+                return primaryReader != nullptr && copyReader != nullptr
+                    && primaryReader->lengthInSamples == copyReader->lengthInSamples
+                    && primaryReader->numChannels == copyReader->numChannels
+                    && std::abs (primaryReader->sampleRate - copyReader->sampleRate) <= 1.0;
+            };
+            // A newly added backup/mirror cannot claim to hold the original
+            // take when it only contains the punch interval. Refuse until its
+            // base copy has been populated and verified.
+            for (std::size_t i = 0; i < tracks.size(); ++i)
+            {
+                if (! isArmedCapture (i)) continue;
+                if (i > 0 && tracks[i - 1]->isStereo.load (std::memory_order_relaxed)
+                          && isArmedCapture (i - 1)) continue;
+                const auto name = juce::String::formatted ("Track_%02d", (int) i + 1);
+                const auto source = audioFilesDir.getChildFile (name + primary.ext);
+                if (backupReady && ! sameBase (source, backupAudioDir.getChildFile (name + backup.ext)))
+                { cancelPunchIn(); return false; }
+                for (std::size_t mi = 0; mi < activeMirrors.size(); ++mi)
+                {
+                    const auto copyDir = activeMirrors[mi].root
+                        .getChildFile (sessionDir.getFileName()).getChildFile ("Audio Files");
+                    if (! sameBase (source, copyDir.getChildFile (name + mirrorFormats[mi].ext)))
+                    { cancelPunchIn(); return false; }
+                }
+            }
+            for (std::size_t i = 0; i < tracks.size(); ++i)
+            {
+                if (! isArmedCapture (i)) continue;
+                if (i > 0 && tracks[i - 1]->isStereo.load (std::memory_order_relaxed)
+                          && isArmedCapture (i - 1)) continue;
+                const auto name = juce::String::formatted ("Track_%02d", (int) i + 1);
+                if (! stashForPunch (audioFilesDir.getChildFile (name + primary.ext)))
+                { restorePunchStashes(); return false; }
+                if (backupReady && ! stashForPunch (backupAudioDir.getChildFile (name + backup.ext)))
+                { restorePunchStashes(); return false; }
+                for (std::size_t mi = 0; mi < activeMirrors.size(); ++mi)
+                {
+                    const auto copyDir = activeMirrors[mi].root
+                        .getChildFile (sessionDir.getFileName()).getChildFile ("Audio Files");
+                    if (! stashForPunch (copyDir.getChildFile (name + mirrorFormats[mi].ext)))
+                    { restorePunchStashes(); return false; }
+                }
+            }
+        }
+
         // Continue: the timeline base is the EXISTING take's length, measured
-        // from the files on disk (the longest armed take's Track_NN + its parts)
+        // from the files on disk (the longest take's Track_NN + its parts)
         // -- authoritative, so the clock / playhead continue correctly even if
         // the caller's hint was stale. Read before the writers open new parts.
         if (continueAsPart)
         {
             juce::AudioFormatManager fm; fm.registerBasicFormats();
 
-            juce::int64 takeLen = 0;
+            juce::int64 takeLen = recordBaseSamples; // caller's loaded-session hint
             for (std::size_t i = 0; i < tracks.size(); ++i)
             {
                 if (tracks[i]->isBus .load (std::memory_order_relaxed)) continue;
-                if (! tracks[i]->armed.load (std::memory_order_relaxed)) continue;
                 const auto name = juce::String::formatted ("Track_%02d", (int) i + 1);
-                const auto mainFile = audioFilesDir.getChildFile (name + primary.ext);
-                juce::int64 len = 0;
-                for (auto& pf : findTakeParts (mainFile))
-                    if (std::unique_ptr<juce::AudioFormatReader> r { fm.createReaderFor (pf) })
-                        len += r->lengthInSamples;
-                takeLen = juce::jmax (takeLen, len);
+                for (auto* ext : { ".wav", ".aif", ".aiff", ".flac" })
+                {
+                    const auto mainFile = audioFilesDir.getChildFile (name + ext);
+                    if (! mainFile.existsAsFile()) continue;
+                    auto reader = ConcatReader::create (fm, findTakeParts (mainFile));
+                    if (reader == nullptr) { continueAsPart = false; return false; }
+                    takeLen = juce::jmax (takeLen, reader->lengthInSamples);
+                }
             }
             recordBaseSamples = takeLen;
         }
@@ -935,7 +1091,6 @@ namespace zynforge
                 primaryFile = pf;
                 w.partNumberPrimary = pn;
             }
-            stashForPunch (primaryFile);
             w.writer.reset (openWriterAtPath (primaryFile, primary.container, primary.bitDepth, chans));
             ++primaryAttempts;
             if (w.writer != nullptr) ++primaryOpened;
@@ -961,7 +1116,6 @@ namespace zynforge
                     backupFile = bf;
                     w.partNumberBackup = bn;
                 }
-                stashForPunch (backupFile);
                 w.backupWriter.reset (openWriterAtPath (backupFile, backup.container, backup.bitDepth, chans));
                 w.backupBaseFile       = backupAudioDir.getChildFile (trackName);
                 w.backupExt            = backup.ext;
@@ -995,7 +1149,6 @@ namespace zynforge
                     mFile = mf;
                     mPart = mn;
                 }
-                stashForPunch (mFile);
                 WriterChannel::Mirror m;
                 m.partNumber = mPart;
                 m.writer.reset (openWriterAtPath (mFile, mFmt.container, mFmt.bitDepth, chans));
@@ -1025,6 +1178,72 @@ namespace zynforge
             fifos[i]->fifo.reset();
         }
 
+        // A newly armed track in an existing session has no earlier media.
+        // Its first sample must occur at the current punch/continue position,
+        // not at time zero. A flat capture file needs an explicit silent lead-
+        // in so playback, raw export and every DAW agree on its alignment.
+        // Do this before capture goes live; pre-roll is disabled for these
+        // edit passes so no history can shift the boundary back again.
+        bool paddingFailed = false;
+        if ((continueAsPart || punchInActive) && recordBaseSamples > 0)
+        {
+            constexpr int kPadBlock = 16384;
+            const std::vector<float> zeros ((std::size_t) kPadBlock, 0.0f);
+            const float* channels[2] { zeros.data(), zeros.data() };
+            for (std::size_t i = 0; i < writers.size(); ++i)
+            {
+                if (! writers[i].active || hadPrimaryBase[i]) continue;
+                auto& w = writers[i];
+                for (juce::int64 done = 0; done < recordBaseSamples;)
+                {
+                    const int count = (int) juce::jmin ((juce::int64) kPadBlock,
+                                                        recordBaseSamples - done);
+                    if (w.writer == nullptr
+                        || ! w.writer->writeFromFloatArrays (channels, w.numChannels, count))
+                    {
+                        primaryFailed.store (true, std::memory_order_relaxed);
+                        paddingFailed = true;
+                        break;
+                    }
+                    w.totalSamplesPrimary += count;
+                    w.bytesWrittenPrimary += (juce::int64) count * w.numChannels
+                                             * w.bytesPerSamplePrimary;
+                    if (w.backupWriter != nullptr)
+                    {
+                        if (w.backupWriter->writeFromFloatArrays (channels, w.numChannels, count))
+                        {
+                            w.totalSamplesBackup += count;
+                            w.bytesWrittenBackup += (juce::int64) count * w.numChannels
+                                                  * w.bytesPerSampleBackup;
+                        }
+                        else
+                        {
+                            w.backupWriter.reset();
+                            backupFailed.store (true, std::memory_order_relaxed);
+                        }
+                    }
+                    for (auto& m : w.mirrors)
+                    {
+                        if (m.writer == nullptr || m.failed) continue;
+                        if (m.writer->writeFromFloatArrays (channels, w.numChannels, count))
+                        {
+                            m.totalSamples += count;
+                            m.bytesWritten += (juce::int64) count * w.numChannels
+                                            * m.bytesPerSample;
+                        }
+                        else
+                        {
+                            m.writer.reset();
+                            m.failed = true;
+                            mirrorFailed.store (true, std::memory_order_relaxed);
+                        }
+                    }
+                    done += count;
+                }
+                if (paddingFailed) break;
+            }
+        }
+
         // Hard error: if we tried to open primary writers but EVERY one failed
         // (disk full, unmounted/read-only volume, permissions), do NOT enter
         // the recording state and do NOT report success -- the caller must not
@@ -1032,9 +1251,28 @@ namespace zynforge
         // sidecars stay on disk under their .punchbase names, so the existing
         // take is renamed-aside, never lost.) The success path -- at least one
         // primary writer open -- is unchanged.
-        if (primaryAttempts == 0 || primaryOpened != primaryAttempts)
+        if (paddingFailed || primaryAttempts == 0 || primaryOpened != primaryAttempts)
         {
+            std::vector<juce::File> unusedNewFiles;
+            for (std::size_t i = 0; i < writers.size(); ++i)
+                if (! hadPrimaryBase[i] && writers[i].active)
+                {
+                    const auto& w = writers[i];
+                    for (const auto& name : w.partFilesPrimary)
+                        unusedNewFiles.push_back (audioFilesDir.getChildFile (name));
+                    if (backupReady)
+                        for (const auto& name : w.partFilesBackup)
+                            unusedNewFiles.push_back (backupAudioDir.getChildFile (name));
+                    for (std::size_t mi = 0; mi < w.mirrors.size(); ++mi)
+                    {
+                        const auto copyDir = activeMirrors[mi].root
+                            .getChildFile (sessionDir.getFileName()).getChildFile ("Audio Files");
+                        for (const auto& name : w.mirrors[mi].partFiles)
+                            unusedNewFiles.push_back (copyDir.getChildFile (name));
+                    }
+                }
             closeWriters();
+            for (const auto& f : unusedNewFiles) f.deleteFile();
             restorePunchStashes();
             return false;
         }

@@ -880,7 +880,10 @@ namespace zynforge
         // Timeline position: on a CONTINUE this is the take end + samples so far,
         // so the playhead carries on past the existing take instead of jumping
         // back to 0.
-        const auto  recPos  = rec ? engine.getRecorder().getRecordTimelineSamples() : 0;
+        const auto  recPos  = rec
+            ? (engine.isCaptureWindowActive() && player.isPlaying()
+                   ? player.getPositionSamples()
+                   : engine.getRecorder().getRecordTimelineSamples()) : 0;
         const auto  total   = rec ? juce::jmax (player.getTotalLengthSamples(), recPos)
                                   : player.getTotalLengthSamples();
         const auto  pos     = rec ? recPos : player.getPositionSamples();

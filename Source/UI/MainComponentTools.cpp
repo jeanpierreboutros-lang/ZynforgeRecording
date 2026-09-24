@@ -194,6 +194,7 @@ void MainComponent::togglePunchMode()
     engine.setPunchModeOn (on);
     if (on)
     {
+        suspendLoopForPunch();
         // Default: punch-arm every currently-armed track. Engineer can
         // narrow by un-arming individuals via the track's right-click
         // menu later.
@@ -207,8 +208,25 @@ void MainComponent::togglePunchMode()
     {
         const bool saved = ! engine.isRecording() || stopActiveCapture (false);
         restoreArmStateAfterPunch();   // leaving punch mode must not keep the forced arms
+        restoreLoopAfterPunch();
         if (saved) showStatus ("Punch mode OFF");
     }
+}
+
+void MainComponent::suspendLoopForPunch()
+{
+    if (punchLoopNeedsRestore) return;
+    auto& player = engine.getPlayer();
+    punchLoopWasEnabled = player.isLoopEnabled();
+    punchLoopNeedsRestore = true;
+    player.setLoopEnabled (false); // a loop must not wrap before punch-out
+}
+
+void MainComponent::restoreLoopAfterPunch()
+{
+    if (! punchLoopNeedsRestore) return;
+    engine.getPlayer().setLoopEnabled (punchLoopWasEnabled);
+    punchLoopNeedsRestore = false;
 }
 
 // Capture / restore the engineer's arm layout around a punch. servicePunch has
@@ -243,6 +261,28 @@ void MainComponent::servicePunch()
     auto& player = engine.getPlayer();
     if (! player.isLoaded()) return;
     const auto pos    = player.getPositionSamples();
+    if (punchSessionActive)
+    {
+        // Selection recording opened before pre-roll began. The audio callback
+        // admitted exactly [in,out), so this timer only finalises the file and
+        // starts post-roll; it no longer decides which samples hit disk.
+        if (engine.isRecording() && (pos >= punchOutSample || ! player.isPlaying()))
+        {
+            const bool saved = stopActiveCapture (false);
+            restoreArmStateAfterPunch();
+            if (! saved)
+            {
+                engine.stopPlayback();
+                engine.setPunchModeOn (false);
+                restoreLoopAfterPunch();
+                punchSessionActive = false;
+                return;
+            }
+            player.setPositionSamples (punchOutSample);
+            engine.startPlayback();
+        }
+        return;
+    }
     const auto inside = (pos >= player.getLoopStart() && pos < player.getLoopEnd());
 
     if (inside && ! wasInsidePunch && player.isPlaying())
@@ -299,6 +339,7 @@ void MainComponent::servicePunch()
         {
             engine.stopPlayback();
             engine.setPunchModeOn (false);
+            restoreLoopAfterPunch();
             punchSessionActive = false;
         }
     }
@@ -324,6 +365,7 @@ void MainComponent::servicePunchSession()
     restoreArmStateAfterPunch();   // no-op if servicePunch already restored it
     engine.stopPlayback();
     engine.setPunchModeOn (false);
+    restoreLoopAfterPunch();
     punchSessionActive = false;
     recordButton.setButtonText ("RECORD");
     if (saved) showStatus ("Punch complete");

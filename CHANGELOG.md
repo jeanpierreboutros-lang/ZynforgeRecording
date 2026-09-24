@@ -17,6 +17,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed — punch/recovery/import audit, 2026-09-24
+
+- An interrupted punch restores the original track on reopen and archives a partial replacement instead of deleting the `.punchbase` safeguard. Punch start now refuses occupied sidecars and backup/mirror copies that lack the original take.
+- Punches and continuations no longer prepend pre-roll audio; newly armed tracks get a silent lead-in so their audio starts at the correct session position.
+- Selected-range punches capture at sample boundaries even for ranges shorter than one UI timer tick, suspend loop playback through punch-out, preserve post-roll and monitor the new input in place of the old take.
+- Importing a source with more than two channels retains every channel as a separate mono track and rolls back that source if a channel fails.
+- The source Release build and headless tests pass; real-device punch and physical-output acceptance remain pending. The installed app and transfer DMG still contain the earlier build.
+
 ### Fixed — manual punch file/session persistence, 2026-09-24
 
 - A rolling in-app RECORD now punches at the live playhead rather than a stale edit cursor; a manual punch ends on one RECORD or STOP press. Normal live recording still requires two presses to stop.

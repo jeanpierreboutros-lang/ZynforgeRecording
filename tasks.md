@@ -15,6 +15,11 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ## Current Priorities
 
+### Punch, capture and import audit remediation — 2026-09-24
+
+- [x] Restore interrupted punch originals without deleting sidecars; fail closed on missing backup/mirror bases or occupied stashes; keep pre-roll out of punch/continue; align newly armed tracks; gate selection capture at sample boundaries, suspend loop, preserve post-roll and switch monitoring to live input; import every channel from multichannel files. Universal Release build and 387/0 headless tests pass; both static audits are clean.
+- [ ] Exercise a disposable real-device session with a short selected punch, manual rolling punch, loop playback initially on, a newly armed track, primary + backup/mirror and multichannel import. Confirm before/new/after playback, physical direct outputs, post-roll and file recovery after an intentionally interrupted disposable punch. Do not use an irreplaceable take for this check.
+
 ### Manual punch persistence — 2026-09-24
 
 - [x] Fix rolling playhead targeting, one-press manual punch-out, original-container reuse across copies, splice rollback reporting, and local session-metadata save. Universal Release build and 378 tests pass locally.

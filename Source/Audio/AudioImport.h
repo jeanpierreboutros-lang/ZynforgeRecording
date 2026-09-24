@@ -17,6 +17,7 @@ namespace zynforge::audioimport
     struct Result
     {
         std::vector<ImportedTrack> tracks;
+        int importedFiles { 0 };
         int failed { 0 };
         int converted { 0 };
         bool cancelled { false };

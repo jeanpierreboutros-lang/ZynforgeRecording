@@ -110,6 +110,12 @@ namespace zynforge
         // multiple parts (Track_NN_partXX) -- punch-in must refuse these.
         static bool takeIsMultiPart (const juce::File& sessionDir, int trackIndex);
 
+        // Restore originals left in .punchbase sidecars by an interrupted
+        // punch. Any partial new take is retained under Session File Backups.
+        // Returns false without discarding either file when recovery fails.
+        static bool recoverInterruptedPunches (const juce::File& audioDir,
+                                               int* recovered = nullptr);
+
         // Next continuation file for a take: Track_NN.<ext> is part 1, then
         // Track_NN_part02, _part03 ... Returns the path to write next + its part
         // number (1 when no take exists yet -> a normal first recording).
