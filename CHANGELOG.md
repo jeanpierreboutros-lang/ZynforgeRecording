@@ -24,6 +24,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - Linked stereo export checks the source channel count before choosing interleaved or legacy two-mono handling. A missing or malformed mono partner fails instead of producing a partial stereo export.
 - The take verifier validates WAV, AIFF and FLAC and rejects unlisted or duplicate take files. EDIT labels its locked edit state during capture. Startup splash delay is shorter so daemon status appears sooner.
 - Universal Release build and exact installed copy verified; the source suite passed 398 test groups with zero failures. The built app passed an idle smoke launch. Physical-rig acceptance remains open.
+- Packaged source `8d79ab8` as a new universal two-Mac test DMG with matching helper and checksum. The read-only mount matched the installed app and passed deep/strict signature checks.
 
 ### Packaged — two-Mac test DMG, 2026-09-24
 

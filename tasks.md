@@ -6,7 +6,7 @@
 - [x] Finalise and alarm a daemon take on audio-device loss, measure daemon callback load and hold last daemon clock position on link loss.
 - [x] Route linked stereo export from source channel count; reject incomplete two-mono pairs. Verify WAV/AIFF/FLAC take files against the manifest in both directions.
 - [x] Build and install the verified universal app with its matching capture helper, preserving two rollback copies. Source suite: 398/0; idle smoke and static audits passed.
-- [ ] Package the updated installed bundle as a new two-Mac test DMG and verify its mounted contents and checksum.
+- [x] Package the updated installed bundle as `Zynforge-Recording-8d79ab8-macOS-universal.dmg` and verify its checksum, read-only mount, exact app copy, architectures and signature.
 - [ ] Run a disposable real-device capture, device-loss, stale-right-file stereo export and three-hour waveform-follow acceptance pass on each target Mac.
 
 ## How to use this file
