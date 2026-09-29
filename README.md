@@ -12,7 +12,7 @@ The latest source also keeps capture warnings and the METERS/BACKUP controls vis
 
 ## Build
 
-On 2026-09-29 the audit follow-up universal Release build passed **398 test groups with 0 failures**. Its exact copy is installed at `/Applications/Zynforge Recording.app` with a rollback copy at `/Applications/Zynforge Recording.app.backup-20260929-audit-followup`. The new [`8d79ab8` two-Mac test DMG](dist/Zynforge-Recording-8d79ab8-macOS-universal.dmg) contains that same tested app and matching helper for `arm64`/`x86_64`; see [installation and checksum details](INSTALL.md). A real-device interrupted take, stale-right-file stereo export and long waveform-follow pass remain to be tested on the target Macs.
+On 2026-09-30 the universal Release build from source commit `672456d` passed **399 test groups with 0 failures**. Its exact copy is installed at `/Applications/Zynforge Recording.app` with the prior version at `/Applications/Zynforge Recording.app.backup-20260930-before-672456d`. The latest fixes cover capture continuation, take verification, report warnings, and unattended STOP. The most recent [two-Mac test DMG](dist/Zynforge-Recording-8d79ab8-macOS-universal.dmg) contains the **earlier** `8d79ab8` build; it does not include these fixes. See [installation details](INSTALL.md). A real-device interrupted take and long waveform-follow pass remain to be tested on the target Macs.
 
 On 2026-09-24, `/Applications/Zynforge Recording.app` contained the universal Release build with the long-take EDIT and codebase-audit fixes, plus its matching protocol-v3 capture helper. The built and installed apps each passed **397 test groups with 0 failures**; the built app passed an idle smoke launch. The new [`3e6104c` test DMG](dist/Zynforge-Recording-3e6104c-macOS-universal.dmg) contains an exact copy of the tested installed bundle for macOS 12.0+ on Apple Silicon and Intel. The previous installed app is retained at `/Applications/Zynforge Recording.app.backup-20260924-before-audit-fixes`, with another verified copy under `/Users/jeanpierre/Zynforge-App-Backups/`. Older DMGs remain unchanged. The installation is ad-hoc signed, **not Developer ID notarized**; real-device punch/navigation and exact-rig rehearsal remain unverified. See [installation details](INSTALL.md) and [show readiness](SHOW-READINESS.md).
 
@@ -24,7 +24,7 @@ open "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
 
 First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 12.0+ Universal (Apple Silicon + Intel).
 
-For local installation, follow [INSTALL.md](INSTALL.md). The current DMG contains both the GUI and matching `ZynforgeCapture` executable under `Contents/MacOS`; copying a GUI executable alone omits the helper. Stop all takes and quit both processes before replacement. Capture protocol is version **3** and requires a successful compatible Hello before any command is accepted.
+For local installation, follow [INSTALL.md](INSTALL.md). The most recent DMG contains both the GUI and matching `ZynforgeCapture` executable under `Contents/MacOS`, but predates the latest installed build. Stop all takes and quit both processes before replacement. Capture protocol is version **3** and requires a successful compatible Hello before any command is accepted.
 
 ## Documentation
 
