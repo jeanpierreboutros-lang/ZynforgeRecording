@@ -8,7 +8,7 @@ A focused recording surface for engineers running front-of-house or monitors: ca
 
 Active development, pre-1.0. Ships **multitrack recording**, **virtual-soundcheck playback**, a non-destructive **clip/region editor with take comping**, **bounce to stems + stereo mix**, and **live OSC console integration** as a single coherent surface.
 
-The latest source also keeps capture warnings and the METERS/BACKUP controls visible in the header, finalises and reports a daemon take if its audio device stops, measures daemon audio load, and exports linked stereo tracks according to the file's actual channel layout. A device interruption remains flagged in the take report and show handoff. The take verifier checks WAV, AIFF and FLAC files against the manifest, including unlisted files. EDIT shows when clip and marker edits are locked during recording. Snap uses **Ctrl+4** so bare **4** can recall cue 4. A real long-take and physical-rig rehearsal remain outstanding.
+The latest source keeps capture warnings and the METERS/BACKUP controls visible in the header, finalises and reports a daemon take if its audio device stops, measures daemon audio load, and exports linked stereo tracks according to the file's actual channel layout. A device interruption remains flagged in the take report and show handoff. Continued sessions keep earlier files and warnings in the final report. The take verifier checks WAV, AIFF and FLAC files for complete parts, frame counts, final hashes and capture warnings. EDIT shows when clip and marker edits are locked during recording. Snap uses **Ctrl+4** so bare **4** can recall cue 4. A real long-take and physical-rig rehearsal remain outstanding.
 
 ## Build
 
@@ -40,6 +40,7 @@ For local installation, follow [INSTALL.md](INSTALL.md). The current DMG contain
 | User-visible changes | [`CHANGELOG.md`](CHANGELOG.md) |
 | Local installation, verification and rollback | [`INSTALL.md`](INSTALL.md) |
 | Planned SD5 / 56-input show and acceptance gates | [`SHOW-READINESS.md`](SHOW-READINESS.md) |
+| 2026-09-30 capture-integrity fixes and validation limits | [`AUDIT_FIXES_2026-09-30.md`](AUDIT_FIXES_2026-09-30.md) |
 | 2026-09-20 recording-reliability audit fixes and acceptance gaps | [`AUDIT_FIXES_2026-09-20.md`](AUDIT_FIXES_2026-09-20.md) |
 | 2026-09-15 whole-project audit and verification limits | [`AUDIT_REPORT_2026-09-15.md`](AUDIT_REPORT_2026-09-15.md) |
 | September audit: all 32 fixes and validation limits | [`AUDIT_FIXES_2026-09-12.md`](AUDIT_FIXES_2026-09-12.md) |
@@ -70,7 +71,7 @@ For local installation, follow [INSTALL.md](INSTALL.md). The current DMG contain
 - **Multi-format simultaneous capture** — primary in one format, parallel backup writer in another
 - **Fail-visible redundancy** — configured backup/mirror paths must open before they count as active; open/write failures stay latched through stop, skipped copies are counted, and disk-time estimates aggregate writers that share a physical volume
 - **StereoMix file capture is independent of physical stream outputs** — live stream sends are recorded even when no hardware stream bus is assigned; an empty stream mix or unsupported daemon StereoMix configuration is refused before RECORD
-- Auto-recover orphan sessions on next launch; `session.report.json` written on clean stop
+- Auto-recover orphan sessions on next launch; `session.report.json` metadata is written on clean stop and final SHA-256 hashes are filled in asynchronously
 
 ### Playback / virtual soundcheck
 - Each `Track_NN.wav` plays through the matching hardware output during soundcheck (a stereo file's two channels route to the L + R outputs)
@@ -160,7 +161,7 @@ Why no built-in HTTPS: JUCE has no server-side TLS, so in-app HTTPS would mean b
 - **Auto-save + backup session** — Session ▸ *Auto-Save & Backup…* (Off / 1 / 2 / 5 / 10 / 15 min) periodically saves the session and drops a complete, restorable **backup session** (all session-defining files, not the multi-GB audio) into `Session File Backups/<Name>_<stamp>/`, keeping the 10 newest. Recordings are always written live and crash-safe independent of this
 - Auto-save only marks a session clean after every metadata file and the backup snapshot succeeds. Failure is shown immediately and retried after 15 seconds instead of delaying until the next normal interval
 - Device settings, mirror drives and click-track generation are all locked while a take is rolling — each one would otherwise stop or silence something mid-show, and each now says so rather than failing quietly
-- **RF64** large takes (one continuous file past 4 GiB) + a fast, hardware-accelerated SHA-256 integrity manifest written on stop. Field-verified with a 6 h+ overnight soak (0 crashes, flat RAM). Validate any take with `tools/verify_take.sh`
+- **RF64** large takes (one continuous file past 4 GiB) + a fast, hardware-accelerated SHA-256 integrity manifest. A historical 6 h+ soak had no crash or memory growth; the latest build still needs its own real-device acceptance. After hashing finishes, run `tools/verify_take.sh` for primary-file integrity, then check routing and backup copies independently
 
 ### Workflow polish
 - Every text / number prompt (rename track, marker name, cue name, clip gain, +CH, New Session, …) opens with its field focused + text selected; **Enter** confirms the primary action without reaching for the mouse

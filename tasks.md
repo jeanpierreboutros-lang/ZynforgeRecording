@@ -1,5 +1,17 @@
 # Project Tasks
 
+## Current Priorities — 2026-09-30
+
+- [x] Fix the latest capture audit: repeated daemon START, STOP lock contention, cumulative continuation reports and warnings, asynchronous hash/write failure visibility, handoff punch warnings, take verification, unattended STOP, and minimum window size. Source commit `672456d`; universal Release build and 399 headless test groups passed with zero failures.
+- [x] Install the exact tested app with its matching capture helper at `/Applications/Zynforge Recording.app`; preserve the prior version at `/Applications/Zynforge Recording.app.backup-20260930-before-672456d`.
+- [x] Package and push `Zynforge-Recording-672456d-macOS-universal.dmg` plus its SHA-256 file. Verify the read-only mount, exact installed-app match, both architectures and deep/strict signature.
+- [ ] On each target Mac, run a disposable device-loss, continued-take, punch, backup/mirror, auto-follow and three-hour recording check with the installed `672456d` build. Record actual results in [FIELD-TEST.md](FIELD-TEST.md); complete the exact-rig gates in [SHOW-READINESS.md](SHOW-READINESS.md) before relying on it as the sole show recorder.
+- [ ] Extend take verification to compare against an independently recorded expected duration/channel map and validate external backup/mirror manifests. Current `verify_take.sh` checks primary files against the report, but the report cannot establish the intended performance length or independent copy health.
+
+The dated sections below retain delivery history and older open checks. The current package and acceptance state are above; old test counts do not describe the latest build.
+
+## Previous release notes
+
 ### Audit follow-up — 2026-09-29
 
 - [x] Correct header allocation for safety controls, status and sample-rate warning; mark EDIT rows/ruler read-only during capture.
@@ -22,7 +34,7 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ---
 
-## Current Priorities
+## Dated delivery history and remaining checks
 
 ### Whole-codebase audit fixes — 2026-09-24
 
@@ -30,7 +42,7 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 - [x] Install the verified audit-fix bundle with its matching helper after preserving the previous app in `/Applications/Zynforge Recording.app.backup-20260924-before-audit-fixes` and `/Users/jeanpierre/Zynforge-App-Backups/`. Exact bundle and deep-signature checks passed; existing DMGs remain unchanged.
 - [ ] Validate the rebuilt installed app with a disposable active-session import, edited continuation, daemon waveform/marker, partial export/bounce and long rolling EDIT navigation on the target rig.
 
-### Current build packaging and installation — 2026-09-24
+### Build packaging and installation — 2026-09-24
 
 - [x] Package the audit-fix `3e6104c` installed build as a new universal two-Mac test DMG with checksum and in-image instructions. Verify the read-only mount, exact app match, both architectures and deep signature. Retain older DMGs.
 - [x] Package `b2c1991` as a local universal DMG with its matching protocol-v3 helper. Verify CI, source tests, DMG checksum/read-only mount, exact bundle comparison, both architectures and deep/strict signatures. Preserve the older `0.2.0` DMG; see [INSTALL.md](INSTALL.md).
@@ -73,7 +85,7 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 - [x] Fix all 16 findings from the 2026-09-20 recording-reliability follow-up: fresh-take collision protection, truthful daemon/redundancy failures, backup persistence, StereoMix capture, external-record transport guards, CaptureLink synchronization/handshake, arrangement-aware background edits, mixer-state persistence, disk telemetry, daemon reconfiguration recovery, autosave transactions, and unbounded Consolidate naming. See [AUDIT_FIXES_2026-09-20.md](AUDIT_FIXES_2026-09-20.md).
 - [x] Pass the universal Release build, 358 test groups with zero failures, invariant audit, design audit and final diff checks; pass [GitHub run 35538818050](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/35538818050) for clean Debug/Release builds, tests and bundled-helper verification.
-- [x] Install the current bundle and matching protocol-v3 helper at `/Applications/Zynforge Recording.app`, preserving the prior installation at `/Applications/Zynforge Recording.app.backup-20260920-before-protocol-v3`. See [INSTALL.md](INSTALL.md).
+- [x] Installed that build and matching protocol-v3 helper at `/Applications/Zynforge Recording.app`, preserving the prior installation at `/Applications/Zynforge Recording.app.backup-20260920-before-protocol-v3`. See [INSTALL.md](INSTALL.md).
 - [x] Update the living architecture, workflow, testing, field-test, show-readiness, component, changelog and installation documentation for the new behavior.
 - [x] Commit application code as `fe5280d` and push it with the documentation-only delivery follow-up to `origin/main` on 2026-09-21.
 
@@ -84,7 +96,7 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 - [ ] User to select MADI/Dante path, Mac/chassis, primary/backup storage and independent recorder. Confirmed: SD5, RME HDSPe AoX-D, 56 inputs, 48 kHz, approximately two hours.
 - [ ] Perform the exact-rig three-hour acceptance rehearsal and inspect all primary/backup recordings. See [SHOW-READINESS.md](SHOW-READINESS.md). No show sign-off yet.
 - [ ] Complete native UI, device-loss and crash/reattachment checks on disposable sessions.
-- [ ] Modernize `tools/verify_take.sh`: distinguish intentional continuation from size splitting, require completed hashes, validate expected duration/channel mapping and backup manifests. Until then, follow its documented limitations; do not treat exit 0 as sole acceptance.
+- [x] Modernize `tools/verify_take.sh` for intentional continuation parts, complete hashes, file/report frame counts and capture-failure flags (2026-09-30). Expected performance duration/channel mapping and external backup/mirror manifests remain an open current priority above; exit 0 alone is not show acceptance.
 
 The dated remediation sections below are historical; their test counts and completion claims do not replace the current rig-specific acceptance gates above.
 
@@ -226,7 +238,7 @@ Ten-area parallel read-only audit of the whole codebase → 120 findings (7 Bloc
 - [~] **Live-recorder multi-part take model** (JP, 2026-06-14) — "a take is a sequence of files" (continue-recording + safe splitting), the way live multitrack recorders work. Replaces the destructive punch splice for the continue case; **never modifies an existing file** (only adds finalised parts), so capture carries no new corruption risk.
   - **Phase 1 — seamless multi-part PLAYBACK (DONE):** `SessionPlayer` stitches `Track_NN.wav` + `Track_NN_partXX.wav` into one continuous take via `ConcatReader` (load groups files per index; total length = sum). Fixes the old "only part 1 plays" gap. `MultiPartPlaybackTests` (loads-as-one-track + seamless-across-boundary). Read-only.
   - **Phase 2 — continue recording = a new part (DONE):** RECORD-continue records `Track_NN_partXX.<ext>` after the take (recorder `armContinue` + `nextContinuationPart`) instead of splicing — the existing file is **byte-identical untouched** (test asserts the SHA). All copies (primary/backup/mirror) continue as parts. `onRecordClicked`: append (no cursor / cursor at end) -> continue-as-part; mid-take cursor on a single-file take -> punch-splice; multi-part mid-take -> continue (splice can't do parts). EDIT view draws the whole take across parts (`ConcatReader` via `thumbnail.setReader`, shared `Source/Audio/MultiPartReader.h`). `PunchRecordTests` continue case + `MultiPartPlaybackTests`. 255/0. Splice now only serves the mid-take punch.
-  - **Phase 3 — `Fade Files/` folder + report accumulation across parts** — render crossfades to a `Fade Files/` folder (Pro Tools structure; lowest priority — fades already work non-destructively in real time). Also: `session.report.json` currently describes the latest pass's part(s); accumulate the manifest across continue passes so verify_take sees the whole take (deferred — each part is independently SHA'd + intact; playback scans the folder).
+  - **Phase 3 — cumulative report DONE; `Fade Files/` remains optional.** As of `672456d`, `session.report.json` enumerates and hashes every on-disk continuation part and retains earlier capture warnings. Rendering crossfades into a separate `Fade Files/` folder is still a low-priority option because fades work non-destructively in real time.
 
 ## Backlog
 
@@ -274,7 +286,7 @@ Ten-area parallel read-only audit of the whole codebase → 120 findings (7 Bloc
 - [x] **Docs sweep** (S) — README / CLAUDE / design.md / architecture / coding-standards / FIELD-TEST + component docs synced for flat design, the PT waveform, continue/punch, and the tightened gate; stale gradient / `setHeatWaveFill` language removed.
 
 ### 2026-06-14 (later) — punch-in recording + cold-load parallel scan + EDIT fixes
-Historical implementation note: the 2026-06-14 punch limitations below were superseded by the 2026-09-24 punch/recovery work in Current Priorities; use [decisions.md](decisions.md) and [testing.md](testing.md) for the current contract.
+Historical implementation note: the 2026-06-14 punch limitations below were superseded by the 2026-09-24 punch/recovery work; use [decisions.md](decisions.md) and [testing.md](testing.md) for the current contract.
 - [x] **Punch-in recording** (L) — record into a region and **keep the audio before the punch-in and after the punch-out**, replacing only the punched middle. Capture-safe by design: the real-time recorder is unchanged (records a clean fresh `Track_NN`), the existing take is stashed to a sidecar before the writer truncates, and on stop an **offline splice** (`Source/Audio/PunchSplice.h`) rebuilds `base[0,punchIn) + newTake + base[after]` via temp + atomic swap — a failure reverts to the pre-punch take, never corrupts it. **Every copy is spliced** (primary + backup + each mirror) so all drives stay byte-identical (JP decision); the splice runs after `closeWriters()` but before the async SHA thread, so the session report's length + SHA describe the spliced file with no JSON surgery. Multi-part (auto-split) bases are refused. Tested: `PunchSpliceTests` (5) + `PunchRecordTests` (2 — on-disk before+new+after, report length+SHA match). 252/0. **Trigger (2026-06-14 follow-up):** the **normal RECORD button** now continues into a loaded session — `onRecordClicked` punches at the edit cursor / appends at the end instead of always spinning up a new session (the original complaint: "can't continue recording in an existing file"). PUNCH mode + loop region is the second, position-windowed path. **Deferred:** pre-roll monitoring of the existing track; a new empty track armed during a continue lands at 0 (no base to offset); "redo from scratch" = New Session.
 - [x] **Waveforms no longer vanish when recording other tracks** (S) — arming + rolling kept only the armed rows on the live envelope; the rest keep their existing waveform.
 - [x] **Faster cold session LOAD** (M) — waveform cache sharded across 4 parallel scan threads (`Track_NN % 4`); ~up to 4× faster first-paint on an un-cached multitrack session. `WaveCache.wfm` rev 3 (one section per shard).

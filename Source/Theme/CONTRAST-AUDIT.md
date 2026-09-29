@@ -1,5 +1,7 @@
 # Heated Steel — contrast / 200-lux legibility audit
 
+> Historical token and component snapshot. The ratios below describe the listed colour pairs, not a fresh WCAG audit or a measured 200-lux field test of the current `672456d` app. See [design.md](../../design.md) and [SHOW-READINESS.md](../../SHOW-READINESS.md) for current design and rig limits.
+
 Goal (from the field constraints): every piece of **information** must read in
 bright FOH light (~200 lux on screen) without a separate high-contrast mode.
 Ratios below are WCAG contrast (foreground vs the surface it sits on). AA needs
@@ -38,9 +40,9 @@ daylight. Alert states (missed samples, hot true-peak) keep `accentRecord`.
   to sit below the content threshold.
 - Spine/seam glow alphas — decoration around the solid bright bar (which passes).
 
-## No separate HC mode needed
-Because every **information-bearing** element now clears AA (most AAA) against its
-real surface, the app is legible in bright light without a toggle. If you later
-add an accessibility HC switch, the hooks are ready: `structuralForge()` is its
-own accessor (can brighten/widen the spine), and `ForgeSteel.h` carries a
-`getStructuralForge(bool hc)` variant to wire to the flag.
+## High-contrast mode status
+No separate high-contrast mode is implemented. The listed colour pairs cleared
+the snapshot's contrast checks, but that does not establish that every current
+component is WCAG-compliant or legible on the planned stage rig. Check the
+actual app under the target lighting and with VoiceOver. `structuralForge()` is
+an accessor that could support a later high-contrast variant.

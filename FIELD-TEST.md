@@ -1,6 +1,6 @@
-# ZynForge Recording — Field-Test Checklist (updated 2026-09-24)
+# ZynForge Recording — Field-Test Checklist (updated 2026-09-30)
 
-Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak. Tick boxes only after performing them; the failure column tells you when to stop and report. The installed app is the local universal build with the long-take EDIT and codebase-audit fixes; its source bundle passed 397 test groups. Both existing DMGs and the older `b2c1991` [GitHub CI run](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/36017363562) predate these fixes. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run.
+Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak. Tick boxes only after performing them; the failure column tells you when to stop and report. The installed app and [current DMG](dist/Zynforge-Recording-672456d-macOS-universal.dmg) contain source build `672456d`, whose headless suite passed 399 test groups. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run on this build.
 
 Never force-quit, unplug hardware or delete sessions during production recording. Crash tests require a disposable rig/session and a recovery plan. In daemon mode, killing only the GUI is a reattachment test; it does not necessarily stop the recording or create an orphan. Stop both processes gracefully before installing or rolling back.
 
@@ -157,31 +157,35 @@ rig + real time:
 
 ### Turnkey verification — `tools/verify_take.sh`
 
-The helper provides partial WAV diagnostics, not complete acceptance. It assumes a single uninterrupted take and currently rejects intentional continuation parts. It can exit 0 while hashing is pending and does not prove channel mapping or equal expected durations. See [helper limitations](SHOW-READINESS.md#verification-helper-limitations). After stopping a disposable single-take session, run:
+The helper checks WAV, AIFF and FLAC files, including continued takes, but does not certify the recording or backup drives. It exits nonzero while hashing is pending and does not prove channel mapping or that the reported duration equals the planned performance. See [helper limitations](SHOW-READINESS.md#verification-helper-limitations). After stopping a disposable session, run:
 
 ```bash
-tools/verify_take.sh                       # newest session under ~/Music/Zynforge Sessions
-tools/verify_take.sh "/path/to/Session"    # or a specific session folder
+tools/verify_take.sh "/path/to/Session"    # use the exact session under test
+# With no path, the helper picks the newest session under ~/Music/Zynforge Sessions.
 ```
 
 Its implemented checks include:
 
-- no `Track_NN_partNN.wav` split files exist (RF64 = one continuous file);
-- each WAV opens at full length (`ffprobe` duration + frame count);
-- header is `RIFF` (<4 GiB) or `RF64` + `ds64` (>4 GiB) — and it **flags any
-  file that crossed 4 GiB without RF64 promotion** (the exact failure mode);
-- `session.report.json` exists and reports `missedSamples: 0`; the displayed track count still needs manual reconciliation;
-- every file's on-disk sha256 matches the report's manifest (once the report
-  flips `sha256Pending:false` — re-run if it's still hashing).
+- every WAV, AIFF and FLAC take opens, and WAV files over 4 GiB have an `RF64` + `ds64` header;
+- a continued take has its base file and an unbroken `_partNN` sequence;
+- primary-file frame totals match the report and every take file is listed exactly once;
+- `session.report.json` exists, hashing has finished, `missedSamples` is zero and capture-failure flags are clear;
+- every listed primary file's on-disk SHA-256 matches the report.
 
 Still do by hand: (1b) open in another DAW, and (1d) the hard-kill-mid-take
-crash-safety check on disposable data. A survivor without a clean-stop report will not pass the helper even when audio is recoverable. Requires `ffprobe`, `xxd`, `shasum`, `jq`, `python3`; these are not all stock macOS tools. Hash-pending output is incomplete verification, even if the exit code is 0.
+crash-safety check on disposable data. A survivor without a clean-stop report will not pass the helper even when audio is recoverable. Requires `ffprobe`, `xxd`, `shasum`, `jq`, `python3`; these are not all stock macOS tools. A pending-hash report exits nonzero and must be checked again when hashing finishes.
 
 ## September regression acceptance
 
-### 2026-09-24 DMG, punch and import delta (run after installing this exact build)
+### 2026-09-30 final DMG and capture-integrity delta
 
-- [ ] Stop all captures, back up the existing app, install the `b2c1991` DMG, verify both GUI and `ZynforgeCapture` are present and signed, and note the installed app path/commit. Opening the DMG or passing CI does not satisfy this row.
+- [ ] On each target Mac, verify the `672456d` DMG against its `.sha256` file, stop capture, preserve the old app, install both GUI and bundled helper, and record the installed bundle's source commit. Opening the DMG or passing the headless suite does not satisfy this row.
+- [ ] During a disposable daemon continuation, send START again while rolling. It must refuse without moving the live playhead, changing the take's base position, or clearing any already-latched capture warning. STOP must remain responsive while a companion/status client is slow or disconnected.
+- [ ] Finish a clean continuation after a take with a known capture warning. The final `session.report.json` must list and hash all earlier and new parts and retain the earlier warning. Run `verify_take.sh` on a clean continued session and on a deliberately gapped disposable copy; only the complete, warning-free copy should pass.
+- [ ] If using `tools/auto_stop.sh`, run it against a disposable live session with its companion token. Confirm it pins the intended session, performs the two-tap STOP, checks `recording:false`, and reports failure when the companion cannot confirm a stop. Never use an untested timer to stop show material.
+
+### 2026-09-24 punch and import delta (historical build; repeat applicable checks on the current DMG)
+
 - [ ] On a disposable session, start with loop playback enabled and select a very short punch range. RECORD must pass through playback pre-roll, replace only the selected samples, continue post-roll and stop; the loop must not wrap before punch-out, and its former enabled state must return afterward.
 - [ ] While punching a known existing take, listen to both master and any configured direct outputs at safe level: hear the old take before/after and the live input **instead of old + live together** inside the punch. Manually punch in/out with RECORD or STOP once, reopen the same session, and compare before/new/after audio and original file path.
 - [ ] Punch and continue with a newly armed track after an existing take. The new track must be silent before its start and sample-aligned on playback/export. Repeat on a long disposable session and note any start delay or disk-space pressure from the silent lead-in.

@@ -1,8 +1,10 @@
 # Recording reliability fixes — 2026-09-20
 
+> Historical verification snapshot for the 2026-09-20 build. For the current `672456d` package, 399-group source test result and remaining field checks, see [INSTALL.md](INSTALL.md), [testing.md](testing.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
+
 ## Outcome
 
-The whole-codebase follow-up audit found 16 user-facing failures: 2 critical, 11 high, and 3 medium. All 16 are fixed in the current working tree. A macOS universal Release build succeeds, the in-app runner passes 358 test groups with zero failures, and both the invariant and design audits are clean.
+The whole-codebase follow-up audit found 16 user-facing failures: 2 critical, 11 high, and 3 medium. All 16 were fixed in that build. Its macOS universal Release build succeeded, the in-app runner passed 358 test groups with zero failures, and both the invariant and design audits were clean.
 
 This is software validation, not acceptance of the planned SD5 / RME / 56-input show rig. The exact interface, clock, storage, daemon mode, backup/mirror drives, and a continuous three-hour rehearsal still require physical verification. Keep an independent recorder for important shows.
 

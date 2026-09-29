@@ -33,7 +33,7 @@ The goal of this document is to keep the codebase consistent enough that any con
 
 ## Preferred Patterns and Anti-Patterns
 
-### Recording-integrity contracts (updated 2026-09-20)
+### Recording-integrity contracts (updated 2026-09-30)
 
 - Check `AudioEngine::isRecording()` where either local or external capture must block an action. The local recorder flag alone misses daemon takes. Freeze writer participation at take start; UI arm changes must not change FIFO participation mid-take.
 - Reorder/delete through `reorderTracks`, not independent renames. Move complete stereo blocks and all identity/state together, check every filesystem result, retain journals on failure and archive removed audio. Invalidate index-based undo/clipboard state after the mapping changes.
@@ -43,6 +43,8 @@ The goal of this document is to keep the codebase consistent enough that any con
 - Before fresh capture, reject an existing base `Track_NN` in every supported audio container. Never infer “safe to replace” from a failed session load. Continue and punch are the only paths allowed to coexist with an existing take.
 - Punch originals in `.punchbase` are recovery material, never disposable stale files. Recover them before loading or starting another pass, archive any partial replacement inside the session, preflight every active copy's base and complete all stashes before opening any writer. Never prepend pre-roll history to a punch or continuation. A selected punch's in/out is gated in the audio callback, not by a UI timer.
 - A backup/mirror is active only after its directory and writer open. Keep take-level failure latches after writer cleanup, and surface them through local and daemon status. Aggregate disk rates per physical volume.
+- Refuse a daemon START while rolling before touching continuation position or failure latches. Never hold the daemon command lock across a socket write that can wait on a slow peer; STOP must be able to finalize the take.
+- A continued session report covers every on-disk part and retains earlier capture warnings. Treat `sha256Pending`, `sha256Failed`, failed writers, skipped mirrors, missed samples and failed punches as incomplete capture evidence. The verifier must compare physical frame counts and complete part numbering as well as SHA-256 hashes; a matching hash alone cannot certify a short file.
 - Background edits capture immutable input, render without engine/UI access, and apply only if the session and source clips still match. Local and external recording both block destructive edits.
 - Automated regression results must be labeled separately from actual hardware acceptance. Do not claim crash/power-loss guarantees from simulated filesystem tests.
 
@@ -57,7 +59,7 @@ The goal of this document is to keep the codebase consistent enough that any con
 - Use `std::atomic` for any value crossed between the audio thread and any other thread.
 - Pass `juce::String` by const reference. Pass small POD by value.
 - Wrap external commands (`lame`, `rclone`) in `juce::ChildProcess` and check the exit code.
-- Set the grey ZynForge LookAndFeel on **every** `juce::AlertWindow` at construction — `aw->setLookAndFeel (&laf)` in a `MainComponent` method, or `&getLookAndFeel()` / `&self->getLookAndFeel()` from a `Component` / captured SafePointer. Prompts must read grey + light grey app-wide.
+- Keep every `juce::AlertWindow` on the grey ZynForge LookAndFeel. `MainComponentInit` sets it as the app default; when a prompt needs an explicit LAF, use `aw->setLookAndFeel (&laf)` or the owning component's LAF. Prompts must read grey + light grey app-wide.
 - Map EDIT-view timeline samples ↔ lane pixels through `TimelineMapper` (`EditPage.cpp`), not a re-inlined lambda: `toX` rounds, `toXFloor` truncates, `toSample` inverts. Build one per paint/event from the lane's inner rect + session length.
 - When you add a menu item whose enabled/greyed state depends on app state, add that condition to `MainComponent::refreshMenuStateIfChanged()`'s signature (`MainComponentMenu.cpp`). macOS caches the native menu's enabled states until `menuItemsChanged()` fires; that polled signature is the only thing that triggers the refresh. Miss it and your item freezes in whatever state it had at launch.
 - Compute a strip's effective gain (own gain + VCA-bus gain) **once** per audio block and share it; don't re-derive it per consumer inside the callback.
@@ -79,7 +81,7 @@ The goal of this document is to keep the codebase consistent enough that any con
 - Allocate, lock, log, or call `Component::repaint` from the audio callback.
 - Construct a raw `juce::Font` outside `Source/Theme/`. Use `brand::type::*` or `brand::fonts::*`.
 - Use `juce::Colour::fromRGB(...)` or `juce::Colours::black/white` outside `Source/Theme/`. Use `brand::*` tokens or `brand::onSignal(bg)`. The **one** sanctioned white is a specular gloss / light scrim — route it through `brand::gloss(alpha)`, never an inline `Colours::white.withAlpha(...)`.
-- Call `juce::LookAndFeel::setDefaultLookAndFeel(...)`. The app's global default is JUCE's, by design: a global ZynForge default crashes JUCE text shaping (`SimpleShapedText::shape`). Set the LAF **per window** instead (see the AlertWindow rule above).
+- Leave the application-wide `juce::LookAndFeel::setDefaultLookAndFeel (&laf)` setup in `MainComponentInit` and its reset in the destructor. New prompts should use that app default or explicitly set the same LAF; do not leave a stock JUCE prompt in the recording workflow.
 - Inline a `withAlpha(0.xx)` literal. Use a named step from `brand::alpha::` (`subtle`/`dimmed`/`ghost`/`scrim`/`muted`/`prominent`/`bold`). If none fits, add a line to the ad-hoc catalog in `BrandColors.h` rather than leaving the magic number undocumented.
 - Pass a raw corner-radius float to `fill/drawRoundedRectangle`. Use `brand::radius::{sm,md,lg,xl}`. Sub-2 px micro-radii on meter segments / icon glyphs are the only exception (geometry-forced, radius < half the element height).
 - Introduce new identity-sensitive persistence keyed only by array index. Prefer `TrackState::stripId`; existing index-based automation and compatibility formats require explicit remapping.

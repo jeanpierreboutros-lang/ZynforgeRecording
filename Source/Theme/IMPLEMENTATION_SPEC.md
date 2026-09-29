@@ -1,5 +1,7 @@
 # ZynForge Heated Steel — Pixel-Parity Implementation Spec
 
+> Historical June 2026 design handoff. Its `edited/` drop-ins and remaining-layout instructions describe that snapshot, not the current shipped header. Check `Source/UI/MainComponentLayout.cpp` and [design.md](../../design.md) before applying any layout step below.
+
 **Canonical target:** `ZynForge Heated Steel Target.html` (open it; it's built
 from the real `ForgeTokens.h` values). Every number below is taken from that
 file and your real source. Match the app to it, region by region.

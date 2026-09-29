@@ -1,6 +1,6 @@
 # Recording and session-integrity fixes
 
-> Historical verification snapshot. For the current protocol-v3 build and the later reliability fixes, see [AUDIT_FIXES_2026-09-20.md](AUDIT_FIXES_2026-09-20.md).
+> Historical verification snapshot. Later fixes are recorded in the [2026-09-20 reliability audit](AUDIT_FIXES_2026-09-20.md) and the [current capture-integrity audit](AUDIT_FIXES_2026-09-30.md); see [INSTALL.md](INSTALL.md) for the current package.
 
 Scope: the 32 findings in the September code audit. Validation below was completed before committing, pushing and installing the update.
 

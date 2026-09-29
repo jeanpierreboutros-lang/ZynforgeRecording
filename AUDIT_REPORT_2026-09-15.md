@@ -1,6 +1,6 @@
 # Whole-project audit — 2026-09-15
 
-> Historical verification snapshot. For the current protocol-v3 build and the later 16-finding reliability pass, see [AUDIT_FIXES_2026-09-20.md](AUDIT_FIXES_2026-09-20.md).
+> Historical verification snapshot. Later fixes are recorded in the [2026-09-20 reliability audit](AUDIT_FIXES_2026-09-20.md) and the [current capture-integrity audit](AUDIT_FIXES_2026-09-30.md); see [INSTALL.md](INSTALL.md) for the current package.
 
 ## Outcome
 

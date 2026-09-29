@@ -17,6 +17,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed — capture continuation and finalization, 2026-09-30
+
+- Repeated daemon START while recording is refused before changing the continued take's base position or clearing capture warnings. Status socket sends no longer hold the command lock while a peer is slow, so STOP can finalize audio.
+- A continued session's report lists and hashes all on-disk parts, accumulates earlier capture warnings and elapsed counters, and records a failed SHA-256 pass. The local app surfaces asynchronous report failure after STOP; verified show handoff flags failed punches and report hashing for review.
+- `verify_take.sh` rejects missing middle parts, unlisted takes, incomplete/failed hashes, capture-failure flags and reported frame counts that exceed the files. Valid WAV, AIFF, FLAC and complete continued takes pass its disposable fixtures.
+- Unattended `auto_stop.sh` pins the live session from authenticated status, uses the actual capture clock, completes the two-tap STOP guard and exits unsuccessfully if stop cannot be confirmed. The main window has a minimum size that keeps recording controls accessible.
+- The universal Release build passed 399 headless test groups with zero failures, was installed with a rollback copy, and was packaged as the verified [`672456d` two-Mac DMG](dist/Zynforge-Recording-672456d-macOS-universal.dmg). Physical long-take and device acceptance remain open; see the [capture-integrity fix record](AUDIT_FIXES_2026-09-30.md).
+
 ### Fixed — audit follow-up, 2026-09-29
 
 - Header keeps METERS, BACKUP, live capture status and sample-rate alarms visible at the normal window size; optional MIDI/Dante labels fit the remaining space.
@@ -107,7 +115,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ### Validation — 2026-09-20
 
 - The universal Release build succeeds and the in-app runner passes **358 test groups with 0 failures**. The invariant audit, design audit and `git diff --check` are clean.
-- The current bundle and matching protocol-v3 helper are installed at `/Applications/Zynforge Recording.app`. Hardware/show acceptance and Developer ID notarization remain pending. Full evidence: [2026-09-20 reliability fixes](AUDIT_FIXES_2026-09-20.md).
+- At that stage, the bundle and matching protocol-v3 helper were installed at `/Applications/Zynforge Recording.app`. Hardware/show acceptance and Developer ID notarization remained pending. Full evidence: [2026-09-20 reliability fixes](AUDIT_FIXES_2026-09-20.md).
 - Application code commit `fe5280d` and its documentation-only delivery follow-up were pushed to `origin/main` on 2026-09-21. [GitHub run 35538818050](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/35538818050) passed every Debug/Release build, test, audit and bundled-helper gate.
 
 ### Security — bounded remote input, 2026-09-15

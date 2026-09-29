@@ -6,7 +6,7 @@ The format follows `/design-system document` output: description, when-to-use, v
 
 ## Index
 
-September 2026 behavior updates are reflected in ChannelStrip, TransportBar, BigClockPanel, EditPageTrackRow, EditTimeRuler, EditToolsBar and SessionRecoveryDialog. The 2026-09-24 source/DMG changes include exact selected-punch capture, one-press deliberate punch-out, crash-safe punch recovery and live EDIT zoom/follow navigation; they do not turn the component descriptions into proof of field validation. For the current test baseline, packaging status and operating limits, see [testing](../../testing.md), [installation](../../INSTALL.md), [architecture](../../architecture.md) and [show readiness](../../SHOW-READINESS.md).
+September 2026 behavior updates are reflected in ChannelStrip, TransportBar, BigClockPanel, EditPageTrackRow, EditTimeRuler, EditToolsBar and SessionRecoveryDialog. The current `672456d` build adds continuation-report integrity, failure-visible handoff and a minimum main-window size; these component descriptions do not prove field validation. For the current test baseline, package and operating limits, see [testing](../../testing.md), [installation](../../INSTALL.md), [architecture](../../architecture.md) and [show readiness](../../SHOW-READINESS.md).
 
 ### Shipped
 

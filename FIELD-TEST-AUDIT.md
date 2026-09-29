@@ -1,13 +1,13 @@
-# ZynForge Recording — Field-Test Checklist: Audit + Session Changes (updated 2026-09-24)
+# ZynForge Recording — Field-Test Checklist: Audit + Session Changes (updated 2026-09-30)
 
-Historical hardware cases below remain useful, but are not passed results for the currently installed `ccd755e` build or the newer, not-yet-installed `b2c1991` DMG. Start with [SHOW-READINESS.md](SHOW-READINESS.md), [the 2026-09-20 reliability fixes](AUDIT_FIXES_2026-09-20.md) and the 2026-09-24 DMG/punch/import delta in [FIELD-TEST.md](FIELD-TEST.md). Confirmed show plan: SD5, RME HDSPe AoX-D, 56 inputs, 48 kHz, about two hours; connection, Mac/chassis and storage are undecided. Never run crash/unplug/delete tests on production recordings.
+Historical hardware cases below remain useful, but are not passed results for the installed `672456d` build or its [matching DMG](dist/Zynforge-Recording-672456d-macOS-universal.dmg). Start with [SHOW-READINESS.md](SHOW-READINESS.md) and the current capture-integrity delta in [FIELD-TEST.md](FIELD-TEST.md). Confirmed show plan: SD5, RME HDSPe AoX-D, 56 inputs, 48 kHz, about two hours; connection, Mac/chassis and storage are undecided. Never run crash/unplug/delete tests on production recordings.
 
 Turnkey verification of the **hardware-gated audit items** and **everything changed since the 2026-05-24 build** (native stereo capture, console link, the compact/GRID mixer UI, prompt chrome, the design re-tone). Run on the real rig. The general first-launch/recording/takes flow lives in `FIELD-TEST.md` — this file is the delta.
 
 The 2026-08-18 session-integrity/security remediation has its canonical manual matrix in `FIELD-TEST.md` §9. Run that section and the 2026-09-20 reliability follow-up before this hardware-only delta; together they cover guarded session replacement, transactional Save As/relocation, fresh-take collision refusal, redundancy failure reporting, daemon transport truth, background edit safety, authenticated Generic OSC and truthful companion errors without duplicating the steps here.
 
 **Severity:** 🟥 data-loss (stop + report now) · 🟧 audio-path (stop if reproducible) · 🟨 stage-readiness · ⬜ cosmetic.
-**Diagnostic helper:** `tools/verify_take.sh [session]` checks a subset of WAV/report properties. It rejects intentional continuation parts, can exit 0 with hashes pending and does not certify backups or routing. See SHOW-READINESS.md for limitations; exit 0 alone is not acceptance.
+**Diagnostic helper:** `tools/verify_take.sh [session]` checks WAV/AIFF/FLAC headers, complete continuation parts, report frame counts, finished hashes and capture-failure flags. It exits nonzero for pending hashes or incomplete takes. It does not certify backups, routing or expected show duration; see [SHOW-READINESS.md](SHOW-READINESS.md#verification-helper-limitations).
 
 ---
 
@@ -33,7 +33,7 @@ Goal: one continuous `Track_NN.wav` past 4 GiB that opens full-length in a real 
 |---|---|---|---|
 | ☐ B.1 | Arm **64 ch @ 24-bit/48k**, record 20+ min of real signal to the gig SSD. | `missedSamples: 0` in the dashboard + `session.report.json`. "DISK STRUGGLING" never shows. | Any missed samples; struggling warning. |
 | ☐ B.2 | Push to **96–128 ch @ 96k** if the interface allows. | Same — 0 missed, ring-fill stays well under 80%. | Ring fill pegs / missed samples climb. |
-| ☐ B.3 | Enable a **second mirror** (backup drive). Record. | Both primary + mirror files present, identical length; `verify_take.sh` green on both roots. | Mirror short / missing; `anyMirrorFailed`. |
+| ☐ B.3 | Enable a **second mirror** (backup drive). Record. | Both primary + mirror files present, identical length; `verify_take.sh` passes the primary session and a separate manual/DAW check confirms the mirror. | Mirror short / missing; `anyMirrorFailed`. |
 | ☐ B.4 | (Optional) **Capture daemon ON** (Session ▸ Recording & Sync ▸ Capture daemon), repeat B.1. | Take rolls out-of-process; a forced UI quit mid-take leaves the file intact + rolling. | UI quit stops the take / corrupts the file. |
 
 ---

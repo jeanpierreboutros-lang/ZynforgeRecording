@@ -121,7 +121,7 @@ If copying or verification fails, do not launch the partial installation. Preser
 
 ## Installation record — 2026-09-24, long-take EDIT fix
 
-- Installed the local universal Release bundle built from the current working tree based on `b2c1991`, including the long-take EDIT fix and matching protocol-v3 `ZynforgeCapture`. The change is not committed and is not in either existing DMG.
+- Installed the local universal Release bundle built from the then-current working tree based on `b2c1991`, including the long-take EDIT fix and matching protocol-v3 `ZynforgeCapture`. At that time the change was uncommitted and absent from both existing DMGs.
 - Confirmed both Zynforge processes were stopped before replacement. Preserved the former installed app at `/Applications/Zynforge Recording.app.backup-20260924-215108-before-live-nav`; its deep/strict signature still verifies.
 - The built, staged and installed bundles matched byte-for-byte. Both installed executables are `x86_64` + `arm64`; the installed bundle passed deep/strict ad-hoc signature verification. GUI SHA-256: `3783001b14675985e79ea7f2215f5f638076892853dfb8bbaa52cc3158d693f9`; helper SHA-256: `e8a5929e7ae4bc619315ebc1ddff7633035031ecb58dcecb9922fd5d7aa6fefc`.
 - The installed app passed 391 test groups with zero failures. The first ordinary launch ended without a new crash report or an established cause; a second fresh launch remained running idle for over one minute with no capture helper active and no new ZynForge crash report.

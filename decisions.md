@@ -6,6 +6,24 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Continued-session integrity report — 2026-09-30
+
+**Context.** Recording another pass in the same session replaced `session.report.json` with only the latest part list and current-pass warnings. A later clean pass could make an earlier failed pass look clean, while handoff and `verify_take.sh` saw unreported audio.
+
+**Decision.** On stop, enumerate all on-disk supported take parts for each track, report their actual frame totals, and hash every listed file. Accumulate previous report counters and capture-failure flags across passes; keep the report's immediate metadata write and asynchronous final SHA-256 pass. Publish `sha256Failed` when hashing cannot complete and surface final write/hash failure locally. A verifier checks physical part numbering and frame counts as well as hashes.
+
+**Consequences.** One session report describes all continued passes. A hash only proves that a file matches its report; it cannot independently establish the intended performance duration, channel routing or health of external backups. A pending report is incomplete evidence. A new hash pass can recheck earlier files after an interrupted prior pass.
+
+## STOP must not wait for status I/O — 2026-09-30
+
+**Context.** The daemon held its command mutex while publishing status to a socket. A connected client that stopped reading could block a status write and delay a STOP that needed the same mutex.
+
+**Decision.** Build status snapshots while holding the mutex, then release it before socket writes. Refuse a duplicate START while rolling before arming a continuation. The unattended soak helper pins the authenticated live session, performs the host's two-tap STOP and requires `recording:false` before reporting success.
+
+**Consequences.** A slow status subscriber cannot keep the recording state lock while STOP closes audio. A wedged network connection can still prevent a remote acknowledgement; the helper must report that uncertainty rather than claim the take stopped. Field testing remains necessary on real devices and network conditions.
+
+---
+
 ## Observer truth and portable handoff — 2026-09-23
 
 **Audit clarification, 2026-09-23.** A UI timer copying a cached daemon snapshot is not a new observation. Status age is measured from the supervisor's last received push; lost links invalidate the snapshot and retain a guarded unknown-take state until the daemon's actual outcome is known. Host-controlled channel labels and mute/solo/colour overlay daemon meter data. The capture report persists skipped mirror destinations so handoff warns even when no mirror writer ever opened.
@@ -80,7 +98,7 @@ For the current September additions, see the following decisions; older entries 
 
 **Decision.** Keep software completion and rig acceptance separate. Require a three-hour, 56-input rehearsal at 48 kHz with the selected redundancy and recorded results; maintain an independent recorder for important shows.
 
-**Consequences.** The current build is rehearsal-ready. Unselected hardware/routing/storage remain open decisions; no show sign-off is implied by commit, installation or a green test report. See SHOW-READINESS.md.
+**Consequences.** That build was rehearsal-ready. Unselected hardware/routing/storage remain open decisions; no show sign-off is implied by commit, installation or a green test report. See [SHOW-READINESS.md](SHOW-READINESS.md).
 
 ## A run flag decides whether to work, never whether to join — 2026-08-14
 
@@ -293,7 +311,7 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 ## Punch-in is an offline splice on stop, not a real-time write into the take — 2026-06-14
 
-**Amended 2026-09-24.** The offline-splice decision remains, but the trigger, recovery, multipart, alignment and monitoring details below describe the current `b2c1991` implementation; the original timer-driven selection trigger and v1 gaps are superseded.
+**Amended 2026-09-24.** The offline-splice decision remains. The trigger, recovery, multipart, alignment and monitoring details below supersede the original timer-driven selection trigger and v1 gaps; they also apply to the current `672456d` build.
 
 **Context.** JP asked to re-record a section of an existing take and keep the audio before/after (classic punch-in). The naive implementation — have the recorder seek into the existing file and overwrite the punched region in real time — would put destructive, position-offset writes on the audio thread, against the file the player may be reading, with RF64/backup/mirror finalisation all needing to stay consistent. That is the single most dangerous thing this app could do; a glitch loses or corrupts a take.
 
