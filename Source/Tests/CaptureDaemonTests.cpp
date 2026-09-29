@@ -97,6 +97,46 @@ namespace zynforge
                 client.disconnect(); daemon.stop(); dir.deleteRecursively(); failed.deleteRecursively();
             }
 
+            beginTest ("audio device stop closes a rolling take and reports the loss");
+            {
+                CaptureDaemon daemon; daemon.setTestModeNoDevice (true);
+                bool listening = false;
+                for (int port : { 49735, 49736, 49737 })
+                    if (daemon.start (port, 1)) { listening = true; break; }
+                expect (listening);
+                if (! listening) return;
+                daemon.prepareForTests (48000, 256, 1);
+                daemon.getRecorder().getTrack (0).armed.store (true);
+                CaptureClient client;
+                std::mutex statusMutex;
+                EngineStatus latest;
+                client.onStatus = [&] (const EngineStatus& s)
+                { const std::lock_guard<std::mutex> l (statusMutex); latest = s; };
+                expect (client.connect ("127.0.0.1", daemon.getPort()));
+                expect (client.hello (2000).ok);
+                const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getChildFile ("zf-daemon-device-loss-" + juce::Uuid().toString());
+                Command start; start.action = Action::StartRecording;
+                start.sessionDir = dir.getFullPathName();
+                expect (client.request (start, 3000).ok);
+                std::vector<float> samples (256, 0.25f);
+                const float* inputs[] { samples.data() };
+                daemon.audioDeviceIOCallbackWithContext (inputs, 1, nullptr, 0, 256, {});
+                daemon.audioDeviceStopped();
+                expect (! daemon.isRecording(), "device loss left the recorder marked as rolling");
+                expect (waitUntil ([&]
+                {
+                    const std::lock_guard<std::mutex> l (statusMutex);
+                    return latest.captureDeviceLost && ! latest.recording;
+                }, 3000), "device-loss alarm did not reach the client");
+                expect (dir.getChildFile ("Audio Files").getChildFile ("Track_01.wav").existsAsFile(),
+                        "device loss did not finalise the take file");
+                const auto report = juce::JSON::parse (dir.getChildFile ("session.report.json"));
+                expect ((bool) report.getProperty ("captureDeviceLost", false),
+                        "final report did not preserve the device interruption");
+                client.disconnect(); daemon.stop(); dir.deleteRecursively();
+            }
+
             auto sessionDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
                                   .getChildFile ("zf-daemon-" + juce::Uuid().toString());
 

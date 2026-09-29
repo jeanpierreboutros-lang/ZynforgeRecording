@@ -8,6 +8,10 @@ This procedure installs a locally built macOS app; it does not create a notarize
 2. Build and run the tests described in [testing.md](testing.md). Check the fresh report and process exit status, not an old pass count.
 3. Preserve the existing installed app at a unique backup path. Do not overwrite an earlier backup.
 
+## Current local installation — 2026-09-29
+
+`/Applications/Zynforge Recording.app` is an exact copy of the 2026-09-29 universal Release build, including its matching capture helper. The source build passed 398 test groups with zero failures. The previous app is preserved at `/Applications/Zynforge Recording.app.backup-20260929-audit-followup` and under `/Users/jeanpierre/Zynforge-App-Backups/`; restore either copy only after stopping capture and quitting the app. The older DMG below does not include the 2026-09-29 fixes.
+
 ## Current two-Mac test DMG — 2026-09-24
 
 [`dist/Zynforge-Recording-3e6104c-macOS-universal.dmg`](dist/Zynforge-Recording-3e6104c-macOS-universal.dmg) packages the tested installed build from source commit `3e6104c`. It runs on macOS 12.0+ on Apple Silicon or Intel and includes the matching protocol-v3 `ZynforgeCapture` helper, an Applications shortcut and a `READ ME.txt`. SHA-256: `3acfe9d93165b4f59d80089f5bcd214fbd19924c2d8be12a6ef5c12fb70c432f`. A matching [checksum file](dist/Zynforge-Recording-3e6104c-macOS-universal.dmg.sha256) is provided for transfer verification.

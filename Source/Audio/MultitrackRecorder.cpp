@@ -1332,6 +1332,7 @@ namespace zynforge
 
         samplesSinceStart.store (0, std::memory_order_relaxed);
         missedSamples    .store (0, std::memory_order_relaxed);
+        captureDeviceLost.store (false, std::memory_order_relaxed);
         samplesSinceFlush.store (0, std::memory_order_relaxed);
         for (auto& f : fifos) f->droppedSamples.store (0, std::memory_order_relaxed);
         // Clear each track's live waveform overview so a new take draws fresh
@@ -1583,6 +1584,7 @@ namespace zynforge
         const auto stoppedAt        = juce::Time::getCurrentTime();
         const auto totalSamples     = samplesSinceStart.load (std::memory_order_relaxed);
         const auto totalMissed      = missedSamples    .load (std::memory_order_relaxed);
+        const bool deviceLostAtStop = captureDeviceLost.load (std::memory_order_relaxed);
         const auto totalSeconds     = sampleRate > 0.0 ? (double) totalSamples / sampleRate : 0.0;
         const bool backupWasRunning = backupActive.load (std::memory_order_relaxed);
         const bool backupHadFailure = backupFailed.load (std::memory_order_relaxed);
@@ -1852,7 +1854,7 @@ namespace zynforge
         auto buildReportJson =
             [sessionDir, bDir, sr, fmt, preRoll, primFailed, punchFailed, stoppedAt,
              totalSamples, totalSeconds, totalMissed, backupWasRunning,
-             backupHadFailure, mirrorsSkipped]
+             backupHadFailure, mirrorsSkipped, deviceLostAtStop]
             (const std::vector<TrackMeta>&   trackMetas,
              const std::vector<WriterReport>& writerSnaps,
              bool withHashes,
@@ -1865,6 +1867,7 @@ namespace zynforge
             report->setProperty ("totalSamples",   (juce::int64) totalSamples);
             report->setProperty ("totalSeconds",   totalSeconds);
             report->setProperty ("missedSamples",  (juce::int64) totalMissed);
+            report->setProperty ("captureDeviceLost", deviceLostAtStop);
             report->setProperty ("backupActive",   backupWasRunning);
             report->setProperty ("backupFailed",   backupHadFailure);
             report->setProperty ("primaryFailed",  primFailed);

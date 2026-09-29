@@ -1,5 +1,14 @@
 # Project Tasks
 
+### Audit follow-up — 2026-09-29
+
+- [x] Correct header allocation for safety controls, status and sample-rate warning; mark EDIT rows/ruler read-only during capture.
+- [x] Finalise and alarm a daemon take on audio-device loss, measure daemon callback load and hold last daemon clock position on link loss.
+- [x] Route linked stereo export from source channel count; reject incomplete two-mono pairs. Verify WAV/AIFF/FLAC take files against the manifest in both directions.
+- [x] Build and install the verified universal app with its matching capture helper, preserving two rollback copies. Source suite: 398/0; idle smoke and static audits passed.
+- [ ] Package the updated installed bundle as a new two-Mac test DMG and verify its mounted contents and checksum.
+- [ ] Run a disposable real-device capture, device-loss, stale-right-file stereo export and three-hour waveform-follow acceptance pass on each target Mac.
+
 ## How to use this file
 
 Claude and human developers share this file as the single source of truth for what's next, what's in flight, and what just shipped. Update at the end of every productive session:

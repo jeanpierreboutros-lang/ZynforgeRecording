@@ -97,6 +97,7 @@ namespace zynforge
         bool          reportWriteFailed { false };
         bool          stereoMixFailed { false };
         bool          diskStruggling { false };
+        bool          captureDeviceLost { false }; // latched if a rolling daemon loses its audio callback
         int           captureFormat { 0 };     // CaptureFormat as int
         std::vector<TrackStatus> tracks;
 
@@ -132,6 +133,7 @@ namespace zynforge
             o->setProperty ("reportWriteFailed", reportWriteFailed);
             o->setProperty ("stereoMixFailed", stereoMixFailed);
             o->setProperty ("diskStruggling", diskStruggling);
+            o->setProperty ("captureDeviceLost", captureDeviceLost);
             o->setProperty ("captureFormat", captureFormat);
             juce::Array<juce::var> arr;
             for (const auto& t : tracks) arr.add (t.toJson());
@@ -171,6 +173,7 @@ namespace zynforge
             s.reportWriteFailed = (bool) v.getProperty ("reportWriteFailed", false);
             s.stereoMixFailed = (bool) v.getProperty ("stereoMixFailed", false);
             s.diskStruggling = (bool) v.getProperty ("diskStruggling", false);
+            s.captureDeviceLost = (bool) v.getProperty ("captureDeviceLost", false);
             s.captureFormat = (int) v.getProperty ("captureFormat", 0);
             if (auto* a = v.getProperty ("tracks", {}).getArray())
                 for (const auto& tv : *a)

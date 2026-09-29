@@ -71,7 +71,8 @@ MainComponent::MainComponent()
 
     statusLabel.setFont (brand::type::uiBody());
     statusLabel.setColour (juce::Label::textColourId, brand::textMuted);
-    statusLabel.setJustificationType (juce::Justification::centredRight);
+    // Alarm prefixes must stay in view when a long warning is clipped.
+    statusLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (statusLabel);
 
     midiStatusLabel.setColour (juce::Label::textColourId, brand::featureEngaged);

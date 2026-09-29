@@ -305,6 +305,7 @@ namespace zynforge
         TimelineFollowState                followState;
         bool                               programmaticViewportChange { false };
         bool                               readOnlyWhileRecording { false };
+        juce::Label                        recordingEditLabel { {}, "REC  EDIT LOCKED" };
         int                                lastViewportX { 0 };
         std::unique_ptr<TrackList>         list;
         PlaceholderView                    placeholder;

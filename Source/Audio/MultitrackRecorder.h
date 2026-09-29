@@ -199,6 +199,7 @@ namespace zynforge
         // Health + position counters -- all RT-safe to read.
         juce::int64 getSamplesSinceStart() const noexcept { return samplesSinceStart.load(std::memory_order_relaxed); }
         juce::int64 getMissedSamples()     const noexcept { return missedSamples    .load(std::memory_order_relaxed); }
+        void markCaptureDeviceLost() noexcept { captureDeviceLost.store (true, std::memory_order_relaxed); }
         int         getLastWriteMs()       const noexcept { return lastWriteMs      .load(std::memory_order_relaxed); }
 
         // Apple-Silicon scheduling: when the engine learns about a new
@@ -626,6 +627,7 @@ namespace zynforge
         std::atomic<bool>        writersReady       { false };
         std::atomic<juce::int64> samplesSinceStart  { 0 };
         std::atomic<juce::int64> missedSamples      { 0 };
+        std::atomic<bool>        captureDeviceLost  { false };
         std::atomic<int>         lastWriteMs        { 0 };
         // Read-modify-written on the drain thread and reset on the message
         // thread at record start; atomic so those accesses never tear.

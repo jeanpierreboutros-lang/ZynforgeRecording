@@ -190,10 +190,11 @@ public:
             if (candidate.existsAsFile() && candidate.hasFileExtension ("zfproj"))
             { pendingDocument = candidate; break; }
         }
-        // Branded launch splash for 7 s, then the main window opens.
+        // Keep the splash brief: the main window reconnects to a rolling
+        // capture daemon, and seven seconds hid status during a live take.
         splash = std::make_unique<SplashWindow> (getApplicationName().toUpperCase(),
                                                  "created by Jean-Pierre Boutros");
-        juce::Timer::callAfterDelay (7000, [this]
+        juce::Timer::callAfterDelay (900, [this]
         {
             splash.reset();
             mainWindow = std::make_unique<MainWindow> (getApplicationName(), pendingDocument);

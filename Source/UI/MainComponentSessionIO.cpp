@@ -539,6 +539,8 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
     std::vector<ExportJob> jobs;
     jobs.reserve (channelIndices.size());
     int missingSources = 0;
+    juce::AudioFormatManager sourceFormats;
+    sourceFormats.registerBasicFormats();
 
     auto& rec = engine.getRecorder();
     for (int i : channelIndices)
@@ -568,21 +570,29 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
         {
             const auto srcL = findTrackFile (i + 1);
             const auto srcR = findTrackFile (i + 2);   // legacy: separate R mono file
-            if (srcL.existsAsFile() && srcR.existsAsFile())
+            // A linked pair may have an old R file after relinking. Source
+            // channel count, not the mere presence of R, decides the layout.
+            std::unique_ptr<juce::AudioFormatReader> left (
+                srcL.existsAsFile() ? sourceFormats.createReaderFor (srcL) : nullptr);
+            if (left != nullptr && left->numChannels >= 2)
             {
-                // LEGACY layout -- two mono files -> interleave into stereo.
-                job.srcL = srcL; job.srcR = srcR; job.stereoPair = true;
+                job.srcL = srcL;
+            }
+            else if (left != nullptr && left->numChannels == 1 && srcR.existsAsFile())
+            {
+                std::unique_ptr<juce::AudioFormatReader> right (sourceFormats.createReaderFor (srcR));
+                if (right != nullptr && right->numChannels == 1)
+                {
+                    job.srcL = srcL; job.srcR = srcR; job.stereoPair = true;
+                }
+                else { ++missingSources; continue; }
             }
             else if (srcL.existsAsFile())
             {
-                // NATIVE layout (2026-06-13): the pair is ONE interleaved
-                // 2-channel file at the L slot with no Track_(N+2). exportTrack
-                // faithfully preserves the source's channel count, so exporting
-                // the 2-channel file directly yields a correct STEREO file.
-                // Do NOT route this to exportStereoPair -- that helper expects
-                // two MONO sources and reads only channel 0 of each, so it
-                // would collapse a native pair to dual-mono of the left channel.
-                job.srcL = srcL;
+                // A stereo strip with a missing/unreadable partner must never
+                // silently export a one-channel file as the full pair.
+                ++missingSources;
+                continue;
             }
         }
         else

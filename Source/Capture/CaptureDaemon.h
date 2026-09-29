@@ -84,6 +84,9 @@ namespace zynforge::capture
         std::atomic<bool> testMode  { false };
         std::atomic<double> currentSampleRate { 0.0 };
         std::atomic<int>    currentBlockSize  { 0 };
+        std::atomic<float>  audioLoadPct { 0.0f };
+        std::atomic<bool>   deviceAvailable { false };
+        std::atomic<bool>   captureDeviceLost { false };
         double              lastDiskHealthUpdateMs { 0.0 }; // under commandLock
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CaptureDaemon)

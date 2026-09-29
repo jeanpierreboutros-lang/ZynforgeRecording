@@ -153,19 +153,12 @@ void MainComponent::resized()
                          tW, tH);
     }
 
-    // Row 1 -- title + status + LOCK + + CH + DEVICE + RECORD
+    // Keep the safety controls anchored at the right. Optional device pills
+    // use only space left after a readable status and sample-rate warning.
     auto row1 = r.removeFromTop (44).reduced (brand::space::lg, brand::space::md);
     // Mock parity: reserve the slot for the PAINTED wordmark lockup (badge +
     // ZYNFORGE RECORDING). The text is drawn in paint(); this just keeps the
     // status labels clear of it.
-    titleLabel   .setBounds (row1.removeFromLeft (248));
-    row1.removeFromLeft (brand::space::md);
-    midiStatusLabel.setBounds (row1.removeFromLeft (180).reduced (0, 4));
-    row1.removeFromLeft (brand::space::sm);
-    danteLabel.setBounds (row1.removeFromLeft (180).reduced (0, 4));
-    row1.removeFromLeft (brand::space::sm);
-    srWarnLabel.setBounds (row1.removeFromLeft (340).reduced (0, 4));
-    row1.removeFromLeft (brand::space::sm);
     recordButton .setBounds ({});
     deviceButton .setBounds (row1.removeFromRight (110).reduced (0, 2));
     row1.removeFromRight (brand::space::sm);
@@ -176,7 +169,25 @@ void MainComponent::resized()
     backupButton .setBounds (row1.removeFromRight (96).reduced (0, 2));
     row1.removeFromRight (brand::space::sm);
     metersButton .setBounds (row1.removeFromRight (92).reduced (0, 2));
-    statusLabel  .setBounds (row1);
+    row1.removeFromRight (brand::space::sm);
+    titleLabel.setBounds (row1.removeFromLeft (248));
+    row1.removeFromLeft (brand::space::md);
+
+    const bool rateWarning = srWarnLabel.getText().isNotEmpty();
+    srWarnLabel.setBounds (rateWarning
+        ? row1.removeFromLeft (juce::jmin (245, row1.getWidth() / 2)).reduced (0, 4)
+        : juce::Rectangle<int>());
+    const int optionalWidth = juce::jmax (0, row1.getWidth() - 220);
+    int pillWidth = optionalWidth;
+    if (midiStatusLabel.getText().isNotEmpty() && danteLabel.getText().isNotEmpty())
+        pillWidth /= 2;
+    pillWidth = juce::jmin (140, pillWidth);
+    midiStatusLabel.setBounds (midiStatusLabel.getText().isNotEmpty()
+        ? row1.removeFromLeft (pillWidth).reduced (0, 4) : juce::Rectangle<int>());
+    danteLabel.setBounds (danteLabel.getText().isNotEmpty()
+        ? row1.removeFromLeft (juce::jmin (140, juce::jmax (0, row1.getWidth() - 220))).reduced (0, 4)
+        : juce::Rectangle<int>());
+    statusLabel.setBounds (row1);
 
     formatButton .setBounds ({});
     preRollButton.setBounds ({});

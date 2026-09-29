@@ -17,6 +17,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed — audit follow-up, 2026-09-29
+
+- Header keeps METERS, BACKUP, live capture status and sample-rate alarms visible at the normal window size; optional MIDI/Dante labels fit the remaining space.
+- A daemon audio-device stop finalises the take and latches a visible device-loss alarm. The interruption is saved in the take report and flagged by verification and show handoff. Daemon audio load is measured in the callback, and the recording clock retains the last daemon position during link loss.
+- Linked stereo export checks the source channel count before choosing interleaved or legacy two-mono handling. A missing or malformed mono partner fails instead of producing a partial stereo export.
+- The take verifier validates WAV, AIFF and FLAC and rejects unlisted or duplicate take files. EDIT labels its locked edit state during capture. Startup splash delay is shorter so daemon status appears sooner.
+- Universal Release build and exact installed copy verified; the source suite passed 398 test groups with zero failures. The built app passed an idle smoke launch. Physical-rig acceptance remains open.
+
 ### Packaged — two-Mac test DMG, 2026-09-24
 
 - Packaged source commit `3e6104c` as a universal macOS 12.0+ DMG containing the exact tested installed app, matching capture helper, Applications shortcut and installation notes. The image checksum, mounted contents and app signature verified. The package is ad-hoc signed and unnotarized; real-device long-take testing remains outstanding. See [INSTALL.md](INSTALL.md).

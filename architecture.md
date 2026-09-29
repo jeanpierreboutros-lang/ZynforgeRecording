@@ -8,7 +8,7 @@ It is **not** a mixer or DAW. No plugins, no effects, no talkback. Architectural
 
 ## 2. Technology Stack
 
-Current validation (2026-09-24): application code `b2c1991` is pushed to `origin/main`, builds as a universal macOS-12 Release, passes 387 local test groups with zero failures and [GitHub run 36017363562](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/36017363562). Its local DMG contains the matching protocol-v3 helper and passed checksum, read-only mount, exact bundle comparison and signature checks. The installed app is still the earlier `ccd755e` build; no real-device capture acceptance was done for `b2c1991`. See [testing.md](testing.md), [INSTALL.md](INSTALL.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
+Validation history: the 2026-09-24 `3e6104c` source and installed app passed 397 local test groups with zero failures. `dist/Zynforge-Recording-3e6104c-macOS-universal.dmg` packages that installed universal bundle. [GitHub run 36017363562](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/36017363562) validates the older `b2c1991` code, not the current source. The 2026-09-29 follow-up adds daemon device-loss signalling, measured daemon load, header warning visibility, stereo source-layout checking and cross-format take verification; these passed a 2026-09-29 universal Release build and 398 headless test groups; physical-rig acceptance remains open. See [testing.md](testing.md), [INSTALL.md](INSTALL.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
 
 | Component | Version / Notes |
 |---|---|

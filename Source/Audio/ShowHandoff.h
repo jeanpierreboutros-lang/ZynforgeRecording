@@ -205,6 +205,7 @@ namespace zynforge::showhandoff
         const int unreported = juce::jmax (0, audioCount - (int) covered.size());
         const bool captureWarning = pending || reported == 0 || matched != reported || unreported > 0
                                  || (juce::int64) report.getProperty ("missedSamples", 0) > 0
+                                 || (bool) report.getProperty ("captureDeviceLost", false)
                                  || (bool) report.getProperty ("primaryFailed", false)
                                  || (bool) report.getProperty ("backupFailed", false)
                                  || (int) report.getProperty ("mirrorsSkipped", 0) > 0
@@ -217,6 +218,7 @@ namespace zynforge::showhandoff
         capture->setProperty ("matchedPrimaryFiles", matched);
         capture->setProperty ("unreportedAudioFiles", unreported);
         capture->setProperty ("missedSamplesReported", report.getProperty ("missedSamples", {}));
+        capture->setProperty ("captureDeviceLostReported", report.getProperty ("captureDeviceLost", false));
         capture->setProperty ("mirrorFailureReported", mirrorReportedFailed);
         capture->setProperty ("mirrorsSkippedReported", report.getProperty ("mirrorsSkipped", 0));
         capture->setProperty ("requiresManualReview", captureWarning);

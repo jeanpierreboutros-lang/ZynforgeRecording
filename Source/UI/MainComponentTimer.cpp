@@ -80,7 +80,8 @@ void MainComponent::timerCallback()
             ? juce::String ("MIDI * ") + clock.getOutputDeviceName()
             : juce::String();
         if (midiStatusLabel.getText() != label)
-            midiStatusLabel.setText (label, juce::dontSendNotification);
+        { midiStatusLabel.setText (label, juce::dontSendNotification); resized(); }
+        midiStatusLabel.setTooltip (label);
     }
 
     // DANTE detection -- flag the active audio device when its name
@@ -94,7 +95,8 @@ void MainComponent::timerCallback()
                 txt = "DANTE * " + deviceName;
         }
         if (danteLabel.getText() != txt)
-            danteLabel.setText (txt, juce::dontSendNotification);
+        { danteLabel.setText (txt, juce::dontSendNotification); resized(); }
+        danteLabel.setTooltip (txt);
     }
 
     // LCD countdown to next cue -- only when a setlist exists AND the
@@ -188,12 +190,12 @@ void MainComponent::timerCallback()
         // Timeline position (continues from the take end on a continue), not the
         // new file's raw length, so the clock carries on instead of restarting.
         elapsed = punchSessionActive && player.isPlaying()
-            ? player.getPositionSamples() : recorder.getRecordTimelineSamples();
+            ? player.getPositionSamples() : engine.getRecordTimelineSamples();
         if (useCaptureDaemon && captureSupervisor.isDaemonRecording())
         {
             const auto remote = engine.captureStatus();
-            if (remote.source == "daemon")
-            { elapsed = remote.positionSamples; timerSR = remote.sampleRate; }
+            if (remote.source == "daemon" && remote.sampleRate > 0.0)
+                timerSR = remote.sampleRate;
         }
 
         // Refresh the free-space estimate every ~2 s of timer ticks
@@ -312,7 +314,7 @@ void MainComponent::timerCallback()
     // timer cadence. Both flags clear automatically when the condition
     // recovers (e.g. swap drives + the new primary write succeeds, or
     // disk catches back up). Status bar is the engineer's first read.
-    if (rec)
+    if (rec || status.captureDeviceLost || (useCaptureDaemon && engine.isRecording()))
     {
         const bool primFail   = status.primaryFailed;
         const bool backupFail = status.backupFailed;
@@ -328,10 +330,11 @@ void MainComponent::timerCallback()
         // -- which walks the entries -- structurally cannot see it. Without this
         // the engineer runs the whole show believing they have a copy they don't.
         const int mirrorsSkipped = status.mirrorsSkipped;
-        if (daemonUnavailable || primFail || backupFail || mirrorFail || recoveryFail || mixFail
+        if (daemonUnavailable || status.captureDeviceLost || primFail || backupFail || mirrorFail || recoveryFail || mixFail
             || diskTrouble || smartBad || mirrorsSkipped > 0)
         {
             juce::String warn;
+            if (status.captureDeviceLost) warn << "!! CAPTURE DEVICE STOPPED -- take ended; inspect audio and reconnect  ";
             if (daemonUnavailable) warn << "!! DAEMON STATUS UNAVAILABLE -- take may still be rolling; reconnect and verify  ";
             if (smartBad)    warn << "! SMART FAILING -- replace this drive  ";
             if (primFail)    warn << "! PRIMARY WRITE FAILED -- recording on backup/mirror  ";
@@ -344,8 +347,21 @@ void MainComponent::timerCallback()
                      << (mirrorsSkipped == 1 ? "" : "S") << " NOT WRITING -- drive missing "
                                                             "or folder unusable  ";
             if (diskTrouble) warn << "! DISK STRUGGLING -- missed samples imminent";
-            statusLabel.setText (warn.trim(), juce::dontSendNotification);
+            activeCaptureWarning = warn.trim();
+            statusLabel.setText (activeCaptureWarning, juce::dontSendNotification);
         }
+        else if (activeCaptureWarning.isNotEmpty())
+        {
+            if (statusLabel.getText() == activeCaptureWarning)
+                statusLabel.setText (rec ? "Recording" : "Idle", juce::dontSendNotification);
+            activeCaptureWarning.clear();
+        }
+    }
+    else if (activeCaptureWarning.isNotEmpty())
+    {
+        if (statusLabel.getText() == activeCaptureWarning)
+            statusLabel.setText ("Idle", juce::dontSendNotification);
+        activeCaptureWarning.clear();
     }
 }
 
@@ -417,7 +433,16 @@ void MainComponent::updateTransportLabels()
 // the dialog fires while stopped, which is when the engineer can fix it.
 void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
 {
-    if (deviceSampleRate <= 0.0) { srWarnLabel.setText ({}, juce::dontSendNotification); return; }
+    auto setWarning = [this] (const juce::String& warning)
+    {
+        if (srWarnLabel.getText() != warning)
+        {
+            srWarnLabel.setText (warning, juce::dontSendNotification);
+            srWarnLabel.setTooltip (warning);
+            resized();
+        }
+    };
+    if (deviceSampleRate <= 0.0) { setWarning ({}); return; }
 
     // The session's authoritative rate: once a take is loaded that's the
     // recorded files' rate; otherwise it's the rate the session was created
@@ -441,7 +466,7 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
 
     if (std::abs (deviceSampleRate - sessionSR) <= 1.0)
     {
-        srWarnLabel.setText ({}, juce::dontSendNotification);   // matched
+        setWarning ({});   // matched
         srMismatchWarned = 0.0;                                 // re-arm the dialog
         return;
     }
@@ -449,9 +474,8 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
     // Persistent always-visible banner (record-red) while mismatched.
     // ASCII only -- sample-rate mismatch must stay legible in every UI face.
     // (it rendered as mojibake); the red colour carries the alarm.
-    srWarnLabel.setText ("! SAMPLE-RATE MISMATCH  device " + fmt (deviceSampleRate)
-                         + "  vs  session " + fmt (sessionSR) + "  - recording blocked",
-                         juce::dontSendNotification);
+    setWarning ("! SAMPLE-RATE MISMATCH  device " + fmt (deviceSampleRate)
+                + "  vs  session " + fmt (sessionSR) + "  - recording blocked");
 
     // One-shot modal, once per distinct device rate, and never mid-take.
     if (std::abs (deviceSampleRate - srMismatchWarned) < 1.0 || engine.isRecording())

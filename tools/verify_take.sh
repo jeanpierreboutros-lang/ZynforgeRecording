@@ -4,11 +4,10 @@
 #
 # Closes the manual half of the RF64 / throughput field soak (FIELD-TEST.md
 # section "Throughput + RF64"). Point it at a session folder; it checks every
-# recorded WAV the way you'd otherwise do by hand:
+# recorded WAV, AIFF or FLAC the way you'd otherwise do by hand:
 #
-#   • opens at full length (ffprobe duration + frame count)
-#   • header is RIFF (<4 GiB) or RF64 + ds64 (>4 GiB) — and flags any file
-#     that crossed 4 GiB but did NOT get promoted to RF64 (the failure mode)
+#   • opens each file and reads its duration with ffprobe
+#   • validates each container header; WAVs over 4 GiB must be RF64 + ds64
 #   • continuation/split parts have a playable Track_NN base
 #   • matches session.report.json: track count, complete per-file sha256,
 #     and reports `missedSamples`
@@ -19,7 +18,7 @@
 # With no argument it picks the most-recently-modified session under
 # ~/Music/Zynforge Sessions. Exit code 0 = all green, 1 = a problem was found.
 #
-# Requires: ffprobe, xxd, shasum, jq, python3 (all stock on a dev Mac).
+# Requires: ffprobe, xxd, shasum, jq, python3.
 
 set -uo pipefail
 
@@ -46,18 +45,18 @@ SESSION="${SESSION%/}"
 [[ -d "$SESSION" ]] || { red "not a directory: $SESSION"; exit 2; }
 
 AUDIO="$SESSION/Audio Files"
-[[ -d "$AUDIO" ]] || AUDIO="$SESSION"   # legacy: WAVs in the session root
+[[ -d "$AUDIO" ]] || AUDIO="$SESSION"   # legacy: takes in the session root
 REPORT="$SESSION/session.report.json"
 
 hdr "Session: $SESSION"
 
 # ── Continuation parts need a playable base file ────────────────────────────
 hdr "1. Continuation-part check"
-parts=$(find "$AUDIO" -name 'Track_*_part*.wav' 2>/dev/null | sort)
+parts=$(find "$AUDIO" -maxdepth 1 -type f \( -name 'Track_*_part*.wav' -o -name 'Track_*_part*.aif' -o -name 'Track_*_part*.aiff' -o -name 'Track_*_part*.flac' \) | sort)
 if [[ -n "$parts" ]]; then
     while IFS= read -r part; do
         name=$(basename "$part")
-        base="${name%%_part*}.wav"
+        base="${name%%_part*}.${name##*.}"
         if [[ ! -f "$AUDIO/$base" ]]; then
             red "orphan continuation part: $name (missing $base)"
             fail=1
@@ -71,25 +70,40 @@ fi
 # ── Per-file: header + length ───────────────────────────────────────────────
 hdr "2. Per-file header + length"
 shopt -s nullglob
-wavs=("$AUDIO"/Track_*.wav)
-if (( ${#wavs[@]} == 0 )); then
-    red "no Track_*.wav files found in $AUDIO"; exit 1
+media=("$AUDIO"/Track_*.wav "$AUDIO"/Track_*.aif "$AUDIO"/Track_*.aiff "$AUDIO"/Track_*.flac)
+if (( ${#media[@]} == 0 )); then
+    red "no Track_* take files found in $AUDIO"; exit 1
 fi
-for w in "${wavs[@]}"; do
+for w in "${media[@]}"; do
     name=$(basename "$w")
+    ext="${name##*.}"
     size=$(stat -f%z "$w")
     magic=$(xxd -l 4 -p "$w")                       # 52494646=RIFF  52463634=RF64
     dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$w" 2>/dev/null)
-    frames=$(ffprobe -v error -select_streams a:0 -show_entries stream=duration_ts -of csv=p=0 "$w" 2>/dev/null)
     human=$(python3 -c "print(f'{$size/1e9:.2f} GB')" 2>/dev/null)
 
-    tag="RIFF"; [[ "$magic" == "52463634" ]] && tag="RF64"
+    case "$magic" in
+        52494646) tag="RIFF" ;;
+        52463634) tag="RF64" ;;
+        464f524d) tag="AIFF" ;;
+        664c6143) tag="FLAC" ;;
+        *) tag="UNKNOWN" ;;
+    esac
     line="  $name  $human  hdr=$tag  dur=${dur:-?}s"
 
     if [[ -z "$dur" || "$dur" == "N/A" ]]; then
         red "$line  -> FAILS TO OPEN"; fail=1; continue
     fi
-    if (( size > FOUR_GIB )) && [[ "$tag" != "RF64" ]]; then
+    headerValid=1
+    case "$ext" in
+        wav) [[ "$tag" == "RIFF" || "$tag" == "RF64" ]] || headerValid=0 ;;
+        aif|aiff) [[ "$tag" == "AIFF" ]] || headerValid=0 ;;
+        flac) [[ "$tag" == "FLAC" ]] || headerValid=0 ;;
+    esac
+    if (( headerValid == 0 )); then
+        red "$line  -> container header does not match extension"; fail=1; continue
+    fi
+    if [[ "$ext" == "wav" ]] && (( size > FOUR_GIB )) && [[ "$tag" != "RF64" ]]; then
         red "$line  -> >4 GiB but NOT RF64 (header overflow risk)"; fail=1; continue
     fi
     if [[ "$tag" == "RF64" ]]; then
@@ -118,12 +132,14 @@ else
     ntracks=$(jq -r '.numTracks // 0' "$REPORT")
     manifestTracks=$(jq -r '.tracks | length' "$REPORT")
     missed=$(jq -r '.missedSamples // 0' "$REPORT")
+    deviceLost=$(jq -r '.captureDeviceLost // false' "$REPORT")
     echo "  numTracks=$ntracks  missedSamples=$missed  sha256Pending=$pending"
     if [[ "$ntracks" != "$manifestTracks" ]]; then
         red "  track manifest has $manifestTracks entries, report says $ntracks"
         fail=1
     fi
     [[ "$missed" == "0" ]] && grn "  OK — missedSamples = 0" || { red "  missedSamples = $missed (DROPPED AUDIO)"; fail=1; }
+    [[ "$deviceLost" == "false" ]] || { red "  capture audio device stopped during the take"; fail=1; }
 
     if [[ "$pending" == "true" ]]; then
         red "  sha256 still hashing — verification is incomplete; re-run after it finishes."
@@ -168,6 +184,20 @@ else
             red "  no primary files listed in the final manifest"
             echo x >> "$marker"
         fi
+        # A valid hash for each listed file is insufficient if the folder
+        # contains an unlisted take, or the manifest lists one file twice.
+        duplicates=$(jq -r '[.tracks[].files[]?] | group_by(.)[] | select(length > 1) | .[0]' "$REPORT")
+        if [[ -n "$duplicates" ]]; then
+            red "  duplicate take filename(s) in manifest: $duplicates"
+            echo x >> "$marker"
+        fi
+        for w in "${media[@]}"; do
+            name=$(basename "$w")
+            if ! jq -e --arg name "$name" '[.tracks[].files[]?] | index($name) != null' "$REPORT" >/dev/null; then
+                red "  unlisted take file: $name"
+                echo x >> "$marker"
+            fi
+        done
         [[ -s "$marker" ]] && fail=1
         rm -f "$marker"
     fi

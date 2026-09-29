@@ -531,6 +531,13 @@ namespace zynforge
         // its own 4 Hz timer.
         ruler = std::make_unique<EditTimeRuler> (engine);
         addAndMakeVisible (*ruler);
+        recordingEditLabel.setFont (brand::type::ui (11.0f, true));
+        recordingEditLabel.setJustificationType (juce::Justification::centred);
+        recordingEditLabel.setColour (juce::Label::textColourId, brand::accentRecord);
+        recordingEditLabel.setColour (juce::Label::backgroundColourId, brand::bgDeep);
+        recordingEditLabel.setTooltip ("Timeline and marker edits are locked while recording; zoom, scroll and FOLLOW remain available");
+        recordingEditLabel.setInterceptsMouseClicks (false, false);
+        addChildComponent (recordingEditLabel);
 
         // Reusable loading/empty/error surface, overlaid on the wave area.
         // It manages its own visibility -- shown when no session is loaded,
@@ -1004,6 +1011,7 @@ namespace zynforge
         const int rulerH = 46;
         if (ruler != nullptr)
             ruler->setBounds (bounds.removeFromTop (rulerH));
+        recordingEditLabel.setBounds (juce::jmax (0, getWidth() - 177), 5, 170, 20);
 
         // Overview navigator strip along the bottom -- only when zoomed in
         // (content wider than the view), leaving room for the H/V zoom
@@ -1139,6 +1147,7 @@ namespace zynforge
     {
         if (readOnlyWhileRecording == readOnly) return;
         readOnlyWhileRecording = readOnly;
+        recordingEditLabel.setVisible (readOnly);
         // Passing mouse events through the rows keeps the viewport's pan and
         // scroll gestures available. The ruler's marker/range edits stay inert.
         // No component is disabled, so waveform paint and zoom chrome retain
