@@ -159,6 +159,13 @@ void MainComponent::timerCallback()
     auto& player   = engine.getPlayer();
     auto& markers  = engine.getMarkers();
 
+    if (recorder.isRecording()) asyncReportFailureShown = false;
+    else if (recorder.hasAsyncReportFailure() && ! asyncReportFailureShown)
+    {
+        asyncReportFailureShown = true;
+        showStatus ("Integrity report hashing or final write failed; check session.report.json and the take files");
+    }
+
     const double deviceSR = [this]() -> double
     {
         if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())

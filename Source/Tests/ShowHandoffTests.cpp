@@ -95,6 +95,23 @@ namespace zynforge
             expectEquals ((int) skippedManifest.getProperty ("captureReport", {})
                               .getProperty ("mirrorsSkippedReported", 0), 1);
 
+            beginTest ("A rolled-back punch requires review in the handoff manifest");
+            dest.getChildFile ("Handoff Manifest.json").deleteFile();
+            dest.getChildFile ("Handoff Channel Map.csv").deleteFile();
+            dest.getChildFile ("Handoff Timeline.csv").deleteFile();
+            const auto punchReport = "{\"sha256Pending\":false,\"missedSamples\":0,\"punchSpliceFailed\":true,\"tracks\":[{\"files\":[\"Track_01.wav\"],\"sha256\":[\""
+                + hash + "\"]}]}";
+            expect (source.getChildFile ("session.report.json").replaceWithText (punchReport));
+            expect (dest.getChildFile ("session.report.json").replaceWithText (punchReport));
+            result = showhandoff::verifyAndWrite (source, dest, "timeline,marker\r\n", cancel);
+            expect (result.ok, result.message);
+            expect (result.captureReportWarning, "rolled-back punch was presented as clean");
+            const auto punchManifest = juce::JSON::parse (dest.getChildFile ("Handoff Manifest.json"));
+            expect ((bool) punchManifest.getProperty ("captureReport", {})
+                            .getProperty ("requiresManualReview", false));
+            expect ((bool) punchManifest.getProperty ("captureReport", {})
+                            .getProperty ("punchSpliceFailedReported", false));
+
             beginTest ("Legacy root-level take is accepted and hash-verified");
             const auto legacy = root.getChildFile ("Legacy");
             const auto legacyCopy = root.getChildFile ("Legacy Handoff");

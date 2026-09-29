@@ -564,6 +564,7 @@ private:
     std::vector<std::unique_ptr<zynforge::ChannelStrip>> strips;
     int  lastTrackCount { -1 };
     int  lastTrackGen   { -1 };        // recorder track-set generation last seen (rebuild on change)
+    bool asyncReportFailureShown { false };
     // macOS keeps the native menu's enabled/greyed states cached until
     // menuItemsChanged() is called. We poll a cheap signature of every bit of
     // state that drives a menu item's enablement and refresh only when it

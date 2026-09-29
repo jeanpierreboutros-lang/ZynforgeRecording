@@ -327,8 +327,11 @@ namespace zynforge
         }
         bool hasReportWriteFailed() const noexcept
         {
-            return reportWriteFailed.load (std::memory_order_relaxed);
+            return reportWriteFailed.load (std::memory_order_relaxed)
+                || hasAsyncReportFailure();
         }
+        bool hasAsyncReportFailure() const noexcept
+        { return reportAsyncState->failed.load (std::memory_order_relaxed); }
         bool hasPunchSpliceFailed() const noexcept
         {
             return punchSpliceFailed.load (std::memory_order_relaxed);
@@ -654,6 +657,15 @@ namespace zynforge
         // the operator loses the take's integrity manifest.
         std::atomic<bool> recoveryMarkerFailed { false };
         std::atomic<bool> reportWriteFailed { false };
+        // The final hash/write runs after stopRecording returns and cannot
+        // capture `this`: the recorder may be destroyed before it finishes.
+        // Each new take invalidates older completion notifications.
+        struct AsyncReportState
+        {
+            std::atomic<juce::uint64> generation { 0 };
+            std::atomic<bool> failed { false };
+        };
+        std::shared_ptr<AsyncReportState> reportAsyncState { std::make_shared<AsyncReportState>() };
         std::atomic<bool> punchSpliceFailed { false };
 
         // Primary-writer failure. Drain thread sets true when a

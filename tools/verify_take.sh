@@ -140,6 +140,102 @@ else
     fi
     [[ "$missed" == "0" ]] && grn "  OK — missedSamples = 0" || { red "  missedSamples = $missed (DROPPED AUDIO)"; fail=1; }
     [[ "$deviceLost" == "false" ]] || { red "  capture audio device stopped during the take"; fail=1; }
+    if [[ "$(jq -r '.sha256Failed // false' "$REPORT")" == "true" ]]; then
+        red "  report hashing failed"
+        fail=1
+    fi
+    for field in primaryFailed backupFailed mirrorFailed punchSpliceFailed; do
+        if [[ "$(jq -r --arg field "$field" '.[$field] // false' "$REPORT")" == "true" ]]; then
+            red "  $field is true — capture needs review"
+            fail=1
+        fi
+    done
+    if [[ "$(jq -r '.mirrorsSkipped // 0' "$REPORT")" != "0" ]]; then
+        red "  configured mirrors were skipped"
+        fail=1
+    fi
+    if jq -e '[.tracks[].mirrors[]? | select(.failed == true)] | length > 0' "$REPORT" >/dev/null; then
+        red "  a mirror writer failed"
+        fail=1
+    fi
+
+    # A hash proves only that a file still matches this report. Check the
+    # report's frame counts and the complete part sequence as well: otherwise
+    # a short but correctly hashed file, or a missing middle part, looks green.
+    hdr "4. frame counts + continuation sequence"
+    if ! python3 - "$REPORT" "$AUDIO" <<'PY'
+import json, pathlib, re, subprocess, sys
+from fractions import Fraction
+
+report = json.loads(pathlib.Path(sys.argv[1]).read_text())
+audio = pathlib.Path(sys.argv[2])
+pattern = re.compile(r"^Track_(\d{1,3})(?:_part(\d+))?\.(wav|aif|aiff|flac)$")
+groups = {}
+problems = []
+for path in audio.iterdir():
+    if not path.is_file() or not path.name.startswith("Track_"):
+        continue
+    if path.suffix.lower() not in (".wav", ".aif", ".aiff", ".flac"):
+        continue
+    match = pattern.fullmatch(path.name)
+    if not match:
+        problems.append(f"invalid take filename: {path.name}")
+        continue
+    track, part, ext = match.groups()
+    groups.setdefault((int(track), ext), set()).add(int(part) if part else 1)
+for (track, ext), parts in groups.items():
+    missing = sorted(set(range(1, max(parts) + 1)) - parts)
+    if missing:
+        problems.append(f"Track_{track:02d}.{ext}: missing part numbers {missing}")
+
+def frames(path):
+    result = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
+         "stream=sample_rate,time_base,duration_ts,duration", "-of", "json", str(path)],
+        capture_output=True, text=True)
+    if result.returncode:
+        raise ValueError("ffprobe could not read the audio stream")
+    streams = json.loads(result.stdout).get("streams", [])
+    if not streams:
+        raise ValueError("no audio stream")
+    stream = streams[0]
+    rate = int(stream["sample_rate"])
+    if "duration_ts" in stream and "time_base" in stream:
+        count = Fraction(int(stream["duration_ts"])) * Fraction(stream["time_base"]) * rate
+    else:
+        count = Fraction(stream["duration"]) * rate
+    return round(count), rate
+
+for index, track in enumerate(report["tracks"], 1):
+    names = track.get("files", [])
+    if not names or "totalSamplesPrimary" not in track:
+        continue  # older reports may omit the frame count
+    actual = 0
+    for name in names:
+        path = audio / name
+        if not path.is_file():
+            continue  # the SHA check reports the missing file below
+        try:
+            count, rate = frames(path)
+            actual += count
+            expected_rate = report.get("sampleRate")
+            if expected_rate and abs(rate - float(expected_rate)) > 0.5:
+                problems.append(f"{name}: sample rate {rate} differs from report {expected_rate}")
+        except (ValueError, KeyError, json.JSONDecodeError) as error:
+            problems.append(f"{name}: cannot count audio frames ({error})")
+    claimed = int(track["totalSamplesPrimary"])
+    if abs(actual - claimed) > 1:
+        problems.append(f"track {index}: {actual} audio frames, report claims {claimed}")
+
+for problem in problems:
+    print("  FAIL — " + problem)
+if not problems:
+    print("  OK — frame counts and continuation parts agree")
+sys.exit(bool(problems))
+PY
+    then
+        fail=1
+    fi
 
     if [[ "$pending" == "true" ]]; then
         red "  sha256 still hashing — verification is incomplete; re-run after it finishes."
@@ -148,7 +244,7 @@ else
         # Re-hash each listed primary file and compare to the manifest.
         # The inner read loop uses process substitution (not a pipe) so it
         # runs in THIS shell and a mismatch marker actually propagates.
-        hdr "4. sha256 manifest match (re-hashing on disk)"
+        hdr "5. sha256 manifest match (re-hashing on disk)"
         marker=$(mktemp)
         listed=0
         n=$(jq '.tracks | length' "$REPORT")

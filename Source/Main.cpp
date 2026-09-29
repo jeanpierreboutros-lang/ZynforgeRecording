@@ -253,6 +253,7 @@ private:
         {
             setUsingNativeTitleBar (true);
             setResizable (true, true);
+            setResizeLimits (1120, 700, 8192, 8192);
             setContentOwned (new MainComponent(), true);
             if (document.existsAsFile())
                 if (auto* mc = dynamic_cast<MainComponent*> (getContentComponent()))

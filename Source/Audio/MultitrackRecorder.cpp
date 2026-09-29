@@ -661,6 +661,12 @@ namespace zynforge
 
     bool MultitrackRecorder::startRecording (const juce::File& sessionDir)
     {
+        const juce::ScopedLock structureGuard (structureLock);
+        if (recording.load()) return false;
+        if (tracks.empty())   return false;
+
+        reportAsyncState->generation.fetch_add (1, std::memory_order_acq_rel);
+        reportAsyncState->failed.store (false, std::memory_order_relaxed);
         recoveryMarkerFailed.store (false, std::memory_order_relaxed);
         reportWriteFailed.store (false, std::memory_order_relaxed);
         punchSpliceFailed.store (false, std::memory_order_relaxed);
@@ -668,10 +674,6 @@ namespace zynforge
         backupFailed.store (false, std::memory_order_relaxed);
         mirrorFailed.store (false, std::memory_order_relaxed);
         backupActive.store (false, std::memory_order_relaxed);
-        const juce::ScopedLock structureGuard (structureLock);
-        if (recording.load()) return false;
-        if (tracks.empty())   return false;
-
         // Reject collisions before opening ANY primary writer. The legacy
         // backup uses <root>/<session name>, exactly like an N-way mirror.
         if (backupDir != juce::File()
@@ -1804,6 +1806,51 @@ namespace zynforge
         continueAsPart    = false;   // consume the continue arm
         recordBaseSamples = 0;
 
+        // The report describes the whole on-disk session, including parts
+        // from earlier CONTINUE passes and tracks that were not armed today.
+        // Listing only this pass made a valid continued take look like it had
+        // unreported audio, and left older parts outside the hash manifest.
+        {
+            juce::AudioFormatManager fm;
+            fm.registerBasicFormats();
+            const auto collectCopy = [&fm] (const juce::File& folder, int index,
+                                            juce::StringArray& names,
+                                            juce::int64& samples)
+            {
+                names.clear();
+                samples = 0;
+                const auto stem = juce::String::formatted ("Track_%02d", index + 1);
+                for (auto* ext : { ".wav", ".aif", ".aiff", ".flac" })
+                {
+                    const auto base = folder.getChildFile (stem + ext);
+                    if (! base.existsAsFile()) continue;
+                    for (const auto& part : findTakeParts (base))
+                    {
+                        if (part == juce::File()) continue;
+                        names.add (part.getFileName());
+                        std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (part));
+                        if (reader != nullptr) samples += reader->lengthInSamples;
+                    }
+                }
+            };
+            const auto primaryFolder = activeSessionDir.getChildFile ("Audio Files");
+            const auto backupFolder = backupDir.getChildFile (activeSessionDir.getFileName())
+                                               .getChildFile ("Audio Files");
+            for (size_t i = 0; i < writerSnapshots.size(); ++i)
+            {
+                auto& snapshot = writerSnapshots[i];
+                collectCopy (primaryFolder, (int) i, snapshot.partFilesPrimary,
+                             snapshot.totalSamplesPrimary);
+                if (backupWasRunning)
+                    collectCopy (backupFolder, (int) i, snapshot.partFilesBackup,
+                                 snapshot.totalSamplesBackup);
+                for (auto& mirror : snapshot.mirrors)
+                    collectCopy (mirror.root.getChildFile (activeSessionDir.getFileName())
+                                            .getChildFile ("Audio Files"),
+                                 (int) i, mirror.partFiles, mirror.totalSamples);
+            }
+        }
+
         // Post-show JSON report -- one file per session that captures every
         // datum a mix engineer / producer needs after the gig: total time,
         // per-track clip count, missed samples, backup status. Drop-in
@@ -1846,36 +1893,69 @@ namespace zynforge
         const bool       punchFailed = punchSpliceFailed.load (std::memory_order_relaxed);
         const int        mirrorsSkipped = mirrorsSkippedAtStart.load (std::memory_order_relaxed);
 
+        // A CONTINUE pass replaces the session report. Keep the earlier
+        // capture warnings and elapsed counters: the file manifest below covers
+        // every pass, so a clean last pass must not certify an earlier failure.
+        const auto oldReportFile = sessionDir.getChildFile ("session.report.json");
+        const auto oldReport = oldReportFile.existsAsFile()
+                                 ? juce::JSON::parse (oldReportFile) : juce::var();
+        const auto previousInt = [&oldReport] (const char* name) -> juce::int64
+        { return oldReport.isObject() ? (juce::int64) oldReport.getProperty (name, 0) : 0; };
+        const auto previousBool = [&oldReport] (const char* name) -> bool
+        { return oldReport.isObject() && (bool) oldReport.getProperty (name, false); };
+        bool previousMirrorFailure = previousBool ("mirrorFailed");
+        if (auto* oldTracks = oldReport.getProperty ("tracks", {}).getArray())
+            for (const auto& track : *oldTracks)
+                if (auto* mirrors = track.getProperty ("mirrors", {}).getArray())
+                    for (const auto& mirror : *mirrors)
+                        previousMirrorFailure = previousMirrorFailure
+                            || (bool) mirror.getProperty ("failed", false);
+        const auto reportedSamples = previousInt ("totalSamples") + totalSamples;
+        const auto reportedSeconds = (oldReport.isObject()
+                                         ? (double) oldReport.getProperty ("totalSeconds", 0.0) : 0.0)
+                                     + totalSeconds;
+        const auto reportedMissed = previousInt ("missedSamples") + totalMissed;
+        const auto reportedMirrorsSkipped = (int) previousInt ("mirrorsSkipped") + mirrorsSkipped;
+        const bool reportedDeviceLoss = previousBool ("captureDeviceLost") || deviceLostAtStop;
+        const bool reportedPrimaryFailure = previousBool ("primaryFailed") || primFailed;
+        const bool reportedBackupFailure = previousBool ("backupFailed") || backupHadFailure;
+        const bool reportedPunchFailure = previousBool ("punchSpliceFailed") || punchFailed;
+        const bool reportedMirrorFailure = previousMirrorFailure
+                                           || mirrorFailed.load (std::memory_order_relaxed);
+
         // Build the report JSON. `withHashes == false` skips the (expensive,
         // GB-scale) SHA-256 pass and marks the report "sha256Pending":true,
         // so we can write a complete metadata report INSTANTLY on stop and
         // fill the hashes in afterwards. Captures only scalars by value, so
         // it's copyable into the background thread below.
         auto buildReportJson =
-            [sessionDir, bDir, sr, fmt, preRoll, primFailed, punchFailed, stoppedAt,
-             totalSamples, totalSeconds, totalMissed, backupWasRunning,
-             backupHadFailure, mirrorsSkipped, deviceLostAtStop]
+            [sessionDir, bDir, sr, fmt, preRoll, stoppedAt,
+             reportedSamples, reportedSeconds, reportedMissed, backupWasRunning,
+             reportedBackupFailure, reportedPrimaryFailure, reportedPunchFailure,
+             reportedMirrorFailure, reportedMirrorsSkipped, reportedDeviceLoss]
             (const std::vector<TrackMeta>&   trackMetas,
              const std::vector<WriterReport>& writerSnaps,
-             bool withHashes,
+             bool withHashes, bool hashingFailed,
              const std::map<juce::String, juce::String>& shaByPath) -> juce::String
         {
             juce::DynamicObject::Ptr report (new juce::DynamicObject());
             report->setProperty ("stoppedAt",      stoppedAt.toISO8601 (true));
             report->setProperty ("sampleRate",     sr);
             report->setProperty ("numTracks",      (int) trackMetas.size());
-            report->setProperty ("totalSamples",   (juce::int64) totalSamples);
-            report->setProperty ("totalSeconds",   totalSeconds);
-            report->setProperty ("missedSamples",  (juce::int64) totalMissed);
-            report->setProperty ("captureDeviceLost", deviceLostAtStop);
+            report->setProperty ("totalSamples",   (juce::int64) reportedSamples);
+            report->setProperty ("totalSeconds",   reportedSeconds);
+            report->setProperty ("missedSamples",  (juce::int64) reportedMissed);
+            report->setProperty ("captureDeviceLost", reportedDeviceLoss);
             report->setProperty ("backupActive",   backupWasRunning);
-            report->setProperty ("backupFailed",   backupHadFailure);
-            report->setProperty ("primaryFailed",  primFailed);
-            report->setProperty ("punchSpliceFailed", punchFailed);
-            report->setProperty ("mirrorsSkipped", mirrorsSkipped);
+            report->setProperty ("backupFailed",   reportedBackupFailure);
+            report->setProperty ("primaryFailed",  reportedPrimaryFailure);
+            report->setProperty ("punchSpliceFailed", reportedPunchFailure);
+            report->setProperty ("mirrorFailed", reportedMirrorFailure);
+            report->setProperty ("mirrorsSkipped", reportedMirrorsSkipped);
             report->setProperty ("captureFormat",  fmt);
             report->setProperty ("preRollSeconds", preRoll);
             report->setProperty ("sha256Pending",  ! withHashes);
+            report->setProperty ("sha256Failed", hashingFailed);
 
             // Hashes are computed in parallel BEFORE this builder runs (see the
             // background thread below) and looked up here by full path, so the
@@ -1975,7 +2055,7 @@ namespace zynforge
             //    (or if the app is killed before hashing finishes).
             reportWriteFailed.store (
                 ! atomicfile::writeText (sessionDir.getChildFile ("session.report.json"),
-                                         buildReportJson (trackMetas, writerSnapshots, false, {})),
+                                         buildReportJson (trackMetas, writerSnapshots, false, false, {})),
                 std::memory_order_relaxed);
 
             // 2) Hash all recorded audio off-thread and rewrite the report with
@@ -1986,8 +2066,11 @@ namespace zynforge
             //    CPU-bound. Runs at UTILITY QoS: still yields to the UI / next
             //    take, but isn't throttled to a trickle the way BACKGROUND was.
             //    If interrupted, the metadata report from step 1 still stands.
+            const auto asyncState = reportAsyncState;
+            const auto asyncGen = asyncState->generation.load (std::memory_order_acquire);
             juce::Thread::launch (
                 [buildReportJson, sessionDir, bDir, backupWasRunning, myGen, genToken,
+                 asyncState, asyncGen,
                  trackMetas  = std::move (trackMetas),
                  writerSnaps = std::move (writerSnapshots)]
                 {
@@ -2043,8 +2126,18 @@ namespace zynforge
                     // that is no longer the session's. Drop it.
                     if (genToken->load (std::memory_order_acquire) != myGen) return;
 
-                    atomicfile::writeText (sessionDir.getChildFile ("session.report.json"),
-                                           buildReportJson (trackMetas, writerSnaps, true, shaByPath));
+                    bool hashingFailed = false;
+                    for (const auto& [path, sha] : shaByPath)
+                    {
+                        juce::ignoreUnused (path);
+                        if (sha.isEmpty()) { hashingFailed = true; break; }
+                    }
+                    const bool wrote = atomicfile::writeText (
+                        sessionDir.getChildFile ("session.report.json"),
+                        buildReportJson (trackMetas, writerSnaps, true, hashingFailed, shaByPath));
+                    if ((! wrote || hashingFailed)
+                        && asyncState->generation.load (std::memory_order_acquire) == asyncGen)
+                        asyncState->failed.store (true, std::memory_order_release);
                 });
         }
 

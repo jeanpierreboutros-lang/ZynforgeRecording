@@ -43,8 +43,10 @@ namespace zynforge::capture
         // recorder FIRST so files close + the manifest is written, then take
         // down comms + device.
         if (recorder.isRecording()) recorder.stopRecording();
-        if (statusThread.joinable()) statusThread.join();
+        // Closing the client interrupts a status write stuck on a peer that
+        // stopped reading; join only after that write can return.
         server.stop();
+        if (statusThread.joinable()) statusThread.join();
         if (! testMode.load())
         {
             deviceManager.removeAudioCallback (this);
@@ -141,7 +143,19 @@ namespace zynforge::capture
 
     void CaptureDaemon::handleCommand (const Command& c)
     {
-        const std::lock_guard<std::mutex> g (commandLock);
+        std::unique_lock<std::mutex> g (commandLock);
+        const auto sendReplyUnlocked = [this, &g] (const Reply& reply)
+        {
+            g.unlock();
+            server.sendReply (reply);
+            g.lock();
+        };
+        const auto sendStatusUnlocked = [this, &g] (const EngineStatus& status)
+        {
+            g.unlock();
+            server.sendStatus (status);
+            g.lock();
+        };
         switch (c.action)
         {
             case Action::Hello:           // server already replied
@@ -152,7 +166,8 @@ namespace zynforge::capture
             {
                 Reply r; r.id = c.id;
                 const juce::File dir (c.sessionDir);
-                if (c.sessionDir.isEmpty())             { r.error = "no sessionDir"; }
+                if (recorder.isRecording())              { r.error = "capture is already recording"; }
+                else if (c.sessionDir.isEmpty())         { r.error = "no sessionDir"; }
                 else if (! testMode.load() && ! deviceAvailable.load())
                     { r.error = "capture audio device is stopped"; }
                 else
@@ -165,8 +180,8 @@ namespace zynforge::capture
                     { captureDeviceLost.store (false); r.ok = true; }
                     else                                r.error = "recorder failed to start";
                 }
-                server.sendStatus (buildStatus());
-                server.sendReply (r);
+                sendStatusUnlocked (buildStatus());
+                sendReplyUnlocked (r);
                 break;
             }
 
@@ -193,8 +208,8 @@ namespace zynforge::capture
                     if (recorder.hasReportWriteFailed()) failures.add ("integrity report failed");
                     r.error = "recording stopped, but finalisation failed: " + failures.joinIntoString (", ");
                 }
-                server.sendStatus (buildStatus());
-                server.sendReply (r);
+                sendStatusUnlocked (buildStatus());
+                sendReplyUnlocked (r);
                 break;
             }
 
@@ -212,13 +227,13 @@ namespace zynforge::capture
             {
                 Reply r; r.id = c.id;
                 if (c.intValue == recorder.getNumTracks())
-                { r.ok = true; server.sendReply (r); break; }
+                { r.ok = true; sendReplyUnlocked (r); break; }
                 if (recorder.isRecording())
                 {
                     // setTrackCount is a no-op while recording anyway; say so
                     // rather than silently ignoring the command.
                     r.error = "refusing to resize tracks mid-take";
-                    server.sendReply (r);
+                    sendReplyUnlocked (r);
                     break;
                 }
                 // setTrackCount ADDS/REMOVES entries in the recorder's tracks +
@@ -233,7 +248,7 @@ namespace zynforge::capture
                 recorder.setTrackCount (juce::jlimit (1, 256, c.intValue));
                 if (! testMode.load()) deviceManager.addAudioCallback (this);
                 r.ok = true;
-                server.sendReply (r);
+                sendReplyUnlocked (r);
                 break;
             }
 
@@ -245,15 +260,15 @@ namespace zynforge::capture
             case Action::ConfigureCapture:
             {
                 Reply r; r.id = c.id;
-                if (recorder.isRecording()) { r.error = "stop recording before configuration"; server.sendReply (r); break; }
+                if (recorder.isRecording()) { r.error = "stop recording before configuration"; sendReplyUnlocked (r); break; }
                 const auto& cfg = c.configuration;
                 auto* tracks = cfg["tracks"].getArray();
                 if (tracks == nullptr || tracks->isEmpty() || tracks->size() > 256)
-                { r.error = "invalid track configuration"; server.sendReply (r); break; }
+                { r.error = "invalid track configuration"; sendReplyUnlocked (r); break; }
                 if (! testMode.load())
                 {
                     auto xml = juce::parseXML (cfg["deviceState"].toString());
-                    if (xml == nullptr) { r.error = "missing device configuration"; server.sendReply (r); break; }
+                    if (xml == nullptr) { r.error = "missing device configuration"; sendReplyUnlocked (r); break; }
                     deviceManager.removeAudioCallback (this);
                     const auto error = deviceManager.initialise (256, 0, xml.get(), false);
                     if (error.isNotEmpty())
@@ -262,13 +277,13 @@ namespace zynforge::capture
                         // rejected reconfiguration. The device manager may
                         // have retained/recovered its old device.
                         deviceManager.addAudioCallback (this);
-                        r.error = error; server.sendReply (r); break;
+                        r.error = error; sendReplyUnlocked (r); break;
                     }
                     auto* device = deviceManager.getCurrentAudioDevice();
                     if (device == nullptr || std::abs (device->getCurrentSampleRate() - (double) cfg["sampleRate"]) > 0.5)
                     {
                         deviceManager.addAudioCallback (this);
-                        r.error = "requested capture sample rate unavailable"; server.sendReply (r); break;
+                        r.error = "requested capture sample rate unavailable"; sendReplyUnlocked (r); break;
                     }
                 }
                 recorder.setTrackCount (tracks->size());
@@ -288,7 +303,7 @@ namespace zynforge::capture
                         mirrors.push_back ({ juce::File (m["root"].toString()), (CaptureFormat) (int) m["format"] });
                 recorder.setMirrors (mirrors);
                 if (! testMode.load()) deviceManager.addAudioCallback (this);
-                r.ok = true; server.sendReply (r); break;
+                r.ok = true; sendReplyUnlocked (r); break;
             }
 
             case Action::StartPlayback:
@@ -296,7 +311,7 @@ namespace zynforge::capture
             {
                 // Capture-only daemon: playback lives in the GUI process.
                 Reply r; r.id = c.id; r.error = "daemon is capture-only; playback is GUI-side";
-                server.sendReply (r);
+                sendReplyUnlocked (r);
                 break;
             }
 
@@ -307,7 +322,7 @@ namespace zynforge::capture
                 {
                     // Protect the take: a Quit can't stop a rolling record.
                     r.error = "refusing to quit mid-take; StopRecording first";
-                    server.sendReply (r);
+                    sendReplyUnlocked (r);
                 }
                 else
                 {
@@ -315,7 +330,7 @@ namespace zynforge::capture
                     // Send the ack BEFORE tripping the quit flag, so the reply
                     // is guaranteed on the wire before the main loop can tear
                     // the server down (which would otherwise race the reply).
-                    server.sendReply (r);
+                    sendReplyUnlocked (r);
                     if (onQuitRequest) onQuitRequest();
                 }
                 break;
@@ -385,8 +400,15 @@ namespace zynforge::capture
         {
             if (server.hasClient())
             {
-                const std::lock_guard<std::mutex> g (commandLock);
-                server.sendStatus (buildStatus());
+                EngineStatus snapshot;
+                {
+                    const std::lock_guard<std::mutex> g (commandLock);
+                    snapshot = buildStatus();
+                }
+                // Socket writes can wait on a connected peer that stopped
+                // reading. Never hold the command lock across that wait: STOP
+                // must still be able to finalise a rolling take.
+                server.sendStatus (snapshot);
             }
             for (int i = 0; i < 10 && running.load(); ++i)
                 juce::Thread::sleep (10);

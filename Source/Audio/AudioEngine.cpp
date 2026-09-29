@@ -815,6 +815,8 @@ namespace zynforge
         }
         EngineStatus s;
         s.recording        = isRecording();
+        if (s.recording)
+            s.sessionPath = recorder.getActiveSessionDir().getFullPathName();
         s.playing          = player.isPlaying();
         s.positionSamples  = player.getPositionSamples();
         s.elapsedSamples   = recorder.getSamplesSinceStart();

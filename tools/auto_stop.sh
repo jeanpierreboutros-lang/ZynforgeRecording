@@ -4,27 +4,29 @@
 #
 # 1. Captures the companion access token off the clipboard (it lands there
 #    when you start the companion server: Session ▸ "Start companion server").
-# 2. Waits until the take is BOTH past a size threshold (so RF64 has fired)
-#    AND a minimum duration, then POSTs the companion `stop` command — the
-#    real stopRecording() path (finalises RF64 + writes the report), no quit
-#    dialog, app stays running. Hard backstop caps total runtime.
+# 2. Watches the authenticated live capture status for one pinned session.
+#    After the size/duration threshold (or hard cap), completes the companion
+#    STOP confirmation and checks that the same session is no longer rolling.
 #
-# Read-only w.r.t. the app except the one HTTP stop (never force-kills).
+# Read-only w.r.t. the app except confirmed HTTP STOP requests (never force-kills).
 # Log: /tmp/zynforge_autostop.log    Abort: touch /tmp/zynforge_autostop.stop
 set -uo pipefail
 
-PORT=9000
-MIN_SECONDS=$(( 8 * 3600 ))                 # don't stop before 8 h of capture
-SIZE_THRESHOLD=$(( 4509715661 ))            # 4.2 GiB — safely past the 4 GiB RF64 point
-HARD_CAP=$(( 34200 ))                       # 9.5 h after recording starts
+PORT=${ZYNFORGE_AUTOSTOP_PORT:-9000}
+MIN_SECONDS=${ZYNFORGE_AUTOSTOP_MIN_SECONDS:-$(( 8 * 3600 ))}
+SIZE_THRESHOLD=${ZYNFORGE_AUTOSTOP_SIZE_THRESHOLD:-4509715661}
+HARD_CAP=${ZYNFORGE_AUTOSTOP_HARD_CAP:-34200}
+POLL_SECONDS=${ZYNFORGE_AUTOSTOP_POLL_SECONDS:-120}
 CAPTURE_TIMEOUT=$(( 45 * 60 ))              # give up looking for the token after 45 min
 LOG=/tmp/zynforge_autostop.log
 STOP=/tmp/zynforge_autostop.stop
 TOKFILE=/tmp/zynforge_cmd_token
-SESS_BASE="$HOME/Music/Zynforge Sessions"
+REQUESTED_SESSION="${1:-}"
 
 log(){ printf '%s %s\n' "$(date +%H:%M:%S)" "$*" >> "$LOG"; }
-newest_wav(){ ls -t "$SESS_BASE"/*/"Audio Files"/Track_01.wav 2>/dev/null | head -1; }
+read_state(){ curl -fsS -m 10 "http://127.0.0.1:${PORT}/state.json?t=${TOKEN}"; }
+send_stop(){ curl -sS -m 10 -X POST "http://127.0.0.1:${PORT}/cmd?t=${TOKEN}" \
+                    -H "Content-Type: application/json" -d '{"action":"stop"}'; }
 
 rm -f "$STOP" "$TOKFILE"
 log "# auto_stop armed. waiting for companion token on the clipboard..."
@@ -42,30 +44,65 @@ while (( $(date +%s) < cap_deadline )); do
 done
 if [[ -z "$TOKEN" ]]; then log "!! never saw a companion URL on the clipboard — cannot auto-stop. Start the companion server, or stop the take manually."; exit 1; fi
 
-# ── Phase B: wait for the recording, then stop on the rule ──────────────────
-t0=0
+# ── Phase B: pin the live take, then stop on the rule ────────────────────────
+target=""
+state_failures=0
 while :; do
     [[ -f "$STOP" ]] && { log "abort sentinel — exiting without stopping"; exit 0; }
-    wav="$(newest_wav)"; size=0
-    [[ -n "$wav" && -f "$wav" ]] && size=$(stat -f%z "$wav" 2>/dev/null || echo 0)
-    now=$(date +%s)
-    if (( size > 0 && t0 == 0 )); then t0=$now; log "recording detected ($wav) — clock started"; fi
-    elapsed=0; (( t0 > 0 )) && elapsed=$(( now - t0 ))
+    if ! state=$(read_state) || ! printf '%s' "$state" | jq -e 'type == "object" and (.recording | type == "boolean")' >/dev/null 2>&1; then
+        state_failures=$((state_failures + 1))
+        log "!! cannot read authenticated capture status (${state_failures}/3)"
+        (( state_failures >= 3 )) && exit 1
+        sleep "$POLL_SECONDS"
+        continue
+    fi
+    state_failures=0
+    recording=$(printf '%s' "$state" | jq -r '.recording')
+    session=$(printf '%s' "$state" | jq -r '.sessionPath // empty')
+    if [[ "$recording" != "true" ]]; then
+        if [[ -n "$target" ]]; then log "take stopped before auto-stop threshold"; exit 0; fi
+        sleep "$POLL_SECONDS"
+        continue
+    fi
+    if [[ -z "$session" ]]; then log "!! rolling capture has no session path; refusing an unscoped STOP"; exit 1; fi
+    if [[ -n "$REQUESTED_SESSION" && "$session" != "${REQUESTED_SESSION%/}" ]]; then
+        log "!! live session is $session, expected $REQUESTED_SESSION; refusing STOP"
+        exit 1
+    fi
+    if [[ -z "$target" ]]; then target="$session"; log "pinned live session: $target"; fi
+    if [[ "$session" != "$target" ]]; then log "!! live session changed to $session; refusing STOP"; exit 1; fi
+
+    wav="$target/Audio Files/Track_01.wav"
+    if [[ ! -f "$wav" ]]; then log "!! no live Track_01.wav in pinned session; RF64 soak cannot be monitored"; exit 1; fi
+    size=$(stat -f%z "$wav" 2>/dev/null || echo 0)
+    elapsed=$(printf '%s' "$state" | jq -r 'if .sampleRate > 0 then (.elapsedSamples / .sampleRate | floor) else 0 end')
     gib=$(awk -v s="$size" 'BEGIN{printf "%.3f", s/1073741824}')
 
-    if (( t0 > 0 )); then
-        if (( elapsed >= MIN_SECONDS && size >= SIZE_THRESHOLD )) || (( elapsed >= HARD_CAP )); then
-            why="elapsed=${elapsed}s size=${gib}GiB"
-            log "STOP condition met ($why) — sending companion stop"
-            resp=$(curl -s -m 10 -X POST "http://127.0.0.1:${PORT}/cmd?t=${TOKEN}" \
-                        -H "Content-Type: application/json" -d '{"action":"stop"}' 2>&1 || true)
-            log "companion responded: ${resp:-<no response>}"
-            sleep 5
-            wav2="$(newest_wav)"; sz2=0; [[ -n "$wav2" ]] && sz2=$(stat -f%z "$wav2" 2>/dev/null || echo 0)
-            log "post-stop file size: $(awk -v s="$sz2" 'BEGIN{printf "%.3f GiB", s/1073741824}')  (should be static now)"
-            log "# done. run tools/verify_take.sh to validate the take."
-            exit 0
-        fi
+    if (( (elapsed >= MIN_SECONDS && size >= SIZE_THRESHOLD) || elapsed >= HARD_CAP )); then
+        log "STOP condition met (elapsed=${elapsed}s size=${gib}GiB)"
+        # The host deliberately requires two STOP presses within two seconds.
+        # A 409 'STOP armed' is the first confirmation, not a failed take.
+        for attempt in 1 2 3 4; do
+            if ! resp=$(send_stop); then
+                log "!! STOP request ${attempt} could not reach the companion"
+            elif printf '%s' "$resp" | jq -e '.ok == true' >/dev/null 2>&1; then
+                log "STOP accepted by host"
+                break
+            else
+                log "STOP request ${attempt}: $(printf '%s' "$resp" | jq -r '.error // "invalid response"' 2>/dev/null)"
+            fi
+            sleep 1
+        done
+        for check in 1 2 3 4 5 6; do
+            if state=$(read_state) && printf '%s' "$state" | jq -e '.recording == false' >/dev/null 2>&1; then
+                log "confirmed stopped: $target"
+                log "# done. run tools/verify_take.sh to validate the take."
+                exit 0
+            fi
+            sleep 1
+        done
+        log "!! STOP was not confirmed; recording may still be running"
+        exit 1
     fi
-    sleep 120
+    sleep "$POLL_SECONDS"
 done

@@ -58,12 +58,39 @@ namespace zynforge
                 {
                     Command start; start.action = Action::StartRecording; start.sessionDir = dir.getFullPathName();
                     expect (client.request (start, 3000).ok);
+                    if (take == 1)
+                    {
+                        const auto base = daemon.getRecorder().getRecordBaseSamples();
+                        expectEquals (base, (juce::int64) 256);
+                        expect (! client.request (start, 3000).ok,
+                                "a repeated START must be refused while the take rolls");
+                        expectEquals (daemon.getRecorder().getRecordBaseSamples(), base,
+                                      "repeated START reset the continued take's playhead");
+                    }
                     Command arm; arm.action = Action::ArmTrack; arm.trackIndex = 0; arm.boolValue = false;
                     expect (client.send (arm));
                     daemon.audioDeviceIOCallbackWithContext (inputs, 2, nullptr, 0, 256, {});
                     Command stop; stop.action = Action::StopRecording;
                     expect (client.request (stop, 5000).ok);
                     expect (daemon.getRecorder().getTrack (0).armed.load(), "mid-take arm change must be refused");
+                    if (take == 0)
+                    {
+                        const auto reportFile = dir.getChildFile ("session.report.json");
+                        expect (waitUntil ([&]
+                        {
+                            const auto report = juce::JSON::parse (reportFile);
+                            return report.isObject()
+                                   && ! (bool) report.getProperty ("sha256Pending", true);
+                        }, 3000));
+                        auto report = juce::JSON::parse (reportFile);
+                        if (auto* object = report.getDynamicObject())
+                        {
+                            object->setProperty ("primaryFailed", true);
+                            object->setProperty ("mirrorFailed", true);
+                            object->setProperty ("missedSamples", 7);
+                            expect (reportFile.replaceWithText (juce::JSON::toString (report)));
+                        }
+                    }
                 }
                 const auto audio = dir.getChildFile ("Audio Files");
                 juce::AudioFormatManager fm; fm.registerBasicFormats();
@@ -79,6 +106,29 @@ namespace zynforge
                     }
                 }
                 expect (! audio.getChildFile ("Track_02.wav").existsAsFile());
+                {
+                    const auto report = juce::JSON::parse (dir.getChildFile ("session.report.json"));
+                    expectEquals ((juce::int64) report.getProperty ("totalSamples", 0), (juce::int64) 512);
+                    expectEquals ((juce::int64) report.getProperty ("missedSamples", 0), (juce::int64) 7);
+                    expect ((bool) report.getProperty ("primaryFailed", false),
+                            "a clean continuation erased an earlier primary failure");
+                    expect ((bool) report.getProperty ("mirrorFailed", false),
+                            "a clean continuation erased an earlier mirror failure");
+                    auto* tracks = report.getProperty ("tracks", {}).getArray();
+                    expect (tracks != nullptr);
+                    if (tracks != nullptr && ! tracks->isEmpty())
+                    {
+                        auto* files = (*tracks)[0].getProperty ("files", {}).getArray();
+                        expect (files != nullptr);
+                        if (files != nullptr)
+                        {
+                            expect (files->contains ("Track_01.wav"));
+                            expect (files->contains ("Track_01_part02.wav"));
+                        }
+                        expectEquals ((juce::int64) (*tracks)[0].getProperty ("totalSamplesPrimary", 0),
+                                      (juce::int64) 512);
+                    }
+                }
 
                 const auto failed = juce::File::getSpecialLocation (juce::File::tempDirectory)
                                         .getChildFile ("zf-daemon-finalize-" + juce::Uuid().toString());
@@ -88,6 +138,10 @@ namespace zynforge
                 Command startFailed; startFailed.action = Action::StartRecording;
                 startFailed.sessionDir = failed.getFullPathName();
                 expect (client.request (startFailed, 3000).ok);
+                expect (daemon.getRecorder().hasRecoveryMarkerFailed());
+                expect (! client.request (startFailed, 3000).ok);
+                expect (daemon.getRecorder().hasRecoveryMarkerFailed(),
+                        "repeated START erased the recovery-marker failure");
                 Command stopFailed; stopFailed.action = Action::StopRecording;
                 const auto finalised = client.request (stopFailed, 5000);
                 expect (! finalised.ok, "mandatory metadata failure reported a clean stop");
