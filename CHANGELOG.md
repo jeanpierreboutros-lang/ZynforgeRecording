@@ -17,6 +17,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed — unattended stop token capture, 2026-10-02
+
+- The unattended STOP helper now recognizes the companion's copied `localhost` URL and the read-only confidence URL as well as `127.0.0.1`, so it can authenticate before watching a pinned take.
+
 ### Fixed — long-take live waveform detail, 2026-10-01
 
 - The live EDIT waveform retains original 256-sample peaks for the most recent portion of a rolling take while retaining a bounded whole-take overview. Pixel queries use absolute recorder-bin ranges, so a long recording no longer forces the visible recording edge to draw from heavily reduced peaks.

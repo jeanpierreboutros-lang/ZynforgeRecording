@@ -2,8 +2,8 @@
 #
 # auto_stop.sh — unattended, clean stop for an overnight RF64 soak.
 #
-# 1. Captures the companion access token off the clipboard (it lands there
-#    when you start the companion server: Session ▸ "Start companion server").
+# 1. Captures the companion access token off the clipboard (copied when you
+#    start the companion server or choose "Copy read-only confidence URL").
 # 2. Watches the authenticated live capture status for one pinned session.
 #    After the size/duration threshold (or hard cap), completes the companion
 #    STOP confirmation and checks that the same session is no longer rolling.
@@ -38,7 +38,7 @@ cap_deadline=$(( $(date +%s) + CAPTURE_TIMEOUT ))
 while (( $(date +%s) < cap_deadline )); do
     [[ -f "$STOP" ]] && { log "aborted before capture"; exit 0; }
     clip="$(pbpaste 2>/dev/null || true)"
-    tok="$(printf '%s' "$clip" | grep -oE "127\.0\.0\.1:${PORT}/\?t=[0-9a-fA-F]+" | head -1 | grep -oE "[0-9a-fA-F]+$" || true)"
+    tok="$(printf '%s' "$clip" | grep -oE "(localhost|127\.0\.0\.1):${PORT}/(confidence)?\?t=[0-9a-fA-F]+" | head -1 | grep -oE "[0-9a-fA-F]+$" || true)"
     if [[ -n "$tok" ]]; then TOKEN="$tok"; printf '%s' "$tok" > "$TOKFILE"; log "captured access token (${#tok} chars)"; break; fi
     sleep 3
 done
