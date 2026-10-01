@@ -5,7 +5,9 @@
 - [x] Diagnose the blocky live waveform reported during a 55-channel, 10:42:37 Mac mini take. Verify all 55 primary RF64 files' frame counts and SHA-256 values against the final report; document the limits of that evidence in [FIELD-TEST-2026-10-01.md](FIELD-TEST-2026-10-01.md).
 - [x] Keep recent original-resolution peaks during long live takes, add ten-hour/ring-wrap regression coverage, build universal Release and pass 401 headless test groups with zero failures. Source commit `d2c5858`.
 - [x] Package and verify the universal `d2c5858` DMG and checksum; install the matching app and helper on the Mac mini with a rollback copy and idle launch check. The development Mac retains `672456d`.
-- [ ] After the user's five-hour run on the updated Mac mini, record live FOLLOW/zoom/waveform observations and independently check the finalized take's report, file lengths and hashes. Keep the session for inspection.
+- [x] Inspect the interrupted `TEST 5 HOURS NEW` take read-only: 55 equal-sized WAV files, all headers readable, about 2:42:51 per file; no clean-stop report. Preserve the originals. Three Mac mini kernel panic reports show the same Apple PCIe `lan-1gb` completion timeout.
+- [ ] Isolate the Mac mini's recurring kernel panic and establish a stable recording host with an independent backup before another important long take. Preserve the panic reports and interrupted session.
+- [ ] Repeat the updated build's five-hour live FOLLOW/zoom/waveform observation and inspect a normally finalized take's report, file lengths and hashes. The interrupted run cannot satisfy this check.
 - [ ] Run the planned 56-input, three-hour exact-rig rehearsal with backup and independent recorder checks before relying on this build as the sole show recorder.
 
 - [x] Fix the latest capture audit: repeated daemon START, STOP lock contention, cumulative continuation reports and warnings, asynchronous hash/write failure visibility, handoff punch warnings, take verification, unattended STOP, and minimum window size. Source commit `672456d`; universal Release build and 399 headless test groups passed with zero failures.

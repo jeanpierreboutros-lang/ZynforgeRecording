@@ -2,7 +2,7 @@
 
 ## Philosophy and Goals
 
-**Latest build and Mac mini installation (2026-10-01):** Source commit `d2c5858` built as a universal Release app and passed **401 test groups with zero failures**. New tests exercise ten-hour peak history, recent-detail retention and ring wrap. The Mac mini installation has matching GUI/helper hashes, passes deep/strict ad-hoc signature verification and launched idle. The development Mac still has `672456d` in Applications. The new build's live five-hour capture, waveform follow and physical-rig readiness are not yet established.
+**Latest build and Mac mini installation (2026-10-01):** Source commit `d2c5858` built as a universal Release app and passed **401 test groups with zero failures**. New tests exercise ten-hour peak history, recent-detail retention and ring wrap. The Mac mini installation has matching GUI/helper hashes, passes deep/strict ad-hoc signature verification and launched idle. The development Mac still has `672456d` in Applications. A five-hour Mac mini run on the new build was interrupted at about 2:43 by a recurring Apple PCIe `lan-1gb` kernel panic. All 55 WAV headers open, but no clean-stop report exists and the live waveform result remains unverified. See [FIELD-TEST-2026-10-01.md](FIELD-TEST-2026-10-01.md).
 
 The [current `d2c5858` DMG](dist/Zynforge-Recording-d2c5858-macOS-universal.dmg) passed `hdiutil verify`, SHA-256 verification and a read-only mount. Its app matched the staged build byte for byte, included the matching universal helper and Applications shortcut, and passed deep/strict signature verification. The Mac mini install's GUI/helper hashes also matched this package. Neither Mac's planned 56-input rig has been acceptance-tested with the current DMG.
 
