@@ -6,7 +6,7 @@
 - [x] Keep recent original-resolution peaks during long live takes, add ten-hour/ring-wrap regression coverage, build universal Release and pass 401 headless test groups with zero failures. Source commit `d2c5858`.
 - [x] Package and verify the universal `d2c5858` DMG and checksum; install the matching app and helper on the Mac mini with a rollback copy and idle launch check. The development Mac retains `672456d`.
 - [x] Inspect the interrupted `TEST 5 HOURS NEW` take read-only: 55 equal-sized WAV files, all headers readable, about 2:42:51 per file; no clean-stop report. Preserve the originals. Three Mac mini kernel panic reports show the same Apple PCIe `lan-1gb` completion timeout.
-- [ ] Isolate the Mac mini's recurring kernel panic and establish a stable recording host with an independent backup before another important long take. Preserve the panic reports and interrupted session.
+- [ ] Isolate the Mac mini's recurring kernel panic and establish a stable recording host with an independent backup before another important long take. The interrupted take used DVS input on built-in Ethernet and Samsung monitor output. If the 55 channels are routed to the RME AoX-D, test that direct input with DVS/ZynForge Live stopped to isolate the Ethernet path. Preserve the panic reports and interrupted session.
 - [ ] Repeat the updated build's five-hour live FOLLOW/zoom/waveform observation and inspect a normally finalized take's report, file lengths and hashes. The interrupted run cannot satisfy this check.
 - [ ] Run the planned 56-input, three-hour exact-rig rehearsal with backup and independent recorder checks before relying on this build as the sole show recorder.
 
