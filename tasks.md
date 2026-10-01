@@ -1,11 +1,17 @@
 # Project Tasks
 
-## Current Priorities — 2026-09-30
+## Current Priorities — 2026-10-01
+
+- [x] Diagnose the blocky live waveform reported during a 55-channel, 10:42:37 Mac mini take. Verify all 55 primary RF64 files' frame counts and SHA-256 values against the final report; document the limits of that evidence in [FIELD-TEST-2026-10-01.md](FIELD-TEST-2026-10-01.md).
+- [x] Keep recent original-resolution peaks during long live takes, add ten-hour/ring-wrap regression coverage, build universal Release and pass 401 headless test groups with zero failures. Source commit `d2c5858`.
+- [x] Package and verify the universal `d2c5858` DMG and checksum; install the matching app and helper on the Mac mini with a rollback copy and idle launch check. The development Mac retains `672456d`.
+- [ ] After the user's five-hour run on the updated Mac mini, record live FOLLOW/zoom/waveform observations and independently check the finalized take's report, file lengths and hashes. Keep the session for inspection.
+- [ ] Run the planned 56-input, three-hour exact-rig rehearsal with backup and independent recorder checks before relying on this build as the sole show recorder.
 
 - [x] Fix the latest capture audit: repeated daemon START, STOP lock contention, cumulative continuation reports and warnings, asynchronous hash/write failure visibility, handoff punch warnings, take verification, unattended STOP, and minimum window size. Source commit `672456d`; universal Release build and 399 headless test groups passed with zero failures.
 - [x] Install the exact tested app with its matching capture helper at `/Applications/Zynforge Recording.app`; preserve the prior version at `/Applications/Zynforge Recording.app.backup-20260930-before-672456d`.
 - [x] Package and push `Zynforge-Recording-672456d-macOS-universal.dmg` plus its SHA-256 file. Verify the read-only mount, exact installed-app match, both architectures and deep/strict signature.
-- [ ] On each target Mac, run a disposable device-loss, continued-take, punch, backup/mirror, auto-follow and three-hour recording check with the installed `672456d` build. Record actual results in [FIELD-TEST.md](FIELD-TEST.md); complete the exact-rig gates in [SHOW-READINESS.md](SHOW-READINESS.md) before relying on it as the sole show recorder.
+- [ ] On each target Mac, run disposable device-loss, continued-take, punch and backup/mirror checks with the current build. Record actual results in [FIELD-TEST.md](FIELD-TEST.md); complete the exact-rig gates in [SHOW-READINESS.md](SHOW-READINESS.md) before relying on it as the sole show recorder.
 - [ ] Extend take verification to compare against an independently recorded expected duration/channel map and validate external backup/mirror manifests. Current `verify_take.sh` checks primary files against the report, but the report cannot establish the intended performance length or independent copy health.
 
 The dated sections below retain delivery history and older open checks. The current package and acceptance state are above; old test counts do not describe the latest build.

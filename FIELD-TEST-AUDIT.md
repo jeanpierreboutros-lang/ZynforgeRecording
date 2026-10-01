@@ -1,6 +1,6 @@
-# ZynForge Recording — Field-Test Checklist: Audit + Session Changes (updated 2026-09-30)
+# ZynForge Recording — Field-Test Checklist: Audit + Session Changes (updated 2026-10-01)
 
-Historical hardware cases below remain useful, but are not passed results for the installed `672456d` build or its [matching DMG](dist/Zynforge-Recording-672456d-macOS-universal.dmg). Start with [SHOW-READINESS.md](SHOW-READINESS.md) and the current capture-integrity delta in [FIELD-TEST.md](FIELD-TEST.md). Confirmed show plan: SD5, RME HDSPe AoX-D, 56 inputs, 48 kHz, about two hours; connection, Mac/chassis and storage are undecided. Never run crash/unplug/delete tests on production recordings.
+Historical hardware cases below remain useful, but are not passed results for the Mac mini's installed `d2c5858` build or its [matching DMG](dist/Zynforge-Recording-d2c5858-macOS-universal.dmg). Start with [SHOW-READINESS.md](SHOW-READINESS.md), the current long-run check and capture-integrity delta in [FIELD-TEST.md](FIELD-TEST.md). The development Mac remains on `672456d`. Confirmed show plan: SD5, RME HDSPe AoX-D, 56 inputs, 48 kHz, about two hours; connection, Mac/chassis and storage are undecided. Never run crash/unplug/delete tests on production recordings.
 
 Turnkey verification of the **hardware-gated audit items** and **everything changed since the 2026-05-24 build** (native stereo capture, console link, the compact/GRID mixer UI, prompt chrome, the design re-tone). Run on the real rig. The general first-launch/recording/takes flow lives in `FIELD-TEST.md` — this file is the delta.
 

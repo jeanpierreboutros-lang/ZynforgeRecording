@@ -1,8 +1,8 @@
 # Show readiness — planned SD5 recording
 
-## Decision as of 2026-09-30
+## Decision as of 2026-10-01
 
-The installed `/Applications/Zynforge Recording.app` and the [current two-Mac DMG](dist/Zynforge-Recording-672456d-macOS-universal.dmg) contain the same universal build from source commit `672456d` and its matching protocol-v3 helper. The source build passed 399 test groups with zero failures; the mounted DMG matched the installed app byte for byte and passed signature and checksum checks. The user reported a three-hour recording with stable capture but stopped EDIT scrolling on an earlier installation. The long-take navigation fix and later capture-integrity fixes still need a disposable real-device test on **each** target Mac. The latest build has not passed the planned 56-input, three-hour exact-rig rehearsal, so it is not approved as the sole recorder for this show. AppKit geometry faults remain an open follow-up. No software result certifies physical hardware, clock stability, disk endurance or uninterrupted show-length capture. See the [installation record](INSTALL.md), [test evidence](testing.md) and [field checklist](FIELD-TEST.md).
+The [current two-Mac DMG](dist/Zynforge-Recording-d2c5858-macOS-universal.dmg) contains universal source build `d2c5858` and its matching protocol-v3 helper. It passed 401 headless test groups with zero failures, package integrity and signature checks, and an idle launch after installation on the Mac mini. The development Mac still has the previous `672456d` build in Applications. A 55-channel, 10:42:37 take on that previous build passed primary-media checks, but the live EDIT waveform became blocky; the new build's five-hour live run is pending. The earlier three-hour scrolling problem also needs a real-device retest. The planned 56-input, three-hour exact-rig rehearsal and independent backup validation remain open, so this build is not approved as the sole recorder for that show. AppKit geometry faults remain an open follow-up. See the [field evidence](FIELD-TEST-2026-10-01.md), [installation record](INSTALL.md) and [field checklist](FIELD-TEST.md).
 
 ## Confirmed plan and open choices
 

@@ -1,10 +1,21 @@
-# ZynForge Recording — Field-Test Checklist (updated 2026-09-30)
+# ZynForge Recording — Field-Test Checklist (updated 2026-10-01)
 
-Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak. Tick boxes only after performing them; the failure column tells you when to stop and report. The installed app and [current DMG](dist/Zynforge-Recording-672456d-macOS-universal.dmg) contain source build `672456d`, whose headless suite passed 399 test groups. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run on this build.
+Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak. Tick boxes only after performing them; the failure column tells you when to stop and report. The Mac mini and [current DMG](dist/Zynforge-Recording-d2c5858-macOS-universal.dmg) contain source build `d2c5858`, whose headless suite passed 401 test groups; the development Mac's Applications copy is still `672456d`. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run on this build. See the [55-channel long-take evidence](FIELD-TEST-2026-10-01.md).
 
 Never force-quit, unplug hardware or delete sessions during production recording. Crash tests require a disposable rig/session and a recovery plan. In daemon mode, killing only the GUI is a reattachment test; it does not necessarily stop the recording or create an orphan. Stop both processes gracefully before installing or rolling back.
 
 **Severity legend:** 🟥 = data-loss class (stop, report immediately) · 🟧 = audio-path class (stop if reproducible) · 🟨 = UX / stage-readiness · ⬜ = cosmetic.
+
+---
+
+## Current long-run waveform check — `d2c5858`
+
+| # | Gesture | Expect | Failure indicator |
+|---|---|---|---|
+| ☐ L.1 | On the updated Mac mini, start a disposable multichannel take and keep FOLLOW enabled. Observe the live waveform at the recording edge after three hours and again near five hours, including after H+/H- and V+/V- changes. | Playhead continues to scroll and the recent waveform keeps visible detail; zoom controls respond. | Scrolling stalls, waveform becomes blocky near the edge, or controls cease to respond. |
+| ☐ L.2 | Stop normally, wait for final hashing, and retain the session. Compare the final file waveform with the last live view; inspect `session.report.json` and verify file lengths, hashes, missed samples and failure flags. | Final waveform duration and detail agree with the capture; no missing frames or capture errors. | Live/final mismatch beyond expected rendering differences, short file, unfinished hash or capture warning. |
+
+The user's five-hour Mac mini run began on 2026-10-01; record its actual observations and integrity results here after completion. Do not mark these rows passed before then.
 
 ---
 
@@ -177,9 +188,9 @@ crash-safety check on disposable data. A survivor without a clean-stop report wi
 
 ## September regression acceptance
 
-### 2026-09-30 final DMG and capture-integrity delta
+### 2026-09-30 capture-integrity delta (previous `672456d` package)
 
-- [ ] On each target Mac, verify the `672456d` DMG against its `.sha256` file, stop capture, preserve the old app, install both GUI and bundled helper, and record the installed bundle's source commit. Opening the DMG or passing the headless suite does not satisfy this row.
+- [ ] On each target Mac, verify the current `d2c5858` DMG against its `.sha256` file, stop capture, preserve the old app, install both GUI and bundled helper, and record the installed bundle's source commit. Completed for the Mac mini on 2026-10-01; the development Mac remains on `672456d`. Opening the DMG or passing the headless suite does not satisfy this row.
 - [ ] During a disposable daemon continuation, send START again while rolling. It must refuse without moving the live playhead, changing the take's base position, or clearing any already-latched capture warning. STOP must remain responsive while a companion/status client is slow or disconnected.
 - [ ] Finish a clean continuation after a take with a known capture warning. The final `session.report.json` must list and hash all earlier and new parts and retain the earlier warning. Run `verify_take.sh` on a clean continued session and on a deliberately gapped disposable copy; only the complete, warning-free copy should pass.
 - [ ] If using `tools/auto_stop.sh`, run it against a disposable live session with its companion token. Confirm it pins the intended session, performs the two-tap STOP, checks `recording:false`, and reports failure when the companion cannot confirm a stop. Never use an untested timer to stop show material.

@@ -2,13 +2,13 @@
 
 ## Philosophy and Goals
 
-**Latest build and installed app (2026-09-30):** Source commit `672456d` built as a universal Release app and passed **399 test groups with zero failures**. The installed app matches that tested bundle byte for byte, includes the matching `arm64`/`x86_64` capture helper, passes deep/strict ad-hoc signature verification, and launched successfully. These checks do not establish real-device capture, long waveform-follow behavior or show readiness on either target Mac.
+**Latest build and Mac mini installation (2026-10-01):** Source commit `d2c5858` built as a universal Release app and passed **401 test groups with zero failures**. New tests exercise ten-hour peak history, recent-detail retention and ring wrap. The Mac mini installation has matching GUI/helper hashes, passes deep/strict ad-hoc signature verification and launched idle. The development Mac still has `672456d` in Applications. The new build's live five-hour capture, waveform follow and physical-rig readiness are not yet established.
 
-The [current `672456d` DMG](dist/Zynforge-Recording-672456d-macOS-universal.dmg) passed `hdiutil verify`, SHA-256 verification and a read-only mount. Its app matched the installed bundle byte for byte, included the matching universal helper and Applications shortcut, and passed deep/strict signature verification. The older `8d79ab8` DMG is retained as a historical package. Neither Mac's physical capture rig has been acceptance-tested with the current DMG.
+The [current `d2c5858` DMG](dist/Zynforge-Recording-d2c5858-macOS-universal.dmg) passed `hdiutil verify`, SHA-256 verification and a read-only mount. Its app matched the staged build byte for byte, included the matching universal helper and Applications shortcut, and passed deep/strict signature verification. The Mac mini install's GUI/helper hashes also matched this package. Neither Mac's planned 56-input rig has been acceptance-tested with the current DMG.
 
 **2026-09-30 capture-integrity validation:** A repeated daemon START is refused without resetting a continued take's base or clearing an existing recovery warning. A continued session report lists base and later parts, accumulates frame/time counters and retains earlier capture-failure flags. Handoff flags a failed punch or hash pass for review. Disposable verifier fixtures pass complete WAV/AIFF/FLAC and continued takes, while failed capture flags, a short file, a missing middle part and a rolled-back punch fail. A mocked unattended-stop run confirms the companion's two-tap STOP and a nonzero result when it is unreachable. These are source and fixture tests; slow-client behavior, real disk failure and the actual device path still need field checks. The [fix record](AUDIT_FIXES_2026-09-30.md) maps each failure to its change.
 
-The current harness covers **399 test groups**, including legacy-session recovery. Historical paragraphs below retain the counts that were accurate for their dated audit passes.
+The current harness covers **401 test groups**, including legacy-session recovery and long-take live peak retention. Historical paragraphs below retain the counts that were accurate for their dated audit passes.
 
 ### Earlier validation snapshots
 
