@@ -20,7 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ### Fixed — long-take live waveform detail, 2026-10-01
 
 - The live EDIT waveform retains original 256-sample peaks for the most recent portion of a rolling take while retaining a bounded whole-take overview. Pixel queries use absolute recorder-bin ranges, so a long recording no longer forces the visible recording edge to draw from heavily reduced peaks.
-- A prior 55-channel, 10:42:37 Mac mini take passed primary-file and report checks but showed a blocky live preview that regained detail after STOP. The new build passed 401 headless test groups and was installed on the Mac mini; a live long-run retest is pending. See the [field evidence](FIELD-TEST-2026-10-01.md).
+- A prior 55-channel, 10:42:37 Mac mini take passed primary-file and report checks but showed a blocky live preview that regained detail after STOP. The new build passed 401 headless test groups and was installed on the Mac mini. Its first five-hour run was interrupted by a recurring Mac mini kernel panic after about 2:43; no Zynforge defect was identified, and a completed live retest remains open. See the [field evidence](FIELD-TEST-2026-10-01.md).
 - Packaged the verified universal [`d2c5858` two-Mac DMG](dist/Zynforge-Recording-d2c5858-macOS-universal.dmg) with a matching checksum file and capture helper.
 
 ### Fixed — capture continuation and finalization, 2026-09-30

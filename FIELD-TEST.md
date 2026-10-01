@@ -15,7 +15,7 @@ Never force-quit, unplug hardware or delete sessions during production recording
 | ☐ L.1 | On the updated Mac mini, start a disposable multichannel take and keep FOLLOW enabled. Observe the live waveform at the recording edge after three hours and again near five hours, including after H+/H- and V+/V- changes. | Playhead continues to scroll and the recent waveform keeps visible detail; zoom controls respond. | Scrolling stalls, waveform becomes blocky near the edge, or controls cease to respond. |
 | ☐ L.2 | Stop normally, wait for final hashing, and retain the session. Compare the final file waveform with the last live view; inspect `session.report.json` and verify file lengths, hashes, missed samples and failure flags. | Final waveform duration and detail agree with the capture; no missing frames or capture errors. | Live/final mismatch beyond expected rendering differences, short file, unfinished hash or capture warning. |
 
-The user's first five-hour Mac mini run on `d2c5858` was interrupted around 2:43 by a recurring macOS PCIe `lan-1gb` kernel panic. The 55 WAV headers open, but the take has no clean-stop report. Neither row passed; see [the evidence](FIELD-TEST-2026-10-01.md). Repeat only after the restart fault is isolated and independent recording is available.
+The user's first five-hour Mac mini run on `d2c5858` was interrupted around 2:43 by a recurring macOS PCIe `lan-1gb` kernel panic. The 55 WAV headers open, but the take has no clean-stop report. Neither row passed; see [the evidence](FIELD-TEST-2026-10-01.md). The user is handling the Mac mini issue separately and requested no app or routing changes for this incident. Defer these rows until the host is stable and the user resumes testing.
 
 ---
 

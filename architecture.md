@@ -8,7 +8,7 @@ It is **not** a mixer or DAW. No plugins, no effects, no talkback. Architectural
 
 ## 2. Technology Stack
 
-Validation baseline: source commit `d2c5858` passed a universal Release build and 401 headless test groups with zero failures. The [current DMG](dist/Zynforge-Recording-d2c5858-macOS-universal.dmg) contains the matching app and helper; its checksum, read-only mount, architectures and signature verified. The Mac mini install matches this package; the development Mac still has `672456d`. A new-build five-hour Mac mini run was interrupted at about 2:43 by a recurring PCIe kernel panic, so physical-rig acceptance and the live waveform result remain open. See [testing.md](testing.md), [INSTALL.md](INSTALL.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
+Validation baseline: source commit `d2c5858` passed a universal Release build and 401 headless test groups with zero failures. The [current DMG](dist/Zynforge-Recording-d2c5858-macOS-universal.dmg) contains the matching app and helper; its checksum, read-only mount, architectures and signature verified. The Mac mini install matches this package; the development Mac still has `672456d`. A new-build five-hour Mac mini run was interrupted at about 2:43 by a recurring host PCIe kernel panic; no Zynforge defect was identified. Physical-rig acceptance and the live waveform result remain open. See [testing.md](testing.md), [INSTALL.md](INSTALL.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
 
 | Component | Version / Notes |
 |---|---|
