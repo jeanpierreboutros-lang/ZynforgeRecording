@@ -4146,7 +4146,7 @@ namespace zynforge
                                      float vz)
         {
             const int w = area.getWidth();
-            const int n = (int) peaks.size();
+            const juce::int64 n = peaks.binCount();
             if (w <= 0 || n <= 0) return;
             const auto visible = area.getIntersection (g.getClipBounds());
             if (visible.isEmpty()) return;
@@ -4155,13 +4155,12 @@ namespace zynforge
             for (int drawX = visible.getX(); drawX < visible.getRight(); ++drawX)
             {
                 const int x = drawX - area.getX();
-                // Map this column to a span of the history and take the
-                // loudest peak in it (so the envelope never thins out when
-                // there are more samples than pixels).
-                const int a = (int) ((juce::int64) x       * n / w);
-                const int b = juce::jmax (a + 1, (int) ((juce::int64) (x + 1) * n / w));
-                float pk = 0.0f;
-                for (int i = a; i < b && i < n; ++i) pk = juce::jmax (pk, peaks.at ((size_t) i));
+                // Map by actual recorder bins, not the shrinking overview's
+                // point count. This lets the recent fine-detail ring draw the
+                // live edge sharply even after hours of overview compaction.
+                const auto a = (juce::int64) x * n / w;
+                const auto b = juce::jmax (a + 1, (juce::int64) (x + 1) * n / w);
+                const float pk = peaks.maxPeakInBinRange (a, b);
                 const float h = juce::jlimit (0.0f, halfH, pk * vz * halfH);
                 if (h <= 0.0f) continue;
                 g.drawVerticalLine (drawX, midY - h, midY + h);
@@ -4205,12 +4204,9 @@ namespace zynforge
         LedMeter                  meter;
 
         int                       playheadX             { -1 };
-        // Live capture envelope -- one peak per UI tick while THIS track
-        // records, so the lane draws a growing red waveform during the
-        // take instead of staying blank until stop. Fed from the live
-        // input meter (TrackState::peak), never the disk file, so it
-        // costs nothing against capture integrity. recPeakR carries the
-        // R partner on a stereo pair.
+        // Live capture envelope fed by recorder peak bins on the UI thread.
+        // It keeps a whole-take overview plus a fine recent window without
+        // reading growing audio files. recPeakR carries a stereo partner.
         LivePeakHistory           recPeakL { TrackState::kLiveBinSamples };
         LivePeakHistory           recPeakR { TrackState::kLiveBinSamples };
         bool                      liveRecording         { false };
