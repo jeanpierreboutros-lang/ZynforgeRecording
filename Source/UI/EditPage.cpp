@@ -841,6 +841,13 @@ namespace zynforge
             recordingBaseSpanSamples = recordingTimelineSpanSamples (
                 0, player.getTotalLengthSamples(), liveRate);
             waveCacheSaved = false; // this take will change the cached media
+            // A deep post-STOP zoom would be multiplied by the growing live
+            // timeline width. Return to the capture-safe range for this pass.
+            if (zoom > kMaxRecordingTimelineZoom)
+            {
+                zoom = kMaxRecordingTimelineZoom;
+                if (onZoomChanged) onZoomChanged (zoom);
+            }
         }
         setReadOnlyWhileRecording (rec);
         const bool transportActive = rec || engine.getPlayer().isPlaying();
@@ -1125,15 +1132,18 @@ namespace zynforge
         if (total <= 0 || b <= a) return;
         pauseFollowForZoom();
         // Zoom so the selection ~fills the viewport (a little headroom), then
-        // centre on it. setZoom clamps to [1, 16].
+        // centre on it. setZoom applies the finalized/live limits.
         const double frac = (double) (b - a) / (double) total;
-        if (frac > 0.0) setZoom ((float) juce::jlimit (1.0, 16.0, 0.9 / frac));
+        if (frac > 0.0) setZoom ((float) juce::jlimit (1.0, (double) kMaxTimelineZoom, 0.9 / frac));
         scrollToSample ((a + b) / 2);
     }
 
     void EditPage::setZoom (float z)
     {
-        z = juce::jlimit (1.0f, 16.0f, z);
+        z = juce::jlimit (1.0f,
+                          engine.isRecording() ? kMaxRecordingTimelineZoom
+                                               : kMaxTimelineZoom,
+                          z);
         // A deadband here can strand the view just above 1x, leaving the
         // minimap visible even after another H- click. Exact equality only
         // rejects a clamped no-op at the zoom limits.

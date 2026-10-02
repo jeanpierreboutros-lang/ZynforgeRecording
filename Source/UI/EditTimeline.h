@@ -7,6 +7,7 @@
 // hardcoded 48 kHz in the tempo lane on top of that.
 
 #include <juce_core/juce_core.h>
+#include <cmath>
 #include <limits>
 #include <vector>
 
@@ -24,6 +25,11 @@ namespace zynforge
     // audio yet -- 5 notional minutes, so the engineer can place the edit
     // cursor, markers, tempo and automation before the first take.
     inline constexpr double kNotionalEmptyLaneSec = 300.0;
+    inline constexpr float kMaxTimelineZoom = 512.0f;
+    // A live take is mapped against its initial span and grows wider for
+    // FOLLOW. Keep that growing component bounded during capture; finalized
+    // sessions can use the full zoom range without the growth multiplier.
+    inline constexpr float kMaxRecordingTimelineZoom = 16.0f;
 
     inline juce::int64 notionalEmptyLaneSamples (double sampleRate) noexcept
     {
@@ -56,7 +62,29 @@ namespace zynforge
     inline float steppedTimelineZoom (float current, bool zoomIn) noexcept
     {
         constexpr float step = 1.41f;
-        return juce::jlimit (1.0f, 16.0f, zoomIn ? current * step : current / step);
+        return juce::jlimit (1.0f, kMaxTimelineZoom,
+                             zoomIn ? current * step : current / step);
+    }
+
+    struct TimelineTickRange
+    {
+        juce::int64 first { 1 }, last { 0 }; // empty by default
+    };
+
+    // A deep zoom can put millions of grid ticks outside the viewport. Bound
+    // drawing work to the visible time range while retaining one edge tick.
+    inline TimelineTickRange visibleTimelineTicks (double step, double totalSec,
+                                                    double visibleStartSec,
+                                                    double visibleEndSec) noexcept
+    {
+        if (step <= 0.0 || totalSec <= 0.0 || visibleEndSec < visibleStartSec)
+            return {};
+        const auto first = (juce::int64) juce::jmax (1.0,
+            std::floor (juce::jmax (0.0, visibleStartSec) / step) - 1.0);
+        const auto last = (juce::int64) juce::jmin (
+            std::ceil (totalSec / step) - 1.0,
+            std::ceil (juce::jmax (0.0, visibleEndSec) / step) + 1.0);
+        return { first, last };
     }
 
     // Auto-follow must yield to an engineer browsing a rolling take. Keep this

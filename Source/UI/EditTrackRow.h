@@ -27,8 +27,8 @@
 namespace zynforge
 {
     // Waveform thumbnail resolution: samples averaged per drawn min/max
-    // point. Lower = finer detail (and a bigger cache). 256 stays crisp
-    // even at 16x horizontal zoom (~3 points/px on a 6-min take). The
+    // point. Lower = finer detail (and a bigger cache). 128 stays crisp
+    // when a finalized take is zoomed in well past its overview scale. The
     // WaveCache.wfm on disk bakes thumbnails AT this resolution, so any
     // change here must invalidate older caches -- hence kWaveCacheVersion,
     // which is written as a header and re-checked on load. Bump the version
@@ -599,7 +599,7 @@ namespace zynforge
                 || (t1 - t0) / area.getWidth() < 0.05)
                 return false;
 
-            // At 16x zoom the lane can be tens of thousands of pixels wide.
+            // At deep zoom the lane can be millions of pixels wide.
             // Build only the portion in the viewport, then reuse it for normal
             // repaints; scanning the entire lane would stall the message thread.
             const auto visible = area.getIntersection (g.getClipBounds());
@@ -891,15 +891,23 @@ namespace zynforge
                     if (minorSec * pxPerSec < 6.0) minorSec = majorSec;
                     const auto secToX = [&] (double s)
                     { return inner.getX() + (int) (s / totalSec * inner.getWidth()); };
-                    // Minor ticks (very faint), then majors (a touch stronger).
-                    g.setColour (brand::edge.withAlpha (zynforge::brand::alpha::ghost));
-                    for (int i = 1; i * minorSec < totalSec; ++i)
-                        g.drawVerticalLine (secToX (i * minorSec),
-                                            (float) inner.getY(), (float) inner.getBottom());
-                    g.setColour (brand::lift (brand::edge, 0.18f).withAlpha (zynforge::brand::alpha::muted));
-                    for (int i = 1; i * majorSec < totalSec; ++i)
-                        g.drawVerticalLine (secToX (i * majorSec),
-                                            (float) inner.getY(), (float) inner.getBottom());
+                    const auto visible = inner.getIntersection (g.getClipBounds());
+                    if (! visible.isEmpty())
+                    {
+                        const double firstSec = (visible.getX() - inner.getX()) / pxPerSec;
+                        const double lastSec = (visible.getRight() - inner.getX()) / pxPerSec;
+                        const auto minor = visibleTimelineTicks (minorSec, totalSec, firstSec, lastSec);
+                        const auto major = visibleTimelineTicks (majorSec, totalSec, firstSec, lastSec);
+                        // Minor ticks (very faint), then majors (a touch stronger).
+                        g.setColour (brand::edge.withAlpha (zynforge::brand::alpha::ghost));
+                        for (juce::int64 i = minor.first; i <= minor.last; ++i)
+                            g.drawVerticalLine (secToX (i * minorSec),
+                                                (float) inner.getY(), (float) inner.getBottom());
+                        g.setColour (brand::lift (brand::edge, 0.18f).withAlpha (zynforge::brand::alpha::muted));
+                        for (juce::int64 i = major.first; i <= major.last; ++i)
+                            g.drawVerticalLine (secToX (i * majorSec),
+                                                (float) inner.getY(), (float) inner.getBottom());
+                    }
                 }
             }
 
@@ -1050,7 +1058,8 @@ namespace zynforge
                             : (engine.getDeviceManager().getCurrentAudioDevice() != nullptr
                                ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
                                : 48000.0);
-                        if (totalSamples > 0 && bpm > 0.0f && sr > 0.0)
+                        if (totalSamples > 0 && bpm > 0.0f && sr > 0.0
+                            && inner.getWidth() > 0)
                         {
                             const double samplesPerBeat = 60.0 * sr / bpm;
                             const double pxPerBeat = samplesPerBeat
@@ -1064,15 +1073,25 @@ namespace zynforge
                             while (pxPerBeat * stride < 6.0 && stride < 4096)
                                 stride *= 4;
 
-                            int beat = 0;
-                            for (double s = 0.0; s < (double) totalSamples;
-                                 s += samplesPerBeat * stride, beat += stride)
+                            const auto visible = inner.getIntersection (g.getClipBounds());
+                            const double samplesPerTick = samplesPerBeat * stride;
+                            const double samplesPerPixel = (double) totalSamples / inner.getWidth();
+                            const auto firstTick = (juce::int64) juce::jmax (0.0,
+                                std::floor ((visible.getX() - inner.getX()) * samplesPerPixel
+                                            / samplesPerTick) - 1.0);
+                            const auto lastTick = (juce::int64) juce::jmin (
+                                std::ceil ((double) totalSamples / samplesPerTick) - 1.0,
+                                std::ceil ((visible.getRight() - inner.getX()) * samplesPerPixel
+                                           / samplesPerTick) + 1.0);
+                            for (juce::int64 tick = firstTick;
+                                 ! visible.isEmpty() && tick <= lastTick; ++tick)
                             {
+                                const double s = tick * samplesPerTick;
                                 const double prop = s / (double) totalSamples;
                                 const int x = inner.getX()
                                             + (int) (prop * inner.getWidth());
                                 const int beatsPerBar = juce::jmax (1, engine.getTimeSignatureNumerator());
-                                const bool downbeat = (beat % beatsPerBar) == 0;
+                                const bool downbeat = (tick * stride % beatsPerBar) == 0;
                                 g.setColour (downbeat ? brand::brandOrange
                                                        : brand::accentStatus.withAlpha (zynforge::brand::alpha::muted));
                                 g.drawVerticalLine (x,

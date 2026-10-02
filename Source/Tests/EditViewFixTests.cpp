@@ -76,6 +76,22 @@ namespace zynforge
                 expect (in > 1.0f);
                 expectEquals (steppedTimelineZoom (in, false), 1.0f);
                 expectEquals (steppedTimelineZoom (1.0f, false), 1.0f);
+                expect (steppedTimelineZoom (16.0f, true) > 16.0f,
+                        "a long finalized take must zoom beyond the old 16x ceiling");
+                expectEquals (steppedTimelineZoom (kMaxTimelineZoom, true),
+                              kMaxTimelineZoom);
+            }
+
+            beginTest ("Deep zoom draws only grid ticks near the viewport");
+            {
+                const auto ticks = visibleTimelineTicks (0.2, 10.0 * 3600.0,
+                                                         5.0 * 3600.0,
+                                                         5.0 * 3600.0 + 30.0);
+                expect (ticks.first > 0);
+                expect (ticks.last - ticks.first < 160,
+                        "a 30-second view must not iterate the whole 10-hour grid");
+                const auto empty = visibleTimelineTicks (0.0, 3600.0, 0.0, 30.0);
+                expect (empty.first > empty.last);
             }
 
             beginTest ("Manual timeline navigation yields to a rolling take, but vertical scroll does not");
