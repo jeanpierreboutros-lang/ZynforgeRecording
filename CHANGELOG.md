@@ -20,7 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ### Fixed — long-take H+ zoom ceiling, 2026-10-02
 
 - Finalized EDIT sessions can now zoom to 512× instead of stopping at 16×. A five-hour take can reach a seconds-wide view, allowing the native detailed thumbnail to replace the overview. Live recording stays capped at 16× because its growing timeline multiplies component width.
-- Timeline and tempo grid drawing now starts and stops around the visible viewport, avoiding a full-take tick walk on every repaint at deep zoom. A regression test covers zoom past the old cap and bounded tick work. The local universal build passed 404 test groups; Mac mini retest is pending.
+- Timeline and tempo grid drawing now starts and stops around the visible viewport, avoiding a full-take tick walk on every repaint at deep zoom. A regression test covers zoom past the old cap and bounded tick work. The local universal build passed 404 test groups. The verified [`5026519` DMG](dist/Zynforge-Recording-5026519-macOS-universal.dmg) was copied to the Mac mini; installation waits for the open app to quit normally.
 
 ### Fixed — long-take waveform overview and cache, 2026-10-02
 

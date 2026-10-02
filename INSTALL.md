@@ -8,7 +8,13 @@ This procedure installs a locally built macOS app; it does not create a notarize
 2. Build and run the tests described in [testing.md](testing.md). Check the fresh report and process exit status, not an old pass count.
 3. Preserve the existing installed app at a unique backup path. Do not overwrite an earlier backup.
 
-## Current two-Mac waveform test DMG — 2026-10-02
+## Current two-Mac deep-zoom test DMG — 2026-10-02
+
+[`dist/Zynforge-Recording-5026519-macOS-universal.dmg`](dist/Zynforge-Recording-5026519-macOS-universal.dmg) packages the universal Release app from source commit `5026519` with its matching protocol-v3 capture helper. SHA-256: `9c7401e4c91628cb94b0e9b7eb6c306f022f3dba380d40129df0e023cb1b19db`; use the matching [checksum file](dist/Zynforge-Recording-5026519-macOS-universal.dmg.sha256). The build passed 404 headless test groups. Its checksum, `hdiutil verify`, read-only mount comparison, both-architecture checks and deep/strict ad-hoc signature verification passed. It adds deep H+ zoom on finalized takes and bounds timeline tick drawing to the viewport. This test DMG is not notarized.
+
+The DMG and checksum were copied to the Mac mini and verified there. The prior app is still open: macOS reported that a graceful quit request was canceled, so the replacement was paused to preserve the user's work. The installed Mac mini app remains `98a645e` until it closes normally. The new build's GUI and helper SHA-256 values are `453df24d5337f54720df06e0052458ab4764288d7cc290724ffc6684172c2be7` and `77cd3fbde0f87ecabaa355f3b912eace80a516142ae98efb308f65a0a18d2fc8`.
+
+## Previous two-Mac waveform test DMG — 2026-10-02
 
 [`dist/Zynforge-Recording-98a645e-macOS-universal.dmg`](dist/Zynforge-Recording-98a645e-macOS-universal.dmg) packages the tested universal Release app from source commit `98a645e` with its matching protocol-v3 capture helper, Applications shortcut and brief install note. SHA-256: `4f1f4574ef6ceab884dbd8262da1f5848337e83084ad7535439e04c7e243a215`; use the matching [checksum file](dist/Zynforge-Recording-98a645e-macOS-universal.dmg.sha256). The build passed 403 headless test groups with zero failures. `hdiutil verify`, read-only mount comparison, both-architecture checks and deep/strict ad-hoc signature verification passed. This is a test build for macOS 12.0+ on Apple Silicon and Intel; it is not notarized.
 
