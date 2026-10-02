@@ -1,13 +1,14 @@
 # Project Tasks
 
-## Current Priorities — 2026-10-01
+## Current Priorities — 2026-10-02
 
 - [x] Diagnose the blocky live waveform reported during a 55-channel, 10:42:37 Mac mini take. Verify all 55 primary RF64 files' frame counts and SHA-256 values against the final report; document the limits of that evidence in [FIELD-TEST-2026-10-01.md](FIELD-TEST-2026-10-01.md).
 - [x] Keep recent original-resolution peaks during long live takes, add ten-hour/ring-wrap regression coverage, build universal Release and pass 401 headless test groups with zero failures. Source commit `d2c5858`.
 - [x] Package and verify the universal `d2c5858` DMG and checksum; install the matching app and helper on the Mac mini with a rollback copy and idle launch check. The development Mac retains `672456d`.
 - [x] Inspect the interrupted `TEST 5 HOURS NEW` take read-only: 55 equal-sized WAV files, all headers readable, about 2:42:51 per file; no clean-stop report. Preserve the originals. Three Mac mini kernel panic reports show the same Apple PCIe `lan-1gb` completion timeout.
+- [x] Complete a separate 55-channel, five-hour Mac mini take on installed `d2c5858`: `TEST NEWWWWWW` stopped normally at 5:00:11 on 2026-10-02, with no user-observed restart. The unattended helper pinned the session, completed two-tap STOP and confirmed `recording:false`; the report has zero missed samples and no capture/write failures. `afinfo` opened all 55 WAVs at the report's exact frame count; no independent re-hash or backup check was done.
 - [ ] Mac mini host issue: preserve the interrupted session and panic reports. The user is handling the Mac mini restart separately and requested no Zynforge or audio-routing changes for this incident. The interrupted take used DVS input and Samsung monitor output; these are configuration facts, not a diagnosed cause.
-- [ ] When the Mac mini is stable and the user resumes testing, complete the updated build's five-hour live FOLLOW/zoom/waveform observation and inspect a normally finalized take's report, file lengths and hashes. The interrupted run cannot satisfy this check.
+- [ ] During a timed long live take on the updated build, observe FOLLOW scrolling, H/V zoom controls and waveform detail after three hours and near five hours. The completed take has a normal report and equal file lengths, but the user's general positive visual report does not document these exact gestures or an independent SHA-256 match. Run the full verifier once `ffprobe` is available, or independently re-hash the preserved take. The interrupted run cannot satisfy this UI check.
 - [ ] Run the planned 56-input, three-hour exact-rig rehearsal with backup and independent recorder checks before relying on this build as the sole show recorder.
 
 - [x] Fix the latest capture audit: repeated daemon START, STOP lock contention, cumulative continuation reports and warnings, asynchronous hash/write failure visibility, handoff punch warnings, take verification, unattended STOP, and minimum window size. Source commit `672456d`; universal Release build and 399 headless test groups passed with zero failures.

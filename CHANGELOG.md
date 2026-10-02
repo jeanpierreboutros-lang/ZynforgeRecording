@@ -21,10 +21,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 - The unattended STOP helper now recognizes the companion's copied `localhost` URL and the read-only confidence URL as well as `127.0.0.1`, so it can authenticate before watching a pinned take.
 
+### Validation — five-hour Mac mini take, 2026-10-02
+
+- A separate 55-channel take on the installed `d2c5858` build stopped normally after 5:00:11 using the authenticated unattended STOP helper. All 55 primary WAVs open at the final report's exact frame count; the report records zero missed samples, no capture/write failure and completed hashes. The user reported no Mac mini restart. Independent file re-hashing, a timed live waveform/FOLLOW/zoom observation, backup validation and the exact 56-input rehearsal remain open. See [field evidence](FIELD-TEST-2026-10-01.md).
+
 ### Fixed — long-take live waveform detail, 2026-10-01
 
 - The live EDIT waveform retains original 256-sample peaks for the most recent portion of a rolling take while retaining a bounded whole-take overview. Pixel queries use absolute recorder-bin ranges, so a long recording no longer forces the visible recording edge to draw from heavily reduced peaks.
-- A prior 55-channel, 10:42:37 Mac mini take passed primary-file and report checks but showed a blocky live preview that regained detail after STOP. The new build passed 401 headless test groups and was installed on the Mac mini. Its first five-hour run was interrupted by a recurring Mac mini kernel panic after about 2:43; no Zynforge defect was identified, and a completed live retest remains open. See the [field evidence](FIELD-TEST-2026-10-01.md).
+- A prior 55-channel, 10:42:37 Mac mini take passed primary-file and report checks but showed a blocky live preview that regained detail after STOP. The new build passed 401 headless test groups and was installed on the Mac mini. Its first five-hour run was interrupted by a recurring Mac mini kernel panic after about 2:43; no Zynforge defect was identified. A separate five-hour take later finalized cleanly, while detailed live UI acceptance remains open. See the [field evidence](FIELD-TEST-2026-10-01.md).
 - Packaged the verified universal [`d2c5858` two-Mac DMG](dist/Zynforge-Recording-d2c5858-macOS-universal.dmg) with a matching checksum file and capture helper.
 
 ### Fixed — capture continuation and finalization, 2026-09-30
