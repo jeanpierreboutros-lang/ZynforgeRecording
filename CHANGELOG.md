@@ -20,7 +20,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ### Fixed — long-take waveform overview and cache, 2026-10-02
 
 - At multi-hour zoom, EDIT draws a smoother sustained-level body from short peak windows while keeping actual transient maxima as thin markers. The five-hour Mac mini screenshot showed solid blocks after STOP in the same open app; sampled WAV audio had no full-scale samples. The display change does not modify audio.
-- A cache older than its `Track_*` media is discarded on load. Starting a new take marks the old cache dirty, and STOP refreshes thumbnails before a complete scan can be saved as the final cache. Local source validation passed 403 test groups; physical visual acceptance of this change remains open.
+- A cache older than its `Track_*` media is discarded on load. Starting a new take marks the old cache dirty, and STOP refreshes thumbnails before a complete scan can be saved as the final cache. Source commit `98a645e` passed 403 test groups; its verified universal DMG was installed on the Mac mini with a rollback copy. Physical visual acceptance of this change remains open.
 
 ### Fixed — unattended stop token capture, 2026-10-02
 

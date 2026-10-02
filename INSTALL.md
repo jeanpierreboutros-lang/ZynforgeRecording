@@ -8,7 +8,13 @@ This procedure installs a locally built macOS app; it does not create a notarize
 2. Build and run the tests described in [testing.md](testing.md). Check the fresh report and process exit status, not an old pass count.
 3. Preserve the existing installed app at a unique backup path. Do not overwrite an earlier backup.
 
-## Current two-Mac test DMG — 2026-10-01
+## Current two-Mac waveform test DMG — 2026-10-02
+
+[`dist/Zynforge-Recording-98a645e-macOS-universal.dmg`](dist/Zynforge-Recording-98a645e-macOS-universal.dmg) packages the tested universal Release app from source commit `98a645e` with its matching protocol-v3 capture helper, Applications shortcut and brief install note. SHA-256: `4f1f4574ef6ceab884dbd8262da1f5848337e83084ad7535439e04c7e243a215`; use the matching [checksum file](dist/Zynforge-Recording-98a645e-macOS-universal.dmg.sha256). The build passed 403 headless test groups with zero failures. `hdiutil verify`, read-only mount comparison, both-architecture checks and deep/strict ad-hoc signature verification passed. This is a test build for macOS 12.0+ on Apple Silicon and Intel; it is not notarized.
+
+The Mac mini received this exact app and helper on 2026-10-02 after a check found no active recording marker or recorder process. The previous `d2c5858` app remains at `/Applications/Zynforge Recording.app.backup-20261002-before-98a645e`. The installed GUI and helper SHA-256 values are `4ebb85016cbc3d0f7364b5ac7312eb86fa429c6ef939d0324ff6a8fa7ee0631f` and `77cd3fbde0f87ecabaa355f3b912eace80a516142ae98efb308f65a0a18d2fc8`, matching the package. Initial launch produced no crash report; the five-hour waveform still needs visual acceptance after reopening. The development Mac's Applications copy remains `672456d`. Stop and save every take, quit both processes and preserve the existing app before installing this DMG on another Mac.
+
+## Previous two-Mac test DMG — 2026-10-01
 
 [`dist/Zynforge-Recording-d2c5858-macOS-universal.dmg`](dist/Zynforge-Recording-d2c5858-macOS-universal.dmg) packages the universal Release app from source commit `d2c5858`, including its matching protocol-v3 capture helper and an Applications shortcut. SHA-256: `14a9c986a3075f0ff77888b0f08576fc67569fd3fc9c163ef74afdfa7b4d19eb`; verify with the matching [checksum file](dist/Zynforge-Recording-d2c5858-macOS-universal.dmg.sha256) using `shasum -a 256 -c Zynforge-Recording-d2c5858-macOS-universal.dmg.sha256` from the files' directory. It supports macOS 12.0+ on Apple Silicon and Intel. The image passed `hdiutil verify`; its read-only mount contained an exact copy of the staged app, and the app's deep/strict ad-hoc signature verified. It is not Developer ID signed or notarized.
 
@@ -30,7 +36,7 @@ Copy the DMG and `.sha256` file to each Mac. From their directory, run `shasum -
 
 The image checksum and read-only mount verified; the mounted app matched the tested installation byte for byte. Its GUI and helper are `arm64` + `x86_64`, and its deep/strict ad-hoc signature verified. The package is not Developer ID signed or notarized. If macOS blocks it, use Finder's Control-click > Open or System Settings > Privacy & Security > Open Anyway for this app; do not disable system-wide security settings.
 
-## Current Mac mini installation — verified through 2026-10-02
+## Previous Mac mini installation — verified through 2026-10-02
 
 After the prior ten-hour take was finalized and the user authorized replacement, the Mac mini received the `d2c5858` app. The old installation is preserved at `/Applications/Zynforge Recording.app.backup-20261001-before-d2c5858`. The installed app passed deep/strict signature verification, its GUI and helper SHA-256 values match the verified package (`429004fbaa3b2860e17bc78036533d642d42c6a47d5b3785fea64b9fdaeddef2` and `77cd3fbde0f87ecabaa355f3b912eace80a516142ae98efb308f65a0a18d2fc8`), and it launched idle. The first five-hour live run was interrupted by a recurring Mac mini kernel panic; a repeat run on 2026-10-02 cleanly stopped after 5:00:11 with 55 matching primary WAV frame counts. The detailed waveform change remains to be observed during a long live take. The development Mac's `/Applications/Zynforge Recording.app` remains the previous `672456d` installation.
 
