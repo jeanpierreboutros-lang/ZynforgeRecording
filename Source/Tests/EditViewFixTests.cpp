@@ -11,6 +11,8 @@
 
 #include "../Audio/AudioEngine.h"
 #include "../UI/EditTimeline.h"
+#include "../UI/WaveCacheFreshness.h"
+#include "../UI/WaveformOverview.h"
 
 namespace zynforge
 {
@@ -30,6 +32,44 @@ namespace zynforge
 
         void runTest() override
         {
+            beginTest ("Zoomed-out waveform keeps an isolated transient without making it a solid block");
+            {
+                const auto overview = buildWaveformOverview (4, 0.0, 4.0,
+                    [] (double a, double)
+                    { return a < 1.0 / 16.0 ? 0.95f : 0.20f; });
+                expectEquals ((int) overview.body.size(), 4);
+                expectWithinAbsoluteError (overview.body[0], 0.20f, 0.001f);
+                expectWithinAbsoluteError (overview.peaks[0], 0.95f, 0.001f);
+                expectWithinAbsoluteError (overview.body[1], 0.20f, 0.001f);
+
+                const auto sustained = buildWaveformOverview (2, 0.0, 2.0,
+                    [] (double, double) { return 0.70f; });
+                expectWithinAbsoluteError (sustained.body[0], 0.70f, 0.001f);
+                expectWithinAbsoluteError (sustained.peaks[0], 0.70f, 0.001f);
+            }
+
+            beginTest ("A finalized take invalidates a waveform cache saved before its audio");
+            {
+                const auto session = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                    .getNonexistentChildFile ("zynforge-wave-cache-test", "", true);
+                expect (session.createDirectory().wasOk());
+                const auto audioDir = session.getChildFile ("Audio Files");
+                expect (audioDir.createDirectory().wasOk());
+                const auto cache = session.getChildFile ("WaveCache.wfm");
+                const auto take = audioDir.getChildFile ("Track_01.wav");
+                expect (cache.replaceWithText ("old thumbnail"));
+                expect (take.replaceWithText ("new take"));
+
+                const auto now = juce::Time::getCurrentTime().toMilliseconds();
+                expect (cache.setLastModificationTime (juce::Time (now - 60000)));
+                expect (take.setLastModificationTime (juce::Time (now)));
+                expect (waveCachePredatesAudio (cache, session));
+
+                expect (cache.setLastModificationTime (juce::Time (now + 60000)));
+                expect (! waveCachePredatesAudio (cache, session));
+                session.deleteRecursively();
+            }
+
             beginTest ("Horizontal zoom steps return exactly to fit-to-take");
             {
                 const float in = steppedTimelineZoom (1.0f, true);

@@ -17,13 +17,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed — long-take waveform overview and cache, 2026-10-02
+
+- At multi-hour zoom, EDIT draws a smoother sustained-level body from short peak windows while keeping actual transient maxima as thin markers. The five-hour Mac mini screenshot showed solid blocks after STOP in the same open app; sampled WAV audio had no full-scale samples. The display change does not modify audio.
+- A cache older than its `Track_*` media is discarded on load. Starting a new take marks the old cache dirty, and STOP refreshes thumbnails before a complete scan can be saved as the final cache. Local source validation passed 403 test groups; physical visual acceptance of this change remains open.
+
 ### Fixed — unattended stop token capture, 2026-10-02
 
 - The unattended STOP helper now recognizes the companion's copied `localhost` URL and the read-only confidence URL as well as `127.0.0.1`, so it can authenticate before watching a pinned take.
 
 ### Validation — five-hour Mac mini take, 2026-10-02
 
-- A separate 55-channel take on the installed `d2c5858` build stopped normally after 5:00:11 using the authenticated unattended STOP helper. All 55 primary WAVs open at the final report's exact frame count; the report records zero missed samples, no capture/write failure and completed hashes. The user reported no Mac mini restart. Independent file re-hashing, a timed live waveform/FOLLOW/zoom observation, backup validation and the exact 56-input rehearsal remain open. See [field evidence](FIELD-TEST-2026-10-01.md).
+- A separate 55-channel take on the installed `d2c5858` build stopped normally after 5:00:11 using the authenticated unattended STOP helper. All 55 primary WAVs open at the final report's exact frame count; the report records zero missed samples, no capture/write failure and completed hashes. The user reported no Mac mini restart, but a later screenshot confirmed that its post-STOP waveform was blocky. Independent file re-hashing, timed live FOLLOW/zoom observation, backup validation and the exact 56-input rehearsal remain open. See [field evidence](FIELD-TEST-2026-10-01.md).
 
 ### Fixed — long-take live waveform detail, 2026-10-01
 

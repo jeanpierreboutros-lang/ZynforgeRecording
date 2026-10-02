@@ -9,6 +9,7 @@
 #include "StripColourPicker.h"
 #include "RenameLabel.h"
 #include "EditTrackRow.h"
+#include "WaveCacheFreshness.h"
 
 #include <algorithm>
 
@@ -561,7 +562,7 @@ namespace zynforge
         // already wrote this session's cache (the common case), rather than
         // paying a cache-sized synchronous write on every quit.
         const auto sessionDir = engine.getActiveSessionDir();
-        if (! waveCacheSaved && sessionDir.isDirectory())
+        if (! waveCacheSaved && ! engine.isRecording() && sessionDir.isDirectory())
             saveCacheToSession (sessionDir);
     }
 
@@ -569,6 +570,14 @@ namespace zynforge
     {
         const auto cacheFile = sessionDir.getChildFile ("WaveCache.wfm");
         if (! cacheFile.existsAsFile() || cacheFile.getSize() < 16) return;
+
+        // A normal take may reuse Track_NN paths while an earlier waveform
+        // cache still exists. Never load those stale peaks into the new rows.
+        if (waveCachePredatesAudio (cacheFile, sessionDir))
+        {
+            cacheFile.deleteFile();
+            return;
+        }
 
         // Versioned header: magic + (resolution<<8|rev). A cache baked at a
         // different thumbnail resolution would re-paint as coarse stair-step
@@ -828,8 +837,11 @@ namespace zynforge
             ? engine.getDeviceSampleRate()
             : (player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0);
         if (rec && ! lastRecording)
+        {
             recordingBaseSpanSamples = recordingTimelineSpanSamples (
                 0, player.getTotalLengthSamples(), liveRate);
+            waveCacheSaved = false; // this take will change the cached media
+        }
         setReadOnlyWhileRecording (rec);
         const bool transportActive = rec || engine.getPlayer().isPlaying();
         const bool wasFollowing = followState.isFollowing();
@@ -867,6 +879,11 @@ namespace zynforge
             resized(); // restore fit-to-take width after live scrolling
         }
 
+        // Drop pre-recording peaks before testing whether the scan is complete.
+        // Saving first could mark an old cache as final for this session.
+        if (recJustStopped && list != nullptr)
+            list->forceRefreshWaveforms();
+
         // Persist WaveCache.wfm as soon as the background scan finishes for the
         // whole session -- even while EDIT is hidden -- so reopening the show
         // (or relaunching) paints waveforms instantly instead of re-scanning
@@ -885,11 +902,8 @@ namespace zynforge
         // Waveforms are NOT re-scanned from disk while recording: 48 channels
         // re-read at 24 Hz would contend with the recorder's own capture
         // writes and risk dropouts (capture integrity wins). The meters show
-        // live signal during the take. The moment recording stops, the files
-        // are final -- do one clean full re-scan (which drops any partial
-        // cached mid-capture) so the waveform paints at full resolution.
-        if (recJustStopped && list != nullptr)
-            list->forceRefreshWaveforms();
+        // live signal during the take. The post-stop re-scan above drops any
+        // partial cached peaks before the new cache can be saved.
 
         // Everything below is purely visual (playhead + repaints) and only
         // matters when EDIT is on screen. While recording we keep going even

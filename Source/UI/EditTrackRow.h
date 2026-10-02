@@ -10,6 +10,7 @@
 #include "EditToolsBar.h"
 #include "EditTimeRuler.h"
 #include "LivePeakHistory.h"
+#include "WaveformOverview.h"
 #include "../Audio/MultiPartReader.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
@@ -526,6 +527,9 @@ namespace zynforge
             stereoOneFile = stereo && fL.existsAsFile() && ! fRin.existsAsFile();
             const juce::File fR = stereoOneFile ? fL : fRin;
 
+            if (fL != currentFileL || fR != currentFileR)
+                overviewCache.clear();
+
             if (fL != currentFileL)
             {
                 currentFileL = fL;
@@ -581,11 +585,85 @@ namespace zynforge
             else               thumbnailR.drawChannels (g, area, t0, t1, zoom);
         }
 
+        // Use a short-window median for the body of a zoomed-out take while
+        // retaining the actual maximum as a thin marker in each screen column.
+        // Cache the result because playhead repaints must not re-query millions
+        // of thumbnail bins at 24 Hz.
+        bool drawOverviewWave (juce::Graphics& g, juce::AudioThumbnail& thumb,
+                               juce::Rectangle<int> area, int channel,
+                               double t0, double t1, float zoom,
+                               juce::Colour bodyColour, juce::Colour peakColour)
+        {
+            if (! thumb.isFullyLoaded() || channel < 0 || channel >= thumb.getNumChannels()
+                || area.getWidth() <= 0 || area.getHeight() <= 0 || t1 <= t0
+                || (t1 - t0) / area.getWidth() < 0.05)
+                return false;
+
+            // At 16x zoom the lane can be tens of thousands of pixels wide.
+            // Build only the portion in the viewport, then reuse it for normal
+            // repaints; scanning the entire lane would stall the message thread.
+            const auto visible = area.getIntersection (g.getClipBounds());
+            if (visible.isEmpty()) return true;
+            const double secondsPerPixel = (t1 - t0) / area.getWidth();
+            const double visibleStart = t0 + (visible.getX() - area.getX()) * secondsPerPixel;
+            const double visibleEnd = visibleStart + visible.getWidth() * secondsPerPixel;
+
+            auto matches = [&] (const CachedOverview& entry)
+            {
+                return entry.thumbnail == &thumb && entry.channel == channel
+                    && entry.width == visible.getWidth()
+                    && entry.start == visibleStart && entry.end == visibleEnd;
+            };
+            auto it = std::find_if (overviewCache.begin(), overviewCache.end(), matches);
+            if (it == overviewCache.end())
+            {
+                if (overviewCache.size() >= 4)
+                    overviewCache.erase (overviewCache.begin());
+                CachedOverview entry;
+                entry.thumbnail = &thumb;
+                entry.channel = channel;
+                entry.width = visible.getWidth();
+                entry.start = visibleStart;
+                entry.end = visibleEnd;
+                entry.levels = buildWaveformOverview (entry.width, visibleStart, visibleEnd,
+                    [&] (double a, double b)
+                    {
+                        float lo = 0.0f, hi = 0.0f;
+                        thumb.getApproximateMinMax (a, b, channel, lo, hi);
+                        return juce::jmax (std::abs (lo), std::abs (hi));
+                    });
+                overviewCache.push_back (std::move (entry));
+                it = std::prev (overviewCache.end());
+            }
+
+            const float mid = (float) area.getCentreY();
+            const float half = area.getHeight() * 0.5f;
+            juce::RectangleList<float> peakRects, bodyRects;
+            peakRects.ensureStorageAllocated (visible.getWidth());
+            bodyRects.ensureStorageAllocated (visible.getWidth());
+            for (int drawX = visible.getX(); drawX < visible.getRight(); ++drawX)
+            {
+                const auto x = (size_t) (drawX - visible.getX());
+                const float p = juce::jlimit (0.0f, half, it->levels.peaks[x] * zoom * half);
+                const float b = juce::jlimit (0.0f, half, it->levels.body[x] * zoom * half);
+                if (p > 0.0f)
+                    peakRects.addWithoutMerging ({ (float) drawX, mid - p, 1.0f, 2.0f * p });
+                if (b > 0.0f)
+                    bodyRects.addWithoutMerging ({ (float) drawX, mid - b, 1.0f, 2.0f * b });
+            }
+            g.setColour (peakColour);
+            g.fillRectList (peakRects);
+            g.setColour (bodyColour);
+            g.fillRectList (bodyRects);
+            return true;
+        }
+
         // Re-issue the thumbnail's input source from the current files so
         // a file that's actively being written (recorder live-capture)
         // gets re-scanned and the waveform grows on screen.
         void reloadCurrentWaveformFiles()
         {
+            overviewCache.clear();
             // setSource consults the AudioThumbnailCache by file hash and, if
             // it finds an entry that claims to be fully loaded, returns it
             // WITHOUT re-reading the file. If the file has since grown (or was
@@ -777,13 +855,17 @@ namespace zynforge
             // channel colour LIFTed light. Solid wave (no rim) so it reads bold.
             const auto waveBg   = brand::lift (getStripColour(), 0.48f);  // light coloured clip backdrop
             const auto waveDark = brand::sink (getStripColour(), 0.68f);  // BOLD deep wave = the focal point
-            auto drawWaveOutlined = [&g, waveBg, waveDark]
+            auto drawWaveOutlined = [this, &g, waveBg, waveDark]
                 (juce::AudioThumbnail& thumb, juce::Rectangle<int> area,
                  bool wholeFile, int chan, double t0, double t1, float zoom)
             {
                 g.setColour (waveBg);
                 g.fillRect (area);                      // light coloured clip backdrop
                 g.setColour (waveDark);                 // solid BOLD dark waveform on top
+                if (! (wholeFile && thumb.getNumChannels() != 1)
+                    && drawOverviewWave (g, thumb, area, chan, t0, t1, zoom,
+                                         waveDark, waveDark.withAlpha (brand::alpha::muted)))
+                    return;
                 if (wholeFile) thumb.drawChannels (g, area, t0, t1, zoom);
                 else           thumb.drawChannel  (g, area, t0, t1, chan, zoom);
             };
@@ -1587,8 +1669,15 @@ namespace zynforge
                                     auto ra = waveArea.withTrimmedTop (half);
                                     if (c.muted)
                                     {
-                                        g.setColour (mutedCol); drawLaneL (g, la, t0, t1, waveZoom (thumbnailL) * gz);
-                                        g.setColour (mutedCol); drawLaneR (g, ra, t0, t1, waveZoom (thumbnailR) * gz);
+                                        g.setColour (mutedCol);
+                                        if (! drawOverviewWave (g, thumbnailL, la, 0, t0, t1,
+                                                                waveZoom (thumbnailL) * gz, mutedCol,
+                                                                mutedCol.withAlpha (brand::alpha::subtle)))
+                                            drawLaneL (g, la, t0, t1, waveZoom (thumbnailL) * gz);
+                                        if (! drawOverviewWave (g, thumbnailR, ra, stereoOneFile ? 1 : 0,
+                                                                t0, t1, waveZoom (thumbnailR) * gz, mutedCol,
+                                                                mutedCol.withAlpha (brand::alpha::subtle)))
+                                            drawLaneR (g, ra, t0, t1, waveZoom (thumbnailR) * gz);
                                     }
                                     else
                                     {
@@ -1599,7 +1688,11 @@ namespace zynforge
                                 else if (c.muted)
                                 {
                                     g.setColour (mutedCol);
-                                    thumbnailL.drawChannels (g, waveArea, t0, t1, waveZoom (thumbnailL) * gz);
+                                    if (! (thumbnailL.getNumChannels() == 1
+                                           && drawOverviewWave (g, thumbnailL, waveArea, 0, t0, t1,
+                                                            waveZoom (thumbnailL) * gz, mutedCol,
+                                                            mutedCol.withAlpha (brand::alpha::subtle))))
+                                        thumbnailL.drawChannels (g, waveArea, t0, t1, waveZoom (thumbnailL) * gz);
                                 }
                                 else
                                 {
@@ -4183,6 +4276,14 @@ namespace zynforge
         juce::AudioThumbnailCache& thumbCache;   // shared; used to drop stale thumbs
         juce::AudioThumbnail      thumbnailL;
         juce::AudioThumbnail      thumbnailR;
+        struct CachedOverview
+        {
+            juce::AudioThumbnail* thumbnail { nullptr };
+            int channel { 0 }, width { 0 };
+            double start { 0.0 }, end { 0.0 };
+            WaveformOverview levels;
+        };
+        std::vector<CachedOverview> overviewCache;
         juce::File                currentFileL;
         juce::File                currentFileR;
         bool                      stereo;
