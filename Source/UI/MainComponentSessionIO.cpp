@@ -61,6 +61,7 @@ bool copyDirectoryCancellable (const juce::File& source, const juce::File& dest,
             target.deleteFile();
             auto out = target.createOutputStream();
             if (in == nullptr || out == nullptr) return false;
+            const auto expectedSize = child.getSize();
             std::array<char, 1024 * 1024> buffer {};
             while (! in->isExhausted())
             {
@@ -71,7 +72,9 @@ bool copyDirectoryCancellable (const juce::File& source, const juce::File& dest,
                 if (got == 0) break;
             }
             out->flush();
-            if (out->getStatus().failed()) return false;
+            if (in->getStatus().failed() || out->getStatus().failed()
+                || in->getPosition() != expectedSize || out->getPosition() != expectedSize
+                || child.getSize() != expectedSize) return false;
         }
     }
     return ! cancel.load (std::memory_order_relaxed);

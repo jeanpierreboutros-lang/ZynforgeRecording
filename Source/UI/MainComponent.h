@@ -33,7 +33,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; }
+namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class OctoberRegressionTests; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -380,6 +380,7 @@ private:
     static constexpr int kCaptureDaemonPort = 17890;
 
     friend class zynforge::MainTransportRegressionTests;
+    friend class zynforge::OctoberRegressionTests;
 
     // Live SafePointers to dialog windows opened by the header buttons.
     // A second click on the launching button closes the dialog instead of

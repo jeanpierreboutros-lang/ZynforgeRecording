@@ -3,6 +3,7 @@
 #include <juce_data_structures/juce_data_structures.h>
 
 #include <memory>
+#include "SettingsFile.h"
 
 namespace zynforge
 {
@@ -19,7 +20,7 @@ namespace zynforge
         // names persist to a SEPARATE "(tests)" settings file so the unit
         // tests can't pollute the real per-channel names the engineer set.
         // The test runner flips this on in Main.cpp's --run-tests path.
-        static void setTestMode (bool on) noexcept { testModeFlag() = on; }
+        static void setTestMode (bool on) noexcept { testModeFlag() = on; if (on) isolateSettings(); }
 
         bool         hasName (int channelIndex) const;
         juce::String getName (int channelIndex) const;

@@ -1,4 +1,5 @@
 #include "AudioEngine.h"
+#include "SettingsFile.h"
 #include "TrackFileTransaction.h"
 #include "AtomicFile.h"
 #include "OscRemote.h"
@@ -101,6 +102,12 @@ namespace zynforge
             t.soloed  .store (false, std::memory_order_relaxed);
             t.monitor .store (false, std::memory_order_relaxed);
             t.isStereo.store (false, std::memory_order_relaxed);
+            t.isBus.store (false); t.vcaGroup.store (-1); t.editGroup.store (-1);
+            t.outputMuted.store (false); t.streamSend.store (false);
+            t.liveInputGainDb.store (0); t.captureInputGainDb.store (0);
+            t.rampSamplesRemaining.store (0);
+            for (auto& send : t.sends)
+            { send.targetBus.store (-1); send.levelDb.store (-60.0f); send.postFader.store (true); }
         }
         // Reload AFTER the Strip* writes above so our whole-file save doesn't
         // undo them, THEN apply the appProps-owned stereo flags and save once.
@@ -164,6 +171,7 @@ namespace zynforge
         }
 
         if (! recorder.startRecording (sessionDir)) return false;
+        invalidateExternalCaptureStatus();
 
         // A take makes the live capture position authoritative -- drop any
         // sticky EDIT cursor left from soundcheck so markers land at the take.
@@ -337,6 +345,7 @@ namespace zynforge
                                               juce::String& error)
     {
         error.clear();
+        if (areControlsLocked()) { error = "session is locked; unlock on the host"; return false; }
 
         // MainComponent installs this for both local and daemon capture.
         // std::nullopt means "use the ordinary in-process implementation";
@@ -597,6 +606,7 @@ namespace zynforge
     void AudioEngine::setAutoArmOnInputDetect (bool on)
     {
         autoArmOnInputFlag.store (on, std::memory_order_release);
+        recorder.setMeterUnarmedInputs (on);
         if (! on) std::fill (autoArmStreaks.begin(), autoArmStreaks.end(), 0);
         if (appProps != nullptr)
         {
@@ -609,7 +619,7 @@ namespace zynforge
     void AudioEngine::serviceAutoArm (int periodTicks, float ampThreshold)
     {
         if (! autoArmOnInputFlag.load (std::memory_order_acquire)) return;
-        if (recorder.isRecording()) return;            // mid-take arming is audio thread's job
+        if (isRecording() || areControlsLocked()) return;
 
         const int n = recorder.getNumTracks();
         if ((int) autoArmStreaks.size() < n)
@@ -666,7 +676,7 @@ namespace zynforge
         return true;
     }
 
-    int AudioEngine::loadSession (const juce::File& sessionDir, bool preserveEdits)
+    int AudioEngine::loadSession (const juce::File& sessionDir, bool preserveEdits, bool appendRecordedAudio)
     {
         if (! TrackFileTransaction::recover (sessionDir)) return -1;
         const auto audioDir = sessionDir.getChildFile ("Audio Files");
@@ -682,7 +692,7 @@ namespace zynforge
             setActiveSessionDir (sessionDir);
             markers.setContext (sessionDir, player.getSampleRate());
             rememberRecentSession (sessionDir);
-            seedDefaultClips (preserveEdits);
+            seedDefaultClips (preserveEdits, appendRecordedAudio);
             invalidateTransientCache();   // different session = different audio
             // (Background transient-cache warmup was attempted here
             // earlier but launched a detached lambda capturing
@@ -752,7 +762,7 @@ namespace zynforge
         if (! active)
         {
             std::lock_guard<std::mutex> lock (externalStatusLock);
-            externalStatusAtMs = 0;
+            if (! externalStatus.captureDeviceLost) externalStatusAtMs = 0;
         }
         externalRecording.store (active, std::memory_order_release);
     }
@@ -773,17 +783,18 @@ namespace zynforge
     EngineStatus AudioEngine::captureStatus()
     {
         constexpr juce::uint32 kDefaultSwatch = 0xff3a3f44;
-        if (externalRecording.load (std::memory_order_acquire))
+        EngineStatus status;
+        juce::int64 receivedAt;
         {
-            EngineStatus status;
-            juce::int64 receivedAt;
-            {
-                std::lock_guard<std::mutex> lock (externalStatusLock);
-                status = externalStatus;
-                receivedAt = externalStatusAtMs;
-            }
-            if (receivedAt != 0 && status.recording
-                && juce::Time::currentTimeMillis() - receivedAt <= 2000)
+            std::lock_guard<std::mutex> lock (externalStatusLock);
+            status = externalStatus;
+            receivedAt = externalStatusAtMs;
+        }
+        if (externalRecording.load (std::memory_order_acquire)
+            || (receivedAt != 0 && status.captureDeviceLost))
+        {
+            if (receivedAt != 0 && (status.captureDeviceLost
+                || juce::Time::currentTimeMillis() - receivedAt <= 2000))
             {
                 status.source = "daemon";
                 status.statusAgeMs = juce::jmax ((juce::int64) 0,
@@ -814,6 +825,7 @@ namespace zynforge
             return unavailable;
         }
         EngineStatus s;
+        s.captureDeviceLost = recorder.hasCaptureDeviceLost();
         s.recording        = isRecording();
         if (s.recording)
             s.sessionPath = recorder.getActiveSessionDir().getFullPathName();
@@ -921,6 +933,16 @@ namespace zynforge
         root->setProperty ("formatVersion", 2);
         root->setProperty ("trackCount", recorder.getNumTracks());
         root->setProperty ("strips", arr);
+        juce::Array<juce::var> vcaState;
+        for (const auto& v : vcas)
+        {
+            auto* o = new juce::DynamicObject();
+            o->setProperty ("gainDb", (double) v.gainDb.load());
+            o->setProperty ("muted", v.muted.load());
+            o->setProperty ("soloed", v.soloed.load());
+            vcaState.add (juce::var (o));
+        }
+        root->setProperty ("vcas", vcaState);
 
         // Session-level tempo state (BPM, time signature, and the multi-point
         // tempo map) -- per session, not global appProps.
@@ -944,12 +966,27 @@ namespace zynforge
 
     bool AudioEngine::loadSessionMixFrom (const juce::File& sessionDir)
     {
+        if (isRecording()) return false;
         const auto f = sessionDir.getChildFile ("session_mix.json");
         if (! f.existsAsFile()) return false;
 
         const auto parsed = juce::JSON::parse (f);
         auto* root = parsed.getDynamicObject();
         if (root == nullptr || ! root->hasProperty ("trackCount")) return false;
+
+        for (auto& v : vcas)
+        {
+            v.gainDb.store (0); v.muted.store (false); v.soloed.store (false);
+            v.rampSamplesRemaining.store (0); v.rampTargetGainDb.store (0);
+        }
+        if (auto* saved = root->getProperty ("vcas").getArray())
+            for (int i = 0; i < juce::jmin (saved->size(), kNumVcas); ++i)
+                if (auto* o = (*saved)[i].getDynamicObject())
+                {
+                    setVcaGainDb (i, (float) (double) o->getProperty ("gainDb"));
+                    setVcaMuted (i, (bool) o->getProperty ("muted"));
+                    setVcaSoloed (i, (bool) o->getProperty ("soloed"));
+                }
 
         // The saved session is authoritative in both directions.  Growing only
         // left channels from the previous, larger session alive and exposed
@@ -1457,7 +1494,7 @@ namespace zynforge
             const int numInputs = (deviceManager.getCurrentAudioDevice() != nullptr)
                 ? deviceManager.getCurrentAudioDevice()->getActiveInputChannels().countNumberOfSetBits()
                 : 0;
-            if (numInputs > 0 && (wantIn < 0 || wantIn >= numInputs))
+            if (numInputs > 0 && (wantIn < -1 || wantIn >= numInputs))
                 wantIn = i % numInputs;
             t.inputRouting .store (wantIn, std::memory_order_relaxed);
             // Default per-channel output is -1 (unrouted) → audio only
@@ -1767,6 +1804,7 @@ namespace zynforge
 
     void AudioEngine::setTestModeSkipAudioInit (bool skip) noexcept
     {
+        if (skip) isolateSettings();
         s_testSkipAudioInit.store (skip, std::memory_order_release);
     }
 
@@ -1805,21 +1843,7 @@ namespace zynforge
         opts.osxLibrarySubFolder = "Application Support";
         opts.storageFormat       = juce::PropertiesFile::storeAsXML;
 
-        if (s_testSkipAudioInit.load (std::memory_order_acquire))
-        {
-            // TEST ISOLATION: the in-binary test harness must NEVER touch the
-            // user's real .settings file. A test that records or sets a pref
-            // would otherwise persist (e.g.) a throwaway temp session path into
-            // `activeSessionDir`, so the next real launch tries to reopen a
-            // deleted folder. Point test engines at ONE fixed throwaway file in
-            // temp -- shared across test engines (as the real file effectively
-            // was), so the harness doesn't litter a file per construction.
-            const auto tmp = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                                 .getChildFile ("zynforge-test.settings");
-            appProps = std::make_unique<juce::PropertiesFile> (tmp, opts);
-        }
-        else
-            appProps = std::make_unique<juce::PropertiesFile> (opts);
+        appProps = makeSettingsFile (opts);
 
         // Restore the stereo-mix-recording flag from the prefs file so the
         // engineer's preference survives restart.
@@ -1827,6 +1851,8 @@ namespace zynforge
                                    std::memory_order_release);
         autoArmOnInputFlag.store (appProps->getBoolValue ("autoArmOnInput", false),
                                    std::memory_order_release);
+
+        recorder.setMeterUnarmedInputs (autoArmOnInputFlag.load());
 
         // Keep the configured path even while a removable backup drive is
         // offline. Readiness can then report it as unavailable, and recording
@@ -1837,9 +1863,8 @@ namespace zynforge
                 recorder.setBackupDirectory (juce::File (savedBackup));
         }
 
-        // Restore N-way mirror destinations from prefs. Skip any whose
-        // root no longer exists (drive unplugged); the engineer can
-        // re-add it via the UI when it's back.
+        // Retain configured mirrors while removable volumes are offline;
+        // readiness must report the missing copy and retry after reconnect.
         {
             const int count = appProps->getIntValue ("mirror_count", 0);
             std::vector<MultitrackRecorder::MirrorConfig> mirrors;
@@ -1848,7 +1873,6 @@ namespace zynforge
                 const auto rootStr = appProps->getValue ("mirror_root_" + juce::String (i), {});
                 if (rootStr.isEmpty()) continue;
                 juce::File f (rootStr);
-                if (! f.exists()) continue;
                 MultitrackRecorder::MirrorConfig c;
                 c.root   = f;
                 c.format = (CaptureFormat) appProps->getIntValue (
@@ -2046,13 +2070,11 @@ namespace zynforge
             automationData.clear();
         }
         clearAllAutomationTrims();
-        // These controls are session routing, not installation preferences.
-        // Reset them before a missing/legacy session_mix.json is loaded so the
-        // previous show's physical-output safety state cannot leak forward.
-        for (int i = 0; i < recorder.getNumTracks(); ++i)
+        resetAllStripState();
+        for (auto& v : vcas)
         {
-            recorder.getTrack (i).outputMuted.store (false, std::memory_order_relaxed);
-            recorder.getTrack (i).streamSend .store (false, std::memory_order_relaxed);
+            v.gainDb.store (0); v.muted.store (false); v.soloed.store (false);
+            v.rampTargetGainDb.store (0); v.rampSamplesRemaining.store (0);
         }
         markers.clearContext();
         invalidateTransientCache();
@@ -2543,6 +2565,7 @@ namespace zynforge
 
     void AudioEngine::audioDeviceStopped()
     {
+        if (recorder.isRecording()) recorder.markCaptureDeviceLost();
         recorder.release();
         player  .release();
     }

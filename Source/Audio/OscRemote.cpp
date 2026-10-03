@@ -35,6 +35,7 @@ namespace zynforge
 
     void OscRemote::oscMessageReceived (const juce::OSCMessage& m)
     {
+        if (engine.areControlsLocked()) return;
         if (engine.isOscDebug())
         {
             juce::String args;

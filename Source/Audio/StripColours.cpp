@@ -1,4 +1,5 @@
 #include "StripColours.h"
+#include "SettingsFile.h"
 
 namespace zynforge
 {
@@ -24,7 +25,7 @@ namespace zynforge
         opts.osxLibrarySubFolder = "Application Support";
         opts.storageFormat       = juce::PropertiesFile::storeAsXML;
 
-        props = std::make_unique<juce::PropertiesFile> (opts);
+        props = makeSettingsFile (opts);
     }
 
     juce::String StripColours::keyFor (int channelIndex)

@@ -363,7 +363,8 @@ void MainComponent::onRecordClicked()
                 restoreArmStateAfterPunch();
                 engine.setPunchModeOn (false);
                 restoreLoopAfterPunch();
-                showStatus ("Selection punch refused -- check take and backup/mirror copies");
+                showStatus (recorder.getStartError().isNotEmpty() ? recorder.getStartError()
+                    : "Selection punch refused -- check take and backup/mirror copies");
                 return;
             }
             punchSessionActive = true;
@@ -419,7 +420,8 @@ void MainComponent::onRecordClicked()
     }
     else
     {
-        statusLabel.setText (continueTake && ! continueAppend
+        statusLabel.setText (recorder.getStartError().isNotEmpty() ? recorder.getStartError()
+                             : continueTake && ! continueAppend
                              ? "Punch refused -- could not safely open the existing take or writer files"
                              : "Failed to start recording -- could not open writer files.",
                              juce::dontSendNotification);
@@ -530,7 +532,7 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind)
         const auto session = engine.getActiveSessionDir();
         if (session.isDirectory())
         {
-            engine.loadSession (session, true);
+            engine.loadSession (session, true, true);
             sessionStateSaved = saveSessionStateTo (session);
         }
         else
@@ -708,6 +710,7 @@ void MainComponent::onLockToggled()
 
 void MainComponent::applyLockState()
 {
+    engine.setControlsLocked (sessionLocked.load());
     const bool e = ! sessionLocked;
 
     recordButton .setEnabled (e);

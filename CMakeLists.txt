@@ -101,6 +101,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/AudioImportTests.cpp
     Source/Tests/ClickTrackRendererTests.cpp
     Source/Tests/SeptemberRegressionTests.cpp
+    Source/Tests/OctoberRegressionTests.cpp
     Source/Tests/DialogAuditTests.cpp
     Source/Tests/NetworkAuditTests.cpp
     Source/Tests/EditViewFixTests.cpp

@@ -176,6 +176,8 @@ namespace zynforge
         void stopRecording() override;
         bool isRecording() const noexcept override { return recorder.isRecording() || externalRecording.load(); }
         void setExternalRecording (bool active) noexcept;
+        void setControlsLocked (bool locked) noexcept { controlsLocked.store (locked); }
+        bool areControlsLocked() const noexcept { return controlsLocked.load(); }
         void setExternalCaptureStatus (const EngineStatus& status, juce::int64 receivedAtMs = 0);
         void invalidateExternalCaptureStatus();
         void setSessionTransitionActive (bool active) noexcept
@@ -197,7 +199,7 @@ namespace zynforge
         // is false for a genuine session OPEN (wipe stale clips; the caller's
         // .zfproj playlist restore repopulates) and true for a SAME-session
         // reload (click-track regen) that must keep the engineer's comps.
-        int  loadSession (const juce::File& sessionDir, bool preserveEdits = false);
+        int  loadSession (const juce::File& sessionDir, bool preserveEdits = false, bool appendRecordedAudio = false);
 
         // Per-SESSION strip mix state: name, colour, gain, pan, mute, solo,
         // monitor, arm, input/output routing, stereo flag, VCA + edit group.
@@ -1177,6 +1179,7 @@ namespace zynforge
         ClickEngine        click;
         MidiClockOut       midiClockOut;
         NDIBridge          ndi;
+        std::atomic<bool> controlsLocked { false };
         std::array<VcaBus, kNumVcas> vcas;
     public:
         ClickEngine& getClickEngine() noexcept { return click; }

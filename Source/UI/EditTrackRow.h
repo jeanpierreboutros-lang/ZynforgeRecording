@@ -3158,7 +3158,6 @@ namespace zynforge
 
                     // Trim / Move: incremental.
                     juce::int64 stepSamples = wantSamples - lastDragSamples;
-                    lastDragSamples = wantSamples;
                     if (std::abs (stepSamples) >= 1)
                     {
                         const auto mode = draggingClipModeInt == 0 ? AudioEngine::ClipEdit::TrimLeft
@@ -3181,9 +3180,16 @@ namespace zynforge
                                 stepSamples = engine.snapSampleToGrid (edge + stepSamples) - edge;
                             }
                         if (stepSamples != 0)
+                        {
+                            // Resolve peers before moving the source clip: peer
+                            // matching uses the original timeline intersection.
+                            std::vector<std::pair<int, int>> peers;
                             for (int peer : editGroupPeers())
                                 if (const int pi = peerClipIndex (peer, draggingClipIdx); pi >= 0)
-                                    engine.editClip (peer, pi, mode, stepSamples);
+                                    peers.emplace_back (peer, pi);
+                            for (auto [peer, pi] : peers) engine.editClip (peer, pi, mode, stepSamples);
+                            lastDragSamples += stepSamples;
+                        }
                         repaint();
                     }
                 }
@@ -3232,9 +3238,11 @@ namespace zynforge
                 const auto& lane = engine.getAutomation (index, p);
                 if (draggingPointIdx < (int) lane.size())
                 {
-                    const auto oldPos = lane[(size_t) draggingPointIdx].samplePos;
-                    engine.removeAutomationPointNear (index, p, oldPos, 1);
-                    engine.addAutomationPoint        (index, p, coord.samplePos, coord.value);
+                    auto moved = lane[(size_t) draggingPointIdx];
+                    engine.removeAutomationPointNear (index, p, moved.samplePos, 1);
+                    moved.samplePos = 0;
+                    moved.value = coord.value;
+                    engine.pasteAutomationRange (index, p, coord.samplePos, { moved });
 
                     // RE-RESOLVE the index. The lane is kept sorted by
                     // samplePos, so the moment the dragged point crosses a

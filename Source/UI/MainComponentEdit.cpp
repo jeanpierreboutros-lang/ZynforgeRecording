@@ -1066,31 +1066,46 @@ void MainComponent::editClipboardCut (bool cut)
     if (currentView == View::Edit && editPage != nullptr
         && editPage->getSelectedClipTrack() >= 0)
     {
-        const int track   = editPage->getSelectedClipTrack();
-        const int idx     = editPage->getSelectedClipIndex();
-        const auto* clips = engine.tryClipsFor (track);
-        if (clips != nullptr && idx >= 0 && idx < (int) clips->size())
+        juce::Array<juce::var> entries;
+        juce::int64 anchor = std::numeric_limits<juce::int64>::max();
+        for (auto [track, idx] : editPage->getSelectedClips())
         {
+            const auto* clips = engine.tryClipsFor (track);
+            if (clips == nullptr || idx < 0 || idx >= (int) clips->size()) continue;
             const auto& c = (*clips)[(size_t) idx];
-            auto* obj = new juce::DynamicObject();
-            obj->setProperty ("track",      track);
+            if (cut && c.locked) continue;
             int channel = c.sourceChannel;
-            auto sourceFile = c.audioFile;
-            if (sourceFile == juce::File()) sourceFile = engine.getTrackAudioFile (track, &channel);
-            obj->setProperty ("audioFile", sourceFile.getFullPathName());
-            obj->setProperty ("sourceChannel", channel);
-            obj->setProperty ("fadeCurve", c.fadeCurve);
-            obj->setProperty ("fileStart",  (juce::int64) c.fileStartSamples);
-            obj->setProperty ("fileLength", (juce::int64) c.fileLengthSamples);
-            obj->setProperty ("fadeIn",     (juce::int64) c.fadeInSamples);
-            obj->setProperty ("fadeOut",    (juce::int64) c.fadeOutSamples);
-            obj->setProperty ("gainDb",     (double) c.gainDb);
-            obj->setProperty ("name",       c.name);
-            clipClipboard = juce::var (obj);
-            showStatus (juce::String (cut ? "Cut" : "Copied") + " clip -- Cmd+V pastes it at the playhead");
-            if (cut) editDeleteSelectedClip();
-            return;
+            auto source = c.audioFile;
+            if (source == juce::File()) source = engine.getTrackAudioFile (track, &channel);
+            if (! source.existsAsFile())
+            { showStatus ("Copy failed: selected clip media is missing"); return; }
+            auto* o = new juce::DynamicObject();
+            o->setProperty ("track", track);
+            o->setProperty ("position", c.timelineStartSamples);
+            o->setProperty ("audioFile", source.getFullPathName());
+            o->setProperty ("sourceChannel", channel);
+            o->setProperty ("fadeCurve", c.fadeCurve);
+            o->setProperty ("fileStart", c.fileStartSamples);
+            o->setProperty ("fileLength", c.fileLengthSamples);
+            o->setProperty ("fadeIn", c.fadeInSamples);
+            o->setProperty ("fadeOut", c.fadeOutSamples);
+            o->setProperty ("gainDb", c.gainDb);
+            o->setProperty ("muted", c.muted);
+            o->setProperty ("name", c.name);
+            entries.add (juce::var (o));
+            anchor = juce::jmin (anchor, c.timelineStartSamples);
         }
+        if (entries.isEmpty()) { showStatus ("No editable clips selected"); return; }
+        for (auto& entry : entries)
+            entry.getDynamicObject()->setProperty ("position",
+                (juce::int64) entry["position"] - anchor);
+        auto* root = new juce::DynamicObject();
+        root->setProperty ("track", editPage->getSelectedClipTrack());
+        root->setProperty ("clips", entries);
+        clipClipboard = juce::var (root);
+        if (cut) editDeleteSelectedClip();
+        showStatus (juce::String (cut ? "Cut " : "Copied ") + juce::String (entries.size()) + " clips");
+        return;
     }
     editCutSelected (cut);   // strip-settings fallback
 }
@@ -1102,43 +1117,46 @@ void MainComponent::editClipboardPaste()
     if (engine.isRecording()) { showStatus ("Stop recording before editing"); return; }
     if (currentView == View::Edit && clipClipboard.isObject())
     {
-        if (auto* obj = clipClipboard.getDynamicObject())
-            if (obj->hasProperty ("fileLength"))
+        auto* entries = clipClipboard["clips"].getArray();
+        if (entries == nullptr || entries->isEmpty()) return;
+        const int sourceTrack = (int) clipClipboard["track"];
+        const int target = editPage != nullptr && editPage->getActiveRowTrackIndex() >= 0
+                         ? editPage->getActiveRowTrackIndex() : sourceTrack;
+        const int offset = target - sourceTrack;
+        const int tracks = juce::jmax (engine.getRecorder().getNumTracks(), engine.getPlayer().getNumTracks());
+        for (const auto& entry : *entries)
+        {
+            const int dest = (int) entry["track"] + offset;
+            if (dest < 0 || dest >= tracks || (juce::int64) entry["fileLength"] <= 0
+                || ! juce::File (entry["audioFile"].toString()).existsAsFile())
+            { showStatus ("Paste failed: missing media or selection extends beyond available tracks"); return; }
+        }
+        const auto pos = currentPlayheadSamples (engine);
+        const auto before = engine.playlistsToJson();
+        std::vector<EditPage::ClipRef> pasted;
+        // Timeline order keeps earlier inserted indices stable on each track.
+        auto ordered = *entries;
+        std::sort (ordered.begin(), ordered.end(), [] (const auto& a, const auto& b)
+            { return (juce::int64) a["position"] < (juce::int64) b["position"]; });
+        for (const auto& entry : ordered)
+        {
+            const int dest = (int) entry["track"] + offset;
+            const int idx = engine.pasteClip (dest, pos + (juce::int64) entry["position"],
+                (juce::int64) entry["fileStart"], (juce::int64) entry["fileLength"],
+                (juce::int64) entry["fadeIn"], (juce::int64) entry["fadeOut"],
+                (float) (double) entry["gainDb"], entry["name"].toString(),
+                juce::File (entry["audioFile"].toString()), (int) entry["sourceChannel"], (int) entry["fadeCurve"]);
+            if (idx >= 0)
             {
-                const int sourceTrack = (int) obj->getProperty ("track");
-                // Paste onto the active EDIT row when one is set; else the
-                // clip's own track. Cross-track paste references the source
-                // track's file so the destination plays the copied audio.
-                int target = sourceTrack;
-                if (editPage != nullptr && editPage->getActiveRowTrackIndex() >= 0)
-                    target = editPage->getActiveRowTrackIndex();
-
-                const juce::File audioFile (obj->getProperty ("audioFile").toString());
-                if (! audioFile.existsAsFile())
-                { showStatus ("Paste failed: copied clip media is missing"); return; }
-
-                const auto pos    = currentPlayheadSamples (engine);
-                const auto before = engine.playlistsToJson();
-                const int newIdx  = engine.pasteClip (
-                    target, pos,
-                    (juce::int64) obj->getProperty ("fileStart"),
-                    (juce::int64) obj->getProperty ("fileLength"),
-                    (juce::int64) obj->getProperty ("fadeIn"),
-                    (juce::int64) obj->getProperty ("fadeOut"),
-                    (float) (double) obj->getProperty ("gainDb"),
-                    obj->getProperty ("name").toString(), audioFile,
-                    (int) obj->getProperty ("sourceChannel"), (int) obj->getProperty ("fadeCurve"));
-                if (newIdx >= 0)
-                {
-                    pushClipUndo ("Paste clip", before);
-                    if (editPage != nullptr) editPage->setSelectedClip (target, newIdx);
-                    if (editPage != nullptr) editPage->repaint();
-                    showStatus (target == sourceTrack ? juce::String ("Pasted clip at the playhead")
-                                                      : "Pasted clip onto track " + juce::String (target + 1));
-                }
-                else showStatus ("Paste failed -- no audio on the source track");
-                return;
+                engine.setClipMuted (dest, idx, (bool) entry["muted"]);
+                pasted.emplace_back (dest, idx);
             }
+        }
+        pushClipUndo ("Paste clips", before);
+        if (editPage != nullptr && ! pasted.empty())
+            editPage->setSelectedClips (pasted, pasted.front());
+        showStatus ("Pasted " + juce::String ((int) pasted.size()) + " clips at the playhead");
+        return;
     }
     editPasteSelected();   // strip-settings fallback
 }

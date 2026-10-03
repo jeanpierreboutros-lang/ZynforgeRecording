@@ -175,10 +175,18 @@ namespace zynforge::capture
                     dir.createDirectory();
                     // Continue into a new part even after reattaching/restarting
                     // the GUI. Existing takes must never be truncated.
-                    recorder.armContinue (0);
+                    const auto audio = dir.getChildFile ("Audio Files");
+                    for (const auto& file : audio.findChildFiles (juce::File::findFiles, false, "Track_*"))
+                    {
+                        if (file.getFileName().containsIgnoreCase (".punchbase")) continue;
+                        const auto number = file.getFileNameWithoutExtension().substring (6);
+                        if (number.isNotEmpty() && number.containsOnly ("0123456789"))
+                        { recorder.armContinue (0); break; }
+                    }
                     if (recorder.startRecording (dir))
                     { captureDeviceLost.store (false); r.ok = true; }
-                    else                                r.error = "recorder failed to start";
+                    else r.error = recorder.getStartError().isNotEmpty()
+                                     ? recorder.getStartError() : "recorder failed to start";
                 }
                 sendStatusUnlocked (buildStatus());
                 sendReplyUnlocked (r);

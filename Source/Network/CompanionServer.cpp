@@ -780,6 +780,12 @@ poll();
         }
         else if (action == "mute" || action == "solo" || action == "arm")
         {
+            if (engine.areControlsLocked())
+            {
+                writeRaw (s, "409 Conflict", "application/json",
+                          "{\"ok\":false,\"error\":\"session is locked\"}");
+                return;
+            }
             const bool applied = action == "mute" ? engine.setTrackMuted (trackIdx, value)
                                : action == "solo" ? engine.setTrackSoloed (trackIdx, value)
                                                   : engine.setTrackArmed (trackIdx, value);

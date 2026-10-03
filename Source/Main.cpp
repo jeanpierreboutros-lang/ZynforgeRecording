@@ -128,6 +128,9 @@ public:
         // write fail with EPIPE instead, which the socket code handles.
         std::signal (SIGPIPE, SIG_IGN);
 
+        // Opt-in isolated preferences for repeatable UI smoke runs.
+        if (commandLine.contains ("--isolated-settings")) zynforge::isolateSettings();
+
         // ZYNFORGE_RUN_TESTS=1 (or --run-tests on the cmd line) runs
         // every juce::UnitTest registered in the binary, prints the
         // results to stderr, and quits with a non-zero exit when any

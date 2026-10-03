@@ -259,6 +259,13 @@ namespace zynforge
                         "{\"action\":\"mute\",\"channel\":999,\"value\":true}");
                     expect (invalidMute.contains ("409"), "invalid channel was ACKed as success");
 
+                    engine.setControlsLocked (true);
+                    const auto lockedMute = httpPost (port, "/cmd?t=" + tok,
+                        "{\"action\":\"mute\",\"channel\":1,\"value\":true}");
+                    expect (lockedMute.contains ("409"));
+                    expect (! engine.getRecorder().getTrack (0).muted.load());
+                    engine.setControlsLocked (false);
+
                     // /cmd arm on a different channel.
                     httpPost (port, "/cmd?t=" + tok, "{\"action\":\"arm\",\"channel\":3,\"value\":true}");
                     expect (engine.getRecorder().getTrack (2).armed.load(), "/cmd arm did not reach the engine");

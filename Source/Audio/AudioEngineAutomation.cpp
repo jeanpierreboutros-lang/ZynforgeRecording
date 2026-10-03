@@ -58,7 +58,7 @@ namespace zynforge
         {
             if (pt.samplePos < startSample) continue;
             if (pt.samplePos > endSample)   break;
-            out.push_back ({ pt.samplePos - startSample, pt.value, pt.curve });
+            out.push_back ({ pt.samplePos - startSample, pt.value, pt.curve, pt.tension });
         }
         return out;
     }

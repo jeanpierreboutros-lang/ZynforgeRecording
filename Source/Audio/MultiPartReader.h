@@ -94,6 +94,11 @@ namespace zynforge
                     if (lastOpened >= 0 && i != lastOpened + 1) holeBetween = true;
                     if (firstOpened < 0) firstOpened = i;
                     lastOpened = i;
+                    if (! rs.empty() && (r->sampleRate != rs.front()->sampleRate
+                        || r->numChannels != rs.front()->numChannels
+                        || r->bitsPerSample != rs.front()->bitsPerSample
+                        || r->usesFloatingPointData != rs.front()->usesFloatingPointData))
+                        return nullptr;
                     rs.push_back (std::move (r));
                 }
             }

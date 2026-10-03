@@ -170,11 +170,15 @@ namespace zynforge
                 expect (client.hello (2000).ok);
                 const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
                                      .getChildFile ("zf-daemon-device-loss-" + juce::Uuid().toString());
+                daemon.getRecorder().setPreRollSeconds (1);
+                std::vector<float> samples (256, 0.25f);
+                const float* inputs[] { samples.data() };
+                for (int i = 0; i < 200; ++i)
+                    daemon.audioDeviceIOCallbackWithContext (inputs, 1, nullptr, 0, 256, {});
                 Command start; start.action = Action::StartRecording;
                 start.sessionDir = dir.getFullPathName();
                 expect (client.request (start, 3000).ok);
-                std::vector<float> samples (256, 0.25f);
-                const float* inputs[] { samples.data() };
+                expectEquals (daemon.getRecorder().getSamplesSinceStart(), (juce::int64) 48000);
                 daemon.audioDeviceIOCallbackWithContext (inputs, 1, nullptr, 0, 256, {});
                 daemon.audioDeviceStopped();
                 expect (! daemon.isRecording(), "device loss left the recorder marked as rolling");
@@ -285,22 +289,12 @@ namespace zynforge
                 if (! started) return;
 
                 CaptureClient client;
-                std::mutex mx;
-                juce::String lastErr;
-                std::atomic<int> replies { 0 };
-                client.onReply = [&] (const Reply& r)
-                { const std::lock_guard<std::mutex> l (mx); if (! r.ok) lastErr = r.error; replies.fetch_add (1); };
-
                 expect (client.connect ("127.0.0.1", daemon.getPort()));
                 expect (client.hello (2000).ok, "handshake failed");
-                replies.store (0);
                 Command play; play.action = Action::StartPlayback;
-                expect (client.send (play));
-                expect (waitUntil ([&] { return replies.load() > 0; }, 2000), "no refusal reply");
-                {
-                    const std::lock_guard<std::mutex> l (mx);
-                    expect (lastErr.containsIgnoreCase ("capture-only"), "wrong refusal: " + lastErr);
-                }
+                const auto reply = client.request (play, 2000);
+                expect (! reply.ok);
+                expect (reply.error.containsIgnoreCase ("capture-only"), "wrong refusal: " + reply.error);
                 client.disconnect();
                 daemon.stop();
             }

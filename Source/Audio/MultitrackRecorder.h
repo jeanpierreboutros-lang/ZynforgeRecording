@@ -46,6 +46,7 @@ namespace zynforge
         void processBlock (const float* const* inputs, int numChannels, int numSamples) noexcept;
 
         bool startRecording (const juce::File& sessionDir);
+        juce::String getStartError() const { return startError; }
         void stopRecording();
         bool isRecording() const noexcept { return recording.load (std::memory_order_acquire); }
 
@@ -199,6 +200,8 @@ namespace zynforge
         // Health + position counters -- all RT-safe to read.
         juce::int64 getSamplesSinceStart() const noexcept { return samplesSinceStart.load(std::memory_order_relaxed); }
         juce::int64 getMissedSamples()     const noexcept { return missedSamples    .load(std::memory_order_relaxed); }
+        bool hasCaptureDeviceLost() const noexcept { return captureDeviceLost.load(); }
+        void setMeterUnarmedInputs (bool on) noexcept { meterUnarmedInputs.store (on); }
         void markCaptureDeviceLost() noexcept { captureDeviceLost.store (true, std::memory_order_relaxed); }
         int         getLastWriteMs()       const noexcept { return lastWriteMs      .load(std::memory_order_relaxed); }
 
@@ -607,7 +610,12 @@ namespace zynforge
         std::vector<std::unique_ptr<ChannelFifo>>    fifos;
         std::vector<WriterChannel>                   writers;
         std::vector<std::unique_ptr<PreRollBuffer>>  preRoll;
+        std::vector<std::unique_ptr<PreRollBuffer>>  preRollSnapshot;
+        // Control side holds this only for pointer swaps/transport publication.
+        juce::SpinLock captureBoundary;
+        std::atomic<bool> meterUnarmedInputs { false };
 
+        juce::String startError;
         juce::AudioFormatManager formatManager;
 
         // Writer-thread pool. We start min(8, max(2, hardware/2)) worker

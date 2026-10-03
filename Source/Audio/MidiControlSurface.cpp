@@ -3,6 +3,12 @@
 
 namespace zynforge
 {
+    static void onMessageThread (std::function<void()> callback)
+    {
+        if (juce::MessageManager::getInstance()->isThisTheMessageThread()) callback();
+        else juce::MessageManager::callAsync (std::move (callback));
+    }
+
     MidiControlSurface::MidiControlSurface (AudioEngine& e) : engine (e)
     {
         for (int i = 0; i < kStrips; ++i)
@@ -36,6 +42,7 @@ namespace zynforge
 
     void MidiControlSurface::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m)
     {
+        if (engine.areControlsLocked()) return;
         auto& rec = engine.getRecorder();
         const int bank = bankOffset.load (std::memory_order_relaxed);
         const auto engineHandle = engine.getAsyncHandle();
@@ -60,13 +67,21 @@ namespace zynforge
 
             const int ch = bank + (m.getChannel() - 1);   // MCU channel 1..8 -> strip + bank
             const float db = mcu::faderToDb (m.getPitchWheelValue());
-            juce::MessageManager::callAsync ([engineHandle, ch, db]
+            onMessageThread ([engineHandle, ch, db]
             {
                 auto* eng = engineHandle->load (std::memory_order_acquire);
-                if (eng == nullptr) return;
+                if (eng == nullptr || eng->areControlsLocked()) return;
                 auto& r = eng->getRecorder();
                 if (ch >= 0 && ch < r.getNumTracks())
-                    r.getTrack (ch).gainDb.store (db, std::memory_order_relaxed);
+                {
+                    eng->setTrackGainDb (ch, db);
+                    // The physical MCU bank exposes either half of a logical
+                    // stereo strip. Apply the same fader value to its partner.
+                    if (r.getTrack (ch).isStereo.load() && ch + 1 < r.getNumTracks())
+                        eng->setTrackGainDb (ch + 1, db);
+                    else if (ch > 0 && r.getTrack (ch - 1).isStereo.load())
+                        eng->setTrackGainDb (ch - 1, db);
+                }
             });
             return;
         }
@@ -78,10 +93,10 @@ namespace zynforge
         if (m.isController() && mcu::isJogCc (m.getControllerNumber()))
         {
             const int delta = mcu::decodeJogDelta (m.getControllerValue());
-            juce::MessageManager::callAsync ([engineHandle, delta]
+            onMessageThread ([engineHandle, delta]
             {
                 auto* eng = engineHandle->load (std::memory_order_acquire);
-                if (eng == nullptr) return;
+                if (eng == nullptr || eng->areControlsLocked()) return;
                 auto& player = eng->getPlayer();
                 const double sr = juce::jmax (1.0, player.getSampleRate());
                 const auto step = (juce::int64) std::lround (sr / 30.0) * (juce::int64) delta;
@@ -95,10 +110,10 @@ namespace zynforge
         {
             const int ch = bank + mcu::vpotStrip (m.getControllerNumber());
             const int delta = mcu::decodeVpotDelta (m.getControllerValue());
-            juce::MessageManager::callAsync ([engineHandle, ch, delta]
+            onMessageThread ([engineHandle, ch, delta]
             {
                 auto* eng = engineHandle->load (std::memory_order_acquire);
-                if (eng == nullptr) return;
+                if (eng == nullptr || eng->areControlsLocked()) return;
                 auto& r = eng->getRecorder();
                 if (ch >= 0 && ch < r.getNumTracks())
                 {
@@ -137,20 +152,20 @@ namespace zynforge
             case mcu::Action::Mute:
                 // Engine setter: mirrors a stereo pair (this used to leave one
                 // leg in the opposite state) and holds the structure lock.
-                juce::MessageManager::callAsync ([engineHandle, ch]
-                { if (auto* eng = engineHandle->load (std::memory_order_acquire)) eng->toggleTrackMuted (ch); });
+                onMessageThread ([engineHandle, ch]
+                { if (auto* eng = engineHandle->load (std::memory_order_acquire); eng != nullptr && ! eng->areControlsLocked()) eng->toggleTrackMuted (ch); });
                 return;
             case mcu::Action::Solo:
                 // Engine setter: mirrors a stereo pair (this used to leave one
                 // leg in the opposite state) and holds the structure lock.
-                juce::MessageManager::callAsync ([engineHandle, ch]
-                { if (auto* eng = engineHandle->load (std::memory_order_acquire)) eng->toggleTrackSoloed (ch); });
+                onMessageThread ([engineHandle, ch]
+                { if (auto* eng = engineHandle->load (std::memory_order_acquire); eng != nullptr && ! eng->areControlsLocked()) eng->toggleTrackSoloed (ch); });
                 return;
             case mcu::Action::Arm:
                 // Engine setter: mirrors a stereo pair (this used to leave one
                 // leg in the opposite state) and holds the structure lock.
-                juce::MessageManager::callAsync ([engineHandle, ch]
-                { if (auto* eng = engineHandle->load (std::memory_order_acquire)) eng->toggleTrackArmed (ch); });
+                onMessageThread ([engineHandle, ch]
+                { if (auto* eng = engineHandle->load (std::memory_order_acquire); eng != nullptr && ! eng->areControlsLocked()) eng->toggleTrackArmed (ch); });
                 return;
             case mcu::Action::Play:
             case mcu::Action::Stop:
@@ -158,10 +173,10 @@ namespace zynforge
             {
                 // Transport touches the player -> marshal to the message thread.
                 const auto a = hit.action;
-                juce::MessageManager::callAsync ([engineHandle, a]
+                onMessageThread ([engineHandle, a]
                 {
                     auto* eng = engineHandle->load (std::memory_order_acquire);
-                    if (eng == nullptr) return;
+                    if (eng == nullptr || eng->areControlsLocked()) return;
                     if (a == mcu::Action::Play)  { if (eng->isPlaying()) eng->stopPlayback(); else eng->startPlayback(); }
                     if (a == mcu::Action::Stop)  eng->stopPlayback();
                     // Record over MCU intentionally not wired in v1 (avoids an

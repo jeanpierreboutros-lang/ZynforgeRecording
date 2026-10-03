@@ -147,7 +147,7 @@ public:
             AudioEngine e; e.setActiveSessionDir (dir.file); e.loadSession (dir.file); e.setStripCount (1);
             e.deleteClip (0, 0); e.pasteClip (0, 0, 0, 1000, 0, 0, 0, "missing", dir.file.getChildFile ("missing.wav"));
             float peak = 0;
-            expect (e.forEachArrangementWindow (0, 0, 1000, [&] (const float* p, juce::int64, int n)
+            expect (! e.forEachArrangementWindow (0, 0, 1000, [&] (const float* p, juce::int64, int n)
             { for (int i = 0; i < n; ++i) peak = juce::jmax (peak, std::abs (p[i])); return true; }));
             expectWithinAbsoluteError (peak, 0.0f, 0.0001f);
             expect (! e.normalizeClip (0, 0, -1));

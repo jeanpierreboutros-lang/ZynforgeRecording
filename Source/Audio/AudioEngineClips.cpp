@@ -557,7 +557,10 @@ namespace zynforge
                 //    stereo pair -> read channel 0; a mono file reads all.
                 for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
                 {
-                    auto f = audioDir.getChildFile (juce::String::formatted ("Track_%02d", track + 1) + ext);
+                    const auto name = juce::String::formatted ("Track_%02d", track + 1) + ext;
+                    auto f = audioDir.getChildFile (name);
+                    if (! f.existsAsFile() && audioDir.getFileName() == "Audio Files")
+                        f = audioDir.getParentDirectory().getChildFile (name);
                     if (f.existsAsFile()) { srcFile = f; break; }
                 }
 
@@ -575,18 +578,21 @@ namespace zynforge
                     //    L partner is index track-1). Read channel 1 from it.
                     for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
                     {
-                        auto f = audioDir.getChildFile (juce::String::formatted ("Track_%02d", track) + ext);
+                        const auto name = juce::String::formatted ("Track_%02d", track) + ext;
+                        auto f = audioDir.getChildFile (name);
+                        if (! f.existsAsFile() && audioDir.getFileName() == "Audio Files")
+                            f = audioDir.getParentDirectory().getChildFile (name);
                         if (f.existsAsFile()) { srcFile = f; break; }
                     }
-                    if (! srcFile.existsAsFile()) return engineClips != nullptr;
+                    if (! srcFile.existsAsFile()) return true;
                     reader = ConcatReader::create (fm, findTakeParts (srcFile));
                     if (reader == nullptr || reader->numChannels < 2)
-                    { reader.reset(); return engineClips != nullptr; }
+                    { reader.reset(); return true; }
                     readChannel = 1;
                 }
                 else
                 {
-                    return engineClips != nullptr;
+                    return true;
                 }
 
                 // Active-take clips; bootstrap a whole-file clip if the
@@ -606,7 +612,7 @@ namespace zynforge
             // Mix every clip's overlap with [winStart, winStart + winLen)
             // into dst (window-relative, accumulating). Fades, clip gain
             // and clip mute match the real-time player path.
-            void mixWindow (float* dst, juce::int64 winStart, int winLen, juce::AudioBuffer<float>& tmp)
+            bool mixWindow (float* dst, juce::int64 winStart, int winLen, juce::AudioBuffer<float>& tmp)
             {
                 for (const auto& c : clips)
                 {
@@ -631,7 +637,8 @@ namespace zynforge
                                                          fm, findTakeParts (c.audioFile))).first;
                         if (it->second != nullptr) rd = it->second.get();
                     }
-                    if (rd == nullptr) continue;
+                    if (rd == nullptr || fileReadStart < 0
+                        || fileReadStart + span > rd->lengthInSamples) return false;
 
                     // Read both channels (a stereo file fills L+R; a mono file
                     // fills ch 0). For the track's own reader, pick the L/R
@@ -640,7 +647,8 @@ namespace zynforge
                                  : (rd == reader.get() ? juce::jmax (0, readChannel) : 0);
                     tmp.setSize (2, span, false, false, true);
                     tmp.clear();
-                    rd->read (&tmp, 0, span, fileReadStart, true, true);
+                    if ((unsigned) ch >= rd->numChannels
+                        || ! rd->read (&tmp, 0, span, fileReadStart, true, true)) return false;
 
                     const float clipGain = juce::Decibels::decibelsToGain (c.gainDb, -60.0f);
                     const bool  eq        = (c.fadeCurve == 1);
@@ -660,6 +668,7 @@ namespace zynforge
                         d[i] += s[i] * g;
                     }
                 }
+                return true;
             }
         };
 
@@ -689,7 +698,7 @@ namespace zynforge
                 const int winLen = (int) juce::jmin<juce::int64> (
                     kRenderWindowSamples, total - winStart);
                 window.clear (0, 0, winLen);
-                src.mixWindow (window.getWritePointer (0), winStart, winLen, tmp);
+                if (! src.mixWindow (window.getWritePointer (0), winStart, winLen, tmp)) return false;
                 const auto* data = window.getReadPointer (0);
                 for (int n = 0; n < winLen; ++n)
                 {
@@ -840,7 +849,7 @@ namespace zynforge
         {
             const int winLen = (int) juce::jmin<juce::int64> (kRenderWindowSamples, endSample - winStart);
             window.clear (0, 0, winLen);
-            src.mixWindow (window.getWritePointer (0), winStart, winLen, tmp);
+            if (! src.mixWindow (window.getWritePointer (0), winStart, winLen, tmp)) return false;
             if (! consume (window.getReadPointer (0), winStart, winLen)) return false;
         }
         return true;
@@ -914,6 +923,7 @@ namespace zynforge
         struct TrackCtx
         {
             int track {};
+            bool audible {}, needed {};
             ArrangementSource src;
             float baseDb {}, basePan {}, vcaDb {};
             int   autoCh {};
@@ -936,12 +946,10 @@ namespace zynforge
             else if (anyVcaSolo) audible = false;
             else if (anySolo)    audible = ts.soloed.load (std::memory_order_relaxed);
             else                 audible = ! ts.muted.load (std::memory_order_relaxed);
-            if (! audible) continue;
+
 
             auto ctx = std::make_unique<TrackCtx>();
-            const std::vector<Clip>* engineClips = (t < (int) trackClips.size())
-                                                     ? &trackClips[(size_t) t] : nullptr;
-            if (! ctx->src.open (audioDir, t, engineClips)) continue;
+            ctx->audible = audible;
             ctx->track   = t;
             ctx->baseDb  = ts.gainDb.load (std::memory_order_relaxed);
             ctx->basePan = ts.pan.load (std::memory_order_relaxed);
@@ -954,6 +962,25 @@ namespace zynforge
             live.push_back (std::move (ctx));
         }
 
+        for (auto& cp : live)
+        {
+            cp->needed = cp->audible;
+            if (! cp->ts->isBus.load())
+                for (const auto& send : cp->ts->sends)
+                {
+                    const int bus = send.targetBus.load();
+                    if (bus >= 0 && bus < nTracks && live[(size_t) bus]->ts->isBus.load()
+                        && live[(size_t) bus]->audible && send.levelDb.load() > -60.0f)
+                        cp->needed = true;
+                }
+            if (cp->needed && ! cp->ts->isBus.load())
+            {
+                const auto* clips = cp->track < (int) trackClips.size()
+                    ? &trackClips[(size_t) cp->track] : nullptr;
+                if (! cp->src.open (audioDir, cp->track, clips)) return false;
+            }
+        }
+
         const double halfPi = juce::MathConstants<double>::halfPi;
         const int step = 512;   // re-evaluate automation every ~10 ms
 
@@ -962,7 +989,7 @@ namespace zynforge
                                    : juce::Decibels::decibelsToGain (
                                          (double) masterState.gainDb.load (std::memory_order_relaxed), -60.0);
 
-        juce::AudioBuffer<float> stereo (2, kRenderWindowSamples), mono (1, kRenderWindowSamples), tmp (1, 0);
+        juce::AudioBuffer<float> stereo (2, kRenderWindowSamples), raw (juce::jmax (1, nTracks), kRenderWindowSamples), tmp (1, 0);
         for (juce::int64 winStart = 0; winStart < totalSamples; winStart += kRenderWindowSamples)
         {
             const int winLen = (int) juce::jmin<juce::int64> (kRenderWindowSamples, totalSamples - winStart);
@@ -970,11 +997,38 @@ namespace zynforge
             auto* oL = stereo.getWritePointer (0);
             auto* oR = stereo.getWritePointer (1);
 
+            raw.clear();
+            for (auto& cp : live)
+                if (cp->needed && ! cp->ts->isBus.load()
+                    && ! cp->src.mixWindow (raw.getWritePointer (cp->track), winStart, winLen, tmp)) return false;
+
+            // Sends precede solo filtering, as in live playback: a soloed bus
+            // still receives its unsoloed source strips.
             for (auto& cp : live)
             {
-                mono.clear (0, 0, winLen);
-                cp->src.mixWindow (mono.getWritePointer (0), winStart, winLen, tmp);
-                const auto* s = mono.getReadPointer (0);
+                if (! cp->needed || cp->ts->isBus.load()) continue;
+                for (int i = 0; i < winLen; i += step)
+                {
+                    const int count = juce::jmin (step, winLen - i);
+                    const auto pos = winStart + i;
+                    const float db = automationValueAtOffline (cp->autoCh, AutomationParam::Volume, pos, cp->baseDb) + cp->vcaDb;
+                    const bool muted = cp->ts->muted.load()
+                        || automationValueAtOffline (cp->autoCh, AutomationParam::Mute, pos, 0.0f) > 0.5f;
+                    for (const auto& send : cp->ts->sends)
+                    {
+                        const int bus = send.targetBus.load();
+                        if (bus < 0 || bus >= nTracks || ! live[(size_t) bus]->ts->isBus.load()) continue;
+                        const float post = send.postFader.load()
+                            ? (muted ? 0.0f : juce::Decibels::decibelsToGain (db, -60.0f)) : 1.0f;
+                        raw.addFrom (bus, i, raw, cp->track, i, count,
+                            post * juce::Decibels::decibelsToGain (send.levelDb.load(), -60.0f));
+                    }
+                }
+            }
+            for (auto& cp : live)
+            {
+                if (! cp->audible) continue;
+                const auto* s = raw.getReadPointer (cp->track);
 
                 for (int i = 0; i < winLen; i += step)
                 {
@@ -1077,8 +1131,9 @@ namespace zynforge
             const int winLen = (int) juce::jmin<juce::int64> (kRenderWindowSamples, len - winStart);
             stereo.clear (0, 0, winLen);
             stereo.clear (1, 0, winLen);
-            if (okL) L.mixWindow (stereo.getWritePointer (0), winStart, winLen, tmp);
-            if (okR) R.mixWindow (stereo.getWritePointer (1), winStart, winLen, tmp);
+            if ((okL && ! L.mixWindow (stereo.getWritePointer (0), winStart, winLen, tmp))
+                || (okR && ! R.mixWindow (stereo.getWritePointer (1), winStart, winLen, tmp)))
+            { writer.reset(); temporary.deleteFile(); return false; }
             ok = writer->writeFromAudioSampleBuffer (stereo, 0, winLen);
         }
         writer.reset();
@@ -1104,6 +1159,9 @@ namespace zynforge
         {
             return ! a.locked && ! b.locked
                 && a.audioFile == b.audioFile
+                && a.sourceChannel == b.sourceChannel && a.gainDb == b.gainDb
+                && a.muted == b.muted && a.fadeCurve == b.fadeCurve
+                && a.fadeOutSamples == 0 && b.fadeInSamples == 0
                 && a.fileStartSamples + a.fileLengthSamples == b.fileStartSamples
                 && a.timelineStartSamples + a.fileLengthSamples == b.timelineStartSamples;
         }
@@ -1285,6 +1343,11 @@ namespace zynforge
         const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
         if (track < 0 || track >= maxTracks) return false;
 
+        if (const auto* clips = tryClipsFor (track))
+            for (const auto& clip : *clips)
+                if (clip.locked && clip.timelineStartSamples < end
+                    && clip.timelineStartSamples + clip.fileLengthSamples > start) return false;
+
         const juce::int64 arrLen = juce::jmax (end, getArrangementLengthSamples());
         const juce::int64 a = juce::jmin (start, arrLen);
         const juce::int64 b = juce::jmin (end,   arrLen);
@@ -1341,6 +1404,13 @@ namespace zynforge
             if (completion) completion (0, false);
             return;
         }
+
+        for (int track : tracks)
+            if (const auto* clips = tryClipsFor (track))
+                for (const auto& clip : *clips)
+                    if (clip.locked && clip.timelineStartSamples < end
+                        && clip.timelineStartSamples + clip.fileLengthSamples > start)
+                    { if (completion) completion (0, false); return; }
 
         std::sort (tracks.begin(), tracks.end());
         tracks.erase (std::unique (tracks.begin(), tracks.end()), tracks.end());
@@ -1413,7 +1483,8 @@ namespace zynforge
                     const int winLen = (int) juce::jmin<juce::int64> (
                         kRenderWindowSamples, end - winStart);
                     window.clear (0, 0, winLen);
-                    src.mixWindow (window.getWritePointer (0), winStart, winLen, tmp);
+                    if (! src.mixWindow (window.getWritePointer (0), winStart, winLen, tmp))
+                    { job.rendered = false; break; }
                     const float* channels[1] = { window.getReadPointer (0) };
                     if (! writer->writeFromFloatArrays (channels, 1, winLen))
                     {

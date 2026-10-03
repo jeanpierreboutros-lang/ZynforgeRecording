@@ -27,6 +27,7 @@ namespace zynforge
         bool isActive() const noexcept { return input != nullptr; }
 
     private:
+        friend class OctoberRegressionTests;
         void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage&) override;
         void timerCallback() override;   // push fader / name / LED state to the surface
 
