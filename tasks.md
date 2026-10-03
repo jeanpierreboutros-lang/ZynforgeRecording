@@ -1,5 +1,11 @@
 # Project Tasks
 
+## Installation and cleanup — 2026-10-04
+
+- [x] Install tested `c563b00` app and matching helper on both Macs; verify executable hashes, signatures and successful launch. The user manually closed the mini app.
+- [x] Package and verify the current universal DMG locally and on the mini.
+- [x] Delete all inventoried old Recording apps, app backups and installers as requested: 31 items locally and 10 on the mini. Preserve recordings and settings. Historical backup/package paths below no longer exist locally.
+
 ## October 3 follow-up audit
 
 - [x] Implement fixes and regression coverage for all 14 additional audit findings.
@@ -17,7 +23,8 @@
 - [x] Reopen the preserved five-hour session on the Mac mini; the stale cache was replaced. Two screenshots show a thinner overview body with narrow true-peak markers instead of the old filled blocks.
 - [x] Diagnose the H+ ceiling: a third screenshot stopped at roughly 16 minutes, and the user confirmed no further zoom was possible. Three 16× clamps caused it. Current source raises finalized-take zoom to 512×, keeps the live growing timeline at 16× and bounds grid/tempo ticks to the viewport; universal Release build and 404 test groups pass.
 - [x] Package source commit `5026519` as a verified universal DMG and copy it with its checksum to the Mac mini; the target checksum and image verification passed.
-- [ ] Install the deeper-zoom build with rollback after the open Mac mini app quits normally, then inspect Track 2 with the ruler spanning a few minutes. A graceful quit request was canceled, so installation was paused. Live FOLLOW and long-take navigation remain separate checks.
+- [x] Install the deeper-zoom changes on the mini (included in `c563b00`, installed 2026-10-04).
+- [ ] Inspect Track 2 with the ruler spanning a few minutes on the updated mini. Live FOLLOW and long-take navigation remain separate checks.
 - [ ] Mac mini host issue: preserve the interrupted session and panic reports. The user is handling the Mac mini restart separately and requested no Zynforge or audio-routing changes for this incident. The interrupted take used DVS input and Samsung monitor output; these are configuration facts, not a diagnosed cause.
 - [ ] During a timed long live take on the updated build, observe FOLLOW scrolling, H/V zoom controls and waveform detail after three hours and near five hours. The completed take has a normal report and equal file lengths, but its post-STOP screenshot shows a display defect and does not document these exact live gestures or an independent SHA-256 match. Run the full verifier once `ffprobe` is available, or independently re-hash the preserved take. The interrupted run cannot satisfy this UI check.
 - [ ] Run the planned 56-input, three-hour exact-rig rehearsal with backup and independent recorder checks before relying on this build as the sole show recorder.

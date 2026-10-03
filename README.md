@@ -6,6 +6,8 @@ A focused recording surface for engineers running front-of-house or monitors: ca
 
 ## Status
 
+Build `c563b00` is installed on both the development Mac and Mac mini as of 2026-10-04. App/helper hashes and signatures match on both, and both launched successfully. Old app copies and installers were deleted as requested; recordings and settings were preserved. The current [universal installer](dist/Zynforge-Recording-c563b00-macOS-universal.dmg) is verified on both Macs. See [installation details](INSTALL.md).
+
 The October 3 follow-up fixes 14 additional recording, console, session, mix and editing issues. Regression coverage includes stereo-link safety, click-bed capture alignment, device-loss finalization, reconnect patch restoration, deletion during capture, gain-reference persistence, missing stereo inputs, mixed legacy media, pasted-clip export, trim/group bounds, live aux sends, VCA mute and playback-safe auto-arm. The universal Release app and helper build successfully; **438 test groups pass**, both audit gates and bundle signatures pass, and a 30-second isolated startup smoke completed without a new crash report.
 
 Active development, pre-1.0. Ships **multitrack recording**, **virtual-soundcheck playback**, a non-destructive **clip/region editor with take comping**, **bounce to stems + stereo mix**, and **live OSC console integration** as a single coherent surface.
@@ -16,9 +18,7 @@ The first October 3 audit fixes covered all 28 reported recording, session-state
 
 ## Build
 
-Previous source commit `5026519` has a successful universal Release build and **404 test groups with 0 failures**. Its [two-Mac test DMG](dist/Zynforge-Recording-5026519-macOS-universal.dmg) passed checksum, read-only mount, bundle comparison and signature checks. The DMG is verified on the Mac mini, but the prior app is still open after a graceful quit request was canceled, so installation is paused. The Mac mini still runs `98a645e`, with `d2c5858` saved for rollback. The five-hour primary-drive capture ran on `d2c5858`; detailed-zoom visual acceptance remains open. The development Mac's `/Applications` copy remains `672456d`. See [installation and checksum details](INSTALL.md).
-
-On 2026-09-24, `/Applications/Zynforge Recording.app` contained the universal Release build with the long-take EDIT and codebase-audit fixes, plus its matching protocol-v3 capture helper. The built and installed apps each passed **397 test groups with 0 failures**; the built app passed an idle smoke launch. The new [`3e6104c` test DMG](dist/Zynforge-Recording-3e6104c-macOS-universal.dmg) contains an exact copy of the tested installed bundle for macOS 12.0+ on Apple Silicon and Intel. The previous installed app is retained at `/Applications/Zynforge Recording.app.backup-20260924-before-audit-fixes`, with another verified copy under `/Users/jeanpierre/Zynforge-App-Backups/`. Older DMGs remain unchanged. The installation is ad-hoc signed, **not Developer ID notarized**; real-device punch/navigation and exact-rig rehearsal remain unverified. See [installation details](INSTALL.md) and [show readiness](SHOW-READINESS.md).
+The installed `c563b00` universal Release build passed **438 test groups with 0 failures**. The matching GUI and capture helper are included in the current installer. This is an ad-hoc-signed development build, not a notarized public release. Real-device capture and exact-rig acceptance remain open; see [show readiness](SHOW-READINESS.md).
 
 ```bash
 cmake -B build -G Xcode

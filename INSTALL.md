@@ -2,33 +2,58 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
+## Current installation and package — 2026-10-04
+
+Both the development Mac and Mac mini (`192.168.68.75`) now have source build `c563b00` at `/Applications/Zynforge Recording.app`, including the matching protocol-v3 `ZynforgeCapture` helper. Both executables are universal arm64 + x86_64. The build passed 438 test groups with zero failures, both audit gates and a 30-second isolated startup smoke before deployment.
+
+The installed bundles pass deep/strict signature verification on both Macs, and their executable hashes match the tested build:
+
+| Executable | SHA-256 |
+| --- | --- |
+| GUI | `be66a25be240d4c603a37c6795de6d8fe7f9d1bc5cd776ebab3086aae733c098` |
+| Capture helper | `afbcb3cf1a741ef7101550e9cc6e82b39c90a4b9ca12108a1eace0a3e68ca1be` |
+
+The development Mac reached Welcome / New Session with its saved device selections and remained running through a 51-second observation (about 116–117 MiB RSS). The mini launched twice; the user confirmed manually closing it both times. No new crash report appeared on either Mac. The mini was left closed. These startup checks do not replace disposable real-device capture or the outstanding exact-rig rehearsal.
+
+The current [universal DMG](dist/Zynforge-Recording-c563b00-macOS-universal.dmg) and [checksum file](dist/Zynforge-Recording-c563b00-macOS-universal.dmg.sha256) are in `dist/` and the mini's `~/Downloads/`. DMG SHA-256: `d55720c4c291ef207e74b553333b60fd3db7154d43a264aaf9d0bf354bb7fdf5`. Image verification passed on both Macs; the read-only mounted app matched the tested build exactly. From the folder containing both files, run:
+
+```bash
+shasum -a 256 -c Zynforge-Recording-c563b00-macOS-universal.dmg.sha256
+```
+
+The app is ad-hoc signed, not Developer ID notarized, and supports macOS 12.0+.
+
+At the user's request, after installation verification, old Recording app bundles, backup copies, installers and checksum files were deleted: 31 items on the development Mac (15 apps, 10 DMGs, 6 checksums), and 10 on the mini (3 apps, 4 DMGs, 3 checksums). Recordings, session backups, settings, source and other ZynForge products were preserved. Final scans of Applications and the user's Applications, Desktop, Downloads, Documents and Zynforge-App-Backups locations found no remaining old versions. The current development Release build remains available.
+
+**Retention notice:** All older installation/package records below are historical. Their backup and installer paths are no longer available locally after this cleanup; old versions remain in Git history. The current installation above supersedes earlier paused-installation and retained-backup statements.
+
 ## Preconditions
 
 1. Stop every take through the app, wait for completion, save the session and quit gracefully. Confirm the capture daemon is idle and has exited too. Never force-kill an unknown daemon: it may be recording after a GUI crash.
 2. Build and run the tests described in [testing.md](testing.md). Check the fresh report and process exit status, not an old pass count.
 3. Preserve the existing installed app at a unique backup path. Do not overwrite an earlier backup.
 
-## Current two-Mac deep-zoom test DMG — 2026-10-02
+## Historical two-Mac deep-zoom test DMG — 2026-10-02
 
-[`dist/Zynforge-Recording-5026519-macOS-universal.dmg`](dist/Zynforge-Recording-5026519-macOS-universal.dmg) packages the universal Release app from source commit `5026519` with its matching protocol-v3 capture helper. SHA-256: `9c7401e4c91628cb94b0e9b7eb6c306f022f3dba380d40129df0e023cb1b19db`; use the matching [checksum file](dist/Zynforge-Recording-5026519-macOS-universal.dmg.sha256). The build passed 404 headless test groups. Its checksum, `hdiutil verify`, read-only mount comparison, both-architecture checks and deep/strict ad-hoc signature verification passed. It adds deep H+ zoom on finalized takes and bounds timeline tick drawing to the viewport. This test DMG is not notarized.
+`dist/Zynforge-Recording-5026519-macOS-universal.dmg` packages the universal Release app from source commit `5026519` with its matching protocol-v3 capture helper. SHA-256: `9c7401e4c91628cb94b0e9b7eb6c306f022f3dba380d40129df0e023cb1b19db`; use the matching `dist/Zynforge-Recording-5026519-macOS-universal.dmg.sha256`. The build passed 404 headless test groups. Its checksum, `hdiutil verify`, read-only mount comparison, both-architecture checks and deep/strict ad-hoc signature verification passed. It adds deep H+ zoom on finalized takes and bounds timeline tick drawing to the viewport. This test DMG is not notarized.
 
 The DMG and checksum were copied to the Mac mini and verified there. The prior app is still open: macOS reported that a graceful quit request was canceled, so the replacement was paused to preserve the user's work. The installed Mac mini app remains `98a645e` until it closes normally. The new build's GUI and helper SHA-256 values are `453df24d5337f54720df06e0052458ab4764288d7cc290724ffc6684172c2be7` and `77cd3fbde0f87ecabaa355f3b912eace80a516142ae98efb308f65a0a18d2fc8`.
 
 ## Previous two-Mac waveform test DMG — 2026-10-02
 
-[`dist/Zynforge-Recording-98a645e-macOS-universal.dmg`](dist/Zynforge-Recording-98a645e-macOS-universal.dmg) packages the tested universal Release app from source commit `98a645e` with its matching protocol-v3 capture helper, Applications shortcut and brief install note. SHA-256: `4f1f4574ef6ceab884dbd8262da1f5848337e83084ad7535439e04c7e243a215`; use the matching [checksum file](dist/Zynforge-Recording-98a645e-macOS-universal.dmg.sha256). The build passed 403 headless test groups with zero failures. `hdiutil verify`, read-only mount comparison, both-architecture checks and deep/strict ad-hoc signature verification passed. This is a test build for macOS 12.0+ on Apple Silicon and Intel; it is not notarized.
+`dist/Zynforge-Recording-98a645e-macOS-universal.dmg` packages the tested universal Release app from source commit `98a645e` with its matching protocol-v3 capture helper, Applications shortcut and brief install note. SHA-256: `4f1f4574ef6ceab884dbd8262da1f5848337e83084ad7535439e04c7e243a215`; use the matching `dist/Zynforge-Recording-98a645e-macOS-universal.dmg.sha256`. The build passed 403 headless test groups with zero failures. `hdiutil verify`, read-only mount comparison, both-architecture checks and deep/strict ad-hoc signature verification passed. This is a test build for macOS 12.0+ on Apple Silicon and Intel; it is not notarized.
 
 The Mac mini received this exact app and helper on 2026-10-02 after a check found no active recording marker or recorder process. The previous `d2c5858` app remains at `/Applications/Zynforge Recording.app.backup-20261002-before-98a645e`. The installed GUI and helper SHA-256 values are `4ebb85016cbc3d0f7364b5ac7312eb86fa429c6ef939d0324ff6a8fa7ee0631f` and `77cd3fbde0f87ecabaa355f3b912eace80a516142ae98efb308f65a0a18d2fc8`, matching the package. Initial launch produced no crash report; the five-hour waveform still needs visual acceptance after reopening. The development Mac's Applications copy remains `672456d`. Stop and save every take, quit both processes and preserve the existing app before installing this DMG on another Mac.
 
 ## Previous two-Mac test DMG — 2026-10-01
 
-[`dist/Zynforge-Recording-d2c5858-macOS-universal.dmg`](dist/Zynforge-Recording-d2c5858-macOS-universal.dmg) packages the universal Release app from source commit `d2c5858`, including its matching protocol-v3 capture helper and an Applications shortcut. SHA-256: `14a9c986a3075f0ff77888b0f08576fc67569fd3fc9c163ef74afdfa7b4d19eb`; verify with the matching [checksum file](dist/Zynforge-Recording-d2c5858-macOS-universal.dmg.sha256) using `shasum -a 256 -c Zynforge-Recording-d2c5858-macOS-universal.dmg.sha256` from the files' directory. It supports macOS 12.0+ on Apple Silicon and Intel. The image passed `hdiutil verify`; its read-only mount contained an exact copy of the staged app, and the app's deep/strict ad-hoc signature verified. It is not Developer ID signed or notarized.
+`dist/Zynforge-Recording-d2c5858-macOS-universal.dmg` packages the universal Release app from source commit `d2c5858`, including its matching protocol-v3 capture helper and an Applications shortcut. SHA-256: `14a9c986a3075f0ff77888b0f08576fc67569fd3fc9c163ef74afdfa7b4d19eb`; verify with the matching `dist/Zynforge-Recording-d2c5858-macOS-universal.dmg.sha256` using `shasum -a 256 -c Zynforge-Recording-d2c5858-macOS-universal.dmg.sha256` from the files' directory. It supports macOS 12.0+ on Apple Silicon and Intel. The image passed `hdiutil verify`; its read-only mount contained an exact copy of the staged app, and the app's deep/strict ad-hoc signature verified. It is not Developer ID signed or notarized.
 
 Stop and save every take before replacing an app. Copy both the DMG and checksum file to the target Mac, verify the checksum there, back up the existing app, drag the new app to Applications and launch it. Make a disposable capture/playback and backup-path check with that Mac's selected device before an important take. The first five-hour attempt on the Mac mini was interrupted by a kernel panic; a separate 55-channel take on the same installed build completed 5:00:11 on 2026-10-02 with a clean stop and equal-length primary WAVs. Detailed live waveform/FOLLOW/zoom observations and backup validation remain open. The user requested no app or routing changes for the restart incident. See [field evidence](FIELD-TEST-2026-10-01.md).
 
 ## Previous two-Mac test DMG — 2026-09-30
 
-[`dist/Zynforge-Recording-672456d-macOS-universal.dmg`](dist/Zynforge-Recording-672456d-macOS-universal.dmg) packages the exact installed app from source commit `672456d`, with the matching capture helper, Applications shortcut and `READ ME.txt`. It supports macOS 12.0+ on Apple Silicon and Intel. SHA-256: `63aff6399ad3e064d319d241e74b773ce88627db56662b5c99062ebc502b1789`; use the matching [checksum file](dist/Zynforge-Recording-672456d-macOS-universal.dmg.sha256).
+`dist/Zynforge-Recording-672456d-macOS-universal.dmg` packages the exact installed app from source commit `672456d`, with the matching capture helper, Applications shortcut and `READ ME.txt`. It supports macOS 12.0+ on Apple Silicon and Intel. SHA-256: `63aff6399ad3e064d319d241e74b773ce88627db56662b5c99062ebc502b1789`; use the matching `dist/Zynforge-Recording-672456d-macOS-universal.dmg.sha256`.
 
 Copy the DMG and `.sha256` file to each Mac. From their directory, run `shasum -a 256 -c Zynforge-Recording-672456d-macOS-universal.dmg.sha256`. Stop and save every take, quit the app and capture helper, then back up the existing app. Open the image and drag `Zynforge Recording.app` onto the Applications shortcut. Launch it and make a disposable recording and playback check with each Mac's selected device and backup paths.
 
@@ -36,7 +61,7 @@ The image checksum and read-only mount verified; the mounted app matched the ins
 
 ## Previous two-Mac test DMG — 2026-09-29
 
-[`dist/Zynforge-Recording-8d79ab8-macOS-universal.dmg`](dist/Zynforge-Recording-8d79ab8-macOS-universal.dmg) packages the exact tested installed app from source commit `8d79ab8`. It includes the matching capture helper, an Applications shortcut and a `READ ME.txt`. It supports macOS 12.0+ on Apple Silicon and Intel. SHA-256: `ce98e3834d505a8b000ad433e6657aaa10014484fd2a74962956b9f48b28c65d`; use the matching [checksum file](dist/Zynforge-Recording-8d79ab8-macOS-universal.dmg.sha256).
+`dist/Zynforge-Recording-8d79ab8-macOS-universal.dmg` packages the exact tested installed app from source commit `8d79ab8`. It includes the matching capture helper, an Applications shortcut and a `READ ME.txt`. It supports macOS 12.0+ on Apple Silicon and Intel. SHA-256: `ce98e3834d505a8b000ad433e6657aaa10014484fd2a74962956b9f48b28c65d`; use the matching `dist/Zynforge-Recording-8d79ab8-macOS-universal.dmg.sha256`.
 
 Copy the DMG and `.sha256` file to each Mac. From their directory, run `shasum -a 256 -c Zynforge-Recording-8d79ab8-macOS-universal.dmg.sha256`. Stop and save any take, quit the app and capture helper, and back up the existing app. Open the image and drag `Zynforge Recording.app` onto the Applications shortcut. Launch it and make a disposable recording, playback, backup and long-take navigation check with that Mac's actual device before important use.
 
@@ -58,7 +83,7 @@ The app now backed up at `/Applications/Zynforge Recording.app.backup-20260930-b
 
 ## Earlier two-Mac test DMG — 2026-09-24
 
-[`dist/Zynforge-Recording-3e6104c-macOS-universal.dmg`](dist/Zynforge-Recording-3e6104c-macOS-universal.dmg) packages the tested installed build from source commit `3e6104c`. It runs on macOS 12.0+ on Apple Silicon or Intel and includes the matching protocol-v3 `ZynforgeCapture` helper, an Applications shortcut and a `READ ME.txt`. SHA-256: `3acfe9d93165b4f59d80089f5bcd214fbd19924c2d8be12a6ef5c12fb70c432f`. A matching [checksum file](dist/Zynforge-Recording-3e6104c-macOS-universal.dmg.sha256) is provided for transfer verification.
+`dist/Zynforge-Recording-3e6104c-macOS-universal.dmg` packages the tested installed build from source commit `3e6104c`. It runs on macOS 12.0+ on Apple Silicon or Intel and includes the matching protocol-v3 `ZynforgeCapture` helper, an Applications shortcut and a `READ ME.txt`. SHA-256: `3acfe9d93165b4f59d80089f5bcd214fbd19924c2d8be12a6ef5c12fb70c432f`. A matching `dist/Zynforge-Recording-3e6104c-macOS-universal.dmg.sha256` is provided for transfer verification.
 
 From the `dist` directory, run `shasum -a 256 -c Zynforge-Recording-3e6104c-macOS-universal.dmg.sha256` on each Mac after copying both files. Stop and save any take, quit the app and capture helper, and back up the existing app. Open the DMG and drag `Zynforge Recording.app` to the Applications shortcut. After replacement, launch the app from Applications and make a disposable recording and playback check with the selected device and backup/mirror paths.
 
@@ -156,5 +181,7 @@ If copying or verification fails, do not launch the partial installation. Preser
 - Preserved the prior installed app at `/Applications/Zynforge Recording.app.backup-20260924-before-audit-fixes` and an exact verified copy under `/Users/jeanpierre/Zynforge-App-Backups/before-audit-fixes-bYakSr/`. Neither existing DMG was changed; both contain older code. This installation remains ad-hoc signed and unnotarized.
 
 ## Rollback
+
+No local old-version rollback copies remain after the requested 2026-10-04 cleanup. Obtain or rebuild the required revision before using the procedure below.
 
 Stop capture and quit both processes first. Preserve current session data and the current app; then move the named backup back to `/Applications/Zynforge Recording.app`. Verify the restored signature before launch. Restore GUI and bundled daemon together, never just one executable. A prior build may not understand new session metadata: test with a duplicate session, not the only recording copy. Rolling back the app does not undo session-file changes or recover audio overwritten before the fixes.
