@@ -1,6 +1,6 @@
 # Heated Steel — contrast / 200-lux legibility audit
 
-> Historical token and component snapshot. The ratios below describe the listed colour pairs, not a fresh WCAG audit or a measured 200-lux field test of the current `672456d` app. See [design.md](../../design.md) and [SHOW-READINESS.md](../../SHOW-READINESS.md) for current design and rig limits.
+> Historical token and component snapshot. The ratios below describe the listed colour pairs, not a fresh WCAG audit or a measured 200-lux field test of the current installed app. See [design.md](../../design.md) and [SHOW-READINESS.md](../../SHOW-READINESS.md) for current design and rig limits.
 
 Goal (from the field constraints): every piece of **information** must read in
 bright FOH light (~200 lux on screen) without a separate high-contrast mode.

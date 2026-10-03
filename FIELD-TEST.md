@@ -1,6 +1,6 @@
-# ZynForge Recording — Field-Test Checklist (updated 2026-10-02)
+# ZynForge Recording — Field-Test Checklist (updated 2026-10-04)
 
-Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak. Tick boxes only after performing them; the failure column tells you when to stop and report. The Mac mini and [current DMG](dist/Zynforge-Recording-d2c5858-macOS-universal.dmg) contain source build `d2c5858`, whose headless suite passed 401 test groups; the development Mac's Applications copy is still `672456d`. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run on this build. See the [55-channel long-take evidence](FIELD-TEST-2026-10-01.md).
+Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak. Tick boxes only after performing them; the failure column tells you when to stop and report. Both Macs have source build `c563b00` and matching capture helpers. The build passed 438 automated test groups; installed hashes, signatures and startup checks passed. The [installation record](INSTALL.md) contains the current DMG and hashes. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run on this build. See the [55-channel long-take evidence](FIELD-TEST-2026-10-01.md).
 
 Never force-quit, unplug hardware or delete sessions during production recording. Crash tests require a disposable rig/session and a recovery plan. In daemon mode, killing only the GUI is a reattachment test; it does not necessarily stop the recording or create an orphan. Stop both processes gracefully before installing or rolling back.
 
@@ -8,7 +8,7 @@ Never force-quit, unplug hardware or delete sessions during production recording
 
 ---
 
-## Current long-run waveform check — `d2c5858`
+## Current long-run waveform check — `c563b00`
 
 | # | Gesture | Expect | Failure indicator |
 |---|---|---|---|
@@ -186,11 +186,34 @@ Its implemented checks include:
 Still do by hand: (1b) open in another DAW, and (1d) the hard-kill-mid-take
 crash-safety check on disposable data. A survivor without a clean-stop report will not pass the helper even when audio is recoverable. Requires `ffprobe`, `xxd`, `shasum`, `jq`, `python3`; these are not all stock macOS tools. A pending-hash report exits nonzero and must be checked again when hashing finishes.
 
+## October regression acceptance — installed `c563b00`
+
+Use disposable sessions and copies. These rows are not pre-passed by the automated suite.
+
+| Check | Expected result |
+| --- | --- |
+| ☐ Generate a backing click longer than the intended take, record, reopen, then continue. | First capture starts at zero; continuation follows recorded media rather than the reference bed. Explicit cursor/rolling punches retain the chosen position. |
+| ☐ Link stereo channels, try an overlapping pair, then test with one physical input unavailable. | Overlap is refused before writing. The available stereo side records with silence on the missing side and equal frame counts. |
+| ☐ Rearm a track on a later take with primary and verified backup/mirror destinations; exercise pre-roll. | All copies align to the common capture start; pre-roll channels share a boundary. Inspect every copy independently. |
+| ☐ Select a foreign or legacy nonempty replica folder; try a layout/sample-rate change against an existing take. | Capture refuses without modifying existing audio; use a new empty destination or restore the original setup. |
+| ☐ Interrupt a local device while optional StereoMix is active; separately test daemon device loss. | Files finalize to the interrupted endpoint, errors remain visible, completed media reloads once, and repeated STOP preserves later edits. |
+| ☐ Save nonzero capture gain, reopen, and test a take whose reference is zero dB. | Capture/live references restore without a playback gain jump; zero is retained as a real reference. |
+| ☐ Enable input auto-arm during playback, then feed only the right input of a stereo pair. | Playback alone never arms; live right input arms the pair together when stopped/unlocked. |
+| ☐ Send live input to an aux; punch, then toggle VCA mute with pre/post-fader sends. | Live aux is audible without doubled punch input; VCA mute silences post-fader sends in playback/export while pre-fader behavior stays independent. |
+| ☐ Disconnect/reconnect a desk after entering virtual soundcheck. | The saved stage patch survives; restoration remains available when desk state is unknown. Direct re-entry does not replace the saved patch. |
+| ☐ Open delete confirmation, attempt capture/session replacement, then cancel or confirm on disposable material. | Session operations stay reserved; completion rechecks recording and the target session before deletion. |
+| ☐ Open mixed root/Audio Files media; paste adjacent cross-track clips, trim to EOF, and drag a group against timeline zero. | Modern files win per track, legacy tracks remain playable, rendered clips retain their source, and shared bounds preserve group spacing. Missing media makes export fail visibly. |
+| ☐ Exercise grouped cut/paste, locked consolidation, healing and curved automation copy/drag. | Locks, peer offsets, source channels, fades and curve/tension survive; incompatible healing or rendering fails without destructive replacement. |
+| ☐ Lock the session and send companion/OSC/MCU commands, including a fader move on either stereo half. | LOCK blocks prohibited commands; when unlocked, paired gain changes remain linked. |
+| ☐ Switch between sessions with different VCA/send/routing state and disconnect/reconnect a configured mirror. | No prior-session state leaks; explicit input None and configured offline destinations survive restore. |
+
+Also reopen the five-hour take and zoom to a few-minute span to observe the detailed waveform path. Repeat L.1/L.2 for live behavior.
+
 ## September regression acceptance
 
 ### 2026-09-30 capture-integrity delta (previous `672456d` package)
 
-- [ ] On each target Mac, verify the current `d2c5858` DMG against its `.sha256` file, stop capture, preserve the old app, install both GUI and bundled helper, and record the installed bundle's source commit. Completed for the Mac mini on 2026-10-01; the development Mac remains on `672456d`. Opening the DMG or passing the headless suite does not satisfy this row.
+- [x] Install and verify source build `c563b00` and matching helper on both Macs (2026-10-04). Hashes, signatures and startup checks passed; old app backups/installers were removed as requested. See [INSTALL.md](INSTALL.md). This completes installation only; the hardware checks below remain open.
 - [ ] During a disposable daemon continuation, send START again while rolling. It must refuse without moving the live playhead, changing the take's base position, or clearing any already-latched capture warning. STOP must remain responsive while a companion/status client is slow or disconnected.
 - [ ] Finish a clean continuation after a take with a known capture warning. The final `session.report.json` must list and hash all earlier and new parts and retain the earlier warning. Run `verify_take.sh` on a clean continued session and on a deliberately gapped disposable copy; only the complete, warning-free copy should pass.
 - [ ] If using `tools/auto_stop.sh`, run it against a disposable live session with its companion token. Confirm it pins the intended session, performs the two-tap STOP, checks `recording:false`, and reports failure when the companion cannot confirm a stop. The success path passed on `TEST NEWWWWWW` on 2026-10-02; the real-device failure path remains untested. Never use an untested timer to stop show material.

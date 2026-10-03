@@ -1,6 +1,6 @@
 # October 3 codebase audit fixes
 
-All 28 findings from the read-only review have source changes. No installed application or release DMG was replaced.
+All 28 initial findings and the 14 follow-up findings below have fixes. Validation completed on 2026-10-04; source build `c563b00` is now installed on both Macs with the matching capture helper. See [INSTALL.md](INSTALL.md) for the current package, hashes, startup checks and old-version cleanup.
 
 | # | Severity | Finding and change |
 |---|---|---|
@@ -73,7 +73,7 @@ The next read-only review found the following failures. Each now has a source fi
 | 13 | P2 | Include VCA mute in live and offline post-fader send gates; retain independent pre-fader behavior. Verify both render paths. |
 | 14 | P2 | Use input-only peaks for auto-arm and arm stereo pairs together. Verify playback alone leaves arms off and right-only input arms both halves. |
 
-Physical desk reconnect and interface removal still require disposable rig validation. Synthetic tests do not certify physical hardware behavior. Installed apps and DMGs are unchanged.
+Physical desk reconnect and interface removal still require disposable rig validation. Synthetic tests do not certify physical hardware behavior. Both installed apps and the current DMG now include these fixes.
 
 
 ### Follow-up validation (2026-10-04)
@@ -83,4 +83,4 @@ Physical desk reconnect and interface removal still require disposable rig valid
 - `tools/design_audit.sh`, `tools/invariants_audit.sh`, `git diff --check` and `codesign --verify --deep --strict` passed.
 - A 30-second `--isolated-settings` startup smoke reached the normal empty-session UI. Samples at 10/20/30 seconds were 133.7/120.4/120.3 MiB RSS and 6.4/4.0/3.0% CPU. Runtime log: zero bytes. The app exited through its normal Quit confirmation.
 - No new Zynforge `.ips` crash report appeared; hashes of both existing production settings files were unchanged.
-- The built bundle is local validation output, not an installed or packaged release. Physical audio-device removal and console reconnect remain rig checks.
+- The tested bundle was subsequently packaged and installed on both Macs; executable hashes and signatures match. Physical audio-device removal and console reconnect remain rig checks.

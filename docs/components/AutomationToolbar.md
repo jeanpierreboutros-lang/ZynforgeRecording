@@ -57,7 +57,7 @@ void setTrimSilently      (bool);
 | Tool not selected | Button bg `bgElevated`, text `textPrimary` | Click to select |
 | Tool selected | Button bg in the tool's accent (Play green / Status green / Record red), text via `onSignal(bg)` | Radio group ensures one selected at a time |
 | WRITE Off | Combo neutral chrome | Lanes are read-only during playback |
-| WRITE non-Off | Combo background `accentRecord`, text white | Lanes record automation on fader moves; TRIM auto-disabled |
+| WRITE non-Off | Combo background `accentRecord`, foreground from theme | Lanes record automation on fader moves; TRIM auto-disabled |
 | TRIM on | Button bg `engagedAmber` | Fader moves nudge per-track trim, not lane shape; WRITE auto-disabled |
 | SUSPEND on | Button bg `textMuted` | Engine ignores stored automation at read time |
 | PUNCH on | Button bg `accentStatus` | Writes gated to engine's `[in, out)` range |
@@ -70,6 +70,10 @@ void setTrimSilently      (bool);
 - **Radius**: `brand::radius::md` on combos and buttons
 - **Tooltips** on every control — visible hover help under stage lighting
 
+## Edit persistence and capture guards
+
+Automation point copy/paste retains interpolation curve and tension; moving points preserves both rather than flattening their shape. The host snapshots edits for undo and blocks prohibited mutations during local or daemon capture and session LOCK. Toolbar state alone is not authorization to edit a rolling take.
+
 ## Mutual exclusion
 
 WRITE and TRIM are exclusive by UI rule. Picking any WRITE mode other than `Off` clears the TRIM toggle and emits `onTrimModeChanged(false)`. Toggling TRIM on resets WRITE to Off and emits `onWriteModeChanged(WriteMode::Off)`. Host doesn't need to deconflict — the toolbar already does.
@@ -78,7 +82,7 @@ WRITE and TRIM are exclusive by UI rule. Picking any WRITE mode other than `Off`
 
 | ✅ Do | ❌ Don't |
 |---|---|
-| Wire all six callbacks once in MainComponent ctor | Forget `onWriteModeChanged` — engine reads its mode atomically; UI must keep them in sync |
+| Wire the required callbacks once in MainComponent ctor | Forget `onWriteModeChanged` — engine reads its mode atomically; UI must keep them in sync |
 | Use `set*Silently` from session-restore code | Fire `onChange` manually in restore paths |
 | Treat `Tempo` and `Click` params as "no per-track lane" | Implement per-strip Click/Tempo lanes — those parameters are global |
 | Read tool/param from the toolbar in EDIT mouse handlers | Cache tool/param in `TrackRow` — toolbar can change between events |

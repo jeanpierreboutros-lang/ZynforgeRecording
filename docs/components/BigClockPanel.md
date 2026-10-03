@@ -27,7 +27,8 @@ No params — state is entirely push-driven via setters.
 | `setMode(Mode)` | Mode enum: `Idle`, `Recording`, `Playing` |
 | `setElapsed(juce::int64 samples, double sampleRate)` | Formats to `HH:MM:SS` |
 | `setMarkers(int count)` | Marker count chip update |
-| `setDiskInfo(double freeGB, int lastWriteMs, int64 missedSamples, double headroomSec)` | Disk-health pill |
+| `setDiskInfo(double freeGB, int lastWriteMs, int64 missedSamples, double remainingSeconds)` | Disk-health pill |
+| `setLoudness(float integratedLufs, float momentaryLufs, float truePeakDb)` | Master loudness and true-peak readout |
 | `setArmedReady(bool)` | When true and `Mode::Idle`, paints amber border + pulses |
 
 ## States

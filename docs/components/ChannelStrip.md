@@ -81,6 +81,12 @@ The host wires `canChangeArm` to recording eligibility. If a take is active (loc
 - **Radius**: `brand::radius::sm` for chips, `brand::radius::md` for the swatch
 - **Alpha**: `brand::alpha::dimmed` for the swatch outline sheen
 
+## Stereo, input detection and sends
+
+Stereo-link requests go through the host/engine, which refuses overlapping pairs. Explicit input None (`-1`) survives session restore. Auto-arm uses `TrackState::inputPeak`, not the display meter's mixed input/playback peak; a signal on either stereo half arms both when capture and LOCK permit it. Fader changes, including MCU changes addressed to the right half, must use engine gain setters to keep linked behavior consistent.
+
+Live monitored inputs feed aux sends. Post-fader sends honor strip and VCA mute in live and offline paths; pre-fader sends remain independent of that mute gate. Capture gain references persist separately from live console gain so reopening and playback compensation remain stable.
+
 ## Right-click menu
 
 Surfaces the per-strip actions that don't fit in the strip header: Rename, Add channel, Delete channel, Link/Unlink stereo pair, Change/Reset colour, Reset name, Send to STREAM bus, Mute physical output, Automation Safe toggle, Assign to VCA submenu, Assign to Edit Group submenu, Send to bus submenu. STREAM-send and physical-output-mute state are session-authoritative: they persist in `session_mix.json`, reset on session replacement, and participate in mixer undo like the visible fader/pan/mute controls.

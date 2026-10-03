@@ -6,6 +6,22 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## October audit contracts — 2026-10-04
+
+**Context.** The October audits found data-alignment, session-identity and asynchronous-state failures that were not covered by the earlier capture checks. A backing bed could move the capture endpoint, unknown replica ownership could overwrite another take, and reconnect or delayed confirmation could act on stale state.
+
+**Decision.** Persist reference-media and capture-gain identity separately from playback length/live gain. Validate stereo topology and replica provenance before writer creation, align each continuation destination, and switch pre-roll histories at one callback boundary. Reserve session I/O throughout delete confirmation and recheck the target at completion. Preserve the saved stage patch until restoration, finalize device loss once, and propagate failed source reads through export. Use one source-bound delta for grouped editing and input-only detector peaks for stereo auto-arm. Keep all preference writers in the same process-scoped test isolation mode.
+
+**Consequences.** Unverifiable nonempty legacy replicas and incompatible capture layouts are refused without modifying their audio. Users may need a new empty replica destination or a new session. Synthetic tests cover these contracts; real device/desk recovery and the full rig remain field checks. See [the October audit record](AUDIT_FIXES_2026-10-03.md).
+
+## Installation retention — 2026-10-04
+
+**Context.** Both Macs held old app bundles, rollback copies and installer images that made it easy to launch an obsolete build.
+
+**Decision.** Install and verify the exact `c563b00` GUI/helper pair on both Macs, then honor the user's request to delete all inventoried old Recording versions. Keep the current installer and development Release output. Preserve source, recordings, session recovery data, settings and other products.
+
+**Consequences.** No local old-version rollback bundle remains. Recovering an earlier app now requires obtaining or rebuilding that revision; Git history is retained. [INSTALL.md](INSTALL.md) is the authoritative package and installation record.
+
 ## Continued-session integrity report — 2026-09-30
 
 **Context.** Recording another pass in the same session replaced `session.report.json` with only the latest part list and current-pass warnings. A later clean pass could make an earlier failed pass look clean, while handoff and `verify_take.sh` saw unreported audio.
@@ -149,7 +165,7 @@ The invariants gate did not fire, correctly: rules 1-2 enumerate consumers that 
 
 **Context.** `ZynForgeLookAndFeel::drawToggleButton` painted the ON-state letter with `Colours::white.withAlpha(0.95f)` over whatever accent the call site had set as the fill. That is correct for record red and wrong for everything else in the palette: solo `#FFD64D`, monitor `#4AD878`, mute `#FF7733` and the dialog toggles `#5DD87A` all have a perceived brightness above `onSignal`'s 0.55 threshold, so they want a **black** letter. White on solo yellow is roughly 1.2:1 — an effectively invisible **S** on one of the few chips an engineer scans mid-show in a dark room.
 
-Two documented rules were broken by that one line ("Text on a saturated accent: `brand::onSignal(bg)`. Never hardcode black or white", and the bare-`Colours::white` ban). `Tools/design_audit.sh` enforces both — and **excludes `Source/Theme/`**, because `Theme/` is where the sanctioned helpers are defined.
+Two documented rules were broken by that one line ("Text on a saturated accent: `brand::onSignal(bg)`. Never hardcode black or white", and the bare-`Colours::white` ban). `tools/design_audit.sh` enforces both — and **excludes `Source/Theme/`**, because `Theme/` is where the sanctioned helpers are defined.
 
 **Decision.** That exclusion is right for the *definitions* and wrong for the *call sites*. Invariants **rule 11** now bans raw `Colours::white` / `Colours::black` everywhere in `Theme/` except `BrandColors.h`, which is where `gloss()` and `onSignal()` legitimately produce them.
 
@@ -170,7 +186,7 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 **Rationale.** Point 2 paid for itself the same day. Careful reading of the dialog files found one violation; the rule found **four** — the three combo handlers plus `applySessionSampleRate` and both new-session device pushes in `MainComponentHelp`. That is the argument for the whole gate, restated: a rule that enumerates the *consumers* of a hazardous pattern finds instances that reading misses, because reading follows the call graph you already have in your head.
 
-**Consequences.** Ten checks now gate every commit, and `Tools/invariants_audit.sh` is the file to add to when an audit finds a class rather than an instance. New device-touching code must guard or the build goes red. The cost is real: a rule mis-written is worse than no rule (two of the original seven were blind — one matched a commented-out call, one was satisfied by an unrelated comment in the same file), so **a new rule is not landed until it has been watched go red against an injected regression**. That step is now part of the ritual, not an optional nicety.
+**Consequences.** Ten checks now gate every commit, and `tools/invariants_audit.sh` is the file to add to when an audit finds a class rather than an instance. New device-touching code must guard or the build goes red. The cost is real: a rule mis-written is worse than no rule (two of the original seven were blind — one matched a commented-out call, one was satisfied by an unrelated comment in the same file), so **a new rule is not landed until it has been watched go red against an injected regression**. That step is now part of the ritual, not an optional nicety.
 
 **Also fixed in the same pass**, all smaller, all real: `compactPath` labelling `/Volumes/RECORD/...` as `~/Volumes/RECORD/...` on the control that tells the engineer which drive the take lands on; raw `this` captured in `MarkerListDialog`'s and `TimelineStrip`'s async menu/modal callbacks (the SafePointer convention every other dialog already followed); a sub-44.1k device displaying as "44.1 kHz"; and `NoiseReportDialog`'s comparator not flooring non-finite keys — unreachable today because the analyzer clamps, but the comparator shouldn't *depend* on a caller's clamping when an unfloored NaN is the hardened-`std::sort` SIGABRT that already crashed the recovery dialog once.
 
@@ -199,7 +215,7 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 **Why documentation didn't work.** Every one of those classes was already written up in `CLAUDE.md` — often with the exact failure mode spelled out. The prose was read, agreed with, and then not applied to the file being edited two weeks later. A rule that depends on someone remembering it at the right moment is not a control.
 
-**Decision.** Bug classes get a **grep that fails the build**. `Tools/invariants_audit.sh` runs in CI (before the build, so a violation fails fast) and in a pre-commit hook, alongside the existing design gate. Seven rules today, each traceable to at least one shipped defect. The rule set is enumerated over **consumers** of a hazardous pattern, not over the call sites that trigger it — that inversion is what the `condemnAllStrips` story cost us four times.
+**Decision.** Bug classes get a **grep that fails the build**. `tools/invariants_audit.sh` runs in CI (before the build, so a violation fails fast) and in a pre-commit hook, alongside the existing design gate. Seven rules today, each traceable to at least one shipped defect. The rule set is enumerated over **consumers** of a hazardous pattern, not over the call sites that trigger it — that inversion is what the `condemnAllStrips` story cost us four times.
 
 **A gate must be proven to fail.** Two of the original seven rules passed a deliberately injected regression: one matched a *commented-out* call, the other was satisfied by an unrelated comment elsewhere in the same file. Both were found only because the gate was self-tested by breaking the code on purpose. **Adding a rule without watching it go red is adding a rule that does nothing** — this is the same lesson as the 2026-07-10 ADR about regression tests needing to reproduce the precondition, one level up.
 
@@ -311,7 +327,7 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 ## Punch-in is an offline splice on stop, not a real-time write into the take — 2026-06-14
 
-**Amended 2026-09-24.** The offline-splice decision remains. The trigger, recovery, multipart, alignment and monitoring details below supersede the original timer-driven selection trigger and v1 gaps; they also apply to the current `672456d` build.
+**Amended 2026-09-24.** The offline-splice decision remains. The trigger, recovery, multipart, alignment and monitoring details below supersede the original timer-driven selection trigger and v1 gaps; they remain part of the current capture implementation.
 
 **Context.** JP asked to re-record a section of an existing take and keep the audio before/after (classic punch-in). The naive implementation — have the recorder seek into the existing file and overwrite the punched region in real time — would put destructive, position-offset writes on the audio thread, against the file the player may be reading, with RF64/backup/mirror finalisation all needing to stay consistent. That is the single most dangerous thing this app could do; a glitch loses or corrupts a take.
 
@@ -480,7 +496,7 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
   2. Every tool that opens a Pro Tools / Logic / Reaper session reads RIFF WAV. RF64 support is uneven — older plugins, broadcast playout systems, and some hardware players reject it. Auto-split produces files every tool can read.
   3. The user mental model — "if a 10-hour record needs to be a 10 GB file, fine, but if it needs to be three 3.3 GB files, that's also fine and I'll just import them all" — matches engineers' existing experience (Pro Tools and many field recorders do exactly this).
   4. Implementation is small: a few hundred lines in `MultitrackRecorder` (byte counter per writer + a roll function called from the drain loop). The roll is on the writer thread, never the audio thread; no real-time concern.
-**Consequences:** Long sessions emit `Track_01.wav` + `Track_01_part02.wav` + ... numbered sequentially. Mix engineers consolidate by re-importing in order (Pro Tools' "Import Audio" + numerical sort, or any DAW's equivalent). The `session.report.json` does not currently list every part file individually — a future improvement would be to enumerate parts there. Backup writers roll independently to keep the mirror layout consistent.
+**Consequences:** Long sessions emit `Track_01.wav` + `Track_01_part02.wav` + ... numbered sequentially. Mix engineers consolidate by re-importing in order (Pro Tools' "Import Audio" + numerical sort, or any DAW's equivalent). At the time of this decision, `session.report.json` did not list every part. The 2026-09-30 continued-session reporting decision above supersedes that limitation: reports now enumerate and hash every on-disk part. Backup writers roll independently to keep the mirror layout consistent.
 **Alternatives Considered:** RF64 promotion (per above), accepting the limit and documenting it (rejected — silent file corruption is a real show-day failure mode), capping recording duration in the UI (rejected — it's the engineer's call, not the app's).
 **Related Documents:** `Source/Audio/MultitrackRecorder.{h,cpp}` (`maxBytesForContainer`, `openWriterAtPath`, the drain-loop roll logic), `Source/Tests/AudioCallbackTests.cpp` (auto-split test).
 

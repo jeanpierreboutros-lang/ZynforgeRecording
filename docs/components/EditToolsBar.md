@@ -54,11 +54,11 @@ Tool buttons use `brand::toolActive()` (cool-teal `featureEngaged`) as the activ
 | Inactive | Bg `bgPanel`, glyph `textSecondary` | Click to select; radio group ensures one active |
 | Hovered | Bg `controlBgHover` | `mouseEnter` flag set; reverts on `mouseExit` |
 | Active | Solid `toolActive()` fill, glyph via `onSignal(toolActive())` | Other tools deselect |
-| Disabled | Bg `controlBg` faded, glyph at 30 % | Not yet wired — all tools always enabled |
+| Disabled | Inherited disabled appearance | Host disables the tools under session LOCK. Recording independently refuses edit mutations while keeping navigation available |
 
 ## Zoom and live navigation (owned by EditPage)
 
-The EDIT view overlays `H+ / H-` for reciprocal timeline zoom, `V+ / V-` for waveform-height zoom, and `FOLLOW` to resume playhead following after a manual horizontal scroll/zoom. Wheel scrolls tracks; Shift+wheel or a horizontal trackpad gesture pans time; Cmd+wheel zooms time; Cmd+Shift+wheel zooms waveform height. These controls remain active during recording and playback. This toolbar has no zoom slider or zoom callbacks.
+The EDIT view overlays `H+ / H-` for reciprocal timeline zoom, `V+ / V-` for waveform-height zoom, and `FOLLOW` to resume playhead following after a manual horizontal scroll/zoom. Wheel scrolls tracks; Shift+wheel or a horizontal trackpad gesture pans time; Cmd+wheel zooms time; Cmd+Shift+wheel zooms waveform height. These navigation controls remain active during recording and playback when the session is unlocked. Finalized-take horizontal zoom reaches 512×; live recording is capped at 16×. This toolbar has no zoom slider or zoom callbacks.
 
 ## Tokens used
 

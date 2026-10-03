@@ -1,6 +1,7 @@
 # Whole-project audit — 2026-09-15
 
-> Historical verification snapshot. Later fixes are recorded in the [2026-09-20 reliability audit](AUDIT_FIXES_2026-09-20.md) and the [current capture-integrity audit](AUDIT_FIXES_2026-09-30.md); see [INSTALL.md](INSTALL.md) for the current package.
+> Historical audit record: findings, test counts and installation paths describe this dated pass. For current fixes and validation, see [the October audit](AUDIT_FIXES_2026-10-03.md) and [testing.md](testing.md). Old app backups/installers were removed on 2026-10-04; [INSTALL.md](INSTALL.md) records the current installation on both Macs.
+
 
 ## Outcome
 

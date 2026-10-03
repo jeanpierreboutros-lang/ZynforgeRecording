@@ -32,6 +32,8 @@ For local installation, follow [INSTALL.md](INSTALL.md). The current DMG contain
 
 ## Documentation
 
+Current package, hashes and installed versions live in [INSTALL.md](INSTALL.md); [testing.md](testing.md) records automated coverage, and [SHOW-READINESS.md](SHOW-READINESS.md) tracks physical acceptance. Dated audit and field reports retain their original evidence. Historical installer/backup paths in those reports were removed during the October 4 cleanup.
+
 | Topic | File |
 |---|---|
 | Operating rules + workflow | [`CLAUDE.md`](CLAUDE.md) |
@@ -75,6 +77,8 @@ For local installation, follow [INSTALL.md](INSTALL.md). The current DMG contain
 - Formats: WAV / AIFF (16 / 24 / 32-float), FLAC (16 / 24)
 - **Multi-format simultaneous capture** — primary in one format, parallel backup writer in another
 - **Fail-visible redundancy** — configured backup/mirror paths must open before they count as active; open/write failures stay latched through stop, skipped copies are counted, and disk-time estimates aggregate writers that share a physical volume
+- **Replica ownership is checked before recording** — a nonempty backup/mirror without matching primary-session provenance is refused without modifying its audio. Choose a new empty destination for unverifiable legacy copies; retain the original capture layout/sample rate or start a new session.
+- **Generated click beds are reference media** — a longer backing bed does not move the default first-record or continuation position. Saved capture-gain references and input-only stereo auto-arm keep playback activity separate from new input detection.
 - **StereoMix file capture is independent of physical stream outputs** — live stream sends are recorded even when no hardware stream bus is assigned; an empty stream mix or unsupported daemon StereoMix configuration is refused before RECORD
 - Auto-recover orphan sessions on next launch; `session.report.json` metadata is written on clean stop and final SHA-256 hashes are filled in asynchronously
 
@@ -190,7 +194,7 @@ Design values are sourced from the **FORGE family design system** (`../ZynForgeB
 
 Part of the ZynForge family — shares palette + fader/meter style with ZynForge Live (sibling project). **Flat design: every surface is a solid fill (no gradients or glossy sheens).** Near-black canvas, neutral-grey strips by default (recoloured per channel from a hue/shade picker), LED-segment meters, and **bright orange reserved for STATE** (armed / peaking), never permanent chrome.
 
-Native macOS sans-serif for UI text + bundled `JetBrains Mono` for tabular numerals. (The former files named as Inter were HTML error pages, not fonts, and have been removed.) A named type scale (UI ladder + mono `monoStamp/monoCounter/readout/…`), a 14-step `alpha::` scale, `space::`/`radius::`/`motion::`/`shadow::` tokens. All chrome routes through `Source/Theme/` tokens — **never raw hex, raw fonts, raw gradients, or ad-hoc opacities** — enforced by `Tools/design_audit.sh` (run as a pre-commit gate; raw colours/fonts/alphas fail, and a spacing ratchet stops raw `reduced()` px from growing). A second pre-commit gate, `Tools/invariants_audit.sh`, does the same for **correctness**: 12 rules encoding the bug classes that repeat audits kept finding re-violated in new places (freed-`TrackState` reads, `.wav`-only take globs, unguarded device restarts mid-take, …). Full rationale in [`design.md`](design.md).
+Native macOS sans-serif for UI text + bundled `JetBrains Mono` for tabular numerals. (The former files named as Inter were HTML error pages, not fonts, and have been removed.) A named type scale (UI ladder + mono `monoStamp/monoCounter/readout/…`), a 14-step `alpha::` scale, `space::`/`radius::`/`motion::`/`shadow::` tokens. All chrome routes through `Source/Theme/` tokens — **never raw hex, raw fonts, raw gradients, or ad-hoc opacities** — enforced by `tools/design_audit.sh` (run as a pre-commit gate; raw colours/fonts/alphas fail, and a spacing ratchet stops raw `reduced()` px from growing). A second pre-commit gate, `tools/invariants_audit.sh`, does the same for **correctness**: 27 rules encoding the bug classes that repeat audits kept finding re-violated in new places (freed-`TrackState` reads, `.wav`-only take globs, unguarded device restarts mid-take, …). Full rationale in [`design.md`](design.md).
 
 ## Where things live
 

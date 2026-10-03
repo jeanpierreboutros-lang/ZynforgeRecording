@@ -23,10 +23,11 @@ struct Row {
 
 using OpenCallback = std::function<void (const juce::File&)>;
 
-static void launch (juce::Array<juce::File> orphans, OpenCallback onOpen);
+static void launch (juce::Array<juce::File> orphans, OpenCallback onOpen,
+                    std::function<void()> onClosed = {});
 ```
 
-The static `launch` instantiates the dialog and wires async modal behaviour. `onOpen` fires when the engineer picks Recover; the host typically calls `engine.loadSession(dir)`.
+The static `launch` instantiates the dialog and wires async modal behaviour. `onOpen` fires when the engineer picks Recover; the host owns session loading. `onClosed` fires when the actual dialog is destroyed and sequences the next startup step. An empty orphan list creates no dialog and does not call `onClosed`.
 
 ## Layout
 

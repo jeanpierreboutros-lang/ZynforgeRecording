@@ -17,6 +17,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Installed and cleaned up — 2026-10-04
+
+- Installed source build `c563b00` with its matching universal capture helper on both Macs. The build passed 438 automated test groups, both static gates, signatures and isolated startup smoke. Both installed apps launched and their executable hashes match the tested build.
+- Published the current verified [universal DMG](dist/Zynforge-Recording-c563b00-macOS-universal.dmg) and [checksum](dist/Zynforge-Recording-c563b00-macOS-universal.dmg.sha256); copied and verified both on the mini. See [INSTALL.md](INSTALL.md).
+- Removed 18 old app bundles, 14 old DMGs and 9 checksum files across both Macs at the user's request. Recordings, settings and source were preserved. Older entries below describe historical package/backup state; those local files no longer remain.
+- Reconciled operational guides, architecture, test instructions and component references with the installed build. Hardware acceptance remains open.
+
+### Fixed — initial October 3 audit
+
+- Protected backup/mirror ownership, rearmed continuation alignment, synchronized pre-roll and capture layout compatibility; made source-copy/render failures visible and preserved originals on failure.
+- Corrected session/VCA reset and persistence, input None, offline mirror retention, stereo aux rendering and throughput, edited continuation and legacy playback.
+- Preserved grouped clipboard geometry, drag bounds, healing rules and automation shapes; enforced remote LOCK and stereo MCU gain; isolated every preferences writer during tests.
+- All 28 findings have regression coverage. That initial build passed 424 groups; the follow-up below raises the full suite to 438. See [the complete fix record](AUDIT_FIXES_2026-10-03.md).
+
 ### Fixed — October 3 follow-up audit
 
 - Reject overlapping stereo links; preserve the valid stereo channel when the other input is absent; exclude generated click beds from recording append length.
@@ -28,7 +42,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ### Fixed — long-take H+ zoom ceiling, 2026-10-02
 
 - Finalized EDIT sessions can now zoom to 512× instead of stopping at 16×. A five-hour take can reach a seconds-wide view, allowing the native detailed thumbnail to replace the overview. Live recording stays capped at 16× because its growing timeline multiplies component width.
-- Timeline and tempo grid drawing now starts and stops around the visible viewport, avoiding a full-take tick walk on every repaint at deep zoom. A regression test covers zoom past the old cap and bounded tick work. The local universal build passed 404 test groups. The verified [`5026519` DMG](dist/Zynforge-Recording-5026519-macOS-universal.dmg) was copied to the Mac mini; installation waits for the open app to quit normally.
+- Timeline and tempo grid drawing now starts and stops around the visible viewport, avoiding a full-take tick walk on every repaint at deep zoom. A regression test covers zoom past the old cap and bounded tick work. The local universal build passed 404 test groups. The verified `dist/Zynforge-Recording-5026519-macOS-universal.dmg` (historical package; removed locally) was copied to the Mac mini; installation was deferred at that time and completed with the later `c563b00` build on 2026-10-04.
 
 ### Fixed — long-take waveform overview and cache, 2026-10-02
 
@@ -47,7 +61,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 - The live EDIT waveform retains original 256-sample peaks for the most recent portion of a rolling take while retaining a bounded whole-take overview. Pixel queries use absolute recorder-bin ranges, so a long recording no longer forces the visible recording edge to draw from heavily reduced peaks.
 - A prior 55-channel, 10:42:37 Mac mini take passed primary-file and report checks but showed a blocky live preview that regained detail after STOP. The new build passed 401 headless test groups and was installed on the Mac mini. Its first five-hour run was interrupted by a recurring Mac mini kernel panic after about 2:43; no Zynforge defect was identified. A separate five-hour take later finalized cleanly, while detailed live UI acceptance remains open. See the [field evidence](FIELD-TEST-2026-10-01.md).
-- Packaged the verified universal [`d2c5858` two-Mac DMG](dist/Zynforge-Recording-d2c5858-macOS-universal.dmg) with a matching checksum file and capture helper.
+- Packaged the verified universal `dist/Zynforge-Recording-d2c5858-macOS-universal.dmg` (historical package; removed locally) with a matching checksum file and capture helper.
 
 ### Fixed — capture continuation and finalization, 2026-09-30
 
@@ -55,7 +69,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - A continued session's report lists and hashes all on-disk parts, accumulates earlier capture warnings and elapsed counters, and records a failed SHA-256 pass. The local app surfaces asynchronous report failure after STOP; verified show handoff flags failed punches and report hashing for review.
 - `verify_take.sh` rejects missing middle parts, unlisted takes, incomplete/failed hashes, capture-failure flags and reported frame counts that exceed the files. Valid WAV, AIFF, FLAC and complete continued takes pass its disposable fixtures.
 - Unattended `auto_stop.sh` pins the live session from authenticated status, uses the actual capture clock, completes the two-tap STOP guard and exits unsuccessfully if stop cannot be confirmed. The main window has a minimum size that keeps recording controls accessible.
-- The universal Release build passed 399 headless test groups with zero failures, was installed with a rollback copy, and was packaged as the verified [`672456d` two-Mac DMG](dist/Zynforge-Recording-672456d-macOS-universal.dmg). Physical long-take and device acceptance remain open; see the [capture-integrity fix record](AUDIT_FIXES_2026-09-30.md).
+- The universal Release build passed 399 headless test groups with zero failures, was installed with a rollback copy, and was packaged as the verified `dist/Zynforge-Recording-672456d-macOS-universal.dmg` (historical package; removed locally). Physical long-take and device acceptance remain open; see the [capture-integrity fix record](AUDIT_FIXES_2026-09-30.md).
 
 ### Fixed — audit follow-up, 2026-09-29
 
@@ -292,7 +306,7 @@ Console control was welded to `juce::DatagramSocket` + OSC, which capped support
 
 Four audit passes each found the *same bug classes* re-violated in new places. This change attacks the class instead of the instance.
 
-- **New `Tools/invariants_audit.sh` — a second CI gate, alongside the design audit.** Seven rules, each with at least one shipped defect behind it: every consumer of a cached `TrackState&` must expose a detach hook *and* be wired into `condemnAllStrips()`; no `getTrack()` bounded by a player-derived count; `TrackState::name` written only through the locked setter; no `.wav`-only `Track_*` globs; bare `Track_*` globs must exclude `.punchbase` sidecars; the sessions root resolved only via `AudioEngine::getSessionsRoot()`; no bare `reload()` on the shared settings file; offline renders using `automationValueAtOffline`. Runs in CI before the build and in a pre-commit hook (`Tools/install_hooks.sh` — hooks aren't tracked by git, so each clone installs once). **Every rule was verified to go red against an injected regression** — two of them were initially blind (a commented-out call and an unrelated comment satisfied the check) and were fixed before landing.
+- **New `tools/invariants_audit.sh` — a second CI gate, alongside the design audit.** Seven rules, each with at least one shipped defect behind it: every consumer of a cached `TrackState&` must expose a detach hook *and* be wired into `condemnAllStrips()`; no `getTrack()` bounded by a player-derived count; `TrackState::name` written only through the locked setter; no `.wav`-only `Track_*` globs; bare `Track_*` globs must exclude `.punchbase` sidecars; the sessions root resolved only via `AudioEngine::getSessionsRoot()`; no bare `reload()` on the shared settings file; offline renders using `automationValueAtOffline`. Runs in CI before the build and in a pre-commit hook (`tools/install_hooks.sh` — hooks aren't tracked by git, so each clone installs once). **Every rule was verified to go red against an injected regression** — two of them were initially blind (a commented-out call and an unrelated comment satisfied the check) and were fixed before landing.
 - **The sweep that produced it found 5 more open sites in classes already "fixed" elsewhere:**
   - **The floating meterbridge was never condemned.** Third component caching a `TrackState&` on its own timer, rebinding only on its 12 Hz tick — a *wider* freed-memory window than the MIXER and EDIT ones already closed. `condemnAllStrips()` now condemns all three.
   - **A crash-orphaned punch sidecar was loaded as part of the take.** `Track_NN.punchbase.<ext>` puts the marker before the extension, so it slipped through `SessionPlayer`'s suffix filter, sorted *before* the real take, and was concatenated as part 1. Same blind spot made it a phantom row in the noise report (whose comment claimed it was excluded — the extension test never could).

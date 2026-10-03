@@ -1,6 +1,8 @@
-# Heated Steel — token promotion (source of truth)
+# Heated Steel — upstream token promotion handoff
 
-The Heated Steel surfaces use a handful of new colours. Today they live in the
+Checked against `c563b00` on 2026-10-04: `steelHeaderHi`, `steelHeaderLo` and `debossFace` remain local definitions in `BrandColors.h`, absent from the vendored `ForgeTokens.h`. This document records the proposed upstream promotion, not a completed change in the separate brand repository.
+
+The Heated Steel surfaces use a handful of colours. They live in the
 hand-written `BrandColors.h` (which is correct — it's not generated). This file
 is the **handoff to lock them into the canonical pipeline** so ZynForge **Live**
 and the rest of the family inherit them.
@@ -60,10 +62,7 @@ standalone — functionally identical, just not yet flowing from `forge::`.)
 ## 4. Components already consume the tokens
 
 `ChannelStrip.cpp` now draws its header + stamp through `brand::steelHeaderHi/Lo`
-and `brand::debossInk/Face` (migrated off inline hex). The other inlined headers
-(`MasterStrip`, `BigClockPanel`, `Meterbridge`) follow the same pattern — point
-their remaining `0xff0b0b0e` / `0xffb4b7bf` literals at the same `brand::` tokens
-when you do the next cleanup sweep.
+and `brand::debossInk/Face` (migrated off inline hex). Other headers (`MasterStrip`, `BigClockPanel`, `Meterbridge`) consume shared `brand::` tokens too. Keep component colours behind that boundary; `tools/design_audit.sh` checks for raw colour literals outside the theme.
 
 ---
 

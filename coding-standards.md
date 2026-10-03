@@ -33,8 +33,14 @@ The goal of this document is to keep the codebase consistent enough that any con
 
 ## Preferred Patterns and Anti-Patterns
 
-### Recording-integrity contracts (updated 2026-09-30)
+### Recording-integrity contracts (updated 2026-10-04)
 
+- Validate replica provenance and mono/stereo/sample-rate compatibility before opening capture files. Preserve an existing foreign or unverifiable destination. Reconcile continuation gaps per destination and detach pre-roll histories at one capture boundary.
+- Keep generated reference media out of default capture length. Persist `referenceMedia` and `captureInputGainDb`; zero gain is a value, not an unknown sentinel. Use input-only peaks for auto-arm and change stereo arms together.
+- Queue device-loss finalization once. Close the stereo mix writer, retain the interrupted endpoint, and preserve warnings through STOP. Repeated STOP must not discard later edits.
+- Treat asynchronous confirmation as a race boundary: reserve session I/O and recheck recording and target identity when confirmation completes. Preserve saved console stage routing across reconnect and unknown-state replies.
+- Resolve explicit clip sources consistently for playback and export. Bound trims by source length and group movement by one common legal delta before any mutation. Propagate read failures instead of returning a successful silent render.
+- Use `makeSettingsFile()` for every shared preferences writer. Test and isolated-smoke settings are process-scoped and must stay isolated even if audio initialization is re-enabled.
 - Check `AudioEngine::isRecording()` where either local or external capture must block an action. The local recorder flag alone misses daemon takes. Freeze writer participation at take start; UI arm changes must not change FIFO participation mid-take.
 - Reorder/delete through `reorderTracks`, not independent renames. Move complete stereo blocks and all identity/state together, check every filesystem result, retain journals on failure and archive removed audio. Invalidate index-based undo/clipboard state after the mapping changes.
 - Preserve authoritative empty playlists and replace automation snapshots, including empty ones. Resolve whole takes via `getTrackAudioFile`/`ConcatReader`; preserve `sourceChannel` and session-relative references. Never substitute own-track media for a missing explicit source.
@@ -60,7 +66,7 @@ The goal of this document is to keep the codebase consistent enough that any con
 - Pass `juce::String` by const reference. Pass small POD by value.
 - Wrap external commands (`lame`, `rclone`) in `juce::ChildProcess` and check the exit code.
 - Keep every `juce::AlertWindow` on the grey ZynForge LookAndFeel. `MainComponentInit` sets it as the app default; when a prompt needs an explicit LAF, use `aw->setLookAndFeel (&laf)` or the owning component's LAF. Prompts must read grey + light grey app-wide.
-- Map EDIT-view timeline samples ↔ lane pixels through `TimelineMapper` (`EditPage.cpp`), not a re-inlined lambda: `toX` rounds, `toXFloor` truncates, `toSample` inverts. Build one per paint/event from the lane's inner rect + session length.
+- Map EDIT-view timeline samples ↔ lane pixels through `TimelineMapper` (`EditTrackRow.h`), not a re-inlined lambda: `toX` rounds, `toXFloor` truncates, `toSample` inverts. Build one per paint/event from the lane's inner rect + session length.
 - When you add a menu item whose enabled/greyed state depends on app state, add that condition to `MainComponent::refreshMenuStateIfChanged()`'s signature (`MainComponentMenu.cpp`). macOS caches the native menu's enabled states until `menuItemsChanged()` fires; that polled signature is the only thing that triggers the refresh. Miss it and your item freezes in whatever state it had at launch.
 - Compute a strip's effective gain (own gain + VCA-bus gain) **once** per audio block and share it; don't re-derive it per consumer inside the callback.
 - Resolve stereo logical ↔ physical strip mapping through `AudioEngine::physicalFromLogical` / `logicalFromPhysical` — it's model topology, not UI state. Don't re-implement the stereo-collapse walk in a view.

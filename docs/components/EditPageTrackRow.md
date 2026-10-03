@@ -78,6 +78,14 @@ Reads `EditToolsBar::getTool()` and `AutomationToolbar::getTool()` to bias hit-t
 | Delete Point | Automation lane click removes nearest point |
 | Select | Drag automation point or tension handle |
 
+## Source and group bounds
+
+Right trims stop at the referenced source's length, including cross-track clips. Group drags calculate one legal movement before changing any peer so a timeline-zero or source boundary cannot alter relative spacing. Snapped drags retain pointer movement until it crosses a snap step. Resolve peer indices before mutating source clips.
+
+Grouped clipboard operations preserve track/time offsets, source channel, fades, gain and mute; all paste destinations are checked before insertion. Healing requires compatible source/gain/mute/fade properties and an unfaded internal join. Automation copy/paste preserves curve and tension, and point dragging must retain both.
+
+Read failures propagate through rendering and consolidation. A missing explicit source must not fall back to the destination track or silently produce a successful export. See [the October regressions](../../AUDIT_FIXES_2026-10-03.md).
+
 ## Drag state (mutually exclusive)
 
 Only one drag-in-progress at a time:
@@ -96,9 +104,11 @@ Only one drag-in-progress at a time:
 
 ## Special paint paths
 
+At long time scales, the overview combines a short-window median body with thin true-peak maxima. Below the overview threshold, the native thumbnail supplies detailed waveform drawing. A cache older than the finalized media is discarded. Live capture uses bounded peak history, including original-resolution bins near the recording head; it does not repeatedly rescan growing files.
+
 | What | Where | When |
 |---|---|---|
-| Pro Tools-style clip waveform | Wave pane | Waveform lane mode — light `waveBg = lift(stripColour)` clip block + DARK `waveDark = sink(waveBg)` thumbnail on top, honest levels (1.5× auto-gain cap); clip gain just scales the waveform (no gain line) |
+| Pro Tools-style clip waveform | Wave pane | Waveform lane mode — light `waveBg = lift(stripColour)` clip block + DARK `waveDark = sink(waveBg)` thumbnail on top, source-level waveform with bounded display gain; clip gain scales the waveform |
 | Live-capture envelope | Wave pane, `meterHot` | While the row is armed + recording (incl. continue / punch) — placed by timeline fraction; dims to the channel colour on stop |
 | Detected transient ticks | Top of wave pane, 6 px engagedAmber strokes | When `engine.getTransientsForTrack(index+1)` returns non-empty |
 | Crossfade visualisation | Overlap between adjacent clips, paints X-shape | Always when two clips overlap |

@@ -1,6 +1,7 @@
 # Recording reliability fixes — 2026-09-20
 
-> Historical verification snapshot for the 2026-09-20 build. For the current `672456d` package, 399-group source test result and remaining field checks, see [INSTALL.md](INSTALL.md), [testing.md](testing.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
+> Historical audit record: findings, test counts and installation paths describe this dated pass. For current fixes and validation, see [the October audit](AUDIT_FIXES_2026-10-03.md) and [testing.md](testing.md). Old app backups/installers were removed on 2026-10-04; [INSTALL.md](INSTALL.md) records the current installation on both Macs.
+
 
 ## Outcome
 

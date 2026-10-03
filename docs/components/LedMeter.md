@@ -14,9 +14,12 @@ One per metered surface. Pass the `TrackState&` it should read. For a stereo pai
 
 ```cpp
 explicit LedMeter (TrackState& s);
-void setStereoRight (TrackState* r);   // nullptr = mono (one bar)
-void setShowLabels (bool on);          // dB gutter on the left
+void setStereoPartner (TrackState* r);   // nullptr = mono (one bar)
+void setShowDbLabels (bool on);          // dB gutter on the left
+void detach() noexcept;                 // stop reading a condemned TrackState
 ```
+
+The owner must call `detach()` before releasing the referenced track state. It stops the meter timer; paint uses cached display values after detachment.
 
 ## Variants
 

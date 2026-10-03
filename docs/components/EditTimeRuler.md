@@ -37,7 +37,7 @@ EditTimeRuler (AudioEngine& engine);
 | `setContentWidth(int)` | Total scrollable width, accounting for zoom |
 | `setScrollOffsetX(int)` | The wave viewport's `getViewPositionX()`. Subtracted from every time→x map (`rulerTimeToX`/`rulerXToTime`) so the fixed-width ruler tracks the scrolling lanes below it. `EditPage` pushes it on `viewport.onScroll` (manual + programmatic/auto-scroll) and in `resized()`. |
 
-All three setters just call `repaint()` — the actual paint reads everything fresh each frame.
+The setters update the shared mapping and request repaint; scroll offset is clamped to zero and only repaints on change. The content width is clamped to at least one pixel.
 
 ## Strip 1 — Markers (top, 20 px)
 
@@ -47,9 +47,11 @@ Reads `engine.getMarkers().getAll()`. Each marker paints as a brand-orange downw
 
 Adaptive tick density: a 1-2-5 progression (`[0.1 … 7200]` s) picks the labelled **major** interval whose labels won't collide (≥ 64 px apart), subdivided into mid + minor ticks of graduated height. Ticks are walked by an integer index (not a float accumulator) so a second never duplicates / skips from drift, and labels switch to tenths below 1 s/major and to H:MM:SS past an hour. The transport playhead draws a bright line + a time bubble (red while recording). Its span covers both the loaded take and growing live position; during a selected punch, the bubble follows the rolling player rather than the pre-opened recorder's pinned start position. The edit cursor draws its own line; the loop region shades as a band.
 
+At deep zoom, tick iteration is bounded to the visible viewport plus edge padding. Finalized sessions support up to 512× timeline zoom; active recording remains capped at 16×. The ruler and waveform rows must share the same span, inset and scroll offset at either limit.
+
 ## Punch range overlay
 
-Overlays the Min:Secs scale as a translucent band when the engine has an automation punch range set (`engine.getAutomationPunchIn() / Out()`). Band brightens when PUNCH is armed on the toolbar, dims when only the range is stored. Shift-drag on the time scale defines the range; shift-click without drag clears it.
+Overlays the Min:Secs scale as a translucent band when the engine has an automation punch range set (`engine.getAutomationPunchIn() / Out()`). Band brightens when PUNCH is armed on the toolbar, dims when only the range is stored. Shift-drag on the time scale defines the range; shift-click without drag clears it. The host disables ruler edit interception while recording, leaving navigation and zoom available.
 
 ## Tokens used
 

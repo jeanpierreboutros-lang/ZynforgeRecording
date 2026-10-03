@@ -1,10 +1,10 @@
 # TransportBar
 
-`Source/UI/TransportBar.{h,cpp}` — horizontal row of six icon buttons (RECORD / PLAY / PAUSE / STOP / SKIP-BACK / SKIP-FWD) in the main header.
+`Source/UI/TransportBar.{h,cpp}` — horizontal row of six icon buttons (START / END / PLAY-PAUSE / STOP / RECORD / LOOP) in the main header.
 
 ## Description
 
-Hosts six `IconButton` instances (vector-drawn glyphs, no bitmaps). Polls the engine at 10 Hz to mirror transport state — `recordButton` glows on `engine.isRecording()`, `playButton`'s glyph swaps to "PAUSE" when playing. Doesn't drive the transport itself — fires callbacks the host wires to engine state mutators.
+Hosts six `IconButton` instances (vector-drawn glyphs, no bitmaps). Polls the engine at 10 Hz to mirror transport state — RECORD reflects `engine.isRecording()` and PLAY changes its glyph while playing. The host wires `onRequestRecord`, `onRequestPlay` and `onRequestStop` to its preflight/finalization paths; absent a callback, the bar falls back to engine operations.
 
 ## When to use
 
@@ -24,17 +24,19 @@ TransportBar (AudioEngine& engine);
 
 | Callback | Signature | Purpose |
 |---|---|---|
-| `onRecord` | `void()` | Engineer pressed RECORD |
-| `onPlay` | `void()` | Engineer pressed PLAY / PAUSE (one button, glyph swaps) |
-| `onStop` | `void()` | Engineer pressed STOP (host implements the two-tap guard while recording) |
-| `onSkipBack` | `void()` | "Skip to previous marker / start" |
-| `onSkipFwd` | `void()` | "Skip to next marker / end" |
+| `onRequestRecord` | `void()` | Host record preflight and punch handling |
+| `onRequestPlay` | `void()` | Host play/pause handling |
+| `onRequestStop` | `void()` | Host normal two-tap guard and one-press punch stop |
+
+START, END and LOOP are wired inside the bar. There are no `onSkipBack`/`onSkipFwd` public callbacks.
 
 ## IconButton (nested)
 
 ### Capture-daemon host contract
 
 `engine.isRecording()` includes external capture. Normal live capture keeps the two-tap STOP guard; a deliberate local manual or selected punch ends on one RECORD or STOP press. The host routes these controls through its capture-finalization path. In protocol-v3 daemon mode it waits for a reply that distinguishes command acceptance, capture completion and clean finalization before clearing the recording display, reloading completed media or saving the stopped session. If capture stopped but report/recovery/redundancy finalization failed, the transport resets but the error remains visible; if completion is uncertain, recording state stays armed. A click alone is not evidence that capture has stopped. Playback refuses at the engine boundary during ordinary local/daemon capture; the explicitly gated selected-punch window is the exception that allows pre/punch/post-roll playback.
+
+Local device loss closes the mix writer and queues engine finalization once, preserving the stopped endpoint and warning. Repeated STOP must not reload away later edits. This does not remove the need to test physical device loss.
 
 Each transport button is an `IconButton` — a custom-painted button that draws a vector glyph (target ring for RECORD, triangle for PLAY, square for STOP) coloured by the button's "base colour." State logic:
 
@@ -43,7 +45,7 @@ Each transport button is an `IconButton` — a custom-painted button that draws 
 | Default | `controlBg` | base colour at 60 % |
 | Hover | `controlBgHover` | base colour at 80 % |
 | Down (pressed) | `controlBgDown` | base colour at 100 % |
-| Active (e.g. `recordButton` while recording) | base colour at 100 % | white via `onSignal()` |
+| Active (e.g. `recordButton` while recording) | base colour at 100 % | contrasting foreground via `onSignal()` |
 | Disabled | `controlBg` faded | base colour at 30 % |
 
 ## RECORD button shape distinctness
@@ -61,6 +63,6 @@ Per a 2026-05-23 UX audit, the RECORD button has a **permanent brand-red 2 px bo
 
 | ✅ Do | ❌ Don't |
 |---|---|
-| Wire `onStop` to the host's normal two-tap guard and deliberate-punch one-press path | Stop an ordinary live take with one accidental press |
+| Wire `onRequestStop` to the host's normal two-tap guard and deliberate-punch one-press path | Stop an ordinary live take with one accidental press |
 | Trust the bar's own 10 Hz poll for visual state | Push transport state in via setters — the bar reads engine atomics directly |
 | Use the same RECORD shape language elsewhere if you build a new record button | Make a square RECORD or a red triangle — breaks the silhouette agreement |

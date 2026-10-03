@@ -8,13 +8,13 @@ It is **not** a mixer or DAW. No plugins, no effects, no talkback. Architectural
 
 ## 2. Technology Stack
 
-Validation baseline: source commit `d2c5858` passed a universal Release build and 401 headless test groups with zero failures. The [current DMG](dist/Zynforge-Recording-d2c5858-macOS-universal.dmg) contains the matching app and helper; its checksum, read-only mount, architectures and signature verified. The Mac mini install matches this package; the development Mac still has `672456d`. A first five-hour Mac mini run was interrupted at about 2:43 by a host PCIe kernel panic, with no Zynforge defect identified. A separate 55-channel run completed 5:00:11 on 2026-10-02 with equal primary-file frame counts and a clean capture report. Timed live waveform/FOLLOW/zoom observations, backup validation and exact-rig acceptance remain open. See [testing.md](testing.md), [INSTALL.md](INSTALL.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
+Validation baseline: source build `c563b00` passed the universal Release GUI/helper build, 438 test groups on Apple Silicon, static gates, bundle signatures and isolated startup smoke. The exact app/helper pair is installed and launch-checked on both Macs. [INSTALL.md](INSTALL.md) holds package hashes and cleanup status; [testing.md](testing.md) distinguishes automated coverage from [outstanding hardware acceptance](SHOW-READINESS.md). The completed five-hour take used the older `d2c5858` build.
 
 | Component | Version / Notes |
 |---|---|
 | Language | C++20 |
 | Framework | JUCE 8.0.4 (pulled via CMake `FetchContent` on first configure) |
-| Build system | CMake 3.21+, Xcode generator on macOS |
+| Build system | CMake 3.22+, Xcode generator on macOS |
 | Platforms | macOS 12.0+, Universal (arm64 + x86_64) |
 | Audio backend | CoreAudio via `juce::AudioDeviceManager` |
 | Threading | `juce::AudioWorkgroup` for writer co-scheduling on Apple Silicon |
@@ -23,6 +23,19 @@ Validation baseline: source commit `d2c5858` passed a universal Release build an
 | Persistence | `juce::PropertiesFile` (app prefs) + `.zfproj` JSON (per-session) |
 | Typography | Native macOS sans-serif (UI); JetBrains Mono bundled via `BinaryData` (tabular numerals) |
 | External tools | `lame` (MP3 export, ChildProcess), `rclone` / `aws` / `rsync` (cloud upload) |
+
+## Capture and session contracts — October 2026
+
+- `TrackState::referenceMedia` identifies generated backing beds and persists in session mix metadata. Default capture append length excludes reference tracks, while explicit cursor/rolling punches retain their requested position. A click bed must not push a first take to the end of the backing file.
+- Capture validates non-overlapping stereo pairs and compatibility with existing media before opening writers. A missing hardware input supplies silence for that channel while the available stereo side continues.
+- Backup/mirror provenance binds a replica to its primary session identity. Unknown nonempty destinations are refused; relocation retains identity, while a live fork cannot claim the original's replica. Continuations pad each participating destination to the shared start position; pre-roll histories detach at one callback boundary.
+- Device-stop handling closes the optional stereo-mix writer, retains the interrupted endpoint and queues engine finalization once. Repeated STOP must not reload away subsequent edits. Daemon failure warnings survive completion.
+- `captureInputGainDb` persists as the take's gain reference; zero dB is valid. Reopen initializes live gain from that reference. Live input feeds aux buses without playback trim compensation, and VCA mute gates post-fader sends in both live and offline paths.
+- `inputPeak` contains input-only activity for auto-arm. Playback display peaks cannot trigger it, and linked stereo arms change together. Capture and LOCK still block automatic arming.
+- Modern `Audio Files` and legacy root media merge per track, with modern media preferred. Explicit cross-track source identity is retained through playback/rendering, trim bounds use the actual source length, and grouped edits compute one legal delta before mutating peers.
+- Delete confirmation reserves session I/O. Its callback rechecks recording and session identity before deleting or clearing state. Console reconnect preserves the saved stage patch until restoration succeeds; unknown remote state must not replace that saved patch.
+
+The [October audit record](AUDIT_FIXES_2026-10-03.md) maps each contract to its fix and regression coverage.
 
 ## 3. High-Level Architecture
 
@@ -174,10 +187,10 @@ The companion runs an accept thread + per-connection writes off the message thre
 - **`Source/Audio/Aaf/CompoundFile.h`** — native MS-CFB (OLE2 structured-storage) container writer, the envelope layer of the in-progress native AAF export. Phase 1 (container + round-trip oracle) complete; object model is future work. See `decisions.md` *AAF export built natively…*.
 
 ### Test isolation
-`AudioEngine`'s ctor opens the user's real `.settings` `PropertiesFile` — EXCEPT in test mode (`s_testSkipAudioInit`), where it points at a throwaway `zynforge-test.settings` in the temp dir so the suite can record/mutate prefs without corrupting the user's live `activeSessionDir`/recent list. Asserted in `EngineStateTests`.
+`Source/Audio/SettingsFile.h` routes all five preferences writers through `makeSettingsFile()`. Tests and `--isolated-settings` smoke launches enable process-wide isolation and share a uniquely named temporary `zynforge-tests-<UUID>.settings` within that process. Re-enabling audio initialization cannot switch those writers back to production preferences. Suites must still clean up shared per-strip state between tests; see [testing.md](testing.md).
 
 ### MIDI control surfaces (`Source/Audio/McuProtocol.h` + `MidiControlSurface.{h,cpp}`)
-`McuProtocol.h` is a header-only, hardware-free set of Mackie Control Universal encode/decode helpers (fader law, button notes, V-pot relative encoders + ring, channel-pressure meters, scribble-strip SysEx, **master fader on MIDI ch 9, jog wheel on CC 0x3C, and the 10-digit time display**) — fully unit-tested in `Source/Tests/McuProtocolTests.cpp`. `MidiControlSurface` opens a paired MIDI in/out, runs a 15 Hz echo timer, and is bidirectional: inbound faders/V-pots/buttons/jog drive channel + transport state (channel writes are plain atomic stores off the MIDI thread; transport is marshalled to the message thread), and the timer pushes faders, LEDs, meters, names, the master fader and the playhead time display back to the surface. Banked 8 strips at a time. Wired from the Control Surfaces dialog (`enableControlSurface`/`disableControlSurface` on the engine).
+`McuProtocol.h` is a header-only, hardware-free set of Mackie Control Universal encode/decode helpers (fader law, button notes, V-pot relative encoders + ring, channel-pressure meters, scribble-strip SysEx, **master fader on MIDI ch 9, jog wheel on CC 0x3C, and the 10-digit time display**) — fully unit-tested in `Source/Tests/McuProtocolTests.cpp`. `MidiControlSurface` opens a paired MIDI in/out, runs a 15 Hz echo timer, and is bidirectional: inbound faders/V-pots/buttons/jog drive channel + transport state (channel writes use guarded engine setters with stereo-pair semantics; transport is marshalled to the message thread), and the timer pushes faders, LEDs, meters, names, the master fader and the playhead time display back to the surface. Banked 8 strips at a time. Wired from the Control Surfaces dialog (`enableControlSurface`/`disableControlSurface` on the engine).
 
 ## 6. Data Flow / Core Workflows
 

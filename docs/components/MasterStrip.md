@@ -4,7 +4,7 @@
 
 ## Description
 
-A `juce::Component` that paints a master fader, dB readout, peak meter, output channel routing (L + R), and a stereo/mono toggle. Sums all strips' post-fader audio into a single master output. Always visible in the MIXER view; hidden in EDIT view (waveforms get the full width).
+A `juce::Component` that paints a master fader, dB readout, peak meter, one output-routing combo (a consecutive pair in stereo mode, one channel in mono), and a stereo/mono toggle. Sums all strips' post-fader audio into a single master output. Always visible in the MIXER view; hidden in EDIT view (waveforms get the full width).
 
 ## When to use
 
@@ -21,14 +21,13 @@ MasterStrip (AudioEngine& engine);
 | Method | Purpose |
 |---|---|
 | `setVisible(bool)` | Host hides on EDIT view |
-| `refreshOutputs(int deviceOutCount)` | Repopulates the L + R output combos when the audio device changes topology |
+| `refreshOutputs()` | Repopulates the output combo when the audio device changes topology |
 
 ## Layout
 
 ```
 ┌─MASTER─┐
-│  L ▾   │  output L routing
-│  R ▾   │  output R routing
+│Out1-2 ▾│  pair in stereo, single channel in mono
 │  [ST]  │  stereo / mono toggle
 │   |    │
 │   |    │  fader (-60..+12 dB)
@@ -42,7 +41,7 @@ MasterStrip (AudioEngine& engine);
 
 ## State sources
 
-The master strip reads from the engine's `masterState` (and `masterStateR` for the stereo case):
+The master strip reads from `engine.getMasterState()` (and `getMasterStateR()` for the stereo case):
 
 | Field | Atomic | What it controls |
 |---|---|---|
@@ -51,14 +50,14 @@ The master strip reads from the engine's `masterState` (and `masterStateR` for t
 | `peak` | `std::atomic<float>` | Driven by the audio thread; UI reads at 10 Hz |
 | `clipped` | `std::atomic<bool>` | Latches via the audio thread; clears via meter click |
 
-Stereo mode flag lives at `engine.masterStereo`; when off, L pan only and R combo hides.
+Use `engine.getMasterStereo()` / `setMasterStereo()` for mode and `setMasterOutputs()` for routing. The single combo lists output pairs in stereo and individual outputs in mono.
 
 ## States
 
 | State | Visual | Behaviour |
 |---|---|---|
 | Default | Personality wash neutral grey | Fader + meter active |
-| Mono | R combo hidden, single meter | Audio sums to L only |
+| Mono | Single-channel routing choices, mono meter | Audio sums to the selected mono output |
 | Hover | ~6 % brightness lift | Same hover pattern as `ChannelStrip` |
 | Clipped | Meter top segment held red for `brand::motion::clipLatchMs` | Click meter to clear |
 
@@ -75,11 +74,11 @@ Stereo mode flag lives at `engine.masterStereo`; when off, L pan only and R comb
 |---|---|
 | Hide the strip via `setVisible(false)` in EDIT view | Lay it out conditionally — JUCE handles invisible siblings cleanly |
 | Read peak / clip from the engine's `masterState` atomics | Subscribe to per-sample audio events to drive the meter — atomic poll is fine at 10 Hz |
-| Show R combo only when `masterStereo == true` | Reserve UI space for R combo in mono mode |
+| Refresh pair/single-channel choices when mode changes | Document or add independent L/R combos without changing the routing contract |
 
 ## Accessibility
 
-- Fader supports drag + scroll wheel (JUCE default)
-- dB readout right-click → context menu with `Reset to 0 dB`
+- Uses `FineFader`: drag and keyboard adjust gain; wheel/trackpad gestures propagate for scrolling without changing level
+- Double-click the fader to reset to 0 dB
 - Stereo/mono toggle has a tooltip
-- Meter click clears the clip latch (matches `PeakTally`'s click-to-clear pattern)
+- Meter click clears the local clip latch; there is no global PeakTally bar

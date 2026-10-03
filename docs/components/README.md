@@ -6,7 +6,7 @@ The format follows `/design-system document` output: description, when-to-use, v
 
 ## Index
 
-September 2026 behavior updates are reflected in ChannelStrip, TransportBar, BigClockPanel, EditPageTrackRow, EditTimeRuler, EditToolsBar and SessionRecoveryDialog. The current `672456d` build adds continuation-report integrity, failure-visible handoff and a minimum main-window size; these component descriptions do not prove field validation. For the current test baseline, package and operating limits, see [testing](../../testing.md), [installation](../../INSTALL.md), [architecture](../../architecture.md) and [show readiness](../../SHOW-READINESS.md).
+References reviewed against source build `c563b00` on 2026-10-04. The October updates cover stereo/input detection, deletion guards, source-bounded and grouped edits, automation shape, finalized-take zoom and device-loss finalization. API corrections below reflect the current headers. Component documentation does not establish field or accessibility acceptance. For the current test baseline, package and operating limits, see [testing](../../testing.md), [installation](../../INSTALL.md), [architecture](../../architecture.md) and [show readiness](../../SHOW-READINESS.md).
 
 ### Shipped
 
@@ -22,9 +22,12 @@ September 2026 behavior updates are reflected in ChannelStrip, TransportBar, Big
 - [`EditTimeRuler`](EditTimeRuler.md) — two-strip ruler (markers / Min:Secs)
 - [`EditPage::TrackRow`](EditPageTrackRow.md) — the per-track EDIT row with waveform, automation lane, clip-edit handles
 - [`Toast`](Toast.md) — non-modal feedback pill
-- [`PeakTally`](PeakTally.md) — global clip indicator
 - [`SessionRecoveryDialog`](SessionRecoveryDialog.md) — orphan-session recovery modal
 - [`WelcomeDialog`](WelcomeDialog.md) — first-launch and File ▸ New flow
+
+### Removed
+
+- [`PeakTally`](PeakTally.md) — historical global clip bar; per-strip meters now own clip indication.
 
 ### TODO
 

@@ -1,5 +1,10 @@
 # Project Tasks
 
+## Documentation reconciliation — 2026-10-04
+
+- [x] Review all 39 tracked Markdown files; reconcile current build, two-Mac installation, cleanup, validation and open hardware acceptance.
+- [x] Correct component APIs, mark removed PeakTally historical, document October contracts, and replace links to removed installers.
+
 ## Installation and cleanup — 2026-10-04
 
 - [x] Install tested `c563b00` app and matching helper on both Macs; verify executable hashes, signatures and successful launch. The user manually closed the mini app.
@@ -11,7 +16,17 @@
 - [x] Implement fixes and regression coverage for all 14 additional audit findings.
 - [x] Validate universal Release app/helper, all 438 test groups, audit gates, signatures and a 30-second isolated startup smoke (2026-10-04).
 
-## Current Priorities — 2026-10-02
+## Current priorities — 2026-10-04
+
+- [ ] Validate the October device-loss, desk reconnect, capture-alignment, replica, routing and edit cases on disposable hardware sessions in [FIELD-TEST.md](FIELD-TEST.md).
+- [ ] Reopen the five-hour take on `c563b00`, zoom to a few-minute span, and capture visual evidence of detailed waveform rendering.
+- [ ] Observe live FOLLOW/H/V zoom at the long-run checkpoints, then independently verify primary and backup media.
+- [ ] Complete the planned 56-input exact-rig rehearsal in [SHOW-READINESS.md](SHOW-READINESS.md).
+- [ ] Retain the separate Mac mini restart investigation and native AppKit geometry follow-up until evidence closes them.
+
+## Historical delivery and remaining checks — 2026-10-02
+
+Installation and retention statements in this dated section describe the state at that time. Both Macs now have `c563b00`; old app backups and installers were removed. Unchecked hardware tasks still apply unless superseded by the current field checklist.
 
 - [x] Diagnose the blocky live waveform reported during a 55-channel, 10:42:37 Mac mini take. Verify all 55 primary RF64 files' frame counts and SHA-256 values against the final report; document the limits of that evidence in [FIELD-TEST-2026-10-01.md](FIELD-TEST-2026-10-01.md).
 - [x] Keep recent original-resolution peaks during long live takes, add ten-hour/ring-wrap regression coverage, build universal Release and pass 401 headless test groups with zero failures. Source commit `d2c5858`.
@@ -193,7 +208,7 @@ Console control rebuilt on a transport seam so support isn't capped at OSC desks
 
 Acting on the two engineering items from the market-position review: stop fixing bug *instances*, and make the UI testable.
 
-- [x] **Invariants CI gate** (M) — `Tools/invariants_audit.sh`, 7 rules over the bug classes that five audit passes each re-violated somewhere new. Wired into CI (before the build) and a pre-commit hook (`Tools/install_hooks.sh`; hooks aren't tracked by git). Every rule verified to go RED against an injected regression — 2 of the 7 were initially blind and fixed before landing. ADR: *Enforce bug CLASSES in CI, not in prose*.
+- [x] **Invariants CI gate** (M) — `tools/invariants_audit.sh`, 7 rules over the bug classes that five audit passes each re-violated somewhere new. Wired into CI (before the build) and a pre-commit hook (`tools/install_hooks.sh`; hooks aren't tracked by git). Every rule verified to go RED against an injected regression — 2 of the 7 were initially blind and fixed before landing. ADR: *Enforce bug CLASSES in CI, not in prose*.
 - [x] **The sweep behind it found 5 more open sites** (M) — meterbridge never condemned (3rd `TrackState&` cacher, 12 Hz window); crash-orphaned `.punchbase` sidecar loaded as part 1 of the take (+ phantom noise-report row); Crop's multi-part guard was `.wav`-only; a 2nd unlocked `TrackState::name` write; transport bar's fallback record path hardcoded the Music folder.
 - [x] **`EditPage::TrackRow` made publicly declared + directly tested** (M) — `EditTrackRowTests.cpp` (5 groups) covers the meter-condemn contract, the stale-index guard and stereo routing display. Reverting the stale-index fix **crashes the test binary in `TrackRow::updatePollState`** — the production UAF, reproduced. 286 groups / 0 failures.
 - [x] **Fixed cross-test pollution** (S) — test-mode engines share one throwaway `.settings`, so per-strip writes leaked between suites (this broke *Player maps files by Track_NN index*). Documented in `testing.md`; suites that mutate strip state must `clearAllStripOverrides()` on setup + teardown.

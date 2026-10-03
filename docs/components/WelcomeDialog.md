@@ -31,25 +31,30 @@ A `juce::Component` hosted via `juce::DialogWindow::LaunchOptions` with a vertic
 
 ```cpp
 struct NewResult {
-    juce::String        name;
-    juce::File          location;
-    CaptureFormat       captureFormat;
-    double              sampleRate;
-    bool                interleaved;
-    juce::String        ioSettings;   // preset key for I/O routing
+    juce::String name;
+    juce::File location;
+    CaptureFormat captureFormat;
+    double sampleRate;
+    bool interleaved;
+    juce::String ioSettings;
+    juce::String inputDeviceName;
+    juce::String outputDeviceName;
 };
-
-using NewCallback  = std::function<void (const NewResult&)>;
-using OpenCallback = std::function<void (const juce::File&)>;
-
-static void launch (juce::File defaultRoot,
-                    double currentSampleRate,
-                    CaptureFormat currentFormat,
-                    NewCallback onCreate,
-                    OpenCallback onOpen);
+struct DeviceChoices {
+    juce::StringArray inputs, outputs;
+    juce::String currentInput, currentOutput;
+};
+using OnCreateNew = std::function<void (const NewResult&)>;
+using OnOpenExisting = std::function<void (const juce::File&)>;
+static void launch (const juce::File& defaultLocation,
+                    double lastSampleRate,
+                    CaptureFormat lastCaptureFormat,
+                    const DeviceChoices& devices,
+                    OnCreateNew onCreate,
+                    OnOpenExisting onOpen);
 ```
 
-Static `launch` constructs the dialog asynchronously. `onCreate` fires when the engineer commits a new session; `onOpen` when they pick an existing one. `MainComponent` owns replacement confirmation and filesystem creation: a failed create leaves the current session untouched, while a configured default template is applied and saved only after the new folder exists.
+Static `launch` constructs the dialog asynchronously. `DeviceChoices` supplies available input/output devices and the current selections; empty device names in `NewResult` mean unchanged. `onCreate` fires when the engineer commits a new session; `onOpen` when they pick an existing one. `MainComponent` owns replacement confirmation and filesystem creation: a failed create leaves the current session untouched, while a configured default template is applied and saved only after the new folder exists.
 
 ## Sidebar
 
@@ -58,7 +63,7 @@ Two items only — `New` and `Open`. Earlier builds had Sketch / Cloud / Learn e
 | Item | Right pane content |
 |---|---|
 | New | Form: name / location / format / sample rate / I/O preset → `[Cancel] [Create]` |
-| Open | `FileChooser` style picker rooted at `defaultRoot`, plus a recent-sessions list pulled from `appProps` |
+| Open | `FileChooser` style picker rooted at `defaultLocation`, plus a recent-sessions list pulled from `appProps` |
 
 ## States
 

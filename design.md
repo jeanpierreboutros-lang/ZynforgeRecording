@@ -207,6 +207,14 @@ components:
 
 # ZynForge — Design System
 
+## October interaction contracts — 2026-10-04
+
+Finalized takes support 512× horizontal zoom; live recording retains its 16× cap. Tick drawing is bounded to the viewport, and manual horizontal navigation suspends FOLLOW until resumed. Long-scale waveforms show a sustained-level body with thin true-peak markers; stale caches reload from finalized media.
+
+Stereo linking refuses overlapping pairs. Auto-arm responds to input activity only and arms both stereo halves together. Session deletion holds a session-I/O reservation while its confirmation is open and rechecks capture/identity on completion. Failed media reads and replica ownership conflicts must be visible; they cannot look like successful empty audio. Console reconnect keeps the saved stage patch available for restoration when remote state is unknown.
+
+See [the component reference](docs/components/README.md) for current control APIs and [the October field checklist](FIELD-TEST.md) for interaction checks still requiring physical validation.
+
 ## Read-only observer and handoff — 2026-09-23
 
 The confidence page is intentionally a separate observer surface: large recording/idle/alarm states first, health figures second, per-track activity last, and no arm, mute, solo or transport buttons. Network loss and stale capture-daemon status are alarms, not a healthy-looking last frame. Audible alerts require an explicit user gesture and remain supplementary to the local recording dashboard.
@@ -217,7 +225,7 @@ The post-show handoff is a background, cancellable transfer into a new/empty fol
 
 The September remediation changes behavior, not the visual token system. Recording state must reflect the actual local or daemon capture: arm/input/session changes are blocked while rolling, and STOP is not shown as complete until acknowledged. Empty edited tracks stay silent; missing sources never silently become a different take. Track deletion retains media, while reorder clears stale index-based undo and clipboard state. Recovery counts media under `Audio Files` and preserves transaction recovery material.
 
-Communicate software validation and show acceptance separately. The Mac mini's installed `d2c5858` universal build passed 401 source test groups and has a matching verified two-Mac DMG. Its first five-hour run was interrupted by a Mac mini kernel panic, with no Zynforge defect identified; a separate 55-channel run completed 5:00:11 on 2026-10-02 with a clean primary-file report. The user reported that it looked fine, but no timed live waveform/FOLLOW/zoom observation was recorded. The user requested no app or routing changes for the earlier restart incident. The development Mac remains on `672456d`, and the planned SD5/56-input rig still needs hardware and three-hour acceptance checks. See [testing.md](testing.md), [INSTALL.md](INSTALL.md) and [SHOW-READINESS.md](SHOW-READINESS.md). Existing visual specifications and historical contrast results below are not a fresh accessibility or hardware certification.
+Communicate software validation and show acceptance separately. Both Macs have `c563b00`, with matching verified app/helper hashes and successful startup checks; its automated suite passed 438 groups. [INSTALL.md](INSTALL.md) owns the current package and retention state. Historical field takes, visual specifications and contrast measurements below do not certify the installed build or planned SD5/56-input rig. See [testing.md](testing.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
 
 > Engineer-first dark UI for live and recording audio applications.
 > Built so the operator can scan critical state at a glance under stage
@@ -428,7 +436,7 @@ overlays (`brand::verticalGradient` is kept but returns a degenerate
 same-stop gradient → renders solid; don't restore a lift/shadow ramp).
 Depth comes from `brand::lift`/`sink` solids + 1 px edges. Bright
 `meter-hot` / orange stays reserved for STATE (armed / peaking), never
-permanent chrome — enforced by `Tools/design_audit.sh`. The signature
+permanent chrome — enforced by `tools/design_audit.sh`. The signature
 surfaces:
 - **Forge-heat meters** (above) — the most-looked-at element.
 - **Ember armed-glow** — a record-armed channel strip gets a warm ember
@@ -503,7 +511,7 @@ ComboBox) or the component's own `paint()` (ChannelStrip, Toast, Meter).
 
 | State | Behavior | Timing |
 |-------|----------|--------|
-| In | slide + fade up from bottom-right | `motion::quickFadeMs` (200) |
+| In | fade in at the bottom-right | `motion::quickFadeMs` (200) |
 | Hold | static, queue waits | `motion::toastHoldMs` (2800) |
 | Out | fade | `motion::fadeOutMs` (320) |
 | Queued | back-to-back toasts display in order, never stomp | — |
