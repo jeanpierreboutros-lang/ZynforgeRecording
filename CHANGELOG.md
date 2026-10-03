@@ -17,6 +17,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed — October 3 follow-up audit
+
+- Reject overlapping stereo links; preserve the valid stereo channel when the other input is absent; exclude generated click beds from recording append length.
+- Finalize interrupted captures and close stereo mix files after audio-device loss. Recheck recording before deleting a session and block new capture while deletion confirmation is open.
+- Preserve saved console stage routing across reconnects and persist capture gain references, including valid zero-dB references.
+- Keep legacy root tracks playable after adding Audio Files media; render adjacent pasted mono clips; bound trims to source media and grouped edits to a shared movement.
+- Feed live input into aux buses, apply VCA mute to post-fader sends, and detect auto-arm from input audio only with stereo-pair arming.
+
 ### Fixed — long-take H+ zoom ceiling, 2026-10-02
 
 - Finalized EDIT sessions can now zoom to 512× instead of stopping at 16×. A five-hour take can reach a seconds-wide view, allowing the native detailed thumbnail to replace the overview. Live recording stays capped at 16× because its growing timeline multiplies component width.

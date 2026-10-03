@@ -280,10 +280,23 @@ namespace zynforge
             // setClipFades. These pin the geometry each produces + undo.
             beginTest ("Trim (slip-left / right) geometry + undo");
             {
+                juce::TemporaryFile source (".wav");
+                {
+                    juce::WavAudioFormat format;
+                    std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
+                        source.getFile().createOutputStream().release(), 48000, 1, 24, {}, 0));
+                    expect (writer != nullptr);
+                    if (writer)
+                    {
+                        juce::AudioBuffer<float> audio (1, 120000); audio.clear();
+                        expect (writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples()));
+                    }
+                }
                 AudioEngine eng;
                 auto& clips = eng.clipsFor (0);
                 clips.clear();
                 Clip c;
+                c.audioFile = source.getFile();
                 c.timelineStartSamples = 10000;
                 c.fileStartSamples     = 5000;
                 c.fileLengthSamples    = 100000;
@@ -304,8 +317,9 @@ namespace zynforge
                 expect (eng.editClip (0, 0, AudioEngine::ClipEdit::TrimRight, 8000));
                 expectEquals (eng.clipsFor (0)[0].fileLengthSamples, (juce::int64) 104000);
 
-                // Over-trim past the 1024-sample floor is refused.
-                expect (! eng.editClip (0, 0, AudioEngine::ClipEdit::TrimRight, -200000));
+                // Over-trim stops at the shared 1024-sample bound.
+                expect (eng.editClip (0, 0, AudioEngine::ClipEdit::TrimRight, -200000));
+                expectEquals (eng.clipsFor (0)[0].fileLengthSamples, (juce::int64) 1024);
 
                 // Undo the whole edit back to the original geometry.
                 eng.loadPlaylistsFromJson (before);

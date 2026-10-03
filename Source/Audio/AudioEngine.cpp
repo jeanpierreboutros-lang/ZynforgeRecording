@@ -105,6 +105,7 @@ namespace zynforge
             t.isBus.store (false); t.vcaGroup.store (-1); t.editGroup.store (-1);
             t.outputMuted.store (false); t.streamSend.store (false);
             t.liveInputGainDb.store (0); t.captureInputGainDb.store (0);
+            t.referenceMedia.store (false); t.inputPeak.store (0);
             t.rampSamplesRemaining.store (0);
             for (auto& send : t.sends)
             { send.targetBus.store (-1); send.levelDb.store (-60.0f); send.postFader.store (true); }
@@ -137,12 +138,8 @@ namespace zynforge
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
         auto& t = recorder.getTrack (channelIndex);
         t.liveInputGainDb.store (dB, std::memory_order_relaxed);
-        // A channel whose gain we learn for the first time mid-take has no
-        // capture reference yet -- seed it so the trim delta starts at 0.
-        if (recorder.isRecording()
-            && t.captureInputGainDb.load (std::memory_order_relaxed) == 0.0f
-            && t.armed.load (std::memory_order_relaxed))
-            t.captureInputGainDb.store (dB, std::memory_order_relaxed);
+        // The reference is fixed at capture start. Zero dB is a valid gain,
+        // never a sentinel permitting a console update to rebaseline a take.
     }
 
     float AudioEngine::getTrackTrimDelta (int channelIndex)
@@ -153,8 +150,18 @@ namespace zynforge
              - t.captureInputGainDb.load (std::memory_order_relaxed);
     }
 
+    juce::int64 AudioEngine::getCaptureLengthSamples()
+    {
+        juce::int64 length = 0;
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+            if (! recorder.getTrack (i).referenceMedia.load())
+                length = juce::jmax (length, player.getTrackLengthSamples (i));
+        return length;
+    }
+
     bool AudioEngine::startRecording (const juce::File& sessionDir)
     {
+        if (captureFinalizationPending.load()) stopRecording();
         stereoMixWriteFailed.store (false, std::memory_order_relaxed);
         if (isRecording() || sessionTransitionActive.load (std::memory_order_acquire))
             return false;
@@ -186,6 +193,7 @@ namespace zynforge
         for (int i = 0; i < recorder.getNumTracks(); ++i)
         {
             auto& t = recorder.getTrack (i);
+            if (! t.armed.load()) continue;
             t.captureInputGainDb.store (t.liveInputGainDb.load (std::memory_order_relaxed),
                                         std::memory_order_relaxed);
         }
@@ -237,6 +245,7 @@ namespace zynforge
                     juce::StringPairArray meta;
                     if (auto* w = wav.createWriterFor (out, sr, 2, 24, meta, 0))
                     {
+                        const juce::ScopedLock sl (stereoMixLock);
                         stereoMixWriter = std::make_unique<juce::AudioFormatWriter::ThreadedWriter>
                                               (w, mixWriterThread, 32768);
                     }
@@ -260,7 +269,8 @@ namespace zynforge
         // session, reseed clips, yank the playhead -- destroying clip/comp
         // edits on a session that is merely idle or playing back. The UI STOP
         // button is already gated, but the engine entry point was not.
-        if (! recorder.isRecording()) return;
+        const bool interrupted = captureFinalizationPending.exchange (false);
+        if (! recorder.isRecording() && ! interrupted) return;
 
         const auto sessionDir = recorder.getActiveSessionDir();
         // Where the take actually ends, captured BEFORE stopRecording()
@@ -269,7 +279,7 @@ namespace zynforge
         // pass began) leave the transport parked at the END of what was just
         // captured, so the next RECORD continues the take from here instead
         // of looking like it starts over from the beginning.
-        const auto recordEnd = recorder.getRecordTimelineSamples();
+        const auto recordEnd = interrupted ? interruptedCaptureEnd.load() : recorder.getRecordTimelineSamples();
         recorder.stopRecording();
         clearCaptureWindow();
         // Fresh audio on disk -- the transient cache from the last
@@ -631,7 +641,7 @@ namespace zynforge
             if (t.armed.load (std::memory_order_relaxed)) { autoArmStreaks[(size_t) i] = 0; continue; }
             if (t.isBus.load (std::memory_order_relaxed)) continue;
 
-            const float pk = t.peak.load (std::memory_order_relaxed);
+            const float pk = t.inputPeak.load (std::memory_order_relaxed);
             if (pk >= ampThreshold)
                 ++autoArmStreaks[(size_t) i];
             else
@@ -639,7 +649,7 @@ namespace zynforge
 
             if (autoArmStreaks[(size_t) i] >= periodTicks)
             {
-                t.armed.store (true, std::memory_order_relaxed);
+                setTrackArmed (i, true);
                 autoArmStreaks[(size_t) i] = 0;
             }
         }
@@ -678,6 +688,7 @@ namespace zynforge
 
     int AudioEngine::loadSession (const juce::File& sessionDir, bool preserveEdits, bool appendRecordedAudio)
     {
+        if (captureFinalizationPending.load()) stopRecording();
         if (! TrackFileTransaction::recover (sessionDir)) return -1;
         const auto audioDir = sessionDir.getChildFile ("Audio Files");
         if (! MultitrackRecorder::recoverInterruptedPunches (
@@ -907,6 +918,8 @@ namespace zynforge
             o->setProperty ("outputMuted", t.outputMuted.load (std::memory_order_relaxed));
             o->setProperty ("streamSend",  t.streamSend .load (std::memory_order_relaxed));
             o->setProperty ("stereo",    t.isStereo .load (std::memory_order_relaxed));
+            o->setProperty ("referenceMedia", t.referenceMedia.load());
+            o->setProperty ("captureInputGainDb", (double) t.captureInputGainDb.load());
             o->setProperty ("isBus",     t.isBus    .load (std::memory_order_relaxed));
             o->setProperty ("vcaGroup",  t.vcaGroup .load (std::memory_order_relaxed));
             o->setProperty ("editGroup", t.editGroup.load (std::memory_order_relaxed));
@@ -996,6 +1009,11 @@ namespace zynforge
         if (want != recorder.getNumTracks())
             setStripCount (want);
 
+        // Replace pair layout, rather than rejecting valid saved pairs against
+        // stale neighbouring flags from the previous session.
+        for (int i = 0; i < recorder.getNumTracks(); ++i)
+            recorder.getTrack (i).isStereo.store (false);
+
         // Session tempo state. Guarded so an older session (no keys) keeps
         // whatever's current rather than snapping to 0 BPM / 4-4.
         if (root->hasProperty ("tempoBpm"))
@@ -1036,6 +1054,13 @@ namespace zynforge
                     if (o->hasProperty ("inRoute"))  setTrackInputRouting  (idx, (int) o->getProperty ("inRoute"));
                     if (o->hasProperty ("outRoute")) setTrackOutputRouting (idx, (int) o->getProperty ("outRoute"));
                     if (o->hasProperty ("stereo"))   setTrackStereo        (idx, (bool) o->getProperty ("stereo"));
+                    t.referenceMedia.store (o->hasProperty ("referenceMedia")
+                        ? (bool) o->getProperty ("referenceMedia")
+                        : t.getNameThreadSafe() == "Click" && t.inputRouting.load() < 0);
+                    const float captureGain = (float) (double) o->getProperty ("captureInputGainDb");
+                    t.captureInputGainDb.store (std::isfinite (captureGain) ? captureGain : 0.0f);
+                    // Until a new desk reading arrives, reopening has no trim delta.
+                    t.liveInputGainDb.store (t.captureInputGainDb.load());
                     // isBus is per-session authoritative (was global appProps,
                     // which leaked the bus layout across sessions). Pre-v1
                     // session_mix.json has no key -> default to a normal strip.
@@ -1523,6 +1548,10 @@ namespace zynforge
         // block, so flipping this mid-take desyncs the on-disk layout from the
         // flag. Refuse while recording -- like setStripCount / removeStripAt.
         if (isRecording()) return;
+        if (isStereoPair
+            && (channelIndex + 1 >= recorder.getNumTracks()
+                || (channelIndex > 0 && recorder.getTrack (channelIndex - 1).isStereo.load())
+                || recorder.getTrack (channelIndex + 1).isStereo.load())) return;
         recorder.getTrack (channelIndex).isStereo.store (isStereoPair,
                                                           std::memory_order_release);
         // Bump the track generation so EVERY view (MIXER, EDIT, and the
@@ -2056,6 +2085,7 @@ namespace zynforge
 
     void AudioEngine::clearSessionState()
     {
+        if (captureFinalizationPending.load()) stopRecording();
         stopPlayback();
         player.unload();
         player.clearAllClips();
@@ -2565,9 +2595,28 @@ namespace zynforge
 
     void AudioEngine::audioDeviceStopped()
     {
-        if (recorder.isRecording()) recorder.markCaptureDeviceLost();
+        const bool interrupted = recorder.isRecording();
+        if (interrupted)
+        {
+            interruptedCaptureEnd.store (recorder.getRecordTimelineSamples());
+            recorder.markCaptureDeviceLost();
+        }
         recorder.release();
-        player  .release();
+        player.release();
+        {
+            const juce::ScopedLock sl (stereoMixLock);
+            stereoMixWriter.reset();
+        }
+        if (interrupted)
+        {
+            captureFinalizationPending.store (true);
+            const auto handle = asyncHandle;
+            juce::MessageManager::callAsync ([handle]
+            {
+                if (auto* engine = handle->load())
+                    if (engine->captureFinalizationPending.load()) engine->stopRecording();
+            });
+        }
     }
 
     void AudioEngine::audioDeviceIOCallbackWithContext (const float* const* inputs, int numInputs,
@@ -2716,7 +2765,12 @@ namespace zynforge
             auto& src = recorder.getTrack (i);
             if (src.isBus.load (std::memory_order_relaxed)) continue;
             const float* srcAudio = playerScratch.getReadPointer (i);
-            if (srcAudio == nullptr) continue;
+            // Match monitoring: add live input as well as playback, except
+            // when punching has already put that input in playerScratch.
+            const bool punchedInput = playerWasRolling && recorder.isRecording() && src.armed.load();
+            const float* liveAudio = ! punchedInput && i < kMaxStrips
+                && (src.armed.load() || src.monitor.load() || (! playerWasRolling && recorder.isRecording()))
+                ? routedInputs[i] : nullptr;
 
             // Strip's effective gain for post-fader sends. A POST-fader send
             // follows the channel mute (static + drawn mute lane) like a real
@@ -2725,7 +2779,9 @@ namespace zynforge
             // channelAudible is defined further down, so evaluate the mute
             // inline here; default 0 so this reflects only the lane.
             const float stripGain = juce::Decibels::decibelsToGain (effectiveGainDb (i), -60.0f);
-            bool stripMuted = src.muted.load (std::memory_order_relaxed);
+            const int vca = src.vcaGroup.load (std::memory_order_relaxed);
+            bool stripMuted = src.muted.load (std::memory_order_relaxed)
+                || (vca >= 0 && vca < kNumVcas && vcas[(size_t) vca].muted.load());
             if (! stripMuted && autoPlayPos >= 0)
             {
                 const int autoCh = (i > 0 && recorder.getTrack (i - 1).isStereo.load (std::memory_order_relaxed))
@@ -2733,6 +2789,10 @@ namespace zynforge
                 stripMuted = automationValueAt (autoCh, AutomationParam::Mute, autoPlayPos, 0.0f) > 0.5f;
             }
             const float postGain = stripMuted ? 0.0f : stripGain;
+            // Trim-follow compensates recorded playback, never the live mic.
+            const float liveDb = effectiveGainDb (i)
+                - (trimFollowEnabled.load() ? getTrackTrimDelta (i) : 0.0f);
+            const float livePostGain = stripMuted ? 0.0f : juce::Decibels::decibelsToGain (liveDb, -60.0f);
 
             for (int s = 0; s < TrackState::kNumSends; ++s)
             {
@@ -2744,10 +2804,16 @@ namespace zynforge
                 const float sendDb = snd.levelDb.load (std::memory_order_relaxed);
                 const float post   = snd.postFader.load (std::memory_order_relaxed) ? postGain : 1.0f;
                 const float gain = juce::Decibels::decibelsToGain (sendDb, -60.0f) * post;
-                if (gain < 0.00001f) continue;
-
                 float* dst = playerScratch.getWritePointer (bus);
-                juce::FloatVectorOperations::addWithMultiply (dst, srcAudio, gain, numSamples);
+                if (gain >= 0.00001f)
+                    juce::FloatVectorOperations::addWithMultiply (dst, srcAudio, gain, numSamples);
+                if (liveAudio != nullptr)
+                {
+                    const float liveGain = juce::Decibels::decibelsToGain (sendDb, -60.0f)
+                        * (snd.postFader.load() ? livePostGain : 1.0f);
+                    if (liveGain >= 0.00001f)
+                        juce::FloatVectorOperations::addWithMultiply (dst, liveAudio, liveGain, numSamples);
+                }
             }
         }
 
@@ -2891,7 +2957,7 @@ namespace zynforge
         // Held to the end of this scope so the writer stays valid through the
         // accumulate + write below.
         const juce::ScopedTryLock mixStl (stereoMixLock);
-        const bool wantMixCapture = mixStl.isLocked() && (stereoMixWriter != nullptr);
+        const bool wantMixCapture = mixStl.isLocked() && recorder.isRecording() && (stereoMixWriter != nullptr);
 
         if (wantMixCapture)
         {

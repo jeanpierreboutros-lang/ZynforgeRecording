@@ -174,6 +174,8 @@ namespace zynforge
 
         bool startRecording (const juce::File& sessionDir) override;
         void stopRecording() override;
+        // Excludes generated reference beds whose length is unrelated to a take.
+        juce::int64 getCaptureLengthSamples();
         bool isRecording() const noexcept override { return recorder.isRecording() || externalRecording.load(); }
         void setExternalRecording (bool active) noexcept;
         void setControlsLocked (bool locked) noexcept { controlsLocked.store (locked); }
@@ -956,6 +958,7 @@ namespace zynforge
         // left. The engine clamps to [0, fileSize] and prevents a clip
         // from inverting (length never < 1 sample).
         enum class ClipEdit { TrimLeft, TrimRight, Move };
+        juce::int64 constrainClipEditDelta (int track, int clipIndex, ClipEdit, juce::int64 deltaSamples) const;
         bool editClip (int track, int clipIndex, ClipEdit, juce::int64 deltaSamples);
 
         // Non-destructive crop: on EVERY track, replace its clip list with
@@ -1099,6 +1102,8 @@ namespace zynforge
 
     private:
         AsyncHandle asyncHandle;
+        std::atomic<bool> captureFinalizationPending { false };
+        std::atomic<juce::int64> interruptedCaptureEnd { 0 };
         juce::AudioDeviceManager deviceManager;
         MultitrackRecorder       recorder;
         SessionPlayer            player;

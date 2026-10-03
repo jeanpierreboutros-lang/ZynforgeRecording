@@ -244,8 +244,12 @@ void MainComponent::onRecordClicked()
         const auto cur   = engine.getEditCursorSample();
         const auto pos   = manualRecordPosition (engine.getPlayer().isPlaying(),
                                                  engine.getPlayer().getPositionSamples(), cur);
-        const auto total = juce::jmax ((juce::int64) 0, engine.getPlayer().getTotalLengthSamples());
-        if (pos < total && (pos > 0 || cur >= 0 || engine.getPlayer().isPlaying()))
+        const auto total = engine.getCaptureLengthSamples();
+        const bool explicitPosition = cur >= 0 || engine.getPlayer().isPlaying();
+        // A deliberate cursor/rolling punch may be inside a reference bed
+        // beyond the captured material. Only default append ignores the bed.
+        if ((pos < total && (pos > 0 || explicitPosition))
+            || (explicitPosition && pos < engine.getPlayer().getTotalLengthSamples()))
         {
             // Mid-take "record OVER from here" -- punch-in at the cursor/playhead.
             // Works on MULTI-PART takes too: the splice reads the whole take
@@ -386,8 +390,7 @@ void MainComponent::onRecordClicked()
         if (continueAppend)
             // Continue the timeline from the end of the existing take so the
             // clock + playhead carry on instead of restarting at 0.
-            engine.armContinue (juce::jmax ((juce::int64) 0,
-                                            engine.getPlayer().getTotalLengthSamples()));
+            engine.armContinue (engine.getCaptureLengthSamples());
         else
             engine.armPunchIn (punchAt);
     }
@@ -935,7 +938,8 @@ void MainComponent::removeLastCapture()
         if (d.getLastModificationTime() > target.getLastModificationTime())
             target = d;
 
-    const bool deletingActive = target == engine.getActiveSessionDir();
+    if (engine.isRecording()) { showStatus ("Stop recording before removing a capture"); return; }
+    sessionIoBusy.store (true);
     juce::Component::SafePointer<MainComponent> self (this);
     juce::AlertWindow::showAsync (
         juce::MessageBoxOptions()
@@ -944,30 +948,33 @@ void MainComponent::removeLastCapture()
             .withMessage ("Permanently delete\n\n" + target.getFullPathName() + "\n\nThis cannot be undone.")
             .withButton ("Delete")
             .withButton ("Cancel"),
-        [self, target, deletingActive] (int result)
+        [self, target] (int result)
     {
-        if (result != 1 || self == nullptr) return; // first button = commandID 1
-        if (target.deleteRecursively())
-        {
-            if (deletingActive)
-            {
-                self->condemnAllStrips();
-                self->engine.clearSessionState();
-                self->engine.setStripCount (0);
-                self->cues.clear();
-                self->currentCueIndex = -1;
-                self->clickTrackIndex = -1;
-                self->lastTrackCount = -1;
-                self->undoManager.clearUndoHistory();
-                self->updateTransportLabels();
-                self->showStartupWelcome();
-            }
-            self->showStatus ("Removed: " + target.getFileName());
-        }
-        else
-            self->showStatus ("Couldn't remove that folder");
+        if (self == nullptr) return;
+        self->sessionIoBusy.store (false);
+        if (result == 1) self->deleteCaptureSession (target);
     });
 }
+
+bool MainComponent::deleteCaptureSession (const juce::File& target)
+{
+    if (engine.isRecording() || sessionIoBusy.load())
+    { showStatus ("Stop recording and finish session operations before removing a capture"); return false; }
+    const bool deletingActive = target == engine.getActiveSessionDir();
+    if (! target.deleteRecursively()) { showStatus ("Couldn't remove that folder"); return false; }
+    if (deletingActive)
+    {
+        condemnAllStrips();
+        engine.clearSessionState();
+        engine.setStripCount (0);
+        cues.clear(); currentCueIndex = -1; clickTrackIndex = -1; lastTrackCount = -1;
+        undoManager.clearUndoHistory();
+        updateTransportLabels(); showStartupWelcome();
+    }
+    showStatus ("Removed: " + target.getFileName());
+    return true;
+}
+
 
 void MainComponent::applySessionSettings()
 {

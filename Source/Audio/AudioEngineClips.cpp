@@ -20,6 +20,24 @@
 
 namespace zynforge
 {
+    // Resolve a slot in the modern directory before considering any legacy
+    // extension, matching SessionPlayer's per-track precedence.
+    static juce::File findTrackMedia (const juce::File& audioDir, int track)
+    {
+        const auto findIn = [track] (const juce::File& directory)
+        {
+            for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
+            {
+                const auto file = directory.getChildFile (juce::String::formatted ("Track_%02d", track + 1) + ext);
+                if (file.existsAsFile()) return file;
+            }
+            return juce::File();
+        };
+        const auto modern = findIn (audioDir);
+        return modern.existsAsFile() || audioDir.getFileName() != "Audio Files"
+            ? modern : findIn (audioDir.getParentDirectory());
+    }
+
     juce::File AudioEngine::getTrackAudioFile (int track, int* channel) const
     {
         if (channel != nullptr) *channel = 0;
@@ -28,18 +46,17 @@ namespace zynforge
         if (! dir.isDirectory()) dir = getActiveSessionDir();
         juce::AudioFormatManager fm; fm.registerBasicFormats();
         for (int offset = 0; offset <= 1 && track - offset >= 0; ++offset)
-            for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
+        {
+            const auto f = findTrackMedia (dir, track - offset);
+            if (! f.existsAsFile()) continue;
+            if (offset == 1)
             {
-                const auto f = dir.getChildFile (juce::String::formatted ("Track_%02d", track - offset + 1) + ext);
-                if (! f.existsAsFile()) continue;
-                if (offset == 1)
-                {
-                    auto r = ConcatReader::create (fm, findTakeParts (f));
-                    if (r == nullptr || r->numChannels < 2) continue;
-                }
-                if (channel != nullptr) *channel = offset;
-                return f;
+                auto r = ConcatReader::create (fm, findTakeParts (f));
+                if (r == nullptr || r->numChannels < 2) continue;
             }
+            if (channel != nullptr) *channel = offset;
+            return f;
+        }
         return {};
     }
 
@@ -555,14 +572,7 @@ namespace zynforge
                 // 1) The track's OWN file (Track_<track+1>). A 2-channel own
                 //    file means this index is the LEFT of an interleaved
                 //    stereo pair -> read channel 0; a mono file reads all.
-                for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
-                {
-                    const auto name = juce::String::formatted ("Track_%02d", track + 1) + ext;
-                    auto f = audioDir.getChildFile (name);
-                    if (! f.existsAsFile() && audioDir.getFileName() == "Audio Files")
-                        f = audioDir.getParentDirectory().getChildFile (name);
-                    if (f.existsAsFile()) { srcFile = f; break; }
-                }
+                srcFile = findTrackMedia (audioDir, track);
 
                 if (srcFile.existsAsFile())
                 {
@@ -576,18 +586,11 @@ namespace zynforge
                     //    interleaved stereo pair, whose audio lives in the
                     //    LEFT slot's 2-ch file (named Track_<track>, since the
                     //    L partner is index track-1). Read channel 1 from it.
-                    for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
-                    {
-                        const auto name = juce::String::formatted ("Track_%02d", track) + ext;
-                        auto f = audioDir.getChildFile (name);
-                        if (! f.existsAsFile() && audioDir.getFileName() == "Audio Files")
-                            f = audioDir.getParentDirectory().getChildFile (name);
-                        if (f.existsAsFile()) { srcFile = f; break; }
-                    }
+                    srcFile = findTrackMedia (audioDir, track - 1);
                     if (! srcFile.existsAsFile()) return true;
                     reader = ConcatReader::create (fm, findTakeParts (srcFile));
                     if (reader == nullptr || reader->numChannels < 2)
-                    { reader.reset(); return true; }
+                    { reader.reset(); srcFile = juce::File(); return true; }
                     readChannel = 1;
                 }
                 else
@@ -1012,7 +1015,9 @@ namespace zynforge
                     const int count = juce::jmin (step, winLen - i);
                     const auto pos = winStart + i;
                     const float db = automationValueAtOffline (cp->autoCh, AutomationParam::Volume, pos, cp->baseDb) + cp->vcaDb;
+                    const int vca = cp->ts->vcaGroup.load();
                     const bool muted = cp->ts->muted.load()
+                        || (vca >= 0 && vca < kNumVcas && vcas[(size_t) vca].muted.load())
                         || automationValueAtOffline (cp->autoCh, AutomationParam::Mute, pos, 0.0f) > 0.5f;
                     for (const auto& send : cp->ts->sends)
                     {
@@ -1742,6 +1747,31 @@ namespace zynforge
         return insertAt;
     }
 
+    juce::int64 AudioEngine::constrainClipEditDelta (int track, int clipIndex, ClipEdit mode,
+                                                    juce::int64 delta) const
+    {
+        const auto* clips = tryClipsFor (track);
+        if (clips == nullptr || clipIndex < 0 || clipIndex >= (int) clips->size()) return 0;
+        const auto& c = (*clips)[(size_t) clipIndex];
+        if (c.locked) return 0;
+        constexpr juce::int64 minLength = 1024;
+        if (mode == ClipEdit::Move) return juce::jmax (delta, -c.timelineStartSamples);
+        if (mode == ClipEdit::TrimLeft)
+            return juce::jlimit (-juce::jmin (c.fileStartSamples, c.timelineStartSamples),
+                                juce::jmax ((juce::int64) 0, c.fileLengthSamples - minLength), delta);
+        if (delta <= 0) return juce::jmax (delta, juce::jmin ((juce::int64) 0, minLength - c.fileLengthSamples));
+        juce::int64 sourceLength = 0;
+        if (c.audioFile == juce::File()) sourceLength = player.getTrackLengthSamples (track);
+        else
+        {
+            juce::AudioFormatManager fm; fm.registerBasicFormats();
+            if (auto reader = ConcatReader::create (fm, findTakeParts (c.audioFile)))
+                sourceLength = reader->lengthInSamples;
+        }
+        return juce::jmin (delta, juce::jmax ((juce::int64) 0,
+                                           sourceLength - c.fileStartSamples - c.fileLengthSamples));
+    }
+
     bool AudioEngine::editClip (int track, int clipIndex, ClipEdit mode, juce::int64 deltaSamples)
     {
         if (track < 0 || track >= (int) trackClips.size()) return false;
@@ -1749,6 +1779,8 @@ namespace zynforge
         if (clipIndex < 0 || clipIndex >= (int) list.size()) return false;
         auto& c = list[(size_t) clipIndex];
         if (c.locked) return false;   // edits refused on locked clips
+        deltaSamples = constrainClipEditDelta (track, clipIndex, mode, deltaSamples);
+        if (deltaSamples == 0) return false;
 
         // Min length: 1024 samples (~20 ms at 48 k) so a clip never
         // collapses to invisibility on a fast drag.

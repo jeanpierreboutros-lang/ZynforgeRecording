@@ -1,5 +1,10 @@
 # Project Tasks
 
+## October 3 follow-up audit
+
+- [x] Implement fixes and regression coverage for all 14 additional audit findings.
+- [x] Validate universal Release app/helper, all 438 test groups, audit gates, signatures and a 30-second isolated startup smoke (2026-10-04).
+
 ## Current Priorities — 2026-10-02
 
 - [x] Diagnose the blocky live waveform reported during a 55-channel, 10:42:37 Mac mini take. Verify all 55 primary RF64 files' frame counts and SHA-256 values against the final report; document the limits of that evidence in [FIELD-TEST-2026-10-01.md](FIELD-TEST-2026-10-01.md).

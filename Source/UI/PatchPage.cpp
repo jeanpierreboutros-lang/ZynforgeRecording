@@ -362,6 +362,7 @@ namespace zynforge
                     {
                         // Going mono → stereo. Need a right partner.
                         if (ls.trackIndex + 1 >= totalTracks) return;
+                        if (engine.getRecorder().getTrack (ls.trackIndex + 1).isStereo.load()) return;
                         engine.setTrackStereo (ls.trackIndex, true);
                         // Hard-pan L/R for the full stereo image (buses sum
                         // centred, so skip them). Matches the mixer + import.

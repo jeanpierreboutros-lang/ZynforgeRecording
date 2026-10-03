@@ -28,6 +28,7 @@ namespace zynforge
             ZF_COPY_FIELD(outputMuted) ZF_COPY_FIELD(vcaGroup) ZF_COPY_FIELD(editGroup) ZF_COPY_FIELD(isBus)
             ZF_COPY_FIELD(inputRouting) ZF_COPY_FIELD(outputRouting) ZF_COPY_FIELD(streamSend)
             ZF_COPY_FIELD(isStereo) ZF_COPY_FIELD(colourARGB)
+            ZF_COPY_FIELD(referenceMedia)
             #undef ZF_COPY_FIELD
             rampTargetGainDb.store (gainDb.load()); rampTargetPan.store (pan.load()); rampSamplesRemaining.store (0);
             for (int i = 0; i < kNumSends; ++i)
@@ -39,6 +40,8 @@ namespace zynforge
         }
 
         std::atomic<float> peak    { 0.0f };
+        std::atomic<float> inputPeak { 0.0f }; // input detector; never receives playback meters
+        std::atomic<bool> referenceMedia { false }; // generated backing bed, not the capture endpoint
         std::atomic<float> rms     { 0.0f };
         std::atomic<bool>  clipped { false };
         std::atomic<bool>  armed   { false };
@@ -214,6 +217,7 @@ namespace zynforge
         void reset() noexcept
         {
             peak.store    (0.0f, std::memory_order_relaxed);
+            inputPeak.store (0.0f, std::memory_order_relaxed);
             rms.store     (0.0f, std::memory_order_relaxed);
             clipped.store (false, std::memory_order_relaxed);
         }

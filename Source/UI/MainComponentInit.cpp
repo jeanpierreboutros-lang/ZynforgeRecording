@@ -1136,6 +1136,8 @@ void MainComponent::rebuildStrips()
             const int total = engine.getRecorder().getNumTracks();
             if (i + 1 >= total) return;
             const bool wasStereo = engine.getRecorder().getTrack (i).isStereo.load();
+            if (! wasStereo && engine.getRecorder().getTrack (i + 1).isStereo.load())
+            { showStatus ("Unlink the neighbouring stereo pair first"); return; }
             engine.setTrackStereo (i, ! wasStereo);
             // Newly linked stereo -> hard-pan L/R for the full image; unlinked
             // back to mono -> recentre both halves so a mono strip isn't left

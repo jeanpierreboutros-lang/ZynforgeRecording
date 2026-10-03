@@ -3187,6 +3187,10 @@ namespace zynforge
                             for (int peer : editGroupPeers())
                                 if (const int pi = peerClipIndex (peer, draggingClipIdx); pi >= 0)
                                     peers.emplace_back (peer, pi);
+                            // One bounded delta preserves alignment when any peer
+                            // reaches zero, a source edge, or a locked clip.
+                            for (auto [peer, pi] : peers)
+                                stepSamples = engine.constrainClipEditDelta (peer, pi, mode, stepSamples);
                             for (auto [peer, pi] : peers) engine.editClip (peer, pi, mode, stepSamples);
                             lastDragSamples += stepSamples;
                         }

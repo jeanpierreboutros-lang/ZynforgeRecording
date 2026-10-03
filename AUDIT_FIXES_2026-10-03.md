@@ -50,3 +50,37 @@ Existing backups without provenance are deliberately not adopted automatically: 
 The regression suite includes recording/rearming, concurrent pre-roll, replica collisions and relocation, layout refusal, missing media, legacy bounce, locked consolidation, session/VCA state, daemon warnings, auto-arm, edited continuation, solo aux sends, healing, automation, offline mirrors, grouped clipboard, snapped group dragging, OSC/MCU controls and settings isolation. The daemon and companion integration tests also exercise the corrected paths.
 
 Physical interface removal/reconnection, removable-volume failures, control-surface hardware, and the planned full rig rehearsal still require field acceptance. Automated synthetic audio and loopback tests do not substitute for those checks.
+
+
+## Follow-up audit: 14 additional findings
+
+The next read-only review found the following failures. Each now has a source fix and coverage in `OctoberRegressionTests.cpp`; validation completed on 2026-10-04.
+
+| # | Severity | Fix and regression |
+|---|---|---|
+| 1 | P1 | Reject overlapping stereo links in UI/engine and invalid persisted pair layouts before opening capture files. Capture a valid three-channel layout and reject a corrupted overlap without writing media. |
+| 2 | P1 | Persist generated click beds as reference media. Exclude them from default append position and recorder length reconciliation while retaining deliberate cursor/rolling punches. Test first capture, reopen and continuation against a longer reference bed. |
+| 3 | P1 | Preserve saved stage routing on reconnect. The console menu offers restoration when connection state is unknown; direct re-entry cannot overwrite the saved patch. Exercise the UI toggle with simulated desk replies. |
+| 4 | P1 | Reserve session I/O while delete confirmation is open; recheck recording and current session identity at deletion. Verify active capture media survives a delayed delete and switching sessions does not clear the new session. |
+| 5 | P2 | Close the stereo mix writer on device stop, retain the interrupted endpoint and queue engine finalization once. Verify media reload, matching mix/take duration and repeated STOP preserving edits. |
+| 6 | P2 | Persist capture input gain, initialize reopened live gain to its reference, and never treat zero dB as unknown. Verify +3 dB stays +3 dB after reopening and mid-take updates retain a zero reference. |
+| 7 | P2 | Feed silence for any captured channel lacking an input, so either stereo side can continue. Verify missing left input produces zero left plus intact right with the full frame count. |
+| 8 | P2 | Merge modern and legacy media per track, preferring modern media consistently. Verify root tracks remain available after adding Audio Files tracks. |
+| 9 | P2 | Clear the rejected mono fallback source identity so adjacent pasted clips open their explicit source reader. Verify rendering and consolidation. |
+| 10 | P2 | Bound right trims by source length, including cross-track sources. Verify extension stops at EOF and remains renderable. |
+| 11 | P2 | Constrain grouped edits to a common delta before moving any peer. Verify a real drag against timeline zero retains the original relative offset. |
+| 12 | P2 | Feed live inputs into aux sends, avoid doubling punch input and exclude playback trim compensation from live input gain. Verify audible live aux. |
+| 13 | P2 | Include VCA mute in live and offline post-fader send gates; retain independent pre-fader behavior. Verify both render paths. |
+| 14 | P2 | Use input-only peaks for auto-arm and arm stereo pairs together. Verify playback alone leaves arms off and right-only input arms both halves. |
+
+Physical desk reconnect and interface removal still require disposable rig validation. Synthetic tests do not certify physical hardware behavior. Installed apps and DMGs are unchanged.
+
+
+### Follow-up validation (2026-10-04)
+
+- `cmake --build build --config Release` passed. The GUI and embedded capture helper both contain arm64 and x86_64 architectures.
+- Full Release suite: **438 test groups, zero failures** on Apple Silicon, including all 14 new regression groups. Two older auto-arm fixtures now feed actual input instead of setting the display meter; the trim/undo fixture now supplies source media and asserts bounded trimming.
+- `tools/design_audit.sh`, `tools/invariants_audit.sh`, `git diff --check` and `codesign --verify --deep --strict` passed.
+- A 30-second `--isolated-settings` startup smoke reached the normal empty-session UI. Samples at 10/20/30 seconds were 133.7/120.4/120.3 MiB RSS and 6.4/4.0/3.0% CPU. Runtime log: zero bytes. The app exited through its normal Quit confirmation.
+- No new Zynforge `.ips` crash report appeared; hashes of both existing production settings files were unchanged.
+- The built bundle is local validation output, not an installed or packaged release. Physical audio-device removal and console reconnect remain rig checks.

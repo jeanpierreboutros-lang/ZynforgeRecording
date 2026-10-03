@@ -79,6 +79,7 @@ namespace zynforge
         dialectConfirmed = false;
         host.clear();
         patch = Patch::Unknown;
+        pendingPatchQueries = 0;
         patchDeadlineMs = gainDeadlineMs = nextSubscribeMs = 0;
         stopTimer();
     }
@@ -154,6 +155,14 @@ namespace zynforge
             return;
         }
         if (! guardWrite ("repatch")) return;
+
+        // A reconnect cannot tell whether the desk still has card returns.
+        // Keep the saved show routing until it has explicitly been restored.
+        if (patch == Patch::Soundcheck || (patch == Patch::Unknown && hasStagePatch()))
+        {
+            if (onStatus) onStatus ("Saved stage patch retained -- restore STAGE before entering soundcheck again.");
+            return;
+        }
 
         // Phase 1: query the current routing of every block. The replies stash
         // the show patch; once all are in, phase 2 flips the blocks to card.

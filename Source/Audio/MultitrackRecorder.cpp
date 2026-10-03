@@ -415,6 +415,12 @@ namespace zynforge
         {
             auto& t = *tracks[(std::size_t) ch];
 
+            float inputPeak = 0.0f;
+            if (inputs[ch] != nullptr)
+                for (int i = 0; i < numSamples; ++i)
+                    inputPeak = juce::jmax (inputPeak, std::abs (inputs[ch][i]));
+            t.inputPeak.store (inputPeak, std::memory_order_relaxed);
+
             // Arm-or-monitor gate. Pro Tools convention:
             //   ARM     = will record when you hit RECORD
             //   MONITOR = listen to the input through the monitor bus
@@ -471,14 +477,10 @@ namespace zynforge
             const float* src = inputs[ch];
             if (src == nullptr)
             {
-                // The RIGHT half of an armed stereo pair MUST keep its FIFO fed
-                // even with no input routed to it. The pair writes ONE
-                // interleaved file and the drain consumes min(L,R) frames, so a
-                // starved R side pinned `avail` at 0 forever: L overflowed, the
-                // 2-ch write never fired, and the whole pair came back as
-                // silence padding. Push zeros so the pair stays in lockstep and
-                // the take is L-plus-silence instead of nothing.
-                if (! (rec && pairArmed)) continue;
+                // Every captured channel advances even when its input is absent.
+                // Stereo drain consumes min(L,R): either missing side must feed
+                // zeros or it starves the valid side and loses the entire pair.
+                if (! (rec && (armed || pairArmed))) continue;
                 if (t.isBus.load (std::memory_order_relaxed)) continue;
                 const int  n0  = juce::jmin (numSamples, (int) scratch.size());
                 if (n0 <= 0) continue;
@@ -501,14 +503,9 @@ namespace zynforge
             }
 
             // Meter (peak + simple block RMS)
-            float peak = 0.0f, sumSq = 0.0f;
-            for (int i = 0; i < numSamples; ++i)
-            {
-                const float s = src[i];
-                const float a = std::abs (s);
-                if (a > peak) peak = a;
-                sumSq += s * s;
-            }
+            const float peak = inputPeak;
+            float sumSq = 0.0f;
+            for (int i = 0; i < numSamples; ++i) sumSq += src[i] * src[i];
             const float rms = std::sqrt (sumSq / (float) juce::jmax (1, numSamples));
             const float prevPeak = t.peak.load (std::memory_order_relaxed);
             t.peak.store (juce::jmax (peak, prevPeak * 0.92f), std::memory_order_relaxed);
@@ -703,6 +700,12 @@ namespace zynforge
         startError.clear();
         if (recording.load()) return false;
         if (tracks.empty())   return false;
+
+        // Refuse corrupt/persisted overlapping pairs before creating any files.
+        for (size_t i = 0; i < tracks.size(); ++i)
+            if (tracks[i]->isStereo.load()
+                && (i + 1 >= tracks.size() || tracks[i + 1]->isStereo.load()))
+            { startError = "Overlapping or incomplete stereo pair"; return false; }
 
         reportAsyncState->generation.fetch_add (1, std::memory_order_acq_rel);
         reportAsyncState->failed.store (false, std::memory_order_relaxed);
@@ -1152,7 +1155,8 @@ namespace zynforge
                     auto reader = ConcatReader::create (fm, findTakeParts (mainFile));
                     if (reader == nullptr) { continueAsPart = false; return false; }
                     previousLengths[i] = reader->lengthInSamples;
-                    takeLen = juce::jmax (takeLen, reader->lengthInSamples);
+                    if (! tracks[i]->referenceMedia.load())
+                        takeLen = juce::jmax (takeLen, reader->lengthInSamples);
                 }
             }
             recordBaseSamples = takeLen;

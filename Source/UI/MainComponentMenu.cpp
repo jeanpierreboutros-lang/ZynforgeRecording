@@ -276,7 +276,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             const bool consoleWritable = consoleLink.isConnected() && consoleLink.canWrite();
             const bool consoleRepatch = consoleWritable && consoleLink.getProfile().canRepatch;
             const bool consoleGains   = consoleWritable && consoleLink.getProfile().canCaptureGains;
-            m.addItem (955, consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck
+            m.addItem (955, (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck
+                            || (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Unknown && consoleLink.hasStagePatch()))
                                ? "Console: back to STAGE patch"
                                : "Console: SOUNDCHECK patch (card returns)",
                        consoleRepatch);

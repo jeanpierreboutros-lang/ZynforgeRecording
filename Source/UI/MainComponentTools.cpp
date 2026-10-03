@@ -110,6 +110,7 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
         return;
     }
 
+    recorder.getTrack (clickTrackIndex).referenceMedia.store (true);
     const auto trackName = juce::String::formatted ("Track_%02d", clickTrackIndex + 1);
     const auto destination = audioFiles.getChildFile (trackName + ".wav");
     clickrender::Settings settings;
@@ -258,6 +259,7 @@ void MainComponent::restoreArmStateAfterPunch()
 
 void MainComponent::servicePunch()
 {
+    if (sessionIoBusy.load()) return;
     auto& player = engine.getPlayer();
     if (! player.isLoaded()) return;
     const auto pos    = player.getPositionSamples();
@@ -650,7 +652,8 @@ void MainComponent::promptConsoleConnect()
 void MainComponent::consoleToggleSoundcheck()
 {
     if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
-    if (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck)
+    if (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck
+        || (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Unknown && consoleLink.hasStagePatch()))
         consoleLink.exitSoundcheck();
     else
         consoleLink.enterSoundcheck();

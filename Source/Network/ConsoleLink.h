@@ -59,6 +59,7 @@ namespace zynforge
         // Patch state machine. Idle -> (query+stash) -> Soundcheck.
         enum class Patch { Unknown, Stage, Soundcheck };
         Patch getPatch() const noexcept { return patch; }
+        bool hasStagePatch() const noexcept { return (int) stagePatch.size() == profile.numInBlocks; }
 
         void enterSoundcheck();   // stash current routing, set CARD blocks
         void exitSoundcheck();    // restore the stashed routing

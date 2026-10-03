@@ -2028,17 +2028,15 @@ namespace zynforge
 
                 f.engine.setAutoArmOnInputDetect (true);
 
-                // Force the peak above threshold on strip 0 only.
-                // serviceAutoArm reads track.peak directly -- not the
-                // input buffer -- so we can set it manually here. In
-                // production the audio thread sets peak each block.
-                s0.peak.store (0.5f, std::memory_order_relaxed);
-                s1.peak.store (0.0f, std::memory_order_relaxed);
+                // Exercise real input detection; playback also drives the
+                // display meter, so setting that meter cannot stand in for input.
+                f.writeInput (0, 0.5f, 256);
+                f.writeInput (1, 0.0f, 256);
 
                 // Threshold 5 ticks, amp 0.01. Strip 0 hits the streak,
                 // strip 1 doesn't.
                 for (int i = 0; i < 6; ++i)
-                    f.engine.serviceAutoArm (5, 0.01f);
+                { f.process (256); f.engine.serviceAutoArm (5, 0.01f); }
                 expect (s0.armed.load());
                 expect (! s1.armed.load());
 
@@ -2052,21 +2050,21 @@ namespace zynforge
                 f.engine.setAutoArmOnInputDetect (true);
 
                 // 4 ticks above threshold (just shy of arming) ...
-                t.peak.store (0.5f, std::memory_order_relaxed);
+                f.writeInput (0, 0.5f, 256);
                 for (int i = 0; i < 4; ++i)
-                    f.engine.serviceAutoArm (10, 0.01f);
+                { f.process (256); f.engine.serviceAutoArm (10, 0.01f); }
                 expect (! t.armed.load());
 
                 // ... then silence resets the streak.
-                t.peak.store (0.0f, std::memory_order_relaxed);
+                f.writeInput (0, 0.0f, 256);
                 for (int i = 0; i < 5; ++i)
-                    f.engine.serviceAutoArm (10, 0.01f);
+                { f.process (256); f.engine.serviceAutoArm (10, 0.01f); }
                 expect (! t.armed.load());
 
                 // 10 ticks of input again, NOW it arms.
-                t.peak.store (0.5f, std::memory_order_relaxed);
+                f.writeInput (0, 0.5f, 256);
                 for (int i = 0; i < 11; ++i)
-                    f.engine.serviceAutoArm (10, 0.01f);
+                { f.process (256); f.engine.serviceAutoArm (10, 0.01f); }
                 expect (t.armed.load());
 
                 f.engine.setAutoArmOnInputDetect (false);
@@ -2077,9 +2075,9 @@ namespace zynforge
                 CallbackFixture f (1, 1, 2);
                 auto& t = f.engine.getRecorder().getTrack (0);
                 f.engine.setAutoArmOnInputDetect (false);
-                t.peak.store (0.99f, std::memory_order_relaxed);
+                f.writeInput (0, 0.99f, 256);
                 for (int i = 0; i < 100; ++i)
-                    f.engine.serviceAutoArm (2, 0.01f);
+                { f.process (256); f.engine.serviceAutoArm (2, 0.01f); }
                 expect (! t.armed.load());
             }
 

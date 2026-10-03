@@ -5,6 +5,7 @@
 #include "../UI/EditTrackRow.h"
 #include "../Audio/MidiControlSurface.h"
 #include "../Audio/OscRemote.h"
+#include "../Network/ConsoleLink.h"
 #include <thread>
 
 namespace zynforge
@@ -318,6 +319,215 @@ public:
             expectWithinAbsoluteError (e.getRecorder().getTrack (0).gainDb.load(), expected, 0.0001f);
             expectWithinAbsoluteError (e.getRecorder().getTrack (1).gainDb.load(), expected, 0.0001f);
             e.clearAllStripOverrides();
+        }
+        beginTest ("Stereo linking cannot overlap an existing pair, and corrupt layouts refuse capture");
+        {
+            Folder f; AudioEngine e; setup (e, 3); auto& r = e.getRecorder();
+            e.setTrackStereo (1, true); e.setTrackStereo (0, true);
+            expect (! r.getTrack (0).isStereo.load()); expect (r.getTrack (1).isStereo.load());
+            for (int i = 0; i < 3; ++i) e.setTrackArmed (i, true);
+            expect (e.startRecording (f.dir)); feed (r, 3); e.stopRecording();
+            auto mono = read (f.track()), stereo = read (f.track (2));
+            expect (mono && stereo);
+            if (mono && stereo)
+            { expectEquals ((int) stereo->numChannels, 2); expectEquals (mono->lengthInSamples, stereo->lengthInSamples); }
+            Folder invalid; r.getTrack (0).isStereo = true;
+            expect (! r.startRecording (invalid.dir)); expect (! invalid.track().existsAsFile());
+        }
+        beginTest ("Reference click beds do not shift first or subsequent captures");
+        {
+            Folder f; expect (write (f.track (2), 48000));
+            AudioEngine e; setup (e); e.loadSession (f.dir); auto& r = e.getRecorder();
+            r.getTrack (1).referenceMedia = true; r.getTrack (1).inputRouting = -1;
+            e.setTrackArmed (0, true); e.setTrackArmed (1, false);
+            expectEquals (e.getCaptureLengthSamples(), (juce::int64) 0);
+            e.armContinue (e.getCaptureLengthSamples());
+            expect (e.startRecording (f.dir)); feed (r, 2); e.stopRecording();
+            expectEquals (e.getCaptureLengthSamples(), (juce::int64) 2560);
+            expect (e.saveSessionMixTo (f.dir)); e.clearSessionState();
+            e.loadSession (f.dir); expect (e.loadSessionMixFrom (f.dir));
+            expect (r.getTrack (1).referenceMedia.load());
+            e.armContinue (e.getCaptureLengthSamples());
+            expect (e.startRecording (f.dir)); feed (r, 2); e.stopRecording();
+            auto mic = read (f.track()), bed = read (f.track (2)); expect (mic && bed);
+            if (mic && bed)
+            { expectEquals (mic->lengthInSamples, (juce::int64) 5120); expectEquals (bed->lengthInSamples, (juce::int64) 48000); }
+        }
+        beginTest ("Reconnect preserves stage patch and the UI toggle restores it");
+        {
+            MainComponent::s_testConstruct = true;
+            {
+                MainComponent main; auto& link = main.consoleLink;
+                std::vector<juce::OSCMessage> sent;
+                link.setSendHook ([&] (const auto& m) { sent.push_back (m); });
+                main.consoleToggleSoundcheck();
+                const char* addresses[] { "/config/routing/IN/1-8", "/config/routing/IN/9-16",
+                                          "/config/routing/IN/17-24", "/config/routing/IN/25-32" };
+                for (int b = 0; b < 4; ++b)
+                    link.injectReply (juce::OSCMessage (juce::OSCAddressPattern (addresses[b]), (juce::int32) (4 + b)));
+                const auto saved = link.toJson(); link.disconnect();
+                link.setSendHook ([&] (const auto& m) { sent.push_back (m); });
+                expect (link.loadJson (saved));
+                sent.clear(); link.enterSoundcheck(); expect (sent.empty());
+                main.consoleToggleSoundcheck(); expectEquals ((int) sent.size(), 4);
+                for (int b = 0; b < (int) sent.size() && b < 4; ++b)
+                    expectEquals (sent[(size_t) b][0].getInt32(), 4 + b);
+                expect (link.getPatch() == ConsoleLink::Patch::Stage);
+            }
+            MainComponent::s_testConstruct = false;
+        }
+        beginTest ("Capture deletion rechecks live recording and the current session");
+        {
+            Folder f, other; MainComponent::s_testConstruct = true;
+            {
+                MainComponent main; setup (main.engine); auto& e = main.engine;
+                e.setTrackArmed (0, true); expect (e.startRecording (f.dir)); feed (e.getRecorder(), 2);
+                expect (! main.deleteCaptureSession (f.dir)); expect (f.track().existsAsFile());
+                e.stopRecording(); e.setActiveSessionDir (other.dir);
+                expect (main.deleteCaptureSession (f.dir));
+                expect (e.getActiveSessionDir() == other.dir);
+            }
+            MainComponent::s_testConstruct = false;
+        }
+        beginTest ("Device loss finalizes the take once and closes the stereo mix writer");
+        {
+            Folder f; AudioEngine e; setup (e); e.setTrackArmed (0, true);
+            e.getRecorder().getTrack (0).streamSend = true; e.setRecordStereoMix (true);
+            expect (e.startRecording (f.dir));
+            float signal[256]; std::fill_n (signal, 256, 0.25f); const float* in[] { signal, signal };
+            juce::AudioBuffer<float> out (2, 256);
+            auto process = [&] { e.audioDeviceIOCallbackWithContext (in, 2, out.getArrayOfWritePointers(), 2, 256, {}); };
+            for (int i = 0; i < 20; ++i) process();
+            e.audioDeviceStopped(); e.stopRecording();
+            expect (! e.isRecording()); expect (e.getPlayer().isLoaded());
+            expect (e.captureStatus().captureDeviceLost);
+            for (int i = 0; i < 30; ++i) process();
+            auto mic = read (f.track()), mix = read (f.dir.getChildFile ("Export Files/StereoMix.wav"));
+            expect (mic && mix);
+            if (mic && mix) expectEquals (mix->lengthInSamples, mic->lengthInSamples);
+            expect (e.splitTrackAtSample (0, 2000)); e.stopRecording();
+            expectEquals ((int) e.clipsFor (0).size(), 2);
+            e.setRecordStereoMix (false);
+        }
+        beginTest ("Capture gain round-trips, including a real zero-dB reference");
+        {
+            Folder f; AudioEngine e; setup (e); e.setTrackArmed (0, true);
+            e.setTrackLiveInputGain (0, 30); expect (e.startRecording (f.dir));
+            feed (e.getRecorder(), 2); e.stopRecording(); e.setTrackLiveInputGain (0, 33);
+            expectWithinAbsoluteError (e.getTrackTrimDelta (0), 3.0f, 0.001f);
+            expect (e.saveSessionMixTo (f.dir)); e.clearSessionState(); e.loadSession (f.dir);
+            expect (e.loadSessionMixFrom (f.dir));
+            expectWithinAbsoluteError (e.getTrackTrimDelta (0), 0.0f, 0.001f);
+            e.setTrackLiveInputGain (0, 33);
+            expectWithinAbsoluteError (e.getTrackTrimDelta (0), 3.0f, 0.001f);
+            Folder zero; e.setTrackLiveInputGain (0, 0); expect (e.startRecording (zero.dir));
+            e.setTrackLiveInputGain (0, 6);
+            expectWithinAbsoluteError (e.getTrackTrimDelta (0), 6.0f, 0.001f);
+            feed (e.getRecorder(), 2); e.stopRecording();
+        }
+        beginTest ("Missing left stereo input records silence plus the right signal");
+        {
+            Folder f; MultitrackRecorder r; r.prepare (48000, 256, 2);
+            r.getTrack (0).isStereo = true; r.getTrack (0).armed = true;
+            expect (r.startRecording (f.dir));
+            float signal[256]; std::fill_n (signal, 256, 0.25f); const float* in[] { nullptr, signal };
+            for (int b = 0; b < 20; ++b) r.processBlock (in, 2, 256);
+            r.stopRecording(); auto audio = read (f.track()); expect (audio != nullptr);
+            if (audio)
+            {
+                expectEquals (audio->lengthInSamples, (juce::int64) 5120);
+                juce::AudioBuffer<float> data (2, 5120); expect (audio->read (&data, 0, 5120, 0, true, true));
+                expectWithinAbsoluteError (data.getMagnitude (0, 0, 5120), 0.0f, 0.00001f);
+                expectWithinAbsoluteError (data.getMagnitude (1, 0, 5120), 0.25f, 0.00001f);
+            }
+        }
+        beginTest ("Mixed legacy and modern media stay playable and resolvable");
+        {
+            Folder f; const auto old = f.dir.getChildFile ("Track_01.wav"); expect (write (old));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            expect (write (f.track (2))); e.loadSession (f.dir, true);
+            expectEquals (e.getPlayer().getTrackLengthSamples (0), (juce::int64) 4800);
+            expectEquals (e.getPlayer().getTrackLengthSamples (1), (juce::int64) 4800);
+            expect (e.getTrackAudioFile (0) == old);
+            juce::AudioBuffer<float> mix; expect (e.renderTrackArrangement (0, mix, 4800));
+            expect (write (f.track(), 9600)); e.loadSession (f.dir, true);
+            expectEquals (e.getPlayer().getTrackLengthSamples (0), (juce::int64) 9600);
+            expect (e.getTrackAudioFile (0) == f.track());
+        }
+        beginTest ("Adjacent mono paste renders and consolidates the audio heard in playback");
+        {
+            Folder f; expect (write (f.track())); AudioEngine e; setup (e); e.loadSession (f.dir);
+            expect (e.pasteClip (1, 0, 0, 4800, 0, 0, 0, "copied", f.track(), 0) >= 0);
+            juce::AudioBuffer<float> out; expect (e.renderTrackArrangement (1, out, 4800));
+            if (out.getNumSamples() >= 4800) expectWithinAbsoluteError (out.getSample (0, 2000), 0.25f, 0.00001f);
+            expect (e.consolidateRange (1, 0, 4800));
+        }
+        beginTest ("Right trim stops at source end for own and cross-track clips");
+        {
+            Folder f; expect (write (f.track())); AudioEngine e; setup (e); e.loadSession (f.dir);
+            expect (! e.editClip (0, 0, AudioEngine::ClipEdit::TrimRight, 1000));
+            expectEquals (e.clipsFor (0)[0].fileLengthSamples, (juce::int64) 4800);
+            expect (e.editClip (0, 0, AudioEngine::ClipEdit::TrimRight, -1000));
+            expect (e.editClip (0, 0, AudioEngine::ClipEdit::TrimRight, 2000));
+            expectEquals (e.clipsFor (0)[0].fileLengthSamples, (juce::int64) 4800);
+            e.pasteClip (1, 0, 1000, 2000, 0, 0, 0, "copied", f.track(), 0);
+            expect (e.editClip (1, 0, AudioEngine::ClipEdit::TrimRight, 10000));
+            expectEquals (e.clipsFor (1)[0].fileLengthSamples, (juce::int64) 3800);
+            juce::AudioBuffer<float> out; expect (e.renderTrackArrangement (1, out, 4800));
+        }
+        beginTest ("Group drag at timeline zero preserves relative alignment");
+        {
+            Folder f; expect (write (f.track(), 48000)); expect (write (f.track (2), 48000));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            for (int i = 0; i < 2; ++i) { e.clipsFor (i)[0].fileLengthSamples = 8000; e.setTrackEditGroup (i, 0); }
+            e.clipsFor (0)[0].timelineStartSamples = 1000; e.setSnapMode (AudioEngine::SnapMode::Off);
+            juce::AudioFormatManager fm; fm.registerBasicFormats(); juce::AudioThumbnailCache cache (8);
+            EditPage::TrackRow row (0, false, e, fm, cache); row.setSize (row.getHeaderWidth() + 1008, 100);
+            row.draggingClipIdx = 0; row.draggingClipModeInt = 2; row.dragStartX = row.getHeaderWidth() + 204;
+            const juce::Point<float> down ((float) row.dragStartX, 50);
+            juce::MouseEvent ev (juce::Desktop::getInstance().getMainMouseSource(), down.translated (-100, 0),
+                juce::ModifierKeys::leftButtonModifier, 1, 0, 0, 0, 0, &row, &row,
+                juce::Time::getCurrentTime(), down, juce::Time::getCurrentTime(), 1, true);
+            row.mouseDrag (ev);
+            expectEquals (e.clipsFor (0)[0].timelineStartSamples - e.clipsFor (1)[0].timelineStartSamples, (juce::int64) 1000);
+        }
+        beginTest ("Live aux receives input and post-fader sends follow VCA mute");
+        {
+            AudioEngine e; setup (e); auto& r = e.getRecorder(); r.getTrack (0).monitor = true;
+            e.setTrackIsBus (1, true); e.setTrackSend (0, 0, 1, 0, true); e.setTrackSoloed (1, true);
+            e.setTrackVcaGroup (0, 0);
+            float signal[256]; std::fill_n (signal, 256, 0.25f); const float* in[] { signal, signal };
+            juce::AudioBuffer<float> out (2, 256);
+            auto process = [&] { e.audioDeviceIOCallbackWithContext (in, 2, out.getArrayOfWritePointers(), 2, 256, {}); };
+            process(); expect (out.getMagnitude (0, 256) > 0.1f);
+            const float liveLevel = out.getMagnitude (0, 256);
+            e.setTrackLiveInputGain (0, 12); e.setTrimFollowEnabled (true); process();
+            expectWithinAbsoluteError (out.getMagnitude (0, 256), liveLevel, 0.0001f);
+            e.setTrimFollowEnabled (false);
+            e.setVcaMuted (0, true); process(); expectWithinAbsoluteError (out.getMagnitude (0, 256), 0.0f, 0.00001f);
+            e.setTrackSend (0, 0, 1, 0, false); process(); expect (out.getMagnitude (0, 256) > 0.1f);
+        }
+        beginTest ("Offline post-fader aux respects VCA mute while pre-fader remains independent");
+        {
+            Folder f; expect (write (f.track())); AudioEngine e; setup (e); e.loadSession (f.dir);
+            e.setTrackIsBus (1, true); e.setTrackSend (0, 0, 1, 0, true); e.setTrackSoloed (1, true);
+            e.setTrackVcaGroup (0, 0); e.setVcaMuted (0, true); juce::AudioBuffer<float> out;
+            expect (e.renderStereoMix (out, 4800)); expectWithinAbsoluteError (out.getMagnitude (0, 4800), 0.0f, 0.00001f);
+            e.setTrackSend (0, 0, 1, 0, false); expect (e.renderStereoMix (out, 4800)); expect (out.getMagnitude (0, 4800) > 0.1f);
+        }
+        beginTest ("Auto-arm ignores playback and arms both halves from right-only live input");
+        {
+            Folder f; expect (write (f.track(), 48000, 2)); AudioEngine e; setup (e); e.loadSession (f.dir);
+            e.setTrackStereo (0, true); e.setTrackArmed (0, false); e.setAutoArmOnInputDetect (true); e.startPlayback();
+            juce::AudioBuffer<float> out (2, 256);
+            for (int i = 0; i < 15; ++i)
+            { e.audioDeviceIOCallbackWithContext (nullptr, 0, out.getArrayOfWritePointers(), 2, 256, {}); e.serviceAutoArm (12, 0.01f); }
+            expect (! e.getRecorder().getTrack (0).armed.load()); expect (! e.getRecorder().getTrack (1).armed.load());
+            float signal[256]; std::fill_n (signal, 256, 0.25f); const float* in[] { nullptr, signal };
+            for (int i = 0; i < 15; ++i)
+            { e.audioDeviceIOCallbackWithContext (in, 2, out.getArrayOfWritePointers(), 2, 256, {}); e.serviceAutoArm (12, 0.01f); }
+            expect (e.getRecorder().getTrack (0).armed.load()); expect (e.getRecorder().getTrack (1).armed.load());
+            e.stopPlayback(); e.setAutoArmOnInputDetect (false);
         }
         beginTest ("Every preferences writer shares the isolated settings file");
         {

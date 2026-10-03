@@ -141,6 +141,7 @@ private:
     // / editSoloSelection / editSetRangeToLoopRange / editToggleSnap /
     // editSplitAtPlayhead / editStartRange / editFinishRange).
     void removeLastCapture();
+    bool deleteCaptureSession (const juce::File& target);
     void showBatchRenameDialog();
     // Import channel names from a console/spreadsheet CSV onto existing tracks.
     void importChannelNamesFromCsv();

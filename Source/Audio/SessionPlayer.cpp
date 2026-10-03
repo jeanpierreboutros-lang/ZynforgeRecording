@@ -105,8 +105,18 @@ namespace zynforge
         };
         const auto audioFiles = sessionDir.getChildFile ("Audio Files");
         auto files = collect (audioFiles);
-        if (files.isEmpty())
-            files = collect (sessionDir);
+        // Prefer Audio Files per track, not per session. Imported/generated
+        // media may coexist with older root-level takes and their parts.
+        const auto modern = files;
+        for (const auto& legacy : collect (sessionDir))
+        {
+            const auto slot = legacy.getFileName().fromFirstOccurrenceOf ("Track_", false, false).getIntValue();
+            bool replaced = false;
+            for (const auto& f : modern)
+                if (f.getFileName().fromFirstOccurrenceOf ("Track_", false, false).getIntValue() == slot)
+                { replaced = true; break; }
+            if (! replaced) files.add (legacy);
+        }
         files.sort();
 
         juce::int64 maxLen = 0;
