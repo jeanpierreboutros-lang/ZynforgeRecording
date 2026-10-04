@@ -5,7 +5,8 @@
 - [x] Capture the development Mac hang: synchronous metadata backup blocked on external ExFAT while eight hash and four high-priority thumbnail readers run.
 - [x] Bound and yield report hashing; cancel stale reads; lower thumbnail scan priority; add digest/cancellation regressions.
 - [x] Validate universal build, 440 test groups, audit gates/signatures and affected-session view/save/quit smoke.
-- [ ] Install locally and repeat a fresh recording/STOP with the target interface and external drive.
+- [x] Install `55d62eb` and its matching helper on the development Mac; verify byte equality/signatures and reopen the stopped session. Retain the previous app for rollback.
+- [ ] Repeat a fresh recording/STOP with the target interface and external drive; the Mac mini remains unchanged.
 
 ## Documentation reconciliation — 2026-10-04
 

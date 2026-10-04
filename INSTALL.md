@@ -2,9 +2,20 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-## Current installation and package — 2026-10-04
+## Development Mac responsiveness update — 2026-10-04
 
-Both the development Mac and Mac mini (`192.168.68.75`) now have source build `c563b00` at `/Applications/Zynforge Recording.app`, including the matching protocol-v3 `ZynforgeCapture` helper. Both executables are universal arm64 + x86_64. The build passed 438 test groups with zero failures, both audit gates and a 30-second isolated startup smoke before deployment.
+The development Mac now runs source build `55d62eb` at `/Applications/Zynforge Recording.app`, with its matching protocol-v3 helper. Both binaries are universal arm64 + x86_64, match the tested Release bundle byte-for-byte, and pass deep/strict signature verification. All 440 test groups pass. The affected 58-track session reopened and view switching/save/quit completed without a new crash report; repeat a fresh capture/STOP on the physical setup to confirm the full symptom is resolved.
+
+| Executable | SHA-256 |
+| --- | --- |
+| GUI | `0a08743f6448d46068f087465721f55df5e6316b80517d6290cf6af649df9475` |
+| Capture helper | `405d815d1005e224dc6294fdf2c5fa7e109de81c10620ed0c17feaf82e3b8384` |
+
+Rollback copy: `/Applications/Zynforge Recording.app.backup-20261004-194817-before-responsiveness`. The Mac mini and existing DMG remain on `c563b00`; no new installer was packaged in this update. The installed development app was relaunched with normal preferences and left open on the stopped session.
+
+## Earlier two-Mac installation and current DMG — 2026-10-04
+
+At the earlier installation, both the development Mac and Mac mini (`192.168.68.75`) received source build `c563b00` at `/Applications/Zynforge Recording.app`, including the matching protocol-v3 `ZynforgeCapture` helper. Both executables are universal arm64 + x86_64. The build passed 438 test groups with zero failures, both audit gates and a 30-second isolated startup smoke before deployment.
 
 The installed bundles pass deep/strict signature verification on both Macs, and their executable hashes match the tested build:
 
@@ -72,6 +83,6 @@ If copying or verification fails, do not launch the partial installation. Preser
 
 ## Rollback
 
-No local old-version rollback copies remain after the requested 2026-10-04 cleanup. Obtain or rebuild the required revision before using the procedure below.
+The development Mac responsiveness update retains the rollback bundle named above. Other historical app copies removed in the earlier cleanup remain unavailable.
 
 Stop capture and quit both processes first. Preserve current session data and the current app; then move the named backup back to `/Applications/Zynforge Recording.app`. Verify the restored signature before launch. Restore GUI and bundled daemon together, never just one executable. A prior build may not understand new session metadata: test with a duplicate session, not the only recording copy. Rolling back the app does not undo session-file changes or recover audio overwritten before the fixes.

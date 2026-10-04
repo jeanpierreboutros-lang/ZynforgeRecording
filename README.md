@@ -1,6 +1,6 @@
 # ZynForge Recording
 
-**STOP responsiveness investigation (2026-10-04):** A live five-second sample on the development Mac found the main thread blocked in `saveSessionStateTo` → `writeSessionBackupSnapshot` → filesystem copies on the external ExFAT PJ volume. Eight integrity-hash readers and four user-initiated waveform scanners were active concurrently. The stopped 58-track report had zero missed samples and no capture failures, with hashes still pending. Source now serializes report scans process-wide, yields 50 ms per 4 MiB, cancels superseded scans between reads, and runs waveform scans at background priority. Metadata-save success/failure semantics and the pending integrity report are preserved. Universal Release GUI/helper builds, all 440 test groups, both audit gates and strict bundle signatures pass. The affected 58-track, 77:36 session reopened with responsive EDIT/MIXER switching and saved/closed successfully; no new crash report appeared. A fresh full-length record/STOP on the target rig is still required. Installation is pending.
+**STOP responsiveness investigation (2026-10-04):** A live five-second sample on the development Mac found the main thread blocked in `saveSessionStateTo` → `writeSessionBackupSnapshot` → filesystem copies on the external ExFAT PJ volume. Eight integrity-hash readers and four user-initiated waveform scanners were active concurrently. The stopped 58-track report had zero missed samples and no capture failures, with hashes still pending. Source now serializes report scans process-wide, yields 50 ms per 4 MiB, cancels superseded scans between reads, and runs waveform scans at background priority. Metadata-save success/failure semantics and the pending integrity report are preserved. Universal Release GUI/helper builds, all 440 test groups, both audit gates and strict bundle signatures pass. The affected 58-track, 77:36 session reopened with responsive EDIT/MIXER switching and saved/closed successfully; no new crash report appeared. A fresh full-length record/STOP on the target rig is still required. Source build `55d62eb` and its matching helper are installed and launched on the development Mac, with a rollback copy retained; the mini and DMG remain on `c563b00`.
 
 Live multitrack recorder + virtual soundcheck for macOS. Built on JUCE 8 / C++20.
 
@@ -8,7 +8,7 @@ A focused recording surface for engineers running front-of-house or monitors: ca
 
 ## Status
 
-Build `c563b00` is installed on both the development Mac and Mac mini as of 2026-10-04. App/helper hashes and signatures match on both, and both launched successfully. Old app copies and installers were deleted as requested; recordings and settings were preserved. The current [universal installer](dist/Zynforge-Recording-c563b00-macOS-universal.dmg) is verified on both Macs. See [installation details](INSTALL.md).
+Build `55d62eb` is installed on the development Mac with the STOP responsiveness fix; the Mac mini and existing [universal installer](dist/Zynforge-Recording-c563b00-macOS-universal.dmg) remain on `c563b00`. The local update passes 440 test groups, both audit gates, bundle verification and an affected-session UI/save smoke. See [installation details](INSTALL.md).
 
 The October 3 follow-up fixes 14 additional recording, console, session, mix and editing issues. Regression coverage includes stereo-link safety, click-bed capture alignment, device-loss finalization, reconnect patch restoration, deletion during capture, gain-reference persistence, missing stereo inputs, mixed legacy media, pasted-clip export, trim/group bounds, live aux sends, VCA mute and playback-safe auto-arm. The universal Release app and helper build successfully; **438 test groups pass**, both audit gates and bundle signatures pass, and a 30-second isolated startup smoke completed without a new crash report.
 
@@ -20,7 +20,7 @@ The first October 3 audit fixes covered all 28 reported recording, session-state
 
 ## Build
 
-The installed `c563b00` universal Release build passed **438 test groups with 0 failures**. The matching GUI and capture helper are included in the current installer. This is an ad-hoc-signed development build, not a notarized public release. Real-device capture and exact-rig acceptance remain open; see [show readiness](SHOW-READINESS.md).
+The development Mac’s `55d62eb` universal Release build passed **440 test groups with 0 failures**. The existing DMG remains on `c563b00`. The matching GUI and capture helper are included in the current installer. This is an ad-hoc-signed development build, not a notarized public release. Real-device capture and exact-rig acceptance remain open; see [show readiness](SHOW-READINESS.md).
 
 ```bash
 cmake -B build -G Xcode
