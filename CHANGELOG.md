@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-04 — STOP and save disk contention
+
+- Bound post-stop integrity scans to one background reader with cooperative disk yields; abandon superseded scans between reads.
+- Lower waveform scan priority so post-stop reads yield to saves, playback and capture.
+- Universal Release build, 440 passing test groups, both audit gates, strict signatures and affected-session UI/save smoke. Add hash equivalence and mid-file cancellation regressions. Diagnosed from a live stack sample on the development Mac's external ExFAT session drive.
+
 All notable user-facing changes to ZynForge Recording are recorded here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning targets [Semantic Versioning](https://semver.org/spec/v2.0.0.html), though the project is pre-1.0 and minor / patch boundaries are pragmatic.

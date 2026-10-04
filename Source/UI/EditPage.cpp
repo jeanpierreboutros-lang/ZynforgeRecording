@@ -423,17 +423,15 @@ namespace zynforge
         // getAutomationToolbar() + addAndMakeVisible().
         autoToolbar = std::make_unique<AutomationToolbar>();
 
-        // Gig-one field report: waveform builds felt slow after record/load.
-        // Two levers: (1) each scan thread runs at high priority so it paints
-        // as fast as the disk allows; (2) the caches are SHARDED so several
-        // WAVs scan in PARALLEL instead of serially on one thread -- the cost
-        // that dominated first-opening an un-cached multitrack session.
+        // Waveform scans must yield disk access to recording, playback and
+        // metadata saves. Keep the existing shard/cache layout, but never run
+        // whole-take scans at user-initiated priority on an external volume.
         for (int s = 0; s < kNumScanShards; ++s)
         {
             auto cache = std::make_unique<juce::AudioThumbnailCache> (256);
             auto& scanThread = cache->getTimeSliceThread();
             scanThread.stopThread (2000);
-            scanThread.startThread (juce::Thread::Priority::high);
+            scanThread.startThread (juce::Thread::Priority::background);
             thumbnailCaches.push_back (std::move (cache));
         }
 

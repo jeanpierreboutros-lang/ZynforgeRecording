@@ -60,6 +60,29 @@ namespace zynforge
                 }
             }
 
+            beginTest ("Yielding background reads retain the complete digest");
+            {
+                juce::MemoryBlock data ((1 << 22) + 123, true);
+                auto f = writeTemp (data.getData(), data.getSize());
+                hashing::ReadPolicy policy { [] { return true; }, 1 };
+                expectEquals (hashing::fileSha256 (f, nullptr, policy),
+                              hashing::fileSha256 (f));
+                f.deleteFile();
+            }
+
+            beginTest ("Superseded scan cancels inside a file without publishing a prefix hash");
+            {
+                juce::MemoryBlock data ((1 << 23) + 123, true);
+                auto f = writeTemp (data.getData(), data.getSize());
+                int reads = 0;
+                hashing::ReadPolicy policy { [&] { return ++reads < 3; }, 0 };
+                expect (hashing::fileSha256 (f, nullptr, policy).isEmpty());
+                expect (reads >= 3, "cancellation was not polled during the read");
+                std::atomic<bool> cancel { true };
+                expect (hashing::fileSha256 (f, &cancel).isEmpty());
+                f.deleteFile();
+            }
+
             beginTest ("Missing file hashes to empty string");
             {
                 expect (hashing::fileSha256 (juce::File ("/no/such/file_zynforge.bin")).isEmpty());

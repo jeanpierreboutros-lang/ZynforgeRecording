@@ -2071,7 +2071,7 @@ namespace zynforge
             report->setProperty ("sha256Pending",  ! withHashes);
             report->setProperty ("sha256Failed", hashingFailed);
 
-            // Hashes are computed in parallel BEFORE this builder runs (see the
+            // Hashes are computed off-thread BEFORE this builder runs (see the
             // background thread below) and looked up here by full path, so the
             // JSON assembly never blocks on a multi-GB read.
             const auto sha256File = [withHashes, &shaByPath] (const juce::File& f) -> juce::String
@@ -2172,14 +2172,10 @@ namespace zynforge
                                          buildReportJson (trackMetas, writerSnapshots, false, false, {})),
                 std::memory_order_relaxed);
 
-            // 2) Hash all recorded audio off-thread and rewrite the report with
-            //    the SHA-256s. The hashing is (a) hardware-accelerated
-            //    (CC_SHA256 -> ARMv8 crypto / SHA-NI, see FastHash.h) and
-            //    (b) parallelised across files, so a multi-GB pass that used to
-            //    take minutes finishes in seconds and is disk-bound, not
-            //    CPU-bound. Runs at UTILITY QoS: still yields to the UI / next
-            //    take, but isn't throttled to a trickle the way BACKGROUND was.
-            //    If interrupted, the metadata report from step 1 still stands.
+            // Scan sequentially at background priority, with bounded read bursts.
+            // Eight parallel hashes plus waveform scans saturated the external
+            // ExFAT volume and blocked even tiny UI-thread metadata saves.
+            // The immediate pending report stays durable while this scan yields.
             const auto asyncState = reportAsyncState;
             const auto asyncGen = asyncState->generation.load (std::memory_order_acquire);
             juce::Thread::launch (
@@ -2189,7 +2185,7 @@ namespace zynforge
                  writerSnaps = std::move (writerSnapshots)]
                 {
                    #if JUCE_MAC
-                    pthread_set_qos_class_self_np (QOS_CLASS_UTILITY, 0);
+                    pthread_set_qos_class_self_np (QOS_CLASS_BACKGROUND, 0);
                    #endif
 
                     // Collect every file the manifest will reference (primary +
@@ -2211,34 +2207,25 @@ namespace zynforge
                         }
                     }
 
-                    // Hash them in parallel (bounded), then build the path->sha map.
+                    // A process-wide gate also bounds overlapping stops in different
+                    // sessions. It is acquired only on this background worker.
+                    static std::mutex reportScanMutex;
+                    const std::lock_guard<std::mutex> scanGuard (reportScanMutex);
+                    const auto current = [=]
+                    {
+                        return genToken->load (std::memory_order_acquire) == myGen
+                            && asyncState->generation.load (std::memory_order_acquire) == asyncGen;
+                    };
+                    hashing::ReadPolicy readPolicy { current, 50 };
                     std::map<juce::String, juce::String> shaByPath;
-                    std::mutex mapMutex;
-                    std::atomic<size_t> next { 0 };
-                    const int nThreads = (int) juce::jlimit (1u, 8u,
-                                            std::max (1u, std::thread::hardware_concurrency()));
-                    std::vector<std::thread> pool;
-                    for (int t = 0; t < nThreads; ++t)
-                        pool.emplace_back ([&]
-                        {
-                            for (;;)
-                            {
-                                const size_t i = next.fetch_add (1);
-                                if (i >= files.size()) break;
-                                const auto sha  = zynforge::hashing::fileSha256 (files[i]);
-                                const auto path = files[i].getFullPathName();
-                                const std::lock_guard<std::mutex> lk (mapMutex);
-                                shaByPath[path] = sha;
-                            }
-                        });
-                    for (auto& th : pool) th.join();
-
-                    // A NEWER take has stopped while we were hashing -- its
-                    // (correct, current) report is already on disk. Writing
-                    // ours now would replace it with the previous take's
-                    // lengths + hashes, so the manifest would describe audio
-                    // that is no longer the session's. Drop it.
-                    if (genToken->load (std::memory_order_acquire) != myGen) return;
+                    for (const auto& file : files)
+                    {
+                        if (! current()) return;
+                        const auto sha = hashing::fileSha256 (file, nullptr, readPolicy);
+                        if (! current()) return; // cancellation is not a hash failure
+                        shaByPath[file.getFullPathName()] = sha;
+                    }
+                    if (! current()) return;
 
                     bool hashingFailed = false;
                     for (const auto& [path, sha] : shaByPath)

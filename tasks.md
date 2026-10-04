@@ -1,5 +1,12 @@
 # Project Tasks
 
+## STOP responsiveness — 2026-10-04
+
+- [x] Capture the development Mac hang: synchronous metadata backup blocked on external ExFAT while eight hash and four high-priority thumbnail readers run.
+- [x] Bound and yield report hashing; cancel stale reads; lower thumbnail scan priority; add digest/cancellation regressions.
+- [x] Validate universal build, 440 test groups, audit gates/signatures and affected-session view/save/quit smoke.
+- [ ] Install locally and repeat a fresh recording/STOP with the target interface and external drive.
+
 ## Documentation reconciliation — 2026-10-04
 
 - [x] Review all 39 tracked Markdown files; reconcile current build, two-Mac installation, cleanup, validation and open hardware acceptance.

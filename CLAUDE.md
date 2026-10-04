@@ -1,5 +1,7 @@
 # ZynForge Recording — Claude operating notes
 
+**STOP responsiveness investigation (2026-10-04):** A live five-second sample on the development Mac found the main thread blocked in `saveSessionStateTo` → `writeSessionBackupSnapshot` → filesystem copies on the external ExFAT PJ volume. Eight integrity-hash readers and four user-initiated waveform scanners were active concurrently. The stopped 58-track report had zero missed samples and no capture failures, with hashes still pending. Source now serializes report scans process-wide, yields 50 ms per 4 MiB, cancels superseded scans between reads, and runs waveform scans at background priority. Metadata-save success/failure semantics and the pending integrity report are preserved. Universal Release GUI/helper builds, all 440 test groups, both audit gates and strict bundle signatures pass. The affected 58-track, 77:36 session reopened with responsive EDIT/MIXER switching and saved/closed successfully; no new crash report appeared. A fresh full-length record/STOP on the target rig is still required. Installation is pending.
+
 ## Project
 
 JUCE 8 / C++20 / CMake, macOS-first (Universal) multitrack recording + playback application with virtual soundcheck. Sibling to the ZynForge Live plugin-insert host.

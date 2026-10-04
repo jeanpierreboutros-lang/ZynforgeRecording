@@ -1,5 +1,7 @@
 # ZynForge Recording
 
+**STOP responsiveness investigation (2026-10-04):** A live five-second sample on the development Mac found the main thread blocked in `saveSessionStateTo` → `writeSessionBackupSnapshot` → filesystem copies on the external ExFAT PJ volume. Eight integrity-hash readers and four user-initiated waveform scanners were active concurrently. The stopped 58-track report had zero missed samples and no capture failures, with hashes still pending. Source now serializes report scans process-wide, yields 50 ms per 4 MiB, cancels superseded scans between reads, and runs waveform scans at background priority. Metadata-save success/failure semantics and the pending integrity report are preserved. Universal Release GUI/helper builds, all 440 test groups, both audit gates and strict bundle signatures pass. The affected 58-track, 77:36 session reopened with responsive EDIT/MIXER switching and saved/closed successfully; no new crash report appeared. A fresh full-length record/STOP on the target rig is still required. Installation is pending.
+
 Live multitrack recorder + virtual soundcheck for macOS. Built on JUCE 8 / C++20.
 
 A focused recording surface for engineers running front-of-house or monitors: capture console inputs and play those tracks back through the same outputs during soundcheck. **Not a DAW** — no plugins, no in-the-box effects. No recording system can guarantee against every failure; use independent redundancy for important shows.
