@@ -19,7 +19,7 @@ namespace zynforge::capture
     // it and it's testable in isolation -- the same transport-seam-first
     // approach used for ConsoleLink before any hardware existed.
 
-    inline constexpr int kProtocolVersion = 3;
+    inline constexpr int kProtocolVersion = 4; // mutual per-user endpoint authentication
 
     enum class Action
     {
@@ -87,6 +87,7 @@ namespace zynforge::capture
         int          intValue   { 0 };
         int          version    { kProtocolVersion };   // meaningful for Hello
         int          id         { 0 };   // request-correlation id (0 = none)
+        juce::String authNonce, authProof;
 
         juce::var toJson() const
         {
@@ -100,6 +101,8 @@ namespace zynforge::capture
             o->setProperty ("intValue",  intValue);
             if (action == Action::Hello) o->setProperty ("version", version);
             if (id > 0)                  o->setProperty ("id", id);
+            if (authNonce.isNotEmpty())  o->setProperty ("authNonce", authNonce);
+            if (authProof.isNotEmpty())  o->setProperty ("authProof", authProof);
             return juce::var (o);
         }
 
@@ -116,8 +119,10 @@ namespace zynforge::capture
             c.trackIndex = (int) v.getProperty ("trackIndex", -1);
             c.boolValue  = (bool) v.getProperty ("boolValue", false);
             c.intValue   = (int) v.getProperty ("intValue", 0);
-            c.version    = (int) v.getProperty ("version", kProtocolVersion);
+            c.version    = (int) v.getProperty ("version", 0);
             c.id         = (int) v.getProperty ("id", 0);
+            c.authNonce  = v.getProperty ("authNonce", "").toString();
+            c.authProof  = v.getProperty ("authProof", "").toString();
             ok = true;
             return c;
         }
@@ -135,6 +140,7 @@ namespace zynforge::capture
         int          version  { kProtocolVersion };
         juce::String error;
         int          id       { 0 };   // echoes the Command::id this replies to
+        juce::String authProof;
 
         juce::var toJson() const
         {
@@ -145,6 +151,7 @@ namespace zynforge::capture
             o->setProperty ("version", version);
             if (error.isNotEmpty()) o->setProperty ("error", error);
             if (id > 0)             o->setProperty ("id", id);
+            if (authProof.isNotEmpty()) o->setProperty ("authProof", authProof);
             return juce::var (o);
         }
 
@@ -153,9 +160,10 @@ namespace zynforge::capture
             Reply r;
             r.ok      = (bool) v.getProperty ("ok", false);
             r.completed = (bool) v.getProperty ("completed", r.ok);
-            r.version = (int) v.getProperty ("version", kProtocolVersion);
+            r.version = (int) v.getProperty ("version", 0);
             r.error   = v.getProperty ("error", "").toString();
             r.id      = (int) v.getProperty ("id", 0);
+            r.authProof = v.getProperty ("authProof", "").toString();
             return r;
         }
     };

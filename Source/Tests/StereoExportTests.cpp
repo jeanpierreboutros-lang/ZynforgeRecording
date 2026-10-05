@@ -5,6 +5,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "../Audio/TrackExporter.h"
+#include "FailingAudioReader.h"
 
 namespace zynforge
 {
@@ -109,9 +110,127 @@ namespace zynforge
                 expect (err.isNotEmpty());
             }
 
+            beginTest ("Mismatched legacy stereo source rates refuse without replacing output");
+            {
+                auto mismatched = dir.getChildFile ("right44.wav");
+                writeMonoDc (mismatched, -0.6f, 44100, 44100.0);
+                auto stem = dir.getChildFile ("mismatched");
+                auto destination = stem.withFileExtension (".wav");
+                expect (destination.replaceWithText ("previous deliverable"));
+                TrackExporter exporter;
+                ExportOptions options;
+                juce::String error;
+                expect (! exporter.exportStereoPair (srcL, mismatched, stem, options, error));
+                expect (error.isNotEmpty());
+                expect (destination.loadFileAsString() == "previous deliverable",
+                        "refused stereo export replaced the existing destination");
+            }
+
+            const auto failingSource = dir.getChildFile ("source.zffault");
+            expect (failingSource.replaceWithText ("synthetic reader fixture"));
+            for (bool pair : { false, true })
+                for (double destinationRate : { 48000.0, 44100.0 })
+                {
+                    beginTest (juce::String (pair ? "Stereo" : "Mono")
+                               + " export rejects a read failure at "
+                               + juce::String (destinationRate, 0) + " Hz and preserves output");
+                    testaudio::ReadEvidence evidence;
+                    TrackExporter exporter;
+                    exporter.formatManager.registerFormat (new testaudio::FailingFormat (evidence), false);
+                    ExportOptions options;
+                    options.sampleRate = destinationRate;
+                    auto stem = dir.getChildFile ("read-failure");
+                    auto destination = stem.withFileExtension (".wav");
+                    expect (destination.replaceWithText ("previous deliverable"));
+                    juce::String error;
+                    const bool success = pair
+                        ? exporter.exportStereoPair (srcL, failingSource, stem, options, error)
+                        : exporter.exportTrack (failingSource, stem, options, error);
+                    expectEquals (evidence.successfulReads, 1);
+                    expect (evidence.failedReads > 0, "fault was not exercised");
+                    expect (! success, "a decoder failure was published as a complete export");
+                    expect (error.isNotEmpty());
+                    expect (destination.loadFileAsString() == "previous deliverable",
+                            "failed export replaced the existing destination");
+                    expectEquals (dir.findChildFiles (juce::File::findFiles, false, "*.partial*").size(), 0);
+                }
+
             dir.deleteRecursively();
         }
     };
 
     static StereoExportTests stereoExportTests;
+
+    // Opt-in kernel ENOSPC exercise. The launcher creates and validates a tiny
+    // disposable disk image; ordinary test runs never fill or mount a volume.
+    class BoundedVolumeExportTests final : public juce::UnitTest
+    {
+    public:
+        BoundedVolumeExportTests() : UnitTest ("Audit bounded volume export", "zynforge") {}
+
+        void runTest() override
+        {
+            const auto path = juce::SystemStats::getEnvironmentVariable ("ZYNFORGE_AUDIT_FULL_VOLUME", {});
+            if (path.isEmpty())
+            {
+                logMessage ("Bounded-volume export probe not requested; use tools/audit_runtime_probe.py disk-full");
+                return;
+            }
+            beginTest ("Validate the disposable bounded-volume fixture before export");
+            const juce::File volume (path);
+            const auto nonce = juce::SystemStats::getEnvironmentVariable ("ZYNFORGE_AUDIT_VOLUME_NONCE", {});
+            const auto marker = juce::JSON::parse (volume.getChildFile ("audit-volume.json"));
+            const auto capacity = volume.getVolumeTotalSize();
+            const auto freeBytes = volume.getBytesFreeOnVolume();
+            const auto destination = volume.getChildFile ("previous.wav");
+            const bool valid = volume.isDirectory() && nonce.isNotEmpty()
+                && marker["nonce"].toString() == nonce && (bool) marker["kernelEnospcObserved"]
+                && capacity > 0 && capacity <= 64 * 1024 * 1024
+                && freeBytes > 16 * 1024 && freeBytes < 256 * 1024
+                && destination.loadFileAsString() == "previous deliverable";
+            expect (valid, "refusing a missing, unbounded, or incorrectly prepared disk fixture");
+            if (! valid) return;
+
+            const auto sourceDirectory = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                .getChildFile ("zf-bounded-export-" + juce::Uuid().toString());
+            const juce::ScopeGuard cleanup { [&] { sourceDirectory.deleteRecursively(); } };
+            const bool directoryCreated = sourceDirectory.createDirectory().wasOk();
+            expect (directoryCreated);
+            if (! directoryCreated) return;
+            const auto source = sourceDirectory.getChildFile ("source.wav");
+            {
+                juce::WavAudioFormat wav;
+                std::unique_ptr<juce::FileOutputStream> stream (source.createOutputStream());
+                expect (stream != nullptr);
+                if (stream == nullptr) return;
+                std::unique_ptr<juce::AudioFormatWriter> writer (
+                    wav.createWriterFor (stream.get(), 48000.0, 1, 24, {}, 0));
+                expect (writer != nullptr);
+                if (writer == nullptr) return;
+                stream.release();
+                std::vector<float> samples (384000, 0.25f);
+                const float* channels[] { samples.data() };
+                expect (writer->writeFromFloatArrays (channels, 1, (int) samples.size()));
+            }
+            for (const bool pair : { false, true })
+                for (const double rate : { 48000.0, 44100.0 })
+                {
+                    beginTest (juce::String (pair ? "Stereo" : "Mono") + " export at "
+                               + juce::String (rate, 0) + " Hz preserves previous output on kernel ENOSPC");
+                    TrackExporter exporter;
+                    ExportOptions options; options.sampleRate = rate;
+                    juce::String error;
+                    const auto stem = volume.getChildFile ("previous");
+                    const bool success = pair
+                        ? exporter.exportStereoPair (source, source, stem, options, error)
+                        : exporter.exportTrack (source, stem, options, error);
+                    expect (! success, "disk exhaustion was reported as successful export");
+                    expect (error.contains ("Write failed"), "fixture failed before the audio write: " + error);
+                    expectEquals (destination.loadFileAsString(), juce::String ("previous deliverable"));
+                    expectEquals (volume.findChildFiles (juce::File::findFiles, false, "*.partial*").size(), 0,
+                                  "failed export left a partial file");
+                }
+        }
+    };
+    static BoundedVolumeExportTests boundedVolumeExportTests;
 }

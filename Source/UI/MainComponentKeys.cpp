@@ -11,8 +11,19 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
 {
     if (sessionIoBusy.load())
     {
-        showStatus ("Wait for the session operation to finish");
-        return true;
+        // Metadata owns persistence and timeline mutations, not navigation.
+        // Keep view switching, zoom, selection and explicit Save available.
+        const auto kc = key.getKeyCode();
+        const bool navigation = key == juce::KeyPress::escapeKey
+            || (key.getModifiers().isCommandDown()
+                && (kc == '=' || kc == '+' || kc == juce::KeyPress::numberPadAdd
+                    || kc == '[' || kc == ']' || kc == 'A' || kc == 'a'
+                    || ((kc == 'S' || kc == 's') && ! captureMetadataPending)));
+        if ((pendingMetadataSaves == 0 && ! captureMetadataPending) || ! navigation)
+        {
+            showStatus ("Wait for the session operation to finish");
+            return true;
+        }
     }
     // Session LOCK is a "don't touch" safety for a running show. It disables
     // the on-screen controls, but keyboard shortcuts bypassed it entirely --

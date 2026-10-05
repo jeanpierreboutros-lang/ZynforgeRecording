@@ -2,9 +2,24 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-## Development Mac responsiveness update — 2026-10-04
+## Development Mac audit repair — 2026-10-05
 
-The development Mac now runs source build `55d62eb` at `/Applications/Zynforge Recording.app`, with its matching protocol-v3 helper. Both binaries are universal arm64 + x86_64, match the tested Release bundle byte-for-byte, and pass deep/strict signature verification. All 440 test groups pass. The affected 58-track session reopened and view switching/save/quit completed without a new crash report; repeat a fresh capture/STOP on the physical setup to confirm the full symptom is resolved.
+The development Mac has the S6 audit repair at `/Applications/Zynforge Recording.app`, including its matching protocol-v4 helper. Both executables are universal arm64 + x86_64, match the tested Release bundle, and pass deep/strict signature verification. The full Release, ThreadSanitizer and AddressSanitizer/UndefinedBehaviorSanitizer/float-cast-overflow suites each passed 519 groups with zero failures; no sanitizer reports were emitted. Final isolated TERM/INT and disposable ENOSPC probes also passed.
+
+| Executable | SHA-256 |
+| --- | --- |
+| GUI | `cf84bfe554d7916e60251d86e9f82d54b451d3a903da2c85d2b57b632e8faa98` |
+| Capture helper | `015a3706a066238b57092fc683299657fe49b0e06c694ac83b943100739c5787` |
+
+Source manifest (253 paths) SHA-256: `1d916b93ee5f3b2dc35f61f497615ee828fabce2d8b11d63cda9621efab98fdd`. The accompanying audit commit contains this source. See [the audit report](docs/AUDIT-2026-10-05.md) for defect/test mapping and reproduction commands.
+
+Rollback: `/Applications/Zynforge Recording.app.backup-20261005-031802-before-audit`. Installation checked that no Recording GUI or capture helper was running, staged and verified the complete bundle, then replaced it with rollback on failure. Recordings and production preferences were preserved. The Mac mini and existing DMG remain unchanged.
+
+**Native startup acceptance is pending macOS microphone consent.** The new local code signature caused TCC to request fresh consent; the isolated smoke launch waited in CoreAudio before creating its main window. Only that owned, non-recording smoke process was terminated after normal quit failed. No audio service or privacy setting was changed. The installed app is closed pending the user's microphone decision. A physical 27-track/27-insert long-take check remains required. Apple `leaks` reports the same small AppIntents connection cycles as the baseline; no leak-free claim is made.
+
+## Previous development Mac responsiveness update — 2026-10-04
+
+The previous development installation ran source build `55d62eb` at `/Applications/Zynforge Recording.app`, with its matching protocol-v3 helper. Both binaries are universal arm64 + x86_64, match the tested Release bundle byte-for-byte, and pass deep/strict signature verification. All 440 test groups pass. The affected 58-track session reopened and view switching/save/quit completed without a new crash report; repeat a fresh capture/STOP on the physical setup to confirm the full symptom is resolved.
 
 | Executable | SHA-256 |
 | --- | --- |
@@ -58,7 +73,7 @@ Zynforge Recording.app/Contents/MacOS/
   ZynforgeCapture
 ```
 
-Capture protocol version 3 requires matching builds and a compatible Hello before commands are accepted. After a successful build/test run, first verify that the built bundle already contains and seals both executables, then stage it in a temporary directory:
+Capture protocol version 4 requires matching builds and a mutually authenticated Hello before commands are accepted. Version 3 peers must be upgraded as a GUI/helper pair. After a successful build/test run, first verify that the built bundle already contains and seals both executables, then stage it in a temporary directory:
 
 ```bash
 install_stage=$(mktemp -d /private/tmp/zynforge-install.XXXXXX)
@@ -83,6 +98,6 @@ If copying or verification fails, do not launch the partial installation. Preser
 
 ## Rollback
 
-The development Mac responsiveness update retains the rollback bundle named above. Other historical app copies removed in the earlier cleanup remain unavailable.
+The development Mac audit repair retains the October 5 rollback bundle named above; the October 4 responsiveness rollback is also retained. Other historical app copies removed in the earlier cleanup remain unavailable.
 
 Stop capture and quit both processes first. Preserve current session data and the current app; then move the named backup back to `/Applications/Zynforge Recording.app`. Verify the restored signature before launch. Restore GUI and bundled daemon together, never just one executable. A prior build may not understand new session metadata: test with a duplicate session, not the only recording copy. Rolling back the app does not undo session-file changes or recover audio overwritten before the fixes.

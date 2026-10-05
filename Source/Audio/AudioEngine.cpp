@@ -161,6 +161,7 @@ namespace zynforge
 
     bool AudioEngine::startRecording (const juce::File& sessionDir)
     {
+        if (isCaptureFinalizing()) return false;
         if (captureFinalizationPending.load()) stopRecording();
         stereoMixWriteFailed.store (false, std::memory_order_relaxed);
         if (isRecording() || sessionTransitionActive.load (std::memory_order_acquire))
@@ -263,6 +264,7 @@ namespace zynforge
 
     void AudioEngine::stopRecording()
     {
+        if (isCaptureFinalizing()) return;
         // Fail closed when not recording. Otherwise a stray transport-stop
         // from a network source (OSC/console recordStop, a tablet double-tap)
         // would still run the whole tail below -- reload the last-recorded
@@ -315,9 +317,102 @@ namespace zynforge
         }
     }
 
+    bool AudioEngine::stopRecordingAsync (std::function<void (bool)> completion)
+    {
+        const std::lock_guard<std::mutex> lifecycle (deviceLifecycleLock);
+        if (isCaptureFinalizing() || ! recorder.beginFinalization()) return false;
+        asyncCaptureFinalizing.store (true, std::memory_order_release);
+        captureFinalizationPending.store (false);
+        auto job = std::make_unique<CaptureStopJob>();
+        job->directory = recorder.getActiveSessionDir();
+        job->recordEnd = recorder.getRecordTimelineSamples();
+        job->playbackRate = deviceSampleRate.load();
+        job->playbackBlock = deviceBlockSize.load();
+        job->explicitReaders = player.snapshotExplicitReaderRequests();
+        job->completion = std::move (completion);
+        job->id = ++captureStopSequence;
+        clearCaptureWindow();
+        player.stop();
+        {
+            const juce::ScopedLock sl (stereoMixLock);
+            job->mixWriter = std::move (stereoMixWriter);
+        }
+        captureStopJob = std::move (job);
+        auto* work = captureStopJob.get();
+        const auto handle = asyncHandle;
+        work->worker = std::thread ([this, work, handle]
+        {
+            recorder.finishFinalization();
+            work->mixWriter.reset();
+            work->prepared = player.prepareSessionLoad (work->directory, work->playbackRate,
+                                                        work->playbackBlock, work->explicitReaders);
+            work->ok = ! recorder.hasPrimaryFailed() && ! recorder.hasCaptureDeviceLost()
+                && ! recorder.hasBackupFailed() && ! recorder.anyMirrorFailed()
+                && recorder.getMirrorsSkippedAtStart() == 0 && ! recorder.hasRecoveryMarkerFailed()
+                && ! recorder.hasReportWriteFailed() && ! recorder.hasPunchSpliceFailed()
+                && ! hasStereoMixWriteFailed() && SessionPlayer::preparedLoadComplete (work->prepared);
+            const auto id = work->id;
+            juce::MessageManager::callAsync ([handle, id]
+            {
+                if (auto* engine = handle->load (std::memory_order_acquire)) engine->installFinalizedCapture (id);
+            });
+        });
+        return true;
+    }
+
+    void AudioEngine::installFinalizedCapture (juce::uint64 id)
+    {
+        if (! captureStopJob || captureStopJob->id != id) return;
+        auto& job = *captureStopJob;
+        // The worker has completed every disk operation before posting here.
+        // Joining only its return tail establishes ownership of the result.
+        if (job.worker.joinable()) job.worker.join();
+        job.retired = player.installPreparedSession (std::move (job.prepared), true);
+        invalidateTransientCache();
+        activeSession = job.directory;
+        if (appProps != nullptr) appProps->setValue ("activeSessionDir", activeSession.getFullPathName());
+        seedDefaultClips (true, true);
+        player.finishPreparedClipPublication();
+        player.setPositionSamples (juce::jlimit ((juce::int64) 0, player.getTotalLengthSamples(), job.recordEnd));
+        auto* work = &job;
+        const auto handle = asyncHandle;
+        job.worker = std::thread ([work, handle]
+        {
+            work->retired.reset();
+            const auto jobId = work->id;
+            juce::MessageManager::callAsync ([handle, jobId]
+            {
+                if (auto* engine = handle->load (std::memory_order_acquire)) engine->completeFinalizedCapture (jobId);
+            });
+        });
+    }
+
+    void AudioEngine::completeFinalizedCapture (juce::uint64 id)
+    {
+        if (! captureStopJob || captureStopJob->id != id) return;
+        if (captureStopJob->worker.joinable()) captureStopJob->worker.join();
+        auto completion = std::move (captureStopJob->completion);
+        const bool ok = captureStopJob->ok;
+        {
+            const std::lock_guard<std::mutex> lifecycle (deviceLifecycleLock);
+            recorder.endFinalization();
+            if (deferredDeviceRelease) recorder.release();
+            deferredDeviceRelease = false;
+            if (deferredDeviceConfiguration)
+            {
+                const auto configuration = *deferredDeviceConfiguration;
+                deferredDeviceConfiguration.reset();
+                applyDeviceConfiguration (configuration.rate, configuration.block, configuration.workgroup);
+            }
+            asyncCaptureFinalizing.store (false, std::memory_order_release);
+            deferredDeviceAudio.store (false, std::memory_order_release);
+        }
+        captureStopJob.reset();
+        if (completion) completion (ok);
+    }
+
     bool AudioEngine::startCompanionServer (int port)
     {
-        if (companion == nullptr) companion = std::make_unique<CompanionServer> (*this);
         // Default to loopback -- the engineer opts into LAN exposure
         // via startCompanionServerOnLan when they actually need it.
         return companion->start (port, "127.0.0.1");
@@ -325,7 +420,6 @@ namespace zynforge
 
     bool AudioEngine::startCompanionServerOnLan (int port)
     {
-        if (companion == nullptr) companion = std::make_unique<CompanionServer> (*this);
         return companion->start (port, "0.0.0.0");
     }
 
@@ -629,7 +723,7 @@ namespace zynforge
     void AudioEngine::serviceAutoArm (int periodTicks, float ampThreshold)
     {
         if (! autoArmOnInputFlag.load (std::memory_order_acquire)) return;
-        if (isRecording() || areControlsLocked()) return;
+        if (isRecording() || isCaptureFinalizing() || areControlsLocked()) return;
 
         const int n = recorder.getNumTracks();
         if ((int) autoArmStreaks.size() < n)
@@ -688,6 +782,7 @@ namespace zynforge
 
     int AudioEngine::loadSession (const juce::File& sessionDir, bool preserveEdits, bool appendRecordedAudio)
     {
+        if (isCaptureFinalizing()) return 0;
         if (captureFinalizationPending.load()) stopRecording();
         if (! TrackFileTransaction::recover (sessionDir)) return -1;
         const auto audioDir = sessionDir.getChildFile ("Audio Files");
@@ -804,8 +899,8 @@ namespace zynforge
         if (externalRecording.load (std::memory_order_acquire)
             || (receivedAt != 0 && status.captureDeviceLost))
         {
-            if (receivedAt != 0 && (status.captureDeviceLost
-                || juce::Time::currentTimeMillis() - receivedAt <= 2000))
+            const auto age = juce::Time::currentTimeMillis() - receivedAt;
+            if (receivedAt != 0 && age >= 0 && (status.captureDeviceLost || age <= 2000))
             {
                 status.source = "daemon";
                 status.statusAgeMs = juce::jmax ((juce::int64) 0,
@@ -835,6 +930,9 @@ namespace zynforge
             unavailable.recording = true;
             return unavailable;
         }
+        // Metrics also traverse recorder shards and tracks. Protect the entire
+        // snapshot, not just the final per-track walk, against structural edits.
+        const juce::ScopedLock sl (recorder.getStructureLock());
         EngineStatus s;
         s.captureDeviceLost = recorder.hasCaptureDeviceLost();
         s.recording        = isRecording();
@@ -866,13 +964,6 @@ namespace zynforge
         s.diskStruggling   = recorder.isDiskStruggling();
         s.captureFormat    = (int) recorder.getCaptureFormat();
 
-        // The companion server calls this from a WORKER thread every 500 ms per
-        // client. numTracks was snapshotted above and then used to index -- a
-        // TOCTOU against the message thread shrinking the vector, i.e. a read of
-        // freed TrackStates. Hold the structure lock across the whole walk and
-        // re-read the count under it.
-        const juce::ScopedLock sl (recorder.getStructureLock());
-        s.numTracks = recorder.getNumTracks();
         s.tracks.reserve ((size_t) s.numTracks);
         for (int i = 0; i < s.numTracks; ++i)
         {
@@ -894,9 +985,10 @@ namespace zynforge
         return s;
     }
 
-    bool AudioEngine::saveSessionMixTo (const juce::File& sessionDir)
+    juce::String AudioEngine::captureSessionMixJson()
     {
-        if (! sessionDir.isDirectory()) return false;
+        const juce::ScopedLock structure (recorder.getStructureLock());
+        const juce::ScopedLock tempo (tempoLock);
 
         juce::Array<juce::var> arr;
         for (int i = 0; i < recorder.getNumTracks(); ++i)
@@ -905,7 +997,7 @@ namespace zynforge
             juce::DynamicObject::Ptr o (new juce::DynamicObject());
             o->setProperty ("index",     i);
             o->setProperty ("uid",       t.stripId);
-            o->setProperty ("name",      t.name);
+            o->setProperty ("name",      t.getNameThreadSafe());
             o->setProperty ("colour",    (juce::int64) t.colourARGB.load (std::memory_order_relaxed));
             o->setProperty ("gainDb",    (double) t.gainDb.load (std::memory_order_relaxed));
             o->setProperty ("pan",       (double) t.pan.load    (std::memory_order_relaxed));
@@ -972,14 +1064,18 @@ namespace zynforge
         }
         root->setProperty ("tempoMap", tmap);
 
-        return atomicfile::writeText (
-            sessionDir.getChildFile ("session_mix.json"),
-            juce::JSON::toString (juce::var (root.get()), true));
+        return juce::JSON::toString (juce::var (root.get()), true);
+    }
+
+    bool AudioEngine::saveSessionMixTo (const juce::File& sessionDir)
+    {
+        return sessionDir.isDirectory() && atomicfile::writeText (
+            sessionDir.getChildFile ("session_mix.json"), captureSessionMixJson());
     }
 
     bool AudioEngine::loadSessionMixFrom (const juce::File& sessionDir)
     {
-        if (isRecording()) return false;
+        if (isRecording() || isCaptureFinalizing()) return false;
         const auto f = sessionDir.getChildFile ("session_mix.json");
         if (! f.existsAsFile()) return false;
 
@@ -1323,15 +1419,13 @@ namespace zynforge
         // strip UUIDs. Called on new-session creation so the engineer
         // starts from a clean slate rather than inheriting (e.g.) a
         // hard-pan they set up for last weekend's gig.
-        for (int i = 0; i < 256; ++i)
-        {
-            stripGains  .clearGain (i);
-            stripGains  .clearPan  (i);
-            stripColours.clearColour (i);
-            stripNames  .clearName (i);
-            stripRouting.clearInput  (i);
-            stripRouting.clearOutput (i);
-        }
+        // Each module replaces its cache from the latest shared file, clears
+        // its whole domain, then saves once. Per-field clears parsed/rewrote
+        // the same XML 1,536 times even when most strip keys were absent.
+        stripGains.clearRange (0, 256);
+        stripColours.clearRange (0, 256);
+        stripNames.clearRange (0, 256);
+        stripRouting.clearRange (0, 256);
         if (appProps != nullptr)
         {
             // Reload AFTER the Strip* clears above (they rewrote the shared
@@ -1346,10 +1440,15 @@ namespace zynforge
                 appProps->removeValue ("strip_editgroup_" + suffix);
                 appProps->removeValue ("strip_outmute_"   + suffix);
                 appProps->removeValue ("strip_isbus_"     + suffix);
-                // Aux sends -- 4 slots per strip can route to a bus.
-                for (int s = 0; s < 4; ++s)
-                    appProps->removeValue ("strip_send_" + juce::String (s)
-                                           + "_" + suffix);
+                // Remove current send fields and the older slot/index key.
+                for (int s = 0; s < TrackState::kNumSends; ++s)
+                {
+                    const auto key = "strip_send_" + suffix + "_" + juce::String (s);
+                    appProps->removeValue (key + "_bus");
+                    appProps->removeValue (key + "_dB");
+                    appProps->removeValue (key + "_post");
+                    appProps->removeValue ("strip_send_" + juce::String (s) + "_" + suffix);
+                }
             }
             // CRITICAL: also reset the persisted strip COUNT. Wiping only the
             // per-index overrides left `stripCount` pointing at last gig's
@@ -1383,15 +1482,10 @@ namespace zynforge
 
     void AudioEngine::clearStripOverridesRange (int firstIndex, int lastIndexExclusive)
     {
-        for (int i = firstIndex; i < lastIndexExclusive; ++i)
-        {
-            stripGains  .clearGain   (i);
-            stripGains  .clearPan    (i);
-            stripColours.clearColour (i);
-            stripNames  .clearName   (i);
-            stripRouting.clearInput  (i);
-            stripRouting.clearOutput (i);
-        }
+        stripGains.clearRange (firstIndex, lastIndexExclusive);
+        stripColours.clearRange (firstIndex, lastIndexExclusive);
+        stripNames.clearRange (firstIndex, lastIndexExclusive);
+        stripRouting.clearRange (firstIndex, lastIndexExclusive);
         // Reload AFTER the Strip* clears above (they rewrote the shared
         // .settings file) so our appProps save doesn't undo them, THEN wipe
         // the appProps-owned per-strip keys and save once.
@@ -1421,7 +1515,7 @@ namespace zynforge
 
     void AudioEngine::setStripCount (int n)
     {
-        if (isRecording()) return;
+        if (isRecording() || isCaptureFinalizing()) return;
         n = juce::jlimit (0, 256, n);
 
         const int oldCount = recorder.getNumTracks();
@@ -1547,7 +1641,7 @@ namespace zynforge
         // fixed at record start, and the capture feed gates on isStereo per
         // block, so flipping this mid-take desyncs the on-disk layout from the
         // flag. Refuse while recording -- like setStripCount / removeStripAt.
-        if (isRecording()) return;
+        if (isRecording() || isCaptureFinalizing()) return;
         if (isStereoPair
             && (channelIndex + 1 >= recorder.getNumTracks()
                 || (channelIndex > 0 && recorder.getTrack (channelIndex - 1).isStereo.load())
@@ -1839,32 +1933,22 @@ namespace zynforge
 
     void AudioEngine::prepareForTests (double sr, int blockSize)
     {
-        // Mirrors audioDeviceAboutToStart minus the device-specific
-        // calls (workgroup join, etc.). Safe to call repeatedly --
-        // recorder.prepare / player.prepare are idempotent on the
-        // same sr/blockSize.
-        deviceSampleRate.store (sr, std::memory_order_relaxed);
-        // Keep the NDI transmit's declared rate on the LIVE device rate --
-        // a rate change under a running transmit otherwise plays the rest of
-        // the show at the wrong pitch on every receiver.
-        ndi.setSampleRate (sr);
-        audioLoadPct    .store (0.0f, std::memory_order_relaxed);
-        recorder.setAudioWorkgroup ({});   // empty workgroup -- no scheduler hint in tests
-        click.prepare (sr);
-        click.setTempoBpm (currentTempoBpm.load (std::memory_order_relaxed));
-        loudness.prepare (sr);
-        recorder.prepare (sr, blockSize, recorder.getNumTracks());   // start empty; preserve count across device restarts
-        player  .prepare (sr, blockSize);
-        stereoMixScratch.setSize (2, blockSize, false, true, true);
-        monitorAccum    .setSize (2, blockSize, false, true, true);
-        outputAccum     .setSize (256, blockSize, false, true, true);
-        playerScratch   .setSize (256, blockSize, false, true, true);
-        applyPersistedStripState();
+        const std::lock_guard<std::mutex> lifecycle (deviceLifecycleLock);
+        if (isCaptureFinalizing())
+        {
+            deferredDeviceAudio.store (true, std::memory_order_release);
+            deferredDeviceConfiguration = DeferredDeviceConfiguration { sr, blockSize, {} };
+            return;
+        }
+        applyDeviceConfiguration (sr, blockSize, {});
     }
 
     AudioEngine::AudioEngine()
         : asyncHandle (std::make_shared<std::atomic<AudioEngine*>> (this))
     {
+        // Publish this stable owner before any device callback can start.
+        // Starting/stopping the listener never changes the pointer's lifetime.
+        companion = std::make_unique<CompanionServer> (*this);
         juce::PropertiesFile::Options opts;
         opts.applicationName     = "Zynforge Recording";
         opts.filenameSuffix      = ".settings";
@@ -1990,13 +2074,30 @@ namespace zynforge
         asyncHandle->store (nullptr, std::memory_order_release);
         if (! s_testSkipAudioInit.load (std::memory_order_acquire))
             deviceManager.removeAudioCallback (this);
+        // No queued callback owns readers. Finish whichever worker phase is
+        // active, then destroy uninstalled/retired readers while player lives.
+        if (captureStopJob && captureStopJob->worker.joinable()) captureStopJob->worker.join();
+        captureStopJob.reset();
+        recorder.endFinalization();
+        asyncCaptureFinalizing.store (false);
     }
 
     void AudioEngine::audioDeviceAboutToStart (juce::AudioIODevice* device)
     {
-        const auto sr        = device->getCurrentSampleRate();
+        const std::lock_guard<std::mutex> lifecycle (deviceLifecycleLock);
+        const auto sr = device->getCurrentSampleRate();
         const auto blockSize = device->getCurrentBufferSizeSamples();
+        if (isCaptureFinalizing())
+        {
+            deferredDeviceAudio.store (true, std::memory_order_release);
+            deferredDeviceConfiguration = DeferredDeviceConfiguration { sr, blockSize, device->getWorkgroup() };
+            return;
+        }
+        applyDeviceConfiguration (sr, blockSize, device->getWorkgroup());
+    }
 
+    void AudioEngine::applyDeviceConfiguration (double sr, int blockSize, juce::AudioWorkgroup workgroup)
+    {
         deviceSampleRate.store (sr, std::memory_order_relaxed);
         // Keep the NDI transmit's declared rate on the LIVE device rate --
         // a rate change under a running transmit otherwise plays the rest of
@@ -2009,7 +2110,7 @@ namespace zynforge
         // writer threads can join it. On Apple Silicon the macOS
         // scheduler then co-schedules the writers with the CoreAudio
         // IO thread -- no priority inversion under load.
-        recorder.setAudioWorkgroup (device->getWorkgroup());
+        recorder.setAudioWorkgroup (std::move (workgroup));
 
         click.prepare (sr);
         click.setTempoBpm (currentTempoBpm.load (std::memory_order_relaxed));
@@ -2074,6 +2175,7 @@ namespace zynforge
 
     void AudioEngine::setActiveSessionDir (const juce::File& dir)
     {
+        if (isCaptureFinalizing()) return;
         activeSession = (dir.isDirectory() ? dir : juce::File());
         if (appProps != nullptr)
         {
@@ -2085,6 +2187,7 @@ namespace zynforge
 
     void AudioEngine::clearSessionState()
     {
+        if (isCaptureFinalizing()) return;
         if (captureFinalizationPending.load()) stopRecording();
         stopPlayback();
         player.unload();
@@ -2270,7 +2373,7 @@ namespace zynforge
 
     void AudioEngine::setTrackInputRouting (int channelIndex, int deviceCh)
     {
-        if (isRecording()) return;
+        if (isRecording() || isCaptureFinalizing()) return;
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
         deviceCh = juce::jmax (-1, deviceCh);
         recorder.getTrack (channelIndex).inputRouting.store (deviceCh, std::memory_order_relaxed);
@@ -2595,6 +2698,15 @@ namespace zynforge
 
     void AudioEngine::audioDeviceStopped()
     {
+        const std::lock_guard<std::mutex> lifecycle (deviceLifecycleLock);
+        if (isCaptureFinalizing())
+        {
+            deferredDeviceAudio.store (true, std::memory_order_release);
+            deferredDeviceRelease = true;
+            deferredDeviceConfiguration.reset();
+            player.stop();
+            return;
+        }
         const bool interrupted = recorder.isRecording();
         if (interrupted)
         {
@@ -2624,6 +2736,13 @@ namespace zynforge
                                                         int numSamples,
                                                         const juce::AudioIODeviceCallbackContext&)
     {
+        if (deferredDeviceAudio.load (std::memory_order_acquire))
+        {
+            for (int channel = 0; channel < numOutputs; ++channel)
+                if (outputs[channel]) juce::FloatVectorOperations::clear (outputs[channel], numSamples);
+            return;
+        }
+
         // CPU-load measurement: capture start time so we can report
         // (callback time / available time) as a load percentage. The
         // dashboard polls audioLoadPct at 4 Hz to drive the LED.

@@ -5,6 +5,7 @@
 #include <juce_core/juce_core.h>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -49,6 +50,10 @@ namespace zynforge
         juce::String getStartError() const { return startError; }
         void stopRecording();
         bool isRecording() const noexcept { return recording.load (std::memory_order_acquire); }
+        bool isFinalizing() const noexcept { return finalizing.load (std::memory_order_acquire); }
+        bool beginFinalization();
+        void finishFinalization();
+        void endFinalization() noexcept { finalizing.store (false, std::memory_order_release); }
 
         // ── Punch-in (overdub a region of an existing take) ────────────────
         // Arm the NEXT startRecording as a punch-in at `punchInSample` on the
@@ -62,6 +67,7 @@ namespace zynforge
         // takes are read as one base and flattened into the spliced result.
         void armPunchIn (juce::int64 punchInSample) noexcept
         {
+            if (isFinalizing()) return;
             punchInActive = true;
             punchInPos    = juce::jmax ((juce::int64) 0, punchInSample);
             // The fresh punch file records from sample 0, but on the TIMELINE
@@ -74,6 +80,7 @@ namespace zynforge
         bool isPunchInArmed() const noexcept { return punchInActive; }
         void cancelPunchIn() noexcept
         {
+            if (isFinalizing()) return;
             punchInActive = false;
             punchInPos = 0;
             recordBaseSamples = 0;
@@ -94,6 +101,7 @@ namespace zynforge
         // where it stopped" instead of restarting at 0.
         void armContinue (juce::int64 baseSamples) noexcept
         {
+            if (isFinalizing()) return;
             continueAsPart    = true;
             recordBaseSamples = juce::jmax ((juce::int64) 0, baseSamples);
         }
@@ -124,14 +132,14 @@ namespace zynforge
             const juce::File& audioDir, const juce::String& trackName, const juce::String& ext);
 
         // Capture format & pre-roll are settings -- only changeable while not recording.
-        void setCaptureFormat (CaptureFormat f) noexcept     { if (! isRecording()) captureFormat = f; }
+        void setCaptureFormat (CaptureFormat f) noexcept     { if (! isRecording() && ! isFinalizing()) captureFormat = f; }
         CaptureFormat getCaptureFormat() const noexcept       { return captureFormat; }
 
         // Optional second format for the backup writer. When set to a
         // different value than the primary, recording produces TWO files
         // per channel -- e.g., 24-bit WAV to the main drive AND 24-bit
         // FLAC to the backup drive. Default mirrors the primary.
-        void setBackupCaptureFormat (CaptureFormat f) noexcept { if (! isRecording()) backupCaptureFormat = f; }
+        void setBackupCaptureFormat (CaptureFormat f) noexcept { if (! isRecording() && ! isFinalizing()) backupCaptureFormat = f; }
         CaptureFormat getBackupCaptureFormat() const noexcept  { return backupCaptureFormat; }
 
         void setPreRollSeconds (int seconds);
@@ -597,7 +605,24 @@ namespace zynforge
         static std::shared_ptr<std::atomic<juce::int64>> claimReportGeneration (
             const juce::File& sessionDir, juce::int64& outGeneration);
 
+        // Cancel obsolete report jobs and exclude their publication while a
+        // caller removes an idle session. Caller must first guard active capture.
+        static bool deleteSessionAfterCancellingReports (const juce::File& sessionDir);
+
     private:
+
+        // Audit-only scheduling seam. Tests install this before stop, and the
+        // worker owns a snapshot; normal capture never installs callbacks.
+        friend struct ConcurrencyAuditAccess;
+        friend class MainTransportRegressionTests; // deterministic STOP failure-latch fixtures
+        friend class AsyncStopAuditTests;
+        struct ReportTestHooks
+        {
+            std::function<void()> beforeScan, beforePublish, afterPublish, finished;
+        };
+        std::shared_ptr<ReportTestHooks> reportTestHooks;
+        std::function<void()> beforeFinalizationForTests;
+        std::atomic<bool> finalizing { false };
 
         double sampleRate { 48000.0 };
         int    blockSize  { 512 };
@@ -714,10 +739,10 @@ namespace zynforge
         // Punch-in state for the active take (set by armPunchIn, cleared in
         // stopRecording). punchInPos is the timeline sample the freshly-recorded
         // audio is spliced in at.
-        bool        punchInActive { false };
+        std::atomic<bool> punchInActive { false };
         juce::int64 punchInPos    { 0 };
-        bool        continueAsPart    { false };   // append a new part instead of overwriting
-        juce::int64 recordBaseSamples { 0 };       // timeline offset for a continue take
+        std::atomic<bool> continueAsPart { false };   // append a new part instead of overwriting
+        std::atomic<juce::int64> recordBaseSamples { 0 };       // timeline offset for a continue take
 
         // Sidecar path that holds an existing take while a punch records over
         // it: "Audio Files/Track_01.wav" -> "Audio Files/Track_01.punchbase.wav".

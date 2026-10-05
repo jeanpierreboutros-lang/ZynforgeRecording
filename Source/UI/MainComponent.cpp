@@ -22,6 +22,26 @@
 
 using namespace zynforge;
 
+namespace
+{
+    juce::String localCaptureFinalizationError (AudioEngine& engine)
+    {
+        auto& recorder = engine.getRecorder();
+        juce::StringArray failures;
+        if (recorder.hasPrimaryFailed()) failures.add ("primary audio write failed");
+        if (recorder.hasCaptureDeviceLost()) failures.add ("capture audio device stopped during take");
+        if (recorder.hasBackupFailed()) failures.add ("backup audio write failed");
+        if (recorder.anyMirrorFailed()) failures.add ("mirror audio write failed");
+        if (recorder.getMirrorsSkippedAtStart() > 0) failures.add ("configured mirror did not open");
+        if (recorder.hasRecoveryMarkerFailed()) failures.add ("recovery marker failed");
+        if (recorder.hasReportWriteFailed()) failures.add ("integrity report could not be saved");
+        if (recorder.hasPunchSpliceFailed()) failures.add ("punch could not be spliced; original audio was retained");
+        if (engine.hasStereoMixWriteFailed()) failures.add ("optional stereo mix is incomplete");
+        return failures.isEmpty() ? juce::String()
+            : "Recording stopped, but finalization failed: " + failures.joinIntoString (", ");
+    }
+}
+
 void MainComponent::updateMixerPlaceholder()
 {
     // Only in MIX view (stripsViewport is the view's visibility proxy) and
@@ -43,27 +63,29 @@ void MainComponent::updateMixerPlaceholder()
 
 void MainComponent::onRecordClicked()
 {
-    if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
+    if (captureMetadataPending || (sessionIoBusy.load() && ! engine.isRecording()))
+    { showStatus ("Wait for recording finalization / session saving to finish"); return; }
     // A RECORD-triggered selection punch is in flight (pre-roll / recording /
     // post-roll) -- pressing RECORD again ends it: punch out if recording
     // (splices the take), then stop the transport and tear down.
     if (punchSessionActive)
     {
-        const bool saved = ! engine.isRecording() || stopActiveCapture (false);
+        const bool wasRecording = engine.isRecording();
+        if (wasRecording) stopActiveCaptureAsync (false);
         restoreArmStateAfterPunch();   // put the pre-punch arm layout back
         engine.stopPlayback();
         engine.setPunchModeOn (false);
         restoreLoopAfterPunch();
         punchSessionActive = false;
         recordButton.setButtonText ("RECORD");
-        if (saved) statusLabel.setText ("Punch ended", juce::dontSendNotification);
+        if (! wasRecording) statusLabel.setText ("Punch ended", juce::dontSendNotification);
         return;
     }
 
     if (manualPunchActive && engine.isRecording())
     {
         stopArmedAtMs = 0;
-        stopActiveCapture (false);
+        stopActiveCaptureAsync (false);
         return;
     }
     if (! engine.isRecording()) manualPunchActive = false;
@@ -115,7 +137,7 @@ void MainComponent::onRecordClicked()
         }
         stopArmedAtMs = 0;
 
-        stopActiveCapture (false);
+        stopActiveCaptureAsync (false);
         return;
     }
 
@@ -311,6 +333,7 @@ void MainComponent::onRecordClicked()
         {
             engine.setExternalCaptureStatus (captureSupervisor.lastStatus(),
                                              captureSupervisor.lastStatusAtMs());
+            lastCaptureFinalizationError.clear();
             engine.setExternalRecording (true);
             engine.setActiveSessionDir (dir);
             statusLabel.setText ("DAEMON recording " + juce::String (armed) + "/"
@@ -371,6 +394,7 @@ void MainComponent::onRecordClicked()
                     : "Selection punch refused -- check take and backup/mirror copies");
                 return;
             }
+            lastCaptureFinalizationError.clear();
             punchSessionActive = true;
             wasInsidePunch    = false;
             engine.startPlayback();
@@ -397,6 +421,7 @@ void MainComponent::onRecordClicked()
 
     if (engine.startRecording (dir))
     {
+        lastCaptureFinalizationError.clear();
         manualPunchActive = continueTake && ! continueAppend;
         const double sr = engine.getPlayer().getSampleRate() > 0.0
                               ? engine.getPlayer().getSampleRate() : 48000.0;
@@ -433,6 +458,8 @@ void MainComponent::onRecordClicked()
 
 void MainComponent::onPlayClicked()
 {
+    if (captureMetadataPending || pendingMetadataSaves != 0)
+    { showStatus ("Wait for session finalization / saving before playing"); return; }
     // During a continue / punch record the player is LOADED, so without this
     // guard clicking PLAY (or transportBar->onRequestPlay) would start
     // playback concurrently with the live recording. The spacebar handler
@@ -476,6 +503,8 @@ void MainComponent::onPlayClicked()
 
 void MainComponent::onStopClicked()
 {
+    if (captureMetadataPending)
+    { showStatus ("Recording stopped; finalization pending"); return; }
     if (punchSessionActive)
     {
         onRecordClicked(); // a deliberate selection punch ends in one press
@@ -506,10 +535,10 @@ void MainComponent::onStopClicked()
         stopArmedAtMs = 0;
     }
 
-    stopActiveCapture (true);
+    stopActiveCaptureAsync (true);
 }
 
-bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind)
+bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind, bool persistMetadata)
 {
     auto& recorder = engine.getRecorder();
     const bool localRecording = recorder.isRecording();
@@ -536,7 +565,7 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind)
         if (session.isDirectory())
         {
             engine.loadSession (session, true, true);
-            sessionStateSaved = saveSessionStateTo (session);
+            sessionStateSaved = ! persistMetadata || saveSessionStateTo (session);
         }
         else
         {
@@ -558,10 +587,10 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind)
     {
         engine.stopRecording();
         manualPunchActive = false;
-        if (recorder.hasReportWriteFailed() || recorder.hasPunchSpliceFailed())
-            sessionStateSaved = false;
+        finalizationError = localCaptureFinalizationError (engine);
+        if (finalizationError.isNotEmpty()) sessionStateSaved = false;
         const auto session = engine.getActiveSessionDir();
-        if (! session.isDirectory() || ! saveSessionStateTo (session))
+        if (! session.isDirectory() || (persistMetadata && ! saveSessionStateTo (session)))
             sessionStateSaved = false;
     }
 
@@ -586,11 +615,6 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind)
                 : "Recording stopped, but session state could not be saved -- check disk permissions / free space");
         return false;
     }
-    if (localRecording && engine.hasStereoMixWriteFailed())
-    {
-        showStatus ("Recording stopped; multitracks were saved, but the optional stereo mix is incomplete");
-        return false;
-    }
     if (resumeManualPlayback)
     {
         engine.getPlayer().setPositionSamples (resumeAt);
@@ -598,6 +622,112 @@ bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind)
         playButton.setButtonText ("PAUSE");
     }
     return true;
+}
+
+void MainComponent::stopActiveCaptureAsync (bool rewind, std::function<void (bool)> completion)
+{
+    if (captureMetadataPending)
+    {
+        showStatus ("Recording stopped; finalization pending");
+        if (completion) completion (false);
+        return;
+    }
+    juce::Component::SafePointer<MainComponent> self (this);
+    auto saveFinalizedCapture = [self, completion]
+        (bool mediaOk, juce::String mediaError)
+    {
+        if (self == nullptr) return;
+        self->captureMetadataPending = true;
+        self->lastCaptureFinalizationError.clear();
+        self->enqueueMetadataSave (self->engine.getActiveSessionDir(), {},
+            [self, mediaOk, mediaError, completion] (bool saved)
+            {
+                if (self == nullptr) return;
+                self->captureMetadataPending = false;
+                if (self->pendingMetadataSaves == 0)
+                {
+                    self->sessionIoBusy.store (false);
+                    self->engine.setSessionTransitionActive (false);
+                }
+                const bool ok = mediaOk && saved;
+                self->lastCaptureFinalizationError = ok ? juce::String()
+                    : ! mediaOk ? mediaError : "Recording stopped, but session metadata could not be saved";
+                self->showStatus (ok
+                    ? self->lastSavedUndoUnits < 0
+                        ? "Recording stopped; captured state saved, newer changes remain unsaved"
+                        : "Recording stopped and session saved"
+                    : self->lastCaptureFinalizationError);
+                if (completion) completion (ok);
+            });
+        if (self->captureMetadataPending) self->showStatus ("Recording stopped; finalization pending");
+    };
+
+    if (engine.getRecorder().isRecording())
+    {
+        // Media finalization owns the recorder/player until its UI completion.
+        // Keep session mutations guarded before capture publishes recording=false,
+        // but let the engine own its worker lease and reader lifetimes.
+        const bool resumeManualPlayback = manualPunchActive && ! rewind && engine.getPlayer().isPlaying();
+        const auto resumeAt = engine.getPlayer().getPositionSamples();
+        const bool previousBusy = sessionIoBusy.load();
+        captureMetadataPending = true;
+        sessionIoBusy.store (true);
+        const bool accepted = engine.stopRecordingAsync (
+            [self, rewind, resumeManualPlayback, resumeAt, saveFinalizedCapture] (bool mediaOk)
+            {
+                if (self == nullptr) return;
+                auto mediaError = localCaptureFinalizationError (self->engine);
+                mediaOk = mediaOk && mediaError.isEmpty();
+                if (! mediaOk && mediaError.isEmpty())
+                    mediaError = "Recording stopped, but media could not be finalized or reopened";
+                if (rewind)
+                {
+                    self->engine.stopPlayback();
+                    self->engine.getPlayer().rewind();
+                    self->playButton.setButtonText ("PLAY");
+                }
+                else if (resumeManualPlayback && mediaOk)
+                {
+                    self->engine.getPlayer().setPositionSamples (resumeAt);
+                    self->engine.startPlayback();
+                    self->playButton.setButtonText ("PAUSE");
+                }
+                self->recordButton.setButtonText ("RECORD");
+                saveFinalizedCapture (mediaOk, std::move (mediaError));
+            });
+        if (! accepted)
+        {
+            captureMetadataPending = false;
+            sessionIoBusy.store (previousBusy);
+            lastCaptureFinalizationError = "Capture finalization was not accepted; check the recording state";
+            showStatus (lastCaptureFinalizationError);
+            // No callback is promised by a rejected engine request. Preserve
+            // the stopped/failed outcome without running another STOP.
+            if (completion) completion (false);
+            return;
+        }
+        manualPunchActive = false;
+        recordButton.setButtonText ("RECORD");
+        showStatus ("Recording stopped; finalization pending");
+        return;
+    }
+
+    const bool hadCapture = engine.isRecording() || captureSupervisor.isDaemonRecording();
+    const bool mediaOk = stopActiveCapture (rewind, false);
+    if (! hadCapture)
+    {
+        if (lastCaptureFinalizationError.isNotEmpty()) showStatus (lastCaptureFinalizationError);
+        if (completion) completion (mediaOk && lastCaptureFinalizationError.isEmpty());
+        return;
+    }
+    const auto mediaError = mediaOk ? juce::String() : statusLabel.getText();
+    if (engine.isRecording())
+    {
+        lastCaptureFinalizationError = mediaError.isNotEmpty() ? mediaError : "Capture did not confirm STOP";
+        if (completion) completion (false);
+        return;
+    }
+    saveFinalizedCapture (mediaOk, mediaError);
 }
 
 std::optional<bool> MainComponent::handleRemoteTransport (
@@ -610,7 +740,11 @@ std::optional<bool> MainComponent::handleRemoteTransport (
     }
     using A = zynforge::AudioEngine::RemoteTransportAction;
     if (action == A::TogglePlay || action == A::StartPlay || action == A::StopPlay)
+    {
+        if (captureMetadataPending || pendingMetadataSaves != 0)
+        { error = "session finalization or saving is pending"; return false; }
         return std::nullopt;
+    }
 
     const bool recording = engine.isRecording();
     if (action == A::StopAll || action == A::StopRecord
@@ -618,6 +752,10 @@ std::optional<bool> MainComponent::handleRemoteTransport (
     {
         if (! recording)
         {
+            if (captureMetadataPending)
+            { error = "recording stopped; finalization pending"; return false; }
+            if (lastCaptureFinalizationError.isNotEmpty())
+            { error = lastCaptureFinalizationError; return false; }
             if (action == A::StopAll) onStopClicked();
             return true;
         }
@@ -631,6 +769,10 @@ std::optional<bool> MainComponent::handleRemoteTransport (
                       : "capture stop or session finalization failed; check the host";
             return false;
         }
+        if (captureMetadataPending)
+        { error = "recording stopped; finalization pending"; return false; }
+        if (lastCaptureFinalizationError.isNotEmpty())
+        { error = lastCaptureFinalizationError; return false; }
         return true;
     }
 
@@ -737,7 +879,7 @@ void MainComponent::applyLockState()
     for (auto& s : strips) if (s != nullptr) s->setEnabled (e);
     if (editPage != nullptr)
     {
-        editPage->setEnabled (e && ! sessionIoBusy.load());
+        editPage->setEnabled (e && (! sessionIoBusy.load() || pendingMetadataSaves != 0 || captureMetadataPending));
         if (auto* tools = editPage->getEditToolsBar()) tools->setEnabled (e);
     }
     if (automationToolbar != nullptr) automationToolbar->setEnabled (e);
@@ -961,7 +1103,8 @@ bool MainComponent::deleteCaptureSession (const juce::File& target)
     if (engine.isRecording() || sessionIoBusy.load())
     { showStatus ("Stop recording and finish session operations before removing a capture"); return false; }
     const bool deletingActive = target == engine.getActiveSessionDir();
-    if (! target.deleteRecursively()) { showStatus ("Couldn't remove that folder"); return false; }
+    if (! zynforge::MultitrackRecorder::deleteSessionAfterCancellingReports (target))
+    { showStatus ("Couldn't remove that folder"); return false; }
     if (deletingActive)
     {
         condemnAllStrips();
@@ -1004,6 +1147,8 @@ void MainComponent::applySessionSettings()
 
 void MainComponent::confirmAndQuit()
 {
+    if (pendingMetadataSaves != 0 || captureMetadataPending)
+    { showStatus ("Session saving is still finishing -- quit again after completion"); return; }
     if (sessionIoBusy.load())
     {
         exportCancel.store (true);
@@ -1037,14 +1182,11 @@ void MainComponent::confirmAndQuit()
             {
                 std::unique_ptr<juce::AlertWindow> dispose (aw);
                 if (result == kCancel || self == nullptr) return; // stay in app
-                if (! self->stopActiveCapture (false)) return;    // daemon may still be rolling
-                if (activeDir.isDirectory() && ! self->saveSessionStateTo (activeDir))
+                self->stopActiveCaptureAsync (false, [self] (bool ok)
                 {
-                    self->showStatus ("Quit cancelled -- session state could not be saved");
-                    return;
-                }
-                if (auto* app = juce::JUCEApplication::getInstance())
-                    app->quit();
+                    if (! ok || self == nullptr) return;
+                    if (auto* app = juce::JUCEApplication::getInstance()) app->quit();
+                });
             }),
             false);
         return;
@@ -1106,15 +1248,24 @@ void MainComponent::confirmAndQuit()
             if (result == kCancel || self == nullptr)
                 return;                              // abort the quit, stay in app
 
-            if (result == kSave && ! self->saveSessionStateTo (activeDir))
+            if (self->pendingMetadataSaves != 0 || self->engine.isRecording())
+            { self->showStatus ("Quit cancelled -- recording or saving began while the dialog was open"); return; }
+            if (result == kSave)
             {
-                self->showStatus ("Quit cancelled -- session state could not be saved");
+                self->metadataContinuationReserved = true;
+                self->setEnabled (false);
+                self->enqueueMetadataSave (activeDir, {}, [self] (bool ok)
+                {
+                    if (self == nullptr) return;
+                    self->metadataContinuationReserved = false;
+                    self->setEnabled (true);
+                    if (ok)
+                        if (auto* app = juce::JUCEApplication::getInstance()) app->quit();
+                });
                 return;
             }
-
-            // kDontSave (or any unexpected value) -- fall through to quit.
-            if (auto* app = juce::JUCEApplication::getInstance())
-                app->quit();
+            if (result == kDontSave)
+                if (auto* app = juce::JUCEApplication::getInstance()) app->quit();
         }),
         false);
 }

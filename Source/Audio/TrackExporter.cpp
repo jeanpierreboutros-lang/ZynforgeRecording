@@ -1,4 +1,5 @@
 #include "TrackExporter.h"
+#include "CheckedReaderSource.h"
 #include "MultiPartReader.h"
 #include "ProcessSearch.h"
 
@@ -200,8 +201,8 @@ namespace zynforge
             return encodeMp3 (destPcmFile, destWithoutExt, opts, outError);
         }
 
-        // Resampling pipeline: keep `reader` alive -- pass `deleteWhenRemoved=false`.
-        juce::AudioFormatReaderSource readerSrc (reader.get(), false);
+        // Keep the reader alive and propagate decoder/I/O failures through resampling.
+        CheckedReaderSource readerSrc (*reader);
         juce::ResamplingAudioSource    resampler (&readerSrc, false, channels);
         resampler.setResamplingRatio (srcSR / destSR);
         const int block = 4096;
@@ -215,6 +216,14 @@ namespace zynforge
             buf.clear();
             juce::AudioSourceChannelInfo info (&buf, 0, thisBlock);
             resampler.getNextAudioBlock (info);
+            if (readerSrc.hasFailed())
+            {
+                outError = "Read failed";
+                writer = nullptr;
+                resampler.releaseResources();
+                destPcmFile.deleteFile();
+                return false;
+            }
 
             const auto** arr = (const float**) buf.getArrayOfReadPointers();
             if (! writer->writeFromFloatArrays (arr, channels, thisBlock))
@@ -255,6 +264,11 @@ namespace zynforge
         std::unique_ptr<juce::AudioFormatReader> readerR (
             ConcatReader::create (formatManager, findTakeParts (sourceR)));
         if (readerL == nullptr || readerR == nullptr) { outError = "Cannot read source"; return false; }
+        if (readerL->sampleRate != readerR->sampleRate)
+        {
+            outError = "Stereo source sample rates must match";
+            return false;
+        }
 
         const auto srcSR   = readerL->sampleRate;
         const auto destSR  = opts.sampleRate;
@@ -281,8 +295,8 @@ namespace zynforge
 
         // Each mono source resamples independently; we interleave the two
         // resampled mono blocks into one stereo block per write.
-        juce::AudioFormatReaderSource readerSrcL (readerL.get(), false);
-        juce::AudioFormatReaderSource readerSrcR (readerR.get(), false);
+        CheckedReaderSource readerSrcL (*readerL);
+        CheckedReaderSource readerSrcR (*readerR);
         juce::ResamplingAudioSource   resL (&readerSrcL, false, 1);
         juce::ResamplingAudioSource   resR (&readerSrcR, false, 1);
         resL.setResamplingRatio (srcSR / destSR);
@@ -299,6 +313,15 @@ namespace zynforge
             monoL.clear(); monoR.clear();
             { juce::AudioSourceChannelInfo i (&monoL, 0, thisBlock); resL.getNextAudioBlock (i); }
             { juce::AudioSourceChannelInfo i (&monoR, 0, thisBlock); resR.getNextAudioBlock (i); }
+            if (readerSrcL.hasFailed() || readerSrcR.hasFailed())
+            {
+                outError = "Read failed";
+                writer = nullptr;
+                resL.releaseResources();
+                resR.releaseResources();
+                destPcmFile.deleteFile();
+                return false;
+            }
             stereo.copyFrom (0, 0, monoL, 0, 0, thisBlock);
             stereo.copyFrom (1, 0, monoR, 0, 0, thisBlock);
             const auto** arr = (const float**) stereo.getArrayOfReadPointers();

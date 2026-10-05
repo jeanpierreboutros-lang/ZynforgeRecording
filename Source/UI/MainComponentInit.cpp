@@ -433,8 +433,7 @@ MainComponent::MainComponent()
         std::swap (cues[(size_t) currentCueIndex], cues[(size_t) target]);
         currentCueIndex = target;
         setlistBar.setCues (cues, currentCueIndex);
-        saveSetlistToActiveSession();
-        showStatus ("Cue moved");
+        saveCueChanges ("Cue moved");
     };
     setlistBar.onDeleteCue  = [this]
     {
@@ -443,8 +442,7 @@ MainComponent::MainComponent()
         cues.erase (cues.begin() + currentCueIndex);
         currentCueIndex = juce::jmin (currentCueIndex, (int) cues.size() - 1);
         setlistBar.setCues (cues, currentCueIndex);
-        saveSetlistToActiveSession();
-        showStatus ("Deleted cue '" + gone + "'");
+        saveCueChanges ("Deleted cue '" + gone + "'");
     };
     addAndMakeVisible (setlistBar);
 
@@ -655,7 +653,7 @@ MainComponent::MainComponent()
     // persists its final value without writing to the active take volume.
     editPage->onZoomChanged = [this] (float)
     {
-        if (! engine.isRecording()) saveUILayoutToActiveSession();
+        if (! engine.isRecording()) requestUILayoutSave();
     };
 
     // EDIT-view channel selection feeds the SAME shared selection set the
@@ -740,7 +738,7 @@ MainComponent::MainComponent()
         showVcaPanel = ! showVcaPanel;
         if (vcaPanel != nullptr) vcaPanel->setVisible (showVcaPanel);
         resized();
-        saveUILayoutToActiveSession();
+        requestUILayoutSave();
     };
     addAndMakeVisible (vcaToggleButton);
 
@@ -840,6 +838,7 @@ MainComponent::~MainComponent()
     joinBounceThread();
     // Same for the export / Save-As copy worker.
     joinExportThread();
+    metadataWriter.finish(); // drains accepted immutable saves before engine/UI teardown
 
    #if JUCE_MAC
     juce::MenuBarModel::setMacMainMenu (nullptr);
@@ -871,7 +870,7 @@ void MainComponent::setStripWidthPreset (StripWidth p)
     stripMButton .setToggleState (p == StripWidth::M,  juce::dontSendNotification);
     stripLButton .setToggleState (p == StripWidth::L,  juce::dontSendNotification);
     resized();
-    saveUILayoutToActiveSession();
+    requestUILayoutSave();
 }
 
 void MainComponent::switchView (View v)
@@ -885,7 +884,7 @@ void MainComponent::switchView (View v)
         editPage->setVisible (! mix);
         if (! mix) editPage->refresh();   // rescan session dir on entry
     }
-    saveUILayoutToActiveSession();
+    requestUILayoutSave();
 
     // Pull keyboard focus back to MainComponent (the app's KeyListener) on
     // every view change. Without this, focus can sit on whatever button or

@@ -57,6 +57,7 @@ namespace zynforge
         static int mp3EncodeTimeoutMs (double durationSeconds);
 
     private:
+        friend class StereoExportTests; // deterministic decoder-failure fixture
         // Shared MP3 tail: encodes an already-written temp WAV to .mp3 via
         // lame, then deletes the temp. False (+ outError) if lame is missing
         // or fails.

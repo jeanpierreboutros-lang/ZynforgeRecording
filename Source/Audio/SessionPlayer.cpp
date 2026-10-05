@@ -38,32 +38,49 @@ namespace zynforge
         stop();
     }
 
-    int SessionPlayer::loadSession (const juce::File& sessionDir)
+    struct SessionPlayer::PreparedLoad
     {
-        // Stop playback and wait for any in-flight audio callback to drain
-        // before we free the readers below.
+        std::vector<Track> tracks;
+        std::map<juce::String, std::unique_ptr<juce::BufferingAudioReader>> explicitReaders;
+        juce::File directory;
+        juce::String name;
+        double sampleRate = 48000.0;
+        juce::int64 length = 0;
+        bool complete = true;
+    };
+
+    int SessionPlayer::loadSession (const juce::File& directory)
+    {
         playing.store (false, std::memory_order_release);
         waitForCallbackDrain();
+        auto prepared = prepareSessionLoad (directory, deviceSampleRate, blockSize);
+        auto retired = installPreparedSession (std::move (prepared), false);
+        return readerCount.load (std::memory_order_acquire);
+    }
 
-        {
-            const juce::ScopedLock sl (tracksLock);
-            tracks.clear();
-        }
-        readerCount.store (0, std::memory_order_release);
-        loaded.store (false, std::memory_order_release);
-        {
-            // New session = new tracks; drop any clip state from the
-            // previous one so a stale authoritative flag can't silence a
-            // freshly loaded track before seedDefaultClips repopulates.
-            const juce::ScopedLock sl (clipsLock);
-            activeClips.clear();
-            clipsAuthoritative.clear();
-            for (auto& f : authoritativeFlags) f.store (0, std::memory_order_release);
-            extraReaders.clear();   // cross-track clip readers belong to the old session
-        }
+    std::vector<Clip> SessionPlayer::snapshotExplicitReaderRequests() const
+    {
+        std::vector<Clip> result;
+        const juce::ScopedLock sl (clipsLock);
+        for (const auto& clips : activeClips)
+            for (const auto& clip : clips)
+                if (clip.audioFile != juce::File()) result.push_back (clip);
+        return result;
+    }
 
-        if (! sessionDir.isDirectory()) return 0;
-
+    SessionPlayer::Prepared SessionPlayer::prepareSessionLoad (const juce::File& sessionDir,
+                                                              double playbackRate, int playbackBlock,
+                                                              const std::vector<Clip>& explicitReaders)
+    {
+        auto prepared = std::make_shared<PreparedLoad>();
+        prepared->directory = sessionDir;
+        prepared->name = sessionDir.getFileName();
+        prepared->sampleRate = playbackRate;
+        if (! sessionDir.isDirectory()) { prepared->complete = false; return prepared; }
+        // Only private value-owned readers are built here. No live player/UI
+        // state changes until installPreparedSession on the message thread.
+        juce::AudioFormatManager formatManager;
+        formatManager.registerBasicFormats();
         // Pro Tools-style: tracks live under <session>/Audio Files/. Older
         // sessions written before the named-folder refactor kept them at
         // the root, so fall back to the root scan when the subfolder is
@@ -120,7 +137,7 @@ namespace zynforge
         files.sort();
 
         juce::int64 maxLen = 0;
-        double      sr     = deviceSampleRate;
+        double      sr     = playbackRate;
 
         // CRITICAL: place each file at the track index encoded in its
         // FILENAME (Track_NN -> index N-1), NOT at its position in the sorted
@@ -168,7 +185,7 @@ namespace zynforge
                 { mainFile = f; break; }
             if (! mainFile.existsAsFile()) continue;
             auto reader = ConcatReader::create (formatManager, findTakeParts (mainFile));
-            if (reader == nullptr) continue; // incomplete/corrupt take: never play a silent truncation
+            if (reader == nullptr) { prepared->complete = false; continue; }
             const double fileSR = reader->sampleRate;
             const bool stereo = reader->numChannels >= 2;
             if (stereo && idx >= 255) continue;
@@ -182,12 +199,12 @@ namespace zynforge
             // user-audible staggered start even though all files begin at the
             // same sample. Playback itself remains non-blocking below.
             {
-                const int primeSamples = juce::jmax (1, juce::jmin (blockSize, 512));
+                const int primeSamples = juce::jmax (1, juce::jmin (playbackBlock, 512));
                 juce::AudioBuffer<float> prime ((int) juce::jmax ((unsigned int) 1,
                                                                  buf->numChannels),
                                                  primeSamples);
                 buf->setReadTimeout (1000);
-                buf->read (&prime, 0, primeSamples, 0, true, true);
+                if (! buf->read (&prime, 0, primeSamples, 0, true, true)) prepared->complete = false;
             }
             buf->setReadTimeout (0); // non-blocking -- fill silence if not buffered yet
 
@@ -197,33 +214,91 @@ namespace zynforge
             sr       = fileSR;
         }
 
-        // Build the index-aligned track list. Empty slots (no file) get a
-        // default Track (null reader) which processBlock renders as silence.
+        prepared->tracks.assign ((std::size_t) (maxIndex + 1), Track{});
+        for (auto& p : pending)
+        {
+            if (p.stereo)
+            {
+                if (p.index + 1 >= (int) prepared->tracks.size()) continue;
+                prepared->tracks[(std::size_t) p.index] = Track { p.reader, p.length, true, false };
+                prepared->tracks[(std::size_t) p.index + 1] = Track { p.reader, p.length, false, true };
+            }
+            else prepared->tracks[(std::size_t) p.index] = Track { p.reader, p.length, true, true };
+        }
+        prepared->sampleRate = sr;
+        prepared->length = maxLen;
+        // Explicit cross-track clips must reopen even an unchanged pathname:
+        // punch replaces its inode and continuation can add new parts. Build
+        // every replacement on this worker, keeping all clip edits as values.
+        for (const auto& clip : explicitReaders)
+        {
+            const auto key = clip.audioFile.getFullPathName();
+            if (prepared->explicitReaders.count (key) != 0) continue;
+            auto raw = ConcatReader::create (formatManager, findTakeParts (clip.audioFile));
+            if (! raw)
+            {
+                prepared->complete = false;
+                // Prevent UI clip publication retrying this failed disk open.
+                // The null marker is discarded after publication, so later
+                // explicit edits/reloads can retry recovered media normally.
+                prepared->explicitReaders.emplace (key, nullptr);
+                continue;
+            }
+            const auto bufferSamples = (int) (raw->sampleRate * kReaderBufferSeconds);
+            auto buffered = std::make_unique<juce::BufferingAudioReader> (
+                raw.release(), readerThread, bufferSamples);
+            juce::AudioBuffer<float> prime (2, 512);
+            buffered->setReadTimeout (1000);
+            if (! buffered->read (&prime, 0, 512, juce::jmax ((juce::int64) 0, clip.fileStartSamples), true, true))
+                prepared->complete = false;
+            buffered->setReadTimeout (0);
+            prepared->explicitReaders.emplace (key, std::move (buffered));
+        }
+        return prepared;
+    }
+
+    bool SessionPlayer::preparedLoadComplete (const Prepared& prepared)
+    { return prepared != nullptr && prepared->complete; }
+
+    void SessionPlayer::finishPreparedClipPublication()
+    {
+        const juce::ScopedLock sl (clipsLock);
+        for (auto it = extraReaders.begin(); it != extraReaders.end();)
+            if (! it->second) it = extraReaders.erase (it); else ++it;
+    }
+
+    SessionPlayer::Prepared SessionPlayer::installPreparedSession (Prepared prepared, bool preserveClipState)
+    {
+        jassert (prepared != nullptr);
+        if (! prepared) return {};
+        playing.store (false, std::memory_order_release);
+        auto retired = std::make_shared<PreparedLoad>();
         {
             const juce::ScopedLock sl (tracksLock);
-            tracks.assign ((std::size_t) (maxIndex + 1), Track{});
-            for (auto& p : pending)
-            {
-                if (p.stereo)
-                {
-                    if (p.index + 1 >= (int) tracks.size()) continue;
-                    tracks[(std::size_t) p.index]     = Track { p.reader, p.length, true,  false };
-                    tracks[(std::size_t) p.index + 1] = Track { p.reader, p.length, false, true  };
-                }
-                else
-                    tracks[(std::size_t) p.index] = Track { p.reader, p.length, true, true };
-            }
+            retired->tracks.swap (tracks);
+            tracks.swap (prepared->tracks);
             readerCount.store ((int) tracks.size(), std::memory_order_release);
         }
-
-        this->sessionDir = sessionDir;
-        sessionName    = sessionDir.getFileName();
-        fileSampleRate = sr;
-        totalLength.store (maxLen, std::memory_order_release);
-        position   .store (0,      std::memory_order_release);
+        {
+            const juce::ScopedLock sl (clipsLock);
+            if (! preserveClipState || sessionDir != prepared->directory)
+            {
+                activeClips.clear();
+                clipsAuthoritative.clear();
+                for (auto& f : authoritativeFlags) f.store (0, std::memory_order_release);
+            }
+            retired->explicitReaders.swap (extraReaders);
+            extraReaders.swap (prepared->explicitReaders);
+        }
+        sessionDir = prepared->directory;
+        sessionName = prepared->name;
+        fileSampleRate = prepared->sampleRate;
+        totalLength.store (prepared->length, std::memory_order_release);
+        position.store (0, std::memory_order_release);
         loaded.store (readerCount.load (std::memory_order_acquire) > 0, std::memory_order_release);
-
-        return readerCount.load (std::memory_order_acquire);
+        // Caller owns retirement: asynchronous STOP destroys these on its
+        // worker, before the readerThread/engine can be destroyed.
+        return retired;
     }
 
     void SessionPlayer::unload()

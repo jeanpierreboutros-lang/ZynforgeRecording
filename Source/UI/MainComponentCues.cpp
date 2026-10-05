@@ -157,18 +157,9 @@ void MainComponent::loadSetlistFromActiveSession()
     }
 }
 
-bool MainComponent::saveSetlistToActiveSession (bool writeBackup) const
+juce::String MainComponent::captureProjectPatchJson() const
 {
-    const auto proj = findSessionProj (engine.getActiveSessionDir());
-    if (proj == juce::File{}) return false;
-
-    // Preserve the existing .zfproj fields (createdAt, sampleRate, etc.)
-    // when we rewrite -- only the 'setlist' key is touched.
-    juce::DynamicObject::Ptr obj;
-    const auto parsed = juce::JSON::parse (proj);
-    if (parsed.isObject()) obj = parsed.getDynamicObject();
-    if (obj == nullptr)    obj = new juce::DynamicObject();
-
+    juce::DynamicObject::Ptr obj (new juce::DynamicObject());
     juce::Array<juce::var> arr;
     for (const auto& c : cues)
     {
@@ -232,12 +223,17 @@ bool MainComponent::saveSetlistToActiveSession (bool writeBackup) const
     obj->setProperty ("formatVersion", 3);
     obj->setProperty ("updatedAt",     juce::Time::getCurrentTime().toISO8601 (true));
 
-    const bool ok = zynforge::atomicfile::writeText (
-        proj, juce::JSON::toString (juce::var (obj.get())));
+    return juce::JSON::toString (juce::var (obj.get()));
+}
 
-    // Drop a full backup session into Session File Backups/ so a misclicked
-    // cue / accidental delete / file corruption is recoverable from the show.
-    return ok && (! writeBackup || writeSessionBackupSnapshot());
+bool MainComponent::saveSetlistToActiveSession (bool writeBackup) const
+{
+    if (pendingMetadataSaves != 0) return false;
+    zynforge::SessionMetadataSnapshot snapshot;
+    snapshot.directory = engine.getActiveSessionDir();
+    snapshot.projectPatchJson = captureProjectPatchJson();
+    snapshot.backup = writeBackup;
+    return zynforge::writeSessionMetadata (snapshot).ok;
 }
 
 bool MainComponent::writeSessionBackupSnapshot() const
@@ -475,8 +471,7 @@ void MainComponent::addCueAtTransport()
         cues.push_back (std::move (c));
         currentCueIndex = (int) cues.size() - 1;
         setlistBar.setCues (cues, currentCueIndex);
-        saveSetlistToActiveSession();
-        showStatus ("Added cue '" + cues.back().name + "' at "
+        saveCueChanges ("Added cue '" + cues.back().name + "' at "
                     + juce::String ((double) pos / juce::jmax (1.0, player.getSampleRate()), 2)
                     + " s (mix snapshot captured)");
     });
@@ -498,8 +493,7 @@ void MainComponent::renameCurrentCue()
         if (idx < 0 || idx >= (int) cues.size()) return;
         cues[(size_t) idx].name = name;
         setlistBar.setCues (cues, currentCueIndex);
-        saveSetlistToActiveSession();
-        showStatus ("Renamed cue -> '" + name + "'");
+        saveCueChanges ("Renamed cue -> '" + name + "'");
     });
 }
 
@@ -530,8 +524,7 @@ void MainComponent::updateCueAtTransport()
     cue.automation = engine.automationToJson();
 
     setlistBar.setCues (cues, currentCueIndex);
-    saveSetlistToActiveSession();
-    showStatus ("Cue '" + cue.name + "' updated -- "
+    saveCueChanges ("Cue '" + cue.name + "' updated -- "
                 + juce::String ((double) pos / juce::jmax (1.0, player.getSampleRate()), 2) + " s, "
                 + juce::String (total) + " strip mix snapshotted");
 }

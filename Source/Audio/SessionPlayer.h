@@ -41,6 +41,14 @@ namespace zynforge
         // Off-thread: scan dir for Track_*.wav, build readers. Stops
         // playback first. Returns number of tracks loaded.
         int  loadSession (const juce::File& sessionDir);
+        struct PreparedLoad;
+        using Prepared = std::shared_ptr<PreparedLoad>;
+        std::vector<Clip> snapshotExplicitReaderRequests() const;
+        Prepared prepareSessionLoad (const juce::File&, double playbackRate, int playbackBlock,
+                                     const std::vector<Clip>& explicitReaders = {});
+        static bool preparedLoadComplete (const Prepared&);
+        Prepared installPreparedSession (Prepared, bool preserveClipState);
+        void finishPreparedClipPublication();
         void unload();
 
         bool isLoaded()       const noexcept { return loaded .load (std::memory_order_acquire); }

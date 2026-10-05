@@ -1,11 +1,11 @@
 #include "OscRemote.h"
 #include "AudioEngine.h"
+#include "../Network/SecureToken.h"
 
 namespace zynforge
 {
     OscRemote::OscRemote (AudioEngine& e) : engine (e)
     {
-        accessToken = juce::String::toHexString (juce::Random::getSystemRandom().nextInt64());
         // Match anything -- we route per-dialect inside oscMessageReceived.
         addListener (this);
     }
@@ -19,16 +19,19 @@ namespace zynforge
     bool OscRemote::start (int udpPort)
     {
         stop();
+        accessToken = securetoken::generate (entropyProviderForTests);
+        if (accessToken.isEmpty()) return false;
         port      = udpPort;
         listening = connect (udpPort);
+        if (! listening) accessToken.clear();
         return listening;
     }
 
     void OscRemote::stop()
     {
-        if (! listening) return;
-        disconnect();
+        if (listening) disconnect();
         listening = false;
+        accessToken.clear();
     }
 
     void OscRemote::setDialect (Dialect d) { dialect = d; }
@@ -39,9 +42,16 @@ namespace zynforge
         if (engine.isOscDebug())
         {
             juce::String args;
-            for (const auto& a : m)
+            const auto path = m.getAddressPattern().toString();
+            for (int i = 0; i < m.size(); ++i)
             {
-                if (a.isInt32())        args << " " << a.getInt32();
+                const auto& a = m[i];
+                // The final Generic argument is a credential, including failed
+                // authentication attempts. Never retain it in copyable logs.
+                if ((path.startsWith ("/zynforge/") && i == m.size() - 1)
+                    || (a.isString() && accessToken.isNotEmpty() && a.getString() == accessToken))
+                    args << " [redacted]";
+                else if (a.isInt32())        args << " " << a.getInt32();
                 else if (a.isFloat32()) args << " " << juce::String (a.getFloat32(), 2);
                 else if (a.isString())  args << " \"" << a.getString() << "\"";
             }
@@ -161,7 +171,7 @@ namespace zynforge
         // not expose transport/arm/mute at all because those protocols cannot
         // carry this application token.
         if (! testDispatch
-            && (m.size() == 0 || ! m[m.size() - 1].isString()
+            && (accessToken.isEmpty() || m.size() == 0 || ! m[m.size() - 1].isString()
                 || m[m.size() - 1].getString() != accessToken))
             return false;
 

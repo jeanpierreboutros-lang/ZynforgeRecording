@@ -538,7 +538,7 @@ void MainComponent::editCropToLoopRange()
             self->pushClipUndo ("Crop to loop range", before);   // Cmd+Z reverts the crop
             self->engine.getPlayer().clearLoopRegion();
             if (self->editPage != nullptr) self->editPage->repaint();
-            self->saveUILayoutToActiveSession();   // persist the new clip layout
+            self->requestUILayoutSave();   // persist the new clip layout
             self->showStatus ("Cropped to loop region (" + juce::String (kept)
                         + " track(s) with audio) -- non-destructive");
         }),

@@ -11,6 +11,7 @@ namespace zynforge
 
         void runTest() override
         {
+            beginTest ("Prepare isolated show handoff fixtures");
             const auto root = juce::File::getSpecialLocation (juce::File::tempDirectory)
                 .getChildFile ("zynforge-handoff-" + juce::Uuid().toString());
             const juce::ScopeGuard cleanup { [&] { root.deleteRecursively(); } };

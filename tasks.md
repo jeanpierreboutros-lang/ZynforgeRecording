@@ -1,5 +1,35 @@
 # Project Tasks
 
+## Full audit and deep STOP repair — 2026-10-05
+
+- [x] Reconcile all eight specialist reports before changing production behavior; preserve the original application/session while working in isolated checkouts.
+- [x] Establish the clean universal build and original 440-group baseline; record its capture-deletion failure instead of inheriting historical green counts.
+- [x] Reproduce metadata blocking, retention/security/input/concurrency failures with deterministic red fixtures and sanitizer evidence.
+- [x] Implement owned immutable metadata persistence and bounded layout coalescing; add truthful pending/completion handling and guarded lifecycle continuations.
+- [x] Reproduce the remaining media-finalization block, split local STOP ownership and prepare/install/retire playback readers across explicit thread boundaries.
+- [x] Run intermediate stage-one full ASan/UBSan and TSan suites (494 groups each, only the expected new media-blocking failure); run stage-two targeted main/concurrency assertions successfully.
+- [x] Execute bounded disposable signal and real-ENOSPC probes; preserve their limited scope in the audit register.
+- [x] Complete reviewer red cases and S3 full TSan and ASan/UBSan verification for native menu invalidation, local failed-take outcome parity, cached reader identity and async telemetry: 512 groups each, zero failures, no emitted sanitizer report files.
+- [x] Build the repaired universal Release app/helper for arm64 and x86_64; verify bundle signatures and repair-3 design/invariant gates.
+- [x] Reproduce preference reset/range-clear I/O amplification and stale persisted-send keys (R26/R27): Release red, four groups/38 failures, reset/range 1,537/61 reloads and 36 surviving fields; implement candidate batching/current-key cleanup after red.
+- [x] Verify R26/R27 targeted Release green: four groups/zero failures, shared-cache semantics preserved, reset/range/public-growth reloads 5/5/10.
+- [x] Complete all three S4 builds, design/invariant gates, universal GUI/helper architecture checks and strict signatures; record both executable hashes in the audit.
+- [x] Complete S4 ASan/UBSan (516/0, no reports) and Apple leak comparison; retain identical nonzero framework cycles in baseline full/repaired Main and both clean S3 sanitizer checkpoints.
+- [x] Reproduce R28/R29 with the corrected authoritative frame-boundary Release red (17 groups/6 failures); retain S4 TSan516/1 and initial deadline red16/3 as earlier evidence.
+- [x] Freeze S5 source manifest (253 paths), complete three Xcode builds/gates/universal signatures and record source/GUI/helper hashes.
+- [x] Verify S5 bounded serializer/completed-frame repairs with unchanged thresholds; full TSan and ASan/UBSan/float-cast-overflow each pass 519 groups/zero failures with no emitted sanitizer reports.
+- [x] Freeze S6 source manifest/253 paths, record both executable identities and pass all three builds, gates, universal signatures and independent static review.
+- [x] Verify the S6 explicit O_NONBLOCK repair: full Release, TSan and ASan/UBSan/float-cast-overflow each pass 519 groups/zero failures, no sanitizer reports, unchanged deadline threshold. Preserve the earlier S5 Release red.
+- [x] Repeat final embedded-helper TERM/INT probes successfully within no-device/empty-capture scope.
+- [x] Pass final S6 bounded disk-full export repeat (5/0, real ENOSPC, image detached) and repeat Main leak observation (28/0, same 288 allocations/18,816 bytes/three Apple cycles).
+- [ ] Complete normal UI smoke after macOS microphone consent. New code identity prompted; no app window yet, only owned nonrecording smoke PID terminated after normal quit did not complete. Preserve the nonzero framework residual and distinguish physical-rig/install acceptance.
+- [ ] Complete a disposable 27-track record/STOP on the target interface/external drive and measure command latency; independently verify primary and configured copy outcomes.
+- [ ] Resume/verify the preserved production take's pending hashes before calling integrity verification complete. Do not infer completion from the application's exit.
+- [x] Install the matching S6 GUI/helper atomically on the development Mac after confirming both processes stopped; verify exact hashes/deep-strict signatures and preserve rollback `Zynforge Recording.app.backup-20261005-031802-before-audit`. Leave the app closed.
+- [ ] Complete the pending macOS microphone-consent/native-smoke step; retain operator residuals and physical long-take requirements. Mini/distribution image unchanged.
+
+Current reports, exact log paths and reproduction commands: [October 5 audit register](docs/AUDIT-2026-10-05.md).
+
 ## STOP responsiveness — 2026-10-04
 
 - [x] Capture the development Mac hang: synchronous metadata backup blocked on external ExFAT while eight hash and four high-priority thumbnail readers run.

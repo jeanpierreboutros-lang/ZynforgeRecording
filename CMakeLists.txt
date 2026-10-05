@@ -110,6 +110,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/AutomationTests.cpp
     Source/Tests/MarkerTests.cpp
     Source/Tests/EngineStateTests.cpp
+    Source/Tests/SettingsBatchAuditTests.cpp
     Source/Tests/RecorderPlayerTests.cpp
     Source/Tests/RecordingIntegrityTests.cpp
     Source/Tests/PunchSpliceTests.cpp
@@ -155,6 +156,10 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/CaptureDaemonTests.cpp
     Source/Tests/CaptureSupervisorTests.cpp
     Source/Tests/MainTransportRegressionTests.cpp
+    Source/Tests/ConcurrencyAuditTests.cpp
+    Source/Tests/AsyncStopAuditTests.cpp
+    Source/Tests/PlaylistBoundaryTests.cpp
+    Source/Tests/AuditSecurityTests.cpp
     Source/Network/CaptureLink.cpp
     Source/Capture/CaptureDaemon.cpp
     Source/Capture/CaptureSupervisor.cpp

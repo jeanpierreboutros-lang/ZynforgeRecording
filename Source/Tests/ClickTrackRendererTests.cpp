@@ -16,6 +16,7 @@ namespace zynforge
 
         void runTest() override
         {
+            beginTest ("Prepare isolated click renderer fixture");
             const auto root = juce::File::getSpecialLocation (juce::File::tempDirectory)
                                   .getChildFile ("zf-click-" + juce::Uuid().toString());
             expect (root.createDirectory().wasOk());

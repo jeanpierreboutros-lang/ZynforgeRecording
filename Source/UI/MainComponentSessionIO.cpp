@@ -229,6 +229,7 @@ bool MainComponent::openSessionDocument (const juce::File& document, bool confir
 
 void MainComponent::confirmSessionReplacement (std::function<void()> continuation)
 {
+    if (sessionIoBusy.load()) { showStatus ("Wait for session saving to finish"); return; }
     if (engine.isRecording() || captureSupervisor.isDaemonRecording())
     { showStatus ("Stop recording before replacing the session"); return; }
     const auto dir = engine.getActiveSessionDir();
@@ -250,9 +251,17 @@ void MainComponent::confirmSessionReplacement (std::function<void()> continuatio
             if (self == nullptr || result == 0) return;
             if (self->engine.isRecording() || self->sessionIoBusy.load())
             { self->showStatus ("Session switch cancelled: recording or file operation in progress"); return; }
-            if (result == 1 && ! self->saveSessionStateTo (dir))
+            if (result == 1)
             {
-                self->showStatus ("Session switch cancelled -- current session could not be saved");
+                self->metadataContinuationReserved = true;
+                self->setEnabled (false); // reserve edits until Save & Continue resolves
+                self->enqueueMetadataSave (dir, {}, [self, continuation = std::move (continuation)] (bool ok)
+                {
+                    if (self == nullptr) return;
+                    self->metadataContinuationReserved = false;
+                    self->setEnabled (true);
+                    if (ok) continuation();
+                });
                 return;
             }
             continuation();
@@ -261,6 +270,7 @@ void MainComponent::confirmSessionReplacement (std::function<void()> continuatio
 
 void MainComponent::closeSession()
 {
+    if (sessionIoBusy.load()) { showStatus ("Wait for session saving to finish"); return; }
     if (engine.isRecording())
     {
         showStatus ("Stop recording before closing the session");
@@ -290,13 +300,11 @@ void MainComponent::closeSession()
             std::unique_ptr<juce::AlertWindow> dispose (aw);
             if (self == nullptr || result == 0) return;          // Cancel
 
-            if (result == 1 && sessionDir.isDirectory()
-                && ! self->saveSessionStateTo (sessionDir))
+            if (self->engine.isRecording() || self->sessionIoBusy.load())
+            { self->showStatus ("Close cancelled -- recording or saving is in progress"); return; }
+            auto finishClose = [self, result]
             {
-                self->showStatus ("Close cancelled -- session state could not be saved");
-                return;
-            }
-
+                if (self == nullptr) return;
             // Forget the session so showStartupWelcome won't auto-reopen it,
             // and reset every session-scoped bit of state to the fresh-empty
             // slate (mirrors a launch with no session).
@@ -317,13 +325,25 @@ void MainComponent::closeSession()
             // activeSessionDir is empty now -> this shows the Welcome dialog
             // (New / Open) instead of auto-reopening the last session.
             self->showStartupWelcome();
+            };
+            if (result == 1)
+            {
+                self->metadataContinuationReserved = true;
+                self->setEnabled (false);
+                self->enqueueMetadataSave (sessionDir, {}, [self, finishClose] (bool ok)
+                {
+                    if (self == nullptr) return;
+                    self->metadataContinuationReserved = false;
+                    self->setEnabled (true);
+                    if (ok) finishClose();
+                });
+            }
+            else if (result == 2) finishClose();
         }), false);
 }
 
-bool MainComponent::saveSessionStateTo (const juce::File& dir)
+zynforge::SessionMetadataSnapshot MainComponent::captureMetadataSnapshot (const juce::File& dir, bool backup)
 {
-    if (! dir.isDirectory()) return false;
-
     auto& recorder = engine.getRecorder();
     auto& player   = engine.getPlayer();
 
@@ -343,44 +363,145 @@ bool MainComponent::saveSessionStateTo (const juce::File& dir)
     {
         juce::DynamicObject::Ptr t (new juce::DynamicObject());
         t->setProperty ("index", i);
-        t->setProperty ("name",  recorder.getTrack (i).name);
+        t->setProperty ("name",  recorder.getTrack (i).getNameThreadSafe());
         t->setProperty ("colourARGB",
                         (int) recorder.getTrack (i).colourARGB.load (std::memory_order_relaxed));
         trackArr.add (juce::var (t.get()));
     }
     root->setProperty ("tracks", trackArr);
 
-    const auto json = juce::JSON::toString (juce::var (root.get()), true);
-    const bool wroteSettings = zynforge::atomicfile::writeText (
-        dir.getChildFile ("session_settings.json"), json);
+    zynforge::SessionMetadataSnapshot snapshot;
+    snapshot.directory = dir;
+    snapshot.settingsJson = juce::JSON::toString (juce::var (root.get()), true);
+    snapshot.mixJson = engine.captureSessionMixJson();
+    auto patch = juce::JSON::parse (captureProjectPatchJson());
+    patch.getDynamicObject()->setProperty ("ui", captureUILayoutJson());
+    snapshot.projectPatchJson = juce::JSON::toString (patch);
+    snapshot.backup = backup;
+    return snapshot;
+}
 
-    // Persist the FULL per-strip mixer state WITH the session (name, colour,
-    // gain, pan, mute, solo, monitor, arm, routing, stereo, VCA + edit group)
-    // so it travels per-show instead of leaking between sessions via global
-    // appProps.
-    const bool wroteMix = engine.saveSessionMixTo (dir);
+bool MainComponent::saveSessionStateTo (const juce::File& dir)
+{
+    // Transactional callers must defer rather than wait on an interactive save
+    // on the message thread. The immutable writer is shared by both paths.
+    if (pendingMetadataSaves != 0) return false;
+    const auto result = zynforge::writeSessionMetadata (captureMetadataSnapshot (dir));
+    if (result.ok) lastSavedUndoUnits = undoManager.getNumberOfUnitsTakenUpByStoredCommands();
+    return result.ok;
+}
 
-    // Persist cues + comp playlists (Takes) + automation lanes into the
-    // .zfproj. These were only auto-saved on cue edits before, so drawing
-    // automation and hitting Save (without touching a cue) used to lose it.
-    const bool wroteSetlist = saveSetlistToActiveSession (false);
+void MainComponent::enqueueMetadataSave (const juce::File& dir, const juce::String& success,
+                                        std::function<void (bool)> completion, bool automatic,
+                                        bool backup)
+{
+    enqueueMetadataSnapshot (captureMetadataSnapshot (dir, backup), success,
+                             std::move (completion), automatic);
+}
 
-    // Also persist the UI layout into the session's .zfproj so reopening
-    // the show brings back the engineer's view choice, strip width,
-    // VCA-panel visibility, and EDIT zoom.
-    const bool wroteLayout = saveUILayoutToActiveSession();
+void MainComponent::enqueueMetadataSnapshot (zynforge::SessionMetadataSnapshot snapshot,
+                                            const juce::String& success,
+                                            std::function<void (bool)> completion, bool automatic)
+{
+    const auto dir = snapshot.directory;
+    if (dir == juce::File() || (sessionIoBusy.load() && pendingMetadataSaves == 0 && ! captureMetadataPending))
+    {
+        showStatus ("Save failed -- a session operation is in progress or no session is open");
+        if (completion) completion (false);
+        return;
+    }
+    const bool fullSave = snapshot.settingsJson.isNotEmpty() && snapshot.mixJson.isNotEmpty();
+    // A layout-only write must not suppress the completion of an explicit
+    // full save. Only a newer full save supersedes that save's status/clean mark.
+    const auto revision = fullSave ? ++metadataRevision : metadataRevision;
+    const auto savedUndoUnits = undoManager.getNumberOfUnitsTakenUpByStoredCommands();
+    // updatedAt is generated per snapshot and is not an edit. Comparing actual
+    // serialized content catches mixer/routing/cue edits outside the UndoManager.
+    auto stableProject = [] (const juce::String& json)
+    {
+        auto value = juce::JSON::parse (json);
+        if (auto* object = value.getDynamicObject()) object->removeProperty ("updatedAt");
+        return juce::JSON::toString (value);
+    };
+    const auto expectedSettings = snapshot.settingsJson;
+    const auto expectedMix = snapshot.mixJson;
+    const auto expectedProject = fullSave ? stableProject (snapshot.projectPatchJson) : juce::String();
+    ++pendingMetadataSaves;
+    sessionIoBusy.store (true);
+    engine.setSessionTransitionActive (true);
+    if (! automatic) showStatus ("Saving session metadata...");
+    juce::Component::SafePointer<MainComponent> self (this);
+    metadataWriter.enqueue (std::move (snapshot), automatic,
+        [self, dir, revision, savedUndoUnits, success, fullSave, expectedSettings, expectedMix,
+         expectedProject, stableProject, completion = std::move (completion)]
+        (zynforge::SessionMetadataResult result)
+    {
+        auto deliver = [self, dir, revision, savedUndoUnits, success, fullSave, expectedSettings,
+                        expectedMix, expectedProject, stableProject,
+                        completion, result = std::move (result)] () mutable
+        {
+            if (self == nullptr) return;
+            --self->pendingMetadataSaves;
+            if (self->pendingMetadataSaves == 0 && ! self->captureMetadataPending)
+            {
+                self->sessionIoBusy.store (false);
+                self->engine.setSessionTransitionActive (false);
+            }
+            if (result.superseded) return; // retired layout request; replacement still owns persistence
+            const bool sameSession = self->engine.getActiveSessionDir() == dir;
+            bool snapshotStillCurrent = true;
+            if (sameSession && result.ok && fullSave)
+            {
+                const auto current = self->captureMetadataSnapshot (dir, false);
+                snapshotStillCurrent = current.settingsJson == expectedSettings
+                    && current.mixJson == expectedMix
+                    && stableProject (current.projectPatchJson) == expectedProject;
+            }
+            if (sameSession)
+            {
+                if (! result.ok) self->showStatus ("Save failed -- " + result.error);
+                else if (fullSave && revision == self->metadataRevision)
+                {
+                    if (snapshotStillCurrent)
+                    {
+                        self->lastSavedUndoUnits = savedUndoUnits;
+                        if (success.isNotEmpty()) self->showStatus (success);
+                    }
+                    else
+                    {
+                        self->lastSavedUndoUnits = -1;
+                        self->showStatus ("Saved earlier session state; newer changes remain unsaved");
+                    }
+                }
+            }
+            if (completion) completion (result.ok && sameSession
+                && (! self->metadataContinuationReserved || snapshotStillCurrent));
+        };
+        // Replaced layout requests retire synchronously during enqueue on the
+        // message thread; worker completions are marshalled back normally.
+        if (juce::MessageManager::getInstance()->isThisTheMessageThread()) deliver();
+        else juce::MessageManager::callAsync (std::move (deliver));
+    });
+}
 
-    // Take the recoverable snapshot only after every live metadata file has
-    // been updated, and include snapshot copy failures in the save result.
-    const bool wroteBackup = wroteSettings && wroteMix && wroteSetlist && wroteLayout
-                          && writeSessionBackupSnapshot();
+void MainComponent::requestUILayoutSave()
+{
+    if (restoringUILayout || engine.isRecording()) return;
+    const auto dir = engine.getActiveSessionDir();
+    if (dir == juce::File()) return;
+    zynforge::SessionMetadataSnapshot snapshot;
+    snapshot.directory = dir;
+    juce::DynamicObject::Ptr patch (new juce::DynamicObject());
+    patch->setProperty ("ui", captureUILayoutJson());
+    patch->setProperty ("updatedAt", juce::Time::getCurrentTime().toISO8601 (true));
+    snapshot.projectPatchJson = juce::JSON::toString (juce::var (patch.get()));
+    snapshot.backup = false;
+    enqueueMetadataSnapshot (std::move (snapshot), {}, {}, true);
+}
 
-    const bool ok = wroteSettings && wroteMix && wroteSetlist && wroteLayout && wroteBackup;
-    // Re-baseline only after every mandatory artifact landed. Marking a failed
-    // save as clean hides unsaved edits from later dirty checks.
-    if (ok)
-        lastSavedUndoUnits = undoManager.getNumberOfUnitsTakenUpByStoredCommands();
-    return ok;
+void MainComponent::saveCueChanges (const juce::String& success)
+{
+    enqueueMetadataSave (engine.getActiveSessionDir(), success);
 }
 
 void MainComponent::serviceAutosave()
@@ -405,22 +526,17 @@ void MainComponent::serviceAutosave()
     // A number of session mutations are deliberately not represented by the
     // undo manager (recording, routing, cue recall, imports).  Saving on each
     // configured interval is the only reliable way not to miss those changes.
-    if (saveSessionStateTo (dir))   // writes mix + .zfproj + a timestamped backup snapshot (10 kept)
-    {
-        lastAutosaveMs = now;
-        statusLabel.setText ("Auto-saved " + juce::Time::getCurrentTime().formatted ("%H:%M:%S"),
-                             juce::dontSendNotification);
-    }
-    else
-    {
-        // Retry soon, but not on every 24 Hz timer tick. Most failures are a
-        // full/unmounted/read-only volume and require an explicit operator
-        // warning rather than silently waiting another full interval.
-        const auto intervalMs = (juce::uint32) mins * 60000u;
-        const auto retryMs = juce::jmin ((juce::uint32) 15000u, intervalMs);
-        lastAutosaveMs = now - intervalMs + retryMs;
-        showStatus ("AUTO-SAVE FAILED -- check session volume permissions and free space; retrying shortly");
-    }
+    lastAutosaveMs = now; // coalesce subsequent ticks while the worker owns I/O
+    juce::Component::SafePointer<MainComponent> self (this);
+    enqueueMetadataSave (dir, "Auto-saved " + juce::Time::getCurrentTime().formatted ("%H:%M:%S"),
+        [self, intervalMs = (juce::uint32) mins * 60000u] (bool ok)
+        {
+            if (self == nullptr || ok) return;
+            const auto retryMs = juce::jmin ((juce::uint32) 15000u, intervalMs);
+            self->lastAutosaveMs = juce::Time::getMillisecondCounter() - intervalMs + retryMs;
+            self->showStatus ("AUTO-SAVE FAILED -- check the session volume; retrying shortly");
+        }, true);
+
 }
 
 void MainComponent::showAutosaveSettings()
@@ -428,7 +544,7 @@ void MainComponent::showAutosaveSettings()
     auto* aw = new juce::AlertWindow ("Auto-Save & Backup",
         "Automatically save the session (mix, cues, automation, layout) on a timer and keep a "
         "timestamped backup snapshot (10 newest) in 'Session File Backups'. Recordings are always "
-        "written to disk live, independent of this -- a take is never at risk.",
+        "written separately; keep independent media backups for important takes.",
         juce::MessageBoxIconType::NoIcon);
     aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
 
@@ -466,19 +582,8 @@ void MainComponent::showAutosaveSettings()
     }), true);
 }
 
-bool MainComponent::saveUILayoutToActiveSession()
+juce::var MainComponent::captureUILayoutJson() const
 {
-    const auto dir = engine.getActiveSessionDir();
-    if (! dir.isDirectory()) return false;
-
-    const auto proj = findSessionProj (dir);
-    if (proj == juce::File{}) return false;
-
-    juce::DynamicObject::Ptr obj;
-    const auto parsed = juce::JSON::parse (proj);
-    if (parsed.isObject()) obj = parsed.getDynamicObject();
-    if (obj == nullptr)    obj = new juce::DynamicObject();
-
     juce::DynamicObject::Ptr ui (new juce::DynamicObject());
     ui->setProperty ("view",         currentView == View::Mix ? "Mix" : "Edit");
     ui->setProperty ("stripWidth",
@@ -488,10 +593,20 @@ bool MainComponent::saveUILayoutToActiveSession()
                                                          : "M");
     ui->setProperty ("vcaPanel",     showVcaPanel);
     ui->setProperty ("editZoom",     editPage != nullptr ? (double) editPage->getZoom() : 1.0);
-    obj->setProperty ("ui", juce::var (ui.get()));
-    obj->setProperty ("updatedAt", juce::Time::getCurrentTime().toISO8601 (true));
-    return zynforge::atomicfile::writeText (
-        proj, juce::JSON::toString (juce::var (obj.get())));
+    return juce::var (ui.get());
+}
+
+bool MainComponent::saveUILayoutToActiveSession()
+{
+    if (pendingMetadataSaves != 0) return false;
+    zynforge::SessionMetadataSnapshot snapshot;
+    snapshot.directory = engine.getActiveSessionDir();
+    juce::DynamicObject::Ptr patch (new juce::DynamicObject());
+    patch->setProperty ("ui", captureUILayoutJson());
+    patch->setProperty ("updatedAt", juce::Time::getCurrentTime().toISO8601 (true));
+    snapshot.projectPatchJson = juce::JSON::toString (juce::var (patch.get()));
+    snapshot.backup = false;
+    return zynforge::writeSessionMetadata (snapshot).ok;
 }
 
 void MainComponent::startExportTracksTo (const juce::File& destDir,
@@ -833,14 +948,12 @@ void MainComponent::onBounceStereoMix()
 
 void MainComponent::onSaveSessionState()
 {
+    if (captureMetadataPending) { showStatus ("Wait for capture finalization before saving again"); return; }
     if (engine.isRecording()) { showStatus ("Stop recording before saving session state"); return; }
     const auto dir = engine.getActiveSessionDir();
     if (dir.isDirectory())
     {
-        if (saveSessionStateTo (dir))
-            showStatus ("Saved session state -> " + dir.getFileName());
-        else
-            showStatus ("Save failed");
+        enqueueMetadataSave (dir, "Saved session state -> " + dir.getFileName());
         return;
     }
     // No active session yet -- behave like Save As so the engineer
@@ -1820,6 +1933,7 @@ void MainComponent::applySessionTemplate (const juce::File& templateFile)
 
 void MainComponent::loadUILayoutFromActiveSession()
 {
+    const juce::ScopedValueSetter<bool> restoring (restoringUILayout, true);
     const auto proj = findSessionProj (engine.getActiveSessionDir());
     if (proj == juce::File{}) return;
 

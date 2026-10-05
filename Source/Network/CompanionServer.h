@@ -4,6 +4,7 @@
 #include "../Audio/AudioEngine.h"
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -60,6 +61,12 @@ namespace zynforge
         void feedStreamSamples (const float* L, const float* R, int n) noexcept;
 
     private:
+        friend struct ConcurrencyAuditAccess;
+        // Set only before test workers start; never installed by the app.
+        std::function<void()> streamReadTestHook;
+        friend class AuditSecurityTests;
+        std::function<bool(void*, size_t)> entropyProviderForTests;
+
         AudioEngine&     engine;
         std::atomic<bool> running     { false };
         std::atomic<int>  listenPort  { -1 };
@@ -127,11 +134,17 @@ namespace zynforge
         void cancelPendingCommands();
 
         // Ring buffer for the streaming WAV endpoint. Single producer
-        // (audio thread), single consumer (per-stream worker thread).
+        // (audio thread), multiple independent stream consumers. Atomic stereo
+        // payloads and absolute sequence stamps detect overwrite while reading.
         struct StreamRing
         {
-            std::vector<float> dataL;
-            std::vector<float> dataR;
+            struct Slot
+            {
+                std::atomic<std::uint64_t> sequence { 0 }, stereo { 0 };
+            };
+            static_assert (std::atomic<std::uint64_t>::is_always_lock_free);
+            std::unique_ptr<Slot[]> slots;
+            std::size_t slotCount { 0 };
             std::atomic<std::size_t> writeIdx { 0 };
             // Number of live /stream.wav consumers. A single bool broke with >1
             // consumer (a page reload / Safari's probe request): the ending
@@ -139,8 +152,8 @@ namespace zynforge
             // so the audio thread keeps feeding while ANY consumer is attached.
             std::atomic<int>         active   { 0 };
 
-            void allocate (std::size_t cap) { dataL.assign (cap, 0.0f); dataR.assign (cap, 0.0f); }
-            std::size_t capacity() const    { return dataL.size(); }
+            void allocate (std::size_t cap) { slots = std::make_unique<Slot[]> (cap); slotCount = cap; }
+            std::size_t capacity() const    { return slotCount; }
         };
         StreamRing streamRing;
 

@@ -1,4 +1,5 @@
 #include "CompanionServer.h"
+#include "SecureToken.h"
 #include "CompanionStreamFormat.h"
 #include "../Theme/BrandColors.h"
 
@@ -387,18 +388,12 @@ poll();
         if (running.load()) return true;
         bind = bindAddress.isEmpty() ? juce::String ("127.0.0.1") : bindAddress;
 
-        // Generate a fresh 32-hex-char access token each start. The
-        // token is the only thing keeping someone else on the same
-        // Wi-Fi from arming tracks when bound to 0.0.0.0 -- mint a
-        // new one per server lifetime so an old token from a prior
-        // session doesn't grant access to a fresh one. Sourced from
-        // juce::Uuid (OS entropy / high-res + MAC mixing) rather than a
-        // wall-clock-seeded juce::Random, whose output an attacker who
-        // knows roughly when the server started could brute-force
-        // (finding #8c). Two UUIDs give 64 hex chars of unguessable token.
+        // Every server lifetime gets a fresh 256-bit OS-random capability.
+        // Failure to obtain entropy must leave the listener closed.
         {
             std::lock_guard<std::mutex> g (tokenLock);
-            accessToken = juce::Uuid().toString() + juce::Uuid().toString();
+            accessToken = securetoken::generate (entropyProviderForTests);
+            if (accessToken.isEmpty()) return false;
         }
 
         listener = std::make_unique<juce::StreamingSocket>();
@@ -410,6 +405,8 @@ poll();
                                       + " bind=" + bind + " errno=" + juce::String (errno)
                                       + " (" + juce::String (std::strerror (errno)) + ")");
             listener.reset();
+            std::lock_guard<std::mutex> g (tokenLock);
+            accessToken.clear();
             return false;
         }
         listenPort.store (port);
@@ -526,11 +523,18 @@ poll();
         if (streamRing.active.load (std::memory_order_relaxed) <= 0 || streamRing.capacity() == 0)
             return;
         const auto cap = streamRing.capacity();
+        const auto first = streamRing.writeIdx.load (std::memory_order_relaxed);
         for (int i = 0; i < n; ++i)
         {
-            const auto idx = (streamRing.writeIdx.load (std::memory_order_relaxed) + (std::size_t) i) % cap;
-            streamRing.dataL[idx] = L != nullptr ? L[i] : 0.0f;
-            streamRing.dataR[idx] = R != nullptr ? R[i] : 0.0f;
+            const auto position = first + (std::size_t) i;
+            auto& slot = streamRing.slots[position % cap];
+            const float pair[2] { L != nullptr ? L[i] : 0.0f, R != nullptr ? R[i] : 0.0f };
+            std::uint64_t packed;
+            static_assert (sizeof (pair) == sizeof (packed));
+            std::memcpy (&packed, pair, sizeof (packed));
+            slot.sequence.store ((std::uint64_t) position * 2 + 1);
+            slot.stereo.store (packed);
+            slot.sequence.store ((std::uint64_t) position * 2 + 2);
         }
         streamRing.writeIdx.fetch_add ((std::size_t) n, std::memory_order_release);
     }
@@ -888,13 +892,27 @@ poll();
             const auto avail = wIdx - readIdx;
             const auto take  = juce::jmin ((std::size_t) 1024, (std::size_t) avail);
             outChunk.resize (take * 2);
+            if (streamReadTestHook) streamReadTestHook();
+            bool overwritten = false;
             for (std::size_t i = 0; i < take; ++i)
             {
-                const auto idx = (readIdx + i) % cap;
-                const float l = streamRing.dataL[idx];
-                const float r = streamRing.dataR[idx];
+                auto& slot = streamRing.slots[(readIdx + i) % cap];
+                const auto expected = (std::uint64_t) (readIdx + i) * 2 + 2;
+                if (slot.sequence.load() != expected) { overwritten = true; break; }
+                const auto packed = slot.stereo.load();
+                if (slot.sequence.load() != expected) { overwritten = true; break; }
+                float pair[2];
+                std::memcpy (pair, &packed, sizeof (packed));
+                const float l = pair[0], r = pair[1];
                 outChunk[i * 2 + 0] = (juce::int16) juce::jlimit (-32768, 32767, (int) (l * 32767.0f));
                 outChunk[i * 2 + 1] = (juce::int16) juce::jlimit (-32768, 32767, (int) (r * 32767.0f));
+            }
+            if (overwritten)
+            {
+                // A slow consumer drops the stale chunk; it never combines
+                // samples from different wraps or delays the audio producer.
+                readIdx = streamRing.writeIdx.load (std::memory_order_acquire);
+                continue;
             }
             const auto bytes = (int) (outChunk.size() * sizeof (juce::int16));
             // Don't block indefinitely inside write() when the peer has gone

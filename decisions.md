@@ -6,6 +6,14 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 ---
 
+## Owned finalization and truthful persistence completion — 2026-10-05
+
+**Context.** A live trace placed the UI in metadata snapshot copies on an external volume. Controlled regressions then reproduced both that barrier and the recorder's drain/splice/read-open barrier blocking message processing. Recording becoming false did not establish that required metadata had saved; remote STOP and cue updates could report success after a failure.
+
+**Decision.** End capture once at the recorder boundary and retain a finalization lease while an engine-owned worker completes media I/O and prepares reader state. Install live playback/clip state on the message thread and retire displaced readers on owned work. MainComponent holds the session guard through immutable metadata persistence on a separate serial writer. Explicit saves keep their outcomes; UI-only layout requests coalesce with bounded storage. Publish durable success after required writes/snapshot completion, retain failures, and compare current content before marking clean. A confirmed remote STOP returns a pending explanation until a later retry can report the completed result. Preserve existing recording safety confirmation and persistence formats.
+
+**Consequences.** UI navigation can continue while capture/session mutations remain guarded. Closing or replacing a session reserves edits and waits for a successful continuation; queued callbacks cannot dereference a destroyed host. Synchronous compatibility helpers and the daemon host acknowledgement/load path remain identified residuals. Metadata snapshots are not audio backups. All three full S6 suites pass 519 groups without failures; no sanitizer reports were emitted. Final bounded disk-full verification passes; the verified S6 pair is installed and left closed, normal startup smoke is microphone-consent-gated, and physical-rig acceptance remains separate; [the audit register](docs/AUDIT-2026-10-05.md) records defect/test mappings, results and residuals.
+
 ## October audit contracts — 2026-10-04
 
 **Context.** The October audits found data-alignment, session-identity and asynchronous-state failures that were not covered by the earlier capture checks. A backing bed could move the capture endpoint, unknown replica ownership could overwrite another take, and reconnect or delayed confirmation could act on stale state.

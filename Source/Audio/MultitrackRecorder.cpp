@@ -18,6 +18,28 @@
 
 namespace zynforge
 {
+    namespace
+    {
+        struct SessionReportState
+        {
+            std::mutex publication;
+            std::atomic<juce::int64> generation { 0 };
+        };
+
+        std::shared_ptr<SessionReportState> sessionReportState (const juce::File& directory)
+        {
+            static std::mutex registryLock;
+            static std::map<juce::String, std::weak_ptr<SessionReportState>> registry;
+            const std::lock_guard<std::mutex> lock (registryLock);
+            for (auto it = registry.begin(); it != registry.end();)
+                if (it->second.expired()) it = registry.erase (it); else ++it;
+            auto& weak = registry[directory.getFullPathName()];
+            auto state = weak.lock();
+            if (! state) { state = std::make_shared<SessionReportState>(); weak = state; }
+            return state;
+        }
+    }
+
     static constexpr int kFifoSeconds     = 4;   // per-channel FIFO length
     static constexpr int kPreRollSafetySec = 2;  // extra buffer beyond user setting
 
@@ -98,6 +120,8 @@ namespace zynforge
 
     void MultitrackRecorder::prepare (double sr, int maxBlock, int numInputs)
     {
+        const juce::ScopedLock structureGuard (structureLock);
+        if (isFinalizing()) return;
         stopRecording();
         // Detach existing shards from their threads -- they'll be rebuilt.
         for (auto& sh : shards)
@@ -186,13 +210,13 @@ namespace zynforge
 
     void MultitrackRecorder::setBackupDirectory (const juce::File& dir)
     {
-        if (isRecording()) return;
+        if (isRecording() || isFinalizing()) return;
         backupDir = dir;
     }
 
     void MultitrackRecorder::addTrack()
     {
-        if (isRecording()) return;
+        if (isRecording() || isFinalizing()) return;
 
         const int fifoSize = juce::nextPowerOfTwo ((int) (sampleRate * kFifoSeconds));
 
@@ -213,7 +237,7 @@ namespace zynforge
 
     void MultitrackRecorder::removeLastTrack()
     {
-        if (isRecording() || tracks.empty()) return;
+        if (isRecording() || isFinalizing() || tracks.empty()) return;
         const juce::ScopedLock sl (structureLock);   // off-thread readers are mid-getTrack
         tracks.pop_back();
         fifos.pop_back();
@@ -224,7 +248,7 @@ namespace zynforge
 
     void MultitrackRecorder::removeTrackAt (int index)
     {
-        if (isRecording()) return;
+        if (isRecording() || isFinalizing()) return;
         const juce::ScopedLock sl (structureLock);
         if (index < 0 || index >= (int) tracks.size()) return;
         tracks.erase (tracks.begin() + index);
@@ -236,7 +260,7 @@ namespace zynforge
 
     void MultitrackRecorder::setTrackCount (int n)
     {
-        if (isRecording()) return;
+        if (isRecording() || isFinalizing()) return;
         // One lock for the whole resize: a reader must never observe a
         // half-applied count. CriticalSection is recursive, so the
         // add/removeLastTrack calls below re-entering it is fine.
@@ -250,7 +274,7 @@ namespace zynforge
     {
         seconds = juce::jlimit (0, 30, seconds);
         if (seconds == preRollSeconds) return;
-        if (isRecording()) return;
+        if (isRecording() || isFinalizing()) return;
         preRollSeconds = seconds;
         allocatePreRollBuffers();
     }
@@ -383,6 +407,8 @@ namespace zynforge
 
     void MultitrackRecorder::release()
     {
+        const juce::ScopedLock structureGuard (structureLock);
+        if (isFinalizing()) return;
         // Called from AudioEngine::audioDeviceStopped on every device
         // stop / restart (device swap, sample-rate or buffer-size change).
         // Detach the device- and thread-bound writer shards, but PRESERVE
@@ -698,7 +724,7 @@ namespace zynforge
     {
         const juce::ScopedLock structureGuard (structureLock);
         startError.clear();
-        if (recording.load()) return false;
+        if (recording.load() || isFinalizing()) return false;
         if (tracks.empty())   return false;
 
         // Refuse corrupt/persisted overlapping pairs before creating any files.
@@ -707,8 +733,6 @@ namespace zynforge
                 && (i + 1 >= tracks.size() || tracks[i + 1]->isStereo.load()))
             { startError = "Overlapping or incomplete stereo pair"; return false; }
 
-        reportAsyncState->generation.fetch_add (1, std::memory_order_acq_rel);
-        reportAsyncState->failed.store (false, std::memory_order_relaxed);
         recoveryMarkerFailed.store (false, std::memory_order_relaxed);
         reportWriteFailed.store (false, std::memory_order_relaxed);
         punchSpliceFailed.store (false, std::memory_order_relaxed);
@@ -1033,6 +1057,19 @@ namespace zynforge
             }
         }
 
+        // Validation-only refusals leave earlier integrity work intact. Once
+        // this start may mutate audio, invalidate only this SESSION's snapshot.
+        // A different session's job remains valid, even on the same recorder.
+        std::shared_ptr<std::atomic<juce::int64>> startReportToken;
+        const auto invalidateReportsBeforeMediaMutation = [&]
+        {
+            if (startReportToken) return;
+            juce::int64 ignoredGeneration = 0;
+            startReportToken = claimReportGeneration (sessionDir, ignoredGeneration);
+            reportAsyncState->generation.fetch_add (1, std::memory_order_acq_rel);
+            reportAsyncState->failed.store (false, std::memory_order_relaxed);
+        };
+
         std::vector<bool> hadPrimaryBase (tracks.size(), false);
         for (std::size_t i = 0; i < tracks.size(); ++i)
         {
@@ -1045,7 +1082,8 @@ namespace zynforge
         // (a take built up by continue-recording is multi-part) survives to be
         // spliced + flattened back on stop. No-op when not punching or no take.
         std::vector<std::pair<juce::File, juce::File>> punchStashes;
-        auto stashForPunch = [this, &punchStashes] (const juce::File& target) -> bool
+        auto stashForPunch = [this, &punchStashes, &invalidateReportsBeforeMediaMutation]
+                            (const juce::File& target) -> bool
         {
             if (! punchInActive) return true;
             // Even when there is no main file, a sidecar may be all that
@@ -1054,7 +1092,9 @@ namespace zynforge
             for (auto& part : findTakeParts (target))   // [Track_NN, _part02, ...]
             {
                 const auto sidecar = punchSidecar (part);
-                if (sidecar.exists() || ! part.moveFileTo (sidecar)) return false;
+                if (sidecar.exists()) return false;
+                invalidateReportsBeforeMediaMutation();
+                if (! part.moveFileTo (sidecar)) return false;
                 punchStashes.emplace_back (part, sidecar);
             }
             return true;
@@ -1245,6 +1285,7 @@ namespace zynforge
                 primaryFile = pf;
                 w.partNumberPrimary = pn;
             }
+            invalidateReportsBeforeMediaMutation();
             w.writer.reset (openWriterAtPath (primaryFile, primary.container, primary.bitDepth, chans));
             ++primaryAttempts;
             if (w.writer != nullptr) ++primaryOpened;
@@ -1539,7 +1580,7 @@ namespace zynforge
 
     bool MultitrackRecorder::setMirrors (const std::vector<MirrorConfig>& configs)
     {
-        if (isRecording()) return false;   // only editable when stopped
+        if (isRecording() || isFinalizing()) return false;   // only editable when stopped
         mirrorConfigs = configs;
         return true;
     }
@@ -1590,11 +1631,9 @@ namespace zynforge
 
     bool MultitrackRecorder::anyMirrorFailed() const noexcept
     {
-        if (mirrorFailed.load (std::memory_order_relaxed)) return true;
-        for (const auto& w : writers)
-            for (const auto& m : w.mirrors)
-                if (m.failed) return true;
-        return false;
+        // Every open/write/roll/padding failure latches this atomic. Live
+        // telemetry must never traverse worker-owned writers during close.
+        return mirrorFailed.load (std::memory_order_relaxed);
     }
 
     juce::int64 MultitrackRecorder::maxBytesForContainer (int containerCode) noexcept
@@ -1668,12 +1707,27 @@ namespace zynforge
         return w;
     }
 
+    bool MultitrackRecorder::beginFinalization()
+    {
+        const juce::ScopedLock structureGuard (structureLock);
+        const juce::SpinLock::ScopedLockType guard (captureBoundary);
+        if (finalizing.load() || ! recording.load()) return false;
+        finalizing.store (true, std::memory_order_release);
+        recording.store (false, std::memory_order_release);
+        return true;
+    }
+
     void MultitrackRecorder::stopRecording()
     {
-        {
-            const juce::SpinLock::ScopedLockType guard (captureBoundary);
-            if (! recording.exchange (false, std::memory_order_acq_rel)) return;
-        }
+        if (! beginFinalization()) return;
+        const juce::ScopeGuard releaseLease { [this] { endFinalization(); } };
+        finishFinalization();
+    }
+
+    void MultitrackRecorder::finishFinalization()
+    {
+        jassert (isFinalizing() && ! isRecording());
+        if (beforeFinalizationForTests) beforeFinalizationForTests();
 
         // Quiesce the writer threads BEFORE the final flush + close.
         // Each shard runs on its own TimeSliceThread draining the
@@ -1686,9 +1740,9 @@ namespace zynforge
         // intended sample count (header says 24 s, data is 8 s).
         // removeTimeSliceClient blocks until any in-flight drain on the
         // shard returns and guarantees no further calls, so after this
-        // loop the message thread is the sole owner of the FIFOs and
-        // writers. (We are always on the message thread here, never on
-        // a writer thread, so this can't deadlock.)
+        // loop the finalization caller is the sole FIFO/writer owner. It is
+        // either the owned STOP worker or the legacy synchronous caller,
+        // never one of the writer threads being detached.
         for (auto& sh : shards)
             for (auto& th : writerThreads)
                 th->removeTimeSliceClient (sh.get());
@@ -1764,10 +1818,20 @@ namespace zynforge
         closeWriters();
         backupActive.store (false, std::memory_order_relaxed);
 
-        // Re-attach the shard clients to their writer threads so the next
-        // take drains again (we detached them above to flush + close
-        // single-threaded).
-        rebuildShards();
+        // The finalization lease keeps the channel layout fixed. Reattach the
+        // existing clients instead of replacing their vector: status readers
+        // may still be loading each client's atomic telemetry during STOP.
+        // Every client was detached before drain/close, so resetting its
+        // private throughput accumulator here cannot race its writer thread.
+        for (size_t i = 0; i < shards.size(); ++i)
+        {
+            auto& shard = *shards[i];
+            shard.throughputAccumBytes = 0;
+            shard.throughputWindowMs = 0;
+            shard.shardBytesPerSec.store (0, std::memory_order_relaxed);
+            shard.shardRingFillPct.store (0, std::memory_order_relaxed);
+            writerThreads[i % writerThreads.size()]->addTimeSliceClient (&shard);
+        }
 
         // ── Punch-in splice ────────────────────────────────────────────────
         // Each punched track recorded a clean fresh file; its existing take was
@@ -1990,7 +2054,7 @@ namespace zynforge
         for (std::size_t i = 0; i < tracks.size(); ++i)
         {
             const auto& ts = *tracks[i];
-            trackMetas.push_back ({ (int) i, ts.name,
+            trackMetas.push_back ({ (int) i, ts.getNameThreadSafe(),
                                     ts.clipCount.load (std::memory_order_relaxed),
                                     (juce::int64) ts.lastClipSample.load (std::memory_order_relaxed),
                                     ts.inputRouting .load (std::memory_order_relaxed),
@@ -2160,8 +2224,9 @@ namespace zynforge
             // Claim this stop's report generation for THIS SESSION. Anything a
             // previous stop's hash thread is still working on is now stale and
             // must not overwrite what we write below.
-            juce::int64 myGen = 0;
-            auto genToken = claimReportGeneration (sessionDir, myGen);
+            const auto reportState = sessionReportState (sessionDir);
+            std::unique_lock<std::mutex> publication (reportState->publication);
+            const auto myGen = reportState->generation.fetch_add (1, std::memory_order_acq_rel) + 1;
 
             // 1) Write the metadata report SYNCHRONOUSLY, right now -- this
             //    guarantees session.report.json exists the instant recording
@@ -2171,6 +2236,7 @@ namespace zynforge
                 ! atomicfile::writeText (sessionDir.getChildFile ("session.report.json"),
                                          buildReportJson (trackMetas, writerSnapshots, false, false, {})),
                 std::memory_order_relaxed);
+            publication.unlock();
 
             // Scan sequentially at background priority, with bounded read bursts.
             // Eight parallel hashes plus waveform scans saturated the external
@@ -2178,12 +2244,17 @@ namespace zynforge
             // The immediate pending report stays durable while this scan yields.
             const auto asyncState = reportAsyncState;
             const auto asyncGen = asyncState->generation.load (std::memory_order_acquire);
+            const auto testHooks = reportTestHooks;
             juce::Thread::launch (
-                [buildReportJson, sessionDir, bDir, backupWasRunning, myGen, genToken,
-                 asyncState, asyncGen,
+                [buildReportJson, sessionDir, bDir, backupWasRunning, myGen, reportState,
+                 asyncState, asyncGen, testHooks,
                  trackMetas  = std::move (trackMetas),
                  writerSnaps = std::move (writerSnapshots)]
                 {
+                    const juce::ScopeGuard finishedHook { [testHooks]
+                    {
+                        if (testHooks && testHooks->finished) testHooks->finished();
+                    } };
                    #if JUCE_MAC
                     pthread_set_qos_class_self_np (QOS_CLASS_BACKGROUND, 0);
                    #endif
@@ -2211,10 +2282,10 @@ namespace zynforge
                     // sessions. It is acquired only on this background worker.
                     static std::mutex reportScanMutex;
                     const std::lock_guard<std::mutex> scanGuard (reportScanMutex);
+                    if (testHooks && testHooks->beforeScan) testHooks->beforeScan();
                     const auto current = [=]
                     {
-                        return genToken->load (std::memory_order_acquire) == myGen
-                            && asyncState->generation.load (std::memory_order_acquire) == asyncGen;
+                        return reportState->generation.load (std::memory_order_acquire) == myGen;
                     };
                     hashing::ReadPolicy readPolicy { current, 50 };
                     std::map<juce::String, juce::String> shaByPath;
@@ -2233,9 +2304,15 @@ namespace zynforge
                         juce::ignoreUnused (path);
                         if (sha.isEmpty()) { hashingFailed = true; break; }
                     }
+                    if (testHooks && testHooks->beforePublish) testHooks->beforePublish();
+                    // The last validity check and rename share ownership with
+                    // new pending reports, media mutation, and session removal.
+                    const std::lock_guard<std::mutex> publish (reportState->publication);
+                    if (! current()) return;
                     const bool wrote = atomicfile::writeText (
                         sessionDir.getChildFile ("session.report.json"),
                         buildReportJson (trackMetas, writerSnaps, true, hashingFailed, shaByPath));
+                    if (testHooks && testHooks->afterPublish) testHooks->afterPublish();
                     if ((! wrote || hashingFailed)
                         && asyncState->generation.load (std::memory_order_acquire) == asyncGen)
                         asyncState->failed.store (true, std::memory_order_release);
@@ -2251,17 +2328,18 @@ namespace zynforge
         MultitrackRecorder::claimReportGeneration (const juce::File& sessionDir,
                                                    juce::int64& outGeneration)
     {
-        // Process-wide, keyed by session path: the stops that race are often
-        // DIFFERENT recorder instances writing one session's report.
-        static std::mutex m;
-        static std::map<juce::String, std::shared_ptr<std::atomic<juce::int64>>> tokens;
+        const auto state = sessionReportState (sessionDir);
+        const std::lock_guard<std::mutex> lock (state->publication);
+        outGeneration = state->generation.fetch_add (1, std::memory_order_acq_rel) + 1;
+        return { state, &state->generation };
+    }
 
-        const auto key = sessionDir.getFullPathName();
-        const std::lock_guard<std::mutex> lk (m);
-        auto& tok = tokens[key];
-        if (tok == nullptr) tok = std::make_shared<std::atomic<juce::int64>> (0);
-        outGeneration = tok->fetch_add (1, std::memory_order_acq_rel) + 1;
-        return tok;
+    bool MultitrackRecorder::deleteSessionAfterCancellingReports (const juce::File& directory)
+    {
+        const auto state = sessionReportState (directory);
+        const std::lock_guard<std::mutex> lock (state->publication);
+        state->generation.fetch_add (1, std::memory_order_acq_rel);
+        return directory.deleteRecursively();
     }
 
     void MultitrackRecorder::closeWriters()

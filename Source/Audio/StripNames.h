@@ -27,6 +27,10 @@ namespace zynforge
         void         setName (int channelIndex, const juce::String&);
         void         clearName (int channelIndex);
 
+        // Clear this module's overrides in [firstIndex, lastIndexExclusive)
+        // with one shared-file reload/save, keeping its live cache consistent.
+        void clearRange (int firstIndex, int lastIndexExclusive);
+
     private:
         static juce::String keyFor (int channelIndex);
         static bool& testModeFlag() noexcept { static bool t = false; return t; }

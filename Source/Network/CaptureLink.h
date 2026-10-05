@@ -3,6 +3,7 @@
 #include <juce_core/juce_core.h>
 
 #include "CaptureProtocol.h"
+#include "CaptureIdentity.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -10,6 +11,8 @@
 #include <mutex>
 #include <chrono>
 #include <thread>
+
+namespace zynforge { struct ConcurrencyAuditAccess; }
 
 namespace zynforge::capture
 {
@@ -49,10 +52,12 @@ namespace zynforge::capture
 
     private:
         void acceptLoop();
-        void readLoop (std::unique_ptr<juce::StreamingSocket>);
+        void readLoop (std::unique_ptr<juce::StreamingSocket>, Command hello,
+                       juce::String serverProof);
         bool writeLine (const juce::var&);
 
         std::unique_ptr<juce::StreamingSocket> listener;
+        identity::Endpoint endpointIdentity;
         // shared_ptr, not a raw pointer: the accept loop needs to CLOSE a stuck
         // client's socket without holding writeLock (that's what interrupts a
         // blocking write), and it must not race the reader thread destroying it.
@@ -102,12 +107,18 @@ namespace zynforge::capture
     private:
         void readLoop();
         bool writeLine (const juce::var&);
+        bool writeLine (const juce::var&, std::chrono::steady_clock::time_point deadline);
+
+        friend struct zynforge::ConcurrencyAuditAccess;
 
         std::unique_ptr<juce::StreamingSocket> socket;
         std::timed_mutex  writeLock;
         std::thread       readThread;
         std::atomic<bool> connected  { false };
         std::atomic<bool> superseded { false };
+        std::atomic<bool> authenticated { false };
+        int endpointPort { 0 };
+        juce::String challengeNonce; // protected by replyLock
 
         // Request/reply correlation: one outstanding request at a time (all
         // GUI calls are synchronous message-thread round-trips).

@@ -22,6 +22,7 @@
 #include "WelcomeDialog.h"
 #include "PerfDashboard.h"
 #include "SetlistBar.h"
+#include "SessionMetadataWriter.h"
 #include "TempoBar.h"
 #include "TimelineStrip.h"
 #include "Toast.h"
@@ -33,7 +34,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class OctoberRegressionTests; }
+namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class OctoberRegressionTests; struct ConcurrencyAuditAccess; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -71,7 +72,8 @@ private:
     // Immediate capture stop shared by the confirmed UI STOP, remote
     // transports and "Stop & Quit".  Unlike onStopClicked it has no two-tap
     // guard because its callers have already confirmed their intent.
-    bool stopActiveCapture (bool stopPlaybackAndRewind);
+    bool stopActiveCapture (bool stopPlaybackAndRewind, bool persistMetadata = true);
+    void stopActiveCaptureAsync (bool rewind, std::function<void (bool)> completion = {});
     std::optional<bool> handleRemoteTransport (
         zynforge::AudioEngine::RemoteTransportAction, juce::String& error);
     void onFileMenuClicked();
@@ -109,6 +111,23 @@ private:
     // File > Open, the Welcome dialog, and the launch auto-reopen.
     int  openSessionFolder (const juce::File& dir);
     bool saveSessionStateTo (const juce::File& dir);
+    zynforge::SessionMetadataSnapshot captureMetadataSnapshot (const juce::File& dir, bool backup = true);
+    juce::String captureProjectPatchJson() const;
+    juce::var captureUILayoutJson() const;
+    void enqueueMetadataSave (const juce::File& dir, const juce::String& success,
+                              std::function<void (bool)> completion = {}, bool automatic = false,
+                              bool backup = true);
+    void enqueueMetadataSnapshot (zynforge::SessionMetadataSnapshot, const juce::String& success,
+                                  std::function<void (bool)> completion = {}, bool automatic = false);
+    void requestUILayoutSave();
+    void saveCueChanges (const juce::String& success);
+    zynforge::SessionMetadataWriter metadataWriter;
+    int pendingMetadataSaves = 0;
+    juce::uint64 metadataRevision = 0;
+    bool captureMetadataPending = false; // holds the entire media + metadata STOP operation
+    bool restoringUILayout = false;
+    bool metadataContinuationReserved = false;
+    juce::String lastCaptureFinalizationError;
     // Periodic auto-save + timestamped backup of the active session, driven
     // from the 10 Hz timer. Interval (minutes; 0 = off) lives in appProps
     // "autosaveMinutes"; showAutosaveSettings() is the picker dialog. Each
@@ -382,6 +401,7 @@ private:
 
     friend class zynforge::MainTransportRegressionTests;
     friend class zynforge::OctoberRegressionTests;
+    friend struct zynforge::ConcurrencyAuditAccess;
 
     // Live SafePointers to dialog windows opened by the header buttons.
     // A second click on the launching button closes the dialog instead of

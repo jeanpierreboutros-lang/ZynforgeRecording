@@ -380,6 +380,29 @@ namespace zynforge
         return juce::var (tracks);
     }
 
+    namespace
+    {
+        bool readSampleCoordinate (const juce::var& value, juce::int64& result)
+        {
+            // Missing legacy fields retain their zero default. Integer JSON
+            // coordinates never pass through double, which loses samples >2^53.
+            if (value.isVoid()) { result = 0; return true; }
+            if (value.isInt() || value.isInt64())
+            {
+                result = (juce::int64) value;
+                return result >= 0;
+            }
+            if (! value.isDouble()) return false;
+            const double number = (double) value;
+            // INT64_MAX rounds to 2^63 as a double: use an exclusive upper bound.
+            if (! std::isfinite (number) || number < 0.0 || number >= 0x1p63
+                || std::floor (number) != number)
+                return false;
+            result = (juce::int64) number;
+            return true;
+        }
+    }
+
     void AudioEngine::loadPlaylistsFromJson (const juce::var& v)
     {
         auto* arr = v.getArray();
@@ -418,11 +441,16 @@ namespace zynforge
                         Clip c;
                         c.name                 = cObj->getProperty ("name").toString();
                         c.audioFile            = juce::File (cObj->getProperty ("file").toString());
-                        c.timelineStartSamples = (juce::int64) (double) cObj->getProperty ("tlStart");
-                        c.fileStartSamples     = (juce::int64) (double) cObj->getProperty ("fileStart");
-                        c.fileLengthSamples    = (juce::int64) (double) cObj->getProperty ("fileLen");
-                        c.fadeInSamples        = (juce::int64) (double) cObj->getProperty ("fadeIn");
-                        c.fadeOutSamples       = (juce::int64) (double) cObj->getProperty ("fadeOut");
+                        if (! readSampleCoordinate (cObj->getProperty ("tlStart"), c.timelineStartSamples)
+                            || ! readSampleCoordinate (cObj->getProperty ("fileStart"), c.fileStartSamples)
+                            || ! readSampleCoordinate (cObj->getProperty ("fileLen"), c.fileLengthSamples)
+                            || ! readSampleCoordinate (cObj->getProperty ("fadeIn"), c.fadeInSamples)
+                            || ! readSampleCoordinate (cObj->getProperty ("fadeOut"), c.fadeOutSamples))
+                            continue;
+                        constexpr auto maxSample = std::numeric_limits<juce::int64>::max();
+                        if (c.fileLengthSamples > maxSample - c.timelineStartSamples
+                            || c.fileLengthSamples > maxSample - c.fileStartSamples)
+                            continue;
                         c.fadeCurve            = (int) cObj->getProperty ("fadeCurve");   // 0 if absent
                         c.sourceChannel        = cObj->hasProperty ("sourceChannel") ? (int) cObj->getProperty ("sourceChannel") : -1;
                         const auto afName = cObj->getProperty ("audioFile").toString();

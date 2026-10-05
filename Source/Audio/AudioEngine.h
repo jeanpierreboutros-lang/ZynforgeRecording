@@ -27,6 +27,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <thread>
 
 namespace zynforge
 {
@@ -34,10 +35,14 @@ namespace zynforge
     class MidiControlSurface;
     class CompanionServer;
 
+    class MainTransportRegressionTests;
+
     class AudioEngine final : public juce::AudioIODeviceCallback,
                               public juce::MidiInputCallback,
                               public ITransport
     {
+        friend class SettingsBatchAuditTests;
+        friend class MainTransportRegressionTests; // deterministic STOP failure-latch fixtures
     public:
         AudioEngine();
         ~AudioEngine() override;
@@ -174,6 +179,10 @@ namespace zynforge
 
         bool startRecording (const juce::File& sessionDir) override;
         void stopRecording() override;
+        // UI entry: accepted once, completion on UI after media/player readiness
+        // and reader retirement. A false return never invokes completion.
+        bool stopRecordingAsync (std::function<void (bool)> completion);
+        bool isCaptureFinalizing() const noexcept { return asyncCaptureFinalizing.load(); }
         // Excludes generated reference beds whose length is unrelated to a take.
         juce::int64 getCaptureLengthSamples();
         bool isRecording() const noexcept override { return recorder.isRecording() || externalRecording.load(); }
@@ -185,7 +194,7 @@ namespace zynforge
         void setSessionTransitionActive (bool active) noexcept
         { sessionTransitionActive.store (active, std::memory_order_release); }
         bool isSessionTransitionActive() const noexcept
-        { return sessionTransitionActive.load (std::memory_order_acquire); }
+        { return sessionTransitionActive.load (std::memory_order_acquire) || isCaptureFinalizing(); }
 
         // Stereo mix bus → file. When enabled, every startRecording also
         // opens a stereo StereoMix.wav writer in the session dir which
@@ -212,6 +221,7 @@ namespace zynforge
         // saved count and applies the file, making the session authoritative
         // for its own mixer state. Returns false for a missing or malformed
         // file so callers can recover a sensible layout from recorded audio.
+        juce::String captureSessionMixJson(); // message-thread snapshot; no filesystem I/O
         bool saveSessionMixTo   (const juce::File& sessionDir);
         bool loadSessionMixFrom (const juce::File& sessionDir);
         // Drop every piece of session-owned state before opening or creating
@@ -220,6 +230,7 @@ namespace zynforge
         void clearSessionState();
         void startPlayback() override
         {
+            if (isCaptureFinalizing()) return;
             // Never play back on top of a live take. This is a recorder, not
             // a DAW -- summing the previous take into the monitor/master mid-
             // record is always wrong. The UI PLAY button guards this, but
@@ -1101,6 +1112,31 @@ namespace zynforge
                                                const juce::AudioIODeviceCallbackContext&) override;
 
     private:
+        struct CaptureStopJob
+        {
+            std::thread worker;
+            SessionPlayer::Prepared prepared, retired;
+            std::vector<Clip> explicitReaders;
+            std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> mixWriter;
+            juce::File directory;
+            juce::int64 recordEnd = 0;
+            double playbackRate = 48000.0;
+            int playbackBlock = 512;
+            bool ok = true;
+            juce::uint64 id = 0;
+            std::function<void (bool)> completion;
+        };
+        void installFinalizedCapture (juce::uint64 id);
+        void completeFinalizedCapture (juce::uint64 id);
+        void applyDeviceConfiguration (double, int, juce::AudioWorkgroup);
+        struct DeferredDeviceConfiguration { double rate; int block; juce::AudioWorkgroup workgroup; };
+        std::mutex deviceLifecycleLock;
+        std::optional<DeferredDeviceConfiguration> deferredDeviceConfiguration;
+        bool deferredDeviceRelease = false;
+        std::atomic<bool> deferredDeviceAudio { false };
+        std::atomic<bool> asyncCaptureFinalizing { false };
+        std::unique_ptr<CaptureStopJob> captureStopJob;
+        juce::uint64 captureStopSequence = 0;
         AsyncHandle asyncHandle;
         std::atomic<bool> captureFinalizationPending { false };
         std::atomic<juce::int64> interruptedCaptureEnd { 0 };
@@ -1400,11 +1436,7 @@ namespace zynforge
             // rewrites the shared file. clear()+reload() picks up others'
             // changes AND honours their deletions. Guarded on the file existing
             // so a first-run (no file yet) doesn't blank current in-memory state.
-            if (appProps != nullptr && appProps->getFile().existsAsFile())
-            {
-                appProps->clear();
-                appProps->reload();
-            }
+            if (appProps != nullptr) reloadSettingsReplacing (*appProps);
         }
 
         // Wipe every persisted per-strip override (name, colour, gain, pan,

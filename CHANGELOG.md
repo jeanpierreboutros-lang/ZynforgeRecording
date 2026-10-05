@@ -23,6 +23,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### October 5 audit repair — installed on development Mac, native smoke pending
+
+- Move interactive metadata saves and local STOP media finalization onto owned workers; keep navigation responsive and preserve completion/failure state through required persistence.
+- Retain remote STOP's confirmation, return an explicit pending result while finalization continues, and acknowledge only its completed outcome. Local completion now preserves primary/device/backup/mirror/recovery failures as well as report/punch/stereo failures. Surface cue-save failures and preserve newer unsaved changes.
+- Keep the newest metadata snapshots across collision/clock changes; refuse linked backup roots, preserve external links/journals, and reject invalid retention safely.
+- Repair report publication/deletion ownership, callback/status/stream races, imported/exported audio read failures, invalid automation/playlist boundaries and mismatched stereo-source rates.
+- Generate capabilities from OS entropy, redact OSC secrets and authenticate capture transport with protocol 4. Upgrade the GUI/helper together; recorded audio/project formats are unchanged.
+- Batch shared preference reloads/writes when clearing strips and remove both current and legacy persisted send fields. A deterministic red measured 1,537 full-reset reloads, 61 for ten slots and 36 surviving send fields; S4 targeted Release passes four groups with reset/range/growth reloads 5/5/10 and no surviving tested send fields.
+- Frozen S6 passed full optimized Release, TSan and ASan/UBSan/float-cast-overflow: 519 groups each, zero failures, no emitted sanitizer reports. Builds, signatures, static gates and final no-device TERM/INT probes pass. Final bounded disk-full tests pass (5/0). The verified S6 protocol-4 GUI/helper pair is installed on the development Mac and left closed, with the prior bundle retained for rollback. Normal startup smoke is consent-gated by macOS microphone permission; physical long-take acceptance remains pending. The Apple leak comparison retains nonzero framework cycles. See [the evidence register](docs/AUDIT-2026-10-05.md).
+
 ### Installed and cleaned up — 2026-10-04
 
 - Installed source build `c563b00` with its matching universal capture helper on both Macs. The build passed 438 automated test groups, both static gates, signatures and isolated startup smoke. Both installed apps launched and their executable hashes match the tested build.

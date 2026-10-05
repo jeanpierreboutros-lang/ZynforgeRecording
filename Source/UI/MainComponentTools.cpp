@@ -207,10 +207,11 @@ void MainComponent::togglePunchMode()
     }
     else
     {
-        const bool saved = ! engine.isRecording() || stopActiveCapture (false);
+        const bool hadCapture = engine.isRecording();
+        if (hadCapture) stopActiveCaptureAsync (false);
         restoreArmStateAfterPunch();   // leaving punch mode must not keep the forced arms
         restoreLoopAfterPunch();
-        if (saved) showStatus ("Punch mode OFF");
+        if (! hadCapture && ! captureMetadataPending) showStatus ("Punch mode OFF");
     }
 }
 
@@ -270,18 +271,23 @@ void MainComponent::servicePunch()
         // starts post-roll; it no longer decides which samples hit disk.
         if (engine.isRecording() && (pos >= punchOutSample || ! player.isPlaying()))
         {
-            const bool saved = stopActiveCapture (false);
-            restoreArmStateAfterPunch();
-            if (! saved)
+            juce::Component::SafePointer<MainComponent> self (this);
+            stopActiveCaptureAsync (false, [self] (bool saved)
             {
-                engine.stopPlayback();
-                engine.setPunchModeOn (false);
-                restoreLoopAfterPunch();
-                punchSessionActive = false;
-                return;
-            }
-            player.setPositionSamples (punchOutSample);
-            engine.startPlayback();
+                if (self == nullptr || ! self->punchSessionActive) return;
+                if (! saved)
+                {
+                    self->engine.stopPlayback();
+                    self->engine.setPunchModeOn (false);
+                    self->restoreLoopAfterPunch();
+                    self->punchSessionActive = false;
+                    return;
+                }
+                auto& playback = self->engine.getPlayer();
+                playback.setPositionSamples (self->punchOutSample);
+                self->engine.startPlayback();
+            });
+            restoreArmStateAfterPunch();
         }
         return;
     }
@@ -328,6 +334,7 @@ void MainComponent::servicePunch()
                 wasInsidePunch = inside;
                 return;
             }
+            lastCaptureFinalizationError.clear();
         }
     }
     else if (! inside && wasInsidePunch && engine.isRecording())
@@ -335,21 +342,23 @@ void MainComponent::servicePunch()
         // Crossed out -- stop recording cleanly (the splice replaces the
         // punched region; audio after the punch-out is preserved), then put the
         // engineer's arm layout back exactly as it was before the punch.
-        const bool saved = stopActiveCapture (false);
-        restoreArmStateAfterPunch();
-        if (! saved)
+        juce::Component::SafePointer<MainComponent> self (this);
+        stopActiveCaptureAsync (false, [self] (bool saved)
         {
-            engine.stopPlayback();
-            engine.setPunchModeOn (false);
-            restoreLoopAfterPunch();
-            punchSessionActive = false;
-        }
+            if (self == nullptr || saved) return;
+            self->engine.stopPlayback();
+            self->engine.setPunchModeOn (false);
+            self->restoreLoopAfterPunch();
+            self->punchSessionActive = false;
+        });
+        restoreArmStateAfterPunch();
     }
     wasInsidePunch = inside;
 }
 
 void MainComponent::servicePunchSession()
 {
+    if (captureMetadataPending) return;
     // Drives a RECORD-button-triggered selection punch through its tail.
     // servicePunch() above does the actual in/out record; this just ends the
     // session: once recording has stopped (punched out) and the post-roll has
@@ -363,14 +372,15 @@ void MainComponent::servicePunchSession()
                    || (pos >= player.getTotalLengthSamples());
     if (! done) return;
 
-    const bool saved = ! engine.isRecording() || stopActiveCapture (false);   // safety net
+    const bool hadCapture = engine.isRecording();
+    if (hadCapture) stopActiveCaptureAsync (false); // safety net
     restoreArmStateAfterPunch();   // no-op if servicePunch already restored it
     engine.stopPlayback();
     engine.setPunchModeOn (false);
     restoreLoopAfterPunch();
     punchSessionActive = false;
     recordButton.setButtonText ("RECORD");
-    if (saved) showStatus ("Punch complete");
+    if (! hadCapture && lastCaptureFinalizationError.isEmpty()) showStatus ("Punch complete");
 }
 
 void MainComponent::runNoiseAnalysis()

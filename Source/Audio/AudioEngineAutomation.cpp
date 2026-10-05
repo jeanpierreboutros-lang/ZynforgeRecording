@@ -258,7 +258,15 @@ namespace zynforge
                 AutomationPoint pt;
                 pt.samplePos = (juce::int64) obj->getProperty ("s");
                 pt.value     = (float) (double) obj->getProperty ("v");
-                pt.curve     = (AutomationCurve) (int) obj->getProperty ("c");
+                const auto curve = obj->getProperty ("c");
+                const double curveValue = (double) curve;
+                pt.curve = (curve.isInt() || curve.isInt64() || curve.isDouble())
+                               && std::isfinite (curveValue)
+                               && curveValue >= (int) AutomationCurve::Hold
+                               && curveValue <= (int) AutomationCurve::ExpDown
+                               && std::floor (curveValue) == curveValue
+                         ? (AutomationCurve) (int) curveValue
+                         : AutomationCurve::Linear;
                 if (obj->hasProperty ("t"))
                     pt.tension = (float) (double) obj->getProperty ("t");
                 // Legacy preset migration -- old .zfproj files only
@@ -488,7 +496,7 @@ namespace zynforge
         // controls how value evolves FROM prev TO next. For Linear,
         // the per-point `tension` warps the ramp into ease-in (<0)
         // or ease-out (>0) via t^exp where exp = 2^(-tension*4).
-        double shaped;
+        double shaped = t; // Invalid in-memory enums also fall back to a linear ramp.
         switch (prev->curve)
         {
             case AutomationCurve::Hold:

@@ -62,11 +62,12 @@ namespace zynforge
                 { const std::lock_guard<std::mutex> l (smx); lastStatus = s; statusCount.fetch_add (1); };
 
                 expect (client.connect ("127.0.0.1", port), "client failed to connect");
-                expect (waitUntil ([&] { return server.hasClient(); }, 2000), "server saw no client");
+                expect (! server.hasClient(), "unverified socket became the active controller");
 
                 // Hello handshake.
                 const auto reply = client.hello (2000);
                 expect (reply.ok, "hello was not acked ok");
+                expect (waitUntil ([&] { return server.hasClient(); }, 2000), "server saw no authenticated client");
                 expectEquals (reply.version, kProtocolVersion);
                 expect (waitUntil ([&] { const std::lock_guard<std::mutex> l (rmx);
                                          return ! received.empty(); }, 2000),
@@ -105,6 +106,55 @@ namespace zynforge
 
                 client.disconnect();
                 server.stop();
+            }
+
+            beginTest ("Unauthenticated peer cannot publish positive replies, status, or supersession");
+            {
+                juce::StreamingSocket listener;
+                const bool listening = listener.createListener (0, "127.0.0.1");
+                expect (listening);
+                if (listening)
+                {
+                    CaptureClient client;
+                    std::atomic<int> positiveReplies { 0 }, diagnostics { 0 }, statuses { 0 };
+                    client.onReply = [&] (const Reply& reply)
+                    {
+                        if (reply.ok) positiveReplies.fetch_add (1);
+                        else if (reply.error == "fixture diagnostic") diagnostics.fetch_add (1);
+                    };
+                    client.onStatus = [&] (const EngineStatus&) { statuses.fetch_add (1); };
+                    const bool connected = client.connect ("127.0.0.1", listener.getBoundPort());
+                    expect (connected);
+                    if (connected)
+                    {
+                        std::unique_ptr<juce::StreamingSocket> peer (listener.waitForNextConnection());
+                        expect (peer != nullptr);
+                        if (peer != nullptr)
+                        {
+                            Reply forged; forged.ok = forged.completed = true;
+                            Reply diagnostic; diagnostic.error = "fixture diagnostic";
+                            EngineStatus forgedStatus; forgedStatus.recording = true;
+                            const auto payload = frame (forged.toJson())
+                                               + frame (encodeStatus (forgedStatus))
+                                               + frame (encodeBye ("superseded"))
+                                               + frame (diagnostic.toJson());
+                            expectEquals (peer->write (payload.toRawUTF8(), (int) payload.getNumBytesAsUTF8()),
+                                          (int) payload.getNumBytesAsUTF8());
+                            // This final diagnostic is a processing barrier for
+                            // the preceding frames, not a timing-only sleep.
+                            expect (waitUntil ([&] { return diagnostics.load() == 1; }, 1000),
+                                    "pre-authentication diagnostic was not delivered");
+                            expectEquals (positiveReplies.load(), 0);
+                            expectEquals (statuses.load(), 0);
+                            expect (! client.wasSuperseded());
+                            expect (! client.hello (100).ok,
+                                    "raw peer was trusted without endpoint authentication");
+                            peer->close();
+                        }
+                    }
+                    client.disconnect();
+                    listener.close();
+                }
             }
 
             beginTest ("loopback: a version-mismatched Hello is acked not-ok");

@@ -1,8 +1,9 @@
 #include "AudioImport.h"
+#include "CheckedReaderSource.h"
 
 namespace zynforge::audioimport
 {
-    namespace
+    namespace detail
     {
         bool cancelled (const std::atomic<bool>* flag) noexcept
         {
@@ -77,7 +78,7 @@ namespace zynforge::audioimport
             }
             else
             {
-                juce::AudioFormatReaderSource source (&reader, false);
+                CheckedReaderSource source (reader);
                 juce::ResamplingAudioSource resampler (&source, false, sourceChannels);
                 resampler.setResamplingRatio (sourceRate / targetRate);
                 resampler.prepareToPlay (chunk, targetRate);
@@ -93,7 +94,7 @@ namespace zynforge::audioimport
                     buffer.clear();
                     juce::AudioSourceChannelInfo info (&buffer, 0, count);
                     resampler.getNextAudioBlock (info);
-                    if (! writeBlock (count)) return false;
+                    if (source.hasFailed() || ! writeBlock (count)) return false;
                     written += count;
                 }
                 resampler.releaseResources();
@@ -112,6 +113,7 @@ namespace zynforge::audioimport
                         double targetSampleRate,
                         const std::atomic<bool>* cancel)
     {
+        using namespace detail;
         Result result;
         if (! audioFilesDir.isDirectory() || targetSampleRate <= 0.0)
         {

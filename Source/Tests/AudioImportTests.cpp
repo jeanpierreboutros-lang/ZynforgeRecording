@@ -1,6 +1,15 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "../Audio/AudioImport.h"
+#include "FailingAudioReader.h"
+
+// Internal seam into the same conversion routine used by importFiles. The
+// public import API and its default reader selection are unchanged.
+namespace zynforge::audioimport::detail
+{
+    bool writeConverted (juce::AudioFormatReader&, const juce::File&, double,
+                         int, int, const std::atomic<bool>*);
+}
 
 namespace zynforge
 {
@@ -115,6 +124,22 @@ namespace zynforge
             expect (cancelled.cancelled);
             expect (cancelled.tracks.empty());
             expectEquals (collision.loadFileAsString(), juce::String ("existing-take"));
+            for (double targetRate : { 48000.0, 44100.0 })
+            {
+                beginTest ("Import rejects source read failure at " + juce::String (targetRate, 0)
+                           + " Hz without publishing partial media");
+                testaudio::ReadEvidence evidence;
+                testaudio::FailingReader reader (evidence);
+                const auto destination = audioDir.getChildFile ("fault-import.wav");
+                destination.deleteFile();
+                expect (! audioimport::detail::writeConverted (
+                    reader, destination, targetRate, 1, 0, nullptr));
+                expectEquals (evidence.successfulReads, 1);
+                expect (evidence.failedReads > 0, "fault was not exercised");
+                expect (! destination.exists(), "failed read became session media");
+                expectEquals (audioDir.findChildFiles (juce::File::findFiles, false,
+                                                       "*.partial.wav").size(), 0);
+            }
             root.deleteRecursively();
         }
     };

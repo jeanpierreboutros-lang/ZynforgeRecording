@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_osc/juce_osc.h>
+#include <functional>
 
 namespace zynforge
 {
@@ -49,6 +50,10 @@ namespace zynforge
         juce::String getAccessToken() const { return accessToken; }
 
     private:
+        friend class AuditSecurityTests;
+        // Injection seam only: the red baseline deliberately retains its
+        // current token generation until a regression proves the defect.
+        std::function<bool(void*, size_t)> entropyProviderForTests;
         void oscMessageReceived (const juce::OSCMessage&) override;
 
         // Dialect dispatchers -- return true if the message was handled.

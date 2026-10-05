@@ -48,7 +48,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // session yet, Save falls through to Save As (picker), and
         // Save As is by definition a picker so it never needs prior
         // state.
-        menu.addItem (2, "Save\tCmd+S", ! sessionIoBusy.load());
+        menu.addItem (2, "Save\tCmd+S", ! sessionLocked && ! captureMetadataPending
+                      && (! sessionIoBusy.load() || pendingMetadataSaves != 0));
         menu.addItem (3, "Save As...", ! sessionIoBusy.load());
         menu.addItem (951, "Auto-Save & Backup...");
         menu.addSeparator();
@@ -346,6 +347,8 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) selectedLogical.size()
         << '|' << (int) engine.isRecording()
         << '|' << (int) sessionIoBusy.load()
+        << '|' << (int) (pendingMetadataSaves != 0)
+        << '|' << (int) captureMetadataPending
         << '|' << (int) sessionLocked
         << '|' << (int) player.hasLoopRegion()
         << '|' << (int) engine.getActiveSessionDir().isDirectory()
@@ -381,7 +384,12 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     if (sessionLocked)
     { showStatus ("LOCKED -- click UNLOCK to resume control"); return; }
     if (sessionIoBusy.load())
-    { showStatus ("Wait for the session operation to finish"); return; }
+    {
+        const bool safeDuringMetadata = pendingMetadataSaves != 0
+            && ((id == 2 && ! captureMetadataPending) || id == 334 || id == 335 || id == 303);
+        if (! safeDuringMetadata)
+        { showStatus ("Wait for the session operation to finish"); return; }
+    }
     juce::Logger::writeToLog ("[ZF] menuItemSelected id=" + juce::String (id));
 
     if (id == 1)         confirmSessionReplacement ([this] { onLoadSessionClicked(); });

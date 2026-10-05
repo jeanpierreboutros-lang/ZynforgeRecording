@@ -3,19 +3,6 @@
 
 namespace zynforge
 {
-    namespace
-    {
-        // REPLACE in-memory state with the on-disk file (not merge): pick up
-        // other writers' changes AND drop keys they deleted since we last
-        // loaded. A plain reload() MERGES, so it resurrects a sibling module's
-        // just-deleted key when this module later rewrites the shared
-        // .settings file wholesale (the "cleared pan comes back" bug).
-        inline void reloadReplace (juce::PropertiesFile& pf)
-        {
-            if (pf.getFile().existsAsFile()) { pf.clear(); pf.reload(); }
-        }
-    }
-
     StripNames::StripNames()
     {
         juce::PropertiesFile::Options opts;
@@ -54,7 +41,7 @@ namespace zynforge
         // Reload first so our whole-file save doesn't clobber keys the other
         // writers (appProps + sibling Strip* modules) sharing this .settings
         // file have written since we last loaded.
-        reloadReplace (*props);
+        reloadSettingsReplacing (*props);
         props->setValue (keyFor (channelIndex), name);
         props->saveIfNeeded();
     }
@@ -62,8 +49,19 @@ namespace zynforge
     void StripNames::clearName (int channelIndex)
     {
         if (props == nullptr) return;
-        reloadReplace (*props);
+        reloadSettingsReplacing (*props);
         props->removeValue (keyFor (channelIndex));
         props->saveIfNeeded();
     }
+    void StripNames::clearRange (int firstIndex, int lastIndexExclusive)
+    {
+        if (! props || firstIndex >= lastIndexExclusive) return;
+        reloadSettingsReplacing (*props);
+        for (int i = firstIndex; i < lastIndexExclusive; ++i)
+        {
+            props->removeValue (keyFor (i));
+        }
+        props->saveIfNeeded();
+    }
+
 }

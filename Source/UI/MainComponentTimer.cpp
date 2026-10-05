@@ -260,11 +260,12 @@ void MainComponent::timerCallback()
     const auto status = engine.captureStatus();
     const bool rec = status.recording;
     // Capture locks timeline mutations, but navigation must remain available
-    // to inspect a rolling take. Session jobs still own the entire editor.
+    // to inspect a rolling take or a pending metadata save. Media jobs still
+    // own the entire editor; metadata persistence only locks its mutations.
     if (editPage != nullptr)
     {
-        editPage->setReadOnlyWhileRecording (rec || engine.isRecording());
-        const bool enableEditor = ! sessionIoBusy.load() && ! sessionLocked;
+        editPage->setReadOnlyWhileRecording (rec || engine.isRecording() || pendingMetadataSaves != 0 || captureMetadataPending);
+        const bool enableEditor = (! sessionIoBusy.load() || pendingMetadataSaves != 0 || captureMetadataPending) && ! sessionLocked;
         if (editPage->isEnabled() != enableEditor)
             editPage->setEnabled (enableEditor);
     }

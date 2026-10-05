@@ -103,7 +103,22 @@ class ZynforgeRecordingApp final : public juce::JUCEApplication
 public:
     ZynforgeRecordingApp() = default;
 
-    const juce::String getApplicationName()    override { return "Zynforge Recording"; }
+    static bool isTestInvocation()
+    {
+        if (juce::SystemStats::getEnvironmentVariable ("ZYNFORGE_RUN_TESTS", "0") != "0")
+            return true;
+        for (const auto& argument : getCommandLineParameterArray())
+            if (argument.unquoted() == "--run-tests") return true;
+        return false;
+    }
+
+    const juce::String getApplicationName() override
+    {
+        // JUCE keys its single-instance lock by application name. Tests use a
+        // separate fixed identity so they never forward arguments to the live
+        // recorder, while still excluding overlapping test processes.
+        return isTestInvocation() ? "Zynforge Recording Tests" : "Zynforge Recording";
+    }
     // Single-sourced from CMake (project VERSION -> the target's JUCE_VERSION
     // -> this macro). It used to be a hardcoded literal here as well as in
     // three places in CMakeLists, so the About box and every crash report kept
@@ -136,20 +151,50 @@ public:
         // results to stderr, and quits with a non-zero exit when any
         // test failed. Lets CI / scripts catch regressions without
         // standing up a separate test target.
-        const bool envRun = juce::SystemStats::getEnvironmentVariable ("ZYNFORGE_RUN_TESTS", "0") != "0";
-        if (envRun || commandLine.contains ("--run-tests"))
+        if (isTestInvocation())
         {
+            juce::String testFilter, reportPath;
+            bool hasTestFilter = false;
+            for (const auto& parameter : getCommandLineParameterArray())
+            {
+                const auto argument = parameter.unquoted();
+                if (argument.startsWith ("--test-filter="))
+                {
+                    hasTestFilter = true;
+                    testFilter = argument.substring (juce::String ("--test-filter=").length());
+                }
+                else if (argument.startsWith ("--test-report="))
+                {
+                    reportPath = argument.substring (juce::String ("--test-report=").length());
+                    if (! juce::File::isAbsolutePath (reportPath))
+                    {
+                        std::cerr << "[zynforge tests] ERROR: --test-report requires an absolute file path\n";
+                        setApplicationReturnValue (2);
+                        quit();
+                        return;
+                    }
+                }
+            }
+
             // GUI-app bundles don't get a controlling TTY when
             // launched outside Terminal -- stdout / stderr go
-            // nowhere. Write the test report to a deterministic
-            // file (~/Library/Logs/Zynforge/test-report.log) AND
-            // mirror to stderr so terminal launches still see it.
-            const auto reportDir = juce::File::getSpecialLocation (
+            // nowhere. Keep the normal report path unless the audit runner
+            // explicitly requests its own --test-report=/absolute/path.
+            const auto defaultReportDir = juce::File::getSpecialLocation (
                                        juce::File::userApplicationDataDirectory)
                                        .getChildFile ("Logs/Zynforge");
-            reportDir.createDirectory();
-            const auto reportFile = reportDir.getChildFile ("test-report.log");
-            reportFile.deleteFile();
+            const auto reportFile = reportPath.isEmpty()
+                ? defaultReportDir.getChildFile ("test-report.log") : juce::File (reportPath);
+            if (reportFile.getParentDirectory().createDirectory().failed()
+                || (reportFile.exists() && ! reportFile.deleteFile())
+                || reportFile.create().failed())
+            {
+                std::cerr << "[zynforge tests] ERROR: cannot create test report: "
+                          << reportFile.getFullPathName().toRawUTF8() << "\n";
+                setApplicationReturnValue (2);
+                quit();
+                return;
+            }
 
             struct DualLogger : public juce::Logger
             {
@@ -171,8 +216,33 @@ public:
 
             juce::UnitTestRunner runner;
             runner.setAssertOnFailure (false);
-            runner.runAllTests();
             int failed = 0;
+            bool invalidSelection = false;
+            if (hasTestFilter)
+            {
+                juce::Array<juce::UnitTest*> selected;
+                if (testFilter.isNotEmpty())
+                    for (auto* test : juce::UnitTest::getAllTests())
+                        if (test->getName().containsIgnoreCase (testFilter))
+                            selected.add (test);
+                if (selected.isEmpty())
+                {
+                    invalidSelection = true;
+                    failed = 1;
+                    dual.logMessage ("[zynforge tests] ERROR: no registered test names match --test-filter="
+                                     + testFilter);
+                }
+                else
+                {
+                    dual.logMessage ("[zynforge tests] Selected " + juce::String (selected.size())
+                                     + " registered test suite(s) matching: " + testFilter);
+                    runner.runTests (selected);
+                }
+            }
+            else
+            {
+                runner.runAllTests();
+            }
             for (int i = 0; i < runner.getNumResults(); ++i)
                 failed += runner.getResult (i)->failures;
             const auto summary = juce::String ("[zynforge tests] ")
@@ -183,7 +253,7 @@ public:
             reportFile.appendText (summary + "\n");
 
             juce::Logger::setCurrentLogger (nullptr);
-            setApplicationReturnValue (failed == 0 ? 0 : 1);
+            setApplicationReturnValue (invalidSelection ? 2 : failed == 0 ? 0 : 1);
             quit();
             return;
         }

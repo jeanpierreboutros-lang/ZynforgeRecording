@@ -30,6 +30,10 @@ namespace zynforge
         void  setPan (int channelIndex, float pan);
         void  clearPan (int channelIndex);
 
+        // Clear this module's overrides in [firstIndex, lastIndexExclusive)
+        // with one shared-file reload/save, keeping its live cache consistent.
+        void clearRange (int firstIndex, int lastIndexExclusive);
+
     private:
         static juce::String gainKey (int channelIndex);
         static juce::String panKey  (int channelIndex);

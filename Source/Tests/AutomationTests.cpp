@@ -20,6 +20,34 @@ namespace zynforge
         {
             AudioEngine::setTestModeSkipAudioInit (true);
 
+            beginTest ("Invalid persisted automation curves normalize to linear before evaluation");
+            {
+                AudioEngine eng;
+                using P = AudioEngine::AutomationParam;
+                using C = AudioEngine::AutomationCurve;
+                for (int invalidCurve : { -1, 999 })
+                {
+                    const auto json = juce::JSON::parse (
+                        "[{\"track\":0,\"volume\":[{\"s\":0,\"v\":-12,\"c\":"
+                        + juce::String (invalidCurve)
+                        + "},{\"s\":48000,\"v\":0,\"c\":1}]}]");
+                    eng.loadAutomationFromJson (json);
+                    const auto& lane = eng.getAutomation (0, P::Volume);
+                    expectEquals ((int) lane.size(), 2);
+                    if (lane.size() == 2)
+                    {
+                        expect (lane[0].curve == C::Linear,
+                                "untrusted enum reached the interpolation state");
+                        // Do not execute known undefined interpolation in the
+                        // red baseline. Once normalized, check its semantics.
+                        if (lane[0].curve == C::Linear)
+                            expectWithinAbsoluteError (
+                                eng.automationValueAtOffline (0, P::Volume, 24000, 0.0f),
+                                -6.0f, 0.0001f);
+                    }
+                }
+            }
+
             beginTest ("addAutomationPoint inserts + sorts");
             {
                 AudioEngine eng;

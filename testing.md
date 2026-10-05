@@ -1,10 +1,42 @@
 # Testing Strategy — ZynForge Recording
 
+## October 5 isolated repair verification
+
+The clean audit baseline built successfully; its original 440 groups had one capture-deletion failure. Historical green counts below do not validate the current patch. [The audit report](docs/AUDIT-2026-10-05.md) owns current red/green and sanitizer evidence.
+
+The frozen S6 source passed **519 groups / 0 failures** in each full optimized
+Release, TSan and ASan/UBSan/float-cast-overflow run; no sanitizer reports were
+emitted. The universal GUI/helper and separate sanitizer builds, signatures and
+gates pass. S6 no-device TERM/INT repeats and the final bounded ENOSPC export
+repeat (5/0) pass. Normal startup smoke is waiting on macOS microphone consent
+and is not passed. The S6 pair is installed, hashes/signatures verified and left
+closed; physical-rig acceptance remains pending.
+
+The audit ledger retains every prior checkpoint, including S5 Release's deadline
+failure and its measured 712.261 ms blocking native send. S6 explicitly sets
+O_NONBLOCK and passes the unchanged optimized deadline oracle as well as both
+sanitizer suites. Instrumented formatting can expire before entering that kernel
+path, so optimized Release coverage remains necessary. Preference reset/range/
+growth reloads are 5/5/10 after the earlier four-group/38-failure red. The
+17-group/six-failure frame-boundary red also has green S6 regression coverage.
+
+Apple leaks reported the same 288 allocations / 18,816 bytes in three framework
+connection cycles for repaired Main (28 groups) and baseline full (440 groups).
+The telemetry workload reported 281 allocations / 18,448 bytes in three Apple
+cycles. These nonzero residuals and differing scopes remain explicit; no
+exclusions or zero-leak claim apply. The final S6 Main repeat reproduced the
+same 28/0 assertions and 288-allocation / 18,816-byte / three-cycle result.
+
+`Main daemon transport regressions` uses a no-device daemon plus disposable session folders. Its metadata gate blocks the real snapshot I/O path while a native macOS message-loop sentinel checks responsiveness; a bounded watchdog prevents a broken implementation from hanging the runner. Coverage includes a synthetic 27-track STOP, duplicate STOP during pending finalization, latched remote failure, cue write failure, immutable revisions, non-undo dirty state, navigation during persistence, 128 coalesced layout requests, forbidden session replacement and host teardown. These controlled fixtures do not establish real-device capture timing or external-volume latency. `Session backup` covers newest contents, legacy collision names, clock rollback, linked external sentinels, journals and invalid retention.
+
+Test mode uses the distinct application identity `Zynforge Recording Tests`, preserving single-instance exclusion between test processes without forwarding arguments to an already-running production app. Run only one suite/process at a time. `--test-filter` selects registered suite names case-insensitively; zero matches exit nonzero. Omit the filter for the full suite. `--test-report` must be an absolute log path. The authoritative build and filtered LaunchServices commands live in the [audit register](docs/AUDIT-2026-10-05.md#reproduction-commands-and-final-verification-still-required).
+Inspect each report's total failures and sanitizer logs; LaunchServices' own exit code alone is not the test outcome. For an instrumented bundle launched with `open`, pass sanitizer configuration using `open --env`, for example `--env TSAN_OPTIONS=halt_on_error=1:log_path=/private/tmp/zynforge-tsan`; a shell-only environment assignment may not reach the launched app. Build TSan separately from ASan/UBSan. See the audit report for exact compiler flags and actual run logs. Never run failure-injection fixtures against the user's session or current capture app.
+
 ## Philosophy and Goals
 
 **Current validation — 2026-10-04:** Source build `c563b00` passed the universal Release GUI/helper build, **438 test groups with zero failures on Apple Silicon**, both static gates, strict/deep bundle-signature checks and a 30-second isolated startup/quit smoke. Both production settings files retained their hashes. Intel slices built successfully; this run does not establish native Intel execution results.
 
-The same app and matching protocol-v3 helper are installed on both Macs. Installed executable hashes and signatures match; both apps launched without a new crash report. The mini's two exits were manual user quits. The current DMG passed checksum/image verification on both Macs and a read-only bundle comparison locally. Old app backups and installers were removed at the user's request. [INSTALL.md](INSTALL.md) owns the current package, hashes and installation evidence.
+At the October 4 checkpoint, the same app and matching protocol-v3 helper were installed on both Macs; S6 now supersedes the development-Mac installation. Installed executable hashes and signatures match; both apps launched without a new crash report. The mini's two exits were manual user quits. The current DMG passed checksum/image verification on both Macs and a read-only bundle comparison locally. Old app backups and installers were removed at the user's request. [INSTALL.md](INSTALL.md) owns the current package, hashes and installation evidence.
 
 The October regression groups, together with daemon, companion and existing integration suites, cover the 28 initial October findings and 14 follow-up findings. See [the audit fix record](AUDIT_FIXES_2026-10-03.md). Disposable physical device removal, console reconnect, storage failure, detailed waveform/FOLLOW interaction and the planned 56-input rehearsal remain open. The older five-hour primary-drive take is historical evidence for `d2c5858`, not hardware acceptance of `c563b00`; see [field evidence](FIELD-TEST-2026-10-01.md).
 
@@ -54,7 +86,7 @@ The strategy is **build + unit + smoke + field**. The unit-test harness is in pl
 ```
 
 - **Build** — `cmake --build build --config Release`. Must succeed. No warnings-as-errors yet, but new warnings should be addressed.
-- **Unit tests** — `juce::UnitTest` groups in `Source/Tests/`, run via `--run-tests` (or `ZYNFORGE_RUN_TESTS=1`). Headless, no CoreAudio device, no message thread. Add a test with every bug fix and every new audio-thread / persistence path.
+- **Unit tests** — `juce::UnitTest` groups in `Source/Tests/`, run via `--run-tests` (or `ZYNFORGE_RUN_TESTS=1`). No physical CoreAudio device; UI regressions use the real message thread and bounded native-loop pumping. Add a test with every bug fix and every new audio-thread / persistence path.
 - **Smoke-test** — Launch the built app, exercise the changed surface, verify RSS / CPU / no new crash report. Documented in `CLAUDE.md` under *Build + smoke test recipe*.
 - **Field rehearsal** — User-driven. Anything touching the audio callback, the recorder, or the player must be exercised in a real (or simulated) session before being declared shippable. The user is the only authority for this stage.
 

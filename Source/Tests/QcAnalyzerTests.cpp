@@ -15,6 +15,7 @@ namespace zynforge
 
         void runTest() override
         {
+            beginTest ("Prepare isolated QC audio fixture");
             const double sr = 48000.0;
             const int total = (int) (3.0 * sr);          // 3 s mono
 

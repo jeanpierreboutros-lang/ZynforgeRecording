@@ -21,6 +21,10 @@ namespace zynforge
         void         setColour (int channelIndex, juce::Colour);
         void         clearColour (int channelIndex);
 
+        // Clear this module's overrides in [firstIndex, lastIndexExclusive)
+        // with one shared-file reload/save, keeping its live cache consistent.
+        void clearRange (int firstIndex, int lastIndexExclusive);
+
     private:
         static juce::String keyFor (int channelIndex);
         std::unique_ptr<juce::PropertiesFile> props;
