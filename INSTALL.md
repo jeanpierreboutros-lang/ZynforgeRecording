@@ -2,7 +2,56 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-## Current development Mac follow-up — 2026-10-05
+## Current two-Mac installation and cleanup — 2026-10-05
+
+Both Macs now have source build `443c769` and its matching protocol-4 capture
+helper at `/Applications/Zynforge Recording.app`. The mini is currently at
+`192.168.68.81`; its SSH host key matches its previously trusted address.
+The development installation already matched the latest tested build exactly;
+the mini was upgraded from `c563b00`. Later commits changed documentation only.
+
+The GUI SHA-256 is `c78236ec6b14c3b723979c66171015bb13822d7b74b1e5977fb3a0abe74817ae`;
+the helper SHA-256 is `ad6b74588229f9c3f23fb556d7f7a95b1a36a010189b4358de4f9c5ceef570f7`.
+Both installed bundles match the tested bundle's files and pass deep/strict
+signature verification; both executables contain arm64 and x86_64. Neither app
+nor helper was running during replacement/cleanup. Mini settings hashes were
+unchanged during installation. Recordings, sessions, source and other ZynForge
+products were excluded from cleanup.
+
+The current [universal DMG](dist/Zynforge-Recording-443c769-macOS-universal.dmg)
+and [checksum](dist/Zynforge-Recording-443c769-macOS-universal.dmg.sha256) are in
+`dist/` and the mini's `~/Downloads/`. DMG SHA-256:
+`01d61b56213a196fec40115ba886cc0729cb387f02f9807d1408e34f5d8fc2be`.
+Image verification passed on both Macs; the read-only mounted app matched the
+installed development bundle exactly and passed signature verification.
+
+```bash
+shasum -a 256 -c Zynforge-Recording-443c769-macOS-universal.dmg.sha256
+```
+
+After verification, the user's cleanup request removed 12 superseded items on
+the development Mac (six old app/rollback bundles, three DMGs, three checksums)
+and three on the mini (its prior app, old DMG and checksum). A final temporary-
+directory sweep removed five additional old staging artifacts on the development
+Mac (four app bundles and one ZIP); the mini had only current staging copies.
+The current Release
+and current sanitizer test builds remain available. Scans of Applications and
+the user's Applications, Desktop, Downloads, Documents and Zynforge-App-Backups
+found no superseded Recording packages remaining. **No old app rollback bundle
+is retained.** Historical backup paths below are no longer available.
+
+Both installed apps were launched with normal settings and remained running at
+the 40-second observation, with no new crash reports. The mini's subsequent
+sample was waiting inside CoreAudio device initialization; microphone consent
+or device readiness still needs checking on its screen. This is not completed
+mini startup acceptance or a physical recording test. No recording was started
+by this installation. The mini's Xcode license was not changed; built-in `file`
+inspection verified architectures because its developer-tool `lipo` was blocked.
+
+Evidence is retained in
+`../ZynforgeRecording-review-evidence-20261005/two-mac-installation/`.
+
+## Earlier development Mac follow-up — 2026-10-05
 
 At the user's request, source repair `443c769` is installed at
 `/Applications/Zynforge Recording.app`, with its matching protocol-v4 capture
@@ -63,7 +112,7 @@ The previous development installation ran source build `55d62eb` at `/Applicatio
 
 Rollback copy: `/Applications/Zynforge Recording.app.backup-20261004-194817-before-responsiveness`. The Mac mini and existing DMG remain on `c563b00`; no new installer was packaged in this update. The installed development app was relaunched with normal preferences and left open on the stopped session.
 
-## Earlier two-Mac installation and current DMG — 2026-10-04
+## Earlier two-Mac installation and superseded DMG — 2026-10-04
 
 At the earlier installation, both the development Mac and Mac mini (`192.168.68.75`) received source build `c563b00` at `/Applications/Zynforge Recording.app`, including the matching protocol-v3 `ZynforgeCapture` helper. Both executables are universal arm64 + x86_64. The build passed 438 test groups with zero failures, both audit gates and a 30-second isolated startup smoke before deployment.
 
@@ -76,7 +125,7 @@ The installed bundles pass deep/strict signature verification on both Macs, and 
 
 The development Mac reached Welcome / New Session with its saved device selections and remained running through a 51-second observation (about 116–117 MiB RSS). The mini launched twice; the user confirmed manually closing it both times. No new crash report appeared on either Mac. The mini was left closed. These startup checks do not replace disposable real-device capture or the outstanding exact-rig rehearsal.
 
-The current [universal DMG](dist/Zynforge-Recording-c563b00-macOS-universal.dmg) and [checksum file](dist/Zynforge-Recording-c563b00-macOS-universal.dmg.sha256) are in `dist/` and the mini's `~/Downloads/`. DMG SHA-256: `d55720c4c291ef207e74b553333b60fd3db7154d43a264aaf9d0bf354bb7fdf5`. Image verification passed on both Macs; the read-only mounted app matched the tested build exactly. From the folder containing both files, run:
+The historical `Zynforge-Recording-c563b00-macOS-universal.dmg` and checksum were in `dist/` and the mini's `~/Downloads/`; both were removed during the October 5 cleanup. DMG SHA-256: `d55720c4c291ef207e74b553333b60fd3db7154d43a264aaf9d0bf354bb7fdf5`. Image verification passed on both Macs; the read-only mounted app matched the tested build exactly. From the folder containing both files, run:
 
 ```bash
 shasum -a 256 -c Zynforge-Recording-c563b00-macOS-universal.dmg.sha256
@@ -86,7 +135,7 @@ The app is ad-hoc signed, not Developer ID notarized, and supports macOS 12.0+.
 
 At the user's request, after installation verification, old Recording app bundles, backup copies, installers and checksum files were deleted: 31 items on the development Mac (15 apps, 10 DMGs, 6 checksums), and 10 on the mini (3 apps, 4 DMGs, 3 checksums). Recordings, session backups, settings, source and other ZynForge products were preserved. Final scans of Applications and the user's Applications, Desktop, Downloads, Documents and Zynforge-App-Backups locations found no remaining old versions. The current development Release build remains available.
 
-**Retention notice:** Older installation/package records elsewhere in the repository describe historical state. Their backup and installer paths are no longer available locally after cleanup; Git history is retained. The current `443c769` section above supersedes earlier installation state. Later October 5 rollback bundles were created after the cleanup and remain retained.
+**Retention notice:** Older installation/package records elsewhere in the repository describe historical state. Their backup and installer paths are no longer available locally after cleanup; Git history is retained. The current `443c769` section above supersedes earlier installation state. Later October 5 rollback bundles were also removed by the subsequent two-Mac cleanup above.
 
 ## Preconditions
 
@@ -133,6 +182,6 @@ If copying or verification fails, do not launch the partial installation. Preser
 
 ## Rollback
 
-The current development installation retains `Zynforge Recording.app.backup-20261005-112530-before-443c769`. The earlier October 5 S6 and October 4 responsiveness rollback bundles remain as recorded above; do not substitute a historical path without checking that it exists. Other historical app copies removed in the earlier cleanup remain unavailable.
+The October 5 two-Mac cleanup removed all inventoried older app bundles at the user's request. There is currently no local old-version rollback copy. The verified current installer can reinstall `443c769`; a rollback to earlier code requires rebuilding and verifying that source revision. Historical backup names in this document are not usable recovery paths.
 
 Stop capture and quit both processes first. Preserve current session data and the current app; then move the named backup back to `/Applications/Zynforge Recording.app`. Verify the restored signature before launch. Restore GUI and bundled daemon together, never just one executable. A prior build may not understand new session metadata: test with a duplicate session, not the only recording copy. Rolling back the app does not undo session-file changes or recover audio overwritten before the fixes.

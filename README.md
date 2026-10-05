@@ -6,12 +6,11 @@ A focused recording surface for engineers running front-of-house or monitors: ca
 
 ## Status — 2026-10-05
 
-The development Mac has the verified `443c769` app and matching protocol-v4
-capture helper installed. Startup was observed with normal preferences, no new
-crash report appeared, and the app was left open at installation. The Mac mini
-and existing [universal installer](dist/Zynforge-Recording-c563b00-macOS-universal.dmg)
-remain on `c563b00` / protocol 3. [INSTALL.md](INSTALL.md) owns executable hashes,
-rollback paths and installation evidence.
+Both Macs and the [universal installer](dist/Zynforge-Recording-443c769-macOS-universal.dmg)
+now use verified `443c769` and its matching protocol-4 helper. Superseded apps,
+rollback bundles and installers were removed at the user's request. Development
+startup was observed; the mini launch is waiting in CoreAudio initialization.
+[INSTALL.md](INSTALL.md) owns executable hashes, startup limits and cleanup evidence.
 
 All 21 follow-up findings are repaired. **563 test groups passed in each full
 Release, ThreadSanitizer and ASan/UBSan/float-cast-overflow suite**, with no
@@ -35,7 +34,7 @@ and [delivery history](CHANGELOG.md).
 
 The tested Release bundle includes both GUI and capture helper, is universal
 arm64 + x86_64, and is ad-hoc signed. It is not a notarized public release.
-The installed development build and the older DMG are separate artifacts;
+Both installations and the current DMG contain the same verified build;
 see [INSTALL.md](INSTALL.md) before replacing either.
 
 ```bash
@@ -46,11 +45,11 @@ open "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
 
 First configure fetches JUCE 8.0.4 via `FetchContent`. macOS 12.0+ Universal (Apple Silicon + Intel).
 
-For local installation, follow [INSTALL.md](INSTALL.md). The current DMG contains both the GUI and matching `ZynforgeCapture` executable under `Contents/MacOS`. Stop all takes and quit both processes before replacement. The development Mac’s installed follow-up pair uses protocol **4**, adding mutual authentication after a compatible Hello. The unchanged mini/existing DMG use protocol **3**; always upgrade their matching GUI/helper together. No command is accepted before its required handshake completes.
+For local installation, follow [INSTALL.md](INSTALL.md). The current DMG contains both the GUI and matching `ZynforgeCapture` executable under `Contents/MacOS`. Stop all takes and quit both processes before replacement. Both Macs and the current DMG use protocol **4**, adding mutual authentication after a compatible Hello; always upgrade the matching GUI/helper together. No command is accepted before its required handshake completes.
 
 ## Documentation
 
-Current package, hashes and installed versions live in [INSTALL.md](INSTALL.md); [testing.md](testing.md) records automated coverage, and [SHOW-READINESS.md](SHOW-READINESS.md) tracks physical acceptance. Dated audit and field reports retain their original evidence. Some older installer/backup paths were removed during the October 4 cleanup; later rollback bundles are retained as listed in INSTALL.md. The [documentation index](docs/README.md) distinguishes current guides from historical records.
+Current package, hashes and installed versions live in [INSTALL.md](INSTALL.md); [testing.md](testing.md) records automated coverage, and [SHOW-READINESS.md](SHOW-READINESS.md) tracks physical acceptance. Dated audit and field reports retain their original evidence. Old installer/backup paths were removed during the October 4 and October 5 cleanups; no old app rollback bundle remains. The [documentation index](docs/README.md) distinguishes current guides from historical records.
 
 | Topic | File |
 |---|---|

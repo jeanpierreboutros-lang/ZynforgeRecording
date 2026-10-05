@@ -2,8 +2,8 @@
 
 ## Decision as of 2026-10-05
 
-The development Mac has verified `443c769` / protocol 4 installed. The Mac mini
-and existing DMG remain on `c563b00` / protocol 3. The current source passed
+Both Macs and the current DMG have verified `443c769` / protocol 4. The mini
+launch is waiting in CoreAudio initialization; its startup acceptance is open. The current source passed
 563 groups in each full Release, TSan and ASan/UBSan suite, plus six auto-stop
 fixtures; no sanitizer reports were emitted. Installed hashes/signatures match
 the tested Release app/helper, and startup with normal preferences produced no

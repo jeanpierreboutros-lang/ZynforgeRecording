@@ -1,6 +1,6 @@
 # October 3 codebase audit fixes
 
-All 28 initial findings and the 14 follow-up findings below have fixes. Validation completed on 2026-10-04; at that checkpoint `c563b00` was installed on both Macs. The development Mac now has the later `443c769` follow-up; the mini/DMG remain unchanged. See [INSTALL.md](INSTALL.md) for the current package, hashes, startup checks and old-version cleanup.
+All 28 initial findings and the 14 follow-up findings below have fixes. Validation completed on 2026-10-04; at that checkpoint `c563b00` was installed on both Macs. Both Macs and the current DMG now have the later `443c769` follow-up. See [INSTALL.md](INSTALL.md) for the current package, hashes, startup checks and old-version cleanup.
 
 | # | Severity | Finding and change |
 |---|---|---|

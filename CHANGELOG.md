@@ -12,7 +12,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## How this file is maintained
 
-- Add new entries under `## [Unreleased]` as you ship changes.
+- Add new entries under `## [Unreleased]
+
+### Installed and cleaned up — October 5, both Macs
+
+- Both Macs and the current universal DMG now use the verified `443c769` GUI/helper pair. Complete bundle hashes, universal architectures and strict signatures match. Removed 12 superseded items plus five temporary staging artifacts on the development Mac and three on the mini after verification; no old app rollback bundle remains. Sessions, recordings and settings were preserved. Both apps were launched without a new crash report; mini startup is waiting in CoreAudio initialization. See [installation evidence](INSTALL.md).` as you ship changes.
 - When cutting a release, rename the section to `## [X.Y.Z] – YYYY-MM-DD` and start a fresh `## [Unreleased]`.
 - Use the categories below. If none apply, the entry probably isn't user-visible and doesn't belong here.
 - Keep entries terse but specific. Link to commits or `decisions.md` ADRs when context matters.
@@ -52,7 +56,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ### Installed and cleaned up — 2026-10-04
 
 - Installed source build `c563b00` with its matching universal capture helper on both Macs. The build passed 438 automated test groups, both static gates, signatures and isolated startup smoke. Both installed apps launched and their executable hashes match the tested build.
-- Published the current verified [universal DMG](dist/Zynforge-Recording-c563b00-macOS-universal.dmg) and [checksum](dist/Zynforge-Recording-c563b00-macOS-universal.dmg.sha256); copied and verified both on the mini. See [INSTALL.md](INSTALL.md).
+- Published the current verified historical `c563b00` universal DMG (removed in the October 5 cleanup) and historical checksum (removed); copied and verified both on the mini. See [INSTALL.md](INSTALL.md).
 - Removed 18 old app bundles, 14 old DMGs and 9 checksum files across both Macs at the user's request. Recordings, settings and source were preserved. Older entries below describe historical package/backup state; those local files no longer remain.
 - Reconciled operational guides, architecture, test instructions and component references with the installed build. Hardware acceptance remains open.
 

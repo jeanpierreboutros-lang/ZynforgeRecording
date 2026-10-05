@@ -2,8 +2,8 @@
 
 Reconciled on 2026-10-05 against source repair `443c769` and its verified
 installation. Later documentation commits do not change the installed binaries.
-The development Mac uses protocol 4; the mini and existing DMG remain on
-`c563b00` / protocol 3. Refer to the owning documents below instead of copying
+Both Macs and the current DMG use `443c769` / protocol 4; superseded apps and
+installers were removed in the subsequent two-Mac cleanup. Refer to the owning documents below instead of copying
 package hashes, test counts or acceptance claims into new guides.
 
 ## Current guides and ownership

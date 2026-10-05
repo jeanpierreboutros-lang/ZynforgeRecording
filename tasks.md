@@ -2,6 +2,9 @@
 
 ## Current follow-up and documentation — 2026-10-05
 
+- [x] Deploy verified `443c769` to both Macs, replace the DMG, and remove 20 superseded app/installer/checksum items across both machines, including five temporary staging copies. Preserve sessions/settings/source.
+- [ ] Complete mini startup acceptance: its launched process is waiting in CoreAudio device initialization.
+
 - [x] Repair all 21 follow-up findings with pre-fix failing regressions; preserve the AIFF diagnosis correction and final-flush failure evidence.
 - [x] Pass 563 groups in each full Release, TSan and ASan/UBSan/float-cast-overflow run, six auto-stop fixtures, both gates, universal signatures and no-device TERM/INT probes.
 - [x] Install the exact `443c769` GUI/helper pair on the development Mac; preserve the previous app, verify complete bundle/binary equality, and leave the new app open after startup observation. See [INSTALL.md](INSTALL.md).
@@ -9,7 +12,7 @@
 - [x] Reconcile all repository Markdown guides and their local links, distinguish current installation from historical evidence, and document ownership in [docs/README.md](docs/README.md).
 - [ ] Measure physical 27-track capture/STOP and command latency with the intended interface/external drive; check all configured copies independently.
 - [ ] Verify normal quit, native navigation/undo, long-take FOLLOW/zoom and pending original-take integrity hashes.
-- [ ] Complete the exact 56-input rehearsal and unresolved Mac mini host investigation. Mini/DMG remain `c563b00`; this task did not update them.
+- [ ] Complete the exact 56-input rehearsal and unresolved Mac mini host investigation. Both Macs/DMG now use `443c769`; mini startup/device readiness still needs acceptance.
 
 
 ## Earlier full audit and deep STOP repair — 2026-10-05
@@ -48,7 +51,7 @@ Earlier S6 reports and commands: [October 5 audit register](docs/AUDIT-2026-10-0
 - [x] Bound and yield report hashing; cancel stale reads; lower thumbnail scan priority; add digest/cancellation regressions.
 - [x] Validate universal build, 440 test groups, audit gates/signatures and affected-session view/save/quit smoke.
 - [x] Install `55d62eb` and its matching helper on the development Mac; verify byte equality/signatures and reopen the stopped session. Retain the previous app for rollback.
-- [ ] Repeat a fresh recording/STOP with the target interface and external drive; the Mac mini remains unchanged.
+- [ ] Repeat a fresh recording/STOP with the target interface and external drive; repeat mini device/startup acceptance after its `443c769` update.
 
 ## Documentation reconciliation — 2026-10-04
 
@@ -76,7 +79,7 @@ Earlier S6 reports and commands: [October 5 audit register](docs/AUDIT-2026-10-0
 
 ## Historical delivery and remaining checks — 2026-10-02
 
-Installation and retention statements in this dated section describe the state at that time. At the October 4 checkpoint both Macs had `c563b00` and the inventoried older packages were removed. The development Mac now has `443c769`; later rollback bundles are retained as listed in INSTALL.md. Unchecked hardware tasks still apply unless superseded by the current field checklist.
+Installation and retention statements in this dated section describe the state at that time. At the October 4 checkpoint both Macs had `c563b00` and the inventoried older packages were removed. Both Macs now have `443c769`; the later cleanup removed rollback bundles as recorded in INSTALL.md. Unchecked hardware tasks still apply unless superseded by the current field checklist.
 
 - [x] Diagnose the blocky live waveform reported during a 55-channel, 10:42:37 Mac mini take. Verify all 55 primary RF64 files' frame counts and SHA-256 values against the final report; document the limits of that evidence in [FIELD-TEST-2026-10-01.md](FIELD-TEST-2026-10-01.md).
 - [x] Keep recent original-resolution peaks during long live takes, add ten-hour/ring-wrap regression coverage, build universal Release and pass 401 headless test groups with zero failures. Source commit `d2c5858`.

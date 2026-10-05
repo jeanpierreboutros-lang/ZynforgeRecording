@@ -135,10 +135,11 @@ be reported as a successful capture, export or punch.
 
 At completion of the source repair, this build was not installed. The user
 subsequently requested installation on this Mac: the verified `443c769` GUI/helper
-pair now replaces `/Applications/Zynforge Recording.app`, with the prior S6
-bundle retained for rollback. See [INSTALL.md](../INSTALL.md) for hashes and
-installation evidence. The Mac mini, DMGs, user sessions and recordings remain
-unchanged.
+pair was installed on the development Mac, then deployed to the mini and
+packaged in the current DMG. The subsequent user-requested cleanup removed
+superseded bundles and installers. See [INSTALL.md](../INSTALL.md) for hashes,
+startup limits and installation evidence. User sessions and recordings were
+untouched.
 
 Physical 27-track capture/STOP latency, the external volume, real console links,
 USB/device hot-plug, long-take memory/I/O behavior and interactive undo/navigation
