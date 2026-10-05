@@ -13,21 +13,23 @@ See [the follow-up repair register](docs/REVIEW-REPAIRS-2026-10-05.md) for the
 21-item test mapping, commands, evidence location, startup observation and
 runtime limits. The verified `443c769` pair is now installed on the development
 Mac; see [INSTALL.md](INSTALL.md) for matching hashes and rollback. Historical
-S6 results below remain evidence for the previous build. The isolated new launch reached main-component rendering with no new
-crash and unchanged production settings; UI automation and normal quit were not
-verified. Physical recording and long-take STOP acceptance remain pending.
+S6 results below remain evidence for the previous build. The isolated launch
+reached main-component rendering with unchanged production settings. The later
+installed launch with normal preferences also reached rendering, produced no new
+crash report and was left open. UI interaction and normal quit were not verified. Physical recording and long-take STOP acceptance remain pending.
 
-## October 5 isolated repair verification
+## Earlier October 5 S6 repair evidence
 
-The clean audit baseline built successfully; its original 440 groups had one capture-deletion failure. Historical green counts below do not validate the current patch. [The audit report](docs/AUDIT-2026-10-05.md) owns current red/green and sanitizer evidence.
+The clean audit baseline built successfully; its original 440 groups had one capture-deletion failure. This paragraph and the S6 results below describe that earlier audit. [The audit report](docs/AUDIT-2026-10-05.md) retains its red/green and sanitizer evidence; the follow-up section above is current.
 
 The frozen S6 source passed **519 groups / 0 failures** in each full optimized
 Release, TSan and ASan/UBSan/float-cast-overflow run; no sanitizer reports were
 emitted. The universal GUI/helper and separate sanitizer builds, signatures and
 gates pass. S6 no-device TERM/INT repeats and the final bounded ENOSPC export
-repeat (5/0) pass. Normal startup smoke is waiting on macOS microphone consent
-and is not passed. The S6 pair is installed, hashes/signatures verified and left
-closed; physical-rig acceptance remains pending.
+repeat (5/0) passed. At S6, normal startup smoke waited on macOS microphone
+consent; the pair was installed, verified and left closed. Later `443c769`
+startup reached rendering, as recorded in INSTALL.md; physical-rig acceptance
+remains pending.
 
 The audit ledger retains every prior checkpoint, including S5 Release's deadline
 failure and its measured 712.261 ms blocking native send. S6 explicitly sets
@@ -46,14 +48,14 @@ same 28/0 assertions and 288-allocation / 18,816-byte / three-cycle result.
 
 `Main daemon transport regressions` uses a no-device daemon plus disposable session folders. Its metadata gate blocks the real snapshot I/O path while a native macOS message-loop sentinel checks responsiveness; a bounded watchdog prevents a broken implementation from hanging the runner. Coverage includes a synthetic 27-track STOP, duplicate STOP during pending finalization, latched remote failure, cue write failure, immutable revisions, non-undo dirty state, navigation during persistence, 128 coalesced layout requests, forbidden session replacement and host teardown. These controlled fixtures do not establish real-device capture timing or external-volume latency. `Session backup` covers newest contents, legacy collision names, clock rollback, linked external sentinels, journals and invalid retention.
 
-Test mode uses the distinct application identity `Zynforge Recording Tests`, preserving single-instance exclusion between test processes without forwarding arguments to an already-running production app. Run only one suite/process at a time. `--test-filter` selects registered suite names case-insensitively; zero matches exit nonzero. Omit the filter for the full suite. `--test-report` must be an absolute log path. The authoritative build and filtered LaunchServices commands live in the [audit register](docs/AUDIT-2026-10-05.md#reproduction-commands-and-final-verification-still-required).
+Test mode uses the distinct application identity `Zynforge Recording Tests`, preserving single-instance exclusion between test processes without forwarding arguments to an already-running production app. Run only one suite/process at a time. `--test-filter` selects registered suite names case-insensitively; zero matches exit nonzero. Omit the filter for the full suite. `--test-report` must be an absolute log path. Current build and sanitizer LaunchServices commands live in the [follow-up register](docs/REVIEW-REPAIRS-2026-10-05.md#reproduction-commands). The earlier audit retains commands for its isolated worktrees.
 Inspect each report's total failures and sanitizer logs; LaunchServices' own exit code alone is not the test outcome. For an instrumented bundle launched with `open`, pass sanitizer configuration using `open --env`, for example `--env TSAN_OPTIONS=halt_on_error=1:log_path=/private/tmp/zynforge-tsan`; a shell-only environment assignment may not reach the launched app. Build TSan separately from ASan/UBSan. See the audit report for exact compiler flags and actual run logs. Never run failure-injection fixtures against the user's session or current capture app.
 
 ## Philosophy and Goals
 
-**Current validation — 2026-10-04:** Source build `c563b00` passed the universal Release GUI/helper build, **438 test groups with zero failures on Apple Silicon**, both static gates, strict/deep bundle-signature checks and a 30-second isolated startup/quit smoke. Both production settings files retained their hashes. Intel slices built successfully; this run does not establish native Intel execution results.
+**Historical validation — 2026-10-04:** Source build `c563b00` passed the universal Release GUI/helper build, **438 test groups with zero failures on Apple Silicon**, both static gates, strict/deep bundle-signature checks and a 30-second isolated startup/quit smoke. Both production settings files retained their hashes. Intel slices built successfully; this run does not establish native Intel execution results.
 
-At the October 4 checkpoint, the same app and matching protocol-v3 helper were installed on both Macs; S6 now supersedes the development-Mac installation. Installed executable hashes and signatures match; both apps launched without a new crash report. The mini's two exits were manual user quits. The current DMG passed checksum/image verification on both Macs and a read-only bundle comparison locally. Old app backups and installers were removed at the user's request. [INSTALL.md](INSTALL.md) owns the current package, hashes and installation evidence.
+At the October 4 checkpoint, the same app and matching protocol-v3 helper were installed on both Macs; `443c769` now supersedes the development-Mac installation. Installed executable hashes and signatures match; both apps launched without a new crash report. The mini's two exits were manual user quits. The current DMG passed checksum/image verification on both Macs and a read-only bundle comparison locally. Old app backups and installers were removed at the user's request. [INSTALL.md](INSTALL.md) owns the current package, hashes and installation evidence.
 
 The October regression groups, together with daemon, companion and existing integration suites, cover the 28 initial October findings and 14 follow-up findings. See [the audit fix record](AUDIT_FIXES_2026-10-03.md). Disposable physical device removal, console reconnect, storage failure, detailed waveform/FOLLOW interaction and the planned 56-input rehearsal remain open. The older five-hour primary-drive take is historical evidence for `d2c5858`, not hardware acceptance of `c563b00`; see [field evidence](FIELD-TEST-2026-10-01.md).
 
@@ -81,7 +83,7 @@ The final 2026-09-24 punch build opened Welcome and reached the idle transport w
 
 The live EDIT-navigation regression checks that manual horizontal pan/time zoom pauses playhead follow, automatic page-scroll and vertical-only scroll do not, FOLLOW resumes, a new transport pass resets follow, and H+/H- return exactly to fit-to-take. Native smoke and a disposable recording must still verify actual wheel/trackpad, minimap, H/V controls and UI performance while rolling; headless state tests alone do not certify that interaction or capture integrity.
 
-The long-take regression checks that three hours of peak bins retain actual sample time within bounded memory, a long continuation prefill stays bounded, a three-hour live timeline has scrollable width, and recording read-only mode leaves zoom buttons enabled. Additional tests assert that isolated transients remain as thin maxima beside a smoother overview body, sustained levels remain visible, an audio file newer than `WaveCache.wfm` invalidates the cache, H+ can pass the old 16× cap, and deep zoom draws only viewport grid ticks. The completed 2026-10-02 hardware take confirms saved primary-audio duration and a clean report; an earlier screenshot exposed blocky post-STOP display. Screenshots of `98a645e` show the thin-body overview and narrow peaks after reopening, but the user confirmed H+ could not pass a 16-minute span. The zoom fix is installed on both Macs in `c563b00`; a few-minute detailed-zoom screenshot is still needed; live motion/navigation at timed long-run checkpoints still require direct observation.
+The long-take regression checks that three hours of peak bins retain actual sample time within bounded memory, a long continuation prefill stays bounded, a three-hour live timeline has scrollable width, and recording read-only mode leaves zoom buttons enabled. Additional tests assert that isolated transients remain as thin maxima beside a smoother overview body, sustained levels remain visible, an audio file newer than `WaveCache.wfm` invalidates the cache, H+ can pass the old 16× cap, and deep zoom draws only viewport grid ticks. The completed 2026-10-02 hardware take confirms saved primary-audio duration and a clean report; an earlier screenshot exposed blocky post-STOP display. Screenshots of `98a645e` show the thin-body overview and narrow peaks after reopening, but the user confirmed H+ could not pass a 16-minute span. The zoom fix is included in `443c769` on the development Mac and `c563b00` on the mini; a few-minute detailed-zoom screenshot is still needed; live motion/navigation at timed long-run checkpoints still require direct observation.
 
 The 2026-09-24 audit follow-up adds file-backed regressions for a pure end trim, a renamed/locked clip, playback of newly appended audio after a split, refusal of an orphan continuation part, fresh/stale daemon marker positioning and LOCK refusing remote playback. Disposable `verify_take.sh` fixtures exercise pending hashes, complete hashes, missing hashes, valid continuation parts and an orphan part. Native interaction still needs a disposable recording and export test.
 
@@ -107,7 +109,7 @@ The strategy is **build + unit + smoke + field**. The unit-test harness is in pl
 - **Smoke-test** — Launch the built app, exercise the changed surface, verify RSS / CPU / no new crash report. Documented in `CLAUDE.md` under *Build + smoke test recipe*.
 - **Field rehearsal** — User-driven. Anything touching the audio callback, the recorder, or the player must be exercised in a real (or simulated) session before being declared shippable. The user is the only authority for this stage.
 
-**Menu / session-load smoke checks (can't be unit-tested — native menu + message thread).** macOS caches the menu's greyed states until `menuItemsChanged()` fires, so after any change near menu enablement, manually verify: launch reopens the last session with its channels; with a session loaded the Edit/Track/Export items light up; after a clip edit, Undo lights up; selecting a strip lights up Track ▸ Cut/Copy/Solo. Export reads from `Audio Files/` — verify Export Individual Track actually writes a file.
+**Menu / session-load smoke checks (supplement native-loop regression fixtures).** macOS caches the menu's greyed states until `menuItemsChanged()` fires, so after any change near menu enablement, manually verify: launch reopens the last session with its channels; with a session loaded the Edit/Track/Export items light up; after a clip edit, Undo lights up; selecting a strip lights up Track ▸ Cut/Copy/Solo. Export reads from `Audio Files/` — verify Export Individual Track actually writes a file.
 
 **Session-transition smoke checks.** With unsaved mixer/clip/cue changes, exercise New, Open, CSV, Console, New from Template, Finder `.zfproj`, Close and Quit. Verify all replacement paths offer Save / Don't Save / Cancel; failed saves leave the session open. Save As must reject a non-empty target, leave the source active during copy, and open only the complete clone. Cancel a cross-volume Save As/relocation and verify there is no partial destination. While a copy/move/bounce is active, Record/Play/strip mutation and a second session job must refuse without changing state.
 
@@ -157,15 +159,14 @@ The audit-follow-up regressions cover stale daemon status, remote STOP confirmat
 The 2026-09-23 idle smoke launch showed a normal window and no new `.ips` crash report (about 118 MB RSS / 5.9% CPU on this development machine), but AppKit logged transient negative-view-geometry runtime faults. Treat that as an open native-UI follow-up, not a fully clean runtime log.
 
 ```bash
-# Stop takes and quit GUI + daemon gracefully before this isolated test run.
-# Never run process-name-wide kill commands on a recording workstation.
+# Test mode has a separate identity and isolated preferences. Run one suite
+# at a time, away from live capture; never kill a user app/daemon to run tests.
 APP="build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
-open -W -n "$APP" --args --run-tests
+open -W -n "$APP" --args --run-tests --test-report=/private/tmp/zynforge-tests.log
 # Launch the bundle through LaunchServices. On newer macOS, invoking the raw
 # GUI executable can abort in NSApplication registration before tests start.
-# Results land in ~/Library/Logs/Zynforge/test-report.log. Check its mtime and
-# final summary; a stale report means the run did not actually fire.
-tail -1 "$HOME/Library/Logs/Zynforge/test-report.log"   # "[zynforge tests] N test groups, 0 failure(s)"
+# Inspect the freshly written explicit report; open's exit code is insufficient.
+tail -1 /private/tmp/zynforge-tests.log   # "[zynforge tests] N test groups, 0 failure(s)"
 ```
 
 ### Static gates (pre-commit, and the cheapest tier of all)
@@ -244,3 +245,28 @@ The development Mac's live PID 70029 sample found the message thread in the sync
 Validation: universal Release GUI/helper build; **440 test groups, zero failures**; both audit gates; deep/strict bundle signatures. Reopened the affected 58-track, 77:36 session with isolated preferences: EDIT/MIXER switching and save/quit completed, with no new crash report. At about 61 seconds the process used 452,592 KiB RSS and 49.7% CPU while scanning/painting. The session's mix/settings/report JSON stayed semantically unchanged; only project `updatedAt` changed during save. All 58 WAV headers matched the report's primary frame totals at 48 kHz. Hashes from the original stopped take remained pending; this is not full audio-content verification.
 
 This smoke verifies loading, view commands and saving on the affected drive, not a repeat of the entire 77-minute capture/STOP under the fixed build. Repeat a disposable recording on the target interface/drive before the next long take.
+
+## Documentation and operator-script validation
+
+Documentation-only changes validate local links/anchors, referenced source APIs,
+commands and current-versus-historical claims. They do not change the app binary
+or re-establish runtime performance. Avoid rebuilding or interrupting the installed
+app solely to edit prose.
+
+Run `python3 tools/test_auto_stop.py` for the six mocked auto-stop cases (requires
+Python 3 and `jq`). The fixtures redirect clipboard, HTTP, delays and temporary
+paths; do not replace them with commands against a real take.
+
+For an operator rehearsal, `tools/auto_stop.sh [session-path]` captures the
+companion URL from the clipboard and pins that session. Default thresholds are
+eight hours plus 4,509,715,661 bytes in `Audio Files/Track_01.wav`, or a
+9.5-hour hard cap. This is a WAV/RF64 soak helper, not a general-format timer. After
+STOP is triggered, `ZYNFORGE_AUTOSTOP_STOP_TIMEOUT` defaults to 300 seconds for
+acknowledgment retries. After the helper issues STOP, only a successful STOP reply followed by idle
+state for the same session is an acknowledged finalization. A take that stops
+before the trigger is logged as externally stopped; that early exit does not
+verify its finalization. Transport failure can retry; finalization-pending
+and first-tap confirmation can retry; a terminal error, session change or timeout
+fails. An abort sentinel stops further requests. The helper no longer writes the
+unused `/tmp/zynforge_cmd_token` file. Final SHA hashing and `verify_take.sh`
+remain separate from the STOP acknowledgment.

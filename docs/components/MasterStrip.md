@@ -59,14 +59,13 @@ Use `engine.getMasterStereo()` / `setMasterStereo()` for mode and `setMasterOutp
 | Default | Personality wash neutral grey | Fader + meter active |
 | Mono | Single-channel routing choices, mono meter | Audio sums to the selected mono output |
 | Hover | ~6 % brightness lift | Same hover pattern as `ChannelStrip` |
-| Clipped | Meter top segment held red for `brand::motion::clipLatchMs` | Click meter to clear |
+| Clipped | Meter clip pip follows the latched `TrackState::clipped` flag | Click meter to clear |
 
 ## Tokens used
 
 - **Colours**: `brand::textPrimary` master label, `brand::accentStatus` for the dB readout, `brand::meterGreen` / `meterAmber` / `meterRed` for meter LEDs, `brand::accentRecord` for clip latch
 - **Typography**: `brand::type::channelName()` for "MASTER", `brand::type::mono(11.0f, true)` for the dB readout
 - **Spacing**: hardcoded 8 px row pitch (audit candidate — could be `brand::space::md`)
-- **Motion**: `brand::motion::clipLatchMs`
 
 ## Do's and Don'ts
 

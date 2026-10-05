@@ -1,32 +1,42 @@
 # ZynForge Recording
 
-**October 5 follow-up — 21 reviewed defects repaired:** The source following `962cb42` passed **563 groups / 0 failures in each full Release, ThreadSanitizer and ASan/UBSan/float-cast-overflow suite**, with no sanitizer reports emitted. All 44 new C++ groups and six auto-stop tests pass; each repair has pre-fix failing evidence. Universal GUI/helper builds, signatures, both audit gates and no-device TERM/INT probes pass. An isolated launch reached the main UI without a new crash or changed production settings; interactive navigation and normal quit remain unverified. See [the repair register](docs/REVIEW-REPAIRS-2026-10-05.md). The verified `443c769` GUI/helper pair is now installed on the development Mac; the previous app is retained for rollback. Recordings are unchanged. See [installation details](INSTALL.md).
-
-**Earlier October 5 S6 checkpoint — source verification passed:** The frozen S6 source passed **519 groups with zero failures in each full Release, ThreadSanitizer and ASan/UBSan/float-cast-overflow suite**, with no emitted sanitizer reports. Universal GUI/helper builds, signatures and design/invariant gates pass; final no-device TERM/INT probes pass. Final bounded disk-full tests pass (5/0). The matching S6 protocol-4 GUI/helper is installed on the development Mac, hashes/signatures verified and left closed. Normal startup smoke is waiting on macOS microphone consent; physical long-take acceptance remains pending. The nonzero Apple framework leak residual remains documented. See [the audit register](docs/AUDIT-2026-10-05.md) for defect/test mappings, identities and evidence.
-
-**October 5 persistence repair (isolated checkout):** Interactive Save, auto-save, cue edits, layout writes and STOP metadata use an owned serialized worker. The message thread captures immutable values; disk writes and metadata snapshots complete before success is reported. A confirmed remote STOP returns `finalization pending` until a later STOP retry can acknowledge the completed result; failures remain visible on subsequent retries. Session replacement, capture start and deletion are guarded while persistence is pending; timeline navigation remains available. Metadata snapshots retain the newest ten accepted revisions across same-second collisions and clock rollback, and refuse linked backup roots. These snapshots exclude audio and cannot undo a committed punch. Local media finalization now has its own owned worker and targeted delayed-I/O checks; all three full S6 suites pass; runtime smoke and physical-rig acceptance remain pending.
-
-**STOP responsiveness investigation (2026-10-04):** A live five-second sample on the development Mac found the main thread blocked in `saveSessionStateTo` → `writeSessionBackupSnapshot` → filesystem copies on the external ExFAT PJ volume. Eight integrity-hash readers and four user-initiated waveform scanners were active concurrently. The stopped 58-track report had zero missed samples and no capture failures, with hashes still pending. Source now serializes report scans process-wide, yields 50 ms per 4 MiB, cancels superseded scans between reads, and runs waveform scans at background priority. Metadata-save success/failure semantics and the pending integrity report are preserved. Universal Release GUI/helper builds, all 440 test groups, both audit gates and strict bundle signatures pass. The affected 58-track, 77:36 session reopened with responsive EDIT/MIXER switching and saved/closed successfully; no new crash report appeared. A fresh full-length record/STOP on the target rig is still required. At that October 4 checkpoint, `55d62eb` and its helper were installed/launched on the development Mac. S6 supersedes that installation; the mini and DMG remain on `c563b00`.
-
 Live multitrack recorder + virtual soundcheck for macOS. Built on JUCE 8 / C++20.
 
 A focused recording surface for engineers running front-of-house or monitors: capture console inputs and play those tracks back through the same outputs during soundcheck. **Not a DAW** — no plugins, no in-the-box effects. No recording system can guarantee against every failure; use independent redundancy for important shows.
 
-## Status
+## Status — 2026-10-05
 
-The verified S6 GUI/helper pair is installed on the development Mac and left closed. All three full suites pass 519 groups; normal startup awaits microphone consent. The Mac mini and existing [universal installer](dist/Zynforge-Recording-c563b00-macOS-universal.dmg) remain on `c563b00`. See [installation details](INSTALL.md).
+The development Mac has the verified `443c769` app and matching protocol-v4
+capture helper installed. Startup was observed with normal preferences, no new
+crash report appeared, and the app was left open at installation. The Mac mini
+and existing [universal installer](dist/Zynforge-Recording-c563b00-macOS-universal.dmg)
+remain on `c563b00` / protocol 3. [INSTALL.md](INSTALL.md) owns executable hashes,
+rollback paths and installation evidence.
 
-The October 3 follow-up fixes 14 additional recording, console, session, mix and editing issues. Regression coverage includes stereo-link safety, click-bed capture alignment, device-loss finalization, reconnect patch restoration, deletion during capture, gain-reference persistence, missing stereo inputs, mixed legacy media, pasted-clip export, trim/group bounds, live aux sends, VCA mute and playback-safe auto-arm. The universal Release app and helper build successfully; **438 test groups pass**, both audit gates and bundle signatures pass, and a 30-second isolated startup smoke completed without a new crash report.
+All 21 follow-up findings are repaired. **563 test groups passed in each full
+Release, ThreadSanitizer and ASan/UBSan/float-cast-overflow suite**, with no
+sanitizer reports emitted. Six auto-stop fixtures and both static gates pass.
+See the [repair-to-test mapping](docs/REVIEW-REPAIRS-2026-10-05.md) and
+[test commands](testing.md).
 
-Active development, pre-1.0. Ships **multitrack recording**, **virtual-soundcheck playback**, a non-destructive **clip/region editor with take comping**, **bounce to stems + stereo mix**, and **live OSC console integration** as a single coherent surface.
+Active development, pre-1.0. The app provides multitrack capture, virtual
+soundcheck, non-destructive clip editing/take comping, stems and stereo bounce,
+and console integration. The current build includes asynchronous STOP/save
+finalization, ordered audio-dropout compensation, bounded settings work,
+true float AIFF-C, and guarded session/network updates.
 
-The latest source keeps recent live waveform peaks at full capture resolution near the recording head. At multi-hour zoom after STOP, it draws a smoother sustained-level body with thin true-peak markers and rejects waveform caches older than the audio. A previous 55-channel, 10:42:37 take passed primary-file checks but showed a blocky live waveform. An initial updated-build run was interrupted by a Mac mini kernel panic after about 2:43. A repeat 55-channel run on the installed `d2c5858` build completed **5:00:11** on 2026-10-02 without a restart: all 55 primary WAVs open at the report's exact frame count, and the report shows zero missed samples or capture/write failures. A later screenshot confirmed a blocky post-STOP display on that installed build, which led to the new overview change. Screenshots from `98a645e` show a thinner body with narrow peaks, but the user found that H+ stopped at a 16-minute span. The current source raises finalized-take zoom to 512× so detailed waveform inspection becomes reachable. Timed live FOLLOW/zoom checks, the planned 56-input rehearsal and independent backup check remain open. See the [field evidence](FIELD-TEST-2026-10-01.md) and [show readiness](SHOW-READINESS.md).
-
-The first October 3 audit fixes covered all 28 reported recording, session-state, editing, export, and remote-control issues. That build passed **424 test groups**, both audit gates, signature verification and an isolated startup smoke check. See [the fix and validation record](AUDIT_FIXES_2026-10-03.md), including backup-provenance compatibility and remaining physical-rig checks.
+Physical 27-track recording/STOP timing, interactive navigation and the planned
+56-input rehearsal remain open. Earlier five-hour primary-take results do not
+validate this build, backups, or the complete rig. See
+[show readiness](SHOW-READINESS.md), [field evidence](FIELD-TEST-2026-10-01.md)
+and [delivery history](CHANGELOG.md).
 
 ## Build
 
-The development Mac’s `55d62eb` universal Release build passed **440 test groups with 0 failures**. The existing DMG remains on `c563b00`. The matching GUI and capture helper are included in the current installer. This is an ad-hoc-signed development build, not a notarized public release. Real-device capture and exact-rig acceptance remain open; see [show readiness](SHOW-READINESS.md).
+The tested Release bundle includes both GUI and capture helper, is universal
+arm64 + x86_64, and is ad-hoc signed. It is not a notarized public release.
+The installed development build and the older DMG are separate artifacts;
+see [INSTALL.md](INSTALL.md) before replacing either.
 
 ```bash
 cmake -B build -G Xcode
@@ -40,7 +50,7 @@ For local installation, follow [INSTALL.md](INSTALL.md). The current DMG contain
 
 ## Documentation
 
-Current package, hashes and installed versions live in [INSTALL.md](INSTALL.md); [testing.md](testing.md) records automated coverage, and [SHOW-READINESS.md](SHOW-READINESS.md) tracks physical acceptance. Dated audit and field reports retain their original evidence. Historical installer/backup paths in those reports were removed during the October 4 cleanup.
+Current package, hashes and installed versions live in [INSTALL.md](INSTALL.md); [testing.md](testing.md) records automated coverage, and [SHOW-READINESS.md](SHOW-READINESS.md) tracks physical acceptance. Dated audit and field reports retain their original evidence. Some older installer/backup paths were removed during the October 4 cleanup; later rollback bundles are retained as listed in INSTALL.md. The [documentation index](docs/README.md) distinguishes current guides from historical records.
 
 | Topic | File |
 |---|---|
@@ -52,6 +62,9 @@ Current package, hashes and installed versions live in [INSTALL.md](INSTALL.md);
 | Coding conventions + brand-token rules | [`coding-standards.md`](coding-standards.md) |
 | Build / smoke-test / field-test strategy | [`testing.md`](testing.md) |
 | User-visible changes | [`CHANGELOG.md`](CHANGELOG.md) |
+| Complete documentation index and ownership | [`docs/README.md`](docs/README.md) |
+| October 5 follow-up fixes and regression evidence | [`docs/REVIEW-REPAIRS-2026-10-05.md`](docs/REVIEW-REPAIRS-2026-10-05.md) |
+| October 5 deep STOP/concurrency audit history | [`docs/AUDIT-2026-10-05.md`](docs/AUDIT-2026-10-05.md) |
 | Local installation, verification and rollback | [`INSTALL.md`](INSTALL.md) |
 | Planned SD5 / 56-input show and acceptance gates | [`SHOW-READINESS.md`](SHOW-READINESS.md) |
 | 2026-09-30 capture-integrity fixes and validation limits | [`AUDIT_FIXES_2026-09-30.md`](AUDIT_FIXES_2026-09-30.md) |
@@ -68,7 +81,7 @@ Current package, hashes and installed versions live in [INSTALL.md](INSTALL.md);
 - Imported media preserves existing edits. Empty arrangements stay silent, missing explicit media never substitutes another take, and cross-track clips retain source-channel identity.
 - Session UUIDs, capture settings and sample rate round-trip. Daemon configuration is acknowledged before recording; STOP waits for acknowledgement and consecutive takes preserve earlier audio.
 - Fresh recording refuses every existing `Track_NN` container unless the user explicitly continues or punches, including when the session cannot be read normally.
-- Primary, backup, mirror, daemon-finalization and report failures remain latched and visible. Installed S6 protocol-v4 commands require a compatible authenticated handshake; unchanged pre-audit protocol-v3 packages retain their earlier handshake contract.
+- Primary, backup, mirror, daemon-finalization and report failures remain latched and visible. Current protocol-v4 commands require a compatible authenticated handshake; unchanged pre-audit protocol-v3 packages retain their earlier handshake contract.
 - Expensive EDIT analysis/render operations run in the background and refuse stale results; playback and destructive edits are blocked for both local and daemon takes.
 - Daemon confidence uses the age of actual status pushes and marks lost/stale links unavailable; companion channel names, mute/solo and colours reflect GUI controls during daemon capture. Remote RECORD uses the active session and its normal preflight, while remote STOP requires the same two taps as the local button and the companion displays the first-tap confirmation prompt.
 - Snapshot retention leaves reorder-recovery journals untouched. Multipart playback/export rejects absurd part indices and propagates media read failures instead of treating a damaged take as complete.
@@ -76,17 +89,17 @@ Current package, hashes and installed versions live in [INSTALL.md](INSTALL.md);
 ## Feature highlights
 
 ### Capture
-- Lock-free per-channel ring + background WAV writer (up to 256 channels)
+- Per-channel audio rings and sharded background writers (up to 256 channels); bounded capture-boundary synchronization preserves exact audio/gap order on overflow
 - **Stereo tracks capture as ONE interleaved stereo file** (`Track_NN.wav`, 2 channels) — not two mono stems; drag it straight into your DAW. Backup + mirror copies are stereo too; legacy two-mono-file sessions still open
-- BWF (`bext`) metadata + ~5 s periodic header flush — crashes leave playable files
+- WAV BWF (`bext`) metadata and periodic header flush; crash recovery remains dependent on successful writes and storage durability
 - Pre-roll buffer (0 / 5 / 10 / 30 s) — last N seconds are included in a fresh take; punch/continue starts at its chosen timeline boundary without prepending earlier audio
 - **Continue a take** — pressing RECORD twice to stop a normal take parks the transport at its end; the separate STOP control rewinds. RECORD from the end appends a new continuation part (`Track_NN_partXX`) in the same session; the parts stitch into one take on playback and in EDIT. Continuing never touches the existing file
 - **Punch-in recording — anywhere, any take** — while playing an existing take, press RECORD to punch at the live playhead (not an old edit cursor); or stop and place an EDIT cursor, then RECORD. Press RECORD or STOP once to punch out. A selected range captures at exact audio-buffer boundaries, temporarily suspends loop playback and continues through post-roll. During the punch, the live input replaces the old take in monitoring/direct outputs. Audio before and after the punched section stays intact in the **same session and original track file**. Multi-part takes are flattened into that file. The writer inherits the original container and bit depth even when capture settings changed, refuses a backup/mirror missing the original take, preserves originals until every splice commits, and recovers interrupted `.punchbase` originals on reopen while archiving partial replacements. Local stop also saves the session project and mix metadata
-- Formats: WAV / AIFF (16 / 24 / 32-float), FLAC (16 / 24)
+- Formats: WAV / AIFF (16 / 24-bit PCM), WAV / AIFF-C (32-bit float), FLAC (16 / 24-bit PCM). Float AIFF-C keeps the `.aif` extension; capture/export/punch check final flush errors
 - **Multi-format simultaneous capture** — primary in one format, parallel backup writer in another
 - **Fail-visible redundancy** — configured backup/mirror paths must open before they count as active; open/write failures stay latched through stop, skipped copies are counted, and disk-time estimates aggregate writers that share a physical volume
 - **Replica ownership is checked before recording** — a nonempty backup/mirror without matching primary-session provenance is refused without modifying its audio. Choose a new empty destination for unverifiable legacy copies; retain the original capture layout/sample rate or start a new session.
-- **Generated click beds are reference media** — a longer backing bed does not move the default first-record or continuation position. Saved capture-gain references and input-only stereo auto-arm keep playback activity separate from new input detection.
+- **Generated click beds are reference media** — only an explicit `referenceMedia` track may be regenerated; a recorded channel named Click is protected. A longer backing bed does not move the default first-record or continuation position. Saved capture-gain references and input-only stereo auto-arm keep playback activity separate from new input detection.
 - **StereoMix file capture is independent of physical stream outputs** — live stream sends are recorded even when no hardware stream bus is assigned; an empty stream mix or unsupported daemon StereoMix configuration is refused before RECORD
 - Auto-recover orphan sessions on next launch; `session.report.json` metadata is written on clean stop and final SHA-256 hashes are filled in asynchronously
 

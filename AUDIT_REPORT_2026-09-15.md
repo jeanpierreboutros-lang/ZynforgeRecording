@@ -1,6 +1,6 @@
 # Whole-project audit — 2026-09-15
 
-> Historical audit record: findings, test counts and installation paths describe this dated pass. For current fixes and validation, see [the October audit](AUDIT_FIXES_2026-10-03.md) and [testing.md](testing.md). Old app backups/installers were removed on 2026-10-04; [INSTALL.md](INSTALL.md) records the current installation on both Macs.
+> Historical audit record: findings, counts and package paths below describe this dated pass. Current fixes and verification are in [the October 5 follow-up](docs/REVIEW-REPAIRS-2026-10-05.md) and [testing.md](testing.md). [INSTALL.md](INSTALL.md) distinguishes the development Mac, unchanged mini/DMG and retained rollback copies; older removed artifacts are not current install instructions.
 
 
 ## Outcome

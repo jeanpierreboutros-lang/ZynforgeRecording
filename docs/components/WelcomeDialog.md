@@ -112,4 +112,4 @@ The chain is in `MainComponent` ctor; don't move it without verifying the sequen
 | Default the name field to empty so the engineer types theirs immediately | Pre-fill with "Session 5" — engineers will overwrite anyway |
 | Sanitise the name via `createLegalFileName` so slashes / colons in show names work | Reject names with special chars — engineers actually type "Show — 2026/05/24" |
 | Auto-uniquify folder names on collision | Overwrite an existing session silently |
-| Wire `onOpen` to `engine.loadSession(...)` | Re-implement session loading inside the dialog |
+| Wire `onOpen` through the host replacement confirmation and `openSessionFolder` funnel | Load directly from the dialog and bypass save/capture guards |

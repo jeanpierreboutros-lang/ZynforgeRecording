@@ -1,6 +1,6 @@
 # Mac mini long-take evidence — 2026-10-01 to 2026-10-02
 
-> Historical field evidence for the named builds and dates below. As of 2026-10-04, both Macs run `c563b00`; the mini is now at `192.168.68.75`. The formerly paused update is complete, and old app backups/installers were deleted as requested. See [INSTALL.md](INSTALL.md) for current state. Detailed waveform and exact-rig acceptance remain open; these earlier takes do not validate the new build.
+> Historical field evidence for the named builds/dates below. The development Mac now has `443c769`; the mini remains on `c563b00` at the last verified address `192.168.68.75`. See [INSTALL.md](INSTALL.md) for current package/retention state. Detailed waveform and exact-rig acceptance remain open; these earlier takes do not validate the follow-up build.
 
 ## Prior-build recording
 

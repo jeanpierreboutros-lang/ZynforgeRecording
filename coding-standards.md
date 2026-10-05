@@ -33,10 +33,10 @@ The goal of this document is to keep the codebase consistent enough that any con
 
 ## Preferred Patterns and Anti-Patterns
 
-### Recording-integrity contracts (updated 2026-10-04)
+### Recording-integrity contracts (updated 2026-10-05)
 
 - Validate replica provenance and mono/stereo/sample-rate compatibility before opening capture files. Preserve an existing foreign or unverifiable destination. Reconcile continuation gaps per destination and detach pre-roll histories at one capture boundary.
-- Keep generated reference media out of default capture length. Persist `referenceMedia` and `captureInputGainDb`; zero gain is a value, not an unknown sentinel. Use input-only peaks for auto-arm and change stereo arms together.
+- Keep generated reference media out of default capture length. Require its explicit ownership flag before regenerating any file; channel name and input routing are not proof of ownership. Persist `referenceMedia` and `captureInputGainDb`; zero gain is a value, not an unknown sentinel. Use input-only peaks for auto-arm and change stereo arms together.
 - Queue device-loss finalization once. Close the stereo mix writer, retain the interrupted endpoint, and preserve warnings through STOP. Repeated STOP must not discard later edits.
 - Treat asynchronous confirmation as a race boundary: reserve session I/O and recheck recording and target identity when confirmation completes. Preserve saved console stage routing across reconnect and unknown-state replies.
 - Resolve explicit clip sources consistently for playback and export. Bound trims by source length and group movement by one common legal delta before any mutation. Propagate read failures instead of returning a successful silent render.
@@ -45,7 +45,7 @@ The goal of this document is to keep the codebase consistent enough that any con
 - Reorder/delete through `reorderTracks`, not independent renames. Move complete stereo blocks and all identity/state together, check every filesystem result, retain journals on failure and archive removed audio. Invalidate index-based undo/clipboard state after the mapping changes.
 - Preserve authoritative empty playlists and replace automation snapshots, including empty ones. Resolve whole takes via `getTrackAudioFile`/`ConcatReader`; preserve `sourceChannel` and session-relative references. Never substitute own-track media for a missing explicit source.
 - Persist UUIDs in session mix state. Existing index-keyed formats remain compatibility contracts: remap them explicitly, and commit UUID property writes after other shared-store operations.
-- Protocol-v3 daemon commands require a compatible Hello. Configuration and STOP require acknowledgements; STOP must distinguish accepted, completed, and cleanly finalized. Publish status in command order; no optimistic success or shutdown escalation based on cached idle. UI components must detach before mirror-driven structure changes too.
+- Current protocol-v4 daemon commands require a compatible Hello and mutual HMAC-SHA256 authentication before command delivery. The unchanged mini/DMG use protocol 3; never mix GUI/helper versions. Configuration and STOP require acknowledgements; STOP must distinguish accepted, completed, and cleanly finalized. Publish status in command order; no optimistic success or shutdown escalation based on cached idle. UI components must detach before mirror-driven structure changes too.
 - Before fresh capture, reject an existing base `Track_NN` in every supported audio container. Never infer “safe to replace” from a failed session load. Continue and punch are the only paths allowed to coexist with an existing take.
 - Punch originals in `.punchbase` are recovery material, never disposable stale files. Recover them before loading or starting another pass, archive any partial replacement inside the session, preflight every active copy's base and complete all stashes before opening any writer. Never prepend pre-roll history to a punch or continuation. A selected punch's in/out is gated in the audio callback, not by a UI timer.
 - A backup/mirror is active only after its directory and writer open. Keep take-level failure latches after writer cleanup, and surface them through local and daemon status. Aggregate disk rates per physical volume.
@@ -53,6 +53,23 @@ The goal of this document is to keep the codebase consistent enough that any con
 - A continued session report covers every on-disk part and retains earlier capture warnings. Treat `sha256Pending`, `sha256Failed`, failed writers, skipped mirrors, missed samples and failed punches as incomplete capture evidence. The verifier must compare physical frame counts and complete part numbering as well as SHA-256 hashes; a matching hash alone cannot certify a short file.
 - Background edits capture immutable input, render without engine/UI access, and apply only if the session and source clips still match. Local and external recording both block destructive edits.
 - Automated regression results must be labeled separately from actual hardware acceptance. Do not claim crash/power-loss guarantees from simulated filesystem tests.
+
+### Follow-up invariants — 2026-10-05
+
+- Preserve the absolute ordering of retained audio and dropped-frame silence.
+  Keep callback metadata bounded; never shift a later gap before earlier audio.
+- Test writer creation and final flush separately. Float-AIFF capture, export
+  and punch must propagate finalization errors before publishing success.
+- Serialize descriptive project patches against the latest document. Refuse
+  malformed existing JSON before writing any sibling session metadata.
+- Registering undo for an already-applied gesture must not replay the gesture.
+  Batch shared settings changes and retain tests of actual reload counts.
+- Recheck capture/finalization at asynchronous chooser completion. Save busy
+  state must still permit stopping existing transport without weakening LOCK.
+- Count distinct requested replies, not unsolicited messages. Validate remote
+  schemas before mutation; exclude authentication envelopes from payload arity.
+- Honor FFT publication before reading shared non-atomic samples. Analysis
+  failures need explicit error state in both detailed and summary reports.
 
 ### Always
 
@@ -84,10 +101,10 @@ The goal of this document is to keep the codebase consistent enough that any con
 
 ### Never
 
-- Allocate, lock, log, or call `Component::repaint` from the audio callback.
+- Allocate, perform I/O, log, or call `Component::repaint` from the audio callback. Do not introduce unbounded waits. Existing short capture-boundary spin-lock sections synchronize timeline metadata; consumer allocation/copying/disk I/O stays outside them.
 - Construct a raw `juce::Font` outside `Source/Theme/`. Use `brand::type::*` or `brand::fonts::*`.
 - Use `juce::Colour::fromRGB(...)` or `juce::Colours::black/white` outside `Source/Theme/`. Use `brand::*` tokens or `brand::onSignal(bg)`. The **one** sanctioned white is a specular gloss / light scrim — route it through `brand::gloss(alpha)`, never an inline `Colours::white.withAlpha(...)`.
-- Leave the application-wide `juce::LookAndFeel::setDefaultLookAndFeel (&laf)` setup in `MainComponentInit` and its reset in the destructor. New prompts should use that app default or explicitly set the same LAF; do not leave a stock JUCE prompt in the recording workflow.
+- Remove the application-wide `juce::LookAndFeel::setDefaultLookAndFeel (&laf)` setup in `MainComponentInit` or its reset in the destructor without preserving their lifetime and styling guarantees. New prompts use the app default or explicitly set the same LAF.
 - Inline a `withAlpha(0.xx)` literal. Use a named step from `brand::alpha::` (`subtle`/`dimmed`/`ghost`/`scrim`/`muted`/`prominent`/`bold`). If none fits, add a line to the ad-hoc catalog in `BrandColors.h` rather than leaving the magic number undocumented.
 - Pass a raw corner-radius float to `fill/drawRoundedRectangle`. Use `brand::radius::{sm,md,lg,xl}`. Sub-2 px micro-radii on meter segments / icon glyphs are the only exception (geometry-forced, radius < half the element height).
 - Introduce new identity-sensitive persistence keyed only by array index. Prefer `TrackState::stripId`; existing index-based automation and compatibility formats require explicit remapping.
@@ -124,10 +141,10 @@ g.setColour (brand::shadow::elev2());
 
 See `testing.md` for the full strategy. High level:
 
-- Every change is **build-tested** (`cmake --build build --config Release`).
-- Every change runs the **headless test suite** (`Source/Tests/`, `juce::UnitTest`) by launching the bundle through LaunchServices: `open -W -n "…/Zynforge Recording.app" --args --run-tests`. Report lands at `~/Library/Logs/Zynforge/test-report.log`; check its fresh mtime and final zero-failure summary. **Quit any running GUI instance first.** Directly invoking the raw GUI executable can abort during `NSApplication` registration on newer macOS before the tests start.
-- New `Source/Audio/` behaviour gets a test. Clip edits + recording integrity are covered (`RecorderPlayerTests`, `RecordingIntegrityTests`, `AudioCallbackTests`); add to them rather than starting a parallel harness.
-- Every change is **smoke-tested** (launch, confirm no new crash report, RSS / CPU healthy).
+- Every production-code change is **build-tested** (`cmake --build build --config Release`).
+- Production-code changes run the relevant **headless test suite** (`Source/Tests/`, `juce::UnitTest`) by launching the bundle through LaunchServices: `open -W -n "…/Zynforge Recording.app" --args --run-tests`. Report lands at `~/Library/Logs/Zynforge/test-report.log`; check its fresh mtime and final zero-failure summary. Test mode has a separate application identity and isolated preferences. Run only one test process at a time; schedule heavy builds/tests away from a live take. Never stop an unrelated recording process to run tests. Directly invoking the raw GUI executable can abort during `NSApplication` registration on newer macOS before the tests start.
+- Documentation-only changes check links, examples and source claims; a rebuild cannot validate prose. New `Source/Audio/` behaviour gets a test. Clip edits + recording integrity are covered (`RecorderPlayerTests`, `RecordingIntegrityTests`, `AudioCallbackTests`); add to them rather than starting a parallel harness.
+- Runtime changes are **smoke-tested** (launch, confirm no new crash report, RSS / CPU healthy).
 - UI-only behaviour (paint, hit-test, modal flow) isn't covered by the headless suite — say so explicitly and eyeball it; don't claim UI correctness from a green build.
 
 ## Documentation and Comments

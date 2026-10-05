@@ -6,7 +6,14 @@ The format follows `/design-system document` output: description, when-to-use, v
 
 ## Index
 
-References reviewed against source build `c563b00` on 2026-10-04. The October updates cover stereo/input detection, deletion guards, source-bounded and grouped edits, automation shape, finalized-take zoom and device-loss finalization. API corrections below reflect the current headers. Component documentation does not establish field or accessibility acceptance. For the current test baseline, package and operating limits, see [testing](../../testing.md), [installation](../../INSTALL.md), [architecture](../../architecture.md) and [show readiness](../../SHOW-READINESS.md).
+References reconciled with the `443c769` source and current headers on
+2026-10-05. This pass corrects transport fallback/STOP contracts, protocol 4,
+clock pulse cadence, clip latching, guarded session opening and mixer/FFT
+ownership. Unchanged references remain in the index. These documents describe
+implementation; they do not establish field or accessibility acceptance.
+[Testing](../../testing.md), [installation](../../INSTALL.md),
+[architecture](../../architecture.md) and [show readiness](../../SHOW-READINESS.md)
+own validation and operating limits.
 
 ### Shipped
 
@@ -31,7 +38,7 @@ References reviewed against source build `c563b00` on 2026-10-04. The October up
 
 ### TODO
 
-The remaining ~50 component files are mostly internal helpers (MiniSpectrum, TimelineStrip, StripColourPicker, etc.) and modal dialogs for specific settings flows (ClickSettings, ExportDialog, etc.). Document on demand when an engineer extends one of them; no value in pre-emptively covering every helper class.
+Other component files are mostly internal helpers (MiniSpectrum, TimelineStrip, StripColourPicker, etc.) and modal dialogs for specific settings flows (ClickSettings, ExportDialog, etc.). Document on demand when an engineer extends one of them; no value in pre-emptively covering every helper class.
 
 ## Style
 

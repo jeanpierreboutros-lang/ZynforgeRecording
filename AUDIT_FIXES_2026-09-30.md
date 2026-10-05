@@ -1,6 +1,6 @@
 # Capture-integrity audit fixes — 2026-09-30
 
-> Historical audit record: findings, test counts and installation paths describe this dated pass. For current fixes and validation, see [the October audit](AUDIT_FIXES_2026-10-03.md) and [testing.md](testing.md). Old app backups/installers were removed on 2026-10-04; [INSTALL.md](INSTALL.md) records the current installation on both Macs.
+> Historical audit record: findings, counts and package paths below describe this dated pass. Current fixes and verification are in [the October 5 follow-up](docs/REVIEW-REPAIRS-2026-10-05.md) and [testing.md](testing.md). [INSTALL.md](INSTALL.md) distinguishes the development Mac, unchanged mini/DMG and retained rollback copies; older removed artifacts are not current install instructions.
 
 This record describes source commit `672456d`, installed at `/Applications/Zynforge Recording.app` and packaged in the `dist/Zynforge-Recording-672456d-macOS-universal.dmg` (historical package; removed locally). It supplements the earlier [recording-reliability audit](AUDIT_FIXES_2026-09-20.md). Automated validation is not a real-device acceptance test.
 

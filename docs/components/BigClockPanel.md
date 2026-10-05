@@ -12,7 +12,7 @@ Exactly one instance per `MainComponent`. The host's 10 Hz timer pushes state vi
 
 ## Constructor
 
-When daemon capture is active, the host supplies the daemon's timeline position and sample rate from `EngineStatus`, not the idle local player's counters. The panel formats the values; it does not infer capture success or synchronization. The host separately surfaces protocol-v3 primary/backup/mirror/recovery/report and disk-health fields, including latched failures after stop. Local and external capture use the same recording-state guard.
+When daemon capture is active, the host supplies the daemon's timeline position and sample rate from `EngineStatus`, not the idle local player's counters. The panel formats the values; it does not infer capture success or synchronization. The host separately surfaces protocol-v4 primary/backup/mirror/recovery/report and disk-health fields, including latched failures after stop. Local and external capture use the same recording-state guard.
 
 ```cpp
 BigClockPanel();
@@ -42,9 +42,9 @@ No params — state is entirely push-driven via setters.
 
 ## Pulse animation
 
-`syncPulseTimer()` starts the 30 Hz timer **only** when `mode == Recording || armedReady`. Idle states stop the timer outright (no background CPU). Setters that change `mode` or `armedReady` call `syncPulseTimer()` to maintain this invariant.
+`syncPulseTimer()` starts a 15 Hz pulse timer only when reduced motion is off and `mode == Recording || armedReady`. Other states stop this pulse timer; host status updates may still repaint when values change. Setters that change `mode` or `armedReady` call `syncPulseTimer()` to maintain this invariant.
 
-This gating is critical — without it, the panel repaints 30× per second on idle, which was the root of a 7-10% idle-CPU regression.
+The pulse repaints the border band rather than continuously repainting the entire panel. This bounds animation work; it does not establish total application idle CPU, which also depends on audio, meters, session state and other timers.
 
 ## Tokens used
 

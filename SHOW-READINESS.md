@@ -1,10 +1,20 @@
 # Show readiness — planned SD5 recording
 
-## Decision as of 2026-10-04
+## Decision as of 2026-10-05
 
-Both Macs now have universal source build `c563b00` and its matching protocol-v3 helper. The build passed 438 automated test groups, static audits, signature checks and isolated startup smoke; installed app/helper hashes match on both Macs, and both launched successfully. The current package and removal of older app backups/installers are documented in [INSTALL.md](INSTALL.md). The mini's short launches ended because the user closed it, with no new crash report.
+The development Mac has verified `443c769` / protocol 4 installed. The Mac mini
+and existing DMG remain on `c563b00` / protocol 3. The current source passed
+563 groups in each full Release, TSan and ASan/UBSan suite, plus six auto-stop
+fixtures; no sanitizer reports were emitted. Installed hashes/signatures match
+the tested Release app/helper, and startup with normal preferences produced no
+new crash report. [INSTALL.md](INSTALL.md) owns package and rollback details.
 
-The finalized-take 512× zoom change and all October audit fixes are included in this installation. A detailed-zoom visual retest, timed live FOLLOW/zoom observation, disposable device/desk failure checks, independent backup validation and the planned 56-input rehearsal remain open. Automated results and launch checks do not close them.
+These checks do not establish recording or UI latency on the target rig. A
+physical 27-track record/STOP check on the development interface/external drive,
+detailed zoom and live FOLLOW interaction, device/desk failures, independent
+backup validation, and the planned 56-input rehearsal remain open. The initial
+installed startup used roughly 59–81% of one CPU core; it was not a steady-state
+performance benchmark or a timed interaction check.
 
 Historical evidence includes a 55-channel, 10:42:37 primary take and a separate `d2c5858` take that completed 5:00:11 with matching primary-file frame counts and a clean capture report. The latter was not independently re-hashed and did not exercise a backup. Another run was interrupted by a Mac mini PCIe `lan-1gb` kernel panic; the cause remains unconfirmed, and the user is handling that host issue separately. AppKit geometry faults from older runs remain an unclosed native-UI follow-up. See [field evidence](FIELD-TEST-2026-10-01.md) and the [field checklist](FIELD-TEST.md). Do not treat these historical results as acceptance of the newly installed build or rely on the mini as the sole recorder while the restart fault is unresolved.
 
@@ -46,7 +56,7 @@ RF64 limits apply **per file**, not to the session total. At 24-bit/48 kHz one m
 4. Run the app's pre-flight checks before recording. Verify primary and backup destinations are separate and writable. Disable computer sleep and protect power/cables. A 512-sample buffer is only a starting point for rehearsal when monitoring through the console; choose the setting that passes on this rig.
 5. Record **three continuous hours** of signal on all 56 inputs with the actual backup/mirror configuration and capture mode. Monitor missed samples, write errors, device sync, free space, per-volume time remaining and application responsiveness. If StereoMix is required, confirm its stream sends and file before the soak.
 6. Stop normally; wait for the final report and hashing, then run `tools/verify_take.sh` on the session. Require exit 0, zero missed samples and no primary/backup/mirror/punch/recovery/report failures. Inspect every file's expected duration and channel mapping, audition beginning/middle/end, and open the recording in another DAW. Check the backup independently; a successful primary does not prove its backup. Unplug/fail a redundant destination only in a separate disposable run and verify the warning remains visible through stop and later continuation.
-7. After installing the exact build to be used, separately test repeated takes, unreadable-session collision protection, selection/manual punch with before/new/after inspection, interrupted-punch recovery, multichannel import, session reopen, playback and export on disposable sessions. Verify every primary/backup/mirror punch copy and physical monitor/direct output. If using the daemon, test protocol-v3 acknowledgement, failed reconfiguration, truthful STOP/finalization status, routing and GUI reattachment. Run [FIELD-TEST.md](FIELD-TEST.md) and the applicable [hardware delta](FIELD-TEST-AUDIT.md).
+7. After installing the exact build to be used, separately test repeated takes, unreadable-session collision protection, selection/manual punch with before/new/after inspection, interrupted-punch recovery, multichannel import, session reopen, playback and export on disposable sessions. Verify every primary/backup/mirror punch copy and physical monitor/direct output. If using the daemon, test the installed protocol version (4 for `443c769`, 3 for the unchanged mini), authenticated attach and acknowledgement, failed reconfiguration, truthful STOP/finalization status, routing and GUI reattachment. Run [FIELD-TEST.md](FIELD-TEST.md) and the applicable [hardware delta](FIELD-TEST-AUDIT.md).
 8. Test device-loss and crash recovery only on disposable recordings, away from show time, with a hardware recovery plan. Stop testing if the interface becomes unstable.
 
 Record actual results and reviewer acceptance; leave unperformed checks open. Any dropped samples, missing/wrong channels, unstable clock, short/corrupt files or failed redundancy is a no-go until diagnosed and the rehearsal passes again.

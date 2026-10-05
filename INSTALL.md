@@ -39,7 +39,7 @@ retained in `../ZynforgeRecording-review-evidence-20261005/installation/`.
 
 ## Previous development Mac S6 audit repair — 2026-10-05
 
-The development Mac has the S6 audit repair at `/Applications/Zynforge Recording.app`, including its matching protocol-v4 helper. Both executables are universal arm64 + x86_64, match the tested Release bundle, and pass deep/strict signature verification. The full Release, ThreadSanitizer and AddressSanitizer/UndefinedBehaviorSanitizer/float-cast-overflow suites each passed 519 groups with zero failures; no sanitizer reports were emitted. Final isolated TERM/INT and disposable ENOSPC probes also passed.
+At the earlier S6 checkpoint, the development Mac had the audit repair at `/Applications/Zynforge Recording.app`, including its matching protocol-v4 helper. Both executables are universal arm64 + x86_64, match the tested Release bundle, and pass deep/strict signature verification. The full Release, ThreadSanitizer and AddressSanitizer/UndefinedBehaviorSanitizer/float-cast-overflow suites each passed 519 groups with zero failures; no sanitizer reports were emitted. Final isolated TERM/INT and disposable ENOSPC probes also passed.
 
 | Executable | SHA-256 |
 | --- | --- |
@@ -50,7 +50,7 @@ Source manifest (253 paths) SHA-256: `1d916b93ee5f3b2dc35f61f497615ee828fabce2d8
 
 Rollback: `/Applications/Zynforge Recording.app.backup-20261005-031802-before-audit`. Installation checked that no Recording GUI or capture helper was running, staged and verified the complete bundle, then replaced it with rollback on failure. Recordings and production preferences were preserved. The Mac mini and existing DMG remain unchanged.
 
-**Native startup acceptance is pending macOS microphone consent.** The new local code signature caused TCC to request fresh consent; the isolated smoke launch waited in CoreAudio before creating its main window. Only that owned, non-recording smoke process was terminated after normal quit failed. No audio service or privacy setting was changed. The installed app is closed pending the user's microphone decision. A physical 27-track/27-insert long-take check remains required. Apple `leaks` reports the same small AppIntents connection cycles as the baseline; no leak-free claim is made.
+**S6 startup observation was blocked on macOS microphone consent.** That local code signature caused TCC to request fresh consent; the isolated smoke launch waited in CoreAudio before creating its main window. Only that owned, non-recording smoke process was terminated after normal quit failed. No audio service or privacy setting was changed. At that checkpoint the app was left closed. The later `443c769` startup observation above reached rendering. A physical 27-track/27-insert long-take check remains required. Apple `leaks` reports the same small AppIntents connection cycles as the baseline; no leak-free claim is made.
 
 ## Previous development Mac responsiveness update — 2026-10-04
 
@@ -86,7 +86,7 @@ The app is ad-hoc signed, not Developer ID notarized, and supports macOS 12.0+.
 
 At the user's request, after installation verification, old Recording app bundles, backup copies, installers and checksum files were deleted: 31 items on the development Mac (15 apps, 10 DMGs, 6 checksums), and 10 on the mini (3 apps, 4 DMGs, 3 checksums). Recordings, session backups, settings, source and other ZynForge products were preserved. Final scans of Applications and the user's Applications, Desktop, Downloads, Documents and Zynforge-App-Backups locations found no remaining old versions. The current development Release build remains available.
 
-**Retention notice:** Older installation/package records elsewhere in the repository describe historical state. Their backup and installer paths are no longer available locally after cleanup; Git history is retained. The current installation above supersedes earlier paused-installation and retained-backup statements.
+**Retention notice:** Older installation/package records elsewhere in the repository describe historical state. Their backup and installer paths are no longer available locally after cleanup; Git history is retained. The current `443c769` section above supersedes earlier installation state. Later October 5 rollback bundles were created after the cleanup and remain retained.
 
 ## Preconditions
 
@@ -133,6 +133,6 @@ If copying or verification fails, do not launch the partial installation. Preser
 
 ## Rollback
 
-The development Mac audit repair retains the October 5 rollback bundle named above; the October 4 responsiveness rollback is also retained. Other historical app copies removed in the earlier cleanup remain unavailable.
+The current development installation retains `Zynforge Recording.app.backup-20261005-112530-before-443c769`. The earlier October 5 S6 and October 4 responsiveness rollback bundles remain as recorded above; do not substitute a historical path without checking that it exists. Other historical app copies removed in the earlier cleanup remain unavailable.
 
 Stop capture and quit both processes first. Preserve current session data and the current app; then move the named backup back to `/Applications/Zynforge Recording.app`. Verify the restored signature before launch. Restore GUI and bundled daemon together, never just one executable. A prior build may not understand new session metadata: test with a duplicate session, not the only recording copy. Rolling back the app does not undo session-file changes or recover audio overwritten before the fixes.

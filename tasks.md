@@ -1,6 +1,18 @@
 # Project Tasks
 
-## Full audit and deep STOP repair — 2026-10-05
+## Current follow-up and documentation — 2026-10-05
+
+- [x] Repair all 21 follow-up findings with pre-fix failing regressions; preserve the AIFF diagnosis correction and final-flush failure evidence.
+- [x] Pass 563 groups in each full Release, TSan and ASan/UBSan/float-cast-overflow run, six auto-stop fixtures, both gates, universal signatures and no-device TERM/INT probes.
+- [x] Install the exact `443c769` GUI/helper pair on the development Mac; preserve the previous app, verify complete bundle/binary equality, and leave the new app open after startup observation. See [INSTALL.md](INSTALL.md).
+- [x] Observe isolated and installed main-component rendering with no new crash reports. The earlier microphone-consent startup block did not recur in these launches; this does not establish normal quit or interactive latency.
+- [x] Reconcile all repository Markdown guides and their local links, distinguish current installation from historical evidence, and document ownership in [docs/README.md](docs/README.md).
+- [ ] Measure physical 27-track capture/STOP and command latency with the intended interface/external drive; check all configured copies independently.
+- [ ] Verify normal quit, native navigation/undo, long-take FOLLOW/zoom and pending original-take integrity hashes.
+- [ ] Complete the exact 56-input rehearsal and unresolved Mac mini host investigation. Mini/DMG remain `c563b00`; this task did not update them.
+
+
+## Earlier full audit and deep STOP repair — 2026-10-05
 
 - [x] Reconcile all eight specialist reports before changing production behavior; preserve the original application/session while working in isolated checkouts.
 - [x] Establish the clean universal build and original 440-group baseline; record its capture-deletion failure instead of inheriting historical green counts.
@@ -22,13 +34,13 @@
 - [x] Verify the S6 explicit O_NONBLOCK repair: full Release, TSan and ASan/UBSan/float-cast-overflow each pass 519 groups/zero failures, no sanitizer reports, unchanged deadline threshold. Preserve the earlier S5 Release red.
 - [x] Repeat final embedded-helper TERM/INT probes successfully within no-device/empty-capture scope.
 - [x] Pass final S6 bounded disk-full export repeat (5/0, real ENOSPC, image detached) and repeat Main leak observation (28/0, same 288 allocations/18,816 bytes/three Apple cycles).
-- [ ] Complete normal UI smoke after macOS microphone consent. New code identity prompted; no app window yet, only owned nonrecording smoke PID terminated after normal quit did not complete. Preserve the nonzero framework residual and distinguish physical-rig/install acceptance.
+- [x] Resolve the earlier consent-gated startup observation: the later `443c769` isolated and installed launches reached main-component rendering. Preserve the original S6 blocked-smoke evidence; interactive navigation and normal quit remain open above.
 - [ ] Complete a disposable 27-track record/STOP on the target interface/external drive and measure command latency; independently verify primary and configured copy outcomes.
 - [ ] Resume/verify the preserved production take's pending hashes before calling integrity verification complete. Do not infer completion from the application's exit.
 - [x] Install the matching S6 GUI/helper atomically on the development Mac after confirming both processes stopped; verify exact hashes/deep-strict signatures and preserve rollback `Zynforge Recording.app.backup-20261005-031802-before-audit`. Leave the app closed.
-- [ ] Complete the pending macOS microphone-consent/native-smoke step; retain operator residuals and physical long-take requirements. Mini/distribution image unchanged.
+- [x] Record subsequent `443c769` startup evidence separately from S6; retain physical long-take and nonzero framework-leak residuals. Mini/distribution image unchanged.
 
-Current reports, exact log paths and reproduction commands: [October 5 audit register](docs/AUDIT-2026-10-05.md).
+Earlier S6 reports and commands: [October 5 audit register](docs/AUDIT-2026-10-05.md). Current follow-up: [repair register](docs/REVIEW-REPAIRS-2026-10-05.md).
 
 ## STOP responsiveness — 2026-10-04
 
@@ -54,7 +66,7 @@ Current reports, exact log paths and reproduction commands: [October 5 audit reg
 - [x] Implement fixes and regression coverage for all 14 additional audit findings.
 - [x] Validate universal Release app/helper, all 438 test groups, audit gates, signatures and a 30-second isolated startup smoke (2026-10-04).
 
-## Current priorities — 2026-10-04
+## Field priorities carried forward — 2026-10-05
 
 - [ ] Validate the October device-loss, desk reconnect, capture-alignment, replica, routing and edit cases on disposable hardware sessions in [FIELD-TEST.md](FIELD-TEST.md).
 - [ ] Reopen the five-hour take on `c563b00`, zoom to a few-minute span, and capture visual evidence of detailed waveform rendering.
@@ -64,7 +76,7 @@ Current reports, exact log paths and reproduction commands: [October 5 audit reg
 
 ## Historical delivery and remaining checks — 2026-10-02
 
-Installation and retention statements in this dated section describe the state at that time. Both Macs now have `c563b00`; old app backups and installers were removed. Unchecked hardware tasks still apply unless superseded by the current field checklist.
+Installation and retention statements in this dated section describe the state at that time. At the October 4 checkpoint both Macs had `c563b00` and the inventoried older packages were removed. The development Mac now has `443c769`; later rollback bundles are retained as listed in INSTALL.md. Unchecked hardware tasks still apply unless superseded by the current field checklist.
 
 - [x] Diagnose the blocky live waveform reported during a 55-channel, 10:42:37 Mac mini take. Verify all 55 primary RF64 files' frame counts and SHA-256 values against the final report; document the limits of that evidence in [FIELD-TEST-2026-10-01.md](FIELD-TEST-2026-10-01.md).
 - [x] Keep recent original-resolution peaks during long live takes, add ten-hour/ring-wrap regression coverage, build universal Release and pass 401 headless test groups with zero failures. Source commit `d2c5858`.

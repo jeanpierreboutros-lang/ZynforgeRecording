@@ -1,6 +1,6 @@
 # Heated Steel — upstream token promotion handoff
 
-Checked against `c563b00` on 2026-10-04: `steelHeaderHi`, `steelHeaderLo` and `debossFace` remain local definitions in `BrandColors.h`, absent from the vendored `ForgeTokens.h`. This document records the proposed upstream promotion, not a completed change in the separate brand repository.
+Rechecked against `443c769` on 2026-10-05: `steelHeaderHi`, `steelHeaderLo` and `debossFace` remain local definitions in `BrandColors.h`, absent from the vendored `ForgeTokens.h`. This document records the proposed upstream promotion, not a completed change in the separate brand repository.
 
 The Heated Steel surfaces use a handful of colours. They live in the
 hand-written `BrandColors.h` (which is correct — it's not generated). This file

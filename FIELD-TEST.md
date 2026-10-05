@@ -1,6 +1,6 @@
-# ZynForge Recording — Field-Test Checklist (updated 2026-10-04)
+# ZynForge Recording — Field-Test Checklist (updated 2026-10-05)
 
-Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak. Tick boxes only after performing them; the failure column tells you when to stop and report. Both Macs have source build `c563b00` and matching capture helpers. The build passed 438 automated test groups; installed hashes, signatures and startup checks passed. The [installation record](INSTALL.md) contains the current DMG and hashes. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run on this build. See the [55-channel long-take evidence](FIELD-TEST-2026-10-01.md).
+Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak. Tick boxes only after performing them; the failure column tells you when to stop and report. The development Mac has `443c769` / protocol 4; the mini and DMG remain `c563b00` / protocol 3. Current source passed 563 groups in each full Release and sanitizer suite, plus six auto-stop tests. Installed development app/helper hashes, signatures and startup checks passed; physical capture is not yet accepted. The [installation record](INSTALL.md) contains the current DMG and hashes. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run on this build. See the [55-channel long-take evidence](FIELD-TEST-2026-10-01.md).
 
 Never force-quit, unplug hardware or delete sessions during production recording. Crash tests require a disposable rig/session and a recovery plan. In daemon mode, killing only the GUI is a reattachment test; it does not necessarily stop the recording or create an orphan. Stop both processes gracefully before installing or rolling back.
 
@@ -8,7 +8,26 @@ Never force-quit, unplug hardware or delete sessions during production recording
 
 ---
 
-## Current long-run waveform check — `c563b00`
+## October 5 follow-up acceptance — `443c769`, not yet performed
+
+Run these checks on disposable sessions; retain measured results and leave
+unchecked items open. [The repair register](docs/REVIEW-REPAIRS-2026-10-05.md)
+contains automated evidence for all 21 defects.
+
+| Check | Expected result |
+| --- | --- |
+| ☐ Record 27 tracks with the intended interface and external drive; operate MIXER/EDIT and STOP. | Measure command response, STOP-to-capture-ended and STOP-to-finalized separately; no missing audio or falsely clean report. |
+| ☐ During a pending save, stop existing playback/capture with Space. | STOP remains available; normal capture still requires its second confirmation and LOCK still applies. |
+| ☐ Change one fader, undo/redo, reset a 27-track session, then reopen. | Values round-trip, controls respond and reset defaults are correct. |
+| ☐ Keep Session Info & Notes open, save newer cues/edits elsewhere, then save notes. | Newer session content survives and unsaved mixer changes are not marked clean. |
+| ☐ Open import/bounce chooser, start capture before selecting a file/destination. | Completion refuses the operation without importing or rendering into a live take. |
+| ☐ Reopen an ordinary recorded channel called Click; separately regenerate a generated click bed. | Recorded audio is unchanged; only the explicit reference bed is regenerated. |
+| ☐ Record/export/punch 32-bit float AIFF-C with primary and configured copies; open it in the intended DAW. | Float data, frame counts and channels match; any destination/finalization error stays visible. |
+| ☐ Analyze stereo audio with signal only on the right and an unreadable test file. | Right-channel issues are reported; the unreadable file is a failed analysis, never a clean result. |
+| ☐ Run the auto-stop helper on a disposable session with deliberately delayed finalization. | It waits for acknowledgment, pins the same session throughout retries, and fails on timeout/error. |
+| ☐ Test the actual console and mirror connections, including incomplete gain replies/reconnect. | Partial gains are not restored; bad mirror data preserves the existing layout. |
+
+## Long-run waveform check — record the installed build for each Mac
 
 | # | Gesture | Expect | Failure indicator |
 |---|---|---|---|
@@ -186,7 +205,7 @@ Its implemented checks include:
 Still do by hand: (1b) open in another DAW, and (1d) the hard-kill-mid-take
 crash-safety check on disposable data. A survivor without a clean-stop report will not pass the helper even when audio is recoverable. Requires `ffprobe`, `xxd`, `shasum`, `jq`, `python3`; these are not all stock macOS tools. A pending-hash report exits nonzero and must be checked again when hashing finishes.
 
-## October regression acceptance — installed `c563b00`
+## October regression acceptance — repeat on the intended installed build
 
 Use disposable sessions and copies. These rows are not pre-passed by the automated suite.
 
@@ -216,7 +235,7 @@ Also reopen the five-hour take and zoom to a few-minute span to observe the deta
 - [x] Install and verify source build `c563b00` and matching helper on both Macs (2026-10-04). Hashes, signatures and startup checks passed; old app backups/installers were removed as requested. See [INSTALL.md](INSTALL.md). This completes installation only; the hardware checks below remain open.
 - [ ] During a disposable daemon continuation, send START again while rolling. It must refuse without moving the live playhead, changing the take's base position, or clearing any already-latched capture warning. STOP must remain responsive while a companion/status client is slow or disconnected.
 - [ ] Finish a clean continuation after a take with a known capture warning. The final `session.report.json` must list and hash all earlier and new parts and retain the earlier warning. Run `verify_take.sh` on a clean continued session and on a deliberately gapped disposable copy; only the complete, warning-free copy should pass.
-- [ ] If using `tools/auto_stop.sh`, run it against a disposable live session with its companion token. Confirm it pins the intended session, performs the two-tap STOP, checks `recording:false`, and reports failure when the companion cannot confirm a stop. The success path passed on `TEST NEWWWWWW` on 2026-10-02; the real-device failure path remains untested. Never use an untested timer to stop show material.
+- [ ] If using `tools/auto_stop.sh`, run it against a disposable live session with its companion token. Confirm it pins the intended session, performs the two-tap STOP, waits for a successful finalization acknowledgment, then confirms `recording:false` for the same session. Pending finalization must not count as success; the timeout or a terminal error must fail visibly. The success path passed on `TEST NEWWWWWW` on 2026-10-02; the real-device failure path remains untested. Never use an untested timer to stop show material.
 
 ### 2026-09-24 punch and import delta (historical build; repeat applicable checks on the current DMG)
 

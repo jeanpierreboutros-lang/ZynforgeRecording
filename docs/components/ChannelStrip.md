@@ -87,6 +87,17 @@ Stereo-link requests go through the host/engine, which refuses overlapping pairs
 
 Live monitored inputs feed aux sends. Post-fader sends honor strip and VCA mute in live and offline paths; pre-fader sends remain independent of that mute gate. Capture gain references persist separately from live console gain so reopening and playback compensation remain stable.
 
+## Undo and FFT ownership
+
+The host coalesces completed mixer gestures into undo snapshots. Registering the
+initial action records the already-applied state without replaying every strip's
+persistent setters; real undo/redo still applies the snapshot. This is distinct
+from the strip's immediate value update.
+
+Mini-spectrum and classifier consumers run on the message thread. Classification
+requires an acquire-published `fftBlockReady` snapshot and leaves release to the
+spectrum consumer; reading the producer-owned buffer while false is invalid.
+
 ## Right-click menu
 
 Surfaces the per-strip actions that don't fit in the strip header: Rename, Add channel, Delete channel, Link/Unlink stereo pair, Change/Reset colour, Reset name, Send to STREAM bus, Mute physical output, Automation Safe toggle, Assign to VCA submenu, Assign to Edit Group submenu, Send to bus submenu. STREAM-send and physical-output-mute state are session-authoritative: they persist in `session_mix.json`, reset on session replacement, and participate in mixer undo like the visible fader/pan/mute controls.

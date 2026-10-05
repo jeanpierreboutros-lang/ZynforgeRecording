@@ -1,9 +1,10 @@
 # October 5 follow-up review repairs
 
 This register tracks the 21 findings reviewed at `962cb42`, after the earlier
-S6 audit. The user authorized all repairs. The installed application and user
-recordings are outside this source/test repair; no physical-take acceptance is
-implied.
+S6 audit. The user authorized all repairs, then requested installation of the
+verified `443c769` GUI/helper pair on the development Mac. [INSTALL.md](../INSTALL.md)
+owns that subsequent installation and rollback record. The source/test evidence
+below does not imply physical-take acceptance; user recordings were untouched.
 
 ## Evidence collected before repair
 

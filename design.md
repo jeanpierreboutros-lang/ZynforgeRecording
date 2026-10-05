@@ -8,17 +8,17 @@ description: >
   next to a console — calm, legible, no decoration.
 colors:
   # ── Canvas / panel chrome (near-pure dark) ──────────────────────────
-  bg-deep:              "#0a0a0c"   # deepest plane — main canvas
+  bg-deep:              "#0d0d12"   # deepest plane — main canvas
   bg-panel:             "#121316"   # header bands, big-clock background
-  bg-strip:             "#18191d"   # neutral strip body (no personality wash)
+  bg-strip:             "#1e1e1e"   # neutral strip body (no personality wash)
   bg-elevated:          "#303030"   # popups, callouts, dialog chrome
   edge:                 "#26282e"   # 1 px outlines around panels and strips
 
-  # ── Text (4-step, all WCAG-AA against bg-strip) ─────────────────────
-  text-primary:         "#e8e8ee"
+  # ── Text (4-step; muted is disabled/decorative, not an AA claim) ─────────────────────
+  text-primary:         "#ffffff"
   text-secondary:       "#b8c2cc"
   text-tertiary:        "#7a8a9a"
-  text-muted:           "#888a94"
+  text-muted:           "#55606c"
 
   # ── Signal states (one of these per show-critical event) ────────────
   meter-green:          "#3cb878"   # signal hot, healthy
@@ -40,24 +40,24 @@ colors:
   # ── Overlays (semantic neutrals; HC-immutable) ──────────────────────
   overlay-light:        "#ffffff"
   overlay-dim:          "#000000"
-  text-on-accent:       "#000000"   # text painted ON accent or amber bg
+  text-on-accent:       "#000000"   # preview only; runtime onSignal(bg) selects contrast
   text-on-light:        "#000000"
 
 # ── Per-strip personality wash (defining family trait) ────────────────
 # Each channel strip's chrome is washed with a muted, low-saturation
 # version of its personality colour — not a thin top band, the whole
 # strip. The wash is dark enough that white text remains readable.
-# The wash is a FLAT solid fill (2026-06-16 flat-design pass — no
-# gradient). 8-colour rotation; channel N picks personality[N % 8].
+# The personality palette remains available for colour helpers/manual picks.
+# New channels default to stripDefaultGrey (#53555b), not automatic rotation.
 personality:
-  - { name: dusty-blue, value: "#3a5063" }
-  - { name: moss,       value: "#395646" }
-  - { name: olive,      value: "#514a35" }
-  - { name: violet,     value: "#4a3d57" }
-  - { name: wine,       value: "#582e3a" }
-  - { name: teal,       value: "#2d5051" }
-  - { name: amber,      value: "#5b4528" }
-  - { name: mustard,    value: "#5a4d2c" }
+  - { name: dusty-blue, value: "#4c6c88" }
+  - { name: moss,       value: "#528a6a" }
+  - { name: olive,      value: "#807646" }
+  - { name: violet,     value: "#765a8c" }
+  - { name: wine,       value: "#783c4e" }
+  - { name: teal,       value: "#3c8286" }
+  - { name: amber,      value: "#805c32" }
+  - { name: mustard,    value: "#7a6a38" }
 
 typography:
   # ── Display / hero / brand mark ─────────────────────────────────────
@@ -143,21 +143,18 @@ rounded:
 # UI-domain (visual feedback). Keep them separate — UI animation should
 # never gate audio events.
 motion:
-  # Audio-domain
-  crossfade:           100ms    # equal-power chain/state crossfade
-  recall-ramp-blocks:  1        # parameter recall gain ramp, in audio blocks
-  meter-fast-tau:      70ms     # fast meter envelope time constant
-  meter-slow-tau:      250ms    # slow meter envelope time constant
-  peak-hold:           1500ms   # peak indicator dwell before fall
-
-  # UI-domain
-  hover:               120ms    # button hover / click feedback
-  engine-reattach:     60ms     # device-dialog close → audio re-attach defer
-  web-broadcast:       200ms    # companion state push interval (5 Hz)
+  # Current ForgeTokens/BrandTokens values; each consumer owns its timer cadence.
+  quick-fade:          200ms
+  fade-out:            320ms
+  toast-hold:          2800ms
+  clip-latch-token:    1000ms   # not the per-strip clip flag, which clears on click
+  pulse-hz:           1
+  cue-ramp:           500ms
+  launch-delay:       250ms
 
 components:
   channel-strip:
-    bg:                "{personality[N].value}"   # personality wash (flat solid fill)
+    bg:                "#53555b"   # default neutral; user colour may override
     bg-neutral:        "{colors.bg-strip}"
     edge:              "{colors.edge}"
     header-typography: "{typography.channel-name}"
@@ -198,14 +195,30 @@ components:
     # gaps between them — reads like physical SSL/Yamaha hardware, not
     # a smooth gradient. Click clears clip.
     segments:          20
-    green-pct:         70       # bottom 70% green
-    amber-pct:         15       # next 15% amber (meter-yellow)
-    red-pct:           15       # top 15% red (meter-red)
+    green-pct:         70       # ForgeTokens heat thresholds by height fraction
+    ember-pct:         15
+    hot-pct:           10
+    white-hot-pct:     5
     bg:                "{colors.bg-deep}"
     gap:               1px      # black gap between segments
 ---
 
 # ZynForge — Design System
+
+## Source of truth — reconciled 2026-10-05
+
+`Source/Theme/ForgeTokens.h` is the vendored family token snapshot (hash
+`857c0847a54e`); `BrandColors.h` and `BrandTokens.h` provide Recording's aliases
+and local helpers. The frontmatter palette, spacing, radii and motion values
+above match that snapshot. Typography roles and component sketches are design
+references, not a generated manifest of every widget. The current type scale is
+9.5 / 10 / 11 / 13 / 14 / 18 / 22 / 28 / 44 px; actual role helpers and layouts
+in source determine each control's size.
+
+The disabled text tier is not a blanket WCAG-AA claim. The contrast handoff is a
+historical snapshot, and physical lighting/VoiceOver acceptance remains open.
+Update the upstream token source and regenerate for a visual change; editing
+this document alone does not recolour the app.
 
 ## October interaction contracts — 2026-10-04
 
@@ -214,6 +227,24 @@ Finalized takes support 512× horizontal zoom; live recording retains its 16× c
 Stereo linking refuses overlapping pairs. Auto-arm responds to input activity only and arms both stereo halves together. Session deletion holds a session-I/O reservation while its confirmation is open and rechecks capture/identity on completion. Failed media reads and replica ownership conflicts must be visible; they cannot look like successful empty audio. Console reconnect keeps the saved stage patch available for restoration when remote state is unknown.
 
 See [the component reference](docs/components/README.md) for current control APIs and [the October field checklist](FIELD-TEST.md) for interaction checks still requiring physical validation.
+
+## STOP, persistence and analysis feedback — 2026-10-05
+
+Capture-ended, media-finalizing, metadata-saved and hashes-complete are separate
+states. Keep navigation available during owned STOP/save work; block session or
+capture mutation until completion. Space may stop existing transport through
+the save busy gate, while LOCK and the ordinary two-tap guard remain intact.
+A pending remote STOP is not a success acknowledgment.
+
+Session Info & Notes edits descriptive fields without replacing newer cues,
+clips or mixer metadata. Deferred import/bounce dialogs recheck capture when
+selection completes. A recorded track named Click is ordinary audio unless its
+explicit reference-media flag establishes generated ownership.
+
+Noise reports distinguish unreadable analysis from clean audio, including in
+the completion summary. Capture/report errors remain latched after a toast
+expires. Invalid mirror replies preserve the current layout rather than showing
+an empty, apparently synchronized session.
 
 ## Read-only observer and handoff — 2026-09-23
 
@@ -225,7 +256,7 @@ The post-show handoff is a background, cancellable transfer into a new/empty fol
 
 The September remediation changes behavior, not the visual token system. Recording state must reflect the actual local or daemon capture: arm/input/session changes are blocked while rolling, and STOP is not shown as complete until acknowledged. Empty edited tracks stay silent; missing sources never silently become a different take. Track deletion retains media, while reorder clears stale index-based undo and clipboard state. Recovery counts media under `Audio Files` and preserves transaction recovery material.
 
-Communicate software validation and show acceptance separately. Both Macs have `c563b00`, with matching verified app/helper hashes and successful startup checks; its automated suite passed 438 groups. [INSTALL.md](INSTALL.md) owns the current package and retention state. Historical field takes, visual specifications and contrast measurements below do not certify the installed build or planned SD5/56-input rig. See [testing.md](testing.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
+Communicate software validation and show acceptance separately. The development Mac has `443c769` / protocol 4; the mini and DMG remain `c563b00` / protocol 3. The current source passed 563 groups in each full Release/sanitizer suite; normal startup was observed, but interactive latency and physical capture remain unverified. [INSTALL.md](INSTALL.md) owns the current package and retention state. Historical field takes, visual specifications and contrast measurements below do not certify the installed build or planned SD5/56-input rig. See [testing.md](testing.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
 
 > Engineer-first dark UI for live and recording audio applications.
 > Built so the operator can scan critical state at a glance under stage
@@ -263,17 +294,18 @@ typography than to a consumer app.
 
 ## Colors
 
-The palette is rooted in **3 background levels**, **4 text levels**,
-**a deliberately small set of signal colours**, and **an 8-colour
-personality rotation** for per-strip identity.
+The palette has **4 background levels**, **4 text levels**,
+**a deliberately small set of signal colours**, and **8 personality colours**.
+New recording channels default to neutral grey; operators can assign colours.
 
-- **Backgrounds (3-step):** `bg-deep` for the deepest plane, `bg-panel`
+- **Backgrounds (4-step):** `bg-deep` for the deepest plane, `bg-panel`
   for header bands and clock readouts, `bg-strip` for neutral strip
   bodies, `bg-elevated` for popups. Adjacent steps are perceptibly
   distinct.
 - **Text (4-step):** `text-primary` for headlines, then `text-secondary
-  / text-tertiary / text-muted` for descending importance. All four
-  pass WCAG AA against `bg-strip`.
+  / text-tertiary / text-muted` for descending importance. Do not assume
+  every text/background pair meets WCAG AA; validate the actual rendered
+  pair and text size, especially for muted or disabled text.
 - **Signal states (one colour = one meaning):**
   - `meter-green` — audio is hot and healthy
   - `meter-yellow` — near threshold, pre-clip, "watch this"
@@ -284,18 +316,12 @@ personality rotation** for per-strip identity.
   - `engaged-amber` — BYPASS / LIVE / LOCK active state
   - `feature-engaged` — cool teal toggle-on, deliberately distinct
     from any meter colour
-- **Personality rotation (8 muted colours):** each strip's chrome is
-  washed with a low-saturation tint from `personality[]` based on the
-  strip's index. The wash is dark enough that `text-primary` stays
-  readable. The wash is a FLAT solid fill (no gradient since the
-  2026-06-16 flat-design pass). The defining trait of the ZynForge family.
-  - **Recording app override (2026-06-04):** at the user's request, new
-    channels in **ZynForge Recording** default to a neutral grey
-    (`stripDefaultGrey`), not the per-index personality wash — engineers
-    colour the channels that matter from the `StripColourPicker` (a hue×shade
-    swatch grid with the strip's current colour pinned + an OK button). The
-    `personality[]` palette stays defined for reference and for ZynForge
-    **Live**, which is unchanged. See `decisions.md`.
+- **Personality palette (8 muted colours):** `personality[]` retains the
+  ZynForge family colours. In Recording, new channels use neutral grey
+  (`stripDefaultGrey`); operators choose individual channel colours through
+  `StripColourPicker`, a hue×shade swatch grid with the current colour pinned
+  and an OK button. The strip wash is a flat solid fill. The historical
+  per-index rotation is not the Recording default. See `decisions.md`.
 
 The complete implementation palette has many more derived tokens; the
 front matter exposes the semantic anchors that everything else derives

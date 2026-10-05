@@ -1,6 +1,6 @@
 # PeakTally — removed component
 
-The global clip-tally bar was removed at the engineer's request. `Source/UI/PeakTally.h` and its host wiring are no longer present in source build `c563b00`.
+The global clip-tally bar was removed at the engineer's request. `Source/UI/PeakTally.h` and its host wiring are no longer present in the current source tree. The named header is a historical reference, not a missing dependency.
 
 Clip indication remains on each strip's [LedMeter](LedMeter.md), including its clip pip / CLIP count. Click a meter to clear its latch. The [master meter](MasterStrip.md) follows the same local clear interaction.
 

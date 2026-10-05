@@ -23,7 +23,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
-### October 5 audit repair — installed on development Mac, native smoke pending
+### Fixed — October 5 follow-up review (`443c769`)
+
+- Preserve ordinary recorded channels named Click; regenerate only explicitly owned reference media.
+- Keep FIFO dropout silence at its true position relative to retained mono/stereo audio, including unequal drops, bounded gap-metadata saturation and continuation reset. Allocate daemon tracks before enabling callbacks.
+- Merge Session Info & Notes into the latest project without reverting newer edits. Refuse malformed existing project JSON before changing sibling metadata. Recheck recording at import/bounce chooser completion and merge modern/legacy export tracks per track.
+- Remove redundant settings replay when registering mixer undo; batch 27-track session reset from 163 settings transactions to five. Keep Space STOP available during pending saves while preserving LOCK and capture confirmation.
+- Implement actual 32-bit float AIFF-C (`fl32`) for capture, export and punch. JUCE previously rejected that selection; final-header/flush errors now propagate to capture flags/reports or preserve the prior export/punch originals.
+- Analyze every stereo channel and report unreadable analysis as an error. Respect FFT snapshot publication before channel classification.
+- Require all requested console gain replies and refuse incomplete restoration. Preserve MIDI realtime framing through fragmented/SysEx traffic, separate Generic OSC credentials from payload arguments, and validate mirror layouts before mutation.
+- Require acknowledged auto-stop finalization, revalidate the pinned session through retries, and remove the unused shared temporary token file.
+- Full Release, TSan and ASan/UBSan/float-cast-overflow each pass 563 groups, with no failures or sanitizer reports; six auto-stop fixtures and both gates pass. The verified universal GUI/helper pair is installed on the development Mac with rollback retained. Normal startup was observed and the app left open; interactive latency, normal quit and physical recording acceptance remain open. Mini/DMG unchanged. See [repair evidence](docs/REVIEW-REPAIRS-2026-10-05.md) and [installation](INSTALL.md).
+
+### Documentation — October 5 reconciliation
+
+- Reconcile current build, protocol, startup evidence, test commands, architecture/STOP diagrams, component contracts and open field checks across the repository. Add a [documentation index](docs/README.md); retain historical counts and outcomes as dated evidence.
+
+### Earlier October 5 S6 audit repair — historical verification checkpoint
 
 - Move interactive metadata saves and local STOP media finalization onto owned workers; keep navigation responsive and preserve completion/failure state through required persistence.
 - Retain remote STOP's confirmation, return an explicit pending result while finalization continues, and acknowledge only its completed outcome. Local completion now preserves primary/device/backup/mirror/recovery failures as well as report/punch/stereo failures. Surface cue-save failures and preserve newer unsaved changes.
@@ -31,7 +47,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - Repair report publication/deletion ownership, callback/status/stream races, imported/exported audio read failures, invalid automation/playlist boundaries and mismatched stereo-source rates.
 - Generate capabilities from OS entropy, redact OSC secrets and authenticate capture transport with protocol 4. Upgrade the GUI/helper together; recorded audio/project formats are unchanged.
 - Batch shared preference reloads/writes when clearing strips and remove both current and legacy persisted send fields. A deterministic red measured 1,537 full-reset reloads, 61 for ten slots and 36 surviving send fields; S4 targeted Release passes four groups with reset/range/growth reloads 5/5/10 and no surviving tested send fields.
-- Frozen S6 passed full optimized Release, TSan and ASan/UBSan/float-cast-overflow: 519 groups each, zero failures, no emitted sanitizer reports. Builds, signatures, static gates and final no-device TERM/INT probes pass. Final bounded disk-full tests pass (5/0). The verified S6 protocol-4 GUI/helper pair is installed on the development Mac and left closed, with the prior bundle retained for rollback. Normal startup smoke is consent-gated by macOS microphone permission; physical long-take acceptance remains pending. The Apple leak comparison retains nonzero framework cycles. See [the evidence register](docs/AUDIT-2026-10-05.md).
+- Frozen S6 passed full optimized Release, TSan and ASan/UBSan/float-cast-overflow: 519 groups each, zero failures, no emitted sanitizer reports. Builds, signatures, static gates and final no-device TERM/INT probes pass. Final bounded disk-full tests pass (5/0). At that checkpoint the verified S6 protocol-4 GUI/helper pair was installed and left closed, with its prior bundle retained. Its normal startup smoke was consent-gated by macOS microphone permission; physical long-take acceptance remains pending. The Apple leak comparison retains nonzero framework cycles. See [the evidence register](docs/AUDIT-2026-10-05.md).
 
 ### Installed and cleaned up — 2026-10-04
 

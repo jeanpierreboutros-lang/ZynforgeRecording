@@ -1,5 +1,32 @@
 # Decisions Log
 
+## Follow-up capture, persistence and control contracts — 2026-10-05
+
+**Context.** The follow-up review reproduced 21 defects after S6, including
+misordered capture gaps, stale dialog writes, unnecessary UI settings I/O and
+false completion/error handling. Runtime evidence corrected the AIFF diagnosis:
+JUCE rejected 32-bit AIFF creation rather than writing integer samples.
+
+**Decision.** Preserve samples and silence in one bounded capture timeline;
+allocate daemon state before callbacks; write float AIFF-C with checked final
+flush; patch descriptive metadata against the latest project; record already-
+applied undo without replay; batch reset transactions; and recheck capture at
+chooser completion. Require distinct requested console replies, byte-correct
+MIDI framing, separate OSC credentials and validated mirror schemas. Report
+analysis failures explicitly and read FFT data only after publication. Auto-stop
+requires an acknowledged finalization outcome before verifying same-session idle.
+
+**Consequences.** Existing public format selections and `.aif` paths remain;
+float data now uses standard AIFF-C `fl32`. Malformed metadata, incomplete remote
+state and failed finalization refuse success while preserving earlier data.
+The installed `443c769` pair passed all three full 563-group suites and six
+operator-script fixtures. Startup observation does not certify physical capture
+or interaction latency. [The repair register](docs/REVIEW-REPAIRS-2026-10-05.md)
+contains each defect's regression and limits; [INSTALL.md](INSTALL.md) owns
+installation state. Earlier decisions below retain their original evidence;
+this amendment supersedes their weaker completion rules.
+
+
 This file records key technical and product decisions for ZynForge Recording as lightweight Architecture Decision Records (ADRs). Each entry captures the context, decision, rationale, and consequences so future-you (or another engineer joining the project) can understand *why* something is the way it is — not just *what* it is.
 
 When making a non-trivial decision, add a new entry below using the template at the bottom. Keep entries short and concrete. Link related ADRs by title rather than by anchor — anchors rot when sections are reordered.
@@ -12,7 +39,7 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 **Decision.** End capture once at the recorder boundary and retain a finalization lease while an engine-owned worker completes media I/O and prepares reader state. Install live playback/clip state on the message thread and retire displaced readers on owned work. MainComponent holds the session guard through immutable metadata persistence on a separate serial writer. Explicit saves keep their outcomes; UI-only layout requests coalesce with bounded storage. Publish durable success after required writes/snapshot completion, retain failures, and compare current content before marking clean. A confirmed remote STOP returns a pending explanation until a later retry can report the completed result. Preserve existing recording safety confirmation and persistence formats.
 
-**Consequences.** UI navigation can continue while capture/session mutations remain guarded. Closing or replacing a session reserves edits and waits for a successful continuation; queued callbacks cannot dereference a destroyed host. Synchronous compatibility helpers and the daemon host acknowledgement/load path remain identified residuals. Metadata snapshots are not audio backups. All three full S6 suites pass 519 groups without failures; no sanitizer reports were emitted. Final bounded disk-full verification passes; the verified S6 pair is installed and left closed, normal startup smoke is microphone-consent-gated, and physical-rig acceptance remains separate; [the audit register](docs/AUDIT-2026-10-05.md) records defect/test mappings, results and residuals.
+**Consequences.** UI navigation can continue while capture/session mutations remain guarded. Closing or replacing a session reserves edits and waits for a successful continuation; queued callbacks cannot dereference a destroyed host. Synchronous compatibility helpers and the daemon host acknowledgement/load path remain identified residuals. Metadata snapshots are not audio backups. All three full S6 suites pass 519 groups without failures; no sanitizer reports were emitted. Final bounded disk-full verification passes; at that checkpoint the verified S6 pair was installed and left closed, its startup smoke was microphone-consent-gated. Physical-rig acceptance remains separate; [the audit register](docs/AUDIT-2026-10-05.md) records defect/test mappings, results and residuals.
 
 ## October audit contracts — 2026-10-04
 
@@ -42,7 +69,7 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 **Context.** The daemon held its command mutex while publishing status to a socket. A connected client that stopped reading could block a status write and delay a STOP that needed the same mutex.
 
-**Decision.** Build status snapshots while holding the mutex, then release it before socket writes. Refuse a duplicate START while rolling before arming a continuation. The unattended soak helper pins the authenticated live session, performs the host's two-tap STOP and requires `recording:false` before reporting success.
+**Decision.** Build status snapshots while holding the mutex, then release it before socket writes. Refuse a duplicate START while rolling before arming a continuation. The unattended soak helper pins the authenticated live session and performs the host's two-tap STOP. Amended October 5: require a successful finalization acknowledgment and then `recording:false` for that same session; idle alone is insufficient.
 
 **Consequences.** A slow status subscriber cannot keep the recording state lock while STOP closes audio. A wedged network connection can still prevent a remote acknowledgement; the helper must report that uncertainty rather than claim the take stopped. Field testing remains necessary on real devices and network conditions.
 

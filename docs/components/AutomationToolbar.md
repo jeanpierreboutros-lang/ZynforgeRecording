@@ -90,4 +90,4 @@ WRITE and TRIM are exclusive by UI rule. Picking any WRITE mode other than `Off`
 ## Accessibility
 
 - **Tooltips**: every control has one. WRITE combo tooltip explains Touch/Latch/Write semantics.
-- **Keyboard**: not yet wired; tool / WRITE-mode selection is mouse-driven.
+- No dedicated tool/WRITE-mode shortcut map is defined here; controls use JUCE focus/button/combo behavior. Verify the actual keyboard and VoiceOver flow in the native app.
