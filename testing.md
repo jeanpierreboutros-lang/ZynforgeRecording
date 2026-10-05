@@ -11,9 +11,9 @@ static gates pass. Every repaired path has recorded pre-fix failing evidence.
 
 See [the follow-up repair register](docs/REVIEW-REPAIRS-2026-10-05.md) for the
 21-item test mapping, commands, evidence location, startup observation and
-runtime limits. The new build is not installed. Historical S6 results below
-remain evidence for the previously installed build, not an installation of this
-follow-up. The isolated new launch reached main-component rendering with no new
+runtime limits. The verified `443c769` pair is now installed on the development
+Mac; see [INSTALL.md](INSTALL.md) for matching hashes and rollback. Historical
+S6 results below remain evidence for the previous build. The isolated new launch reached main-component rendering with no new
 crash and unchanged production settings; UI automation and normal quit were not
 verified. Physical recording and long-take STOP acceptance remain pending.
 

@@ -132,9 +132,12 @@ through unequal stereo loss, descriptor saturation/recovery and continuation.
 Float-AIFF output preserves IEEE float samples, and a final flush failure cannot
 be reported as a successful capture, export or punch.
 
-This follow-up build is **not installed**. `/Applications`, the Mac mini, DMGs,
-user sessions and recordings were not modified. The installed development-Mac
-S6 package remains the previously verified version.
+At completion of the source repair, this build was not installed. The user
+subsequently requested installation on this Mac: the verified `443c769` GUI/helper
+pair now replaces `/Applications/Zynforge Recording.app`, with the prior S6
+bundle retained for rollback. See [INSTALL.md](../INSTALL.md) for hashes and
+installation evidence. The Mac mini, DMGs, user sessions and recordings remain
+unchanged.
 
 Physical 27-track capture/STOP latency, the external volume, real console links,
 USB/device hot-plug, long-take memory/I/O behavior and interactive undo/navigation

@@ -2,7 +2,42 @@
 
 This procedure installs a locally built macOS app; it does not create a notarized public release. Run commands from the repository root. Do not update software, drivers or firmware during a show.
 
-## Development Mac audit repair — 2026-10-05
+## Current development Mac follow-up — 2026-10-05
+
+At the user's request, source repair `443c769` is installed at
+`/Applications/Zynforge Recording.app`, with its matching protocol-v4 capture
+helper. This is the tested follow-up for all 21 reviewed findings: full Release,
+ThreadSanitizer and ASan/UBSan/float-cast-overflow each passed 563 groups with
+zero failures and no sanitizer reports. Six auto-stop tests and both static
+gates passed. See [the repair report](docs/REVIEW-REPAIRS-2026-10-05.md).
+
+| Executable | SHA-256 |
+| --- | --- |
+| GUI | `c78236ec6b14c3b723979c66171015bb13822d7b74b1e5977fb3a0abe74817ae` |
+| Capture helper | `ad6b74588229f9c3f23fb556d7f7a95b1a36a010189b4358de4f9c5ceef570f7` |
+
+Both installed executables match the tested Release bundle byte-for-byte, contain
+arm64 and x86_64, and pass deep/strict signature verification. A complete staged
+bundle was verified before replacement and compared again after installation.
+No Recording GUI or capture helper was running at replacement. Production
+preference hashes were unchanged by installation; recordings were untouched.
+
+Rollback: `/Applications/Zynforge Recording.app.backup-20261005-112530-before-443c769`.
+Earlier rollback bundles were not overwritten. The Mac mini and DMGs were not
+updated. Physical 27-track capture/STOP acceptance remains pending.
+
+The installed app was launched with normal preferences and left open. A
+30-second observation produced no new crash report; the targeted process sample
+showed main-component rendering and timer dispatch. During startup, CPU was
+roughly 59–81% of one core and RSS roughly 522–525 MiB after the first five
+seconds. This confirms startup, not interactive latency or physical recording
+performance. No recording was started by the installer.
+
+Installation hashes, rollback path, process sample and observation log are
+retained in `../ZynforgeRecording-review-evidence-20261005/installation/`.
+
+
+## Previous development Mac S6 audit repair — 2026-10-05
 
 The development Mac has the S6 audit repair at `/Applications/Zynforge Recording.app`, including its matching protocol-v4 helper. Both executables are universal arm64 + x86_64, match the tested Release bundle, and pass deep/strict signature verification. The full Release, ThreadSanitizer and AddressSanitizer/UndefinedBehaviorSanitizer/float-cast-overflow suites each passed 519 groups with zero failures; no sanitizer reports were emitted. Final isolated TERM/INT and disposable ENOSPC probes also passed.
 
