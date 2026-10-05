@@ -175,26 +175,33 @@ namespace zynforge
                 || m[m.size() - 1].getString() != accessToken))
             return false;
 
+        // Authentication is an envelope, never a command argument. The test
+        // dispatch seam omits that envelope deliberately.
+        const int payloadCount = m.size() - (testDispatch ? 0 : 1);
+
         if (path == "/zynforge/record")
         {
-            if (m.size() == 0 || ! toBool (m[0])) recordStop(); else recordStart();
+            if (payloadCount < 1) return false;
+            if (! toBool (m[0])) recordStop(); else recordStart();
             return true;
         }
         if (path == "/zynforge/play")
         {
-            if (m.size() == 0 || ! toBool (m[0])) playStop(); else playStart();
+            if (payloadCount < 1) return false;
+            if (! toBool (m[0])) playStop(); else playStart();
             return true;
         }
         if (path == "/zynforge/stop") { playStop(); recordStop(); return true; }
 
         if (path == "/zynforge/marker")
         {
-            dropMarker (m.size() > 0 ? toString (m[0]) : juce::String());
+            dropMarker (payloadCount > 0 ? toString (m[0]) : juce::String());
             return true;
         }
         if (path == "/zynforge/scene")
         {
-            dropSceneMarker (m.size() > 0 ? toInt (m[0], 0) : 0);
+            if (payloadCount < 1) return false;
+            dropSceneMarker (toInt (m[0], 0));
             return true;
         }
 
@@ -202,7 +209,7 @@ namespace zynforge
         if (path.startsWith ("/zynforge/channel/"))
         {
             const auto parts = juce::StringArray::fromTokens (path.substring (18), "/", "");
-            if (parts.size() >= 2 && m.size() >= 1)
+            if (parts.size() >= 2 && payloadCount >= 1)
             {
                 const int ch1 = parts[0].getIntValue();
                 const auto& key = parts[1];

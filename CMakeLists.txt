@@ -160,6 +160,11 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/AsyncStopAuditTests.cpp
     Source/Tests/PlaylistBoundaryTests.cpp
     Source/Tests/AuditSecurityTests.cpp
+    Source/Tests/ReviewUiFormatRepairTests.cpp
+    Source/Tests/ReviewPersistenceRepairTests.cpp
+    Source/Tests/ReviewNetworkRepairTests.cpp
+    Source/Tests/ReviewCaptureRepairTests.cpp
+    Source/Tests/ReviewFloatFinalizeTests.cpp
     Source/Network/CaptureLink.cpp
     Source/Capture/CaptureDaemon.cpp
     Source/Capture/CaptureSupervisor.cpp

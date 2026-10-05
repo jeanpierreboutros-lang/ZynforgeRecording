@@ -70,6 +70,8 @@ namespace zynforge::capture
         void audioDeviceStopped() override;
 
     private:
+        friend class ReviewCaptureStartupTests;
+        std::function<void()> registerCallbackForTests;
         void handleCommand (const Command&);
         void statusLoop();
         EngineStatus buildStatus();

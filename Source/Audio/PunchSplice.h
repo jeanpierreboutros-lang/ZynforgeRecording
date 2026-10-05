@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "MultiPartReader.h"   // ConcatReader -- multi-part base for the splice
+#include "FloatAiffWriter.h"
 
 namespace zynforge
 {
@@ -46,8 +47,10 @@ namespace zynforge
         if (os == nullptr) return false;
 
         std::unique_ptr<juce::AudioFormatWriter> w (
-            fmt->createWriterFor (os.get(), baseR.sampleRate, (unsigned int) chans,
-                                  isFloat ? 32 : bits, {}, 0));
+            isFloat && (ext == ".aif" || ext == ".aiff")
+                ? FloatAiffWriter::create (os.get(), baseR.sampleRate, (unsigned int) chans)
+                : fmt->createWriterFor (os.get(), baseR.sampleRate, (unsigned int) chans,
+                                       isFloat ? 32 : bits, {}, 0));
         if (w == nullptr) return false;
         os.release();
 
@@ -56,6 +59,7 @@ namespace zynforge
         if (ok && insLen)                     ok = w->writeFromAudioReader (*insR, 0,          insLen);
         if (ok && afterLen > 0)               ok = w->writeFromAudioReader (baseR, afterStart, afterLen);
 
+        if (ok) ok = flushFloatAiffBeforeClose (w.get());
         w.reset();
         if (! ok) outFile.deleteFile();
         return ok;

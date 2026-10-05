@@ -8,6 +8,10 @@ namespace zynforge::capture
     {
         stop();
 
+        // Publish stable logical storage before registration can deliver the
+        // first callback. The device may expose fewer physical inputs.
+        recorder.setTrackCount (numInputs);
+
         if (! testMode.load())
         {
             // Inputs only -- the daemon never plays back.
@@ -19,8 +23,8 @@ namespace zynforge::capture
             }
             deviceManager.addAudioCallback (this);
         }
-
-        recorder.setTrackCount (numInputs);
+        else if (registerCallbackForTests)
+            registerCallbackForTests();
 
         server.onCommand = [this] (const Command& c) { handleCommand (c); };
         if (! server.listen (port))

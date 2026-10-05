@@ -34,7 +34,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class OctoberRegressionTests; struct ConcurrencyAuditAccess; }
+namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -82,6 +82,10 @@ private:
     void onExportAllTracks();
     void onBounceStems();      // render the edited clip arrangement to flat stems
     void onBounceStereoMix();  // render the edited arrangement summed to stereo
+    void completeBounceStems (juce::File);
+    void completeBounceStereoMix (juce::File);
+    void completeAudioImport (const juce::Array<juce::File>&);
+    static juce::String noiseAnalysisSummary (const std::vector<zynforge::NoiseFinding>&);
     void onExportIndividualTrack (int channelIndex);
     void onExportIndividualTracks();   // tick-box picker → format → destination → export
     void exportShowHandoff();
@@ -401,6 +405,8 @@ private:
 
     friend class zynforge::MainTransportRegressionTests;
     friend class zynforge::OctoberRegressionTests;
+    friend class zynforge::ReviewPersistenceRepairTests;
+    friend class zynforge::ReviewUiFormatRepairTests;
     friend struct zynforge::ConcurrencyAuditAccess;
 
     // Live SafePointers to dialog windows opened by the header buttons.

@@ -1,5 +1,22 @@
 # Testing Strategy — ZynForge Recording
 
+## October 5 follow-up verification
+
+All 21 follow-up findings are repaired. Full Release, ThreadSanitizer and
+ASan/UBSan/float-cast-overflow each passed **563 groups / 0 failures**, with no
+sanitizer reports emitted. The 44 new C++ groups include capture gap ordering,
+startup ordering, persistence, network framing, UI settings cost, true float
+AIFF and final-header failure propagation. Six mocked auto-stop tests and both
+static gates pass. Every repaired path has recorded pre-fix failing evidence.
+
+See [the follow-up repair register](docs/REVIEW-REPAIRS-2026-10-05.md) for the
+21-item test mapping, commands, evidence location, startup observation and
+runtime limits. The new build is not installed. Historical S6 results below
+remain evidence for the previously installed build, not an installation of this
+follow-up. The isolated new launch reached main-component rendering with no new
+crash and unchanged production settings; UI automation and normal quit were not
+verified. Physical recording and long-take STOP acceptance remain pending.
+
 ## October 5 isolated repair verification
 
 The clean audit baseline built successfully; its original 440 groups had one capture-deletion failure. Historical green counts below do not validate the current patch. [The audit report](docs/AUDIT-2026-10-05.md) owns current red/green and sanitizer evidence.
@@ -42,7 +59,7 @@ The October regression groups, together with daemon, companion and existing inte
 
 **2026-09-30 capture-integrity validation:** A repeated daemon START is refused without resetting a continued take's base or clearing an existing recovery warning. A continued session report lists base and later parts, accumulates frame/time counters and retains earlier capture-failure flags. Handoff flags a failed punch or hash pass for review. Disposable verifier fixtures pass complete WAV/AIFF/FLAC and continued takes, while failed capture flags, a short file, a missing middle part and a rolled-back punch fail. A mocked unattended-stop run confirms the companion's two-tap STOP and a nonzero result when it is unreachable. These are source and fixture tests; slow-client behavior, real disk failure and the actual device path still need field checks. The [fix record](AUDIT_FIXES_2026-09-30.md) maps each failure to its change.
 
-The current harness covers **438 test groups**, including capture provenance/alignment, reference media, stereo topology, device-loss finalization, session state, console restoration, routing, grouped editing, long-take waveforms and settings isolation. Historical paragraphs below retain the counts that were accurate for their dated audit passes.
+The current harness covers **563 test groups**, including capture provenance/alignment, reference media, stereo topology, device-loss finalization, session state, console restoration, routing, grouped editing, long-take waveforms and settings isolation. Historical paragraphs below retain the counts that were accurate for their dated audit passes.
 
 ### Earlier validation snapshots
 

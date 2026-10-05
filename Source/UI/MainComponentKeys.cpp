@@ -14,12 +14,15 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         // Metadata owns persistence and timeline mutations, not navigation.
         // Keep view switching, zoom, selection and explicit Save available.
         const auto kc = key.getKeyCode();
+        const bool stoppingTransport = key == juce::KeyPress::spaceKey
+            && (engine.isRecording() || engine.getPlayer().isPlaying());
         const bool navigation = key == juce::KeyPress::escapeKey
             || (key.getModifiers().isCommandDown()
                 && (kc == '=' || kc == '+' || kc == juce::KeyPress::numberPadAdd
                     || kc == '[' || kc == ']' || kc == 'A' || kc == 'a'
                     || ((kc == 'S' || kc == 's') && ! captureMetadataPending)));
-        if ((pendingMetadataSaves == 0 && ! captureMetadataPending) || ! navigation)
+        if (! stoppingTransport
+            && ((pendingMetadataSaves == 0 && ! captureMetadataPending) || ! navigation))
         {
             showStatus ("Wait for the session operation to finish");
             return true;

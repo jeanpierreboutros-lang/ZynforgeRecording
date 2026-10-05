@@ -55,8 +55,9 @@ namespace zynforge
         std::function<void()> onBeforeTrackCountChange;
 
     private:
+        friend class ReviewNetworkRepairTests;
         void timerCallback() override;
-        void applyState (const juce::var& state);
+        bool applyState (const juce::var& state);
         // Runs on a short-lived background thread: bounded, time-budgeted GET
         // so a slow/rogue host can't freeze the UI or exhaust memory. Publishes
         // the result for the next timerCallback to apply on the message thread.

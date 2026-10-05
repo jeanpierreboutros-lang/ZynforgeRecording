@@ -225,6 +225,11 @@ namespace zynforge
             if (onStatus) onStatus ("No captured gains to restore.");
             return;
         }
+        if (! gainCaptureComplete)
+        {
+            if (onStatus) onStatus ("Partial head-amp capture cannot be restored -- capture every requested gain first.");
+            return;
+        }
         for (const auto& [idx, value] : gains)
             if (profile.dialect.setHeadAmp)
                 sendMessage (profile.dialect.setHeadAmp (idx, value));
@@ -296,8 +301,10 @@ namespace zynforge
 
             case ConsoleEvent::Type::HeadAmpGain:
             {
-                if (ev.index < 0 || ev.index >= 128) return;   // range-check off-wire indices
                 if (expectedGainReplies <= 0) return; // preserve the completed capture snapshot
+                // Only the headamps queried by this capture can complete it.
+                // Subscription updates for other headamps are not replies.
+                if (ev.index < 0 || ev.index >= expectedGainReplies) return;
                 gains[ev.index] = ev.value;
                 if (expectedGainReplies > 0 && (int) gains.size() >= expectedGainReplies)
                 {

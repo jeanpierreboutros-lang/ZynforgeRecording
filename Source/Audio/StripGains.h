@@ -33,6 +33,7 @@ namespace zynforge
         // Clear this module's overrides in [firstIndex, lastIndexExclusive)
         // with one shared-file reload/save, keeping its live cache consistent.
         void clearRange (int firstIndex, int lastIndexExclusive);
+        void resetRange (int firstIndex, int lastIndexExclusive);
 
     private:
         static juce::String gainKey (int channelIndex);

@@ -169,15 +169,14 @@ int MainComponent::openSessionFolder (const juce::File& dir)
     // session that already contains a "Click" strip.
     clickTrackIndex = -1;
     {
-        // Identify the generated click strip by name AND its playback-only
-        // routing (inputRouting < 0). A recorded console "Click"/metronome-
-        // return channel has a real input, so it is never adopted -- otherwise
-        // a tempo change would deleteFile()/overwrite that recorded take.
+        // Regeneration owns only explicitly generated reference media. A
+        // recorded console Click return can also be routed to None for playback.
         auto& rec = engine.getRecorder();
         for (int i = 0; i < rec.getNumTracks(); ++i)
         {
             auto& t = rec.getTrack (i);
-            if (t.getNameThreadSafe() == "Click"
+            if (t.referenceMedia.load (std::memory_order_relaxed)
+                && t.getNameThreadSafe() == "Click"
                 && t.inputRouting.load (std::memory_order_relaxed) < 0)
             { clickTrackIndex = i; break; }
         }
@@ -619,15 +618,14 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
 
     destDir.createDirectory();
 
-    // Recordings live under "Audio Files/" (legacy sessions kept them at the
-    // session root). Search the subfolder first, fall back to the root --
-    // otherwise the export found no Track_*.wav and reported "Export failed".
+    // Imported/generated media can coexist with legacy root-level takes.
+    // Prefer the modern file for each track, then fall back to its legacy file.
     const auto audioDir = sourceDir.getChildFile ("Audio Files");
-    const auto srcBase  = audioDir.isDirectory() ? audioDir : sourceDir;
     // Bare Track_* also matches Track_NN.punchbase.<ext> (a crash-orphaned punch
     // sidecar). matchesIndex below demands an EXACT "Track_NN" stem so one can't
     // slip through today, but exclude it here too rather than depend on that.
-    auto allFiles = srcBase.findChildFiles (juce::File::findFiles, false, "Track_*");
+    auto allFiles = audioDir.findChildFiles (juce::File::findFiles, false, "Track_*");
+    allFiles.addArray (sourceDir.findChildFiles (juce::File::findFiles, false, "Track_*"));
     allFiles.removeIf ([] (const juce::File& f)
                        { return f.getFileName().containsIgnoreCase (".punchbase"); });
 
@@ -724,8 +722,10 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
             // selected strip, a previously loaded source, or a dangling
             // continuation part is missing media and makes the batch partial.
             const auto stem = juce::String::formatted ("Track_%02d", i + 1);
-            const bool hasPart = ! srcBase.findChildFiles (juce::File::findFiles, false,
-                                                           stem + "_part*").isEmpty();
+            const bool hasPart = ! audioDir.findChildFiles (juce::File::findFiles, false,
+                                                            stem + "_part*").isEmpty()
+                              || ! sourceDir.findChildFiles (juce::File::findFiles, false,
+                                                             stem + "_part*").isEmpty();
             const auto* clips = engine.tryClipsFor (i);
             const bool hasArrangement = clips != nullptr && ! clips->empty();
             if (channelIndices.size() != (size_t) rec.getNumTracks()
@@ -815,74 +815,81 @@ void MainComponent::onBounceStems()
         [chooserSelf, this] (const juce::FileChooser& fc)
     {
         if (chooserSelf == nullptr) return;
-        auto dest = fc.getResult();
-        if (dest.getFullPathName().isEmpty()) return;
-        dest.createDirectory();
+        completeBounceStems (fc.getResult());
+    });
+}
 
-        const int    nTracks = engine.getRecorder().getNumTracks();
-        const auto   arrLen  = engine.getArrangementLengthSamples();
-        const double sr      = engine.getPlayer().getSampleRate() > 0.0
-                                 ? engine.getPlayer().getSampleRate() : 48000.0;
-        if (arrLen <= 0) { showStatus ("Nothing to bounce -- record or load a session first"); return; }
-        if (sessionIoBusy.exchange (true)) { showStatus ("Another session operation is already running"); return; }
-        engine.setSessionTransitionActive (true);
-        if (editPage != nullptr) editPage->setEnabled (false);
+void MainComponent::completeBounceStems (juce::File dest)
+{
+    if (dest.getFullPathName().isEmpty()) return;
+    // The asynchronous picker may have been opened before a remote RECORD.
+    if (engine.isRecording() || captureSupervisor.isDaemonRecording() || engine.isCaptureFinalizing())
+    { showStatus ("Stop recording and wait for finalization before bouncing stems"); return; }
+    dest.createDirectory();
 
-        showStatus ("Bouncing " + juce::String (nTracks) + " edited stems...");
-        // Offline render on an OWNED background thread (joined + cancellable in
-        // the destructor) so a quit mid-bounce can't leave it dereferencing a
-        // freed engine. The engineer shouldn't be editing clips mid-bounce.
-        joinBounceThread();   // finish any prior bounce first (one at a time)
-        juce::Component::SafePointer<MainComponent> self (this);
-        bounceThread = std::thread ([this, self, dest, nTracks, arrLen, sr]
+    const int    nTracks = engine.getRecorder().getNumTracks();
+    const auto   arrLen  = engine.getArrangementLengthSamples();
+    const double sr      = engine.getPlayer().getSampleRate() > 0.0
+                             ? engine.getPlayer().getSampleRate() : 48000.0;
+    if (arrLen <= 0) { showStatus ("Nothing to bounce -- record or load a session first"); return; }
+    if (sessionIoBusy.exchange (true)) { showStatus ("Another session operation is already running"); return; }
+    engine.setSessionTransitionActive (true);
+    if (editPage != nullptr) editPage->setEnabled (false);
+
+    showStatus ("Bouncing " + juce::String (nTracks) + " edited stems...");
+    // Offline render on an OWNED background thread (joined + cancellable in
+    // the destructor) so a quit mid-bounce can't leave it dereferencing a
+    // freed engine. The engineer shouldn't be editing clips mid-bounce.
+    joinBounceThread();   // finish any prior bounce first (one at a time)
+    juce::Component::SafePointer<MainComponent> self (this);
+    bounceThread = std::thread ([this, self, dest, nTracks, arrLen, sr]
+    {
+        const juce::ScopedLock structureGuard (engine.getRecorder().getStructureLock());
+        int written = 0, attempted = 0;
+        for (int t = 0; t < nTracks; ++t)
         {
-            const juce::ScopedLock structureGuard (engine.getRecorder().getStructureLock());
-            int written = 0, attempted = 0;
-            for (int t = 0; t < nTracks; ++t)
+            if (bounceCancel.load (std::memory_order_relaxed)) break;
+            auto& rec = engine.getRecorder();
+            // A stereo pair bounces as ONE interleaved stereo stem from
+            // its L half; skip the R half (already written).
+            if (t > 0 && rec.getTrack (t - 1).isStereo.load (std::memory_order_relaxed))
+                continue;
+            const auto& ts = rec.getTrack (t);
+            // getNameThreadSafe() -- this runs on the bounce thread; a raw
+            // ts.name read races setTrackName's locked reassignment (torn String).
+            const auto safe = ts.getNameThreadSafe().replaceCharacter ('/', '_').replaceCharacter ('\\', '_');
+            const auto outFile = dest.getChildFile (
+                juce::String::formatted ("Track_%02d - ", t + 1) + safe + ".wav");
+            // Streams the edited arrangement window-by-window straight to
+            // disk, so a multi-hour stem never needs a whole-track buffer.
+            const bool stereo = ts.isStereo.load (std::memory_order_relaxed);
+            const bool okBounce = stereo
+                ? engine.bounceStereoPairToWav (t, outFile, arrLen, sr, &bounceCancel)
+                : engine.bounceTrackArrangementToWav (t, outFile, arrLen, sr, &bounceCancel);
+            ++attempted;
+            if (okBounce) ++written;
+        }
+        // A superseding bounce (or app quit) sets bounceCancel and joins us;
+        // don't post a stale "Bounced 0 stem(s)" over the new bounce's status.
+        const bool cancelled = bounceCancel.load (std::memory_order_relaxed);
+        juce::MessageManager::callAsync ([self, written, attempted, cancelled, dest]
+        {
+            if (self == nullptr) return;
+            self->sessionIoBusy.store (false);
+            self->engine.setSessionTransitionActive (false);
+            if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
+            if (! cancelled)
             {
-                if (bounceCancel.load (std::memory_order_relaxed)) break;
-                auto& rec = engine.getRecorder();
-                // A stereo pair bounces as ONE interleaved stereo stem from
-                // its L half; skip the R half (already written).
-                if (t > 0 && rec.getTrack (t - 1).isStereo.load (std::memory_order_relaxed))
-                    continue;
-                const auto& ts = rec.getTrack (t);
-                // getNameThreadSafe() -- this runs on the bounce thread; a raw
-                // ts.name read races setTrackName's locked reassignment (torn String).
-                const auto safe = ts.getNameThreadSafe().replaceCharacter ('/', '_').replaceCharacter ('\\', '_');
-                const auto outFile = dest.getChildFile (
-                    juce::String::formatted ("Track_%02d - ", t + 1) + safe + ".wav");
-                // Streams the edited arrangement window-by-window straight to
-                // disk, so a multi-hour stem never needs a whole-track buffer.
-                const bool stereo = ts.isStereo.load (std::memory_order_relaxed);
-                const bool okBounce = stereo
-                    ? engine.bounceStereoPairToWav (t, outFile, arrLen, sr, &bounceCancel)
-                    : engine.bounceTrackArrangementToWav (t, outFile, arrLen, sr, &bounceCancel);
-                ++attempted;
-                if (okBounce) ++written;
+                if (attempted == 0)
+                    self->showStatus ("Bounce failed: no eligible stems");
+                else if (written == attempted)
+                    self->showStatus ("Bounced " + juce::String (written)
+                                      + " edited stem(s) -> " + dest.getFileName());
+                else
+                    self->showStatus ((written == 0 ? "Bounce failed: " : "Bounce INCOMPLETE: ")
+                                      + juce::String (attempted - written) + " of "
+                                      + juce::String (attempted) + " stem(s) failed");
             }
-            // A superseding bounce (or app quit) sets bounceCancel and joins us;
-            // don't post a stale "Bounced 0 stem(s)" over the new bounce's status.
-            const bool cancelled = bounceCancel.load (std::memory_order_relaxed);
-            juce::MessageManager::callAsync ([self, written, attempted, cancelled, dest]
-            {
-                if (self == nullptr) return;
-                self->sessionIoBusy.store (false);
-                self->engine.setSessionTransitionActive (false);
-                if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
-                if (! cancelled)
-                {
-                    if (attempted == 0)
-                        self->showStatus ("Bounce failed: no eligible stems");
-                    else if (written == attempted)
-                        self->showStatus ("Bounced " + juce::String (written)
-                                          + " edited stem(s) -> " + dest.getFileName());
-                    else
-                        self->showStatus ((written == 0 ? "Bounce failed: " : "Bounce INCOMPLETE: ")
-                                          + juce::String (attempted - written) + " of "
-                                          + juce::String (attempted) + " stem(s) failed");
-                }
-            });
         });
     });
 }
@@ -905,43 +912,50 @@ void MainComponent::onBounceStereoMix()
         [chooserSelf, this] (const juce::FileChooser& fc)
     {
         if (chooserSelf == nullptr) return;
-        auto dest = fc.getResult();
-        if (dest.getFullPathName().isEmpty()) return;
-        if (! dest.hasFileExtension ("wav")) dest = dest.withFileExtension ("wav");
+        completeBounceStereoMix (fc.getResult());
+    });
+}
 
-        const auto   arrLen = engine.getArrangementLengthSamples();
-        const double sr     = engine.getPlayer().getSampleRate() > 0.0
-                                 ? engine.getPlayer().getSampleRate() : 48000.0;
-        if (arrLen <= 0) { showStatus ("Nothing to bounce -- record or load a session first"); return; }
-        if (sessionIoBusy.exchange (true)) { showStatus ("Another session operation is already running"); return; }
-        engine.setSessionTransitionActive (true);
-        if (editPage != nullptr) editPage->setEnabled (false);
+void MainComponent::completeBounceStereoMix (juce::File dest)
+{
+    if (dest.getFullPathName().isEmpty()) return;
+    // The asynchronous picker may have been opened before a remote RECORD.
+    if (engine.isRecording() || captureSupervisor.isDaemonRecording() || engine.isCaptureFinalizing())
+    { showStatus ("Stop recording and wait for finalization before bouncing a mix"); return; }
+    if (! dest.hasFileExtension ("wav")) dest = dest.withFileExtension ("wav");
 
-        showStatus ("Bouncing stereo mix...");
-        // Owned + joinable thread (see onBounceStems) -- never a detached
-        // juce::Thread::launch that can outlive the engine on quit.
-        joinBounceThread();
-        juce::Component::SafePointer<MainComponent> self (this);
-        bounceThread = std::thread ([this, self, dest, arrLen, sr]
+    const auto   arrLen = engine.getArrangementLengthSamples();
+    const double sr     = engine.getPlayer().getSampleRate() > 0.0
+                             ? engine.getPlayer().getSampleRate() : 48000.0;
+    if (arrLen <= 0) { showStatus ("Nothing to bounce -- record or load a session first"); return; }
+    if (sessionIoBusy.exchange (true)) { showStatus ("Another session operation is already running"); return; }
+    engine.setSessionTransitionActive (true);
+    if (editPage != nullptr) editPage->setEnabled (false);
+
+    showStatus ("Bouncing stereo mix...");
+    // Owned + joinable thread (see onBounceStems) -- never a detached
+    // juce::Thread::launch that can outlive the engine on quit.
+    joinBounceThread();
+    juce::Component::SafePointer<MainComponent> self (this);
+    bounceThread = std::thread ([this, self, dest, arrLen, sr]
+    {
+        const juce::ScopedLock structureGuard (engine.getRecorder().getStructureLock());
+        // Streams the summed mix window-by-window straight to disk.
+        const bool ok = ! bounceCancel.load (std::memory_order_relaxed)
+                     && engine.bounceStereoMixToWav (dest, arrLen, sr, &bounceCancel);
+        // A superseding bounce (or app quit) sets bounceCancel and joins us;
+        // that returns false but is NOT a failure -- don't post a spurious
+        // "bounce failed" over the new bounce's status.
+        const bool cancelled = bounceCancel.load (std::memory_order_relaxed);
+        juce::MessageManager::callAsync ([self, ok, cancelled, dest]
         {
-            const juce::ScopedLock structureGuard (engine.getRecorder().getStructureLock());
-            // Streams the summed mix window-by-window straight to disk.
-            const bool ok = ! bounceCancel.load (std::memory_order_relaxed)
-                         && engine.bounceStereoMixToWav (dest, arrLen, sr, &bounceCancel);
-            // A superseding bounce (or app quit) sets bounceCancel and joins us;
-            // that returns false but is NOT a failure -- don't post a spurious
-            // "bounce failed" over the new bounce's status.
-            const bool cancelled = bounceCancel.load (std::memory_order_relaxed);
-            juce::MessageManager::callAsync ([self, ok, cancelled, dest]
-            {
-                if (self == nullptr) return;
-                self->sessionIoBusy.store (false);
-                self->engine.setSessionTransitionActive (false);
-                if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
-                if (! cancelled)
-                    self->showStatus (ok ? "Bounced stereo mix -> " + dest.getFileName()
-                                         : juce::String ("Stereo mix bounce failed"));
-            });
+            if (self == nullptr) return;
+            self->sessionIoBusy.store (false);
+            self->engine.setSessionTransitionActive (false);
+            if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
+            if (! cancelled)
+                self->showStatus (ok ? "Bounced stereo mix -> " + dest.getFileName()
+                                     : juce::String ("Stereo mix bounce failed"));
         });
     });
 }
@@ -985,160 +999,168 @@ void MainComponent::onImportAudioFiles()
         [self, this] (const juce::FileChooser& fc)
     {
         if (self == nullptr) return;
-        const auto picks = fc.getResults();
-        if (picks.isEmpty()) return;
+        completeAudioImport (fc.getResults());
+    });
+}
 
-        if (sessionIoBusy.exchange (true))
+void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
+{
+    juce::Component::SafePointer<MainComponent> self (this);
+    if (picks.isEmpty()) return;
+    // Initial command validation expires while the asynchronous picker is open.
+    if (engine.isRecording() || captureSupervisor.isDaemonRecording() || engine.isCaptureFinalizing())
+    { showStatus ("Stop recording and wait for finalization before importing"); return; }
+
+    if (sessionIoBusy.exchange (true))
+    {
+        showStatus ("Another session file operation is already running");
+        return;
+    }
+
+    // Prepare the destination on the message thread, then leave every
+    // potentially multi-hour decode/resample/write operation to the owned
+    // session-I/O worker below.
+    const auto originalSession = engine.getActiveSessionDir();
+    const bool newSession = ! originalSession.isDirectory();
+    // makeNewSessionDir may reuse a persisted named folder even when the
+    // engine has no active session. Import must start in its own unique
+    // folder in that case, never write into an unrelated old take.
+    auto sessionDir = newSession
+        ? getSessionsRoot().getNonexistentChildFile (
+            "Imported_" + juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S"),
+            {}, false)
+        : originalSession;
+    const bool deleteOnCancel = newSession && ! sessionDir.exists();
+    if (! sessionDir.createDirectory().wasOk())
+    {
+        sessionIoBusy.store (false);
+        showStatus ("Import failed -- session folder is not writable");
+        return;
+    }
+
+    auto audioFilesDir = sessionDir.getChildFile ("Audio Files");
+    const bool layoutReady = audioFilesDir.createDirectory().wasOk()
+        && sessionDir.getChildFile ("Export Files").createDirectory().wasOk()
+        && sessionDir.getChildFile ("Session File Backups").createDirectory().wasOk();
+    if (! layoutReady)
+    {
+        sessionIoBusy.store (false);
+        showStatus ("Import failed -- session folders are not writable");
+        return;
+    }
+    // Keep the current session pinned until an import has actually
+    // produced playable media. A failed or cancelled import must not
+    // redirect Save, Export or the next recording to an empty folder.
+
+    // Every imported file is written at the SESSION's sample rate, not its
+    // own. Writing each source at `reader->sampleRate` left a session with
+    // mixed rates on disk; SessionPlayer doesn't resample and takes the
+    // LAST loaded file's rate as the session rate, so importing a 44.1 k
+    // file into a 48 k session played it (or everything else) at the wrong
+    // speed with no warning. Convert on the way in instead.
+    const double targetSr = [this]
+    {
+        if (engine.getPlayer().isLoaded() && engine.getPlayer().getSampleRate() > 0.0)
+            return engine.getPlayer().getSampleRate();
+        if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())
+            if (d->getCurrentSampleRate() > 0.0) return d->getCurrentSampleRate();
+        return pendingSampleRate > 0.0 ? pendingSampleRate : 48000.0;
+    }();
+
+    int firstTrack = engine.getRecorder().getNumTracks();
+    for (const auto& file : audioFilesDir.findChildFiles (juce::File::findFiles, false,
+                                                           "Track_*"))
+    {
+        const auto stem = file.getFileNameWithoutExtension();
+        if (! stem.startsWith ("Track_")) continue;
+        const int index = stem.fromFirstOccurrenceOf ("Track_", false, false)
+                              .upToFirstOccurrenceOf ("_part", false, false).getIntValue();
+        firstTrack = juce::jmax (firstTrack, index);
+    }
+    engine.setSessionTransitionActive (true);
+    if (editPage != nullptr) editPage->setEnabled (false);
+    showStatus ("Importing " + juce::String (picks.size()) + " audio file(s)...");
+
+    joinExportThread();
+    exportThread = std::thread ([this, self, picks, sessionDir, originalSession,
+                                 newSession, deleteOnCancel, audioFilesDir, firstTrack, targetSr]
+    {
+        const auto result = zynforge::audioimport::importFiles (
+            picks, audioFilesDir, firstTrack, targetSr, &exportCancel);
+
+        juce::MessageManager::callAsync ([self, result, sessionDir, originalSession,
+                                           newSession, deleteOnCancel, audioFilesDir, targetSr]
         {
-            showStatus ("Another session file operation is already running");
-            return;
-        }
-
-        // Prepare the destination on the message thread, then leave every
-        // potentially multi-hour decode/resample/write operation to the owned
-        // session-I/O worker below.
-        const auto originalSession = engine.getActiveSessionDir();
-        const bool newSession = ! originalSession.isDirectory();
-        // makeNewSessionDir may reuse a persisted named folder even when the
-        // engine has no active session. Import must start in its own unique
-        // folder in that case, never write into an unrelated old take.
-        auto sessionDir = newSession
-            ? getSessionsRoot().getNonexistentChildFile (
-                "Imported_" + juce::Time::getCurrentTime().formatted ("%Y-%m-%d_%H-%M-%S"),
-                {}, false)
-            : originalSession;
-        const bool deleteOnCancel = newSession && ! sessionDir.exists();
-        if (! sessionDir.createDirectory().wasOk())
-        {
-            sessionIoBusy.store (false);
-            showStatus ("Import failed -- session folder is not writable");
-            return;
-        }
-
-        auto audioFilesDir = sessionDir.getChildFile ("Audio Files");
-        const bool layoutReady = audioFilesDir.createDirectory().wasOk()
-            && sessionDir.getChildFile ("Export Files").createDirectory().wasOk()
-            && sessionDir.getChildFile ("Session File Backups").createDirectory().wasOk();
-        if (! layoutReady)
-        {
-            sessionIoBusy.store (false);
-            showStatus ("Import failed -- session folders are not writable");
-            return;
-        }
-        // Keep the current session pinned until an import has actually
-        // produced playable media. A failed or cancelled import must not
-        // redirect Save, Export or the next recording to an empty folder.
-
-        // Every imported file is written at the SESSION's sample rate, not its
-        // own. Writing each source at `reader->sampleRate` left a session with
-        // mixed rates on disk; SessionPlayer doesn't resample and takes the
-        // LAST loaded file's rate as the session rate, so importing a 44.1 k
-        // file into a 48 k session played it (or everything else) at the wrong
-        // speed with no warning. Convert on the way in instead.
-        const double targetSr = [this]
-        {
-            if (engine.getPlayer().isLoaded() && engine.getPlayer().getSampleRate() > 0.0)
-                return engine.getPlayer().getSampleRate();
-            if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())
-                if (d->getCurrentSampleRate() > 0.0) return d->getCurrentSampleRate();
-            return pendingSampleRate > 0.0 ? pendingSampleRate : 48000.0;
-        }();
-
-        int firstTrack = engine.getRecorder().getNumTracks();
-        for (const auto& file : audioFilesDir.findChildFiles (juce::File::findFiles, false,
-                                                               "Track_*"))
-        {
-            const auto stem = file.getFileNameWithoutExtension();
-            if (! stem.startsWith ("Track_")) continue;
-            const int index = stem.fromFirstOccurrenceOf ("Track_", false, false)
-                                  .upToFirstOccurrenceOf ("_part", false, false).getIntValue();
-            firstTrack = juce::jmax (firstTrack, index);
-        }
-        engine.setSessionTransitionActive (true);
-        if (editPage != nullptr) editPage->setEnabled (false);
-        showStatus ("Importing " + juce::String (picks.size()) + " audio file(s)...");
-
-        joinExportThread();
-        exportThread = std::thread ([this, self, picks, sessionDir, originalSession,
-                                     newSession, deleteOnCancel, audioFilesDir, firstTrack, targetSr]
-        {
-            const auto result = zynforge::audioimport::importFiles (
-                picks, audioFilesDir, firstTrack, targetSr, &exportCancel);
-
-            juce::MessageManager::callAsync ([self, result, sessionDir, originalSession,
-                                               newSession, deleteOnCancel, audioFilesDir, targetSr]
+            if (self == nullptr) return;
+            if (result.cancelled || self->engine.getActiveSessionDir() != originalSession
+                || result.tracks.empty())
             {
-                if (self == nullptr) return;
-                if (result.cancelled || self->engine.getActiveSessionDir() != originalSession
-                    || result.tracks.empty())
-                {
-                    for (const auto& track : result.tracks)
-                        audioFilesDir.getChildFile (juce::String::formatted ("Track_%02d.wav",
-                                                                            track.trackIndex + 1)).deleteFile();
-                    if (deleteOnCancel) sessionDir.deleteRecursively();
-                    if (! result.cancelled)
-                        self->showStatus (result.tracks.empty()
-                            ? "Import failed -- no readable audio files"
-                            : "Import finished for the previous session; current session was not changed");
-                    self->engine.setSessionTransitionActive (false);
-                    self->sessionIoBusy.store (false);
-                    if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
-                    return;
-                }
-
-                int nextTrack = self->engine.getRecorder().getNumTracks();
-                for (const auto& record : result.tracks)
-                    nextTrack = juce::jmax (nextTrack,
-                                            record.trackIndex + (record.stereo ? 2 : 1));
-                if (nextTrack > self->engine.getRecorder().getNumTracks())
-                    self->engine.setStripCount (nextTrack);
-
-                for (const auto& record : result.tracks)
-                {
-                    self->engine.setTrackName (record.trackIndex, record.name);
-                    self->engine.setTrackStereo (record.trackIndex, record.stereo);
-                    if (record.stereo)
-                    {
-                        self->engine.setTrackName (record.trackIndex + 1, record.name + " R");
-                        self->engine.setTrackStereo (record.trackIndex + 1, false);
-                        self->engine.setTrackPan (record.trackIndex, -1.0f);
-                        self->engine.setTrackPan (record.trackIndex + 1, 1.0f);
-                        self->engine.setTrackLinkedRouting (record.trackIndex, record.trackIndex);
-                        self->engine.setTrackLinkedRouting (record.trackIndex + 1,
-                                                            record.trackIndex + 1);
-                    }
-                    else
-                    {
-                        self->engine.setTrackLinkedRouting (record.trackIndex, record.trackIndex);
-                    }
-                }
-
-                self->lastTrackCount = -1;
-                const auto savedEdits = newSession ? juce::var() : self->engine.playlistsToJson();
-                const int loaded = self->engine.loadSession (sessionDir, ! newSession);
-                if (! newSession) self->engine.loadPlaylistsFromJson (savedEdits);
-                const bool saved = self->saveSessionStateTo (sessionDir);
+                for (const auto& track : result.tracks)
+                    audioFilesDir.getChildFile (juce::String::formatted ("Track_%02d.wav",
+                                                                        track.trackIndex + 1)).deleteFile();
+                if (deleteOnCancel) sessionDir.deleteRecursively();
+                if (! result.cancelled)
+                    self->showStatus (result.tracks.empty()
+                        ? "Import failed -- no readable audio files"
+                        : "Import finished for the previous session; current session was not changed");
                 self->engine.setSessionTransitionActive (false);
                 self->sessionIoBusy.store (false);
                 if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
+                return;
+            }
 
-                const int stereoCount = (int) std::count_if (
-                    result.tracks.begin(), result.tracks.end(),
-                    [] (const auto& record) { return record.stereo; });
-                self->showStatus ("Imported " + juce::String (result.importedFiles)
-                    + " file(s) as " + juce::String ((int) result.tracks.size())
-                    + " track(s), " + juce::String (stereoCount) + " stereo, "
-                    + juce::String ((int) result.tracks.size() - stereoCount) + " mono"
-                    + (result.converted > 0
-                        ? " (" + juce::String (result.converted) + " resampled to "
-                            + juce::String (targetSr / 1000.0, 1) + " kHz)"
-                        : juce::String())
-                    + (result.failed > 0
-                        ? " (skipped " + juce::String (result.failed) + ")"
-                        : juce::String())
-                    + " -- loaded " + juce::String (loaded) + " for playback"
-                    + (saved ? juce::String() : juce::String ("; WARNING: session state was not saved")));
-            });
+            int nextTrack = self->engine.getRecorder().getNumTracks();
+            for (const auto& record : result.tracks)
+                nextTrack = juce::jmax (nextTrack,
+                                        record.trackIndex + (record.stereo ? 2 : 1));
+            if (nextTrack > self->engine.getRecorder().getNumTracks())
+                self->engine.setStripCount (nextTrack);
+
+            for (const auto& record : result.tracks)
+            {
+                self->engine.setTrackName (record.trackIndex, record.name);
+                self->engine.setTrackStereo (record.trackIndex, record.stereo);
+                if (record.stereo)
+                {
+                    self->engine.setTrackName (record.trackIndex + 1, record.name + " R");
+                    self->engine.setTrackStereo (record.trackIndex + 1, false);
+                    self->engine.setTrackPan (record.trackIndex, -1.0f);
+                    self->engine.setTrackPan (record.trackIndex + 1, 1.0f);
+                    self->engine.setTrackLinkedRouting (record.trackIndex, record.trackIndex);
+                    self->engine.setTrackLinkedRouting (record.trackIndex + 1,
+                                                        record.trackIndex + 1);
+                }
+                else
+                {
+                    self->engine.setTrackLinkedRouting (record.trackIndex, record.trackIndex);
+                }
+            }
+
+            self->lastTrackCount = -1;
+            const auto savedEdits = newSession ? juce::var() : self->engine.playlistsToJson();
+            const int loaded = self->engine.loadSession (sessionDir, ! newSession);
+            if (! newSession) self->engine.loadPlaylistsFromJson (savedEdits);
+            const bool saved = self->saveSessionStateTo (sessionDir);
+            self->engine.setSessionTransitionActive (false);
+            self->sessionIoBusy.store (false);
+            if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
+
+            const int stereoCount = (int) std::count_if (
+                result.tracks.begin(), result.tracks.end(),
+                [] (const auto& record) { return record.stereo; });
+            self->showStatus ("Imported " + juce::String (result.importedFiles)
+                + " file(s) as " + juce::String ((int) result.tracks.size())
+                + " track(s), " + juce::String (stereoCount) + " stereo, "
+                + juce::String ((int) result.tracks.size() - stereoCount) + " mono"
+                + (result.converted > 0
+                    ? " (" + juce::String (result.converted) + " resampled to "
+                        + juce::String (targetSr / 1000.0, 1) + " kHz)"
+                    : juce::String())
+                + (result.failed > 0
+                    ? " (skipped " + juce::String (result.failed) + ")"
+                    : juce::String())
+                + " -- loaded " + juce::String (loaded) + " for playback"
+                + (saved ? juce::String() : juce::String ("; WARNING: session state was not saved")));
         });
     });
 }

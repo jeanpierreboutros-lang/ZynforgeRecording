@@ -79,22 +79,19 @@ namespace zynforge
     void AudioEngine::resetAllStripState()
     {
         const int n = recorder.getNumTracks();
+        // Each domain reloads the shared file once, preserving sibling keys
+        // and updating its own cache before the next domain publishes.
+        stripNames.clearRange (0, n);
+        stripColours.clearRange (0, n);
+        stripGains.resetRange (0, n);
+        stripRouting.resetRange (0, n);
         for (int i = 0; i < n; ++i)
         {
-            // Clear persistent overrides -- name, colour, gain, pan, routing.
-            // (Each of these Strip* setters reloads + rewrites the shared
-            // .settings file.)
-            stripNames  .clearName   (i);
-            stripColours.clearColour (i);
-            // Gains has no clear-by-index helper; just reset to defaults
-            // via the engine setters so the persistent file is rewritten.
-            setTrackGainDb (i, 0.0f);
-            setTrackPan    (i, 0.0f);
-            setTrackInputRouting  (i, i);   // identity
-            setTrackOutputRouting (i, -1);  // master-only
-
             // Live atomics so the UI flips back immediately.
             auto& t = recorder.getTrack (i);
+            t.gainDb.store (0.0f); t.pan.store (0.0f);
+            t.rampTargetGainDb.store (0.0f);
+            t.inputRouting.store (i); t.outputRouting.store (-1);
             t.setNameThreadSafe (juce::String (i + 1));
             t.colourARGB.store (0, std::memory_order_relaxed);
             t.armed   .store (false, std::memory_order_relaxed);

@@ -40,6 +40,7 @@ namespace zynforge
         // Constant noise floor
         float  noiseFloorDbFS   { -90.0f };
         float  crestFactor      { 0.0f };      // peak / rms ratio (dB)
+        juce::String error;                   // nonempty means analysis did not complete
     };
 
     class NoiseAnalyzer
@@ -49,23 +50,31 @@ namespace zynforge
                                           int trackIdx,
                                           const juce::String& name)
         {
-            NoiseFinding nf;
-            nf.track     = trackIdx;
-            nf.trackName = name;
-
             juce::AudioFormatManager fm;
             fm.registerBasicFormats();
-            fm.registerFormat (new juce::FlacAudioFormat(), false);   // FLAC takes are analysable too
             auto reader = ConcatReader::create (fm, findTakeParts (wavFile));
-            if (reader == nullptr || reader->numChannels < 1) return nf;   // guard OOB read on malformed file
+            return analyseReader (reader.get(), trackIdx, name);
+        }
+
+    private:
+        friend class ReviewCaptureRepairTests;
+        static NoiseFinding analyseReader (juce::AudioFormatReader* reader, int trackIdx,
+                                            const juce::String& name)
+        {
+            NoiseFinding nf;
+            nf.track = trackIdx;
+            nf.trackName = name;
+            if (reader == nullptr || reader->numChannels < 1 || reader->numChannels > 256)
+            { nf.error = "Audio could not be opened"; return nf; }
 
             const double sr     = reader->sampleRate;
             const auto   total  = (juce::int64) reader->lengthInSamples;
-            if (sr <= 0.0 || total < (int) sr) return nf;
+            if (! std::isfinite (sr) || sr <= 0.0 || sr > 768000.0 || total < (juce::int64) sr)
+            { nf.error = "Audio is invalid or shorter than the one-second analysis window"; return nf; }
 
             constexpr int kFftOrder = 12;          // 4096-point
             constexpr int kFftSize  = 1 << kFftOrder;
-            const int hopSamples    = (int) (sr * 0.5);
+            const int hopSamples    = juce::jmax (1, (int) (sr * 0.5));
 
             juce::dsp::FFT fft (kFftOrder);
             std::vector<float> window (kFftSize);
@@ -73,8 +82,15 @@ namespace zynforge
                 window[(size_t) i] = 0.5f - 0.5f * std::cos (2.0f * juce::MathConstants<float>::pi
                                                               * (float) i / (kFftSize - 1));
 
-            juce::AudioBuffer<float> chunk (1, kFftSize);
+            juce::AudioBuffer<float> chunk ((int) reader->numChannels, kFftSize);
             std::vector<float> fftBuf ((size_t) kFftSize * 2, 0.0f);
+
+            // Analyse each side independently: summing stereo first can cancel
+            // opposite-phase hum. Report the worst channel without double-
+            // counting an event shared by both microphones.
+            nf.noiseFloorDbFS = -120.0f;
+            for (int channel = 0; channel < (int) reader->numChannels; ++channel)
+            {
 
             // Running aggregates.
             float maxPeak   = 0.0f;
@@ -95,8 +111,9 @@ namespace zynforge
             for (juce::int64 pos = 0; pos + kFftSize <= total; pos += hopSamples)
             {
                 chunk.clear();
-                reader->read (&chunk, 0, kFftSize, pos, true, false);
-                const float* in = chunk.getReadPointer (0);
+                if (! reader->read (&chunk, 0, kFftSize, pos, true, true))
+                { nf.error = "Audio read failed at sample " + juce::String (pos); return nf; }
+                const float* in = chunk.getReadPointer (channel);
 
                 // Window into fftBuf (real-only).
                 std::fill (fftBuf.begin(), fftBuf.end(), 0.0f);
@@ -170,16 +187,24 @@ namespace zynforge
             }
 
             const double rms = sumCount > 0 ? std::sqrt (sumSq / sumCount) : 0.0;
-            nf.noiseFloorDbFS = juce::Decibels::gainToDecibels (juce::jmax (1e-7, rms), -120.0);
-            nf.crestFactor    = juce::Decibels::gainToDecibels (juce::jmax (1e-7f, maxPeak), -120.0f)
-                                - nf.noiseFloorDbFS;
-            nf.humDb           = bestHumDb;
-            nf.humDbAboveFloor = bestHumAboveFloor;
-            nf.humFundamentalHz= bestHumFund;
-            nf.bumpCount       = bumps;
+            const auto floor = (float) juce::Decibels::gainToDecibels (juce::jmax (1e-7, rms), -120.0);
+            if (floor >= nf.noiseFloorDbFS)
+            {
+                nf.noiseFloorDbFS = floor;
+                nf.crestFactor = juce::Decibels::gainToDecibels (juce::jmax (1e-7f, maxPeak), -120.0f) - floor;
+            }
+            if (bestHumAboveFloor > nf.humDbAboveFloor)
+            {
+                nf.humDb = bestHumDb;
+                nf.humDbAboveFloor = bestHumAboveFloor;
+                nf.humFundamentalHz = bestHumFund;
+            }
+            nf.bumpCount = juce::jmax (nf.bumpCount, bumps);
+            }
             return nf;
         }
 
+    public:
         // Scan the session, write noise_report.json, return findings
         // for the UI to also display.
         static std::vector<NoiseFinding> analyseSession (const juce::File& sessionDir,
@@ -219,6 +244,7 @@ namespace zynforge
                 juce::DynamicObject::Ptr o (new juce::DynamicObject());
                 o->setProperty ("track",            nf.track);
                 o->setProperty ("name",             nf.trackName);
+                if (nf.error.isNotEmpty()) o->setProperty ("error", nf.error);
                 o->setProperty ("humDb",            (double) nf.humDb);
                 o->setProperty ("humAboveFloorDb",  (double) nf.humDbAboveFloor);
                 o->setProperty ("humFundamentalHz", nf.humFundamentalHz);
@@ -239,6 +265,7 @@ namespace zynforge
         // Build a human-readable summary line per track.
         static juce::String summaryLine (const NoiseFinding& nf)
         {
+            if (nf.error.isNotEmpty()) return nf.trackName + ": analysis failed: " + nf.error;
             juce::StringArray parts;
             if (nf.humFundamentalHz > 0)
                 parts.add (juce::String (nf.humFundamentalHz) + " Hz hum "

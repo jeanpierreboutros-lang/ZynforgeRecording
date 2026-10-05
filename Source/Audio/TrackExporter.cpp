@@ -1,4 +1,5 @@
 #include "TrackExporter.h"
+#include "FloatAiffWriter.h"
 #include "CheckedReaderSource.h"
 #include "MultiPartReader.h"
 #include "ProcessSearch.h"
@@ -96,6 +97,9 @@ namespace zynforge
             }
             case ExportFormat::Aiff24:
             {
+                if (bitsPerSample == 32)
+                    return std::unique_ptr<juce::AudioFormatWriter> (
+                        FloatAiffWriter::create (out, sampleRate, numChannels));
                 juce::AiffAudioFormat f;
                 return std::unique_ptr<juce::AudioFormatWriter> (
                     f.createWriterFor (out, sampleRate, numChannels, bitsPerSample, {}, 0));
@@ -195,6 +199,12 @@ namespace zynforge
                 }
                 pos += n;
             }
+            if (! flushFloatAiffBeforeClose (writer.get()))
+            {
+                outError = "Final audio header flush failed";
+                writer = nullptr; destPcmFile.deleteFile();
+                return false;
+            }
             writer = nullptr;   // flush + close
             if (! isMp3)
                 return installCompletedExport (destPcmFile, finalPcmFile, outError);
@@ -238,6 +248,12 @@ namespace zynforge
                 return false;
             }
             written += thisBlock;
+        }
+        if (! flushFloatAiffBeforeClose (writer.get()))
+        {
+            outError = "Final audio header flush failed";
+            writer = nullptr; resampler.releaseResources(); destPcmFile.deleteFile();
+            return false;
         }
         writer = nullptr;     // flush + close
         resampler.releaseResources();
@@ -336,9 +352,17 @@ namespace zynforge
             }
             written += thisBlock;
         }
+        const bool finalized = flushFloatAiffBeforeClose (writer.get());
         writer = nullptr;
         resL.releaseResources();
         resR.releaseResources();
+
+        if (! finalized)
+        {
+            outError = "Final audio header flush failed";
+            destPcmFile.deleteFile();
+            return false;
+        }
 
         if (! isMp3)
             return installCompletedExport (destPcmFile, finalPcmFile, outError);

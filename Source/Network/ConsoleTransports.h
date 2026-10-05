@@ -317,7 +317,6 @@ namespace zynforge
         {
             const auto* d = static_cast<const juce::uint8*> (buffer.getData());
             const int   n = (int) buffer.getSize();
-            int consumed = 0, i = 0;
 
             auto emit = [&out] (const juce::uint8* p, int len)
             {
@@ -349,61 +348,59 @@ namespace zynforge
                 }
             };
 
-            while (i < n)
+            // Consume one byte at a time: realtime can interrupt a channel
+            // message OR SysEx, including across TCP reads. Retain only the
+            // unfinished message, with already-delivered realtime removed.
+            std::vector<juce::uint8> pending;
+            int required = 0;
+            bool sysex = false;
+            for (int i = 0; i < n; ++i)
             {
-                const juce::uint8 s = d[i];
-
-                // MIDI realtime bytes may appear between ANY two data bytes.
-                // Emit them immediately without cancelling channel running
-                // status (MIDI 1.0 spec).
-                if (s >= 0xF8)
+                const auto byte = d[i];
+                if (byte >= 0xF8)
                 {
                     emit (d + i, 1);
-                    ++i; consumed = i;
                     continue;
                 }
-
-                if (s < 0x80)                                  // data byte
+                if (byte >= 0x80)
                 {
-                    if (runningStatus == 0) { ++i; continue; }  // genuinely stray -- no status yet
-                    const int need = dataBytesFor (runningStatus);
-                    if (need == 0) { ++i; continue; }
-                    if (i + need > n) break;                    // incomplete -- wait for more
-                    // Re-materialise the implied status byte so the dialect
-                    // always sees a complete message.
-                    juce::uint8 msg[3] = { runningStatus, 0, 0 };
-                    for (int k = 0; k < need; ++k) msg[k + 1] = d[i + k];
-                    emit (msg, need + 1);
-                    i += need; consumed = i; continue;
-                }
-
-                if (s == 0xF0)                                // SysEx: run to 0xF7
-                {
-                    int e = i + 1;
-                    while (e < n && d[e] != 0xF7) ++e;
-                    if (e >= n) break;                        // incomplete -- wait for more
-                    emit (d + i, e - i + 1);
-                    i = e + 1; consumed = i;
-                    runningStatus = 0;                        // SysEx cancels running status
+                    if (byte == 0xF7 && sysex)
+                    {
+                        pending.push_back (byte);
+                        emit (pending.data(), (int) pending.size());
+                        pending.clear();
+                        sysex = false;
+                        continue;
+                    }
+                    // A new non-realtime status interrupts an incomplete
+                    // message. Never interpret the status byte as message data.
+                    pending.assign (1, byte);
+                    sysex = byte == 0xF0;
+                    runningStatus = byte < 0xF0 ? byte : 0;
+                    required = dataBytesFor (byte) + 1;
+                    if (! sysex && required == 1)
+                    {
+                        emit (pending.data(), 1);
+                        pending.clear();
+                    }
                     continue;
                 }
-
-                const int need = dataBytesFor (s) + 1;
-                if (i + need > n) break;                      // incomplete
-                emit (d + i, need);
-                // Channel messages arm running status; system messages clear it
-                // (realtime bytes, which are 1 byte, deliberately do NOT --
-                // but they also never reach here as a multi-byte message).
-                runningStatus = (s < 0xF0) ? s : 0;
-                i += need; consumed = i;
+                if (pending.empty())
+                {
+                    if (runningStatus == 0) continue;
+                    pending.push_back (runningStatus);
+                    required = dataBytesFor (runningStatus) + 1;
+                }
+                pending.push_back (byte);
+                if (! sysex && (int) pending.size() == required)
+                {
+                    emit (pending.data(), required);
+                    pending.clear();
+                }
             }
-
-            if (consumed > 0)
-            {
-                juce::MemoryBlock rest;
-                if (n > consumed) rest.append (d + consumed, (size_t) (n - consumed));
-                buffer = std::move (rest);
-            }
+            juce::MemoryBlock rest;
+            if (! pending.empty()) rest.append (pending.data(), pending.size());
+            buffer = std::move (rest);
         }
 
         static void frame (juce::MemoryBlock& buffer, std::vector<ConsoleMessage>& out)

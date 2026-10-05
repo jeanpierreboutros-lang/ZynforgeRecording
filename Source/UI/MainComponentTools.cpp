@@ -79,6 +79,8 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
         // this really is a click strip -- without this, a freshly-created click
         // strip trips the guard and Generate aborts on the very first press.
         engine.setTrackInputRouting (clickTrackIndex, -1);
+        if (clickTrackIndex < recorder.getNumTracks())
+            recorder.getTrack (clickTrackIndex).referenceMedia.store (true);
     }
 
     const double sr = juce::jmax (8000.0, [this]
@@ -97,11 +99,10 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
 
     auto& cl = engine.getClickEngine();
 
-    // Defence in depth: NEVER deleteFile() a slot that isn't actually the
-    // click strip. Require both the name AND the playback-only routing
-    // (inputRouting < 0) so a recorded channel that merely happens to be named
-    // "Click" (a console metronome return) can't be overwritten.
+    // Name and routing are user-editable; only the explicit reference-media
+    // marker establishes that this slot belongs to the click generator.
     if (clickTrackIndex < 0 || clickTrackIndex >= recorder.getNumTracks()
+        || ! recorder.getTrack (clickTrackIndex).referenceMedia.load (std::memory_order_relaxed)
         || recorder.getTrack (clickTrackIndex).getNameThreadSafe() != "Click"
         || recorder.getTrack (clickTrackIndex).inputRouting.load (std::memory_order_relaxed) >= 0)
     {
@@ -110,7 +111,6 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
         return;
     }
 
-    recorder.getTrack (clickTrackIndex).referenceMedia.store (true);
     const auto trackName = juce::String::formatted ("Track_%02d", clickTrackIndex + 1);
     const auto destination = audioFiles.getChildFile (trackName + ".wav");
     clickrender::Settings settings;
@@ -383,6 +383,26 @@ void MainComponent::servicePunchSession()
     if (! hadCapture && lastCaptureFinalizationError.isEmpty()) showStatus ("Punch complete");
 }
 
+juce::String MainComponent::noiseAnalysisSummary (const std::vector<zynforge::NoiseFinding>& findings)
+{
+    int humCount = 0, bumpCount = 0, failedCount = 0;
+    for (const auto& f : findings)
+    {
+        if (f.error.isNotEmpty()) { ++failedCount; continue; }
+        if (f.humFundamentalHz > 0) ++humCount;
+        if (f.bumpCount > 0) ++bumpCount;
+    }
+    const auto completed = findings.size() - (size_t) failedCount;
+    const auto count = failedCount == 0 ? juce::String (findings.size())
+        : juce::String (completed) + " of " + juce::String (findings.size());
+    const auto failures = failedCount == 0 ? juce::String()
+        : juce::String (failedCount) + (failedCount == 1 ? " analysis failed; " : " analyses failed; ");
+    return count + " track"
+        + (findings.size() == 1 ? juce::String() : juce::String ("s"))
+        + " analysed -- " + failures + juce::String (humCount) + " with hum, "
+        + juce::String (bumpCount) + " with mic bumps. Report saved to noise_report.json.";
+}
+
 void MainComponent::runNoiseAnalysis()
 {
     const auto sessionDir = engine.getActiveSessionDir();
@@ -432,17 +452,7 @@ void MainComponent::runNoiseAnalysis()
                     : juce::String ("Track ") + juce::String (idx + 1);
             });
 
-        // Build a one-line summary + a popup with per-track detail.
-        int humCount = 0, bumpCount = 0;
-        for (const auto& f : findings)
-        {
-            if (f.humFundamentalHz > 0) ++humCount;
-            if (f.bumpCount > 0) ++bumpCount;
-        }
-        juce::String summary = juce::String (findings.size()) + " track"
-            + (findings.size() == 1 ? juce::String() : juce::String ("s"))
-            + " analysed -- " + juce::String (humCount) + " with hum, "
-            + juce::String (bumpCount) + " with mic bumps. Report saved to noise_report.json.";
+        const auto summary = noiseAnalysisSummary (findings);
 
         juce::MessageManager::callAsync ([self, summary, findings]
         {
@@ -1059,13 +1069,12 @@ void MainComponent::showSessionProperties()
 
     juce::Component::SafePointer<MainComponent> self (this);
     SessionPropertiesDialog::launch (fields,
-        [self, proj, sessionDir, obj] (const SessionPropertiesDialog::Fields& edited)
+        [self, sessionDir] (const SessionPropertiesDialog::Fields& edited)
         {
             if (self == nullptr) return;
-            // Merge back into the existing JSON (preserves sampleRate /
-            // captureFormat / createdAt that the dialog doesn't edit).
-            juce::DynamicObject::Ptr merged = obj;
-            if (merged == nullptr) merged = new juce::DynamicObject();
+            // Submit only fields owned by this dialog. The serialized worker
+            // merges them with the latest project after preceding autosaves.
+            juce::DynamicObject::Ptr merged (new juce::DynamicObject());
             merged->setProperty ("zynforgeSession", true);
             merged->setProperty ("name",            edited.name);
             merged->setProperty ("artist",          edited.artist);
@@ -1076,9 +1085,14 @@ void MainComponent::showSessionProperties()
             merged->setProperty ("updatedAt",
                                  juce::Time::getCurrentTime().toISO8601 (true));
 
-            self->showStatus (zynforge::atomicfile::writeText (
-                                  proj, juce::JSON::toString (juce::var (merged.get())))
-                                ? "Saved session properties -- " + sessionDir.getFileName()
-                                : "Session properties NOT saved -- check permissions / free space");
+            SessionMetadataSnapshot snapshot;
+            snapshot.directory = sessionDir;
+            snapshot.projectPatchJson = juce::JSON::toString (juce::var (merged.get()));
+            self->enqueueMetadataSnapshot (std::move (snapshot), {},
+                [self, sessionDir] (bool ok)
+                {
+                    if (self != nullptr && ok)
+                        self->showStatus ("Saved session properties -- " + sessionDir.getFileName());
+                });
         });
 }

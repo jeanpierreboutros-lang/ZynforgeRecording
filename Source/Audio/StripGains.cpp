@@ -55,6 +55,18 @@ namespace zynforge
         props->removeValue (panKey (ch));
         props->saveIfNeeded();
     }
+    void StripGains::resetRange (int firstIndex, int lastIndexExclusive)
+    {
+        if (! props || firstIndex >= lastIndexExclusive) return;
+        reloadSettingsReplacing (*props);
+        for (int i = firstIndex; i < lastIndexExclusive; ++i)
+        {
+            props->setValue (gainKey (i), 0.0);
+            props->setValue (panKey (i), 0.0);
+        }
+        props->saveIfNeeded();
+    }
+
     void StripGains::clearRange (int firstIndex, int lastIndexExclusive)
     {
         if (! props || firstIndex >= lastIndexExclusive) return;

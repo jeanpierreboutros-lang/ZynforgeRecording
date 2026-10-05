@@ -31,7 +31,10 @@ namespace zynforge
             // Before the device starts sampleRate is 0; binHz would collapse
             // every bin to 0 Hz, dumping all energy into b.sub and forcing a
             // bogus Kick/Bass guess. Return a neutral "other" instead.
-            if (sampleRate <= 0.0)
+            // Classification and MiniSpectrum run on the message thread. A
+            // published snapshot remains immutable until that thread's spectrum
+            // consumer releases it. Never read the producer-owned false state.
+            if (sampleRate <= 0.0 || ! t.fftBlockReady.load (std::memory_order_acquire))
                 return { "other", {} };
 
             // Window + FFT in place using a temp buffer (kFftSize is 1024).

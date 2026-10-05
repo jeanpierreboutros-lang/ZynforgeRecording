@@ -238,6 +238,7 @@ namespace zynforge
 
     void SessionPropertiesDialog::launch (Fields initial, SaveCallback onSave)
     {
+        if (launchForTests) { launchForTests (std::move (initial), std::move (onSave)); return; }
         auto* content = new Content (std::move (initial), std::move (onSave));
 
         juce::DialogWindow::LaunchOptions opts;

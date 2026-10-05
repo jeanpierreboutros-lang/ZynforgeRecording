@@ -119,6 +119,9 @@ namespace
             {
                 afterState = captureAll();
                 afterCaptured = true;
+                // The gesture is already applied. Recording its undo state
+                // must not replay every strip's synchronous settings writes.
+                return true;
             }
             applyAll (afterState);
             return true;

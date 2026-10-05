@@ -63,9 +63,13 @@ namespace zynforge
                 }
                 else
                 {
-                    applyState (v);
-                    lastSyncMs = juce::Time::currentTimeMillis();
-                    lastError.clear();
+                    if (applyState (v))
+                    {
+                        lastSyncMs = juce::Time::currentTimeMillis();
+                        lastError.clear();
+                    }
+                    else
+                        lastError = "invalid primary status; channel layout preserved";
                 }
             }
         }
@@ -138,9 +142,29 @@ namespace zynforge
         resultReady.store (true);
     }
 
-    void SessionMirror::applyState (const juce::var& v)
+    bool SessionMirror::applyState (const juce::var& v)
     {
-        if (v.getDynamicObject() == nullptr) return;
+        if (v.getDynamicObject() == nullptr) return false;
+
+        // Validate the complete layout before changing any strip. A proxy's
+        // JSON error object is not an empty session, and a partially valid
+        // array must not partially overwrite the last accepted layout.
+        const auto count = v.getProperty ("numTracks", {});
+        const auto layout = v.getProperty ("tracks", {});
+        const auto* tracks = layout.getArray();
+        if ((! count.isInt() && ! count.isInt64()) || tracks == nullptr
+            || (juce::int64) count < 0 || (juce::int64) count > 256
+            || (juce::int64) count != tracks->size())
+            return false;
+        for (const auto& track : *tracks)
+        {
+            const auto colour = track.getProperty ("colour", {}).toString();
+            if (! track.isObject() || ! track.getProperty ("name", {}).isString()
+                || ! track.getProperty ("stereo", {}).isBool()
+                || colour.length() != 7 || ! colour.startsWithChar ('#')
+                || ! colour.substring (1).containsOnly ("0123456789abcdefABCDEF"))
+                return false;
+        }
 
         // Parse the EXACT schema the primary's CompanionServer emits
         // (EngineStatus::toJson): a "tracks" array whose colours are "#RRGGBB"
@@ -172,5 +196,6 @@ namespace zynforge
             if (cur.isStereo.load (std::memory_order_relaxed) != t.stereoLeft)
                 engine.setTrackStereo (i, t.stereoLeft);
         }
+        return true;
     }
 }

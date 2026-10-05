@@ -1,4 +1,5 @@
 #include "MultitrackRecorder.h"
+#include "FloatAiffWriter.h"
 #include "AtomicFile.h"
 #include "FastHash.h"
 #include "PunchSplice.h"
@@ -511,7 +512,7 @@ namespace zynforge
                 const int  n0  = juce::jmin (numSamples, (int) scratch.size());
                 if (n0 <= 0) continue;
                 auto& cfz = *fifos[(std::size_t) ch];
-                const auto zs = cfz.fifo.write (n0);
+                const auto zs = cfz.fifo.write (cfz.canAcceptAudio() ? n0 : 0);
                 if (zs.blockSize1 > 0)
                     std::memcpy (cfz.data.data() + zs.startIndex1, scratch.data(),
                                  (std::size_t) zs.blockSize1 * sizeof (float));
@@ -519,11 +520,11 @@ namespace zynforge
                     std::memcpy (cfz.data.data() + zs.startIndex2, scratch.data(),
                                  (std::size_t) zs.blockSize2 * sizeof (float));
                 const int wroteZ = zs.blockSize1 + zs.blockSize2;
+                cfz.accountCapture (wroteZ, numSamples);
                 if (wroteZ < numSamples)
                 {
                     const int deficit = numSamples - wroteZ;
                     missedSamples     .fetch_add (deficit, std::memory_order_relaxed);
-                    cfz.droppedSamples.fetch_add (deficit, std::memory_order_relaxed);
                 }
                 continue;
             }
@@ -582,8 +583,9 @@ namespace zynforge
                 t.liveWavePush (src, numSamples);
 
                 auto& cf = *fifos[(std::size_t) ch];
-                const auto scope = cf.fifo.write (numSamples);
+                const auto scope = cf.fifo.write (cf.canAcceptAudio() ? numSamples : 0);
                 const int wrote = scope.blockSize1 + scope.blockSize2;
+                cf.accountCapture (wrote, numSamples);
 
                 if (scope.blockSize1 > 0)
                     std::memcpy (cf.data.data() + scope.startIndex1,
@@ -603,7 +605,6 @@ namespace zynforge
                     // the take develops permanent inter-track sync drift.
                     const int deficit = numSamples - wrote;
                     missedSamples     .fetch_add (deficit, std::memory_order_relaxed);
-                    cf.droppedSamples .fetch_add (deficit, std::memory_order_relaxed);
                 }
             }
         }
@@ -1480,7 +1481,7 @@ namespace zynforge
         missedSamples    .store (0, std::memory_order_relaxed);
         captureDeviceLost.store (false, std::memory_order_relaxed);
         samplesSinceFlush.store (0, std::memory_order_relaxed);
-        for (auto& f : fifos) f->droppedSamples.store (0, std::memory_order_relaxed);
+        for (auto& f : fifos) f->resetCaptureTimeline();
         // Clear each track's live waveform overview so a new take draws fresh
         // (done before the audio thread starts pushing into it).
         for (auto& t : tracks) t->liveWaveReset();
@@ -1701,7 +1702,8 @@ namespace zynforge
 
         juce::AudioFormatWriter* w = nullptr;
         if      (containerCode == 2) w = flac.createWriterFor (out, sampleRate, chans, bits, meta, 5);
-        else if (containerCode == 1) w = aiff.createWriterFor (out, sampleRate, chans, bits, meta, 0);
+        else if (containerCode == 1) w = bits == 32 ? FloatAiffWriter::create (out, sampleRate, chans)
+                                                   : aiff.createWriterFor (out, sampleRate, chans, bits, meta, 0);
         else                         w = wav .createWriterFor (out, sampleRate, chans, bits, meta, 0);
         if (w == nullptr) delete out;
         return w;
@@ -1750,6 +1752,10 @@ namespace zynforge
         // Final flush of whatever is still buffered, now single-threaded.
         for (auto& sh : shards)
             drainShard (*sh);
+
+        // Complete fallible headers before snapshotting failure flags and
+        // per-writer metadata for the capture report.
+        finalizeWriterHandles();
 
         const auto stoppedAt        = juce::Time::getCurrentTime();
         const auto totalSamples     = samplesSinceStart.load (std::memory_order_relaxed);
@@ -2345,7 +2351,30 @@ namespace zynforge
     void MultitrackRecorder::closeWriters()
     {
         writersReady.store (false, std::memory_order_release);
+        finalizeWriterHandles();
         writers.clear();
+    }
+
+    void MultitrackRecorder::finalizeWriterHandles()
+    {
+        for (auto& writer : writers)
+        {
+            if (! flushFloatAiffBeforeClose (writer.writer.get()))
+                primaryFailed.store (true, std::memory_order_relaxed);
+            writer.writer.reset();
+            if (! flushFloatAiffBeforeClose (writer.backupWriter.get()))
+                backupFailed.store (true, std::memory_order_relaxed);
+            writer.backupWriter.reset();
+            for (auto& mirror : writer.mirrors)
+            {
+                if (! flushFloatAiffBeforeClose (mirror.writer.get()))
+                {
+                    mirror.failed = true;
+                    mirrorFailed.store (true, std::memory_order_relaxed);
+                }
+                mirror.writer.reset();
+            }
+        }
     }
 
     int MultitrackRecorder::useTimeSlice()
@@ -2578,10 +2607,19 @@ namespace zynforge
         for (std::size_t i = first; i < last && i < writers.size(); ++i)
         {
             auto& w = writers[i];
-            if (w.writer       != nullptr) w.writer->flush();
-            if (w.backupWriter != nullptr) w.backupWriter->flush();
+            const auto flush = [] (juce::AudioFormatWriter* writer)
+            {
+                if (writer == nullptr) return true;
+                if (dynamic_cast<FloatAiffWriter*> (writer) != nullptr)
+                    return flushFloatAiffBeforeClose (writer);
+                writer->flush(); // Other JUCE codecs may report unsupported.
+                return true;
+            };
+            if (! flush (w.writer.get())) primaryFailed.store (true, std::memory_order_relaxed);
+            if (! flush (w.backupWriter.get())) backupFailed.store (true, std::memory_order_relaxed);
             for (auto& m : w.mirrors)
-                if (m.writer != nullptr && ! m.failed) m.writer->flush();
+                if (! m.failed && ! flush (m.writer.get()))
+                { m.failed = true; mirrorFailed.store (true, std::memory_order_relaxed); }
         }
     }
 
@@ -2643,6 +2681,8 @@ namespace zynforge
                         + (juce::int64) samplesPending * chans * wc.bytesPerSamplePrimary;
                     if (projected >= maxBytesForContainer (wc.primaryContainer))
                     {
+                        if (! flushFloatAiffBeforeClose (wc.writer.get()))
+                            primaryFailed.store (true, std::memory_order_relaxed);
                         wc.writer.reset();   // closes + finalises header
                         ++wc.partNumberPrimary;
                         const auto nextFile = wc.primaryBaseFile.getParentDirectory()
@@ -2665,6 +2705,8 @@ namespace zynforge
                         + (juce::int64) samplesPending * chans * wc.bytesPerSampleBackup;
                     if (projected >= maxBytesForContainer (wc.backupContainer))
                     {
+                        if (! flushFloatAiffBeforeClose (wc.backupWriter.get()))
+                            backupFailed.store (true, std::memory_order_relaxed);
                         wc.backupWriter.reset();
                         ++wc.partNumberBackup;
                         const auto nextFile = wc.backupBaseFile.getParentDirectory()
@@ -2689,6 +2731,8 @@ namespace zynforge
                         + (juce::int64) samplesPending * chans * m.bytesPerSample;
                     if (projected >= maxBytesForContainer (m.container))
                     {
+                        if (! flushFloatAiffBeforeClose (m.writer.get()))
+                        { m.failed = true; mirrorFailed.store (true, std::memory_order_relaxed); }
                         m.writer.reset();
                         ++m.partNumber;
                         const auto nextFile = m.baseFile.getParentDirectory()
@@ -2709,261 +2753,114 @@ namespace zynforge
                 }
             };
 
-            // Length-preserving overflow compensation. When the audio thread
-            // had to drop samples on a full FIFO it counted them per-channel;
-            // here we write that many silence frames to EVERY destination so
-            // this track's file advances by the same total sample count as
-            // every other track. Without this, different channels lose
-            // different counts and the take develops permanent inter-track
-            // sync drift (not merely a glitch). Runs on the writer thread, so
-            // the reusable zero buffer + writes are fine here.
-            auto writeSilencePad = [&] (WriterChannel& wc, juce::int64 frames) noexcept
+            // Snapshot a finite timeline budget so live callbacks cannot keep
+            // this drain running forever. Each stereo side supplies its own
+            // real/silent spans, preserving alignment even for unequal drops.
+            const int channels = w.numChannels == 2 && i + 1 < fifos.size() ? 2 : 1;
+            auto* right = channels == 2 ? fifos[i + 1].get() : nullptr;
+            juce::int64 remaining;
             {
-                const int chans = juce::jmax (1, wc.numChannels);
-                while (frames > 0)
+                const juce::SpinLock::ScopedLockType guard (captureBoundary);
+                remaining = cf.producedFrames - cf.consumedFrames;
+                if (right != nullptr)
+                    remaining = juce::jmin (remaining, right->producedFrames - right->consumedFrames);
+            }
+            constexpr int chunkLimit = 8192;
+            if (remaining > 0)
+            {
+                shard.stageL.resize ((size_t) juce::jmin (remaining, (juce::int64) chunkLimit));
+                if (right != nullptr) shard.stageR.resize (shard.stageL.size());
+            }
+            while (remaining > 0)
+            {
+                const int frames = (int) juce::jmin (remaining, (juce::int64) chunkLimit);
+                ChannelFifo::DrainPlan leftPlan, rightPlan;
                 {
-                    const int chunk = (int) juce::jmin ((juce::int64) 8192, frames);
-                    frames -= chunk;
-                    if ((int) shard.silence.size() < chunk)
-                        shard.silence.assign ((std::size_t) chunk, 0.0f);  // grows once, stays all-zero
-                    const float* z = shard.silence.data();
-                    const float* const arr[] = { z, z };
-
-                    rollIfNeeded (wc, chunk);
-                    if (wc.writer != nullptr)
+                    // Only bounded cursor/descriptor operations. The reserved
+                    // sample ranges stay occupied until AFTER the disk write,
+                    // so the producer cannot overwrite a copied/read span.
+                    const juce::SpinLock::ScopedLockType guard (captureBoundary);
+                    cf.reserveTimeline (leftPlan, frames);
+                    if (right != nullptr) right->reserveTimeline (rightPlan, frames);
+                }
+                if (afterFifoReservationForTests) afterFifoReservationForTests();
+                auto materialize = [] (const ChannelFifo& source, const ChannelFifo::DrainPlan& plan,
+                                       std::vector<float>& destination)
+                {
+                    int sourceOffset = 0;
+                    for (size_t spanIndex = 0; spanIndex < plan.count; ++spanIndex)
                     {
-                        if (! wc.writer->writeFromFloatArrays (arr, chans, chunk))
+                        const auto& span = plan.spans[spanIndex];
+                        auto* out = destination.data() + span.offset;
+                        if (span.silence)
                         {
-                            wc.writer.reset();
-                            primaryFailed.store (true, std::memory_order_relaxed);
-                        }
-                        else
-                        {
-                            wc.bytesWrittenPrimary += (juce::int64) chunk * chans * wc.bytesPerSamplePrimary;
-                            wc.totalSamplesPrimary += chunk;
-                        }
-                    }
-                    if (wc.backupWriter != nullptr)
-                    {
-                        if (! wc.backupWriter->writeFromFloatArrays (arr, chans, chunk))
-                        {
-                            wc.backupWriter.reset();
-                            backupFailed.store (true, std::memory_order_relaxed);
-                        }
-                        else
-                        {
-                            wc.bytesWrittenBackup += (juce::int64) chunk * chans * wc.bytesPerSampleBackup;
-                            wc.totalSamplesBackup += chunk;
-                        }
-                    }
-                    for (auto& m : wc.mirrors)
-                    {
-                        if (m.writer == nullptr || m.failed) continue;
-                        if (! m.writer->writeFromFloatArrays (arr, chans, chunk))
-                        {
-                            m.writer.reset();
-                            m.failed = true;
-                            mirrorFailed.store (true, std::memory_order_relaxed);
+                            juce::FloatVectorOperations::clear (out, span.length);
                             continue;
                         }
-                        m.bytesWritten += (juce::int64) chunk * chans * m.bytesPerSample;
-                        m.totalSamples += chunk;
+                        int count = span.length;
+                        if (sourceOffset < plan.samples.blockSize1)
+                        {
+                            const int first = juce::jmin (count, plan.samples.blockSize1 - sourceOffset);
+                            std::memcpy (out, source.data.data() + plan.samples.startIndex1 + sourceOffset,
+                                         (size_t) first * sizeof (float));
+                            sourceOffset += first; out += first; count -= first;
+                        }
+                        if (count > 0)
+                        {
+                            std::memcpy (out, source.data.data() + plan.samples.startIndex2
+                                               + sourceOffset - plan.samples.blockSize1,
+                                         (size_t) count * sizeof (float));
+                            sourceOffset += count;
+                        }
                     }
-                    totalWritten += (juce::int64) chunk * wc.numChannels;
-                }
-            };
-
-            // ── Interleaved stereo pair ──────────────────────────────────
-            // A stereo-L writer (numChannels == 2) owns BOTH this FIFO and
-            // the R partner's (i + 1). Drain the SAME number of frames from
-            // each -- min(ready) so neither runs ahead -- gather them into
-            // two contiguous planar staging buffers (the FIFO read may wrap),
-            // then do ONE 2-channel write. The R partner's WriterChannel is
-            // empty (writer == nullptr), so it's skipped on its own iteration
-            // and its FIFO is consumed only here -- never left to overflow.
-            if (w.numChannels == 2 && i + 1 < fifos.size())
-            {
-                auto& cfR = *fifos[i + 1];
-                const int avail = juce::jmin (cf.fifo.getNumReady(), cfR.fifo.getNumReady());
-                if (avail > 0)
+                };
+                materialize (cf, leftPlan, shard.stageL);
+                if (right != nullptr) materialize (*right, rightPlan, shard.stageR);
+                const float* const audio[] { shard.stageL.data(), right != nullptr ? shard.stageR.data() : nullptr };
+                rollIfNeeded (w, frames);
+                if (w.writer != nullptr)
                 {
-                    const auto scopeL = cf .fifo.read (avail);
-                    const auto scopeR = cfR.fifo.read (avail);
-
-                    // Copy a (possibly wrapped) ScopedRead into a contiguous array.
-                    auto gather = [avail] (std::vector<float>& dst, const ChannelFifo& src,
-                                           const auto& sc) noexcept
+                    if (! w.writer->writeFromFloatArrays (audio, channels, frames))
                     {
-                        dst.resize ((std::size_t) avail);
-                        if (sc.blockSize1 > 0)
-                            std::memcpy (dst.data(),
-                                         src.data.data() + sc.startIndex1,
-                                         (std::size_t) sc.blockSize1 * sizeof (float));
-                        if (sc.blockSize2 > 0)
-                            std::memcpy (dst.data() + sc.blockSize1,
-                                         src.data.data() + sc.startIndex2,
-                                         (std::size_t) sc.blockSize2 * sizeof (float));
-                    };
-                    gather (shard.stageL, cf,  scopeL);
-                    gather (shard.stageR, cfR, scopeR);
-
-                    rollIfNeeded (w, avail);
-                    const float* const channels[] = { shard.stageL.data(), shard.stageR.data() };
-
-                    if (w.writer != nullptr)
-                    {
-                        if (! w.writer->writeFromFloatArrays (channels, 2, avail))
-                        {
-                            w.writer.reset();
-                            primaryFailed.store (true, std::memory_order_relaxed);
-                        }
-                        else
-                        {
-                            w.bytesWrittenPrimary += (juce::int64) avail * 2 * w.bytesPerSamplePrimary;
-                            w.totalSamplesPrimary += avail;
-                        }
+                        w.writer.reset();
+                        primaryFailed.store (true, std::memory_order_relaxed);
                     }
-                    if (w.backupWriter != nullptr
-                        && ! w.backupWriter->writeFromFloatArrays (channels, 2, avail))
+                    else
+                    {
+                        w.bytesWrittenPrimary += (juce::int64) frames * channels * w.bytesPerSamplePrimary;
+                        w.totalSamplesPrimary += frames;
+                    }
+                }
+                if (w.backupWriter != nullptr)
+                {
+                    if (! w.backupWriter->writeFromFloatArrays (audio, channels, frames))
                     {
                         w.backupWriter.reset();
                         backupFailed.store (true, std::memory_order_relaxed);
                     }
-                    else if (w.backupWriter != nullptr)
+                    else
                     {
-                        w.bytesWrittenBackup += (juce::int64) avail * 2 * w.bytesPerSampleBackup;
-                        w.totalSamplesBackup += avail;
+                        w.bytesWrittenBackup += (juce::int64) frames * channels * w.bytesPerSampleBackup;
+                        w.totalSamplesBackup += frames;
                     }
-                    for (auto& m : w.mirrors)
-                    {
-                        if (m.writer == nullptr || m.failed) continue;
-                        if (! m.writer->writeFromFloatArrays (channels, 2, avail))
-                        {
-                            m.writer.reset();
-                            m.failed = true;
-                            mirrorFailed.store (true, std::memory_order_relaxed);
-                            continue;
-                        }
-                        m.bytesWritten += (juce::int64) avail * 2 * m.bytesPerSample;
-                        m.totalSamples += avail;
-                    }
-                    totalWritten += (juce::int64) avail * w.numChannels;
                 }
-
-                // Compensate any per-side FIFO overflow with silence so the
-                // pair's file stays aligned with every other track. Both sides
-                // are consumed here (padMax keeps the interleaved frame count
-                // uniform across all tracks); consume both counters either way.
-                const juce::int64 padL = cf .droppedSamples.exchange (0, std::memory_order_relaxed);
-                const juce::int64 padR = cfR.droppedSamples.exchange (0, std::memory_order_relaxed);
-                writeSilencePad (w, juce::jmax (padL, padR));
-                continue;
-            }
-
-            const int available = cf.fifo.getNumReady();
-            if (available > 0)
-            {
-            const auto scope = cf.fifo.read (available);
-
-            if (scope.blockSize1 > 0)
-            {
-                rollIfNeeded (w, scope.blockSize1);
-                const float* ptr = cf.data.data() + scope.startIndex1;
-                const float* const channels[] = { ptr };
-                if (w.writer != nullptr)
+                for (auto& mirror : w.mirrors)
                 {
-                    if (! w.writer->writeFromFloatArrays (channels, 1, scope.blockSize1))
+                    if (mirror.writer == nullptr || mirror.failed) continue;
+                    if (! mirror.writer->writeFromFloatArrays (audio, channels, frames))
                     {
-                        // Primary write failed mid-take (disk full,
-                        // path disappeared, permissions). Close the
-                        // writer so we don't keep hammering a bad
-                        // handle, flip the failure flag so UI + report
-                        // surface it, and let backup + mirrors keep
-                        // capturing without interruption.
-                        w.writer.reset();
-                        primaryFailed.store (true, std::memory_order_relaxed);
+                        mirror.writer.reset(); mirror.failed = true;
+                        mirrorFailed.store (true, std::memory_order_relaxed);
                     }
                     else
                     {
-                        w.bytesWrittenPrimary += (juce::int64) scope.blockSize1 * w.bytesPerSamplePrimary;
-                        w.totalSamplesPrimary += scope.blockSize1;
+                        mirror.bytesWritten += (juce::int64) frames * channels * mirror.bytesPerSample;
+                        mirror.totalSamples += frames;
                     }
                 }
-                if (w.backupWriter != nullptr
-                    && ! w.backupWriter->writeFromFloatArrays (channels, 1, scope.blockSize1))
-                {
-                    w.backupWriter.reset();
-                    backupFailed.store (true, std::memory_order_relaxed);
-                }
-                else if (w.backupWriter != nullptr)
-                {
-                    w.bytesWrittenBackup += (juce::int64) scope.blockSize1 * w.bytesPerSampleBackup;
-                    w.totalSamplesBackup += scope.blockSize1;
-                }
-                for (auto& m : w.mirrors)
-                {
-                    if (m.writer == nullptr || m.failed) continue;
-                    if (! m.writer->writeFromFloatArrays (channels, 1, scope.blockSize1))
-                    {
-                        m.writer.reset();
-                        m.failed = true;
-                        mirrorFailed.store (true, std::memory_order_relaxed);
-                        continue;
-                    }
-                    m.bytesWritten += (juce::int64) scope.blockSize1 * m.bytesPerSample;
-                    m.totalSamples += scope.blockSize1;
-                }
-                totalWritten += scope.blockSize1;
+                totalWritten += (juce::int64) frames * channels;
+                remaining -= frames;
             }
-            if (scope.blockSize2 > 0)
-            {
-                rollIfNeeded (w, scope.blockSize2);
-                const float* ptr = cf.data.data() + scope.startIndex2;
-                const float* const channels[] = { ptr };
-                if (w.writer != nullptr)
-                {
-                    if (! w.writer->writeFromFloatArrays (channels, 1, scope.blockSize2))
-                    {
-                        w.writer.reset();
-                        primaryFailed.store (true, std::memory_order_relaxed);
-                    }
-                    else
-                    {
-                        w.bytesWrittenPrimary += (juce::int64) scope.blockSize2 * w.bytesPerSamplePrimary;
-                        w.totalSamplesPrimary += scope.blockSize2;
-                    }
-                }
-                if (w.backupWriter != nullptr
-                    && ! w.backupWriter->writeFromFloatArrays (channels, 1, scope.blockSize2))
-                {
-                    w.backupWriter.reset();
-                    backupFailed.store (true, std::memory_order_relaxed);
-                }
-                else if (w.backupWriter != nullptr)
-                {
-                    w.bytesWrittenBackup += (juce::int64) scope.blockSize2 * w.bytesPerSampleBackup;
-                    w.totalSamplesBackup += scope.blockSize2;
-                }
-                for (auto& m : w.mirrors)
-                {
-                    if (m.writer == nullptr || m.failed) continue;
-                    if (! m.writer->writeFromFloatArrays (channels, 1, scope.blockSize2))
-                    {
-                        m.writer.reset();
-                        m.failed = true;
-                        mirrorFailed.store (true, std::memory_order_relaxed);
-                        continue;
-                    }
-                    m.bytesWritten += (juce::int64) scope.blockSize2 * m.bytesPerSample;
-                    m.totalSamples += scope.blockSize2;
-                }
-                totalWritten += scope.blockSize2;
-            }
-            }
-
-            // Compensate this channel's FIFO overflow with an equal count of
-            // silence so its file stays length-aligned with every other track.
-            writeSilencePad (w, cf.droppedSamples.exchange (0, std::memory_order_relaxed));
         }
 
         // Periodic header flush (~every 5 s). Keeps each open file self-

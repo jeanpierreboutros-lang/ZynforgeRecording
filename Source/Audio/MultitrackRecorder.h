@@ -5,6 +5,7 @@
 #include <juce_core/juce_core.h>
 
 #include <atomic>
+#include <array>
 #include <functional>
 #include <memory>
 #include <vector>
@@ -403,21 +404,80 @@ namespace zynforge
         {
             juce::AbstractFifo fifo { 1 };
             std::vector<float> data;
+            // Audio and gaps occupy the SAME absolute capture timeline. All
+            // cursor/descriptor access uses captureBoundary; sample copies and
+            // disk writes never hold that lock on the consumer. Fixed metadata
+            // costs 4 KiB per channel, independent of take duration.
+            struct Gap { juce::int64 start {}, length {}; };
+            static constexpr size_t gapCapacity = 256;
+            std::array<Gap, gapCapacity> gaps {};
+            size_t gapHead {}, gapCount {};
+            juce::int64 producedFrames {}, consumedFrames {};
 
-            // Samples the audio thread had to DROP because this channel's FIFO
-            // was full (disk fell behind). Bumped on the audio thread (push),
-            // consumed on the drain thread which compensates by writing that
-            // many silence samples so every track's file advances by the same
-            // total sample count -- otherwise per-channel drop counts diverge
-            // and the take gains permanent inter-track sync drift.
-            std::atomic<juce::int64> droppedSamples { 0 };
+            struct DrainPlan
+            {
+                struct Span { int offset {}, length {}; bool silence {}; };
+                std::array<Span, 2 * gapCapacity + 1> spans {};
+                size_t count {};
+                juce::AbstractFifo::ScopedRead samples;
+            };
+
+            bool canAcceptAudio() const noexcept { return gapCount < gapCapacity; }
+
+            void accountCapture (int written, int requested) noexcept
+            {
+                const int lost = requested - written;
+                if (lost > 0)
+                {
+                    const auto start = producedFrames + written;
+                    const auto tail = (gapHead + gapCount + gapCapacity - 1) % gapCapacity;
+                    if (gapCount > 0 && gaps[tail].start + gaps[tail].length == start)
+                        gaps[tail].length += lost;
+                    else
+                    {
+                        // A saturated descriptor ring refuses further real
+                        // samples until a gap is consumed. They extend its last
+                        // contiguous gap and are counted in missedSamples.
+                        jassert (gapCount < gapCapacity);
+                        gaps[(gapHead + gapCount++) % gapCapacity] = { start, lost };
+                    }
+                }
+                producedFrames += requested;
+            }
+
+            void reserveTimeline (DrainPlan& plan, int frames) noexcept
+            {
+                int offset = 0, realFrames = 0;
+                while (offset < frames)
+                {
+                    const bool silence = gapCount > 0 && gaps[gapHead].start == consumedFrames;
+                    const auto run = silence ? gaps[gapHead].length
+                        : (gapCount > 0 ? gaps[gapHead].start - consumedFrames : frames - offset);
+                    const int count = (int) juce::jmin ((juce::int64) (frames - offset), run);
+                    jassert (count > 0 && plan.count < plan.spans.size());
+                    plan.spans[plan.count++] = { offset, count, silence };
+                    if (silence)
+                    {
+                        auto& gap = gaps[gapHead];
+                        gap.start += count; gap.length -= count;
+                        if (gap.length == 0) { gapHead = (gapHead + 1) % gapCapacity; --gapCount; }
+                    }
+                    else realFrames += count;
+                    offset += count; consumedFrames += count;
+                }
+                plan.samples = fifo.read (realFrames);
+                jassert (plan.samples.blockSize1 + plan.samples.blockSize2 == realFrames);
+            }
+
+            void resetCaptureTimeline() noexcept
+            { gapHead = gapCount = 0; producedFrames = consumedFrames = 0; }
 
             void resize (int size)
             {
                 data.assign ((std::size_t) size, 0.0f);
                 fifo.setTotalSize (size);
                 fifo.reset();
-                droppedSamples.store (0, std::memory_order_relaxed);
+                resetCaptureTimeline();
             }
         };
 
@@ -543,6 +603,7 @@ namespace zynforge
         std::atomic<double> lastWriterFlushMs { 0.0 };
         void rebuildShards();
         void closeWriters();
+        void finalizeWriterHandles();
         void allocatePreRollBuffers();
         void dumpPreRollToWriters();
 
@@ -616,6 +677,8 @@ namespace zynforge
         friend struct ConcurrencyAuditAccess;
         friend class MainTransportRegressionTests; // deterministic STOP failure-latch fixtures
         friend class AsyncStopAuditTests;
+        friend class ReviewCaptureRepairTests;
+        std::function<void()> afterFifoReservationForTests;
         struct ReportTestHooks
         {
             std::function<void()> beforeScan, beforePublish, afterPublish, finished;

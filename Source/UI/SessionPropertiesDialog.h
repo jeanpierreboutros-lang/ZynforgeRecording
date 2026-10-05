@@ -32,5 +32,10 @@ namespace zynforge
         // Opens modal-async. Calls onSave with the edited fields on
         // Save; does nothing on Cancel.
         static void launch (Fields initial, SaveCallback onSave);
+
+    private:
+        friend class ReviewPersistenceRepairTests;
+        // Isolated UI tests capture the real deferred save callback without a native dialog.
+        inline static std::function<void (Fields, SaveCallback)> launchForTests;
     };
 }

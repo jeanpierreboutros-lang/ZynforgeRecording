@@ -33,6 +33,10 @@ namespace zynforge
         const auto patch = juce::JSON::parse (snapshot.projectPatchJson);
         if (! patch.isObject()) return { false, "Invalid session metadata snapshot" };
         auto existing = juce::JSON::parse (project);
+        // A failed read/parse is not a new session. Refuse before touching any
+        // sibling metadata so the original project remains recoverable.
+        if (project.exists() && ! existing.isObject())
+            return { false, "Existing session project could not be read; original metadata was preserved" };
         juce::DynamicObject::Ptr merged = existing.isObject() ? existing.getDynamicObject()
                                                             : new juce::DynamicObject();
         for (const auto& property : patch.getDynamicObject()->getProperties())

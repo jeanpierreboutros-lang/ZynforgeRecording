@@ -93,7 +93,12 @@ namespace zynforge
 
             juce::String text;
             juce::Colour fg = brand::textPrimary;
-            switch (columnId)
+            if (f.error.isNotEmpty())
+            {
+                text = columnId == 1 ? f.trackName + ": " + f.error : "--";
+                fg = brand::accentRecord;
+            }
+            else switch (columnId)
             {
                 case 1: text = f.trackName; break;
                 case 2: text = juce::String (f.humDb, 1); break;

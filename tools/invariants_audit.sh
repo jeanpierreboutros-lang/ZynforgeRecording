@@ -324,10 +324,14 @@ report "background exports hold the session-I/O exclusion gate" \
        "$HITS"
 
 HITS=""
-IMPORT_BODY=$(sed -n '/void MainComponent::onImportAudioFiles/,/^}/p' \
+IMPORT_LAUNCH=$(sed -n '/void MainComponent::onImportAudioFiles/,/^}/p' \
               Source/UI/MainComponentSessionIO.cpp 2>/dev/null)
+IMPORT_BODY=$(sed -n '/void MainComponent::completeAudioImport/,/^}/p' \
+              Source/UI/MainComponentSessionIO.cpp 2>/dev/null)
+grep -q "completeAudioImport (fc.getResults())" <<<"$IMPORT_LAUNCH" \
+    || HITS="Source/UI/MainComponentSessionIO.cpp: picker bypasses the guarded import completion"
 grep -q "exportThread = std::thread" <<<"$IMPORT_BODY" \
-    || HITS="Source/UI/MainComponentSessionIO.cpp: audio import no longer runs on the owned worker"
+    || HITS+=$'\nSource/UI/MainComponentSessionIO.cpp: audio import no longer runs on the owned worker'
 grep -q "audioimport::importFiles" <<<"$IMPORT_BODY" \
     || HITS+=$'\nSource/UI/MainComponentSessionIO.cpp: audio decode/resample has returned to the message thread'
 report "audio import stays off the message thread" \

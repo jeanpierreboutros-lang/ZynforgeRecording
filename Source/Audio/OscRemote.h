@@ -50,6 +50,7 @@ namespace zynforge
         juce::String getAccessToken() const { return accessToken; }
 
     private:
+        friend class ReviewNetworkRepairTests;
         friend class AuditSecurityTests;
         // Injection seam only: the red baseline deliberately retains its
         // current token generation until a regression proves the defect.
