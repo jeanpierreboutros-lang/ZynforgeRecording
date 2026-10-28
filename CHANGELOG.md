@@ -37,7 +37,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - Analyze every stereo channel and report unreadable analysis as an error. Respect FFT snapshot publication before channel classification.
 - Require all requested console gain replies and refuse incomplete restoration. Preserve MIDI realtime framing through fragmented/SysEx traffic, separate Generic OSC credentials from payload arguments, and validate mirror layouts before mutation.
 - Require acknowledged auto-stop finalization, revalidate the pinned session through retries, and remove the unused shared temporary token file.
-- Full Release, TSan and ASan/UBSan/float-cast-overflow each pass 563 groups, with no failures or sanitizer reports; six auto-stop fixtures and both gates pass. The verified universal GUI/helper pair is installed on the development Mac with rollback retained. Normal startup was observed and the app left open; interactive latency, normal quit and physical recording acceptance remain open. Mini/DMG unchanged. See [repair evidence](docs/REVIEW-REPAIRS-2026-10-05.md) and [installation](INSTALL.md).
+- Full Release, TSan and ASan/UBSan/float-cast-overflow each pass 563 groups, with no failures or sanitizer reports; six auto-stop fixtures and both gates pass. The verified universal GUI/helper pair is installed on the development Mac with rollback retained. Normal startup was observed and the app left open; interactive latency, normal quit and physical recording acceptance remain open. Mini/DMG unchanged. See [repair evidence](docs/history/REVIEW-REPAIRS-2026-10-05.md) and [installation](INSTALL.md).
 
 ### Documentation — October 5 reconciliation
 
@@ -51,7 +51,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - Repair report publication/deletion ownership, callback/status/stream races, imported/exported audio read failures, invalid automation/playlist boundaries and mismatched stereo-source rates.
 - Generate capabilities from OS entropy, redact OSC secrets and authenticate capture transport with protocol 4. Upgrade the GUI/helper together; recorded audio/project formats are unchanged.
 - Batch shared preference reloads/writes when clearing strips and remove both current and legacy persisted send fields. A deterministic red measured 1,537 full-reset reloads, 61 for ten slots and 36 surviving send fields; S4 targeted Release passes four groups with reset/range/growth reloads 5/5/10 and no surviving tested send fields.
-- Frozen S6 passed full optimized Release, TSan and ASan/UBSan/float-cast-overflow: 519 groups each, zero failures, no emitted sanitizer reports. Builds, signatures, static gates and final no-device TERM/INT probes pass. Final bounded disk-full tests pass (5/0). At that checkpoint the verified S6 protocol-4 GUI/helper pair was installed and left closed, with its prior bundle retained. Its normal startup smoke was consent-gated by macOS microphone permission; physical long-take acceptance remains pending. The Apple leak comparison retains nonzero framework cycles. See [the evidence register](docs/AUDIT-2026-10-05.md).
+- Frozen S6 passed full optimized Release, TSan and ASan/UBSan/float-cast-overflow: 519 groups each, zero failures, no emitted sanitizer reports. Builds, signatures, static gates and final no-device TERM/INT probes pass. Final bounded disk-full tests pass (5/0). At that checkpoint the verified S6 protocol-4 GUI/helper pair was installed and left closed, with its prior bundle retained. Its normal startup smoke was consent-gated by macOS microphone permission; physical long-take acceptance remains pending. The Apple leak comparison retains nonzero framework cycles. See [the evidence register](docs/history/AUDIT-2026-10-05.md).
 
 ### Installed and cleaned up — 2026-10-04
 
@@ -65,7 +65,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - Protected backup/mirror ownership, rearmed continuation alignment, synchronized pre-roll and capture layout compatibility; made source-copy/render failures visible and preserved originals on failure.
 - Corrected session/VCA reset and persistence, input None, offline mirror retention, stereo aux rendering and throughput, edited continuation and legacy playback.
 - Preserved grouped clipboard geometry, drag bounds, healing rules and automation shapes; enforced remote LOCK and stereo MCU gain; isolated every preferences writer during tests.
-- All 28 findings have regression coverage. That initial build passed 424 groups; the follow-up below raises the full suite to 438. See [the complete fix record](AUDIT_FIXES_2026-10-03.md).
+- All 28 findings have regression coverage. That initial build passed 424 groups; the follow-up below raises the full suite to 438. See [the complete fix record](docs/history/AUDIT_FIXES_2026-10-03.md).
 
 ### Fixed — October 3 follow-up audit
 
@@ -91,12 +91,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ### Validation — five-hour Mac mini take, 2026-10-02
 
-- A separate 55-channel take on the installed `d2c5858` build stopped normally after 5:00:11 using the authenticated unattended STOP helper. All 55 primary WAVs open at the final report's exact frame count; the report records zero missed samples, no capture/write failure and completed hashes. The user reported no Mac mini restart, but a later screenshot confirmed that its post-STOP waveform was blocky. Independent file re-hashing, timed live FOLLOW/zoom observation, backup validation and the exact 56-input rehearsal remain open. See [field evidence](FIELD-TEST-2026-10-01.md).
+- A separate 55-channel take on the installed `d2c5858` build stopped normally after 5:00:11 using the authenticated unattended STOP helper. All 55 primary WAVs open at the final report's exact frame count; the report records zero missed samples, no capture/write failure and completed hashes. The user reported no Mac mini restart, but a later screenshot confirmed that its post-STOP waveform was blocky. Independent file re-hashing, timed live FOLLOW/zoom observation, backup validation and the exact 56-input rehearsal remain open. See [field evidence](docs/history/FIELD-TEST-2026-10-01.md).
 
 ### Fixed — long-take live waveform detail, 2026-10-01
 
 - The live EDIT waveform retains original 256-sample peaks for the most recent portion of a rolling take while retaining a bounded whole-take overview. Pixel queries use absolute recorder-bin ranges, so a long recording no longer forces the visible recording edge to draw from heavily reduced peaks.
-- A prior 55-channel, 10:42:37 Mac mini take passed primary-file and report checks but showed a blocky live preview that regained detail after STOP. The new build passed 401 headless test groups and was installed on the Mac mini. Its first five-hour run was interrupted by a recurring Mac mini kernel panic after about 2:43; no Zynforge defect was identified. A separate five-hour take later finalized cleanly, while detailed live UI acceptance remains open. See the [field evidence](FIELD-TEST-2026-10-01.md).
+- A prior 55-channel, 10:42:37 Mac mini take passed primary-file and report checks but showed a blocky live preview that regained detail after STOP. The new build passed 401 headless test groups and was installed on the Mac mini. Its first five-hour run was interrupted by a recurring Mac mini kernel panic after about 2:43; no Zynforge defect was identified. A separate five-hour take later finalized cleanly, while detailed live UI acceptance remains open. See the [field evidence](docs/history/FIELD-TEST-2026-10-01.md).
 - Packaged the verified universal `dist/Zynforge-Recording-d2c5858-macOS-universal.dmg` (historical package; removed locally) with a matching checksum file and capture helper.
 
 ### Fixed — capture continuation and finalization, 2026-09-30
@@ -105,7 +105,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - A continued session's report lists and hashes all on-disk parts, accumulates earlier capture warnings and elapsed counters, and records a failed SHA-256 pass. The local app surfaces asynchronous report failure after STOP; verified show handoff flags failed punches and report hashing for review.
 - `verify_take.sh` rejects missing middle parts, unlisted takes, incomplete/failed hashes, capture-failure flags and reported frame counts that exceed the files. Valid WAV, AIFF, FLAC and complete continued takes pass its disposable fixtures.
 - Unattended `auto_stop.sh` pins the live session from authenticated status, uses the actual capture clock, completes the two-tap STOP guard and exits unsuccessfully if stop cannot be confirmed. The main window has a minimum size that keeps recording controls accessible.
-- The universal Release build passed 399 headless test groups with zero failures, was installed with a rollback copy, and was packaged as the verified `dist/Zynforge-Recording-672456d-macOS-universal.dmg` (historical package; removed locally). Physical long-take and device acceptance remain open; see the [capture-integrity fix record](AUDIT_FIXES_2026-09-30.md).
+- The universal Release build passed 399 headless test groups with zero failures, was installed with a rollback copy, and was packaged as the verified `dist/Zynforge-Recording-672456d-macOS-universal.dmg` (historical package; removed locally). Physical long-take and device acceptance remain open; see the [capture-integrity fix record](docs/history/AUDIT_FIXES_2026-09-30.md).
 
 ### Fixed — audit follow-up, 2026-09-29
 
@@ -197,7 +197,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ### Validation — 2026-09-20
 
 - The universal Release build succeeds and the in-app runner passes **358 test groups with 0 failures**. The invariant audit, design audit and `git diff --check` are clean.
-- At that stage, the bundle and matching protocol-v3 helper were installed at `/Applications/Zynforge Recording.app`. Hardware/show acceptance and Developer ID notarization remained pending. Full evidence: [2026-09-20 reliability fixes](AUDIT_FIXES_2026-09-20.md).
+- At that stage, the bundle and matching protocol-v3 helper were installed at `/Applications/Zynforge Recording.app`. Hardware/show acceptance and Developer ID notarization remained pending. Full evidence: [2026-09-20 reliability fixes](docs/history/AUDIT_FIXES_2026-09-20.md).
 - Application code commit `fe5280d` and its documentation-only delivery follow-up were pushed to `origin/main` on 2026-09-21. [GitHub run 35538818050](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/35538818050) passed every Debug/Release build, test, audit and bundled-helper gate.
 
 ### Security — bounded remote input, 2026-09-15
@@ -224,7 +224,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ### Validation — 2026-09-15
 
 - A fresh macOS-12 universal Release build passes **350 test groups, 0 failures on arm64 and x86_64**; ASan+UBSan Debug passes 350/0. Xcode static analysis has no app-owned diagnostics. The 27-rule invariant audit and design audit are clean; deep/strict bundle verification passes.
-- Application code through `df5ad36` is pushed to `origin/main`, [GitHub run 34986170067](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/34986170067) passed its clean Debug/Release matrix, and that exact signed bundle is installed at `/Applications/Zynforge Recording.app`; the previous app is preserved at `/Applications/Zynforge Recording.app.backup-20260915-before-df5ad36`. Hardware/show acceptance and Developer ID notarization remain pending. Full evidence: [2026-09-15 audit report](AUDIT_REPORT_2026-09-15.md).
+- Application code through `df5ad36` is pushed to `origin/main`, [GitHub run 34986170067](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/34986170067) passed its clean Debug/Release matrix, and that exact signed bundle is installed at `/Applications/Zynforge Recording.app`; the previous app is preserved at `/Applications/Zynforge Recording.app.backup-20260915-before-df5ad36`. Hardware/show acceptance and Developer ID notarization remain pending. Full evidence: [2026-09-15 audit report](docs/history/AUDIT_REPORT_2026-09-15.md).
 
 ### Fixed — recording and session integrity, 2026-09-12
 
@@ -239,7 +239,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - Capture protocol is **2**; GUI and daemon must be upgraded together. Local packaging includes `ZynforgeCapture` in the app's `Contents/MacOS` directory.
 - Commit `44a309e` was pushed and installed locally with a rollback backup. Universal Release passed **320 test groups, 0 failures**. No new numbered public release was created.
 - Added installation/rollback and planned SD5/56-input show-readiness guides. Hardware acceptance and a three-hour rehearsal remain pending; automated success is not sole-recorder show certification.
-- Complete item-by-item resolution: [September audit report](AUDIT_FIXES_2026-09-12.md).
+- Complete item-by-item resolution: [September audit report](docs/history/AUDIT_FIXES_2026-09-12.md).
 
 ### Fixed (whole-codebase remediation — 2026-08-18)
 

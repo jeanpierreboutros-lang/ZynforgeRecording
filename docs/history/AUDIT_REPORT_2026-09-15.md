@@ -1,6 +1,6 @@
 # Whole-project audit — 2026-09-15
 
-> Historical audit record: findings, counts and package paths below describe this dated pass. Current fixes and verification are in [the October 5 follow-up](docs/REVIEW-REPAIRS-2026-10-05.md) and [testing.md](testing.md). [INSTALL.md](INSTALL.md) distinguishes the development Mac, unchanged mini/DMG and retained rollback copies; older removed artifacts are not current install instructions.
+> Historical audit record: findings, counts and package paths below describe this dated pass. Current fixes and verification are in [the October 5 follow-up](REVIEW-REPAIRS-2026-10-05.md) and [testing.md](../../testing.md). [INSTALL.md](../../INSTALL.md) distinguishes the development Mac, unchanged mini/DMG and retained rollback copies; older removed artifacts are not current install instructions.
 
 
 ## Outcome
@@ -11,7 +11,7 @@ This is a software-validation result, not show certification. The exact DiGiCo S
 
 ## Expected behaviour established from the project
 
-ZynForge Recording is a macOS live multitrack recorder and virtual-soundcheck player, not a general DAW. Its safety contract is: never overwrite an existing take or deliverable on a failed operation; keep channels sample-aligned; surface primary/backup/mirror failures; keep the capture daemon authoritative when selected; preserve sessions through interruption; keep network control authenticated and bounded; and keep expensive file work off the audio and message threads. See [README.md](README.md), [architecture.md](architecture.md), [testing.md](testing.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
+ZynForge Recording is a macOS live multitrack recorder and virtual-soundcheck player, not a general DAW. Its safety contract is: never overwrite an existing take or deliverable on a failed operation; keep channels sample-aligned; surface primary/backup/mirror failures; keep the capture daemon authoritative when selected; preserve sessions through interruption; keep network control authenticated and bounded; and keep expensive file work off the audio and message threads. See [README.md](../../README.md), [architecture.md](../../architecture.md), [testing.md](../../testing.md) and [SHOW-READINESS.md](../../SHOW-READINESS.md).
 
 ## High findings
 
@@ -414,4 +414,4 @@ ZynForge Recording is a macOS live multitrack recorder and virtual-soundcheck pl
 
 ## Show decision
 
-The installed build is suitable for the **exact-rig rehearsal**, not yet suitable as the only recorder at a show. For 56 mono channels at 48 kHz/24-bit, raw audio is approximately **58.06 GB for two hours per destination**; plan at least 70 GB usable headroom per primary/backup destination for the show, and the project’s safer recommendation remains 150 GB free per drive for a three-hour acceptance rehearsal plus soundcheck/overrun. Follow [SHOW-READINESS.md](SHOW-READINESS.md) and retain a genuinely independent recorder.
+The installed build is suitable for the **exact-rig rehearsal**, not yet suitable as the only recorder at a show. For 56 mono channels at 48 kHz/24-bit, raw audio is approximately **58.06 GB for two hours per destination**; plan at least 70 GB usable headroom per primary/backup destination for the show, and the project’s safer recommendation remains 150 GB free per drive for a three-hour acceptance rehearsal plus soundcheck/overrun. Follow [SHOW-READINESS.md](../../SHOW-READINESS.md) and retain a genuinely independent recorder.

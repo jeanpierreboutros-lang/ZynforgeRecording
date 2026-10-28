@@ -1,6 +1,6 @@
 # ZynForge Recording — Field-Test Checklist (updated 2026-10-05)
 
-Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak. Tick boxes only after performing them; the failure column tells you when to stop and report. Both Macs and the current DMG have `443c769` / protocol 4; mini startup is waiting in CoreAudio initialization. Current source passed 563 groups in each full Release and sanitizer suite, plus six auto-stop tests. Installed development app/helper hashes, signatures and startup checks passed; physical capture is not yet accepted. The [installation record](INSTALL.md) contains the current DMG and hashes. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run on this build. See the [55-channel long-take evidence](FIELD-TEST-2026-10-01.md).
+Run this with a real audio interface and disposable sessions. Basic smoke checks are separate from the multi-hour soak. Tick boxes only after performing them; the failure column tells you when to stop and report. Both Macs and the current DMG have `443c769` / protocol 4; mini startup is waiting in CoreAudio initialization. Current source passed 563 groups in each full Release and sanitizer suite, plus six auto-stop tests. Installed development app/helper hashes, signatures and startup checks passed; physical capture is not yet accepted. The [installation record](INSTALL.md) contains the current DMG and hashes. The planned SD5 / 56-input / 48 kHz / two-hour show's three-hour acceptance test is defined in [SHOW-READINESS.md](SHOW-READINESS.md) and has not yet run on this build. See the [55-channel long-take evidence](docs/history/FIELD-TEST-2026-10-01.md).
 
 Never force-quit, unplug hardware or delete sessions during production recording. Crash tests require a disposable rig/session and a recovery plan. In daemon mode, killing only the GUI is a reattachment test; it does not necessarily stop the recording or create an orphan. Stop both processes gracefully before installing or rolling back.
 
@@ -11,7 +11,7 @@ Never force-quit, unplug hardware or delete sessions during production recording
 ## October 5 follow-up acceptance — `443c769`, not yet performed
 
 Run these checks on disposable sessions; retain measured results and leave
-unchecked items open. [The repair register](docs/REVIEW-REPAIRS-2026-10-05.md)
+unchecked items open. [The repair register](docs/history/REVIEW-REPAIRS-2026-10-05.md)
 contains automated evidence for all 21 defects.
 
 | Check | Expected result |
@@ -34,7 +34,7 @@ contains automated evidence for all 21 defects.
 | ☐ L.1 | On the updated Mac mini, start a disposable multichannel take and keep FOLLOW enabled. Observe the live waveform at the recording edge after three hours and again near five hours, including after H+/H- and V+/V- changes. | Playhead continues to scroll and the recent waveform keeps visible detail; zoom controls respond. | Scrolling stalls, waveform becomes blocky near the edge, or controls cease to respond. |
 | ☐ L.2 | Stop normally, wait for final hashing, and retain the session. Compare the final file waveform with the last live view; inspect `session.report.json` and verify file lengths, hashes, missed samples and failure flags. | Final waveform duration and detail agree with the capture; no missing frames or capture errors. | Live/final mismatch beyond expected rendering differences, short file, unfinished hash or capture warning. |
 
-The first five-hour Mac mini run on `d2c5858` was interrupted around 2:43 by a macOS PCIe `lan-1gb` kernel panic. A separate 55-channel run on 2026-10-02 completed 5:00:11 without a restart. Its final report and all 55 primary WAV frame counts agree, with zero missed samples or reported capture/write failures. The user said everything looked fine, but no timed live waveform/FOLLOW/zoom observation, live-to-final comparison or independent SHA-256 comparison was recorded. Keep L.1 and L.2 open for those remaining checks; see [the evidence](FIELD-TEST-2026-10-01.md). The user requested no app or routing changes for the earlier host incident.
+The first five-hour Mac mini run on `d2c5858` was interrupted around 2:43 by a macOS PCIe `lan-1gb` kernel panic. A separate 55-channel run on 2026-10-02 completed 5:00:11 without a restart. Its final report and all 55 primary WAV frame counts agree, with zero missed samples or reported capture/write failures. The user said everything looked fine, but no timed live waveform/FOLLOW/zoom observation, live-to-final comparison or independent SHA-256 comparison was recorded. Keep L.1 and L.2 open for those remaining checks; see [the evidence](docs/history/FIELD-TEST-2026-10-01.md). The user requested no app or routing changes for the earlier host incident.
 
 ---
 

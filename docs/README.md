@@ -59,14 +59,14 @@ new code. Removed installer paths and old rollback names are historical; use
 
 | Record | Scope |
 | --- | --- |
-| [October 5 follow-up](REVIEW-REPAIRS-2026-10-05.md) | All 21 findings, failing/passing regressions, 563-group suites and remaining limits |
-| [October 5 S1–S6 audit](AUDIT-2026-10-05.md) | Earlier deep STOP/concurrency repair ledger and its 519-group checkpoint |
-| [October 3 audit](../AUDIT_FIXES_2026-10-03.md) | Initial 28 and additional 14 findings |
-| [October 1–2 long takes](../FIELD-TEST-2026-10-01.md) | Named Mac mini builds, primary-file checks and UI/host limits |
-| [September 30 audit](../AUDIT_FIXES_2026-09-30.md) | Continuation, report and unattended STOP integrity |
-| [September 20 audit](../AUDIT_FIXES_2026-09-20.md) | Recording reliability changes |
-| [September 15 audit](../AUDIT_REPORT_2026-09-15.md) | Whole-project findings and evidence |
-| [September 12 audit](../AUDIT_FIXES_2026-09-12.md) | Recording/session-integrity fixes |
+| [October 5 follow-up](history/REVIEW-REPAIRS-2026-10-05.md) | All 21 findings, failing/passing regressions, 563-group suites and remaining limits |
+| [October 5 S1–S6 audit](history/AUDIT-2026-10-05.md) | Earlier deep STOP/concurrency repair ledger and its 519-group checkpoint |
+| [October 3 audit](history/AUDIT_FIXES_2026-10-03.md) | Initial 28 and additional 14 findings |
+| [October 1–2 long takes](history/FIELD-TEST-2026-10-01.md) | Named Mac mini builds, primary-file checks and UI/host limits |
+| [September 30 audit](history/AUDIT_FIXES_2026-09-30.md) | Continuation, report and unattended STOP integrity |
+| [September 20 audit](history/AUDIT_FIXES_2026-09-20.md) | Recording reliability changes |
+| [September 15 audit](history/AUDIT_REPORT_2026-09-15.md) | Whole-project findings and evidence |
+| [September 12 audit](history/AUDIT_FIXES_2026-09-12.md) | Recording/session-integrity fixes |
 
 ## Theme sources and historical handoffs
 

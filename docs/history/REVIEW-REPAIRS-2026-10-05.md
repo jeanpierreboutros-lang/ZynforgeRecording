@@ -2,7 +2,7 @@
 
 This register tracks the 21 findings reviewed at `962cb42`, after the earlier
 S6 audit. The user authorized all repairs, then requested installation of the
-verified `443c769` GUI/helper pair on the development Mac. [INSTALL.md](../INSTALL.md)
+verified `443c769` GUI/helper pair on the development Mac. [INSTALL.md](../../INSTALL.md)
 owns that subsequent installation and rollback record. The source/test evidence
 below does not imply physical-take acceptance; user recordings were untouched.
 
@@ -137,7 +137,7 @@ At completion of the source repair, this build was not installed. The user
 subsequently requested installation on this Mac: the verified `443c769` GUI/helper
 pair was installed on the development Mac, then deployed to the mini and
 packaged in the current DMG. The subsequent user-requested cleanup removed
-superseded bundles and installers. See [INSTALL.md](../INSTALL.md) for hashes,
+superseded bundles and installers. See [INSTALL.md](../../INSTALL.md) for hashes,
 startup limits and installation evidence. User sessions and recordings were
 untouched.
 

@@ -13,8 +13,8 @@ Release, TSan and ASan/UBSan/float-cast-overflow each pass 563 groups with zero
 failures and no sanitizer reports. Normal startup reached main-component
 rendering; interactive and physical capture acceptance remains open. The mini
 and DMG remain `c563b00` / protocol 3. [INSTALL.md](INSTALL.md) owns package
-identities; [the follow-up register](docs/REVIEW-REPAIRS-2026-10-05.md) and
-[earlier S6 audit](docs/AUDIT-2026-10-05.md) retain separate evidence.
+identities; [the follow-up register](docs/history/REVIEW-REPAIRS-2026-10-05.md) and
+[earlier S6 audit](docs/history/AUDIT-2026-10-05.md) retain separate evidence.
 
 A local STOP crosses the recorder's capture boundary once, publishes recording=false and retains a finalization lease. `AudioEngine::stopRecordingAsync` owns the worker that drains queues, closes writers, splices punches, starts integrity reporting and prepares playback readers. Only the message thread installs prepared player/clip state, including refreshed explicit-source readers after a punch; comp clip state survives but stale source descriptors do not. The owned job retires old readers off that thread before invoking its completion. Deferred device configuration waits for the same ownership boundary. Repeated STOP/start/structural mutation cannot reuse finalizing writer state. The synchronous engine entry remains for legacy callers. The daemon's host acknowledgement/load path still has separate synchronous costs.
 
@@ -57,7 +57,7 @@ applied during configuration. Historical field takes used earlier source.
 - Modern `Audio Files` and legacy root media merge per track, with modern media preferred. Explicit cross-track source identity is retained through playback/rendering, trim bounds use the actual source length, and grouped edits compute one legal delta before mutating peers.
 - Delete confirmation reserves session I/O. Its callback rechecks recording and session identity before deleting or clearing state. Console reconnect preserves the saved stage patch until restoration succeeds; unknown remote state must not replace that saved patch.
 
-The [October audit record](AUDIT_FIXES_2026-10-03.md) maps each contract to its fix and regression coverage.
+The [October audit record](docs/history/AUDIT_FIXES_2026-10-03.md) maps each contract to its fix and regression coverage.
 
 ## 3. High-Level Architecture
 
@@ -342,3 +342,13 @@ Bounce stems, bounce stereo mix, Strip Silence, and Consolidate all run through 
 - **Dante reaches the app through CoreAudio**, using an appropriate hardware driver (such as the RME AoX-D) or a software soundcard. Dante Virtual Soundcard is not required when a hardware interface supplies the channels. The app does not implement native Dante routing/control.
 - **Workspace layout per show** is persisted globally, not per session yet. Edge case: an engineer with multiple regular gigs may want layouts saved alongside `.zfproj`.
 - **LSP diagnostics are unreliable** — the project's `clangd` setup does not see JUCE module headers, so "undeclared identifier 'juce'" warnings are stale. The build is authoritative.
+
+## Implementation notes (moved from CLAUDE.md, 2026-10-29)
+
+For ad-hoc architecture questions, the source of truth is the code itself — start from `Source/Audio/AudioEngine.{h,cpp}` and `Source/UI/MainComponent.{h,cpp}`. Clip/take/comp + offline-render logic lives in `Source/Audio/AudioEngineClips.cpp` (offline renders are **windowed**: `forEachArrangementWindow` / `forEachStereoMixWindow` render fixed 64k-sample windows so memory stays O(window) on multi-hour shows; `bounceTrackArrangementToWav` / `bounceStereoMixToWav` stream those windows straight to 24-bit WAV and are what File ▸ Bounce uses — `renderTrackArrangement` / `renderStereoMix` are the buffer-returning wrappers for tests/short material; `compRangeFromTake` does take comping; `pasteClip` carries a per-clip `audioFile` for cross-track paste; **`healSeparationAt/Range`**, **`stripSilence`** (peak-envelope scan → clips around gaps, with pad), **`consolidateRange`** (flatten a range to a new flat file), **`setClipName`/`setClipGainDb`/`setClipMuted`/`setClipLocked`** are the clip ops). BS.1770 loudness is `Source/Audio/LoudnessMeter.h`; the EDIT overview navigator is `Source/UI/TimelineMinimap.h`.
+
+**EDIT view file layout (2026-06-14):** `EditPage.cpp` was split — the ~3,800-line nested class `EditPage::TrackRow` (the per-track row: header + waveform/automation lane) plus the shared EDIT constants + `TimelineMapper` now live in **`Source/UI/EditTrackRow.h`** (included only by `EditPage.cpp`). `EditPage.cpp` (~870 lines) keeps `TrackList` + the `EditPage` methods. Edit the row's paint/hit-test/clip logic in `EditTrackRow.h`.
+
+**Mixer layout + density (`MainComponentLayout.cpp`):** strips lay out either single-row (width-preset driven) or **GRID** (12-per-row × 2 visible rows = 24 faders, vertical scroll) when `mixerGridView` is on (toolbar `gridButton`, persisted). Width presets carry a per-preset floor AND **ceil** (M ≈70–120px stays compact so 12 fit; L 150–280px triggers the **2-row header** so the full channel name shows on its own line). The strip's fader cluster (`ChannelStrip::resized`) packs dB ruler + fader + meter tight and centres them. **`LedMeter` auto-drops its dB labels when narrower than ~30px** (compact strips / EDIT) — never assert on a negative bar rect, and it removes the redundant right-hand scale. **Faders are click-drag-only**: `FineFader` (channel/master/VCA/bus — the name is legacy; it no longer fine-trims) ignores the wheel and forwards it to the parent so the mixer scrolls.
+
+EDIT-view specifics in `Source/UI/EditTrackRow.h` (was `EditPage.cpp`): the `TrackRow` header (swatch / name / R-I-S-M / VIEW / slim `LedMeter` / routing) is **pinned** — drawn last via `paintHeader(g, headerOriginX())` and laid out + hit-tested at the horizontal scroll offset so it never scrolls off (the `ScrollViewport` subclass fires `relayoutHeaders()` on scroll; mouse gates go through `inWavePane/inSwatch/inNameZone`). Each clip is a **region block** with its own waveform (mapped to the clip's file region, so move/slip-trim show the right audio); a 1-2-5 s grid sits behind, and Move/trim drags snap through `engine.snapSampleToGrid`. EDIT tool keys (`S/T/R/G/F/B`) live in `MainComponentKeys.cpp`; `switchView` grabs keyboard focus so they + Delete actually arrive. The strip colour picker is `Source/UI/StripColourPicker.{h,cpp}` — a hue×shade gradient palette (no free-form selector); the per-strip default is now **neutral grey** (`brand::stripColour` → `stripDefaultGrey`, no longer the per-index `personality`).

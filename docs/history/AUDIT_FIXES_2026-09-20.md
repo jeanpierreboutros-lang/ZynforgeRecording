@@ -1,6 +1,6 @@
 # Recording reliability fixes — 2026-09-20
 
-> Historical audit record: findings, counts and package paths below describe this dated pass. Current fixes and verification are in [the October 5 follow-up](docs/REVIEW-REPAIRS-2026-10-05.md) and [testing.md](testing.md). [INSTALL.md](INSTALL.md) distinguishes the development Mac, unchanged mini/DMG and retained rollback copies; older removed artifacts are not current install instructions.
+> Historical audit record: findings, counts and package paths below describe this dated pass. Current fixes and verification are in [the October 5 follow-up](REVIEW-REPAIRS-2026-10-05.md) and [testing.md](../../testing.md). [INSTALL.md](../../INSTALL.md) distinguishes the development Mac, unchanged mini/DMG and retained rollback copies; older removed artifacts are not current install instructions.
 
 
 ## Outcome
@@ -60,4 +60,4 @@ Application code commit `fe5280d` and its documentation-only delivery follow-up 
 3. Capture StereoMix locally with stream sends but no hardware stream outputs and confirm the file is audible.
 4. Reopen an unreadable/corrupt session containing existing take files and verify RECORD cannot replace them.
 5. Run Strip Silence, Normalize, Consolidate, and transient navigation on a long edited stereo/multipart session and confirm the UI remains responsive.
-6. Complete the three-hour, 56-input rehearsal in [SHOW-READINESS.md](SHOW-READINESS.md).
+6. Complete the three-hour, 56-input rehearsal in [SHOW-READINESS.md](../../SHOW-READINESS.md).

@@ -1,5 +1,20 @@
 # Project Tasks
 
+## Handover back to Claude Code + structural-debt pass — 2026-10-29
+
+Development moved from OpenAI Codex back to Claude Code. The working copy now lives at `/Volumes/PJ /zynforge/ZynforgeRecording` (exFAT). A read-only scan of `69aab9f` found structural debt that the repeated audit passes kept patching around rather than removing. Each item below lands as its own commit with a green full suite.
+
+- [x] Sync the exFAT working copy: it was 31 commits behind `origin/main` and held an uncommitted early draft of `3e6104c` (verified fully superseded; kept as `git stash` "Codex uncommitted draft…"). `core.fileMode false`; `._*` ignored; stale Desktop-path build trees moved out of the repo.
+- [x] Baseline on this Mac: universal Release build, **563 groups / 0 failures**, both gates clean.
+- [x] Docs: CLAUDE.md holds rules only (dated status → `docs/history/CLAUDE-status-log-2026-09-10.md`, code-map notes → `architecture.md`); dated audit/field reports → `docs/history/`; all links re-pointed. `install_hooks.sh` wrote `Tools/` (wrong case).
+- [ ] EDIT strip drag: one `reorderTracks` on release with a drop indicator, instead of a full on-disk transaction per row crossed (each stopped the player and detached the audio callback on the message thread; the stereo second swap ignored failure).
+- [ ] One `canMutateTimeline()` policy for the copy-pasted recording guards; one owned background-job runner for the pasted export/bounce launchers.
+- [ ] Audio callback: resolve each strip's mix (gain, mute, automation) once per block and share one mix kernel with the offline render.
+- [ ] Engine → UI change notifications instead of 10 Hz polling for strip rebuilds; command-based mixer undo instead of the 100 ms JSON diff.
+- [ ] Split `MainComponent` (one class over 11 files) into controllers; split `EditTrackRow.h`; extract steps from `MultitrackRecorder::startRecording` / `finishFinalization`; move app/network ownership out of `AudioEngine`.
+- [ ] Build: tests out of the shipping app (core library + test target); CI cache keyed on the JUCE SHA, faster Debug job.
+- [ ] Organise test files by feature rather than by audit/month.
+
 ## Current follow-up and documentation — 2026-10-05
 
 - [x] Deploy verified `443c769` to both Macs, replace the DMG, and remove 20 superseded app/installer/checksum items across both machines, including five temporary staging copies. Preserve sessions/settings/source.
@@ -43,7 +58,7 @@
 - [x] Install the matching S6 GUI/helper atomically on the development Mac after confirming both processes stopped; verify exact hashes/deep-strict signatures and preserve rollback `Zynforge Recording.app.backup-20261005-031802-before-audit`. Leave the app closed.
 - [x] Record subsequent `443c769` startup evidence separately from S6; retain physical long-take and nonzero framework-leak residuals. Mini/distribution image unchanged.
 
-Earlier S6 reports and commands: [October 5 audit register](docs/AUDIT-2026-10-05.md). Current follow-up: [repair register](docs/REVIEW-REPAIRS-2026-10-05.md).
+Earlier S6 reports and commands: [October 5 audit register](docs/history/AUDIT-2026-10-05.md). Current follow-up: [repair register](docs/history/REVIEW-REPAIRS-2026-10-05.md).
 
 ## STOP responsiveness — 2026-10-04
 
@@ -81,7 +96,7 @@ Earlier S6 reports and commands: [October 5 audit register](docs/AUDIT-2026-10-0
 
 Installation and retention statements in this dated section describe the state at that time. At the October 4 checkpoint both Macs had `c563b00` and the inventoried older packages were removed. Both Macs now have `443c769`; the later cleanup removed rollback bundles as recorded in INSTALL.md. Unchecked hardware tasks still apply unless superseded by the current field checklist.
 
-- [x] Diagnose the blocky live waveform reported during a 55-channel, 10:42:37 Mac mini take. Verify all 55 primary RF64 files' frame counts and SHA-256 values against the final report; document the limits of that evidence in [FIELD-TEST-2026-10-01.md](FIELD-TEST-2026-10-01.md).
+- [x] Diagnose the blocky live waveform reported during a 55-channel, 10:42:37 Mac mini take. Verify all 55 primary RF64 files' frame counts and SHA-256 values against the final report; document the limits of that evidence in [FIELD-TEST-2026-10-01.md](docs/history/FIELD-TEST-2026-10-01.md).
 - [x] Keep recent original-resolution peaks during long live takes, add ten-hour/ring-wrap regression coverage, build universal Release and pass 401 headless test groups with zero failures. Source commit `d2c5858`.
 - [x] Package and verify the universal `d2c5858` DMG and checksum; install the matching app and helper on the Mac mini with a rollback copy and idle launch check. The development Mac retains `672456d`.
 - [x] Inspect the interrupted `TEST 5 HOURS NEW` take read-only: 55 equal-sized WAV files, all headers readable, about 2:42:51 per file; no clean-stop report. Preserve the originals. Three Mac mini kernel panic reports show the same Apple PCIe `lan-1gb` completion timeout.
@@ -178,13 +193,13 @@ Effort scale: **S** (≤1 hour), **M** (1–4 hours), **L** (half-day or more).
 
 ### Show acceptance — current as of 2026-09-20
 
-- [x] Fix all 16 findings from the 2026-09-20 recording-reliability follow-up: fresh-take collision protection, truthful daemon/redundancy failures, backup persistence, StereoMix capture, external-record transport guards, CaptureLink synchronization/handshake, arrangement-aware background edits, mixer-state persistence, disk telemetry, daemon reconfiguration recovery, autosave transactions, and unbounded Consolidate naming. See [AUDIT_FIXES_2026-09-20.md](AUDIT_FIXES_2026-09-20.md).
+- [x] Fix all 16 findings from the 2026-09-20 recording-reliability follow-up: fresh-take collision protection, truthful daemon/redundancy failures, backup persistence, StereoMix capture, external-record transport guards, CaptureLink synchronization/handshake, arrangement-aware background edits, mixer-state persistence, disk telemetry, daemon reconfiguration recovery, autosave transactions, and unbounded Consolidate naming. See [AUDIT_FIXES_2026-09-20.md](docs/history/AUDIT_FIXES_2026-09-20.md).
 - [x] Pass the universal Release build, 358 test groups with zero failures, invariant audit, design audit and final diff checks; pass [GitHub run 35538818050](https://github.com/jeanpierreboutros-lang/ZynforgeRecording/actions/runs/35538818050) for clean Debug/Release builds, tests and bundled-helper verification.
 - [x] Installed that build and matching protocol-v3 helper at `/Applications/Zynforge Recording.app`, preserving the prior installation at `/Applications/Zynforge Recording.app.backup-20260920-before-protocol-v3`. See [INSTALL.md](INSTALL.md).
 - [x] Update the living architecture, workflow, testing, field-test, show-readiness, component, changelog and installation documentation for the new behavior.
 - [x] Commit application code as `fe5280d` and push it with the documentation-only delivery follow-up to `origin/main` on 2026-09-21.
 
-- [x] Fix all 41 findings from the 2026-09-15 audit; pass 350 test groups on both slices of a fresh macOS-12 universal Release build and in ASan+UBSan Debug; pass Xcode analysis with no app-owned diagnostics, 27 invariants, design audit, strict bundle verification and GitHub Debug/Release CI. See [AUDIT_REPORT_2026-09-15.md](AUDIT_REPORT_2026-09-15.md).
+- [x] Fix all 41 findings from the 2026-09-15 audit; pass 350 test groups on both slices of a fresh macOS-12 universal Release build and in ASan+UBSan Debug; pass Xcode analysis with no app-owned diagnostics, 27 invariants, design audit, strict bundle verification and GitHub Debug/Release CI. See [AUDIT_REPORT_2026-09-15.md](docs/history/AUDIT_REPORT_2026-09-15.md).
 - [x] Accept the local Xcode 27 license and verify the universal arm64+x86_64 build, both architecture test runs, static analyzer, deployment load commands and final diff.
 - [x] Review, commit/push and install application code `df5ad36` with the matching protocol-v2 daemon; preserve the former app at `/Applications/Zynforge Recording.app.backup-20260915-before-df5ad36`; verify exact-copy hashes/signature, installed 350/0 tests and native launch. See [INSTALL.md](INSTALL.md).
 - [x] Update current documentation, operating guidance, deployment record and validation limits for the installed build.

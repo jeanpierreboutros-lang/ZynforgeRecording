@@ -16,7 +16,7 @@ backup validation, and the planned 56-input rehearsal remain open. The initial
 installed startup used roughly 59–81% of one CPU core; it was not a steady-state
 performance benchmark or a timed interaction check.
 
-Historical evidence includes a 55-channel, 10:42:37 primary take and a separate `d2c5858` take that completed 5:00:11 with matching primary-file frame counts and a clean capture report. The latter was not independently re-hashed and did not exercise a backup. Another run was interrupted by a Mac mini PCIe `lan-1gb` kernel panic; the cause remains unconfirmed, and the user is handling that host issue separately. AppKit geometry faults from older runs remain an unclosed native-UI follow-up. See [field evidence](FIELD-TEST-2026-10-01.md) and the [field checklist](FIELD-TEST.md). Do not treat these historical results as acceptance of the newly installed build or rely on the mini as the sole recorder while the restart fault is unresolved.
+Historical evidence includes a 55-channel, 10:42:37 primary take and a separate `d2c5858` take that completed 5:00:11 with matching primary-file frame counts and a clean capture report. The latter was not independently re-hashed and did not exercise a backup. Another run was interrupted by a Mac mini PCIe `lan-1gb` kernel panic; the cause remains unconfirmed, and the user is handling that host issue separately. AppKit geometry faults from older runs remain an unclosed native-UI follow-up. See [field evidence](docs/history/FIELD-TEST-2026-10-01.md) and the [field checklist](FIELD-TEST.md). Do not treat these historical results as acceptance of the newly installed build or rely on the mini as the sole recorder while the restart fault is unresolved.
 
 ## Confirmed plan and open choices
 

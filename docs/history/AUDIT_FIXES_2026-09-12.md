@@ -1,6 +1,6 @@
 # Recording and session-integrity fixes
 
-> Historical audit record: findings, counts and package paths below describe this dated pass. Current fixes and verification are in [the October 5 follow-up](docs/REVIEW-REPAIRS-2026-10-05.md) and [testing.md](testing.md). [INSTALL.md](INSTALL.md) distinguishes the development Mac, unchanged mini/DMG and retained rollback copies; older removed artifacts are not current install instructions.
+> Historical audit record: findings, counts and package paths below describe this dated pass. Current fixes and verification are in [the October 5 follow-up](REVIEW-REPAIRS-2026-10-05.md) and [testing.md](../../testing.md). [INSTALL.md](../../INSTALL.md) distinguishes the development Mac, unchanged mini/DMG and retained rollback copies; older removed artifacts are not current install instructions.
 
 
 Scope: the 32 findings in the September code audit. Validation below was completed before committing, pushing and installing the update.
@@ -58,9 +58,9 @@ Test report: `/Users/jeanpierre/Library/Logs/Zynforge/test-report.log`.
 
 ## Delivery and remaining acceptance
 
-Code commit `44a309e` was pushed to `origin/main`. The GUI and matching protocol-v2 daemon were installed in `/Applications/Zynforge Recording.app`; the installed copy matched the signed staging bundle and passed deep/strict signature verification. The previous app is retained at `/Applications/Zynforge Recording.app.backup-20260912-44a309e`. See [installation and rollback](INSTALL.md).
+Code commit `44a309e` was pushed to `origin/main`. The GUI and matching protocol-v2 daemon were installed in `/Applications/Zynforge Recording.app`; the installed copy matched the signed staging bundle and passed deep/strict signature verification. The previous app is retained at `/Applications/Zynforge Recording.app.backup-20260912-44a309e`. See [installation and rollback](../../INSTALL.md).
 
-The planned SD5 / RME HDSPe AoX-D show is 56 inputs at 48 kHz for approximately two hours. Connection, computer/chassis and drives remain undecided. [Show readiness](SHOW-READINESS.md) defines the pending three-hour rehearsal and independent-backup requirement. The build is rehearsal-ready, not certified as the sole show recorder.
+The planned SD5 / RME HDSPe AoX-D show is 56 inputs at 48 kHz for approximately two hours. Connection, computer/chassis and drives remain undecided. [Show readiness](../../SHOW-READINESS.md) defines the pending three-hour rehearsal and independent-backup requirement. The build is rehearsal-ready, not certified as the sole show recorder.
 
 Regression coverage includes backup collisions, live-arm changes, empty arrangements, cross-track media, missing references, take selection, locks, automation snapshots, session UUIDs, reorder persistence, mixed stereo/mono moves, failed and interrupted file transactions, sample-continuous loops, console snapshots, daemon routing and repeat recording.
 

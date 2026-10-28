@@ -1,6 +1,6 @@
 # Capture-integrity audit fixes — 2026-09-30
 
-> Historical audit record: findings, counts and package paths below describe this dated pass. Current fixes and verification are in [the October 5 follow-up](docs/REVIEW-REPAIRS-2026-10-05.md) and [testing.md](testing.md). [INSTALL.md](INSTALL.md) distinguishes the development Mac, unchanged mini/DMG and retained rollback copies; older removed artifacts are not current install instructions.
+> Historical audit record: findings, counts and package paths below describe this dated pass. Current fixes and verification are in [the October 5 follow-up](REVIEW-REPAIRS-2026-10-05.md) and [testing.md](../../testing.md). [INSTALL.md](../../INSTALL.md) distinguishes the development Mac, unchanged mini/DMG and retained rollback copies; older removed artifacts are not current install instructions.
 
 This record describes source commit `672456d`, installed at `/Applications/Zynforge Recording.app` and packaged in the `dist/Zynforge-Recording-672456d-macOS-universal.dmg` (historical package; removed locally). It supplements the earlier [recording-reliability audit](AUDIT_FIXES_2026-09-20.md). Automated validation is not a real-device acceptance test.
 
@@ -26,5 +26,5 @@ The continuation report also now enumerates and hashes all on-disk parts, includ
 - Universal Release build succeeded. The in-app runner passed **399 test groups with zero failures**. Both static audits and `git diff --check` were clean.
 - Disposable verifier fixtures passed valid fresh and continued WAV takes and real AIFF/FLAC files. Failed capture flags, a short file, a missing middle part and a failed punch were rejected.
 - A mocked companion confirmed the unattended script sends the required STOP sequence and exits unsuccessfully when the companion is unreachable. No real take was stopped by this test.
-- The installed bundle and read-only-mounted DMG matched byte for byte. Both GUI and helper contain `arm64` and `x86_64`, and the app passed deep/strict ad-hoc signature verification. The DMG checksum is in [INSTALL.md](INSTALL.md).
-- A disposable long recording on each target Mac must still confirm waveform FOLLOW, real-device continuity, STOP behavior, backups and intended channel mapping. `verify_take.sh` checks primary files against their report; it cannot establish the planned show duration or certify external copies. Follow [FIELD-TEST.md](FIELD-TEST.md) and [SHOW-READINESS.md](SHOW-READINESS.md).
+- The installed bundle and read-only-mounted DMG matched byte for byte. Both GUI and helper contain `arm64` and `x86_64`, and the app passed deep/strict ad-hoc signature verification. The DMG checksum is in [INSTALL.md](../../INSTALL.md).
+- A disposable long recording on each target Mac must still confirm waveform FOLLOW, real-device continuity, STOP behavior, backups and intended channel mapping. `verify_take.sh` checks primary files against their report; it cannot establish the planned show duration or certify external copies. Follow [FIELD-TEST.md](../../FIELD-TEST.md) and [SHOW-READINESS.md](../../SHOW-READINESS.md).

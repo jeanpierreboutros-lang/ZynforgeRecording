@@ -15,7 +15,7 @@ startup was observed; the mini launch is waiting in CoreAudio initialization.
 All 21 follow-up findings are repaired. **563 test groups passed in each full
 Release, ThreadSanitizer and ASan/UBSan/float-cast-overflow suite**, with no
 sanitizer reports emitted. Six auto-stop fixtures and both static gates pass.
-See the [repair-to-test mapping](docs/REVIEW-REPAIRS-2026-10-05.md) and
+See the [repair-to-test mapping](docs/history/REVIEW-REPAIRS-2026-10-05.md) and
 [test commands](testing.md).
 
 Active development, pre-1.0. The app provides multitrack capture, virtual
@@ -27,7 +27,7 @@ true float AIFF-C, and guarded session/network updates.
 Physical 27-track recording/STOP timing, interactive navigation and the planned
 56-input rehearsal remain open. Earlier five-hour primary-take results do not
 validate this build, backups, or the complete rig. See
-[show readiness](SHOW-READINESS.md), [field evidence](FIELD-TEST-2026-10-01.md)
+[show readiness](SHOW-READINESS.md), [field evidence](docs/history/FIELD-TEST-2026-10-01.md)
 and [delivery history](CHANGELOG.md).
 
 ## Build
@@ -62,16 +62,16 @@ Current package, hashes and installed versions live in [INSTALL.md](INSTALL.md);
 | Build / smoke-test / field-test strategy | [`testing.md`](testing.md) |
 | User-visible changes | [`CHANGELOG.md`](CHANGELOG.md) |
 | Complete documentation index and ownership | [`docs/README.md`](docs/README.md) |
-| October 5 follow-up fixes and regression evidence | [`docs/REVIEW-REPAIRS-2026-10-05.md`](docs/REVIEW-REPAIRS-2026-10-05.md) |
-| October 5 deep STOP/concurrency audit history | [`docs/AUDIT-2026-10-05.md`](docs/AUDIT-2026-10-05.md) |
+| October 5 follow-up fixes and regression evidence | [`docs/REVIEW-REPAIRS-2026-10-05.md`](docs/history/REVIEW-REPAIRS-2026-10-05.md) |
+| October 5 deep STOP/concurrency audit history | [`docs/AUDIT-2026-10-05.md`](docs/history/AUDIT-2026-10-05.md) |
 | Local installation, verification and rollback | [`INSTALL.md`](INSTALL.md) |
 | Planned SD5 / 56-input show and acceptance gates | [`SHOW-READINESS.md`](SHOW-READINESS.md) |
-| 2026-09-30 capture-integrity fixes and validation limits | [`AUDIT_FIXES_2026-09-30.md`](AUDIT_FIXES_2026-09-30.md) |
-| 2026-09-20 recording-reliability audit fixes and acceptance gaps | [`AUDIT_FIXES_2026-09-20.md`](AUDIT_FIXES_2026-09-20.md) |
-| 2026-09-15 whole-project audit and verification limits | [`AUDIT_REPORT_2026-09-15.md`](AUDIT_REPORT_2026-09-15.md) |
-| September audit: all 32 fixes and validation limits | [`AUDIT_FIXES_2026-09-12.md`](AUDIT_FIXES_2026-09-12.md) |
+| 2026-09-30 capture-integrity fixes and validation limits | [`docs/history/AUDIT_FIXES_2026-09-30.md`](docs/history/AUDIT_FIXES_2026-09-30.md) |
+| 2026-09-20 recording-reliability audit fixes and acceptance gaps | [`docs/history/AUDIT_FIXES_2026-09-20.md`](docs/history/AUDIT_FIXES_2026-09-20.md) |
+| 2026-09-15 whole-project audit and verification limits | [`docs/history/AUDIT_REPORT_2026-09-15.md`](docs/history/AUDIT_REPORT_2026-09-15.md) |
+| September audit: all 32 fixes and validation limits | [`docs/history/AUDIT_FIXES_2026-09-12.md`](docs/history/AUDIT_FIXES_2026-09-12.md) |
 | Manual regression and hardware checklists | [`FIELD-TEST.md`](FIELD-TEST.md), [`FIELD-TEST-AUDIT.md`](FIELD-TEST-AUDIT.md) |
-| 55-channel long-take evidence and waveform fix limits | [`FIELD-TEST-2026-10-01.md`](FIELD-TEST-2026-10-01.md) |
+| 55-channel long-take evidence and waveform fix limits | [`docs/history/FIELD-TEST-2026-10-01.md`](docs/history/FIELD-TEST-2026-10-01.md) |
 
 ### September safety changes
 

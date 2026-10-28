@@ -21,7 +21,7 @@ float data now uses standard AIFF-C `fl32`. Malformed metadata, incomplete remot
 state and failed finalization refuse success while preserving earlier data.
 The installed `443c769` pair passed all three full 563-group suites and six
 operator-script fixtures. Startup observation does not certify physical capture
-or interaction latency. [The repair register](docs/REVIEW-REPAIRS-2026-10-05.md)
+or interaction latency. [The repair register](docs/history/REVIEW-REPAIRS-2026-10-05.md)
 contains each defect's regression and limits; [INSTALL.md](INSTALL.md) owns
 installation state. Earlier decisions below retain their original evidence;
 this amendment supersedes their weaker completion rules.
@@ -39,7 +39,7 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 **Decision.** End capture once at the recorder boundary and retain a finalization lease while an engine-owned worker completes media I/O and prepares reader state. Install live playback/clip state on the message thread and retire displaced readers on owned work. MainComponent holds the session guard through immutable metadata persistence on a separate serial writer. Explicit saves keep their outcomes; UI-only layout requests coalesce with bounded storage. Publish durable success after required writes/snapshot completion, retain failures, and compare current content before marking clean. A confirmed remote STOP returns a pending explanation until a later retry can report the completed result. Preserve existing recording safety confirmation and persistence formats.
 
-**Consequences.** UI navigation can continue while capture/session mutations remain guarded. Closing or replacing a session reserves edits and waits for a successful continuation; queued callbacks cannot dereference a destroyed host. Synchronous compatibility helpers and the daemon host acknowledgement/load path remain identified residuals. Metadata snapshots are not audio backups. All three full S6 suites pass 519 groups without failures; no sanitizer reports were emitted. Final bounded disk-full verification passes; at that checkpoint the verified S6 pair was installed and left closed, its startup smoke was microphone-consent-gated. Physical-rig acceptance remains separate; [the audit register](docs/AUDIT-2026-10-05.md) records defect/test mappings, results and residuals.
+**Consequences.** UI navigation can continue while capture/session mutations remain guarded. Closing or replacing a session reserves edits and waits for a successful continuation; queued callbacks cannot dereference a destroyed host. Synchronous compatibility helpers and the daemon host acknowledgement/load path remain identified residuals. Metadata snapshots are not audio backups. All three full S6 suites pass 519 groups without failures; no sanitizer reports were emitted. Final bounded disk-full verification passes; at that checkpoint the verified S6 pair was installed and left closed, its startup smoke was microphone-consent-gated. Physical-rig acceptance remains separate; [the audit register](docs/history/AUDIT-2026-10-05.md) records defect/test mappings, results and residuals.
 
 ## October audit contracts — 2026-10-04
 
@@ -47,7 +47,7 @@ When making a non-trivial decision, add a new entry below using the template at 
 
 **Decision.** Persist reference-media and capture-gain identity separately from playback length/live gain. Validate stereo topology and replica provenance before writer creation, align each continuation destination, and switch pre-roll histories at one callback boundary. Reserve session I/O throughout delete confirmation and recheck the target at completion. Preserve the saved stage patch until restoration, finalize device loss once, and propagate failed source reads through export. Use one source-bound delta for grouped editing and input-only detector peaks for stereo auto-arm. Keep all preference writers in the same process-scoped test isolation mode.
 
-**Consequences.** Unverifiable nonempty legacy replicas and incompatible capture layouts are refused without modifying their audio. Users may need a new empty replica destination or a new session. Synthetic tests cover these contracts; real device/desk recovery and the full rig remain field checks. See [the October audit record](AUDIT_FIXES_2026-10-03.md).
+**Consequences.** Unverifiable nonempty legacy replicas and incompatible capture layouts are refused without modifying their audio. Users may need a new empty replica destination or a new session. Synthetic tests cover these contracts; real device/desk recovery and the full rig remain field checks. See [the October audit record](docs/history/AUDIT_FIXES_2026-10-03.md).
 
 ## Installation retention — 2026-10-04
 

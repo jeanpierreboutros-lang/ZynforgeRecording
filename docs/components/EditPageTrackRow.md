@@ -84,7 +84,7 @@ Right trims stop at the referenced source's length, including cross-track clips.
 
 Grouped clipboard operations preserve track/time offsets, source channel, fades, gain and mute; all paste destinations are checked before insertion. Healing requires compatible source/gain/mute/fade properties and an unfaded internal join. Automation copy/paste preserves curve and tension, and point dragging must retain both.
 
-Read failures propagate through rendering and consolidation. A missing explicit source must not fall back to the destination track or silently produce a successful export. See [the October regressions](../../AUDIT_FIXES_2026-10-03.md).
+Read failures propagate through rendering and consolidation. A missing explicit source must not fall back to the destination track or silently produce a successful export. See [the October regressions](../history/AUDIT_FIXES_2026-10-03.md).
 
 ## Drag state (mutually exclusive)
 

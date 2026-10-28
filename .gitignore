@@ -27,3 +27,6 @@ Sessions/
 
 # Logs
 *.log
+
+# exFAT / non-HFS volumes: macOS AppleDouble metadata
+._*

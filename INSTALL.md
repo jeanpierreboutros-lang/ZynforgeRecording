@@ -58,7 +58,7 @@ At the user's request, source repair `443c769` is installed at
 helper. This is the tested follow-up for all 21 reviewed findings: full Release,
 ThreadSanitizer and ASan/UBSan/float-cast-overflow each passed 563 groups with
 zero failures and no sanitizer reports. Six auto-stop tests and both static
-gates passed. See [the repair report](docs/REVIEW-REPAIRS-2026-10-05.md).
+gates passed. See [the repair report](docs/history/REVIEW-REPAIRS-2026-10-05.md).
 
 | Executable | SHA-256 |
 | --- | --- |
@@ -95,7 +95,7 @@ At the earlier S6 checkpoint, the development Mac had the audit repair at `/Appl
 | GUI | `cf84bfe554d7916e60251d86e9f82d54b451d3a903da2c85d2b57b632e8faa98` |
 | Capture helper | `015a3706a066238b57092fc683299657fe49b0e06c694ac83b943100739c5787` |
 
-Source manifest (253 paths) SHA-256: `1d916b93ee5f3b2dc35f61f497615ee828fabce2d8b11d63cda9621efab98fdd`. The accompanying audit commit contains this source. See [the audit report](docs/AUDIT-2026-10-05.md) for defect/test mapping and reproduction commands.
+Source manifest (253 paths) SHA-256: `1d916b93ee5f3b2dc35f61f497615ee828fabce2d8b11d63cda9621efab98fdd`. The accompanying audit commit contains this source. See [the audit report](docs/history/AUDIT-2026-10-05.md) for defect/test mapping and reproduction commands.
 
 Rollback: `/Applications/Zynforge Recording.app.backup-20261005-031802-before-audit`. Installation checked that no Recording GUI or capture helper was running, staged and verified the complete bundle, then replaced it with rollback on failure. Recordings and production preferences were preserved. The Mac mini and existing DMG remain unchanged.
 
@@ -145,7 +145,7 @@ At the user's request, after installation verification, old Recording app bundle
 
 ## Earlier installations
 
-The previous installs and packages (`b2c1991`, `3e6104c`, `8d79ab8`, `672456d`, `d2c5858`, `98a645e`, `5026519` and earlier) have been superseded. Their local app backups and installers were removed during the authorized cleanup. Historical validation and field results remain in [CHANGELOG.md](CHANGELOG.md), the dated audit records, [FIELD-TEST-2026-10-01.md](FIELD-TEST-2026-10-01.md), and Git history. A historical hash or test count is not evidence for the current executable.
+The previous installs and packages (`b2c1991`, `3e6104c`, `8d79ab8`, `672456d`, `d2c5858`, `98a645e`, `5026519` and earlier) have been superseded. Their local app backups and installers were removed during the authorized cleanup. Historical validation and field results remain in [CHANGELOG.md](CHANGELOG.md), the dated audit records, [FIELD-TEST-2026-10-01.md](docs/history/FIELD-TEST-2026-10-01.md), and Git history. A historical hash or test count is not evidence for the current executable.
 
 ## Package both executables
 
