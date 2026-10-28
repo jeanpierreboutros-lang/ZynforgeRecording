@@ -22,6 +22,7 @@
 #include "WelcomeDialog.h"
 #include "PerfDashboard.h"
 #include "SetlistBar.h"
+#include "SessionJobRunner.h"
 #include "SessionMetadataWriter.h"
 #include "TempoBar.h"
 #include "TimelineStrip.h"
@@ -141,8 +142,8 @@ private:
     void showAutosaveSettings();
     // Kick off a track export. Resolves every source file + destination stem
     // on the MESSAGE thread (it reads TrackStates), then does the actual
-    // decode / resample / encode work on `exportThread` and reports the result
-    // via callAsync. Running the whole thing inline used to freeze the app for
+    // decode / resample / encode work on `sessionJobs` and reports the result
+    // on the message thread. Running the whole thing inline used to freeze the app for
     // the length of the export -- minutes for a 32-track MP3 batch, with no
     // progress and no way to cancel.
     void startExportTracksTo (const juce::File& dir,
@@ -319,6 +320,17 @@ private:
     // showMarkersDialog opens the standalone Memory Locations table.
     void dropMarkerAndPromptName();
     void showMarkersDialog();
+
+    // The ONE gate for timeline mutations (clips, ranges, markers,
+    // automation, undo/redo). Refuses -- with the reason on the status
+    // line -- while capture rolls (local or daemon), while a session
+    // operation owns persistence (sessionIoBusy: copy/move/bounce or a
+    // pending metadata save), and while LOCKed. The key handler, menu and
+    // editor enablement also gate these, but the edit functions are
+    // reachable from more surfaces than any one of them covers, so every
+    // mutation checks here rather than repeating its own partial guard.
+    // `action` completes "Stop recording before ..." (e.g. "cropping").
+    bool canMutateTimeline (const juce::String& action = "editing");
 
     // EditPage calls this to bracket an automation edit. The lambda
     // performs the mutation; the helper snapshots automationData
@@ -544,34 +556,20 @@ private:
     void restoreArmStateAfterPunch();
     int  lastExportFailures { 0 }; // tracks failed in the last exportTracksTo (partial-failure warning)
 
-    // Offline stem/mix bounce runs on this OWNED thread (not a detached
-    // juce::Thread::launch) so the destructor can cancel + join it before the
-    // engine is torn down -- a quit mid-bounce used to leave the detached
-    // thread dereferencing a freed engine. bounceCancel lets a long bounce
-    // abort promptly instead of blocking quit.
-    std::thread       bounceThread;
-    std::atomic<bool> bounceCancel { false };
-    void joinBounceThread() noexcept
-    {
-        bounceCancel.store (true, std::memory_order_relaxed);
-        if (bounceThread.joinable()) bounceThread.join();
-        bounceCancel.store (false, std::memory_order_relaxed);
-    }
-
-    // Track export + Save-As folder copy run here, on the same owned-and-joined
-    // pattern as the bounce: both are unbounded file work (a 32-track MP3
-    // batch, a multi-GB session copy) that used to run on the message thread
-    // and freeze the app. Cancelled + joined in the destructor so neither can
-    // outlive the engine.
-    std::thread       exportThread;
-    std::atomic<bool> exportCancel { false };
+    // Session-I/O reservation: true while a session operation owns the
+    // session's files -- a background job below, or pending metadata saves
+    // (which count themselves in pendingMetadataSaves). Gates recording,
+    // playback, timeline/strip mutations and competing transitions.
     std::atomic<bool> sessionIoBusy { false };
-    void joinExportThread() noexcept
-    {
-        exportCancel.store (true, std::memory_order_relaxed);
-        if (exportThread.joinable()) exportThread.join();
-        exportCancel.store (false, std::memory_order_relaxed);
-    }
+
+    // Every unbounded session-file job (track export, stem/mix bounce,
+    // import, Save As copy, relocation, show handoff, click render) runs on
+    // this ONE owned worker, never on the message thread and never detached.
+    // It releases sessionIoBusy on every exit path before the job's
+    // completion runs, and the destructor cancels + joins it while the engine
+    // (declared above) is still alive. Declared after sessionIoBusy, which it
+    // references.
+    zynforge::SessionJobRunner sessionJobs { sessionIoBusy };
     void promptCueName (const juce::String& title,
                         const juce::String& initial,
                         std::function<void (const juce::String&)> onAccept);

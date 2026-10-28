@@ -315,10 +315,10 @@ report "detached uploads do not inherit short-lived output pipes" \
 HITS=""
 EXPORT_BODY=$(sed -n '/void MainComponent::startExportTracksTo/,/^}/p' \
               Source/UI/MainComponentSessionIO.cpp 2>/dev/null)
-grep -q "sessionIoBusy.exchange (true)" <<<"$EXPORT_BODY" \
+grep -q "sessionJobs.reserve()" <<<"$EXPORT_BODY" \
     || HITS="Source/UI/MainComponentSessionIO.cpp: background track export is not marked busy"
-grep -q "sessionIoBusy.store (false)" <<<"$EXPORT_BODY" \
-    || HITS+=$'\nSource/UI/MainComponentSessionIO.cpp: background track export never clears its busy state'
+grep -q "sessionJobs.launch (" <<<"$EXPORT_BODY" \
+    || HITS+=$'\nSource/UI/MainComponentSessionIO.cpp: background track export bypasses the session job runner (which owns the busy release)'
 report "background exports hold the session-I/O exclusion gate" \
        "without the gate, Save As/session switching can overlap an export and a second export can block the UI joining a multi-hour encode" \
        "$HITS"
@@ -330,7 +330,7 @@ IMPORT_BODY=$(sed -n '/void MainComponent::completeAudioImport/,/^}/p' \
               Source/UI/MainComponentSessionIO.cpp 2>/dev/null)
 grep -q "completeAudioImport (fc.getResults())" <<<"$IMPORT_LAUNCH" \
     || HITS="Source/UI/MainComponentSessionIO.cpp: picker bypasses the guarded import completion"
-grep -q "exportThread = std::thread" <<<"$IMPORT_BODY" \
+grep -q "sessionJobs.launch (" <<<"$IMPORT_BODY" \
     || HITS+=$'\nSource/UI/MainComponentSessionIO.cpp: audio import no longer runs on the owned worker'
 grep -q "audioimport::importFiles" <<<"$IMPORT_BODY" \
     || HITS+=$'\nSource/UI/MainComponentSessionIO.cpp: audio decode/resample has returned to the message thread'
@@ -348,7 +348,7 @@ report "persistent text writes use atomic replacement" \
        "$HITS"
 
 HITS=""
-grep -q "exportThread = std::thread" Source/UI/MainComponentTools.cpp \
+grep -q "sessionJobs.launch (" Source/UI/MainComponentTools.cpp \
     || HITS="Source/UI/MainComponentTools.cpp: click-track render returned to the message thread"
 grep -q "temporary.replaceFileIn (destination)" Source/Audio/ClickTrackRenderer.cpp \
     || HITS+=$'\nSource/Audio/ClickTrackRenderer.cpp: click render replaces/deletes the previous file before success'
@@ -358,6 +358,30 @@ grep -q "installBounce" Source/Audio/AudioEngineClips.cpp \
     || HITS+=$'\nSource/Audio/AudioEngineClips.cpp: bounce no longer installs transactionally'
 report "long renders are cancellable and transactionally installed" \
        "UI-thread rendering freezes the show UI, while early destination deletion loses the previous deliverable on failure" \
+       "$HITS"
+
+# Session-file jobs run ONLY on SessionJobRunner, which releases the
+# session-I/O reservation on every worker exit path before the completion
+# runs. Eight hand-written std::thread launches each owned their own release;
+# the track export's cancel path returned before posting it and left the
+# session busy forever after a quit-cancel. A raw thread here reopens that.
+HITS=$(grep -rn "std::thread *(" Source/UI --include='*.cpp' --include='*.h' 2>/dev/null \
+       | sed 's,//.*,,' | grep "std::thread *(" | grep -v 'Source/UI/SessionJobRunner.h')
+RUNNER_RELEASE=$(sed -n '/MessageManager::callAsync/,/});/p' Source/UI/SessionJobRunner.h 2>/dev/null \
+                 | sed 's,//.*,,' | grep -n "busy.store (false)\|if (done) done()" | cut -d: -f2 | tr -d ' ' | tr '\n' '|')
+[[ "$RUNNER_RELEASE" == "state->busy.store(false);|if(done)done();|" ]] \
+    || HITS+=$'\nSource/UI/SessionJobRunner.h: the completion no longer releases the reservation before running'
+report "session jobs release their reservation structurally" \
+       "a worker that owns its own busy release can skip it on an early return and wedge every session operation" \
+       "$HITS"
+
+# A UI worker must never hold the recorder's structure lock across a render:
+# the 10 Hz timer's captureStatus() takes it, so the whole UI freezes until
+# the render ends. Renderers snapshot strips under a brief lock of their own.
+HITS=$(grep -rn "getStructureLock" Source/UI --include='*.cpp' --include='*.h' 2>/dev/null \
+       | sed 's,//.*,,' | grep "getStructureLock")
+report "UI workers never hold the structure lock across a render" \
+       "a bounce holding it froze the message thread (captureStatus) for the whole render" \
        "$HITS"
 
 HITS=""

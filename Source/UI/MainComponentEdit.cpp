@@ -296,11 +296,11 @@ void MainComponent::confirmDeleteChannels (std::function<void()> onConfirm)
 
 void MainComponent::editUndo()
 {
-    if (engine.isRecording()) { showStatus ("Stop recording before editing"); return; }
+    if (! canMutateTimeline()) return;
     // Commit any in-flight mixer change NOW so Cmd+Z immediately after a fader
     // / rename / colour move undoes that move -- the timer's ~300 ms settle
     // wouldn't have recorded it as an undo step yet.
-    if (! engine.isRecording() && mixerUndoReady)
+    if (mixerUndoReady)
     {
         const auto cur    = captureMixerSnapshot();
         const auto curSig = juce::JSON::toString (cur);
@@ -326,7 +326,7 @@ void MainComponent::editUndo()
 
 void MainComponent::editRedo()
 {
-    if (engine.isRecording()) { showStatus ("Stop recording before editing"); return; }
+    if (! canMutateTimeline()) return;
     if (! undoManager.canRedo()) { showStatus ("Nothing to redo"); return; }
     undoManager.redo();
     lastTrackCount = -1;
@@ -337,7 +337,7 @@ void MainComponent::editRedo()
 // ─── Cut / copy / paste / delete on the strip selection ──────────────
 void MainComponent::editCutSelected (bool cut)
 {
-    if (cut && engine.isRecording()) { showStatus ("Stop recording before editing"); return; }
+    if (cut && ! canMutateTimeline()) return;
     if (selectedLogical.empty()) { showStatus ("No strip selected"); return; }
     juce::Array<juce::var> arr;
     for (int logical : selectedLogical)
@@ -355,7 +355,7 @@ void MainComponent::editCutSelected (bool cut)
 
 void MainComponent::editPasteSelected()
 {
-    if (engine.isRecording()) { showStatus ("Stop recording before editing"); return; }
+    if (! canMutateTimeline()) return;
     if (! stripClipboard.isObject()) { showStatus ("Clipboard is empty"); return; }
     auto* obj = stripClipboard.getDynamicObject();
     auto* arr = obj ? obj->getProperty ("strips").getArray() : nullptr;
@@ -496,7 +496,7 @@ void MainComponent::editCropToLoopRange()
 {
     auto& player = engine.getPlayer();
     if (! player.hasLoopRegion()) { showStatus ("Set a loop region first, then Crop"); return; }
-    if (engine.isRecording())     { showStatus ("Stop recording before cropping"); return; }
+    if (! canMutateTimeline ("cropping")) return;
 
     const auto dir = engine.getActiveSessionDir();
     if (! dir.isDirectory())      { showStatus ("No active session to crop"); return; }
@@ -550,7 +550,7 @@ void MainComponent::editCropToLoopRange()
 
 void MainComponent::editSetRangeToLoopRange()
 {
-    if (engine.isRecording()) { showStatus ("Stop recording before editing range markers"); return; }
+    if (! canMutateTimeline ("editing range markers")) return;
     auto& player = engine.getPlayer();
     if (! player.hasLoopRegion())
     {
@@ -658,11 +658,21 @@ void MainComponent::showMarkersDialog()
     zynforge::MarkerListDialog::launch (engine);
 }
 
+bool MainComponent::canMutateTimeline (const juce::String& action)
+{
+    if (engine.isRecording())
+    { showStatus ("Stop recording before " + action); return false; }
+    if (sessionIoBusy.load())
+    { showStatus ("Wait for the session operation to finish"); return false; }
+    if (sessionLocked)
+    { showStatus ("LOCKED -- click UNLOCK to resume control"); return false; }
+    return true;
+}
+
 void MainComponent::runAutomationEdit (const juce::String& label,
                                        std::function<void()> mutate)
 {
-    if (engine.isRecording() || sessionIoBusy.load() || sessionLocked)
-    { showStatus ("Stop recording or unlock the session before editing"); return; }
+    if (! canMutateTimeline()) return;
     if (! mutate) return;
     const auto before = engine.automationToJson();
     mutate();
@@ -730,7 +740,7 @@ std::vector<int> MainComponent::tracksToEditPhysical()
 
 void MainComponent::editSplitAtPlayhead()
 {
-    if (engine.isRecording()) { showStatus ("Stop recording before editing"); return; }
+    if (! canMutateTimeline()) return;
     auto pos = engine.snapSampleToGrid (currentPlayheadSamples (engine));
 
     // Clip-level split across the target tracks (selected, else all).
@@ -765,7 +775,7 @@ void MainComponent::editSplitAtPlayhead()
 // back to a plain split at the playhead.
 void MainComponent::editSeparateAtSelection()
 {
-    if (engine.isRecording()) { showStatus ("Stop recording before editing"); return; }
+    if (! canMutateTimeline()) return;
     auto& player = engine.getPlayer();
     if (! player.hasLoopRegion())
     {
@@ -792,7 +802,7 @@ void MainComponent::editSeparateAtSelection()
 // healable split inside the selected range, on the target tracks.
 void MainComponent::editHealSeparation()
 {
-    if (engine.isRecording()) { showStatus ("Stop recording before editing"); return; }
+    if (! canMutateTimeline()) return;
     auto& player = engine.getPlayer();
     const auto before = engine.playlistsToJson();
     int n = 0;
@@ -827,8 +837,7 @@ void MainComponent::editZoomToSelection()
 // take around the silence.
 void MainComponent::editStripSilence()
 {
-    if (engine.isRecording()) { showStatus ("Stop recording before running Strip Silence"); return; }
-    if (sessionIoBusy.load()) { showStatus ("Wait for the session operation to finish"); return; }
+    if (! canMutateTimeline ("running Strip Silence")) return;
     auto& player = engine.getPlayer();
     if (! player.isLoaded()) { showStatus ("Load or record a session first"); return; }
 
@@ -898,7 +907,7 @@ void MainComponent::editStripSilence()
         auto ms = [sr] (juce::Slider& s) { return (juce::int64) (sr * s.getValue() / 1000.0); };
         const auto targets = self->tracksToEditPhysical();
         if (targets.empty()) { self->showStatus ("Select at least one track"); return; }
-        if (self->sessionIoBusy.exchange (true))
+        if (! self->sessionJobs.reserve())
         { self->showStatus ("Wait for the session operation to finish"); return; }
         const auto before = self->engine.playlistsToJson();
         if (self->editPage != nullptr) self->editPage->setEnabled (false);
@@ -908,7 +917,7 @@ void MainComponent::editStripSilence()
             [self, before] (int tracks, int clips, bool complete)
         {
             if (self == nullptr) return;
-            self->sessionIoBusy.store (false);
+            self->sessionJobs.release();
             if (self->editPage != nullptr)
             {
                 self->editPage->setReadOnlyWhileRecording (self->engine.isRecording());
@@ -931,14 +940,13 @@ void MainComponent::editStripSilence()
 // file (bakes in gains / fades / clip order).
 void MainComponent::editConsolidateSelection()
 {
-    if (engine.isRecording()) { showStatus ("Stop recording before consolidating audio"); return; }
-    if (sessionIoBusy.load()) { showStatus ("Wait for the session operation to finish"); return; }
+    if (! canMutateTimeline ("consolidating audio")) return;
     auto& player = engine.getPlayer();
     if (! player.hasLoopRegion()) { showStatus ("Select a range first, then Consolidate"); return; }
     const auto a = player.getLoopStart(), b = player.getLoopEnd();
     const auto targets = tracksToEditPhysical();
     if (targets.empty()) { showStatus ("Select at least one track"); return; }
-    if (sessionIoBusy.exchange (true))
+    if (! sessionJobs.reserve())
     { showStatus ("Wait for the session operation to finish"); return; }
     const auto before = engine.playlistsToJson();
     if (editPage != nullptr) editPage->setEnabled (false);
@@ -947,7 +955,7 @@ void MainComponent::editConsolidateSelection()
     engine.consolidateRangeAsync (targets, a, b, [self, before] (int n, bool complete)
     {
         if (self == nullptr) return;
-        self->sessionIoBusy.store (false);
+        self->sessionJobs.release();
         if (self->editPage != nullptr)
         {
             self->editPage->setReadOnlyWhileRecording (self->engine.isRecording());
@@ -967,7 +975,7 @@ void MainComponent::editConsolidateSelection()
 // and Cmd+Z restores the clips.
 void MainComponent::editClearRange()
 {
-    if (engine.isRecording()) { showStatus ("Stop recording before editing"); return; }
+    if (! canMutateTimeline()) return;
     auto& player = engine.getPlayer();
     if (! player.hasLoopRegion())
     {
@@ -989,7 +997,7 @@ void MainComponent::editClearRange()
 // ─── Operations on the clicked (selected) clip(s) ────────────────────
 void MainComponent::editDeleteSelectedClip()
 {
-    if (engine.isRecording()) { showStatus ("Stop recording before editing"); return; }
+    if (! canMutateTimeline()) return;
     if (editPage == nullptr) return;
     std::vector<std::pair<int, int>> sel (editPage->getSelectedClips().begin(),
                                           editPage->getSelectedClips().end());
@@ -1011,7 +1019,7 @@ void MainComponent::editDeleteSelectedClip()
 
 void MainComponent::editDuplicateSelectedClip()
 {
-    if (engine.isRecording()) { showStatus ("Stop recording before editing"); return; }
+    if (! canMutateTimeline()) return;
     if (editPage == nullptr) return;
     const int track = editPage->getSelectedClipTrack();
     const int idx   = editPage->getSelectedClipIndex();
@@ -1029,7 +1037,7 @@ void MainComponent::editDuplicateSelectedClip()
 
 void MainComponent::editNudgeSelectedClip (int dir)
 {
-    if (engine.isRecording()) { showStatus ("Stop recording before editing"); return; }
+    if (! canMutateTimeline()) return;
     if (editPage == nullptr) return;
     const auto& sel = editPage->getSelectedClips();
     if (sel.empty()) { showStatus ("No clip selected -- click a clip first"); return; }
@@ -1065,7 +1073,7 @@ void MainComponent::editCycleNudgeValue()
 // the EDIT view, else the strip-settings clipboard (legacy behaviour).
 void MainComponent::editClipboardCut (bool cut)
 {
-    if (cut && engine.isRecording()) { showStatus ("Stop recording before editing"); return; }
+    if (cut && ! canMutateTimeline()) return;
     if (currentView == View::Edit && editPage != nullptr
         && editPage->getSelectedClipTrack() >= 0)
     {
@@ -1117,7 +1125,7 @@ void MainComponent::editClipboardCut (bool cut)
 // track, else paste strip settings.
 void MainComponent::editClipboardPaste()
 {
-    if (engine.isRecording()) { showStatus ("Stop recording before editing"); return; }
+    if (! canMutateTimeline()) return;
     if (currentView == View::Edit && clipClipboard.isObject())
     {
         auto* entries = clipClipboard["clips"].getArray();
@@ -1168,7 +1176,7 @@ void MainComponent::editClipboardPaste()
 // gap so later audio slides earlier.
 void MainComponent::editRippleDelete()
 {
-    if (engine.isRecording()) { showStatus ("Stop recording before editing"); return; }
+    if (! canMutateTimeline()) return;
     if (editPage != nullptr && editPage->getSelectedClipTrack() >= 0)
     {
         const int track   = editPage->getSelectedClipTrack();
@@ -1204,7 +1212,7 @@ void MainComponent::editRippleDelete()
 
 void MainComponent::editStartRange()
 {
-    if (engine.isRecording()) { showStatus ("Stop recording before editing"); return; }
+    if (! canMutateTimeline()) return;
     const auto pos = currentPlayheadSamples (engine);
     auto& player = engine.getPlayer();
     const auto end = player.hasLoopRegion() ? player.getLoopEnd()
@@ -1219,7 +1227,7 @@ void MainComponent::editStartRange()
 
 void MainComponent::editFinishRange()
 {
-    if (engine.isRecording()) { showStatus ("Stop recording before editing"); return; }
+    if (! canMutateTimeline()) return;
     const auto pos = currentPlayheadSamples (engine);
     auto& player = engine.getPlayer();
     const auto start = player.hasLoopRegion() ? player.getLoopStart() : juce::int64 (0);

@@ -1,5 +1,11 @@
 # Testing Strategy — ZynForge Recording
 
+## October 29 structural-debt pass (source after `69aab9f`)
+
+Current source: universal Release build, **575 groups / 0 failures**, both static gates clean (the invariants gate now has 29 checks). New suites: *Strip reorder* (6 groups, drives the EDIT row's real mouse handlers) and *Session jobs* (6 groups, including a strip removal in the middle of a stereo-mix render). Each new test and gate rule was shown to fail against an injected regression before landing. ThreadSanitizer and ASan/UBSan runs for this pass are **not yet repeated**; the counts below for those suites describe `443c769`. Nothing from this pass is installed on either Mac.
+
+Run one suite with `--run-tests --test-filter="<suite name>"`. After adding a test file to `CMakeLists.txt`, re-run `cmake -B build -G Xcode` explicitly before building -- the Xcode build's automatic regeneration missed one such edit.
+
 ## October 5 follow-up verification
 
 All 21 follow-up findings are repaired. Full Release, ThreadSanitizer and
@@ -61,7 +67,7 @@ The October regression groups, together with daemon, companion and existing inte
 
 **2026-09-30 capture-integrity validation:** A repeated daemon START is refused without resetting a continued take's base or clearing an existing recovery warning. A continued session report lists base and later parts, accumulates frame/time counters and retains earlier capture-failure flags. Handoff flags a failed punch or hash pass for review. Disposable verifier fixtures pass complete WAV/AIFF/FLAC and continued takes, while failed capture flags, a short file, a missing middle part and a rolled-back punch fail. A mocked unattended-stop run confirms the companion's two-tap STOP and a nonzero result when it is unreachable. These are source and fixture tests; slow-client behavior, real disk failure and the actual device path still need field checks. The [fix record](docs/history/AUDIT_FIXES_2026-09-30.md) maps each failure to its change.
 
-The current harness covers **563 test groups**, including capture provenance/alignment, reference media, stereo topology, device-loss finalization, session state, console restoration, routing, grouped editing, long-take waveforms and settings isolation. Historical paragraphs below retain the counts that were accurate for their dated audit passes.
+The harness at `443c769` covered **563 test groups** (575 in the current source), including capture provenance/alignment, reference media, stereo topology, device-loss finalization, session state, console restoration, routing, grouped editing, long-take waveforms and settings isolation. Historical paragraphs below retain the counts that were accurate for their dated audit passes.
 
 ### Earlier validation snapshots
 

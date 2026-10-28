@@ -50,17 +50,16 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
         return;
     }
 
-    if (sessionIoBusy.exchange (true))
+    if (! sessionJobs.reserve())
     {
         refuse ("Another session file operation is already running");
         return;
     }
-    joinExportThread();
 
     auto audioFiles = sessionDir.getChildFile ("Audio Files");
     if (audioFiles.createDirectory().failed())
     {
-        sessionIoBusy.store (false);
+        sessionJobs.release();
         refuse ("Click write failed -- couldn't create Audio Files");
         return;
     }
@@ -106,7 +105,7 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
         || recorder.getTrack (clickTrackIndex).getNameThreadSafe() != "Click"
         || recorder.getTrack (clickTrackIndex).inputRouting.load (std::memory_order_relaxed) >= 0)
     {
-        sessionIoBusy.store (false);
+        sessionJobs.release();
         refuse ("Click slot isn't a Click strip -- aborted to protect recordings");
         return;
     }
@@ -134,20 +133,18 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
     showStatus ("Generating click track in the background...");
 
     juce::Component::SafePointer<MainComponent> self (this);
-    exportThread = std::thread ([this, self, destination, settings, sessionDir,
-                                 generatedTrackIndex, generatedBpm,
-                                 addedClickStrip, previousTrackCount,
-                                 completion = std::move (completion)] () mutable
+    sessionJobs.launch ([self, destination, settings, sessionDir,
+                         generatedTrackIndex, generatedBpm,
+                         addedClickStrip, previousTrackCount,
+                         completion = std::move (completion)] (const std::atomic<bool>& cancel)
+                         -> zynforge::SessionJobRunner::Completion
     {
-        const auto result = clickrender::render (destination, settings, &exportCancel);
+        const auto result = clickrender::render (destination, settings, &cancel);
         const bool cancelled = result == clickrender::Result::cancelled;
-        juce::MessageManager::callAsync (
-            [self, result, cancelled, sessionDir, generatedTrackIndex,
-             generatedBpm, addedClickStrip, previousTrackCount,
-             completion = std::move (completion)] () mutable
+        return [self, result, cancelled, sessionDir, generatedTrackIndex,
+                generatedBpm, addedClickStrip, previousTrackCount, completion] () mutable
         {
             if (self == nullptr) return;
-            self->sessionIoBusy.store (false);
             self->engine.setSessionTransitionActive (false);
             if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
 
@@ -185,7 +182,7 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
             if (self->editPage != nullptr)
                 self->editPage->setClickTrackPresent (true, generatedTrackIndex);
             if (completion) completion (true);
-        });
+        };
     });
 }
 

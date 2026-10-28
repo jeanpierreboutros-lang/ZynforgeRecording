@@ -6,6 +6,8 @@ A focused recording surface for engineers running front-of-house or monitors: ca
 
 ## Status — 2026-10-05
 
+**Source since then (2026-10-29):** development moved back to Claude Code and a structural-debt pass is under way (see [tasks.md](tasks.md)); the source is ahead of the installed `443c769` build and passes 575 Release test groups. The installation notes below describe `443c769`.
+
 Both Macs and the [universal installer](dist/Zynforge-Recording-443c769-macOS-universal.dmg)
 now use verified `443c769` and its matching protocol-4 helper. Superseded apps,
 rollback bundles and installers were removed at the user's request. Development

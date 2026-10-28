@@ -31,6 +31,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 - Dragging a strip's colour swatch in EDIT now shows a drop line where the strip will land, autoscrolls the track list near its top and bottom edges, and moves the strip **once, on release**. A strip can now move past a strip of a different width (mono past a stereo pair); stereo pairs always move as one.
 
+### Fixed — session jobs and bounce
+
+- Quitting during a track export no longer leaves the session stuck "busy". The export's cancel path skipped releasing the session-I/O reservation, so every later quit, save, open and edit answered "wait for the session operation to finish" until the app was force-quit. All session-file jobs (export, bounce, import, Save As, relocate, handoff, click render) now run on one worker that always releases the reservation.
+- Bouncing stems or a stereo mix no longer freezes the whole app for the length of the bounce. The bounce held a lock that the screen-refresh timer also needs; it now captures the mixer state up front and renders without it.
+- Clip, range, marker, automation and undo edits are refused consistently while recording, while a session file operation runs, and while the session is LOCKed, whichever surface they come from. Most of these checks previously covered recording only.
+
+### Changed — stereo-mix bounce
+
+- A stereo-mix bounce renders the mixer exactly as it stood when the bounce started. Mute and send changes made during a bounce no longer leak into the file part-way through (fader and pan moves already did not).
+
 ### Fixed — strip reorder
 
 - A swatch drag no longer runs a full on-disk reorder for every row it crosses. Each step used to stop playback, detach the audio callback, rename every take file and rewrite the session documents on the UI thread; a stereo strip's second swap also ignored the first one's failure and could leave the pair split.

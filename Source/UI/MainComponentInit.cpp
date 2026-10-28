@@ -849,12 +849,10 @@ MainComponent::~MainComponent()
     engine.setRemoteTransportHandler ({});
     sessionMirror.stop();
 
-    // Cancel + join any in-flight offline bounce BEFORE members (the engine)
-    // are torn down -- the bounce thread dereferences engine, so it must finish
-    // while engine is still alive (a detached thread used to UAF on quit).
-    joinBounceThread();
-    // Same for the export / Save-As copy worker.
-    joinExportThread();
+    // Cancel + join any in-flight session job (bounce, export, copy) now,
+    // explicitly, before anything else in this destructor tears down state a
+    // job might read. The runner's own destructor would also join, but later.
+    sessionJobs.cancelAndJoin();
     metadataWriter.finish(); // drains accepted immutable saves before engine/UI teardown
 
    #if JUCE_MAC

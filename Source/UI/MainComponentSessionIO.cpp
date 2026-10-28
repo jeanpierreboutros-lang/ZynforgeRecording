@@ -746,17 +746,17 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
     // ── Phase 2 (BACKGROUND): decode / resample / encode ───────────────────
     // Owned + joinable thread (same pattern as the bounce) so a quit mid-export
     // can't leave a detached worker running against freed state.
-    if (sessionIoBusy.exchange (true))
+    if (! sessionJobs.reserve())
     {
         showStatus ("Another session file operation is already running");
         return;
     }
-    joinExportThread();   // one export at a time
     showStatus ("Exporting " + juce::String ((int) jobs.size()) + " track(s)...");
 
     juce::Component::SafePointer<MainComponent> self (this);
     const auto destName = destDir.getFileName();
-    exportThread = std::thread ([this, self, jobs, opts, destName, missingSources]
+    sessionJobs.launch ([self, jobs, opts, destName, missingSources] (const std::atomic<bool>& cancel)
+                        -> zynforge::SessionJobRunner::Completion
     {
         zynforge::TrackExporter exporter;
         int succeeded = 0, attempted = 0;
@@ -764,7 +764,10 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
 
         for (const auto& j : jobs)
         {
-            if (exportCancel.load (std::memory_order_relaxed)) return;
+            // Returning without a completion is safe: the runner releases the
+            // reservation on every path. (This early return used to skip the
+            // only release, leaving the session busy after a cancelled export.)
+            if (cancel.load (std::memory_order_relaxed)) return {};
             juce::String err;
             const bool ok = j.stereoPair
                 ? exporter.exportStereoPair (j.srcL, j.srcR, j.destStem, opts, err)
@@ -774,13 +777,10 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
             else if (firstError.isEmpty() && err.isNotEmpty()) firstError = err;
         }
 
-        const bool cancelled = exportCancel.load (std::memory_order_relaxed);
-        juce::MessageManager::callAsync (
-            [self, succeeded, attempted, firstError, destName, cancelled, missingSources]
+        const bool cancelled = cancel.load (std::memory_order_relaxed);
+        return [self, succeeded, attempted, firstError, destName, cancelled, missingSources]
         {
-            if (self == nullptr) return;
-            self->sessionIoBusy.store (false);
-            if (cancelled) return;
+            if (self == nullptr || cancelled) return;
             // Surface PARTIAL failures too -- e.g. the destination runs out of
             // space mid-batch. A run that wrote 10 of 32 files must not read as
             // success and ship an incomplete deliverable.
@@ -795,7 +795,7 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
             else
                 self->showStatus ("Exported " + juce::String (succeeded)
                                   + " track(s) -> " + destName);
-        });
+        };
     });
 }
 
@@ -832,50 +832,54 @@ void MainComponent::completeBounceStems (juce::File dest)
     const double sr      = engine.getPlayer().getSampleRate() > 0.0
                              ? engine.getPlayer().getSampleRate() : 48000.0;
     if (arrLen <= 0) { showStatus ("Nothing to bounce -- record or load a session first"); return; }
-    if (sessionIoBusy.exchange (true)) { showStatus ("Another session operation is already running"); return; }
+    if (! sessionJobs.reserve()) { showStatus ("Another session operation is already running"); return; }
     engine.setSessionTransitionActive (true);
     if (editPage != nullptr) editPage->setEnabled (false);
 
     showStatus ("Bouncing " + juce::String (nTracks) + " edited stems...");
-    // Offline render on an OWNED background thread (joined + cancellable in
-    // the destructor) so a quit mid-bounce can't leave it dereferencing a
-    // freed engine. The engineer shouldn't be editing clips mid-bounce.
-    joinBounceThread();   // finish any prior bounce first (one at a time)
-    juce::Component::SafePointer<MainComponent> self (this);
-    bounceThread = std::thread ([this, self, dest, nTracks, arrLen, sr]
+    // Resolve every stem's name and layout HERE, on the message thread, and
+    // hand the worker plain values. The worker used to read TrackStates under
+    // the recorder's structure lock for the WHOLE bounce -- and the 10 Hz UI
+    // timer's captureStatus() takes that same lock, so the entire app froze
+    // until the last stem was written. The render itself reads only clips and
+    // files, never a TrackState.
+    struct Stem { int track; bool stereo; juce::File file; };
+    std::vector<Stem> stems;
     {
-        const juce::ScopedLock structureGuard (engine.getRecorder().getStructureLock());
-        int written = 0, attempted = 0;
+        auto& rec = engine.getRecorder();
         for (int t = 0; t < nTracks; ++t)
         {
-            if (bounceCancel.load (std::memory_order_relaxed)) break;
-            auto& rec = engine.getRecorder();
-            // A stereo pair bounces as ONE interleaved stereo stem from
-            // its L half; skip the R half (already written).
+            // A stereo pair bounces as ONE interleaved stereo stem from its
+            // L half; skip the R half.
             if (t > 0 && rec.getTrack (t - 1).isStereo.load (std::memory_order_relaxed))
                 continue;
             const auto& ts = rec.getTrack (t);
-            // getNameThreadSafe() -- this runs on the bounce thread; a raw
-            // ts.name read races setTrackName's locked reassignment (torn String).
             const auto safe = ts.getNameThreadSafe().replaceCharacter ('/', '_').replaceCharacter ('\\', '_');
-            const auto outFile = dest.getChildFile (
-                juce::String::formatted ("Track_%02d - ", t + 1) + safe + ".wav");
+            stems.push_back ({ t, ts.isStereo.load (std::memory_order_relaxed),
+                               dest.getChildFile (juce::String::formatted ("Track_%02d - ", t + 1) + safe + ".wav") });
+        }
+    }
+    juce::Component::SafePointer<MainComponent> self (this);
+    sessionJobs.launch ([self, &eng = engine, stems, dest, arrLen, sr] (const std::atomic<bool>& cancel)
+                        -> zynforge::SessionJobRunner::Completion
+    {
+        int written = 0, attempted = 0;
+        for (const auto& stem : stems)
+        {
+            if (cancel.load (std::memory_order_relaxed)) break;
             // Streams the edited arrangement window-by-window straight to
             // disk, so a multi-hour stem never needs a whole-track buffer.
-            const bool stereo = ts.isStereo.load (std::memory_order_relaxed);
-            const bool okBounce = stereo
-                ? engine.bounceStereoPairToWav (t, outFile, arrLen, sr, &bounceCancel)
-                : engine.bounceTrackArrangementToWav (t, outFile, arrLen, sr, &bounceCancel);
+            const bool okBounce = stem.stereo
+                ? eng.bounceStereoPairToWav (stem.track, stem.file, arrLen, sr, &cancel)
+                : eng.bounceTrackArrangementToWav (stem.track, stem.file, arrLen, sr, &cancel);
             ++attempted;
             if (okBounce) ++written;
         }
-        // A superseding bounce (or app quit) sets bounceCancel and joins us;
-        // don't post a stale "Bounced 0 stem(s)" over the new bounce's status.
-        const bool cancelled = bounceCancel.load (std::memory_order_relaxed);
-        juce::MessageManager::callAsync ([self, written, attempted, cancelled, dest]
+        // A quit cancels us; don't post a stale "Bounced 0 stem(s)".
+        const bool cancelled = cancel.load (std::memory_order_relaxed);
+        return [self, written, attempted, cancelled, dest]
         {
             if (self == nullptr) return;
-            self->sessionIoBusy.store (false);
             self->engine.setSessionTransitionActive (false);
             if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
             if (! cancelled)
@@ -890,7 +894,7 @@ void MainComponent::completeBounceStems (juce::File dest)
                                       + juce::String (attempted - written) + " of "
                                       + juce::String (attempted) + " stem(s) failed");
             }
-        });
+        };
     });
 }
 
@@ -928,35 +932,33 @@ void MainComponent::completeBounceStereoMix (juce::File dest)
     const double sr     = engine.getPlayer().getSampleRate() > 0.0
                              ? engine.getPlayer().getSampleRate() : 48000.0;
     if (arrLen <= 0) { showStatus ("Nothing to bounce -- record or load a session first"); return; }
-    if (sessionIoBusy.exchange (true)) { showStatus ("Another session operation is already running"); return; }
+    if (! sessionJobs.reserve()) { showStatus ("Another session operation is already running"); return; }
     engine.setSessionTransitionActive (true);
     if (editPage != nullptr) editPage->setEnabled (false);
 
     showStatus ("Bouncing stereo mix...");
-    // Owned + joinable thread (see onBounceStems) -- never a detached
-    // juce::Thread::launch that can outlive the engine on quit.
-    joinBounceThread();
+    // No structure lock here: the mix renderer snapshots every strip under a
+    // brief lock of its own and then renders lock-free. Holding the lock for
+    // the whole render froze the UI timer (captureStatus) until it finished.
     juce::Component::SafePointer<MainComponent> self (this);
-    bounceThread = std::thread ([this, self, dest, arrLen, sr]
+    sessionJobs.launch ([self, &eng = engine, dest, arrLen, sr] (const std::atomic<bool>& cancel)
+                        -> zynforge::SessionJobRunner::Completion
     {
-        const juce::ScopedLock structureGuard (engine.getRecorder().getStructureLock());
         // Streams the summed mix window-by-window straight to disk.
-        const bool ok = ! bounceCancel.load (std::memory_order_relaxed)
-                     && engine.bounceStereoMixToWav (dest, arrLen, sr, &bounceCancel);
-        // A superseding bounce (or app quit) sets bounceCancel and joins us;
-        // that returns false but is NOT a failure -- don't post a spurious
-        // "bounce failed" over the new bounce's status.
-        const bool cancelled = bounceCancel.load (std::memory_order_relaxed);
-        juce::MessageManager::callAsync ([self, ok, cancelled, dest]
+        const bool ok = ! cancel.load (std::memory_order_relaxed)
+                     && eng.bounceStereoMixToWav (dest, arrLen, sr, &cancel);
+        // A quit cancels us; that returns false but is NOT a failure -- don't
+        // post a spurious "bounce failed".
+        const bool cancelled = cancel.load (std::memory_order_relaxed);
+        return [self, ok, cancelled, dest]
         {
             if (self == nullptr) return;
-            self->sessionIoBusy.store (false);
             self->engine.setSessionTransitionActive (false);
             if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
             if (! cancelled)
                 self->showStatus (ok ? "Bounced stereo mix -> " + dest.getFileName()
                                      : juce::String ("Stereo mix bounce failed"));
-        });
+        };
     });
 }
 
@@ -1011,7 +1013,7 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
     if (engine.isRecording() || captureSupervisor.isDaemonRecording() || engine.isCaptureFinalizing())
     { showStatus ("Stop recording and wait for finalization before importing"); return; }
 
-    if (sessionIoBusy.exchange (true))
+    if (! sessionJobs.reserve())
     {
         showStatus ("Another session file operation is already running");
         return;
@@ -1033,7 +1035,7 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
     const bool deleteOnCancel = newSession && ! sessionDir.exists();
     if (! sessionDir.createDirectory().wasOk())
     {
-        sessionIoBusy.store (false);
+        sessionJobs.release();
         showStatus ("Import failed -- session folder is not writable");
         return;
     }
@@ -1044,7 +1046,7 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
         && sessionDir.getChildFile ("Session File Backups").createDirectory().wasOk();
     if (! layoutReady)
     {
-        sessionIoBusy.store (false);
+        sessionJobs.release();
         showStatus ("Import failed -- session folders are not writable");
         return;
     }
@@ -1081,15 +1083,15 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
     if (editPage != nullptr) editPage->setEnabled (false);
     showStatus ("Importing " + juce::String (picks.size()) + " audio file(s)...");
 
-    joinExportThread();
-    exportThread = std::thread ([this, self, picks, sessionDir, originalSession,
-                                 newSession, deleteOnCancel, audioFilesDir, firstTrack, targetSr]
+    sessionJobs.launch ([self, picks, sessionDir, originalSession,
+                         newSession, deleteOnCancel, audioFilesDir, firstTrack, targetSr]
+                        (const std::atomic<bool>& cancel) -> zynforge::SessionJobRunner::Completion
     {
         const auto result = zynforge::audioimport::importFiles (
-            picks, audioFilesDir, firstTrack, targetSr, &exportCancel);
+            picks, audioFilesDir, firstTrack, targetSr, &cancel);
 
-        juce::MessageManager::callAsync ([self, result, sessionDir, originalSession,
-                                           newSession, deleteOnCancel, audioFilesDir, targetSr]
+        return [self, result, sessionDir, originalSession,
+                newSession, deleteOnCancel, audioFilesDir, targetSr]
         {
             if (self == nullptr) return;
             if (result.cancelled || self->engine.getActiveSessionDir() != originalSession
@@ -1104,7 +1106,6 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
                         ? "Import failed -- no readable audio files"
                         : "Import finished for the previous session; current session was not changed");
                 self->engine.setSessionTransitionActive (false);
-                self->sessionIoBusy.store (false);
                 if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
                 return;
             }
@@ -1142,7 +1143,6 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
             if (! newSession) self->engine.loadPlaylistsFromJson (savedEdits);
             const bool saved = self->saveSessionStateTo (sessionDir);
             self->engine.setSessionTransitionActive (false);
-            self->sessionIoBusy.store (false);
             if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
 
             const int stereoCount = (int) std::count_if (
@@ -1161,7 +1161,7 @@ void MainComponent::completeAudioImport (const juce::Array<juce::File>& picks)
                     : juce::String())
                 + " -- loaded " + juce::String (loaded) + " for playback"
                 + (saved ? juce::String() : juce::String ("; WARNING: session state was not saved")));
-        });
+        };
     });
 }
 
@@ -1169,7 +1169,7 @@ void MainComponent::onSaveSessionAs()
 {
     if (engine.isRecording() || captureSupervisor.isDaemonRecording())
     { showStatus ("Stop recording before Save As"); return; }
-    if (sessionIoBusy.exchange (true))
+    if (! sessionJobs.reserve())
     {
         showStatus ("Another session file operation is already running");
         return;
@@ -1196,27 +1196,27 @@ void MainComponent::onSaveSessionAs()
     {
         if (chooserSelf == nullptr) return;
         auto dest = fc.getResult();
-        if (dest.getFullPathName().isEmpty()) { sessionIoBusy.store (false); return; }
+        if (dest.getFullPathName().isEmpty()) { sessionJobs.release(); return; }
 
         if (source == dest)
         {
             const bool ok = saveSessionStateTo (dest);
-            sessionIoBusy.store (false);
+            sessionJobs.release();
             showStatus (ok ? "Session saved" : "Save failed -- check permissions / free space");
             return;
         }
 
         const bool createdDestination = ! dest.exists();
         if (createdDestination && dest.createDirectory().failed())
-        { sessionIoBusy.store (false); showStatus ("Save As destination invalid"); return; }
+        { sessionJobs.release(); showStatus ("Save As destination invalid"); return; }
         if (! dest.isDirectory())
-        { sessionIoBusy.store (false); showStatus ("Save As destination invalid"); return; }
+        { sessionJobs.release(); showStatus ("Save As destination invalid"); return; }
 
         // Refuse a destination INSIDE the source: copyDirectoryTo would copy
         // the growing destination into itself.
         if (source.isDirectory() && pathsafety::isSameOrDescendant (source, dest))
         {
-            sessionIoBusy.store (false);
+            sessionJobs.release();
             showStatus ("Save As failed -- pick a folder outside the current session");
             return;
         }
@@ -1226,7 +1226,7 @@ void MainComponent::onSaveSessionAs()
         // files and prevents an old session from becoming a hybrid.
         if (! dest.findChildFiles (juce::File::findFilesAndDirectories, false).isEmpty())
         {
-            sessionIoBusy.store (false);
+            sessionJobs.release();
             showStatus ("Save As needs a new or empty folder");
             return;
         }
@@ -1237,13 +1237,13 @@ void MainComponent::onSaveSessionAs()
             if (! ensureSessionScaffold (dest))
             {
                 removePartialCopy (dest, createdDestination);
-                sessionIoBusy.store (false);
+                sessionJobs.release();
                 showStatus ("Save As failed -- couldn't create the session files");
                 return;
             }
             engine.setActiveSessionDir (dest);
             const bool ok = saveSessionStateTo (dest);
-            sessionIoBusy.store (false);
+            sessionJobs.release();
             showStatus (ok ? "Saved As -> " + dest.getFileName()
                            : "Save As failed -- check permissions / free space");
             return;
@@ -1253,7 +1253,7 @@ void MainComponent::onSaveSessionAs()
         if (! saveSessionStateTo (source))
         {
             removePartialCopy (dest, createdDestination);
-            sessionIoBusy.store (false);
+            sessionJobs.release();
             showStatus ("Save As failed -- couldn't save the current session");
             return;
         }
@@ -1262,20 +1262,18 @@ void MainComponent::onSaveSessionAs()
         // runs on the owned export thread instead of freezing the message
         // thread for the duration. The state files are written afterwards, back
         // on the message thread, because saveSessionStateTo touches engine state.
-        joinExportThread();
         engine.setSessionTransitionActive (true);
         showStatus ("Saving As -> " + dest.getFileName() + " (copying session)...");
 
         juce::Component::SafePointer<MainComponent> self (this);
-        exportThread = std::thread ([self, source, dest, createdDestination]
+        sessionJobs.launch ([self, source, dest, createdDestination] (const std::atomic<bool>& cancel)
+                            -> zynforge::SessionJobRunner::Completion
         {
-            const bool ok = self != nullptr
-                         && copyDirectoryCancellable (source, dest, self->exportCancel);
-            juce::MessageManager::callAsync ([self, ok, dest, createdDestination]
+            const bool ok = copyDirectoryCancellable (source, dest, cancel);
+            return [self, ok, dest, createdDestination]
             {
                 if (self == nullptr) return;
                 self->engine.setSessionTransitionActive (false);
-                self->sessionIoBusy.store (false);
                 if (! ok)
                 {
                     removePartialCopy (dest, createdDestination);
@@ -1284,7 +1282,7 @@ void MainComponent::onSaveSessionAs()
                 }
                 self->openSessionFolder (dest);
                 self->showStatus ("Saved As -> " + dest.getFileName());
-            });
+            };
         });
     });
 }
@@ -1586,7 +1584,7 @@ void MainComponent::exportShowHandoff()
     const auto source = engine.getActiveSessionDir();
     if (! source.isDirectory() || engine.isRecording() || sessionLocked)
     { showStatus ("Stop recording and unlock the session before creating a handoff"); return; }
-    if (sessionIoBusy.exchange (true))
+    if (! sessionJobs.reserve())
     { showStatus ("Another session operation is already running"); return; }
 
     chooser = std::make_unique<juce::FileChooser> (
@@ -1599,36 +1597,36 @@ void MainComponent::exportShowHandoff()
     {
         if (self == nullptr) return;
         const auto dest = fc.getResult();
-        if (dest == juce::File()) { self->sessionIoBusy.store (false); return; }
+        if (dest == juce::File()) { self->sessionJobs.release(); return; }
         if (pathsafety::isSameOrDescendant (source, dest) || dest.isSymbolicLink())
         {
-            self->sessionIoBusy.store (false);
+            self->sessionJobs.release();
             self->showStatus ("Choose a new handoff folder outside the source session");
             return;
         }
         if (dest.exists() && (! dest.isDirectory()
                               || ! dest.findChildFiles (juce::File::findFilesAndDirectories, false).isEmpty()))
         {
-            self->sessionIoBusy.store (false);
+            self->sessionJobs.release();
             self->showStatus ("Handoff needs a new or empty folder; nothing was overwritten");
             return;
         }
         if (! dest.isDirectory() && dest.createDirectory().failed())
         {
-            self->sessionIoBusy.store (false);
+            self->sessionJobs.release();
             self->showStatus ("Could not create the handoff folder");
             return;
         }
         if (! self->saveSessionStateTo (source))
         {
-            self->sessionIoBusy.store (false);
+            self->sessionJobs.release();
             self->showStatus ("Handoff cancelled: session metadata could not be saved");
             return;
         }
         const auto timelineCsv = self->buildTimelineCsv();
         if (timelineCsv.isEmpty())
         {
-            self->sessionIoBusy.store (false);
+            self->sessionJobs.release();
             self->showStatus ("Handoff cancelled: session timeline is unavailable");
             return;
         }
@@ -1638,19 +1636,19 @@ void MainComponent::exportShowHandoff()
         if (! atomicfile::writeText (incomplete,
              "This show handoff was interrupted or failed. Do not deliver it as verified.\n"))
         {
-            self->sessionIoBusy.store (false);
+            self->sessionJobs.release();
             self->showStatus ("Could not create the handoff safety marker");
             return;
         }
 
-        self->joinExportThread();
         self->engine.setSessionTransitionActive (true);
         self->showStatus ("Creating handoff in background: " + dest.getFileName());
-        self->exportThread = std::thread ([self, source, dest, incomplete, timelineCsv]
+        self->sessionJobs.launch ([self, source, dest, incomplete, timelineCsv] (const std::atomic<bool>& cancel)
+                                  -> zynforge::SessionJobRunner::Completion
         {
             showhandoff::Result result;
-            if (self != nullptr && copyDirectoryCancellable (source, dest, self->exportCancel))
-                result = showhandoff::verifyAndWrite (source, dest, timelineCsv, self->exportCancel);
+            if (copyDirectoryCancellable (source, dest, cancel))
+                result = showhandoff::verifyAndWrite (source, dest, timelineCsv, cancel);
             else
                 result = { false, "Copy cancelled or failed" };
 
@@ -1660,11 +1658,10 @@ void MainComponent::exportShowHandoff()
             if (! result.ok)
                 atomicfile::writeText (incomplete,
                     "This show handoff is incomplete: " + result.message + "\nDo not deliver it as verified.\n");
-            juce::MessageManager::callAsync ([self, dest, result]
+            return [self, dest, result]
             {
                 if (self == nullptr) return;
                 self->engine.setSessionTransitionActive (false);
-                self->sessionIoBusy.store (false);
                 if (result.ok)
                     self->showStatus ((result.captureReportWarning
                         ? "! Handoff copy verified; CAPTURE REPORT NEEDS REVIEW: "
@@ -1672,28 +1669,28 @@ void MainComponent::exportShowHandoff()
                 else
                     self->showStatus ("Handoff incomplete at " + dest.getFullPathName()
                                       + " -- " + result.message);
-            });
+            };
         });
     });
 }
 
 void MainComponent::relocateActiveSession()
 {
-    if (sessionIoBusy.exchange (true))
+    if (! sessionJobs.reserve())
     {
         showStatus ("Another session file operation is already running");
         return;
     }
     if (engine.isRecording())
     {
-        sessionIoBusy.store (false);
+        sessionJobs.release();
         showStatus ("Stop recording before moving the session.");
         return;
     }
     const auto oldDir = engine.getActiveSessionDir();
     if (! oldDir.isDirectory())
     {
-        sessionIoBusy.store (false);
+        sessionJobs.release();
         showStatus ("No active session to move -- record or open one first.");
         return;
     }
@@ -1709,21 +1706,21 @@ void MainComponent::relocateActiveSession()
         {
             if (chooserSelf == nullptr) return;
             const auto newParent = fc.getResult();
-            if (! newParent.isDirectory()) { sessionIoBusy.store (false); return; }
+            if (! newParent.isDirectory()) { sessionJobs.release(); return; }
 
             const auto newDir = newParent.getChildFile (oldDir.getFileName());
             if (newDir == oldDir)
-            { sessionIoBusy.store (false); showStatus ("That's already the session's location."); return; }
+            { sessionJobs.release(); showStatus ("That's already the session's location."); return; }
             if (pathsafety::isSameOrDescendant (oldDir, newParent)
                 || pathsafety::isSameOrDescendant (oldDir, newDir))
             {
-                sessionIoBusy.store (false);
+                sessionJobs.release();
                 showStatus ("Move failed -- the destination cannot be inside the session");
                 return;
             }
             if (newDir.exists())
             {
-                sessionIoBusy.store (false);
+                sessionJobs.release();
                 showStatus ("A folder named \"" + oldDir.getFileName()
                             + "\" already exists there -- pick another location.");
                 return;
@@ -1731,7 +1728,7 @@ void MainComponent::relocateActiveSession()
 
             if (! saveSessionStateTo (oldDir))
             {
-                sessionIoBusy.store (false);
+                sessionJobs.release();
                 showStatus ("Move failed -- couldn't save the current session");
                 return;
             }
@@ -1741,19 +1738,18 @@ void MainComponent::relocateActiveSession()
             // message thread so a big session can't freeze the UI.
             engine.stopPlayback();
             engine.setSessionTransitionActive (true);
-            joinExportThread();
             showStatus ("Moving session to " + newParent.getFullPathName() + " ...");
 
             juce::Component::SafePointer<MainComponent> self (this);
-            exportThread = std::thread ([self, oldDir, newDir, newParent]
+            sessionJobs.launch ([self, oldDir, newDir, newParent] (const std::atomic<bool>& cancel)
+                                -> zynforge::SessionJobRunner::Completion
             {
                 bool relocated = oldDir.moveFileTo (newDir);   // instant within a volume
                 bool oldCopyRemains = false;
                 if (! relocated)                               // cross-volume: copy + delete
                 {
-                    const bool copied = self != nullptr
-                                     && copyDirectoryCancellable (oldDir, newDir, self->exportCancel);
-                    if (copied && ! self->exportCancel.load (std::memory_order_relaxed))
+                    const bool copied = copyDirectoryCancellable (oldDir, newDir, cancel);
+                    if (copied && ! cancel.load (std::memory_order_relaxed))
                     {
                         relocated = true; // the complete new copy is authoritative
                         oldCopyRemains = ! oldDir.deleteRecursively();
@@ -1762,11 +1758,10 @@ void MainComponent::relocateActiveSession()
                         newDir.deleteRecursively();
                 }
 
-                juce::MessageManager::callAsync ([self, relocated, oldCopyRemains, oldDir, newDir, newParent]
+                return [self, relocated, oldCopyRemains, oldDir, newDir, newParent]
                 {
                     if (self == nullptr) return;
                     self->engine.setSessionTransitionActive (false);
-                    self->sessionIoBusy.store (false);
                     if (! relocated)
                     {
                         self->showStatus ("Move failed -- check permissions / free space. Session left in place.");
@@ -1782,7 +1777,7 @@ void MainComponent::relocateActiveSession()
                         ? "Session moved, but the old folder could not be fully removed: "
                             + oldDir.getFullPathName()
                         : "Session moved to " + newDir.getFullPathName());
-                });
+                };
             });
         });
 }

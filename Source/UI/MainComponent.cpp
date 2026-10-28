@@ -1081,7 +1081,7 @@ void MainComponent::removeLastCapture()
             target = d;
 
     if (engine.isRecording()) { showStatus ("Stop recording before removing a capture"); return; }
-    sessionIoBusy.store (true);
+    if (! sessionJobs.reserve()) { showStatus ("Wait for the session operation to finish"); return; }
     juce::Component::SafePointer<MainComponent> self (this);
     juce::AlertWindow::showAsync (
         juce::MessageBoxOptions()
@@ -1093,7 +1093,7 @@ void MainComponent::removeLastCapture()
         [self, target] (int result)
     {
         if (self == nullptr) return;
-        self->sessionIoBusy.store (false);
+        self->sessionJobs.release();
         if (result == 1) self->deleteCaptureSession (target);
     });
 }
@@ -1151,8 +1151,7 @@ void MainComponent::confirmAndQuit()
     { showStatus ("Session saving is still finishing -- quit again after completion"); return; }
     if (sessionIoBusy.load())
     {
-        exportCancel.store (true);
-        bounceCancel.store (true);
+        sessionJobs.cancel();
         showStatus ("Cancelling session file operation -- quit again when it finishes");
         return;
     }

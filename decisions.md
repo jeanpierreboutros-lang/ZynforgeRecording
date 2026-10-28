@@ -740,6 +740,18 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 ---
 
+## Session-file jobs run on one runner that owns the release — 2026-10-29
+
+**Status:** Accepted (refines *Session replacement and copies are transactions*, 2026-08-18)
+**Context:** Eight session-file jobs (track export, stem/mix bounce, import, Save As copy, relocation, show handoff, click render) each hand-wrote "claim `sessionIoBusy`, join the previous `std::thread`, launch, post a completion that clears the flag" onto two shared thread members. Releasing the flag was every worker's own job on every exit path. The track export's cancel path returned before posting, so a quit that cancelled an export left the session busy until restart. Separately, both bounce workers held the recorder's structure lock for the whole render while the 10 Hz UI timer's `captureStatus()` waited on it, freezing the app for the length of the bounce.
+**Decision:** `SessionJobRunner` owns the one worker and the cancel flag. Callers `reserve()`, `release()` on pre-launch exits, and `launch (work)`; the work returns its completion and the runner clears the reservation on the message thread before running it, whatever the work returned or threw. Renderers snapshot every strip they read under a brief structure lock and render lock-free; UI code never takes that lock. Two invariant-gate rules pin both.
+**Rationale:** A release that is structural cannot be skipped by a new early return. One worker matches reality: every job already excluded every other through the same flag. Snapshotting is both the fix for the freeze and the honest semantic for an offline render.
+**Consequences:** A mix bounce renders the mixer as it stood when it began; fader/mute moves during the bounce no longer leak into the file. Metadata saves still share `sessionIoBusy` through their own pending count, which `enqueueMetadataSnapshot` keeps from overlapping a job.
+**Alternatives Considered:** Patch the one early return (rejected: the class stays open for the next job); keep the structure lock and make `captureStatus` try-lock (rejected: other message-thread users of the lock would still block, and the render would still read live strips).
+**Related Documents:** `Source/UI/SessionJobRunner.h`; `AudioEngine::forEachStereoMixWindow`; `Source/Tests/SessionJobsTests.cpp`; CLAUDE.md *Don't block the message thread*.
+
+---
+
 ## Template
 
 ```

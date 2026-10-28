@@ -107,6 +107,7 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Tests/EditViewFixTests.cpp
     Source/Tests/EditTrackRowTests.cpp
     Source/Tests/TrackReorderTests.cpp
+    Source/Tests/SessionJobsTests.cpp
     Source/Tests/ConsoleTransportTests.cpp
     Source/Tests/AutomationTests.cpp
     Source/Tests/MarkerTests.cpp

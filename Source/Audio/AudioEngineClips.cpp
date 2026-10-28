@@ -938,19 +938,18 @@ namespace zynforge
         // Stereo Mix). A file with no strip has no fader/pan/mute, so it isn't
         // part of the mix -- matching onBounceStems, which already bounds on
         // the recorder count.
-        const int nTracks = recorder.getNumTracks();
         const auto audioDir = getActiveSessionDir().getChildFile ("Audio Files");
 
-        bool anySolo = false;
-        for (int i = 0; i < nTracks; ++i)
-            if (recorder.getTrack (i).soloed.load (std::memory_order_relaxed)) { anySolo = true; break; }
-        bool anyVcaSolo = false;
-        for (const auto& v : vcas)
-            if (v.soloed.load (std::memory_order_relaxed)) { anyVcaSolo = true; break; }
-
-        // Open every audible track's source up front; the tracks then
-        // render window-by-window in lockstep, so only O(window) audio is
-        // in RAM at once (readers, not buffers, stay open per track).
+        // Everything the mix reads from a strip is SNAPSHOTTED here, under a
+        // BRIEF structure lock, and the windows below render from the
+        // snapshot alone. The render used to keep a pointer to each strip's
+        // TrackState and re-read mute/VCA/sends every window, so the caller
+        // had to hold the structure lock for the WHOLE bounce -- and the UI
+        // timer's captureStatus() takes that lock, freezing the app until the
+        // bounce finished. The snapshot is also the honest semantic: the file
+        // is the mix as it stood when the bounce began, not a blend of
+        // mid-bounce fader and mute moves.
+        struct SendSnapshot { int bus { -1 }; float levelDb { -100.0f }; bool post { false }; };
         struct TrackCtx
         {
             int track {};
@@ -958,53 +957,80 @@ namespace zynforge
             ArrangementSource src;
             float baseDb {}, basePan {}, vcaDb {};
             int   autoCh {};
-            TrackState* ts {};
+            bool  isBus {}, muted {}, vcaMuted {};
+            std::array<SendSnapshot, TrackState::kNumSends> sends {};
         };
         std::vector<std::unique_ptr<TrackCtx>> live;
-        for (int t = 0; t < nTracks; ++t)
+        int nTracks = 0;
         {
-            auto& ts = recorder.getTrack (t);
-            const int grp = ts.vcaGroup.load (std::memory_order_relaxed);
+            const juce::ScopedLock structure (recorder.getStructureLock());
+            // The MIXER is authoritative for the stereo mix: every strip read
+            // below is a TrackState (solo / mute / gain / pan / VCA), so the
+            // bound MUST be the recorder's track count. It used to be
+            // jmax(recorder, player), which indexed `recorder.getTrack()` --
+            // an unchecked `*tracks[i]` -- past the end whenever the session
+            // had more Track_NN files on disk than strips in the mixer. A file
+            // with no strip has no fader/pan/mute, so it isn't part of the mix
+            // -- matching onBounceStems, which also bounds on the recorder.
+            nTracks = recorder.getNumTracks();
 
-            bool audible;
-            if (grp >= 0 && grp < kNumVcas)
+            bool anySolo = false;
+            for (int i = 0; i < nTracks; ++i)
+                if (recorder.getTrack (i).soloed.load (std::memory_order_relaxed)) { anySolo = true; break; }
+            bool anyVcaSolo = false;
+            for (const auto& v : vcas)
+                if (v.soloed.load (std::memory_order_relaxed)) { anyVcaSolo = true; break; }
+
+            for (int t = 0; t < nTracks; ++t)
             {
-                if (vcas[(size_t) grp].muted.load (std::memory_order_relaxed)) audible = false;
-                else if (anyVcaSolo && ! vcas[(size_t) grp].soloed.load (std::memory_order_relaxed)) audible = false;
-                else if (anySolo) audible = ts.soloed.load (std::memory_order_relaxed);
-                else audible = ! ts.muted.load (std::memory_order_relaxed);
+                const auto& ts = recorder.getTrack (t);
+                const int grp = ts.vcaGroup.load (std::memory_order_relaxed);
+                const bool inVca = grp >= 0 && grp < kNumVcas;
+
+                bool audible;
+                if (inVca)
+                {
+                    if (vcas[(size_t) grp].muted.load (std::memory_order_relaxed)) audible = false;
+                    else if (anyVcaSolo && ! vcas[(size_t) grp].soloed.load (std::memory_order_relaxed)) audible = false;
+                    else if (anySolo) audible = ts.soloed.load (std::memory_order_relaxed);
+                    else audible = ! ts.muted.load (std::memory_order_relaxed);
+                }
+                else if (anyVcaSolo) audible = false;
+                else if (anySolo)    audible = ts.soloed.load (std::memory_order_relaxed);
+                else                 audible = ! ts.muted.load (std::memory_order_relaxed);
+
+                auto ctx = std::make_unique<TrackCtx>();
+                ctx->audible  = audible;
+                ctx->track    = t;
+                ctx->baseDb   = ts.gainDb.load (std::memory_order_relaxed);
+                ctx->basePan  = ts.pan.load (std::memory_order_relaxed);
+                ctx->vcaDb    = inVca ? vcas[(size_t) grp].gainDb.load (std::memory_order_relaxed) : 0.0f;
+                ctx->vcaMuted = inVca && vcas[(size_t) grp].muted.load (std::memory_order_relaxed);
+                ctx->isBus    = ts.isBus.load (std::memory_order_relaxed);
+                ctx->muted    = ts.muted.load (std::memory_order_relaxed);
+                for (size_t k = 0; k < ctx->sends.size(); ++k)
+                    ctx->sends[k] = { ts.sends[k].targetBus.load (std::memory_order_relaxed),
+                                      ts.sends[k].levelDb.load (std::memory_order_relaxed),
+                                      ts.sends[k].postFader.load (std::memory_order_relaxed) };
+                // Stereo pair reads its left partner's volume + mute lanes.
+                ctx->autoCh   = (t > 0 && recorder.getTrack (t - 1).isStereo.load (std::memory_order_relaxed))
+                                  ? t - 1 : t;
+                live.push_back (std::move (ctx));
             }
-            else if (anyVcaSolo) audible = false;
-            else if (anySolo)    audible = ts.soloed.load (std::memory_order_relaxed);
-            else                 audible = ! ts.muted.load (std::memory_order_relaxed);
-
-
-            auto ctx = std::make_unique<TrackCtx>();
-            ctx->audible = audible;
-            ctx->track   = t;
-            ctx->baseDb  = ts.gainDb.load (std::memory_order_relaxed);
-            ctx->basePan = ts.pan.load (std::memory_order_relaxed);
-            ctx->vcaDb   = (grp >= 0 && grp < kNumVcas)
-                             ? vcas[(size_t) grp].gainDb.load (std::memory_order_relaxed) : 0.0f;
-            // Stereo pair reads its left partner's volume + mute lanes.
-            ctx->autoCh  = (t > 0 && recorder.getTrack (t - 1).isStereo.load (std::memory_order_relaxed))
-                             ? t - 1 : t;
-            ctx->ts      = &ts;
-            live.push_back (std::move (ctx));
         }
 
         for (auto& cp : live)
         {
             cp->needed = cp->audible;
-            if (! cp->ts->isBus.load())
-                for (const auto& send : cp->ts->sends)
+            if (! cp->isBus)
+                for (const auto& send : cp->sends)
                 {
-                    const int bus = send.targetBus.load();
-                    if (bus >= 0 && bus < nTracks && live[(size_t) bus]->ts->isBus.load()
-                        && live[(size_t) bus]->audible && send.levelDb.load() > -60.0f)
+                    const int bus = send.bus;
+                    if (bus >= 0 && bus < nTracks && live[(size_t) bus]->isBus
+                        && live[(size_t) bus]->audible && send.levelDb > -60.0f)
                         cp->needed = true;
                 }
-            if (cp->needed && ! cp->ts->isBus.load())
+            if (cp->needed && ! cp->isBus)
             {
                 const auto* clips = cp->track < (int) trackClips.size()
                     ? &trackClips[(size_t) cp->track] : nullptr;
@@ -1030,31 +1056,29 @@ namespace zynforge
 
             raw.clear();
             for (auto& cp : live)
-                if (cp->needed && ! cp->ts->isBus.load()
+                if (cp->needed && ! cp->isBus
                     && ! cp->src.mixWindow (raw.getWritePointer (cp->track), winStart, winLen, tmp)) return false;
 
             // Sends precede solo filtering, as in live playback: a soloed bus
             // still receives its unsoloed source strips.
             for (auto& cp : live)
             {
-                if (! cp->needed || cp->ts->isBus.load()) continue;
+                if (! cp->needed || cp->isBus) continue;
                 for (int i = 0; i < winLen; i += step)
                 {
                     const int count = juce::jmin (step, winLen - i);
                     const auto pos = winStart + i;
                     const float db = automationValueAtOffline (cp->autoCh, AutomationParam::Volume, pos, cp->baseDb) + cp->vcaDb;
-                    const int vca = cp->ts->vcaGroup.load();
-                    const bool muted = cp->ts->muted.load()
-                        || (vca >= 0 && vca < kNumVcas && vcas[(size_t) vca].muted.load())
+                    const bool muted = cp->muted || cp->vcaMuted
                         || automationValueAtOffline (cp->autoCh, AutomationParam::Mute, pos, 0.0f) > 0.5f;
-                    for (const auto& send : cp->ts->sends)
+                    for (const auto& send : cp->sends)
                     {
-                        const int bus = send.targetBus.load();
-                        if (bus < 0 || bus >= nTracks || ! live[(size_t) bus]->ts->isBus.load()) continue;
-                        const float post = send.postFader.load()
+                        const int bus = send.bus;
+                        if (bus < 0 || bus >= nTracks || ! live[(size_t) bus]->isBus) continue;
+                        const float post = send.post
                             ? (muted ? 0.0f : juce::Decibels::decibelsToGain (db, -60.0f)) : 1.0f;
                         raw.addFrom (bus, i, raw, cp->track, i, count,
-                            post * juce::Decibels::decibelsToGain (send.levelDb.load(), -60.0f));
+                            post * juce::Decibels::decibelsToGain (send.levelDb, -60.0f));
                     }
                 }
             }
@@ -1073,7 +1097,7 @@ namespace zynforge
                     const float volDb = automationValueAtOffline (cp->autoCh, AutomationParam::Volume, absPos, cp->baseDb);
                     const float panV  = automationValueAtOffline (cp->track,  AutomationParam::Pan,    absPos, cp->basePan);
                     const float muteV = automationValueAtOffline (cp->autoCh, AutomationParam::Mute,   absPos,
-                                                                  cp->ts->muted.load (std::memory_order_relaxed) ? 1.0f : 0.0f);
+                                                                  cp->muted ? 1.0f : 0.0f);
                     if (muteV > 0.5f) continue;
 
                     const double gain = juce::Decibels::decibelsToGain ((double) (volDb + cp->vcaDb), -60.0);
