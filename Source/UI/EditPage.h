@@ -245,6 +245,23 @@ namespace zynforge
         void updatePlaceholder();   // show/hide the empty-state overlay by channel count
         void rescanWaveforms();     // drop cached peaks + re-scan every row (e.g. after a strip reorder renamed files)
 
+        // Strip reorder by swatch drag. While the pointer moves, the dragged
+        // row asks for a preview: the list draws a drop line where the strip
+        // would land and autoscrolls near its edges, touching neither the
+        // engine nor the disk. On release ONE AudioEngine::reorderTracks()
+        // moves the whole logical strip (a stereo pair moves as a pair).
+        // reorderTracks is a full on-disk transaction, so it must never run
+        // once per row crossed.
+        //   updateReorderPreview returns the PHYSICAL index the strip would be
+        //   inserted before (numTracks = after the last row), or -1.
+        int  updateReorderPreview (juce::Point<int> pointInPage);
+        void clearReorderPreview();
+        //   commitReorder returns true when the move committed or was a no-op.
+        bool commitReorder (int fromPhysical, int insertBeforePhysical);
+
+        // Status-line message for the host (reorder refusals and failures).
+        std::function<void (const juce::String&)> onStatus;
+
         void paint (juce::Graphics&) override;
         void resized() override;
 

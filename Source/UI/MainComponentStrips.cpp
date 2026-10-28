@@ -19,21 +19,14 @@
 #include "NewSessionDialog.h"
 #include "Meterbridge.h"
 #include "../Audio/ChannelCsv.h"
+#include "../Audio/TrackOrder.h"
 
 using namespace zynforge;
 
 void MainComponent::moveSelectedStrips (int delta)
 {
     if (selectedLogical.empty() || engine.isRecording() || sessionIoBusy.load()) return;
-    std::vector<std::vector<int>> blocks;
-    auto& rec = engine.getRecorder();
-    for (int p = 0; p < rec.getNumTracks();)
-    {
-        const int width = rec.getTrack (p).isStereo.load() && p + 1 < rec.getNumTracks() ? 2 : 1;
-        std::vector<int> block;
-        for (int k = 0; k < width; ++k) block.push_back (p + k);
-        blocks.push_back (std::move (block)); p += width;
-    }
+    auto blocks = trackorder::logicalBlocks (trackorder::stereoFlags (engine.getRecorder()));
     std::vector<int> selected (selectedLogical.begin(), selectedLogical.end());
     if (delta > 0) std::reverse (selected.begin(), selected.end());
     std::set<int> next;
@@ -44,12 +37,9 @@ void MainComponent::moveSelectedStrips (int delta)
         if (target < 0 || target >= (int) blocks.size()) { next.insert (i); continue; }
         std::swap (blocks[(size_t) i], blocks[(size_t) target]); next.insert (target);
     }
-    std::vector<int> order;
-    for (const auto& block : blocks) order.insert (order.end(), block.begin(), block.end());
-    if (engine.reorderTracks (order))
+    if (engine.reorderTracks (trackorder::flatten (blocks)))
     { selectedLogical = std::move (next); showStatus ("Moved selected strips"); }
     else showStatus ("Move failed; check disk permissions and Session File Backups before retrying");
-    lastTrackCount = -1;
 }
 
 namespace

@@ -10,6 +10,7 @@
 #include "RenameLabel.h"
 #include "EditTrackRow.h"
 #include "WaveCacheFreshness.h"
+#include "../Audio/TrackOrder.h"
 
 #include <algorithm>
 
@@ -375,6 +376,65 @@ namespace zynforge
 
         int rowCount() const { return (int) rows.size(); }
 
+        // True when the rows were built for exactly this logical layout. A
+        // count check alone misses a block move that keeps both the track and
+        // row counts ([mono, stereo] -> [stereo, mono]) and would leave rows
+        // drawing the wrong strip as a pair.
+        bool matchesLayout (const trackorder::Blocks& blocks) const
+        {
+            if (blocks.size() != rows.size()) return false;
+            for (size_t k = 0; k < rows.size(); ++k)
+                if (rows[k]->getTrackIndex() != blocks[k].front()
+                    || rows[k]->isStereoPair() != (blocks[k].size() == 2))
+                    return false;
+            return true;
+        }
+
+        // Swatch-drag reorder preview: the physical index the dragged strip
+        // would be inserted before (numTracks = after the last row), with a
+        // drop line drawn at that gap. Rows are logical, so a row's index is
+        // always a strip's L track. Hidden rows (Memory-Location recall) are
+        // skipped; dropping below the last visible row lands in front of the
+        // next row, visible or not.
+        int updateReorderPreview (juce::Point<int> p, int numTracks)
+        {
+            int before = -1, lineY = -1, lastVisible = -1;
+            for (size_t k = 0; k < rows.size(); ++k)
+            {
+                const auto& r = *rows[k];
+                if (! r.isVisible()) continue;
+                lastVisible = (int) k;
+                if (p.y < r.getBounds().getCentreY())
+                {
+                    before = r.getTrackIndex();
+                    lineY  = r.getY() - kRowGap / 2;
+                    break;
+                }
+            }
+            if (before < 0 && lastVisible >= 0)
+            {
+                const auto next = (size_t) lastVisible + 1;
+                before = next < rows.size() ? rows[next]->getTrackIndex() : numTracks;
+                lineY  = rows[(size_t) lastVisible]->getBottom() + kRowGap / 2;
+            }
+            setReorderLineY (lineY);
+            return before;
+        }
+
+        void setReorderLineY (int y)
+        {
+            if (y == reorderLineY) return;
+            reorderLineY = y;
+            repaint();
+        }
+
+        void paintOverChildren (juce::Graphics& g) override
+        {
+            if (reorderLineY < 0) return;
+            g.setColour (brand::accentEdit);
+            g.fillRect (0, reorderLineY - 1, getWidth(), 2);
+        }
+
         // True when every row's thumbnail has finished its background scan.
         bool allWaveformsLoaded() const
         {
@@ -407,6 +467,7 @@ namespace zynforge
         std::vector<std::unique_ptr<juce::AudioThumbnailCache>>& thumbCaches;
         std::vector<std::unique_ptr<TrackRow>>    rows;
         int                                       viewportHeight { 480 };
+        int                                       reorderLineY { -1 };   // swatch-drag drop line; -1 = none
     };
 
     EditPage::EditPage (AudioEngine& eng)
@@ -706,17 +767,12 @@ namespace zynforge
     {
         const int n = engine.getRecorder().getNumTracks();
 
-        // Compute logical (stereo-aware) row count and rebuild when it
-        // differs -- physical track count alone doesn't detect isStereo
-        // toggles, which collapse two rows into one.
-        int logicalRows = 0;
-        for (int i = 0; i < n; )
-        {
-            const bool s = engine.getRecorder().getTrack (i).isStereo.load() && (i + 1 < n);
-            ++logicalRows;
-            i += s ? 2 : 1;
-        }
-        if (n != lastTrackCount || logicalRows != (int) list->rowCount())
+        // Rebuild whenever the rows no longer match the logical (stereo-aware)
+        // layout. Counts are not enough: a stereo link/unlink changes the row
+        // count, but a strip moved past a stereo pair changes WHERE the pair
+        // sits while keeping both counts.
+        const auto layout = trackorder::logicalBlocks (trackorder::stereoFlags (engine.getRecorder()));
+        if (n != lastTrackCount || ! list->matchesLayout (layout))
         {
             list->rebuild (n);
             lastTrackCount = n;
@@ -780,6 +836,57 @@ namespace zynforge
     void EditPage::condemnAllRows()
     {
         if (list != nullptr) list->condemnAllRows();
+    }
+
+    int EditPage::updateReorderPreview (juce::Point<int> pointInPage)
+    {
+        if (list == nullptr || readOnlyWhileRecording) return -1;
+        // Scroll the row list when the pointer nears its top/bottom edge, so a
+        // strip can travel the whole session in one drag. The row drives this
+        // with beginDragAutoRepeat, so it keeps scrolling while held still.
+        const auto inViewport = viewport.getLocalPoint (this, pointInPage);
+        viewport.autoScroll (inViewport.x, inViewport.y, 24, 16);
+        return list->updateReorderPreview (list->getLocalPoint (this, pointInPage),
+                                           engine.getRecorder().getNumTracks());
+    }
+
+    void EditPage::clearReorderPreview()
+    {
+        if (list != nullptr) list->setReorderLineY (-1);
+    }
+
+    bool EditPage::commitReorder (int fromPhysical, int insertBeforePhysical)
+    {
+        clearReorderPreview();
+        auto report = [this] (const juce::String& message) { if (onStatus) onStatus (message); };
+        auto& recorder = engine.getRecorder();
+        const auto blocks = trackorder::logicalBlocks (trackorder::stereoFlags (recorder));
+        const int n = recorder.getNumTracks();
+        const int from = trackorder::blockStartingAt (blocks, fromPhysical);
+        const int before = insertBeforePhysical >= n ? (int) blocks.size()
+                                                     : trackorder::blockStartingAt (blocks, insertBeforePhysical);
+        // The layout changed under the drag (a delete or stereo link from
+        // another surface): refuse rather than move the wrong strip.
+        if (from < 0 || before < 0)
+        {
+            report ("Strip move cancelled: the track layout changed during the drag");
+            return false;
+        }
+        const auto order = trackorder::moveBlock (blocks, from, before);
+        if (order.empty()) return true;   // dropped where it started
+
+        // reorderTracks stops the player and reloads it at 0; keep the playhead.
+        const auto playhead = engine.getPlayer().getPositionSamples();
+        if (! engine.reorderTracks (order))
+        {
+            report ("Strip move failed; check disk permissions and Session File Backups before retrying");
+            return false;
+        }
+        engine.getPlayer().setPositionSamples (playhead);
+        // Row rebuild + waveform rescan follow from the host's
+        // onTracksReordered handler, shared with every other reorder path.
+        report ("Moved strip");
+        return true;
     }
 
     void EditPage::rescanWaveforms()

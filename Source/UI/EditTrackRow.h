@@ -193,18 +193,13 @@ namespace zynforge
         float       dragStartGainDb  { 0.0f };   // clip-gain handle drag (mode 7)
         int         dragStartGainY   { 0 };      // mouse y at gain-drag start (relative ride)
 
-        // Strip reorder drag -- armed on swatch-column mouseDown,
-        // activates once vertical movement exceeds 8 px. Each
-        // additional row-height of movement swaps with the adjacent
-        // strip via engine.swapTracks.
+        // Strip reorder drag -- armed on swatch-column mouseDown, activates
+        // once vertical movement exceeds 8 px. While dragging, EditPage only
+        // PREVIEWS the drop position; the move commits once, on release.
         bool reorderArmed  { false };
         bool reorderActive { false };
         int  reorderStartY { 0 };
-        // The dragged content's CURRENT physical index -- it walks with the
-        // audio as each swap moves it, so a multi-row drag keeps stepping in
-        // one direction instead of oscillating around the origin row.
-        int         reorderLiveIndex { -1 };
-        juce::int64 reorderStartPos  { 0 };
+        int  reorderInsertBefore { -1 };   // physical index to land in front of; -1 = none
 
         TrackRow (int trackIdx,
                   bool isStereoPair,
@@ -2497,11 +2492,10 @@ namespace zynforge
             // picker (preserves the legacy 'click swatch = colour').
             if (inSwatch (e.x))
             {
-                reorderArmed     = true;
-                reorderActive    = false;
-                reorderStartY    = e.y;
-                reorderLiveIndex = index;
-                reorderStartPos  = engine.getPlayer().getPositionSamples();
+                reorderArmed        = true;
+                reorderActive       = false;
+                reorderStartY       = e.y;
+                reorderInsertBefore = -1;
                 return;
             }
 
@@ -2950,24 +2944,17 @@ namespace zynforge
                 return;
             }
 
-            // Strip reorder via swatch drag -- once the engineer's
-            // vertical movement crosses one row height, swap with the
-            // adjacent strip and reset the drag origin so a continuous
-            // up-up-up drag walks the strip across the list.
+            // Strip reorder via swatch drag. Moving the pointer only PREVIEWS
+            // the drop (EditPage draws a line and autoscrolls); the move
+            // itself commits once, in mouseUp. Each reorderTracks() is a full
+            // on-disk transaction, and running one per row crossed used to
+            // stop the player and detach the audio callback on every step.
             if (reorderArmed)
             {
-                const int delta = e.y - reorderStartY;
-                const int rowH  = juce::jmax (1, getHeight());
-                if (! reorderActive && std::abs (delta) > 8)
-                    reorderActive = true;
-
-                if (reorderActive && std::abs (delta) > rowH)
+                if (! reorderActive && std::abs (e.y - reorderStartY) > 8)
                 {
-                    // Refuse reorder while playback is actively rolling
-                    // -- swapTracks renames Track_NN.wav on disk and the
-                    // player's open readers would point at the wrong
-                    // data mid-block. Pop a modal warning so the
-                    // engineer knows the drag was ignored.
+                    // Refuse while playback rolls: the move renames take
+                    // files the player has open. Say so once, up front.
                     if (engine.getPlayer().isPlaying())
                     {
                         juce::AlertWindow::showAsync (
@@ -2975,70 +2962,20 @@ namespace zynforge
                                 .withIconType (juce::MessageBoxIconType::NoIcon)
                                 .withTitle ("Strip reorder paused")
                                 .withMessage ("Stop playback before reordering strips -- "
-                                              "swapping during playback would corrupt the "
-                                              "player's open file readers.")
+                                              "moving a strip renames take files the "
+                                              "player has open.")
                                 .withButton ("OK"),
                             nullptr);
-                        reorderActive = false;
-                        reorderArmed  = false;
+                        reorderArmed = false;
                         return;
                     }
-                    const int dir = delta > 0 ? +1 : -1;
-                    // engine.swapTracks does an ADJACENT swap. For a
-                    // stereo strip, swap both halves together so the
-                    // logical pair stays linked. Walk from the dragged
-                    // content's CURRENT index (reorderLiveIndex), not the
-                    // row's fixed `index` -- otherwise the second crossing
-                    // swaps the same pair straight back (the oscillation bug).
-                    if (reorderLiveIndex < 0) reorderLiveIndex = index;
-                    const int cur = reorderLiveIndex;
-                    auto& rec = engine.getRecorder();
-                    const int n = rec.getNumTracks();
-                    // The track vector can shrink under a drag in flight (a
-                    // delete from another surface); getTrack() is unchecked, so
-                    // bail rather than read past the end.
-                    if (cur < 0 || cur >= n) { reorderArmed = reorderActive = false; return; }
-                    const bool s  = rec.getTrack (cur).isStereo.load() && (cur + 1 < n);
-                    const int step = s ? 2 : 1;
-                    // Size of the ADJACENT logical strip we'd swap with, in the
-                    // drag direction. A stereo pair is 2 physical tracks.
-                    int tStep = 1;
-                    if (dir > 0)
-                    {
-                        const int tStart = cur + step;
-                        tStep = (tStart < n && rec.getTrack (tStart).isStereo.load() && tStart + 1 < n) ? 2 : 1;
-                    }
-                    else
-                    {
-                        tStep = (cur - 2 >= 0 && rec.getTrack (cur - 2).isStereo.load()) ? 2 : 1;
-                    }
-                    const int other = cur + dir * step;
-                    const bool inRange = (dir > 0) ? (cur + step < n) : (other >= 0);
-                    // Only swap EQUAL-size logical blocks (mono<->mono,
-                    // stereo<->stereo). A mono<->stereo step derived `step` from
-                    // the dragged strip alone and would SPLIT the target pair --
-                    // orphaning its R half and corrupting the persisted layout.
-                    // Refuse that step (the reorder just won't cross a pair
-                    // boundary) rather than scramble the pairing.
-                    if (inRange && tStep == step)
-                    {
-                        if (dir > 0)
-                        {
-                            engine.swapTracks (cur, other);
-                            if (s) engine.swapTracks (cur + 1, other + 1);
-                        }
-                        else
-                        {
-                            engine.swapTracks (other, cur);
-                            if (s) engine.swapTracks (other + 1, cur + 1);
-                        }
-                        // The dragged content now lives at `other`; keep
-                        // following it. Stay armed; reset origin so the next
-                        // row crossing fires again.
-                        reorderLiveIndex = other;
-                        reorderStartY    = e.y;
-                    }
+                    reorderActive = true;
+                    beginDragAutoRepeat (50);   // keep autoscrolling while the pointer rests at an edge
                 }
+                if (reorderActive)
+                    if (auto* page = findParentComponentOfClass<EditPage>())
+                        reorderInsertBefore = page->updateReorderPreview (
+                            page->getLocalPoint (this, e.getPosition()));
                 return;
             }
 
@@ -3336,22 +3273,20 @@ namespace zynforge
             }
             else if (reorderActive)
             {
-                // engine.swapTracks already renamed the Track_NN.wav files
-                // AND reloaded the player readers into the new order while
-                // PRESERVING every clip/comp edit -- do NOT call the wiping
-                // loadSession() here again (that was the reorder-wipe blocker
-                // and a redundant second reload). Each swap rewound the
-                // player to 0; restore the pre-drag playhead.
-                engine.getPlayer().setPositionSamples (reorderStartPos);
-                // The swap renamed the on-disk files but the rows' file PATHS
-                // are unchanged, so force a waveform re-scan or each lane keeps
-                // showing the previous track's cached peaks.
+                // ONE reorderTracks() for the whole drag. It renames the take
+                // files and reloads the player while PRESERVING clip/comp
+                // edits -- never follow it with the wiping loadSession(). The
+                // page keeps the playhead, reports failure, and the host
+                // rebuilds rows and rescans peaks asynchronously.
                 if (auto* page = findParentComponentOfClass<EditPage>())
-                    page->rescanWaveforms();
+                {
+                    if (reorderInsertBefore >= 0) page->commitReorder (index, reorderInsertBefore);
+                    else                          page->clearReorderPreview();
+                }
             }
-            reorderArmed     = false;
-            reorderActive    = false;
-            reorderLiveIndex = -1;
+            reorderArmed        = false;
+            reorderActive       = false;
+            reorderInsertBefore = -1;
 
             // Click (no drag) on a clip body selects it so Delete /
             // Duplicate / Nudge can act on it. Shift+click toggles the clip

@@ -27,6 +27,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Changed — EDIT strip reorder
+
+- Dragging a strip's colour swatch in EDIT now shows a drop line where the strip will land, autoscrolls the track list near its top and bottom edges, and moves the strip **once, on release**. A strip can now move past a strip of a different width (mono past a stereo pair); stereo pairs always move as one.
+
+### Fixed — strip reorder
+
+- A swatch drag no longer runs a full on-disk reorder for every row it crosses. Each step used to stop playback, detach the audio callback, rename every take file and rewrite the session documents on the UI thread; a stereo strip's second swap also ignored the first one's failure and could leave the pair split.
+- EDIT rows rebuild when a move changes where a stereo pair sits even though the track and row counts stay the same, so EDIT and MIXER no longer disagree about which strip is a pair.
+- EDIT waveforms refresh after a strip move made in the MIXER; a lane could show its previous occupant's audio under the new name.
+- A failed EDIT reorder is reported on the status line.
+
 ### Fixed — October 5 follow-up review (`443c769`)
 
 - Preserve ordinary recorded channels named Click; regenerate only explicitly owned reference media.

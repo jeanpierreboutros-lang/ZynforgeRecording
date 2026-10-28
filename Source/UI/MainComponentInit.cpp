@@ -47,6 +47,22 @@ MainComponent::MainComponent()
         clipClipboard = juce::var(); // any copied implicit track index is now stale
         undoManager.clearUndoHistory(); // old per-index snapshots must not undo onto different audio
         rebaselineMixerUndo();
+        // A block move can change the stereo LAYOUT without changing the track
+        // or row count ([mono, stereo] -> [stereo, mono]), which a count check
+        // never notices. Rebuild the strips on the next tick, and refresh EDIT
+        // asynchronously: this callback can run inside an EDIT row's own
+        // mouseUp, and refresh() destroys and recreates the rows. The rename
+        // keeps each row's file PATH, so the path-keyed peaks must be rescanned
+        // or a lane shows its previous occupant's audio -- for a MIXER move as
+        // much as an EDIT drag.
+        lastTrackCount = -1;
+        if (editPage != nullptr)
+            juce::MessageManager::callAsync ([safePage = juce::Component::SafePointer<EditPage> (editPage.get())]
+            {
+                if (safePage == nullptr) return;
+                safePage->refresh();
+                safePage->rescanWaveforms();
+            });
     };
     setLookAndFeel (&laf);
     // Make the ZynForge chrome the app-wide default so EVERY prompt --
@@ -691,6 +707,7 @@ MainComponent::MainComponent()
         clearStripSelection();
         if (editPage != nullptr) editPage->repaint();
     };
+    editPage->onStatus = [this] (const juce::String& message) { showStatus (message); };
     // Right-click ▸ Delete Channel from the EDIT row header. Select just
     // this channel (so the highlight matches what's about to go), then run
     // the shared confirm + delete path used by the Track menu + Delete key.
