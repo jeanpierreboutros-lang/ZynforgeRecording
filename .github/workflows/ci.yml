@@ -3,6 +3,11 @@ name: build-and-test
 # Build the app and run the headless unit-test suite (--run-tests exits
 # non-zero on any failure) on every push / PR to main. Mirrors the local
 # recipe in CLAUDE.md: Xcode generator, Debug assertions plus Release.
+#
+# Debug and Release run as two PARALLEL jobs. The Debug job builds arm64 only:
+# its purpose is the assertion-enabled test run, and a universal build compiles
+# every translation unit twice. The Release job stays universal because that is
+# what ships, and it alone verifies the bundle seal.
 
 on:
   push:
@@ -17,20 +22,24 @@ concurrency:
 
 jobs:
   macos:
+    name: ${{ matrix.config }}
     runs-on: macos-14
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Release-only testing hid JUCE assertions (including duplicate
+          # format registration and damaged-session handling). Keep an
+          # assertion-enabled run so those regressions fail before shipping.
+          - config: Debug
+            archs: arm64
+          - config: Release
+            archs: "arm64;x86_64"
     steps:
       # Pin third-party actions to immutable commits so a
       # moved tag cannot inject code into the release build.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      # JUCE arrives via CMake FetchContent; cache the download so only
-      # the first run after a JUCE version bump pays for it.
-      - name: Cache JUCE sources
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: build/_deps
-          key: juce-deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
 
       # Both gates run BEFORE the build so a violation fails fast (and so a
       # broken invariant can't be masked by a build error further down).
@@ -42,35 +51,40 @@ jobs:
       - name: Invariants audit
         run: ./tools/invariants_audit.sh
 
+      # JUCE arrives via CMake FetchContent. Key the cache on the pinned JUCE
+      # commit only: keying on the whole CMakeLists.txt threw the cache away
+      # every time a source file was added.
+      - name: Resolve pinned JUCE commit
+        id: juce
+        run: echo "sha=$(sed -n 's/^ *GIT_TAG *\([0-9a-f]\{40\}\).*/\1/p' CMakeLists.txt | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache JUCE sources
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/_deps
+          key: juce-deps-${{ runner.os }}-${{ steps.juce.outputs.sha }}
+
       - name: Configure
-        run: cmake -B build -G Xcode
+        run: cmake -B build -G Xcode "-DCMAKE_OSX_ARCHITECTURES=${{ matrix.archs }}"
 
-      # Release-only testing hid JUCE assertions (including duplicate format
-      # registration and damaged-session handling). Keep an assertion-enabled
-      # run in CI so those regressions fail before shipping.
-      - name: Build (Debug)
-        run: cmake --build build --config Debug
+      - name: Build (${{ matrix.config }})
+        run: cmake --build build --config ${{ matrix.config }}
 
-      - name: Headless tests (Debug)
+      - name: Headless tests (${{ matrix.config }})
         run: |
-          "build/ZynforgeRecording_artefacts/Debug/Zynforge Recording.app/Contents/MacOS/Zynforge Recording" --run-tests
-
-      - name: Build (Release)
-        run: cmake --build build --config Release
-
-      - name: Headless tests (Release)
-        run: |
-          "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app/Contents/MacOS/Zynforge Recording" --run-tests
+          "build/ZynforgeRecording_artefacts/${{ matrix.config }}/Zynforge Recording.app/Contents/MacOS/Zynforge Recording" --run-tests
 
       - name: Verify bundled capture daemon
+        if: matrix.config == 'Release'
         run: |
           test -x "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app/Contents/MacOS/ZynforgeCapture"
           codesign --verify --deep --strict "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
+          lipo -archs "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app/Contents/MacOS/Zynforge Recording" | grep -q 'x86_64 arm64\|arm64 x86_64'
 
       - name: Upload test report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: test-report
+          name: test-report-${{ matrix.config }}
           path: ~/Library/Logs/Zynforge/test-report.log
           if-no-files-found: ignore
