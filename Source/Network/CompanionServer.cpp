@@ -772,7 +772,13 @@ poll();
         if (action == "play" || action == "stop" || action == "record")
         {
             auto result = std::make_shared<CommandResult>();
+            if (commandRegisterTestHook) commandRegisterTestHook();
             registerPendingCommand (result);
+            // stop() clears `running` BEFORE it cancels pending commands, so a
+            // request that registers after that sweep sees it here. It used to
+            // wait the full 5 s for a callAsync the message thread -- blocked
+            // in stop() joining this worker -- could never run.
+            if (! running.load()) result->complete (false, "server is stopping");
             const auto engineHandle = engine.getAsyncHandle();
             const auto act = action;
             const bool queued = juce::MessageManager::callAsync ([engineHandle, act, result]

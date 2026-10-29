@@ -436,6 +436,38 @@ namespace zynforge
                     server.stop();
                 }
             }
+
+            beginTest ("stop() does not wait out a command that registers after the cancel sweep");
+            {
+                // A /cmd worker that reached registerPendingCommand just AFTER
+                // stop() ran cancelPendingCommands waited the full 5 s for a
+                // callAsync the (blocked) message thread could never run.
+                AudioEngine engine;
+                CompanionServer server (engine);
+                const int port = startOnFreePort (server, 19430);
+                expect (port != 0, "companion server failed to start");
+                if (port != 0)
+                {
+                    juce::WaitableEvent reached;
+                    server.commandRegisterTestHook = [&]
+                    {
+                        reached.signal();
+                        while (server.running.load()) juce::Thread::sleep (1);
+                        juce::Thread::sleep (50);   // stop() cancels right after clearing running
+                    };
+                    const auto tok = server.getAccessToken();
+                    std::thread requester ([&]
+                    { httpPost (port, "/cmd?t=" + tok, "{\"action\":\"play\"}"); });
+                    expect (reached.wait (2000), "command never reached registration");
+
+                    const auto started = juce::Time::getMillisecondCounterHiRes();
+                    server.stop();
+                    const auto elapsedMs = juce::Time::getMillisecondCounterHiRes() - started;
+                    requester.join();
+                    expectLessThan (elapsedMs, 1500.0,
+                                    "stop() waited out the five-second transport timeout");
+                }
+            }
             AudioEngine::setTestModeSkipAudioInit (false);
         }
     };
