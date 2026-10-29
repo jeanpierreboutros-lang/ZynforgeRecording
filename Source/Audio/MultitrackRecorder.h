@@ -667,7 +667,7 @@ namespace zynforge
         bool stashPunchBases (TakeStart&);
         bool measureContinuationBase (TakeStart&);
         void openTakeWriters (TakeStart&);
-        bool padNewTrackLeadIns (TakeStart&);
+        bool writeLeadInMarkers (TakeStart&);
         void abandonTakeStart (TakeStart&);
         void goLive (const TakeStart&);
 
@@ -676,6 +676,7 @@ namespace zynforge
         // writers close. SessionReport: everything session.report.json says,
         // by value, so the background hashing thread can rebuild it.
         struct TakeStop;
+        void completeLeadIns (const TakeStop&);
         struct SessionReport;
         void quiesceWritersForStop();
         TakeStop snapshotTakeAtStop();
@@ -890,10 +891,42 @@ namespace zynforge
         // armed point; the splice uses this so the new audio lands where it
         // was played, not hundreds of ms early.
         std::atomic<juce::int64> punchCaptureOrigin { -1 };
-        // Per channel: this take wrote a silent lead-in up to punchInPos at
-        // start (a track with no base). If capture began later than that, the
-        // first live block opens a silent gap of the difference in its FIFO.
-        std::vector<char> leadInGapTracks;
+
+    public:
+        // ── Deferred lead-ins ───────────────────────────────────────────
+        // A copy that has less audio than the take's timeline position (a
+        // newly armed track on a continue or punch, or a backup/mirror added
+        // mid-session) needs silence before this pass's audio. Writing it at
+        // record start held RECORD for as long as the write took (GBs on a
+        // long take), so capture starts at once instead: the new audio goes
+        // into a later part slot, and the reserved slots are filled with
+        // silence after STOP (finalization), using the real timeline start.
+        // A marker in "<copy>/Audio Files/Pending Lead-ins/" lets session open
+        // (recoverInterruptedPunches) finish the job after a crash.
+        struct PendingLeadIn
+        {
+            juce::File   audioDir;               // the copy's Audio Files folder
+            juce::String trackName, ext;         // "Track_05", ".wav"
+            int          firstPart { 1 }, parts { 1 };   // reserved part slots
+            int          container { 0 }, bitDepth { 24 }, channels { 1 };
+            double       sampleRate { 48000.0 };
+            juce::int64  priorLength   { 0 };    // samples this copy had before the pass
+            juce::int64  timelineStart { 0 };    // where the pass begins (start-time estimate)
+            int          copyIndex { 0 };        // 0 primary, 1 backup, 2+ mirror (not persisted)
+        };
+        static juce::File partFileFor (const juce::File& audioDir, const juce::String& trackName,
+                                       const juce::String& ext, int part);
+        // Fills the reserved slots with (timelineStart - priorLength) samples
+        // of silence. Skips (true) when this pass wrote no audio to the copy.
+        static bool writeLeadIn (const PendingLeadIn&, juce::int64 timelineStart);
+        // Completes every marker left in audioDir by an interrupted take.
+        static bool recoverPendingLeadIns (const juce::File& audioDir);
+
+    private:
+        std::vector<PendingLeadIn> pendingLeadIns;   // this take's reservations
+        static juce::File leadInMarkerFor (const PendingLeadIn&);
+        static bool writeSilenceFile (const juce::File&, int container, int bits, int chans,
+                                      double sampleRate, juce::int64 frames);
         std::atomic<bool> continueAsPart { false };   // append a new part instead of overwriting
         std::atomic<juce::int64> recordBaseSamples { 0 };       // timeline offset for a continue take
 

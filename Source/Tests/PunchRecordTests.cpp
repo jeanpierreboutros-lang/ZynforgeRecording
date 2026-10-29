@@ -11,6 +11,7 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/FastHash.h"
 #include "../UI/RecordPosition.h"
+#include "../Audio/MultiPartReader.h"
 
 namespace zynforge
 {
@@ -37,10 +38,18 @@ namespace zynforge
             rec.stopRecording();
         }
 
+        // A track's whole take as playback reads it: Track_NN plus its parts.
+        // A newly armed track's lead-in is its own part (written after STOP).
+        static std::unique_ptr<juce::AudioFormatReader> takeReader (juce::AudioFormatManager& fm,
+                                                                    const juce::File& mainFile)
+        {
+            return ConcatReader::create (fm, findTakeParts (mainFile));
+        }
+
         static float regionMean (juce::AudioFormatManager& fm, const juce::File& f,
                                  juce::int64 start, juce::int64 len)
         {
-            std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (f));
+            auto r = takeReader (fm, f);
             if (r == nullptr || len <= 0) return 999.0f;
             len = juce::jmin (len, r->lengthInSamples - start);
             juce::AudioBuffer<float> buf (1, (int) juce::jmax ((juce::int64) 1, len));
@@ -407,9 +416,12 @@ namespace zynforge
                 for (int b = 0; b < 4; ++b) rec.processBlock (inputs, 2, block);
                 rec.stopRecording();
                 const auto file = alignedDir.getChildFile ("Audio Files/Track_02.wav");
-                std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (file));
+                auto r = takeReader (fm, file);
                 expect (r != nullptr);
                 if (r != nullptr) expectEquals ((int) r->lengthInSamples, baseLen + 4 * block);
+                expect (alignedDir.getChildFile ("Audio Files/Track_02_part02.wav").existsAsFile(),
+                        "the new audio is not in the part after the lead-in");
+                expect (! alignedDir.getChildFile ("Audio Files/Pending Lead-ins").exists());
                 expectWithinAbsoluteError (regionMean (fm, file, baseLen - block, block), 0.0f, 0.001f);
                 expectWithinAbsoluteError (regionMean (fm, file, baseLen + 64,
                                                        4 * block - 128), punchVal, 0.02f);
@@ -432,7 +444,7 @@ namespace zynforge
                 for (int b = 0; b < 4; ++b) rec.processBlock (inputs, 2, block);
                 rec.stopRecording();
                 const auto file = alignedDir.getChildFile ("Audio Files/Track_02.wav");
-                std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (file));
+                auto r = takeReader (fm, file);
                 expect (r != nullptr);
                 if (r != nullptr) expectEquals ((int) r->lengthInSamples, (int) punchIn + 4 * block);
                 expectWithinAbsoluteError (regionMean (fm, file, punchIn - block, block), 0.0f, 0.001f);

@@ -11,6 +11,7 @@
 #include "../UI/SessionProjPath.h"
 #include "../Audio/MultitrackRecorder.h"
 #include "../Audio/AudioEngine.h"
+#include "../Audio/MultiPartReader.h"
 
 namespace zynforge
 {
@@ -39,10 +40,11 @@ namespace zynforge
                                   playhead >= 0 ? playhead + (juce::int64) b * block : -1);
         }
 
+        // Reads a track's whole take (Track_NN plus its parts), as playback does.
         static float mean (const juce::File& f, juce::int64 start, juce::int64 len)
         {
             juce::AudioFormatManager fm; fm.registerBasicFormats();
-            std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (f));
+            auto r = ConcatReader::create (fm, findTakeParts (f));
             if (r == nullptr || len <= 0 || start + len > r->lengthInSamples) return 999.0f;
             juce::AudioBuffer<float> buf (1, (int) len);
             r->read (&buf, 0, (int) len, start, true, false);
@@ -54,7 +56,7 @@ namespace zynforge
         static juce::int64 lengthOf (const juce::File& f)
         {
             juce::AudioFormatManager fm; fm.registerBasicFormats();
-            std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (f));
+            auto r = ConcatReader::create (fm, findTakeParts (f));
             return r != nullptr ? r->lengthInSamples : -1;
         }
 
@@ -144,6 +146,102 @@ namespace zynforge
                               "the new track's lead-in does not reach where capture began");
                 expectWithinAbsoluteError (mean (t2, 0, capturedAt), 0.0f, 1.0e-6f);
                 expectWithinAbsoluteError (mean (t2, capturedAt, punchLen), -0.3f, 1.0e-3f);
+            }
+
+            beginTest ("RECORD on a continue does not wait for a new track's lead-in");
+            {
+                const auto dir = tempDir ("leadin-deferred");
+                {
+                    MultitrackRecorder rec;
+                    rec.prepare (sr, block, 1);
+                    rec.getTrack (0).armed.store (true);
+                    expect (rec.startRecording (dir));
+                    feed (rec, 1, 0.5f, 90, block);
+                    rec.stopRecording();
+                }
+                MultitrackRecorder rec;
+                rec.prepare (sr, block, 2);
+                rec.getTrack (1).armed.store (true);   // a new track with no audio yet
+                rec.armContinue (0);
+                expect (rec.startRecording (dir));
+                const auto audio = dir.getChildFile ("Audio Files");
+                expect (! audio.getChildFile ("Track_02.wav").existsAsFile(),
+                        "the silent lead-in was written before capture could start");
+                expect (audio.getChildFile ("Track_02_part02.wav").existsAsFile(),
+                        "the new audio does not open in the part after the lead-in");
+                expect (audio.getChildFile ("Pending Lead-ins/Track_02.json").existsAsFile(),
+                        "no crash-recovery marker for the deferred lead-in");
+                feed (rec, 2, -0.3f, 8, block);
+                rec.stopRecording();
+                const auto t2 = audio.getChildFile ("Track_02.wav");
+                expectEquals (lengthOf (t2), baseLen + 8 * block);
+                expectWithinAbsoluteError (mean (t2, 0, baseLen), 0.0f, 1.0e-6f);
+                expectWithinAbsoluteError (mean (t2, baseLen, 8 * block), -0.3f, 1.0e-3f);
+                expect (! audio.getChildFile ("Pending Lead-ins").exists(), "the marker outlived STOP");
+            }
+
+            beginTest ("an interrupted take's lead-in is completed when the session opens");
+            {
+                const auto audio = tempDir ("leadin-recover").getChildFile ("Audio Files");
+                audio.createDirectory();
+                {
+                    juce::WavAudioFormat wav;
+                    std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (
+                        audio.getChildFile ("Track_03_part02.wav").createOutputStream().release(),
+                        sr, 1, 24, {}, 0));
+                    std::vector<float> dc ((size_t) block, 0.2f);
+                    const float* p = dc.data();
+                    for (int b = 0; b < 4; ++b) w->writeFromFloatArrays (&p, 1, block);
+                }
+                juce::DynamicObject::Ptr m (new juce::DynamicObject());
+                m->setProperty ("track", "Track_03");   m->setProperty ("ext", ".wav");
+                m->setProperty ("firstPart", 1);        m->setProperty ("parts", 1);
+                m->setProperty ("container", 0);        m->setProperty ("bitDepth", 24);
+                m->setProperty ("channels", 1);         m->setProperty ("sampleRate", sr);
+                m->setProperty ("priorLength", 0);      m->setProperty ("timelineStart", 3000);
+                audio.getChildFile ("Pending Lead-ins").createDirectory();
+                audio.getChildFile ("Pending Lead-ins/Track_03.json")
+                     .replaceWithText (juce::JSON::toString (juce::var (m.get())));
+                expect (MultitrackRecorder::recoverInterruptedPunches (audio));
+                const auto t3 = audio.getChildFile ("Track_03.wav");
+                expectEquals (lengthOf (t3), (juce::int64) 3000 + 4 * block);
+                expectWithinAbsoluteError (mean (t3, 3000, 4 * block), 0.2f, 1.0e-3f);
+                expect (! audio.getChildFile ("Pending Lead-ins").exists(), "the marker survived recovery");
+            }
+
+            beginTest ("a lead-in longer than one file fills its reserved parts, none empty");
+            {
+                const auto dir = tempDir ("leadin-split");
+                MultitrackRecorder::setAutoSplitThresholdBytesForTests (20000 * 3);
+                {
+                    MultitrackRecorder rec;
+                    rec.prepare (sr, block, 1);
+                    rec.setCaptureFormat (CaptureFormat::Aiff24);
+                    rec.getTrack (0).armed.store (true);
+                    expect (rec.startRecording (dir));
+                    feed (rec, 1, 0.5f, 90, block);
+                    rec.stopRecording();
+                }
+                MultitrackRecorder rec;
+                rec.prepare (sr, block, 2);
+                rec.setCaptureFormat (CaptureFormat::Aiff24);
+                rec.getTrack (1).armed.store (true);
+                rec.armContinue (0);
+                expect (rec.startRecording (dir), rec.getStartError());
+                feed (rec, 2, -0.3f, 8, block);
+                rec.stopRecording();
+                MultitrackRecorder::setAutoSplitThresholdBytesForTests (0);
+                const auto t2 = dir.getChildFile ("Audio Files/Track_02.aif");
+                const auto parts = findTakeParts (t2);
+                expect (parts.size() >= 4, "a 46080-sample lead-in did not split at a 20000-frame ceiling");
+                juce::AudioFormatManager fm; fm.registerBasicFormats();
+                for (const auto& part : parts)
+                {
+                    std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (part));
+                    expect (r != nullptr && r->lengthInSamples > 0, part.getFileName() + " is empty");
+                }
+                expectEquals (lengthOf (t2), baseLen + 8 * block);
+                expectWithinAbsoluteError (mean (t2, baseLen, 8 * block), -0.3f, 1.0e-3f);
             }
 
             beginTest ("a punch with playback stopped still splices at the armed point");

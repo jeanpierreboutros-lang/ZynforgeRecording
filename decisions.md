@@ -792,6 +792,14 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 **Consequences:** The engine header loses the network API and three forward-declared server types; callers say `engine.getRemotes().startOsc (…)`. The control surface is destroyed earlier in teardown than before (inside `remotes`, not after most engine members), which only shortens the window in which its MIDI thread can reach the engine. Preferences (`appProps`, about 150 uses in `AudioEngine.cpp`) were not moved: they are per-strip engine state, and moving them needs a persistence-layer design rather than a mechanical move.
 
+## Lead-in silence is written after STOP — 2026-10-29
+
+**Context:** A copy with less audio than the take's timeline position needs silence before this pass's audio: a newly armed track on a continue or punch, or a backup/mirror drive added mid-session. That silence was written synchronously inside `startRecording`, before capture went live and under `structureLock`. Two hours into a show, one new track on three copies is about 3 GB; an empty backup added after an hour with 56 tracks is about 29 GB. The UI froze and every track missed audio until the write finished. The pad also ignored the auto-split ceiling.
+
+**Decision:** Capture starts at once. `openTakeWriters` reserves part slots for each such copy (enough to stay under its container's ceiling) and opens the new audio in the part after them. A JSON marker per copy and track records the reservation. During finalization, on the STOP worker, `completeLeadIns` writes the silence into the reserved slots from the real timeline start (a rolling punch's captured origin). It deletes the marker, and only then do the manifest and report enumerate the parts. `recoverInterruptedPunches` completes any marker left by a crash, at session open and at record start.
+
+**Consequences:** RECORD never waits on a lead-in, and the silence write moves to the background finalization. Such a track's take is now two or more files (silence part, then audio part), like any continued take, so every reader must go through `findTakeParts`. After a crash during a rolling punch, recovery sizes the silence from the armed position rather than the captured origin (the origin was only in memory); this is off by the start latency, on a new track only. Alternatives rejected: writing the silence on a background thread during the take, which competes with live capture for the disk; going live first and padding from the writer thread, which overflows the ~5.5 s FIFO on a large pad; and flattening silence and audio into one file at STOP, which rewrites the whole new take and re-splits it at the ceiling.
+
 ## Template
 
 ```

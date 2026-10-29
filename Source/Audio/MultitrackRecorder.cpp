@@ -465,23 +465,13 @@ namespace zynforge
         const int n = juce::jmin (numChannels, (int) fifos.size());
         const bool rec = recording.load (std::memory_order_acquire);
 
-        juce::int64 leadInGap = 0;
         if (rec && playheadAtBlock >= 0 && punchInActive.load (std::memory_order_relaxed))
         {
             juce::int64 unset = -1;
             if (punchCaptureOrigin.compare_exchange_strong (unset, playheadAtBlock,
                                                             std::memory_order_acq_rel))
-            {
                 recordBaseSamples.store (playheadAtBlock, std::memory_order_relaxed);
-                leadInGap = juce::jmax ((juce::int64) 0, playheadAtBlock - punchInPos);
-            }
         }
-        const auto openLeadInGap = [&] (ChannelFifo& fifo, int ch) noexcept
-        {
-            if (leadInGap > 0 && ch < (int) leadInGapTracks.size()
-                && leadInGapTracks[(std::size_t) ch] != 0)
-                fifo.accountCapture (0, (int) juce::jmin (leadInGap, (juce::int64) std::numeric_limits<int>::max()));
-        };
 
         for (int ch = 0; ch < n; ++ch)
         {
@@ -557,7 +547,6 @@ namespace zynforge
                 const int  n0  = juce::jmin (numSamples, (int) scratch.size());
                 if (n0 <= 0) continue;
                 auto& cfz = *fifos[(std::size_t) ch];
-                openLeadInGap (cfz, ch);
                 const auto zs = cfz.fifo.write (cfz.canAcceptAudio() ? n0 : 0);
                 if (zs.blockSize1 > 0)
                     std::memcpy (cfz.data.data() + zs.startIndex1, scratch.data(),
@@ -629,7 +618,6 @@ namespace zynforge
                 t.liveWavePush (src, numSamples);
 
                 auto& cf = *fifos[(std::size_t) ch];
-                openLeadInGap (cf, ch);
                 const auto scope = cf.fifo.write (cf.canAcceptAudio() ? numSamples : 0);
                 const int wrote = scope.blockSize1 + scope.blockSize2;
                 cf.accountCapture (wrote, numSamples);
@@ -670,6 +658,9 @@ namespace zynforge
     {
         if (recovered != nullptr) *recovered = 0;
         if (! audioDir.isDirectory()) return true;
+        // A take interrupted before STOP may still owe a copy its silent
+        // lead-in (see PendingLeadIn); without it the new audio sits early.
+        if (! recoverPendingLeadIns (audioDir)) return false;
 
         juce::Array<juce::File> sidecars;
         for (const auto& file : audioDir.findChildFiles (juce::File::findFiles, false,
@@ -881,8 +872,8 @@ namespace zynforge
         // sidecars stay on disk under their .punchbase names, so the existing
         // take is renamed-aside, never lost.) The success path -- at least one
         // primary writer open -- is unchanged.
-        const bool padded = padNewTrackLeadIns (take);
-        if (! padded || take.primaryAttempts == 0 || take.primaryOpened != take.primaryAttempts)
+        const bool marked = writeLeadInMarkers (take);
+        if (! marked || take.primaryAttempts == 0 || take.primaryOpened != take.primaryAttempts)
         {
             abandonTakeStart (take);
             return false;
@@ -1470,6 +1461,37 @@ namespace zynforge
         // open, so a disk-full / read-only / permissions failure at record
         // start is treated as the hard error it is instead of being swallowed.
 
+        // A copy with less audio than the timeline position gets a silent
+        // lead-in, written after STOP into part slots reserved here (see
+        // PendingLeadIn). Returns the part this pass's audio opens at.
+        pendingLeadIns.clear();
+        const bool editPass = (continueAsPart || punchInActive) && recordBaseSamples > 0;
+        const auto reserveLeadIn = [&] (std::size_t track, int copyIndex, const juce::File& dir,
+                                        const juce::String& trackName, const TakeFormat& fmt,
+                                        int chans, int nextPart, juce::int64 prior)
+        {
+            if (! editPass || (! continueAsPart && take.hadPrimaryBase[track])) return nextPart;
+            const juce::int64 base = recordBaseSamples;
+            if (base <= prior) return nextPart;
+            PendingLeadIn lead;
+            lead.audioDir = dir;           lead.trackName = trackName;  lead.ext = fmt.ext;
+            lead.container = fmt.container; lead.bitDepth = fmt.bitDepth; lead.channels = chans;
+            lead.sampleRate = sampleRate;  lead.priorLength = prior;    lead.timelineStart = base;
+            lead.firstPart = nextPart;     lead.copyIndex = copyIndex;
+            // Enough slots to stay under the container's ceiling. A punch
+            // starts capturing a little after it was armed (punchCaptureOrigin),
+            // so allow a minute more than the armed position.
+            const juce::int64 frameBytes = (juce::int64) juce::jmax (1, chans) * juce::jmax (1, fmt.bitDepth / 8);
+            const juce::int64 maxFrames = juce::jmax ((juce::int64) 1,
+                                                      (maxBytesForContainer (fmt.container) - 1) / frameBytes);
+            const juce::int64 estimate = base - prior
+                + (punchInActive ? (juce::int64) (sampleRate * 60.0) : 0);
+            lead.parts = estimate <= maxFrames ? 1
+                       : (int) juce::jmin ((juce::int64) 999, 1 + (estimate - 1) / maxFrames);
+            pendingLeadIns.push_back (lead);
+            return nextPart + lead.parts;
+        };
+
         for (std::size_t i = 0; i < tracks.size(); ++i)
         {
             WriterChannel w;
@@ -1527,6 +1549,13 @@ namespace zynforge
                 primaryFile = pf;
                 w.partNumberPrimary = pn;
             }
+            if (const int part = reserveLeadIn (i, 0, audioFilesDir, trackName, primary, chans,
+                                                w.partNumberPrimary, take.previousLengths[i]);
+                part != w.partNumberPrimary)
+            {
+                primaryFile = partFileFor (audioFilesDir, trackName, primary.ext, part);
+                w.partNumberPrimary = part;
+            }
             invalidateReportsBeforeMediaMutation (take);
             w.writer.reset (openWriterAtPath (primaryFile, primary.container, primary.bitDepth, chans));
             ++primaryAttempts;
@@ -1552,6 +1581,13 @@ namespace zynforge
                     auto [bf, bn] = nextContinuationPart (backupAudioDir, trackName, backup.ext);
                     backupFile = bf;
                     w.partNumberBackup = bn;
+                }
+                if (const int part = reserveLeadIn (i, 1, backupAudioDir, trackName, backup, chans,
+                                                    w.partNumberBackup, take.backupLengths[i]);
+                    part != w.partNumberBackup)
+                {
+                    backupFile = partFileFor (backupAudioDir, trackName, backup.ext, part);
+                    w.partNumberBackup = part;
                 }
                 w.backupWriter.reset (openWriterAtPath (backupFile, backup.container, backup.bitDepth, chans));
                 w.backupBaseFile       = backupAudioDir.getChildFile (trackName);
@@ -1586,6 +1622,13 @@ namespace zynforge
                     mFile = mf;
                     mPart = mn;
                 }
+                if (const int part = reserveLeadIn (i, 2 + (int) mirrorIndex, mirrorSession, trackName, mFmt,
+                                                    chans, mPart, take.mirrorLengths[mirrorIndex][i]);
+                    part != mPart)
+                {
+                    mFile = partFileFor (mirrorSession, trackName, mFmt.ext, part);
+                    mPart = part;
+                }
                 WriterChannel::Mirror m;
                 m.partNumber = mPart;
                 m.writer.reset (openWriterAtPath (mFile, mFmt.container, mFmt.bitDepth, chans));
@@ -1616,65 +1659,143 @@ namespace zynforge
         }
     }
 
-    bool MultitrackRecorder::padNewTrackLeadIns (TakeStart& take)
+    // Persist each reservation openTakeWriters made, so a crash before STOP
+    // can still complete the lead-in on the next session open. A copy whose
+    // writer never opened records nothing this pass and needs no silence.
+    bool MultitrackRecorder::writeLeadInMarkers (TakeStart& take)
     {
-        auto& hadPrimaryBase = take.hadPrimaryBase;
-        auto& previousLengths = take.previousLengths;
-        auto& backupLengths = take.backupLengths;
-        auto& mirrorLengths = take.mirrorLengths;
-
-        // A newly armed track in an existing session has no earlier media.
-        // Its first sample must occur at the current punch/continue position,
-        // not at time zero. A flat capture file needs an explicit silent lead-
-        // in so playback, raw export and every DAW agree on its alignment.
-        // Do this before capture goes live; pre-roll is disabled for these
-        // edit passes so no history can shift the boundary back again.
-        bool paddingFailed = false;
-        leadInGapTracks.assign (tracks.size(), 0);
-        if ((continueAsPart || punchInActive) && recordBaseSamples > 0)
+        juce::ignoreUnused (take);
+        bool ok = true;
+        std::vector<PendingLeadIn> kept;
+        for (const auto& lead : pendingLeadIns)
         {
-            constexpr int kPadBlock = 16384;
-            const std::vector<float> zeros ((std::size_t) kPadBlock, 0.0f);
-            const float* channels[2] { zeros.data(), zeros.data() };
-            for (std::size_t i = 0; i < writers.size(); ++i)
+            if (! partFileFor (lead.audioDir, lead.trackName, lead.ext,
+                               lead.firstPart + lead.parts).existsAsFile()) continue;
+            juce::DynamicObject::Ptr m (new juce::DynamicObject());
+            m->setProperty ("track",         lead.trackName);
+            m->setProperty ("ext",           lead.ext);
+            m->setProperty ("firstPart",     lead.firstPart);
+            m->setProperty ("parts",         lead.parts);
+            m->setProperty ("container",     lead.container);
+            m->setProperty ("bitDepth",      lead.bitDepth);
+            m->setProperty ("channels",      lead.channels);
+            m->setProperty ("sampleRate",    lead.sampleRate);
+            m->setProperty ("priorLength",   lead.priorLength);
+            m->setProperty ("timelineStart", lead.timelineStart);
+            const auto marker = leadInMarkerFor (lead);
+            if (! marker.getParentDirectory().createDirectory().wasOk()
+                || ! atomicfile::writeText (marker, juce::JSON::toString (juce::var (m.get()))))
             {
-                if (! writers[i].active || (! continueAsPart && hadPrimaryBase[i])) continue;
-                auto& w = writers[i];
-                if (punchInActive)
-                    for (int c = 0; c < w.numChannels && i + (std::size_t) c < leadInGapTracks.size(); ++c)
-                        leadInGapTracks[i + (std::size_t) c] = 1;
-                const auto pad = [&] (auto& writer, juce::int64 priorLength, int bytesPerSample,
-                                      juce::int64& samples, juce::int64& bytes)
-                {
-                    if (writer == nullptr) return false;
-                    for (auto remaining = recordBaseSamples - priorLength; remaining > 0;)
-                    {
-                        const int count = (int) juce::jmin ((juce::int64) kPadBlock, remaining);
-                        if (! writer->writeFromFloatArrays (channels, w.numChannels, count))
-                        { writer.reset(); return false; }
-                        samples += count;
-                        bytes += (juce::int64) count * w.numChannels * bytesPerSample;
-                        remaining -= count;
-                    }
-                    return true;
-                };
-                if (! pad (w.writer, previousLengths[i], w.bytesPerSamplePrimary,
-                           w.totalSamplesPrimary, w.bytesWrittenPrimary))
-                { primaryFailed.store (true); paddingFailed = true; }
-                if (w.backupWriter && ! pad (w.backupWriter, backupLengths[i], w.bytesPerSampleBackup,
-                                             w.totalSamplesBackup, w.bytesWrittenBackup))
-                    backupFailed.store (true);
-                for (std::size_t mi = 0; mi < w.mirrors.size(); ++mi)
-                {
-                    auto& mirror = w.mirrors[mi];
-                    if (mirror.writer && ! pad (mirror.writer, mirrorLengths[mi][i], mirror.bytesPerSample,
-                                                mirror.totalSamples, mirror.bytesWritten))
-                    { mirror.failed = true; mirrorFailed.store (true); }
-                }
-                if (paddingFailed) break;
+                // Without its marker a crash would leave this copy's new audio
+                // at the wrong place. The primary refuses the take; a backup or
+                // mirror copy is reported as failed.
+                if (lead.audioDir == take.audioFilesDir) ok = false;
+                else if (lead.audioDir == take.backupAudioDir) backupFailed.store (true);
+                else mirrorFailed.store (true);
             }
+            kept.push_back (lead);
         }
-        return ! paddingFailed;
+        pendingLeadIns = std::move (kept);
+        if (! ok) startError = "Recording refused: the lead-in marker could not be written; check the recording drive.";
+        return ok;
+    }
+
+    juce::File MultitrackRecorder::partFileFor (const juce::File& audioDir, const juce::String& trackName,
+                                                const juce::String& ext, int part)
+    {
+        return part <= 1 ? audioDir.getChildFile (trackName + ext)
+                         : audioDir.getChildFile (trackName + "_part"
+                               + juce::String::formatted ("%02d", part) + ext);
+    }
+
+    juce::File MultitrackRecorder::leadInMarkerFor (const PendingLeadIn& lead)
+    {
+        return lead.audioDir.getChildFile ("Pending Lead-ins").getChildFile (lead.trackName + ".json");
+    }
+
+    bool MultitrackRecorder::writeSilenceFile (const juce::File& file, int container, int bits,
+                                               int chans, double sampleRate, juce::int64 frames)
+    {
+        file.deleteFile();
+        std::unique_ptr<juce::FileOutputStream> os (file.createOutputStream());
+        if (os == nullptr) return false;
+        const auto channels = (unsigned int) juce::jmax (1, chans);
+        std::unique_ptr<juce::AudioFormatWriter> w;
+        if (container == 2)
+            w.reset (juce::FlacAudioFormat().createWriterFor (os.get(), sampleRate, channels, bits, {}, 5));
+        else if (container == 1)
+            w.reset (bits == 32 ? FloatAiffWriter::create (os.get(), sampleRate, channels)
+                                : juce::AiffAudioFormat().createWriterFor (os.get(), sampleRate, channels, bits, {}, 0));
+        else
+            w.reset (juce::WavAudioFormat().createWriterFor (os.get(), sampleRate, channels, bits, {}, 0));
+        if (w == nullptr) { os.reset(); file.deleteFile(); return false; }
+        os.release();
+
+        constexpr int kBlock = 16384;
+        const std::vector<float> zeros ((std::size_t) kBlock, 0.0f);
+        const float* planes[2] { zeros.data(), zeros.data() };
+        bool ok = true;
+        for (auto remaining = frames; ok && remaining > 0;)
+        {
+            const int count = (int) juce::jmin ((juce::int64) kBlock, remaining);
+            ok = w->writeFromFloatArrays (planes, (int) channels, count);
+            remaining -= count;
+        }
+        if (ok) ok = flushFloatAiffBeforeClose (w.get());
+        w.reset();
+        if (! ok) file.deleteFile();
+        return ok;
+    }
+
+    bool MultitrackRecorder::writeLeadIn (const PendingLeadIn& lead, juce::int64 timelineStart)
+    {
+        // No audio reached this copy this pass: nothing to align.
+        if (! partFileFor (lead.audioDir, lead.trackName, lead.ext,
+                           lead.firstPart + lead.parts).existsAsFile()) return true;
+        const auto silence = juce::jmax ((juce::int64) 0, timelineStart - lead.priorLength);
+        const int parts = juce::jmax (1, lead.parts);
+        // Spread evenly so no reserved slot is left empty; each share stays
+        // under the container's ceiling because the slots were sized for it.
+        for (int p = 0; p < parts; ++p)
+        {
+            const auto share = silence / parts + (p < silence % parts ? 1 : 0);
+            if (! writeSilenceFile (partFileFor (lead.audioDir, lead.trackName, lead.ext, lead.firstPart + p),
+                                    lead.container, lead.bitDepth, lead.channels, lead.sampleRate, share))
+                return false;
+        }
+        return true;
+    }
+
+    bool MultitrackRecorder::recoverPendingLeadIns (const juce::File& audioDir)
+    {
+        const auto folder = audioDir.getChildFile ("Pending Lead-ins");
+        if (! folder.isDirectory()) return true;
+        bool ok = true;
+        for (const auto& marker : folder.findChildFiles (juce::File::findFiles | juce::File::ignoreHiddenFiles,
+                                                         false, "*.json"))
+        {
+            const auto v = juce::JSON::parse (marker);
+            if (! v.isObject()) { ok = false; continue; }
+            PendingLeadIn lead;
+            lead.audioDir      = audioDir;
+            lead.trackName     = v["track"].toString();
+            lead.ext           = v["ext"].toString();
+            lead.firstPart     = (int) v["firstPart"];
+            lead.parts         = (int) v["parts"];
+            lead.container     = (int) v["container"];
+            lead.bitDepth      = (int) v["bitDepth"];
+            lead.channels      = (int) v["channels"];
+            lead.sampleRate    = (double) v["sampleRate"];
+            lead.priorLength   = (juce::int64) v["priorLength"];
+            lead.timelineStart = (juce::int64) v["timelineStart"];
+            if (! lead.trackName.startsWith ("Track_") || lead.ext.isEmpty() || lead.parts < 1
+                || lead.firstPart < 1 || lead.sampleRate <= 0.0)
+            { ok = false; continue; }
+            if (writeLeadIn (lead, lead.timelineStart)) marker.deleteFile();
+            else ok = false;
+        }
+        if (folder.getNumberOfChildFiles (juce::File::findFilesAndDirectories) == 0) folder.deleteFile();
+        return ok;
     }
 
     // Undo a start that opened writers but cannot go live: close them, delete
@@ -1707,6 +1828,12 @@ namespace zynforge
             }
         closeWriters();
         for (const auto& f : unusedNewFiles) f.deleteFile();
+        for (const auto& lead : pendingLeadIns)
+        {
+            leadInMarkerFor (lead).deleteFile();
+            partFileFor (lead.audioDir, lead.trackName, lead.ext, lead.firstPart + lead.parts).deleteFile();
+        }
+        pendingLeadIns.clear();
         restorePunchStashes (take);
     }
 
@@ -2019,6 +2146,7 @@ namespace zynforge
         double      totalSeconds {};
         bool        backupWasRunning {}, backupHadFailure {};
         bool        doPunch {};
+        juce::int64 timelineStart {};   // where this pass sits on the timeline (punch origin aware)
         std::vector<WriterReport>     writers;
         std::vector<PunchWriterFiles> punchFiles;
     };
@@ -2067,6 +2195,7 @@ namespace zynforge
         reattachWriterShards();
 
         if (stop.doPunch) splicePunchedTracks (stop);
+        completeLeadIns (stop);
         punchInActive     = false;
         continueAsPart    = false;   // consume the continue arm
         recordBaseSamples = 0;
@@ -2078,6 +2207,30 @@ namespace zynforge
         // Clean stop -- remove the recovery marker.
         if (activeSessionDir.isDirectory())
             activeSessionDir.getChildFile ("recording.session").deleteFile();
+    }
+
+    // Fill the lead-in slots reserved at start now that the pass's real
+    // timeline start is known (a rolling punch begins where capture began).
+    // Runs before the manifest, so the report lists the silence parts too.
+    void MultitrackRecorder::completeLeadIns (const TakeStop& stop)
+    {
+        for (const auto& lead : pendingLeadIns)
+        {
+            if (writeLeadIn (lead, stop.timelineStart))
+            {
+                const auto marker = leadInMarkerFor (lead);
+                marker.deleteFile();
+                const auto folder = marker.getParentDirectory();
+                if (folder.getNumberOfChildFiles (juce::File::findFilesAndDirectories) == 0)
+                    folder.deleteFile();
+                continue;
+            }
+            // The marker stays, so the next session open retries the write.
+            if (lead.copyIndex == 0)      primaryFailed.store (true, std::memory_order_relaxed);
+            else if (lead.copyIndex == 1) backupFailed .store (true, std::memory_order_relaxed);
+            else                          mirrorFailed .store (true, std::memory_order_relaxed);
+        }
+        pendingLeadIns.clear();
     }
 
     void MultitrackRecorder::quiesceWritersForStop()
@@ -2126,6 +2279,7 @@ namespace zynforge
         // auto-split logic.
         stop.writers.reserve (writers.size());
         stop.doPunch = punchInActive;
+        stop.timelineStart = recordBaseSamples;
         for (auto& wc : writers)
         {
             TakeStop::WriterReport wr { wc.totalSamplesPrimary, wc.totalSamplesBackup,
