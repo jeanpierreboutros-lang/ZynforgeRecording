@@ -23,6 +23,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed — October bug hunt: network and remote control
+
+- One crafted UDP packet of nested OSC bundles from any host on the network can no longer crash the recorder: the OSC listener and the console link parse packets with a depth-capped, bounds-checked parser (`OscPacketReceiver`).
+- The companion's RECORD button only starts recording; two taps during a take no longer stop it.
+- Console trim readings that are not finite are ignored and the rest are limited to a real preamp range, so trim-follow can no longer drive soundcheck playback to full scale or NaN.
+- A dropped Yamaha or Allen & Heath console connection is now reported and shown as disconnected instead of "up" for the rest of the show.
+- A deeply nested command body sent to the companion is rejected instead of crashing the app; closed audition streams release their connection even while audio is stopped; quitting or restarting the companion no longer freezes for 5 s when a command arrives at that moment.
+- Head-amp gains captured from an X32/M32 are range-checked, so a bad reply can never be written back to the desk.
+
+### Fixed — October bug hunt: clip editing, analysis and file exchange
+
+- Clear Range, Ripple Delete, Comp and Consolidate cut every overlapping clip at the range edges, so no clip keeps playing inside the range and Consolidate no longer doubles audio.
+- Undoing a paste onto a never-recorded strip removes the pasted clip from playback, bounce and EDIT.
+- Clips on strips above the last recorded track keep playing after a take stop or reload, and audio recorded onto such a strip joins its arrangement.
+- QC, the noise report, song detection and Tab transients ignore `Track_NN_consolidated_K` renders and punch sidecars: no duplicate rows or phantom song markers.
+- Channel-name CSV import keeps every name on its channel number, including blank-name rows, numbering gaps and "Ch 1"-style labels.
+- Trimming a clip below its fade lengths shrinks the fades; Strip Silence no longer deletes muted clips.
+- The handoff timeline CSV lists the files each strip actually reads (stereo channel and every continuation part) and uses the learned house frame rate.
+- Tab-to-transient covers the whole take (it stopped after 30 minutes) and lands where the edited arrangement plays each transient.
+
 ### Fixed — October bug hunt: punch, capture and session safety
 
 - **Loop or a playhead jump during a punch no longer overwrites audio after the punch-out.** A punch take now locks the playhead and loop until it stops (`SessionPlayer::setSeekLocked`, set by `AudioEngine::startRecording`, cleared by both stop paths). Cue recall, marker jumps, nudges, EDIT/ruler clicks and the MCU jog no longer move it mid-punch (the mixer part of a cue recall still applies), and the transport Loop button refuses to turn on during PUNCH mode or any take.
@@ -37,7 +57,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - New Session clears the previous session's undo history; Cmd+Z can no longer apply session A's clip and mixer edits to session B. The Undo/Redo status line names the step it actually undid.
 - Session ▸ Analysis (noise, QC, song detection) refuses during a take or session job; song markers go through the same edit gate as every other timeline edit.
 - Crash recovery: a daemon take is reattached before the recovery scan and never offered for Delete; Recover clears the crash marker only after the session actually opened, and reports the real error otherwise.
-- Sessions on exFAT/FAT/SMB: the project lookup ignores macOS AppleDouble `._X.zfproj` files, which could make a session load without cues or automation and refuse every save.
+- The project-file lookup skips hidden files. (The reported AppleDouble `._X.zfproj` case did not reproduce: macOS's directory listing already hides those files.)
 - Mixer and patch: stereo link/unlink during a take no longer re-pans the pair; "Delete channel" during a take no longer freezes the strip's meter; a linked input/output patch change during a take is refused whole instead of half-applied; Move up/down at the list edge no longer swaps the selected strips with each other; VCA Unassign clears both halves of a stereo pair; LOCK also locks the VCA panel and the floating PATCH and DEVICE windows.
 - Closing the DEVICE panel without Apply only reverts a change the panel itself made, and only if nothing else has changed the device since.
 - A tempo change during a take re-renders the click track once the take ends.
