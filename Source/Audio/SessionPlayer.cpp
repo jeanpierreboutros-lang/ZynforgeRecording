@@ -660,7 +660,6 @@ namespace zynforge
                     const juce::int64 spanOffsetInClip = ovStartTL - c.timelineStartSamples;
                     const juce::int64 fIn  = c.fadeInSamples;
                     const juce::int64 fOut = c.fadeOutSamples;
-                    const juce::int64 fOutStart = c.fileLengthSamples - fOut;
                     const float clipGain = juce::Decibels::decibelsToGain (c.gainDb, -60.0f);
                     // ACCUMULATE into dst (out was cleared once before the clip
                     // loop). For non-overlapping clips the destination span is
@@ -681,23 +680,10 @@ namespace zynforge
                     }
                     else
                     {
-                        const bool equalPower = (c.fadeCurve == 1);
+                        // clipFadeGain is shared with the offline renders
+                        // (ClipModel.h), so monitor == render here too.
                         for (int i = 0; i < spanLen; ++i)
-                        {
-                            const juce::int64 clipPos = spanOffsetInClip + i;
-                            float gain = clipGain;
-                            if (fIn > 0 && clipPos < fIn)
-                            {
-                                const float t = (float) clipPos / (float) fIn;
-                                gain *= equalPower ? std::sin (t * 1.57079633f) : t;
-                            }
-                            else if (fOut > 0 && clipPos >= fOutStart)
-                            {
-                                const float t = (float) (c.fileLengthSamples - clipPos) / (float) fOut;
-                                gain *= equalPower ? std::sin (t * 1.57079633f) : t;
-                            }
-                            dst[i] += src[i] * gain;
-                        }
+                            dst[i] += src[i] * (clipGain * clipFadeGain (c, spanOffsetInClip + i));
                     }
                 }
                 if (playableThisBlock < numSamples)
