@@ -757,7 +757,10 @@ poll();
                 else if (act == "stop")
                     actionToRun = AudioEngine::RemoteTransportAction::StopAll;
                 else
-                    actionToRun = AudioEngine::RemoteTransportAction::ToggleRecord;
+                    // RECORD only ever starts. A toggle meant STOP during a
+                    // take, so a double-tap "to make sure" ended the live
+                    // recording. STOP keeps its own button and two-tap guard.
+                    actionToRun = AudioEngine::RemoteTransportAction::StartRecord;
 
                 juce::String error;
                 const bool ok = eng->performRemoteTransport (actionToRun, error);

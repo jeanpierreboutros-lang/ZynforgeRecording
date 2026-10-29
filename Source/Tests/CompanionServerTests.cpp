@@ -8,10 +8,14 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../Audio/AudioEngine.h"
+#include "../Network/CompanionServer.h"
 #include "../Network/CompanionStreamFormat.h"
 
 #include <atomic>
 #include <thread>
+#if JUCE_MAC
+ #include <CoreFoundation/CoreFoundation.h>
+#endif
 
 namespace zynforge
 {
@@ -91,6 +95,31 @@ namespace zynforge
                 }
             }
             return mb.toString();
+        }
+
+        // Run the message loop (the /cmd worker marshals transport onto it)
+        // until `predicate` holds or the timeout passes.
+        static bool pumpUntil (const std::function<bool()>& predicate, int timeoutMs)
+        {
+            const auto end = juce::Time::getMillisecondCounterHiRes() + timeoutMs;
+            while (! predicate() && juce::Time::getMillisecondCounterHiRes() < end)
+            {
+               #if JUCE_MAC
+                CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.005, true);
+               #elif JUCE_MODAL_LOOPS_PERMITTED
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (5);
+               #else
+                juce::Thread::sleep (5);
+               #endif
+            }
+            return predicate();
+        }
+
+        static int startOnFreePort (CompanionServer& server, int first)
+        {
+            for (int p = first; p < first + 10; ++p)
+                if (server.start (p)) return p;
+            return 0;
         }
 
         static void sendInvalidUtf8Request (int port)
@@ -318,6 +347,42 @@ namespace zynforge
                                     "stop waited for the five-second transport timeout");
                     expect (response.contains ("409") || response.isEmpty(),
                             "cancelled transport returned an unexpected response");
+                }
+            }
+
+            beginTest ("Companion RECORD only ever starts a take, never stops one");
+            {
+                // The phone's RECORD button mapped to ToggleRecord, which the
+                // host treats as STOP while a take is rolling: a double-tap
+                // "to make sure" armed and then fired the two-tap STOP.
+                AudioEngine engine;
+                std::vector<AudioEngine::RemoteTransportAction> actions;   // message thread only
+                engine.setRemoteTransportHandler ([&] (auto action, juce::String&) -> std::optional<bool>
+                {
+                    actions.push_back (action);
+                    return true;
+                });
+                CompanionServer server (engine);
+                const int port = startOnFreePort (server, 19400);
+                expect (port != 0, "companion server failed to start");
+                if (port != 0)
+                {
+                    const auto tok = server.getAccessToken();
+                    std::atomic<bool> finished { false };
+                    juce::String response;
+                    std::thread requester ([&]
+                    {
+                        response = httpPost (port, "/cmd?t=" + tok, "{\"action\":\"record\"}");
+                        finished.store (true);
+                    });
+                    pumpUntil ([&] { return finished.load(); }, 3000);
+                    requester.join();
+                    expect (response.contains ("200"), response);
+                    expectEquals ((int) actions.size(), 1);
+                    if (! actions.empty())
+                        expect (actions[0] == AudioEngine::RemoteTransportAction::StartRecord,
+                                "companion RECORD reached the host as a toggle that STOPs a rolling take");
+                    server.stop();
                 }
             }
             AudioEngine::setTestModeSkipAudioInit (false);
