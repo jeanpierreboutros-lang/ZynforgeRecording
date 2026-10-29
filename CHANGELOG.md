@@ -23,6 +23,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed — October bug hunt: EDIT view
+
+- Clicking a Waveform, Markers or Click lane no longer adds, deletes or drags automation you can't see, or writes the tempo map; each row draws, labels and edits the same automation lane.
+- Dragging an automation point over its neighbour no longer deletes the neighbour.
+- Clip right-click actions on a stereo row apply to both halves, and on an edit group each track's own clip under the clicked one is changed, never whichever clip shares its index. Takes and comps keep left and right on the same arrangement.
+- Deep zoom no longer freezes the UI: the waveform reads only the part of the take that is on screen.
+- The "REC EDIT LOCKED" lock no longer flickers after STOP and holds until finalization and saving finish; a drag in progress stops editing when recording starts. After STOP, EDIT waits for the take files to finalize before rescanning, so the end of the take shows without reopening the session.
+- A clip dragged past the end of the session stays under the mouse; a clip moved past its neighbour no longer shows a fake crossfade; a clip too narrow to show its gain handle no longer steals clicks.
+- The waveform under automation lanes lines up with the audio; moving, deleting or relinking strips, or changing session, clears the clip selection.
+- The ruler readout rolls 1:23.97 to 1:24.0 (it showed 1:23.10); Zoom to Selection puts the whole selection on screen, clear of the track headers.
+
 ### Fixed — October bug hunt: network and remote control
 
 - One crafted UDP packet of nested OSC bundles from any host on the network can no longer crash the recorder: the OSC listener and the console link parse packets with a depth-capped, bounds-checked parser (`OscPacketReceiver`).
