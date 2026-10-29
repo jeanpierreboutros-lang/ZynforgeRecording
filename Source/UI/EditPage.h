@@ -338,6 +338,7 @@ namespace zynforge
         int        lastTrackGen    { -1 };   // rebuild on a stereo link/unlink (count unchanged, generation bumps)
         bool       lastLoaded      { false };
         bool       lastRecording   { false };
+        bool       lastFinalizing  { false };   // async STOP still finalizing on the last tick
         juce::int64 recordingBaseSpanSamples { 0 };
         bool       waveCacheSaved  { false };   // WaveCache.wfm written for this session yet?
         juce::File lastSessionDir;

@@ -807,7 +807,13 @@ namespace zynforge
         // row keeps showing its already-recorded waveform -- arming one track
         // and rolling no longer blanks the tracks you captured earlier. The
         // armed rows' real waveforms scan in once, cleanly, on stop.
-        if (engine.isRecording())
+        if (engine.isCaptureFinalizing())
+        {
+            // An async STOP is still draining, closing and (for a punch)
+            // splicing the take files. Leave every row on what it showed during
+            // the take; timerCallback refreshes and rescans once it settles.
+        }
+        else if (engine.isRecording())
         {
             // A normal take is being WRITTEN to its file -> skip the armed rows
             // (scanning a growing file paints garbage; the live envelope owns
@@ -944,6 +950,9 @@ namespace zynforge
         // session loaded, session changed, ...
         const bool loaded = engine.getPlayer().isLoaded();
         const bool rec    = engine.isRecording();
+        // A local STOP clears `recording` at once, but the take files are
+        // drained, closed and (for a punch) spliced on a worker afterwards.
+        const bool finalizing = engine.isCaptureFinalizing();
         const auto& player = engine.getPlayer();
         const double liveRate = engine.getDeviceSampleRate() > 0.0
             ? engine.getDeviceSampleRate()
@@ -974,6 +983,10 @@ namespace zynforge
             || wasTransportActive != followState.isTransportActive())
             syncFollowButton();
         const bool recJustStopped = (! rec && lastRecording);
+        // The take files are final: recording over AND finalization done. A
+        // synchronous stop settles on the same tick `recording` clears.
+        const bool captureJustSettled = ! rec && ! finalizing && (lastRecording || lastFinalizing);
+        lastFinalizing = finalizing;
 
         // Live capture envelope: arming is now SELF-DRIVEN per row inside
         // pushRecLevels (below), every tick, from the live recording+armed
@@ -988,7 +1001,8 @@ namespace zynforge
         // thumbnail scans in -- the lane shows the just-captured waveform
         // instantly instead of blanking for the duration of the scan.
         if (recJustStopped && list != nullptr) list->holdLiveEnvelopesUntilScanned();
-        if (loaded != lastLoaded || rec != lastRecording || engine.getActiveSessionDir() != lastSessionDir)
+        if (loaded != lastLoaded || rec != lastRecording || captureJustSettled
+            || engine.getActiveSessionDir() != lastSessionDir)
         {
             if (engine.getActiveSessionDir() != lastSessionDir)
                 waveCacheSaved = false;   // new session -> its cache needs (re)writing
@@ -1004,7 +1018,10 @@ namespace zynforge
 
         // Drop pre-recording peaks before testing whether the scan is complete.
         // Saving first could mark an old cache as final for this session.
-        if (recJustStopped && list != nullptr)
+        // Wait for the capture to SETTLE: rescanning at the STOP edge read
+        // files an async finalization still had open (the last ~5 s missing,
+        // a punch not yet spliced) and nothing rescanned once it completed.
+        if (captureJustSettled && list != nullptr)
             list->forceRefreshWaveforms();
 
         // Persist WaveCache.wfm as soon as the background scan finishes for the
@@ -1014,7 +1031,7 @@ namespace zynforge
         // freshly-imported session that wasn't quit cleanly re-scanned on the
         // next open. Done once per session; skipped while recording (files
         // still growing).
-        if (! waveCacheSaved && ! rec && list != nullptr && list->rowCount() > 0
+        if (! waveCacheSaved && ! rec && ! finalizing && list != nullptr && list->rowCount() > 0
             && engine.getActiveSessionDir().isDirectory()
             && list->allWaveformsLoaded())
         {

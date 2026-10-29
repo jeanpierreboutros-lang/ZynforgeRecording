@@ -1541,7 +1541,9 @@ namespace zynforge
             // -- from here on the file waveform owns the lane. Until then,
             // `showLive` keeps the just-captured envelope on screen so the lane
             // is never blank while the background scan runs.
-            if (liveHold && waveformsLoaded()) liveHold = false;
+            // Not while an async STOP still finalizes: the armed rows have no
+            // file yet (the settle rescan attaches it), so "loaded" is vacuous.
+            if (liveHold && waveformsLoaded() && ! engine.isCaptureFinalizing()) liveHold = false;
             const bool showLive = liveRecording || liveHold;
             // While CAPTURING (or holding the just-captured envelope), the live
             // forge-orange overlay OWNS the lane -- even on a take that already
@@ -3390,6 +3392,7 @@ namespace zynforge
         juce::String getInputRoutingTextForTests()  const { return inputCombo.getText(); }
         juce::String getOutputRoutingTextForTests() const { return outputCombo.getText(); }
         bool         isCondemnedForTests()   const noexcept { return ! rowValid; }
+        double       getWaveformSecondsForTests() const { return thumbnailL.getTotalLength(); }
 
         // Physical tracks this row's clip edits propagate to: itself plus
         // every member of its EDIT group (so split / trim / move / fade /

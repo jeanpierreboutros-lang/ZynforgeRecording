@@ -661,6 +661,59 @@ namespace zynforge
                 }
             }
 
+            // ── #7: the post-STOP rescan waits for async finalization ────────
+            beginTest ("After an async STOP the EDIT waveform shows the finalized take");
+            {
+                const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getChildFile ("zf-editaudit-stop-" + juce::Uuid().toString());
+                expect (dir.createDirectory().wasOk());
+                {
+                    AudioEngine engine;
+                    engine.clearAllStripOverrides();
+                    constexpr int block = 256, blocks = 188;   // ~1 s
+                    engine.setStripCount (1);
+                    engine.prepareForTests (48000, block);
+                    auto& recorder = engine.getRecorder();
+                    recorder.getTrack (0).armed.store (true);
+                    engine.setActiveSessionDir (dir);   // a session is open before the take, as in the app
+
+                    EditPage page (engine);
+                    page.setBounds (0, 0, 1400, 300);
+                    page.refresh();
+
+                    expect (engine.startRecording (dir));
+                    pumpUntil ([] { return false; }, 120);    // the page sees the take roll
+                    std::vector<float> audio ((size_t) block, 0.5f);
+                    const float* input[] { audio.data() };
+                    for (int b = 0; b < blocks; ++b) recorder.processBlock (input, 1, block);
+
+                    juce::WaitableEvent entered, release;
+                    std::atomic<bool> completed { false };
+                    recorder.beforeFinalizationForTests = [&] { entered.signal(); release.wait (5000); };
+                    const juce::ScopeGuard releaseWorker { [&] { release.signal(); } };
+                    expect (engine.stopRecordingAsync ([&] (bool) { completed = true; }));
+                    expect (entered.wait (2000), "STOP never reached finalization");
+                    pumpUntil ([] { return false; }, 200);    // page ticks while the files are still open
+                    release.signal();
+                    expect (pumpUntil ([&] { return completed.load(); }, 10000), "STOP did not complete");
+
+                    auto rows = rowsOf (page);
+                    expect (rows.size() == 1, "setup: one row");
+                    const double takeSec = (double) (block * blocks) / 48000.0;
+                    if (rows.size() == 1)
+                    {
+                        pumpUntil ([&] { return rows[0]->waveformsLoaded()
+                                             && std::abs (rows[0]->getWaveformSecondsForTests() - takeSec) < 0.01; },
+                                   5000);
+                        expectWithinAbsoluteError (rows[0]->getWaveformSecondsForTests(), takeSec, 0.01,
+                                                   "the lane kept the waveform scanned while the take was still open");
+                    }
+                    engine.clearAllStripOverrides();
+                }
+                MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
+                dir.deleteRecursively();
+            }
+
             //@@MORE_TESTS@@
 
             AudioEngine::setTestModeSkipAudioInit (false);
