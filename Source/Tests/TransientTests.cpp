@@ -101,6 +101,42 @@ namespace zynforge
                 // Steady noise floor shouldn't produce false positives.
                 expect ((int) onsets.size() <= 1);
             }
+
+            beginTest ("detectInFile finds onsets past the first 30 minutes of a take");
+            {
+                // 1 kHz keeps a 35-minute file small (~4 MB at 16-bit).
+                const double sr = 1000.0;
+                const juce::int64 len = (juce::int64) (sr * 60.0 * 35.0);
+                const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                      .getChildFile ("zf-transient-long-" + juce::Uuid().toString() + ".wav");
+                const juce::int64 early = (juce::int64) (sr * 60.0 * 10.0);
+                const juce::int64 late  = (juce::int64) (sr * 60.0 * 33.0);
+                {
+                    juce::WavAudioFormat wav;
+                    std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (
+                        file.createOutputStream().release(), sr, 1, 16, {}, 0));
+                    expect (w != nullptr);
+                    juce::AudioBuffer<float> block (1, 60000);
+                    for (juce::int64 at = 0; w != nullptr && at < len; at += 60000)
+                    {
+                        const int n = (int) juce::jmin ((juce::int64) 60000, len - at);
+                        block.clear();
+                        for (const auto burst : { early, late })
+                            for (juce::int64 i = juce::jmax (burst, at); i < juce::jmin (burst + 50, at + n); ++i)
+                                block.setSample (0, (int) (i - at), (i % 2 == 0) ? 0.6f : -0.6f);
+                        w->writeFromAudioSampleBuffer (block, 0, n);
+                    }
+                }
+                const auto onsets = TransientDetector::detectInFile (file);
+                file.deleteFile();
+                const auto near = [&onsets] (juce::int64 at)
+                {
+                    for (auto o : onsets) if (std::abs (o - at) < 100) return true;
+                    return false;
+                };
+                expect (near (early), "the 10-minute burst was missed");
+                expect (near (late), "a burst after 30 minutes was never analysed");
+            }
         }
     };
 

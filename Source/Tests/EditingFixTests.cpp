@@ -227,6 +227,25 @@ public:
             expect (e.getTransientsForTrack (2).empty(),
                     "a consolidate render's onsets were filed under track 2");
         }
+
+        beginTest ("Tab lands on transients where the edited arrangement plays them");
+        {
+            Folder f; expect (writeClicks (f.track()));     // bursts at file 24000 / 48000 / 72000
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            expect (e.rippleDeleteRange (0, 0, 12000));     // the take slides 12000 earlier
+            for (const int restrict : { 1, -1 })
+            {
+                const auto next = e.nextTransientSample (0, restrict);
+                expect (std::abs (next - 12000) < 600,
+                        "Tab used the file position, not the timeline: " + juce::String (next));
+            }
+            expect (e.clearTrackRange (0, 30000, 40000));   // deletes the burst now at 36000
+            const auto afterGap = e.nextTransientSample (13000, 1);
+            expect (std::abs (afterGap - 60000) < 600,
+                    "Tab stopped on audio that was deleted: " + juce::String (afterGap));
+            const auto back = e.prevTransientSample (59000, 1);
+            expect (std::abs (back - 12000) < 600, "Shift+Tab: " + juce::String (back));
+        }
     }
 
     // Peak of one player output channel at `pos`, polling while the

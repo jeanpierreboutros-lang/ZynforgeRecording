@@ -1097,6 +1097,8 @@ namespace zynforge
     // or the session root) and stores onsets BOTH per-track AND pooled +
     // deduped. The UI invokes it through buildTransientCacheAsync; the
     // synchronous query fallback remains useful to non-UI callers/tests.
+    constexpr juce::int64 kTransientDedupeWindow = 48000 / 40;   // ~25 ms @ 48k
+
     static void
     buildTransientCacheInto (const juce::File& sessionDir,
                              std::vector<juce::int64>& pooledOut,
@@ -1128,20 +1130,69 @@ namespace zynforge
             pooledOut.insert (pooledOut.end(), onsets.begin(), onsets.end());
         }
         std::sort (pooledOut.begin(), pooledOut.end());
-        constexpr juce::int64 kDedupeWindow = 48000 / 40;   // ~25 ms @ 48k
         if (! pooledOut.empty())
         {
             std::vector<juce::int64> dedup;
             dedup.reserve (pooledOut.size());
             dedup.push_back (pooledOut.front());
             for (size_t i = 1; i < pooledOut.size(); ++i)
-                if (pooledOut[i] - dedup.back() >= kDedupeWindow)
+                if (pooledOut[i] - dedup.back() >= kTransientDedupeWindow)
                     dedup.push_back (pooledOut[i]);
             pooledOut.swap (dedup);
         }
     }
 
     static const std::vector<juce::int64> emptyTransients;
+
+    // Onsets are found per take FILE, but Tab moves along the TIMELINE. Map
+    // them through the current clip arrangement at query time, so an edit
+    // needs no re-scan: an onset inside a clip's source region lands where
+    // that clip sits, and one the arrangement no longer plays (trimmed,
+    // deleted, muted) is no Tab stop. A strip with no clip list plays its
+    // whole take, so its onsets stand. restrictToTrack is 1-based, as before;
+    // otherwise every strip is pooled and thinned like the cached list.
+    static std::vector<juce::int64> timelineTransients (const std::vector<std::vector<juce::int64>>& perFile,
+                                                        const std::vector<std::vector<Clip>>& clips,
+                                                        int restrictToTrack)
+    {
+        const auto onsetsOf = [&perFile] (int trackNumber) -> const std::vector<juce::int64>*
+        {
+            return trackNumber >= 1 && trackNumber <= (int) perFile.size()
+                     ? &perFile[(size_t) trackNumber - 1] : nullptr;
+        };
+        std::vector<juce::int64> out;
+        const auto addStrip = [&] (int strip)
+        {
+            if (strip >= (int) clips.size())
+            {
+                if (const auto* own = onsetsOf (strip + 1))
+                    out.insert (out.end(), own->begin(), own->end());
+                return;
+            }
+            for (const auto& c : clips[(size_t) strip])
+            {
+                // Onsets are detected on a file's first channel only.
+                if (c.muted || c.sourceChannel == 1) continue;
+                const auto* onsets = onsetsOf (c.audioFile == juce::File() ? strip + 1
+                                                                           : mainTakeTrackNumber (c.audioFile));
+                if (onsets == nullptr) continue;
+                const auto end = c.fileStartSamples + c.fileLengthSamples;
+                for (auto it = std::lower_bound (onsets->begin(), onsets->end(), c.fileStartSamples);
+                     it != onsets->end() && *it < end; ++it)
+                    out.push_back (c.timelineStartSamples + (*it - c.fileStartSamples));
+            }
+        };
+        const bool pooled = restrictToTrack < 1 || restrictToTrack > (int) perFile.size();
+        if (! pooled) addStrip (restrictToTrack - 1);
+        else for (int strip = 0; strip < (int) juce::jmax (perFile.size(), clips.size()); ++strip) addStrip (strip);
+        std::sort (out.begin(), out.end());
+        const juce::int64 window = pooled ? kTransientDedupeWindow : 1;
+        std::vector<juce::int64> thinned;
+        thinned.reserve (out.size());
+        for (const auto o : out)
+            if (thinned.empty() || o - thinned.back() >= window) thinned.push_back (o);
+        return thinned;
+    }
 
     void AudioEngine::buildTransientCacheAsync (std::function<void (bool)> completion)
     {
@@ -1205,9 +1256,8 @@ namespace zynforge
             buildTransientCacheInto (getActiveSessionDir(), transientCache, transientPerTrack);
             transientCacheValid.store (true, std::memory_order_release);
         }
-        const auto* list = (restrictToTrack >= 1 && restrictToTrack <= (int) transientPerTrack.size())
-                              ? &transientPerTrack[(size_t) restrictToTrack - 1]
-                              : &transientCache;
+        const auto timeline = timelineTransients (transientPerTrack, trackClips, restrictToTrack);
+        const auto* list = &timeline;
         if (list->empty()) return -1;
         auto it = std::upper_bound (list->begin(), list->end(), fromSample);
         return it == list->end() ? -1 : *it;
@@ -1220,9 +1270,8 @@ namespace zynforge
             buildTransientCacheInto (getActiveSessionDir(), transientCache, transientPerTrack);
             transientCacheValid.store (true, std::memory_order_release);
         }
-        const auto* list = (restrictToTrack >= 1 && restrictToTrack <= (int) transientPerTrack.size())
-                              ? &transientPerTrack[(size_t) restrictToTrack - 1]
-                              : &transientCache;
+        const auto timeline = timelineTransients (transientPerTrack, trackClips, restrictToTrack);
+        const auto* list = &timeline;
         if (list->empty()) return -1;
         auto it = std::lower_bound (list->begin(), list->end(), fromSample);
         if (it == list->begin()) return -1;

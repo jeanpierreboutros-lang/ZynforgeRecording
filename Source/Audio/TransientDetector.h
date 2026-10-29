@@ -58,22 +58,39 @@ namespace zynforge
 
             if (longN >= numSamples) return onsets;
 
-            auto rms = [samples, numSamples] (juce::int64 start, juce::int64 n) -> double
+            auto sumSq = [samples] (juce::int64 start, juce::int64 n) -> double
             {
-                if (n <= 0 || start < 0 || start + n > numSamples) return 0.0;
                 double acc = 0.0;
                 for (juce::int64 i = 0; i < n; ++i)
                     acc += (double) samples[start + i] * (double) samples[start + i];
-                return std::sqrt (acc / (double) n);
+                return acc;
             };
 
             float prevRatio = 0.0f;
             juce::int64 lastOnsetSample = -refractoryN - 1;
 
-            for (juce::int64 pos = longN; pos + shortN < numSamples; pos += hopN)
+            // Both windows slide one hop at a time: add the samples entering,
+            // drop the ones leaving. Re-summing ~110 ms of audio every 5 ms
+            // hop cost ~22 multiply-adds per sample, too slow to analyse a
+            // whole multi-hour take. Re-summed exactly every kResync hops (and
+            // whenever a hop is longer than a window) so rounding can't build.
+            constexpr int kResync = 64;
+            double sumShort = 0.0, sumLong = 0.0;
+            int hop = 0;
+            for (juce::int64 pos = longN; pos + shortN < numSamples; pos += hopN, ++hop)
             {
-                const double sR = rms (pos, shortN);
-                const double lR = rms (pos - longN, longN);
+                if (hop % kResync == 0 || hopN > shortN || hopN > longN)
+                {
+                    sumShort = sumSq (pos, shortN);
+                    sumLong  = sumSq (pos - longN, longN);
+                }
+                else
+                {
+                    sumShort += sumSq (pos + shortN - hopN, hopN) - sumSq (pos - hopN, hopN);
+                    sumLong  += sumSq (pos - hopN, hopN) - sumSq (pos - longN - hopN, hopN);
+                }
+                const double sR = std::sqrt (std::max (0.0, sumShort) / (double) shortN);
+                const double lR = std::sqrt (std::max (0.0, sumLong)  / (double) longN);
                 const float ratio = lR > 1.0e-6 ? (float) (sR / lR) : 0.0f;
 
                 if (ratio >= p.threshold
@@ -92,7 +109,8 @@ namespace zynforge
         // returns the sample-position list. Returns empty on failure.
         // Reads in ~60 s chunks (with enough overlap for the long window
         // + rising-edge primer) so a long track never needs more than a
-        // few MB of RAM; analysis still caps at the first 30 minutes.
+        // few MB of RAM. The whole take is analysed: a 30-minute cap left
+        // Tab reporting "No later transient" anywhere past 30:00 of a show.
         static std::vector<juce::int64> detectInFile (const juce::File& f)
         {
             std::vector<juce::int64> onsets;
@@ -113,7 +131,7 @@ namespace zynforge
             const auto hopN        = (juce::int64) std::max ((juce::int64) 1, (juce::int64) (p.hopSec * sr));
             const auto refractoryN = (juce::int64) (p.minSeparationSec * sr);
 
-            const juce::int64 analyseLen = juce::jmin ((juce::int64) (sr * 1800.0), n);
+            const juce::int64 analyseLen = n;
             const juce::int64 chunkCore  = (juce::int64) (sr * 60.0);
 
             juce::AudioBuffer<float> buf;
