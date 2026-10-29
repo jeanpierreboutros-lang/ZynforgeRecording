@@ -329,6 +329,23 @@ namespace zynforge
         if (! connected) { stopTimer(); return; }
         const auto now = juce::Time::currentTimeMillis();
 
+        // 0. LINK WATCHDOG. A TCP transport's reader exits when the desk goes
+        //    away (power cycle, switch reboot, idle timeout) and the transport
+        //    then reports !isConnected() -- but nothing asked, so the menu
+        //    still said "disconnect <host>" while names and scene markers had
+        //    stopped for the rest of the show. Say so and drop the link; a
+        //    reconnect stays the engineer's call (TCP connect blocks this
+        //    thread for up to 2 s). The stashed patch + gains are kept.
+        if (transport != nullptr && ! transport->isConnected())
+        {
+            const auto lostHost = host;
+            disconnect();
+            if (onStatus)
+                onStatus (profile.displayName + " link to " + lostHost
+                          + " lost -- the console stopped answering. Use Console: connect... to reconnect.");
+            return;
+        }
+
         // 1. Renew the push subscription BEFORE it expires. Without this the
         //    desk stops pushing ~10 s after connect and every scene recall
         //    silently stops dropping a marker for the rest of the show.
@@ -364,10 +381,8 @@ namespace zynforge
             }
         }
 
-        // Nothing left to do and no subscription to renew -> stop beating.
-        if (profile.dialect.subscribe == nullptr
-            && patchDeadlineMs == 0 && gainDeadlineMs == 0)
-            stopTimer();
+        // The watchdog above beats for as long as the link is up, so the
+        // timer only stops in disconnect().
     }
 
     // ── Persistence ─────────────────────────────────────────────────────

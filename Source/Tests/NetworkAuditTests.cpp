@@ -11,6 +11,12 @@
 #include "../Network/ConsoleLink.h"
 #include "../Network/ConsoleTransports.h"
 
+#include <cmath>
+#include <limits>
+#if JUCE_MAC
+ #include <CoreFoundation/CoreFoundation.h>
+#endif
+
 namespace zynforge
 {
     class NetworkAuditTests final : public juce::UnitTest
@@ -141,6 +147,54 @@ namespace zynforge
                 expectEquals (m.intArg (0), 3, "the numeric args must still line up");
                 expectEquals ((int) m.args.size(), 3);
             }
+
+            beginTest ("A console TCP link that drops is noticed, not reported as up");
+            {
+                // The SCP / MIDI-over-TCP reader exits when the desk goes away,
+                // but ConsoleLink never asked the transport: the menu kept
+                // offering "disconnect <host>" while names and scene markers
+                // had silently stopped for the rest of the show.
+                int port = 47940;
+                for (const auto kind : { ConsoleProfile::Kind::Yamaha, ConsoleProfile::Kind::AllenHeath })
+                {
+                    juce::StreamingSocket server;
+                    while (port < 47950 && ! server.createListener (port, "127.0.0.1")) ++port;
+                    expect (port < 47950, "test listener failed");
+
+                    ConsoleLink link;
+                    link.setProfile (kind);
+                    juce::StringArray statuses;
+                    link.onStatus = [&] (const juce::String& s) { statuses.add (s); };
+                    expect (link.connect ("127.0.0.1", port), "connect failed");
+                    std::unique_ptr<juce::StreamingSocket> accepted (server.waitForNextConnection());
+                    expect (accepted != nullptr);
+                    if (accepted != nullptr) accepted->close();   // the desk goes away
+                    server.close();
+                    ++port;
+
+                    pumpUntil ([&] { return ! link.isConnected(); }, 3000);
+                    expect (! link.isConnected(), link.getProfile().displayName
+                                                  + ": a dropped link still reports connected");
+                    expect (statuses.joinIntoString ("\n").containsIgnoreCase ("lost"),
+                            "the engineer was not told the console link dropped");
+                }
+            }
+        }
+
+        static bool pumpUntil (const std::function<bool()>& predicate, int timeoutMs)
+        {
+            const auto end = juce::Time::getMillisecondCounterHiRes() + timeoutMs;
+            while (! predicate() && juce::Time::getMillisecondCounterHiRes() < end)
+            {
+               #if JUCE_MAC
+                CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.005, true);
+               #elif JUCE_MODAL_LOOPS_PERMITTED
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (5);
+               #else
+                juce::Thread::sleep (5);
+               #endif
+            }
+            return predicate();
         }
     };
 

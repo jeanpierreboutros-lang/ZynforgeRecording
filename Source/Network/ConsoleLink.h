@@ -136,7 +136,7 @@ namespace zynforge
 
     private:
         void handleMessage (const ConsoleMessage&);
-        // ONE repeating heartbeat, two jobs.
+        // ONE repeating heartbeat, three jobs; it runs while the link is up.
         //
         // 1. SUBSCRIPTION RENEWAL. The X32's /xremote subscription expires after
         //    about 10 s. subscribe() was sent once on connect and never again,
@@ -148,6 +148,9 @@ namespace zynforge
         //    replies; a lost one would hang the op forever ("Reading console
         //    patch..."). Deadlines are timestamps checked on each beat rather
         //    than a one-shot timer, so the two jobs can share the timer.
+        // 3. LINK WATCHDOG. A TCP transport (Yamaha SCP, A&H MIDI) notices the
+        //    desk dropping the connection; each beat asks it, and a dead link
+        //    is reported and disconnected instead of showing as up all show.
         void timerCallback() override;
         void startHeartbeat();
         static constexpr int kHeartbeatMs      = 1000;
