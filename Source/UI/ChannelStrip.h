@@ -162,6 +162,7 @@ namespace zynforge
         // surface is rebuilt. Empty for a TrackState the recorder doesn't own.
         const std::shared_ptr<TrackState> keepAlive;
         TrackState*  pairState { nullptr };   // R partner when this is a stereo strip
+        int          availableInputs { 0 };   // device inputs, from setAvailableInputs
         juce::Colour personality;
         ColourCallback colourCb;
         NameCallback   renameCb;

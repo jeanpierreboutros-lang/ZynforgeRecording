@@ -594,13 +594,16 @@ void MainComponent::serviceTimecodeChase()
                             ? engine.getPlayer().getSampleRate() : pendingSampleRate;
         const juce::int64 target = engine.getChaseTargetSamples();
 
-        if (! engine.isPlaying())
-            engine.startPlayback();
-
+        // Locate BEFORE starting: startPlayback refuses with nothing ahead of
+        // the playhead (STOP parks it at the take end), and the MIDI clock's
+        // Song Position Pointer is taken from where playback starts.
         const juce::int64 cur   = engine.getPlayer().getPositionSamples();
         const juce::int64 slack = (juce::int64) (0.08 * sr);   // 80 ms lock window
         if (std::llabs ((long long) (cur - target)) > slack)
             engine.getPlayer().setPositionSamples (target);
+
+        if (! engine.isPlaying())
+            engine.startPlayback();
     }
     else if (chaseWasLive && engine.isPlaying() && ! engine.isKeepRollingOnSyncLoss())
     {

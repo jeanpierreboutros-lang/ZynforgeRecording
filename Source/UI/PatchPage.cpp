@@ -50,7 +50,7 @@ namespace zynforge
                 for (int i = 0; i < n; ++i)
                 {
                     auto& t = rec.getTrack (i);
-                    const auto r = isInput ? t.inputRouting.load (std::memory_order_relaxed)
+                    const auto r = isInput ? engine.getEffectiveInputRouting (i)
                                             : t.outputRouting.load (std::memory_order_relaxed);
                     const auto s = t.isStereo .load (std::memory_order_relaxed) ? 1 : 0;
                     const auto c = (std::size_t) t.colourARGB.load (std::memory_order_relaxed);
@@ -489,8 +489,10 @@ namespace zynforge
 
             int currentRoutingForTrack (int trackIndex) const
             {
+                // Inputs: what the strip hears on this device; a saved patch
+                // past a smaller device's inputs wraps live, unchanged on disk.
                 auto& t = engine.getRecorder().getTrack (trackIndex);
-                return isInput ? t.inputRouting .load (std::memory_order_relaxed)
+                return isInput ? engine.getEffectiveInputRouting (trackIndex)
                                : t.outputRouting.load (std::memory_order_relaxed);
             }
             void setRoutingLogical (const LogicalStrip& ls, int hwChannel)

@@ -379,6 +379,16 @@ namespace zynforge
         position.store (juce::jlimit<juce::int64> (0, total, s), std::memory_order_release);
     }
 
+    bool SessionPlayer::hasAudioAhead() const noexcept
+    {
+        if (! loaded.load (std::memory_order_acquire)) return false;
+        const auto total = totalLength.load (std::memory_order_relaxed);
+        if (position.load (std::memory_order_relaxed) < total) return true;
+        const auto s = loopStart.load (std::memory_order_relaxed);
+        const auto e = juce::jmin (loopEnd.load (std::memory_order_relaxed), total);
+        return loopEnabled.load (std::memory_order_relaxed) && s >= 0 && e > s;
+    }
+
     void SessionPlayer::setLoopRegion (juce::int64 s, juce::int64 e) noexcept
     {
         if (e <= s) { clearLoopRegion(); return; }
@@ -495,7 +505,7 @@ namespace zynforge
         {
             int count = numSamples - done;
             const auto begin = loopStart.load();
-            const auto end = loopEnd.load();
+            const auto end = juce::jmin (loopEnd.load(), totalLength.load());   // same wrap point as renderBlock
             if (loopEnabled.load() && begin >= 0 && end > begin)
             {
                 const auto pos = position.load();
@@ -525,11 +535,14 @@ namespace zynforge
         const auto numTracks = readerCount.load (std::memory_order_acquire);
         if (numTracks == 0) return;
 
-        juce::int64       startPos = position.load (std::memory_order_relaxed);
+        juce::int64       startPos = position.load (std::memory_order_acquire);
         const juce::int64 total    = totalLength.load (std::memory_order_relaxed);
 
         const juce::int64 lStart = loopStart.load (std::memory_order_relaxed);
-        const juce::int64 lEnd   = loopEnd  .load (std::memory_order_relaxed);
+        // A loop region may run past the session end (e.g. the default 2 s
+        // loop dropped near the take end): wrap at whichever comes first
+        // instead of reaching the end and stopping.
+        const juce::int64 lEnd   = juce::jmin (loopEnd.load (std::memory_order_relaxed), total);
         // Loop playback only when the ⟲ loop-play toggle is on AND a region is
         // set -- so selecting a range for editing doesn't force play to loop.
         const bool        looping = loopEnabled.load (std::memory_order_relaxed)
@@ -537,8 +550,11 @@ namespace zynforge
 
         if (looping && startPos >= lEnd)
         {
+            // Compare-and-swap: a locate that landed after the load above
+            // wins; this block stays silent and the next one plays from it.
+            if (! position.compare_exchange_strong (startPos, lStart, std::memory_order_acq_rel))
+                return;
             startPos = lStart;
-            position.store (startPos, std::memory_order_release);
         }
 
         if (startPos >= total)
@@ -721,6 +737,11 @@ namespace zynforge
             if (outputs[i] != nullptr)
                 juce::FloatVectorOperations::clear (outputs[i], numSamples);
 
-        position.store (startPos + playableThisBlock, std::memory_order_release);
+        // Advance only from where this block started. A locate (ruler click,
+        // marker, go-to-start, chase re-seek, StopAll's rewind) that the
+        // message thread stored while this block rendered must survive; a
+        // plain store here overwrote it with the old position + n.
+        juce::int64 expected = startPos;
+        position.compare_exchange_strong (expected, startPos + playableThisBlock, std::memory_order_acq_rel);
     }
 }

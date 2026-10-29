@@ -339,7 +339,9 @@ void MainComponent::applyRecordAutoRouting (RecordStartPlan& plan)
     {
         auto& t = recorder.getTrack (i);
         const bool isArmed = t.armed.load (std::memory_order_relaxed);
-        const int dev = t.inputRouting.load (std::memory_order_relaxed);
+        // What the strip hears on this device: a saved patch past a smaller
+        // device's inputs already wraps live and must not be overwritten here.
+        const int dev = engine.getEffectiveInputRouting (i);
         // Playback-only strips (notably the generated Click) and buses have
         // no input by design. Never turn them into live-input strips here.
         if (isArmed && ! t.isBus.load (std::memory_order_relaxed)

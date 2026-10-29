@@ -35,6 +35,7 @@ namespace zynforge
 {
 
     class MainTransportRegressionTests;
+    class AudioCallbackTests;
 
     class AudioEngine final : public juce::AudioIODeviceCallback,
                               public juce::MidiInputCallback,
@@ -42,6 +43,7 @@ namespace zynforge
     {
         friend class SettingsBatchAuditTests;
         friend class MainTransportRegressionTests; // deterministic STOP failure-latch fixtures
+        friend class AudioCallbackTests;           // holds automationLock to force a missed try-lock
     public:
         AudioEngine();
         ~AudioEngine() override;
@@ -84,6 +86,9 @@ namespace zynforge
         // call `audioDeviceIOCallbackWithContext` directly with
         // synthetic buffers and assert what comes out.
         void prepareForTests (double sampleRate, int blockSize);
+        // Test-only: with no device open, report `n` active inputs, so the
+        // smaller-device routing rules run without hardware.
+        void setDeviceInputCountForTests (int n) noexcept { testDeviceInputs.store (n, std::memory_order_relaxed); }
 
         juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
         MultitrackRecorder&       getRecorder()      noexcept { return recorder; }
@@ -112,8 +117,15 @@ namespace zynforge
         juce::StringArray getMidiInputNames() const;
         bool              setMtcInputByName (const juce::String& name);
         juce::String      getMtcInputName() const { return mtcInputName; }
-        // True while a chase source is selected AND timecode is live.
-        bool        isChaseLive() const noexcept { return getChaseMode() != ChaseMode::Off && timecodeChase.isRunning(); }
+        // True while a chase source is selected AND that source is live:
+        // decoded, consistent LTC frames, or MTC still streaming. Per mode,
+        // so an MTC port left open can't make an LTC chase look locked.
+        bool        isChaseLive() const noexcept
+        {
+            const auto mode = getChaseMode();
+            return mode == ChaseMode::Ltc ? timecodeChase.isLtcLocked()
+                 : mode == ChaseMode::Mtc && timecodeChase.isMtcRunning();
+        }
         // The position (in the player's sample domain) the chased timecode
         // currently points at, and a HH:MM:SS:FF string for display.
         juce::int64  getChaseTargetSamples() const;
@@ -228,15 +240,25 @@ namespace zynforge
             // chase reach here directly, so the guard belongs at the engine.
             if (isRecording() && ! captureWindowEnabled.load (std::memory_order_acquire)) return;
             const bool wasPlaying = player.isPlaying();
+            // Nothing to roll (no session, or parked at/after the end with no
+            // loop to wrap): don't start, and don't tell slaved gear to -- a
+            // chase target past the last take sent Start ten times a second.
+            if (! wasPlaying && ! player.hasAudioAhead()) return;
             player.start();
-            if (! wasPlaying) midiClockOut.sendStart();
-            else              midiClockOut.sendContinue();
+            const auto pos = player.getPositionSamples();
+            if (wasPlaying)    midiClockOut.sendContinue();
+            else if (pos <= 0) midiClockOut.sendStart();
+            else               midiClockOut.sendContinueFrom (midiBeatsAt (pos));
         }
         void stopPlayback() override
         {
             player.stop();
             midiClockOut.sendStop();
         }
+
+        // 16th notes (MIDI beats, the Song Position Pointer unit) from the
+        // session start to `samplePos`, through the tempo map. Message thread.
+        int midiBeatsAt (juce::int64 samplePos) const;
 
         // MIDI clock master (24 PPQN) -- drives outboard synths /
         // drum machines / DAW slaves from the session tempo.
@@ -318,8 +340,11 @@ namespace zynforge
         // Per-block ramp stepper -- called from the audio callback.
         void  tickRamps (int numSamples) noexcept;
 
-        // Routing. -1 = unrouted; values clamped to current device's range.
+        // Routing. -1 = unrouted. The input is stored as REQUESTED (and
+        // saved that way); getEffectiveInputRouting is what the strip hears
+        // on the current device -- what MIXER / EDIT / PATCH display.
         void  setTrackInputRouting  (int channelIndex, int deviceCh);
+        int   getEffectiveInputRouting (int channelIndex);
         void  setTrackOutputRouting (int channelIndex, int deviceCh);
 
         // Sets both input AND output for the strip to the same hardware
@@ -1127,6 +1152,7 @@ namespace zynforge
 
         TimecodeChase    timecodeChase;
         std::atomic<int> ltcSourceStrip { -1 };   // 0-based strip index, -1 = none
+        std::atomic<int> testDeviceInputs { 0 };  // see setDeviceInputCountForTests
         std::atomic<int>  chaseMode      { 0 };    // 0=Off 1=LTC 2=MTC
         std::atomic<bool> keepRollingOnSyncLoss { false };
         std::unique_ptr<juce::MidiInput> mtcInput;
@@ -1315,6 +1341,12 @@ namespace zynforge
         // another. The offline bounce resolves the same struct per step.
         static constexpr int kMaxResolvedStrips = 256;   // == setStripCount's ceiling
         std::array<mix::StripLanes, kMaxResolvedStrips> resolvedMix {};
+        // What resolvedMix was last resolved from (audio thread only): a
+        // missed try-lock mid-roll holds it only if it came from the lanes
+        // for the same strips (count + track generation).
+        bool resolvedMixFromLanes  { false };
+        int  resolvedMixTracks     { -1 };
+        int  resolvedMixGeneration { -1 };
 
         // mix::resolveLanes over this engine's lanes at `pos`. The caller holds
         // automationLock -- the callback via its one try-lock per block, the

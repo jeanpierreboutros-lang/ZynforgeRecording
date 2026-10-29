@@ -15,11 +15,23 @@ namespace zynforge
     // 0xBFFC; MSB-first when assembled = 0x3FFD).
     //
     // The decoder is a zero-crossing → interval → bit-classifier state
-    // machine. It learns the half-bit cell length from a running mean
-    // of short intervals, then classifies each new interval as either
-    // a half-cell or a full cell. Two halves in a row = '1', one full
-    // = '0'. Bits shift into a 16-bit window; when the window matches
-    // the sync word, the previous 64 bits are parsed as a SMPTE frame.
+    // machine. One FIXED split serves every standard rate: at 24..30 fps a
+    // half cell is always shorter than sampleRate / 3000 and a full cell
+    // always longer, so there is no learned estimate to drift onto the wrong
+    // side (the old running mean could settle between the two and then read
+    // every cell as "short"). Two halves in a row = '1', one full = '0'; an
+    // interval outside both ranges is a bit error. Bits shift into a 16-bit
+    // window; a sync word only yields a frame when EXACTLY 80 clean bits have
+    // passed since the previous sync word.
+    //
+    // LOCK (isLtcLocked) needs three such frames in a row whose labels count
+    // up one frame at a time. It then holds through a relocate as long as
+    // valid frames keep arriving, and drops a quarter second after they stop:
+    // counted in samples while the strip is still fed, and in wall-clock time
+    // when the feed itself stops (strip unrouted, device change). The frame
+    // rate is the measured sync-to-sync period, floored by the highest frame
+    // number seen -- never the zero-crossing rate, which depends on how many
+    // '1' bits a frame carries (about 100-110 crossings per frame, not 160).
     //
     // MTC quarter-frame: 8 F1-status messages, each carrying one nibble
     // of hr/mn/sc/fr plus the frame-rate code. After all 8 arrive a
@@ -39,17 +51,26 @@ namespace zynforge
             ltcFps        .store (0.0f, std::memory_order_relaxed);
             ltcDropFrame  .store (false, std::memory_order_relaxed);
             lastMtcTickMs .store (0, std::memory_order_relaxed);
+            ltcLocked     .store (false, std::memory_order_relaxed);
+            lastLtcFrameMs.store (0, std::memory_order_relaxed);
             crossings   = 0;
             samplesAcc  = 0;
-            prevSample  = 0.0f;
+            ltcHigh     = false;
+            ltcEnvelope = 0.0f;
             samplesSinceLastCrossing = 0;
-            halfBitMean = 0.0f;
-            bootstrapCount = 0;
-            haveHalfBit = false;
             pendingHalf = false;
+            frameError  = true;
+            bitsSinceSync = 0;
             bitWindow   = 0;
             framePos    = 0;
             for (auto& b : frameBits) b = 0;
+            sampleClock     = 0;
+            lastSyncSample  = -1;
+            lastValidSample = -1;
+            chain = 0;
+            prevFrameCount = -1;
+            maxFrameSeen = 0;
+            locked = false;
             mtcAcc = MtcAcc{};
         }
 
@@ -61,46 +82,59 @@ namespace zynforge
         // not reset(), for a live mode switch.
         void clearFreewheel() noexcept
         {
-            running      .store (false, std::memory_order_relaxed);
-            lastMtcTickMs.store (0,     std::memory_order_relaxed);
+            running       .store (false, std::memory_order_relaxed);
+            lastMtcTickMs .store (0,     std::memory_order_relaxed);
+            ltcLocked     .store (false, std::memory_order_relaxed);
+            lastLtcFrameMs.store (0,     std::memory_order_relaxed);
         }
 
-        // Audio-thread feed. Counts zero crossings AND tracks the
-        // interval (in samples) between consecutive crossings. Long
-        // intervals = full bit cell ('0'); two consecutive short
-        // intervals = one '1' bit. Bits accumulate into bitWindow;
-        // when the sync word is hit, the prior 64 bits are decoded.
+        // Audio-thread feed: no locks, no allocation. A Schmitt trigger at 15%
+        // of a slow peak follower finds the transitions (so a noise floor
+        // can't chatter around zero), each interval between two of them is
+        // classified as a half or full bit cell, and complete frames are
+        // decoded on their sync word.
         void feedLtc (const float* samples, int n, double sampleRate) noexcept
         {
             if (samples == nullptr || n <= 0 || sampleRate <= 0.0) return;
+
+            float blockPeak = 0.0f;
+            for (int i = 0; i < n; ++i) blockPeak = juce::jmax (blockPeak, std::abs (samples[i]));
+            ltcEnvelope = juce::jmax (blockPeak, ltcEnvelope * 0.8f);
+            const float hysteresis = juce::jmax (1.0e-4f, ltcEnvelope * 0.15f);
+            const Cells cells { sampleRate };
+
             for (int i = 0; i < n; ++i)
             {
+                if (samplesSinceLastCrossing < (1 << 30)) ++samplesSinceLastCrossing;
                 const float s = samples[i];
-                ++samplesSinceLastCrossing;
-
-                const bool zc = (s >= 0.0f && prevSample < 0.0f)
-                             || (s <  0.0f && prevSample >= 0.0f);
-                prevSample = s;
-
-                if (zc)
+                if (ltcHigh ? (s < -hysteresis) : (s > hysteresis))
                 {
+                    ltcHigh = ! ltcHigh;
                     ++crossings;
-                    onCrossing (samplesSinceLastCrossing);
+                    onInterval (samplesSinceLastCrossing, sampleClock + i, cells);
                     samplesSinceLastCrossing = 0;
                 }
             }
+            sampleClock += n;
 
             samplesAcc += n;
             if ((double) samplesAcc >= sampleRate)
             {
-                const float rate = (float) crossings * (float) (sampleRate / (double) samplesAcc);
-                crossingsPerS.store (rate, std::memory_order_relaxed);
-                // LTC bit clock × 2 = zero-crossing rate. fps in
-                // 24..30 → 80 bits/frame × 2 → 3840..4800 crossings/s.
-                running.store (rate > 1500.0f && rate < 5500.0f,
-                               std::memory_order_relaxed);
+                // Diagnostic only. It no longer decides anything: a tone or
+                // program audio crosses zero at LTC-like rates too.
+                crossingsPerS.store ((float) crossings * (float) (sampleRate / (double) samplesAcc),
+                                     std::memory_order_relaxed);
                 crossings  = 0;
                 samplesAcc = 0;
+            }
+
+            // Valid frames stopped arriving on a strip that is still fed.
+            if (locked && sampleClock - lastValidSample > (juce::int64) (sampleRate * kLtcDropSeconds))
+            {
+                locked = false;
+                chain = 0;
+                maxFrameSeen = 0;
+                ltcLocked.store (false, std::memory_order_release);
             }
         }
 
@@ -177,23 +211,29 @@ namespace zynforge
             lastMtcTickMs.store (juce::Time::getMillisecondCounter(), std::memory_order_relaxed);
         }
 
-        bool isRunning() const noexcept
+        // MTC is live: a full time has been assembled and quarter-frames are
+        // still arriving. An MTC master streams quarter-frames continuously
+        // (~every 8-10 ms); `running` is set true on each but never cleared
+        // by the MIDI thread when the master stops, so honour the last-tick
+        // time: no MTC for kMtcTimeoutMs => stopped.
+        bool isMtcRunning() const noexcept
         {
             if (! running.load (std::memory_order_relaxed)) return false;
-            // MTC freewheel/timeout. An MTC master streams quarter-frames
-            // continuously (~every 8-10 ms); `running` is set true on each but
-            // was NEVER cleared when the master stopped (only the LTC path
-            // clears it), so the chase stayed "live" forever and the transport
-            // became unstoppable (re-seeking to the frozen target every tick).
-            // Honour the last-tick time: no MTC for kMtcTimeoutMs => stopped.
-            // lastMtcTickMs == 0 means the LTC path is driving `running`, which
-            // manages its own liveness, so skip the MTC timeout there.
             const juce::uint32 last = lastMtcTickMs.load (std::memory_order_relaxed);
             if (last != 0
                 && (juce::uint32) (juce::Time::getMillisecondCounter() - last) > kMtcTimeoutMs)
                 return false;
             return true;
         }
+        // LTC LOCK: decoded, consistent frames, the last one recent. The
+        // wall-clock check covers a feed that simply stopped being called.
+        bool isLtcLocked() const noexcept
+        {
+            if (! ltcLocked.load (std::memory_order_acquire)) return false;
+            const juce::uint32 last = lastLtcFrameMs.load (std::memory_order_relaxed);
+            return (juce::uint32) (juce::Time::getMillisecondCounter() - last) <= kLtcTimeoutMs;
+        }
+        bool isRunning() const noexcept { return isMtcRunning() || isLtcLocked(); }
         juce::uint8 getHours()   const noexcept { return ltcHours  .load (std::memory_order_relaxed); }
         juce::uint8 getMinutes() const noexcept { return ltcMinutes.load (std::memory_order_relaxed); }
         juce::uint8 getSeconds() const noexcept { return ltcSeconds.load (std::memory_order_relaxed); }
@@ -202,7 +242,7 @@ namespace zynforge
         {
             return crossingsPerS.load (std::memory_order_relaxed);
         }
-        // Detected frame rate (24, 25, 29.97, 30) -- 0 until a sync word lands.
+        // Detected frame rate (24, 25, 29.97, 30) -- 0 until a frame decodes.
         float getFps() const noexcept { return ltcFps.load (std::memory_order_relaxed); }
         bool  isDropFrame() const noexcept { return ltcDropFrame.load (std::memory_order_relaxed); }
 
@@ -213,73 +253,78 @@ namespace zynforge
             juce::uint8 seen { 0 };   // bitmask of which types have arrived
         };
 
-        // Called for every zero crossing on the LTC line. Maintains the
-        // running half-bit-cell estimate and classifies each interval.
-        void onCrossing (int intervalSamples) noexcept
+        // Bit-cell limits for one sample rate. A half cell runs sr/4800 (30
+        // fps) .. sr/3840 (24 fps), a full cell sr/2400 .. sr/1920; `split`
+        // sits between the two groups with ~20% margin either side.
+        struct Cells
         {
-            if (intervalSamples <= 0) return;
+            explicit Cells (double sr) noexcept
+                : shortest (sr / 9600.0), split (sr / 3000.0), longest (sr / 1280.0), rate (sr) {}
+            double shortest, split, longest, rate;
+        };
 
-            if (! haveHalfBit)
+        void onInterval (int intervalSamples, juce::int64 at, const Cells& cells) noexcept
+        {
+            if (intervalSamples < cells.shortest || intervalSamples > cells.longest)
             {
-                // Bootstrap -- first 32 intervals seed the estimate; we
-                // take whichever turns out to be the shorter group.
-                if (halfBitMean <= 0.0f) halfBitMean = (float) intervalSamples;
-                else                     halfBitMean = halfBitMean * 0.9f + (float) intervalSamples * 0.1f;
-
-                if (++bootstrapCount > 32)
-                {
-                    haveHalfBit  = true;
-                    bootstrapCount = 0;
-                }
+                // Not a bit cell at all (noise, silence ending, a dropout):
+                // whatever frame is in flight is damaged.
+                pendingHalf = false;
+                frameError  = true;
+                bitWindow   = 0;
                 return;
             }
 
-            // Classify: short ≈ halfBitMean, long ≈ 2 × halfBitMean. The
-            // boundary sits at 1.5 × halfBitMean.
-            const float boundary = halfBitMean * 1.5f;
-            const bool isShort = (float) intervalSamples < boundary;
-
-            // Update the half-bit estimate with confirmed short intervals
-            // (slow EMA, only on shorts so longs don't bias it).
-            if (isShort)
-                halfBitMean = halfBitMean * 0.97f + (float) intervalSamples * 0.03f;
-
-            // Biphase-mark decode: two consecutive shorts = '1', one long = '0'.
-            int bit = -1;
-            if (isShort)
+            int bit = 0;
+            if (intervalSamples < cells.split)
             {
-                if (pendingHalf) { bit = 1; pendingHalf = false; }
-                else             { pendingHalf = true; }
-            }
-            else
-            {
-                bit = 0;
+                if (! pendingHalf) { pendingHalf = true; return; }
                 pendingHalf = false;
+                bit = 1;
+            }
+            else if (pendingHalf)
+            {
+                // A lone half cell: we were out of step. The full cell that
+                // follows starts on a real bit boundary again.
+                pendingHalf = false;
+                frameError  = true;
             }
 
-            if (bit < 0) return;
-
-            // Shift into the rolling window + the 80-bit frame buffer.
-            bitWindow = static_cast<juce::uint16> ((bitWindow << 1)
-                                                   | static_cast<juce::uint16> (bit));
+            bitWindow = static_cast<juce::uint16> ((bitWindow << 1) | static_cast<juce::uint16> (bit));
             frameBits[framePos] = (juce::uint8) bit;
             framePos = (framePos + 1) % 80;
+            if (bitsSinceSync < 1000) ++bitsSinceSync;
 
             // Sync word -- last 16 bits of every LTC frame.
             // 0011111111111101 = 0x3FFD when read in bit order.
             if (bitWindow == 0x3FFD)
-                decodeFrame();
+                onSync (at, cells.rate);
         }
 
-        // After a sync word lands, the 64 bits preceding it in framePos
-        // are the data field of the just-completed frame. The biphase
-        // ordering walks back 80 from framePos (the sync 16 + data 64).
-        // We pick the 64 data bits and unpack into SMPTE digits.
-        void decodeFrame() noexcept
+        void onSync (juce::int64 at, double sr) noexcept
+        {
+            // A frame is the 80 bits since the previous sync word, decoded
+            // without a single bit error; its period is sync-to-sync.
+            const bool whole = bitsSinceSync == 80 && ! frameError && lastSyncSample >= 0;
+            const juce::int64 period = at - lastSyncSample;
+            lastSyncSample = at;
+            bitsSinceSync  = 0;
+            frameError     = false;
+            if (! whole || period < (juce::int64) (sr / 31.5) || period > (juce::int64) (sr / 22.5))
+            {
+                chain = 0;
+                return;
+            }
+            decodeFrame (sr / (double) period, at);
+        }
+
+        // framePos now points at the oldest of the last 80 bits, which is
+        // bit 0 of the frame whose sync word just completed.
+        void decodeFrame (double measuredFps, juce::int64 at) noexcept
         {
             juce::uint8 d[80] {};
             for (int i = 0; i < 80; ++i)
-                d[i] = frameBits[(framePos + 80 - 80 + i) % 80];
+                d[i] = frameBits[(framePos + i) % 80];
 
             // Standard LTC frame layout (offsets within d[0..79]):
             //   0-3 : frame units      (BCD)
@@ -312,53 +357,80 @@ namespace zynforge
 
             // Reject obviously corrupt frames so a noise burst can't
             // jolt the readout to bogus values.
-            if (fu > 9 || su > 9 || mu > 9 || hu > 9
-                || ft > 3 || st > 5 || mt > 5 || ht > 2) return;
-
             const juce::uint8 fr = (juce::uint8) (ft * 10 + fu);
             const juce::uint8 sc = (juce::uint8) (st * 10 + su);
             const juce::uint8 mn = (juce::uint8) (mt * 10 + mu);
             const juce::uint8 hr = (juce::uint8) (ht * 10 + hu);
-
             // ht is 2 bits + hu 0-9 can encode hours 24-29 (e.g. ht=2,hu=9);
-            // a real SMPTE hour is 0-23, so drop the impossible ones.
-            if (hr > 23) return;
+            // a real SMPTE hour is 0-23, and no rate has a frame 30.
+            if (fu > 9 || su > 9 || mu > 9 || hu > 9
+                || st > 5 || mt > 5 || hr > 23 || fr > 29)
+            {
+                chain = 0;
+                return;
+            }
+
+            // Frame rate from the period, snapped to the standard set; 29.97
+            // vs 30 by the drop-frame flag. A frame number the rate cannot
+            // hold (frame 24 at "24 fps") means the guess is too low.
+            if (! locked && chain == 0) maxFrameSeen = 0;   // a fresh acquisition
+            maxFrameSeen = juce::jmax (maxFrameSeen, (int) fr);
+            float fps = measuredFps < 24.5 ? 24.0f : measuredFps < 27.5 ? 25.0f : 30.0f;
+            if (maxFrameSeen >= (int) fps) fps = maxFrameSeen < 25 ? 25.0f : 30.0f;
+            const int  nominal = (int) fps;
+            const bool drop    = nominal == 30 && df;
+            if (drop) fps = 29.97f;
+
+            // Labels count up one frame at a time (drop-frame skips two
+            // labels at most minute starts; midnight wraps).
+            const int day   = 24 * 3600 * nominal;
+            const int count = ((hr * 60 + mn) * 60 + sc) * nominal + fr;
+            const bool countsUp = prevFrameCount >= 0
+                && (count == (prevFrameCount + 1) % day || (drop && count == (prevFrameCount + 3) % day));
+            chain = countsUp ? chain + 1 : 1;
+            prevFrameCount  = count;
+            lastValidSample = at;
 
             ltcHours    .store (hr, std::memory_order_relaxed);
             ltcMinutes  .store (mn, std::memory_order_relaxed);
             ltcSeconds  .store (sc, std::memory_order_relaxed);
             ltcFrames   .store (fr, std::memory_order_relaxed);
-            ltcDropFrame.store (df, std::memory_order_relaxed);
-            running     .store (true, std::memory_order_relaxed);
+            ltcDropFrame.store (drop, std::memory_order_relaxed);
+            ltcFps      .store (fps, std::memory_order_relaxed);
 
-            // Infer fps from the crossings/sec rate (80 bits/frame × 2
-            // crossings/bit = 160 × fps).
-            const float xs = crossingsPerS.load (std::memory_order_relaxed);
-            if (xs > 0.0f)
+            if (! locked && chain >= kFramesToLock) locked = true;
+            if (locked)
             {
-                const float fps = xs / 160.0f;
-                if      (fps > 23.5f && fps < 24.5f) ltcFps.store (24.0f, std::memory_order_relaxed);
-                else if (fps > 24.5f && fps < 25.5f) ltcFps.store (25.0f, std::memory_order_relaxed);
-                else if (fps > 29.0f && fps < 30.5f) ltcFps.store (df ? 29.97f : 30.0f,
-                                                                  std::memory_order_relaxed);
+                lastLtcFrameMs.store (juce::Time::getMillisecondCounter(), std::memory_order_relaxed);
+                ltcLocked.store (true, std::memory_order_release);
             }
         }
 
         // LTC state (audio thread).
         int   crossings  { 0 };
         int   samplesAcc { 0 };
-        float prevSample { 0.0f };
+        bool  ltcHigh    { false };    // Schmitt-trigger output
+        float ltcEnvelope { 0.0f };    // slow peak follower for the hysteresis
         int   samplesSinceLastCrossing { 0 };
-        float halfBitMean { 0.0f };
-        int   bootstrapCount { 0 };
-        bool  haveHalfBit { false };
         bool  pendingHalf { false };
+        bool  frameError  { true };    // a bit error since the last sync word
+        int   bitsSinceSync { 0 };
         juce::uint16 bitWindow { 0 };
         juce::uint8  frameBits[80] {};
         int          framePos { 0 };
+        juce::int64  sampleClock     { 0 };    // samples fed so far
+        juce::int64  lastSyncSample  { -1 };
+        juce::int64  lastValidSample { -1 };   // last decoded frame
+        int          chain { 0 };              // consecutive count-up frames
+        int          prevFrameCount { -1 };
+        int          maxFrameSeen { 0 };
+        bool         locked { false };         // audio-thread view of ltcLocked
+        static constexpr int    kFramesToLock   = 3;
+        static constexpr double kLtcDropSeconds = 0.25;
 
         // Cross-thread atomics.
-        std::atomic<bool>  running       { false };
+        std::atomic<bool>  running       { false };   // MTC only
+        std::atomic<bool>  ltcLocked     { false };
         std::atomic<float> crossingsPerS { 0.0f };
         std::atomic<juce::uint8> ltcHours   { 0 };
         std::atomic<juce::uint8> ltcMinutes { 0 };
@@ -366,9 +438,12 @@ namespace zynforge
         std::atomic<juce::uint8> ltcFrames  { 0 };
         std::atomic<float>       ltcFps     { 0.0f };
         std::atomic<bool>        ltcDropFrame { false };
-        // Wall-clock ms of the last MTC tick (0 = LTC path / never). Read on the
+        // Wall-clock ms of the last MTC tick (0 = never). Read on the
         // message thread (isRunning), written on the MIDI thread -> atomic.
         std::atomic<juce::uint32> lastMtcTickMs { 0 };
+        // Wall-clock ms of the last decoded LTC frame while locked.
+        std::atomic<juce::uint32> lastLtcFrameMs { 0 };
+        static constexpr juce::uint32 kLtcTimeoutMs = 300;
         // No MTC for this long => the master stopped (quarter-frames arrive
         // ~every 8-10 ms; 250 ms is ~7-8 frames, well clear of jitter).
         static constexpr juce::uint32 kMtcTimeoutMs = 250;

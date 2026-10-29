@@ -545,6 +545,8 @@ namespace zynforge
     {
         // Decoded on the MIDI thread -> TimecodeChase atomics (no locks). The
         // message-thread chase poll reads getChaseTargetSamples() to seek.
+        // Only while MTC is the chase source: LTC shares the time readout.
+        if (getChaseMode() != ChaseMode::Mtc) return;
         if (m.isQuarterFrame())
             timecodeChase.feedMtcQuarterFrame (m.getRawData()[1]);
         else if (m.isFullFrame())
@@ -573,6 +575,28 @@ namespace zynforge
                           + (double) timecodeChase.getSeconds()
                           + (double) timecodeChase.getFrames()  / fps;
         return (juce::int64) (secs * rate + 0.5);
+    }
+
+    int AudioEngine::midiBeatsAt (juce::int64 samplePos) const
+    {
+        const double rate = player.getSampleRate() > 0.0 ? player.getSampleRate()
+                          : deviceSampleRate.load (std::memory_order_relaxed);
+        if (rate <= 0.0 || samplePos <= 0) return 0;
+        // Same segments the click and the clock pulse rate use: the session
+        // tempo until the first change, then each change's bpm.
+        const juce::ScopedLock sl (tempoLock);
+        double quarters = 0.0, bpm = (double) currentTempoBpm.load (std::memory_order_relaxed);
+        juce::int64 from = 0;
+        for (const auto& tc : tempoMap)
+        {
+            if (tc.samplePos >= samplePos) break;
+            const auto at = juce::jmax (from, tc.samplePos);
+            quarters += (double) (at - from) / rate * bpm / 60.0;
+            from = at;
+            bpm  = (double) tc.bpm;
+        }
+        quarters += (double) (samplePos - from) / rate * bpm / 60.0;
+        return (int) (quarters * 4.0 + 1.0e-6);
     }
 
     juce::String AudioEngine::getChaseTimecodeString() const
@@ -1545,15 +1569,13 @@ namespace zynforge
             // default to "ungrouped / normal channel" via TrackState
             // construction.
 
-            // Default to channel i, but clamp to the device's active
-            // input count so a 4-strip session on a 1-input device still
-            // captures sound (strip i wraps to i % numInputs).
-            int wantIn = stripRouting.hasInput (i) ? stripRouting.getInput (i) : i;
-            const int numInputs = (deviceManager.getCurrentAudioDevice() != nullptr)
-                ? deviceManager.getCurrentAudioDevice()->getActiveInputChannels().countNumberOfSetBits()
-                : 0;
-            if (numInputs > 0 && (wantIn < -1 || wantIn >= numInputs))
-                wantIn = i % numInputs;
+            // Default to channel i. A request past a smaller device's last
+            // input is KEPT: the callback wraps it live (strip i hears
+            // i % numInputs, effectiveInputRouting), so a 4-strip session on a
+            // 1-input device still captures sound, while every save path keeps
+            // writing the patch the show rig needs. Storing the wrapped value
+            // here leaked it into session_mix.json on the next save or reorder.
+            const int wantIn = stripRouting.hasInput (i) ? stripRouting.getInput (i) : i;
             t.inputRouting .store (wantIn, std::memory_order_relaxed);
             // Default per-channel output is -1 (unrouted) → audio only
             // reaches the hardware via the master bus. Engineer picks a
@@ -1585,8 +1607,29 @@ namespace zynforge
             && (channelIndex + 1 >= recorder.getNumTracks()
                 || (channelIndex > 0 && recorder.getTrack (channelIndex - 1).isStereo.load())
                 || recorder.getTrack (channelIndex + 1).isStereo.load())) return;
+        const bool wasStereo = recorder.getTrack (channelIndex).isStereo.load();
         recorder.getTrack (channelIndex).isStereo.store (isStereoPair,
                                                           std::memory_order_release);
+        // Linking makes the pair ONE strip in every view, and that strip
+        // shows and edits the L half -- so bring the R half onto it now.
+        // Otherwise R kept playing (and recording) by its own mute, fader,
+        // VCA, arm and routing until each control happened to be touched.
+        // Pan stays per channel: that is the stereo image.
+        if (isStereoPair && ! wasStereo)
+        {
+            auto& l = recorder.getTrack (channelIndex);
+            auto& r = recorder.getTrack (channelIndex + 1);
+            for (auto flag : { &TrackState::muted, &TrackState::soloed, &TrackState::armed,
+                               &TrackState::monitor, &TrackState::outputMuted, &TrackState::streamSend })
+                (r.*flag).store ((l.*flag).load (std::memory_order_relaxed), std::memory_order_relaxed);
+            setTrackGainDb   (channelIndex + 1, l.gainDb.load (std::memory_order_relaxed));
+            setTrackVcaGroup (channelIndex + 1, l.vcaGroup.load (std::memory_order_relaxed));
+            setTrackEditGroup (channelIndex + 1, l.editGroup.load (std::memory_order_relaxed));
+            const int in  = l.inputRouting .load (std::memory_order_relaxed);
+            const int out = l.outputRouting.load (std::memory_order_relaxed);
+            if (in  != -2) setTrackInputRouting  (channelIndex + 1, in  >= 0 ? in  + 1 : -1);
+            if (out != -2) setTrackOutputRouting (channelIndex + 1, out >= 0 ? out + 1 : -1);
+        }
         // Bump the track generation so EVERY view (MIXER, EDIT, and the
         // meterbridge) rebuilds and re-collapses the pair -- a stereo link from
         // the PATCH page changed the engine but left the other views showing two
@@ -1850,6 +1893,10 @@ namespace zynforge
         {
             recorder.setTrackCount ((int) order.size());
             persist ((int) order.size());
+            // The LTC source follows its strip; deleting that strip clears it.
+            const int ltc = ltcSourceStrip.load();
+            if (ltc >= 0 && ltc < n && destination[(size_t) ltc] != ltc)
+                setLtcSourceStrip (destination[(size_t) ltc] + 1);
             // A reorder can move a stereo pair without changing the count;
             // every view rebuilds on a generation change.
             recorder.bumpTrackGeneration();
@@ -1897,6 +1944,11 @@ namespace zynforge
         opts.storageFormat       = juce::PropertiesFile::storeAsXML;
 
         appProps = makeSettingsFile (opts);
+
+        // The MIDI clock sends Stop when playback ends without stopPlayback()
+        // (session end, reorder, session load, device stop). midiClockOut is
+        // declared after player, so its timer is stopped before player dies.
+        midiClockOut.setTransportProbe ([this] { return player.isPlaying(); });
 
         // Restore the stereo-mix-recording flag from the prefs file so the
         // engineer's preference survives restart.
@@ -2275,7 +2327,15 @@ namespace zynforge
     {
         if (auto* d = deviceManager.getCurrentAudioDevice())
             return d->getActiveInputChannels().countNumberOfSetBits();
-        return 0;
+        return testDeviceInputs.load (std::memory_order_relaxed);
+    }
+
+    int AudioEngine::getEffectiveInputRouting (int channelIndex)
+    {
+        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return -1;
+        return effectiveInputRouting (channelIndex,
+                                      recorder.getTrack (channelIndex).inputRouting.load (std::memory_order_relaxed),
+                                      getCurrentDeviceInputCount());
     }
 
     int AudioEngine::getCurrentDeviceOutputCount() const
@@ -2362,6 +2422,10 @@ namespace zynforge
         t.rampSamplesRemaining.store (samples, std::memory_order_relaxed);
         if (samples == 0)
             t.pan.store (pan, std::memory_order_relaxed);
+        // Persisted target, like the gain ramp: applyPersistedStripState
+        // re-reads StripGains on +CH / device restart, which otherwise
+        // snapped a cue-recalled pan back to the last manual value.
+        stripGains.setPan (channelIndex, pan);
     }
 
     void AudioEngine::setVcaGainDb (int idx, float dB)
@@ -2689,7 +2753,8 @@ namespace zynforge
         const float* routedInputs[kMaxStrips] = {};
         for (int i = 0; i < numTracks && i < kMaxStrips; ++i)
         {
-            const int dev = recorder.getTrack (i).inputRouting.load (std::memory_order_relaxed);
+            const int dev = effectiveInputRouting (
+                i, recorder.getTrack (i).inputRouting.load (std::memory_order_relaxed), numInputs);
             routedInputs[i] = (dev >= 0 && dev < numInputs) ? inputs[dev] : nullptr;
         }
 
@@ -2775,16 +2840,24 @@ namespace zynforge
                                                          : (juce::int64) -1;
 
         // Resolve every strip's lane-driven inputs ONCE for this block, under
-        // ONE try-lock (see resolvedMix). Losing the lock -- the UI is
-        // mid-edit -- or SUSPEND makes the whole block use the static values,
-        // consistently, instead of a per-call mix of both. The rules live in
-        // MixKernel.h, shared with the offline bounce.
+        // ONE try-lock (see resolvedMix). SUSPEND makes the whole block use
+        // the static values, consistently, instead of a per-call mix of both.
+        // Losing the lock while rolling -- the UI is mid-edit, WRITE thinning,
+        // the strip poll -- HOLDS the previous block's values: dropping to the
+        // static ones let a Mute-lane-muted strip blip through for a block and
+        // jumped every volume lane to its fader. Held only while the same
+        // strips sit in the same order as when they were resolved. The rules
+        // live in MixKernel.h, shared with the offline bounce.
         {
             const juce::ScopedTryLock automationStl (automationLock);
             const bool rolling   = autoPlayPos >= 0;
-            const bool readLanes = rolling && automationStl.isLocked()
-                                && ! automationReadSuspended.load (std::memory_order_acquire);
-            for (int i = 0; i < numTracks && i < kMaxResolvedStrips; ++i)
+            const bool suspended = automationReadSuspended.load (std::memory_order_acquire);
+            const bool readLanes = rolling && automationStl.isLocked() && ! suspended;
+            const int  generation = recorder.getTrackGeneration();
+            const bool holdLanes = rolling && ! suspended && ! automationStl.isLocked()
+                                && resolvedMixFromLanes && resolvedMixTracks == numTracks
+                                && resolvedMixGeneration == generation;
+            for (int i = 0; ! holdLanes && i < numTracks && i < kMaxResolvedStrips; ++i)
             {
                 auto& t = recorder.getTrack (i);
                 const int autoCh = mix::automationChannel (
@@ -2796,6 +2869,12 @@ namespace zynforge
                     t.muted.load (std::memory_order_relaxed),
                     autoPlayPos, rolling, readLanes);
             }
+            if (! holdLanes)
+            {
+                resolvedMixFromLanes  = readLanes;
+                resolvedMixTracks     = numTracks;
+                resolvedMixGeneration = generation;
+            }
         }
 
         const auto effectiveGainDb = [this] (int i) noexcept -> float
@@ -2804,8 +2883,8 @@ namespace zynforge
             float dB = i < kMaxResolvedStrips ? resolvedMix[(size_t) i].volDb
                                               : t.gainDb.load (std::memory_order_relaxed);
             const int g = t.vcaGroup.load (std::memory_order_relaxed);
-            if (g >= 0 && g < kNumVcas)
-                dB += vcas[(size_t) g].gainDb.load (std::memory_order_relaxed);
+            dB = mix::stripDb (dB, g >= 0 && g < kNumVcas
+                                     ? vcas[(size_t) g].gainDb.load (std::memory_order_relaxed) : 0.0f);
             // Trim-follow: track the console's input-gain change since capture
             // so soundcheck preamp moves shift the recorded track like a live mic.
             if (trimFollowEnabled.load (std::memory_order_relaxed))
@@ -3063,12 +3142,13 @@ namespace zynforge
         }
         }   // release stereoMixLock
 
-        // LTC presence detection -- analyzes the input of a designated
-        // strip every block. Engineer routes the desk's timecode line
-        // to that strip and toggles 'LTC source' to it from the UI.
+        // LTC decode -- analyzes the input of a designated strip every
+        // block while LTC is the chase source. Engineer routes the desk's
+        // timecode line to that strip and picks it in Transport Sync.
         {
             const int srcStrip = ltcSourceStrip.load (std::memory_order_relaxed);
-            if (srcStrip >= 0 && srcStrip < trackCount && routedInputs[srcStrip] != nullptr)
+            if (srcStrip >= 0 && srcStrip < trackCount && routedInputs[srcStrip] != nullptr
+                && chaseMode.load (std::memory_order_relaxed) == (int) ChaseMode::Ltc)
             {
                 const auto sr = deviceManager.getCurrentAudioDevice() != nullptr
                                 ? deviceManager.getCurrentAudioDevice()->getCurrentSampleRate()
@@ -3134,8 +3214,8 @@ namespace zynforge
             // though it worked on the routed outputs (which go through
             // effectiveGainDb). Fold the VCA gain in so the monitor matches.
             const int vgrp = t.vcaGroup.load (std::memory_order_relaxed);
-            if (vgrp >= 0 && vgrp < kNumVcas)
-                dBVal += vcas[(size_t) vgrp].gainDb.load (std::memory_order_relaxed);
+            dBVal = mix::stripDb (dBVal, vgrp >= 0 && vgrp < kNumVcas
+                                           ? vcas[(size_t) vgrp].gainDb.load (std::memory_order_relaxed) : 0.0f);
 
             const double dB   = (double) dBVal;
             const double gain = juce::Decibels::decibelsToGain (dB, -60.0);

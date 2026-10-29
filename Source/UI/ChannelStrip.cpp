@@ -274,7 +274,10 @@ namespace zynforge
     void ChannelStrip::setAvailableInputs (int n)
     {
         const bool stereoStrip = (pairState != nullptr);
-        int current = state.inputRouting.load (std::memory_order_relaxed);
+        availableInputs = n;
+        // Show what the strip hears on THIS device (a saved patch past a
+        // smaller device's inputs wraps live; the saved patch is unchanged).
+        int current = effectiveInputRouting (stripIndex, state.inputRouting.load (std::memory_order_relaxed), n);
         if (current == -2) current = stripIndex;   // identity default
 
         // Populate enough items so a strip's identity input always has
@@ -421,7 +424,8 @@ namespace zynforge
             if (routing < 0) return 1;
             return routing + 2;
         };
-        const int inR  = state.inputRouting .load (std::memory_order_relaxed);
+        const int inR  = effectiveInputRouting (stripIndex, state.inputRouting.load (std::memory_order_relaxed),
+                                                availableInputs);
         const int outR = state.outputRouting.load (std::memory_order_relaxed);
         const int wantedIn  = (inR  == -2) ? stripIndex + 2 : pick (inputCombo,  inR);
         const int wantedOut = (outR == -2) ? stripIndex + 2 : pick (outputCombo, outR);

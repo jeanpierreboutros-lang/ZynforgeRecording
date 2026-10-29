@@ -23,6 +23,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Fixed — October bug hunt: engine and playback
+
+- **A session prepared on a smaller device keeps its saved input patch.** Strips wrap onto the available inputs only while that device is in use, so the show rig records the right inputs (the wrapped patch used to be saved).
+- **LTC chase decodes real timecode before showing LOCK**, detects 24/25/29.97/30 fps from the frame period, never locks onto tones or program audio, and drops LOCK when timecode stops. The LTC source strip follows a strip move.
+- A locate made during playback (ruler click, marker, go-to-start, chase re-seek) is no longer occasionally ignored; loop-play wraps when the loop region extends past the end of the session.
+- Editing automation during playback no longer makes automated strips click or briefly un-mute.
+- Pans recalled by a cue or turned on an MCU V-pot survive adding a strip or a device change; linking two strips as a stereo pair brings the right half onto the pair's mute, fader, VCA, arm and routing.
+- Cue fades and fader moves no longer rewrite the preferences file on every step.
+- MIDI clock followers stop when playback reaches the end and resume from the right bar when playback starts mid-session.
+- A fader or VCA pulled to -60 dB silences the strip whatever the other is set to; NDI audio frames carry proper timecode.
+
 ### Fixed — October bug hunt: EDIT view
 
 - Clicking a Waveform, Markers or Click lane no longer adds, deletes or drags automation you can't see, or writes the tempo map; each row draws, labels and edits the same automation lane.

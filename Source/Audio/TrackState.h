@@ -119,6 +119,8 @@ namespace zynforge
 
         // Routing. -1 = unrouted (no input captured / no output played).
         // Default of -2 means "use identity routing" (resolved at init).
+        // inputRouting is the REQUESTED patch -- what every save path writes.
+        // What a strip hears on the current device is effectiveInputRouting().
         std::atomic<int> inputRouting  { -2 };
         std::atomic<int> outputRouting { -2 };
 
@@ -228,4 +230,17 @@ namespace zynforge
             clipped.store (false, std::memory_order_relaxed);
         }
     };
+
+    // The device input strip `strip` captures from on a device with
+    // `numInputs` active inputs. On a smaller device (laptop prep, a fallback
+    // to the built-in interface) a request past the last input wraps to
+    // strip % numInputs, so the strip still hears something -- but only live:
+    // the request itself stays in TrackState::inputRouting and is what gets
+    // saved, so the show rig records what was patched. -1 = no input.
+    inline int effectiveInputRouting (int strip, int requested, int numInputs) noexcept
+    {
+        if (numInputs > 0 && (requested < -1 || requested >= numInputs))
+            return strip % numInputs;
+        return requested;
+    }
 }

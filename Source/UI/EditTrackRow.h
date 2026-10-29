@@ -483,7 +483,7 @@ namespace zynforge
         void refreshRoutingSelection()
         {
             auto& s = engine.getRecorder().getTrack (index);
-            int inR  = s.inputRouting .load();
+            int inR  = engine.getEffectiveInputRouting (index);   // what it hears on this device
             int outR = s.outputRouting.load();
             if (inR  == -2) inR  = index;
             if (outR == -2) outR = index;

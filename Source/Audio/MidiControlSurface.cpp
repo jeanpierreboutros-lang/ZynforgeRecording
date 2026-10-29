@@ -118,9 +118,9 @@ namespace zynforge
                 if (ch >= 0 && ch < r.getNumTracks())
                 {
                     auto& t = r.getTrack (ch);
-                    const float pan = juce::jlimit (-1.0f, 1.0f,
-                        t.pan.load (std::memory_order_relaxed) + (float) delta * 0.05f);
-                    t.pan.store (pan, std::memory_order_relaxed);
+                    // Through the engine so the pan is persisted: a bare store
+                    // snapped back to the saved pan on the next +CH / restart.
+                    eng->setTrackPan (ch, t.pan.load (std::memory_order_relaxed) + (float) delta * 0.05f);
                 }
             });
             return;

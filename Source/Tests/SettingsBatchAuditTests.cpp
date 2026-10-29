@@ -151,6 +151,40 @@ namespace zynforge
                     expectWithinAbsoluteError (track.pan.load(), 0.0f, 0.0001f);
                 }
             }
+
+            beginTest ("A 56-strip cue fade tick does not rewrite the settings file per strip");
+            {
+                // updateCueRamp sets gain + pan on every strip at 10 Hz; each
+                // call used to reload and rewrite the whole shared file.
+                juce::File file;
+                {
+                    AudioEngine engine;
+                    engine.setStripCount (56);
+                    file = engine.getAppProps()->getFile();
+                    const auto before = settingsReloadCountForTests.load();
+                    for (int i = 0; i < 56; ++i)
+                    {
+                        engine.setTrackGainDb (i, -6.0f - (float) i * 0.1f);
+                        engine.setTrackPan (i, 0.5f);
+                    }
+                    const auto reloads = settingsReloadCountForTests.load() - before;
+                    logMessage ("56-strip gain + pan tick shared-file reloads: " + juce::String (reloads));
+                    expect (reloads <= 2, "every gain/pan call rewrote the settings file: " + juce::String (reloads));
+
+                    // The newest values are what a device restart re-applies...
+                    engine.prepareForTests (48000.0, 512);
+                    expectWithinAbsoluteError (engine.getRecorder().getTrack (55).gainDb.load(), -11.5f, 0.0001f);
+                    expectWithinAbsoluteError (engine.getRecorder().getTrack (55).pan.load(), 0.5f, 0.0001f);
+                }
+                // ...and what is on disk once the engine is gone.
+                {
+                    juce::PropertiesFile saved (file, options());
+                    expectWithinAbsoluteError (saved.getDoubleValue ("strip_gain_55"), -11.5, 0.0001);
+                    expectWithinAbsoluteError (saved.getDoubleValue ("strip_pan_55"), 0.5, 0.0001);
+                }
+                AudioEngine cleanup;
+                cleanup.clearAllStripOverrides();
+            }
         }
     };
     static SettingsBatchAuditTests settingsBatchAuditTests;

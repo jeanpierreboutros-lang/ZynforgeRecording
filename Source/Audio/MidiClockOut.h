@@ -3,6 +3,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <atomic>
+#include <functional>
 
 namespace zynforge
 {
@@ -80,12 +81,20 @@ namespace zynforge
 
         bool isEnabled() const noexcept { return enabled.load (std::memory_order_relaxed); }
 
+        // Test-only: also hand every outgoing message to `sink` (called with
+        // the output lock held, from the caller's thread or the clock thread).
+        void setMessageSinkForTests (std::function<void (const juce::MidiMessage&)> sink)
+        {
+            const juce::ScopedLock sl (lock);
+            testSink = std::move (sink);
+        }
+
         // Engine calls these on play / pause / stop / resume so the
         // slave hardware locks to the session transport.
         void sendStart()
         {
             const juce::ScopedLock sl (lock);
-            if (output != nullptr) output->sendMessageNow (juce::MidiMessage::midiStart());
+            send (juce::MidiMessage::midiStart());
             // Finding #6: publish the fresh timestamp BEFORE flipping running
             // true (release). The timer reads running with acquire, so once it
             // observes running it also sees this timestamp -- never a stale one
@@ -97,15 +106,35 @@ namespace zynforge
         void sendContinue()
         {
             const juce::ScopedLock sl (lock);
-            if (output != nullptr) output->sendMessageNow (juce::MidiMessage::midiContinue());
+            send (juce::MidiMessage::midiContinue());
             msAtLastPulse.store ((double) juce::Time::getMillisecondCounterHiRes(),
                                  std::memory_order_relaxed);
             running.store (true, std::memory_order_release);
         }
+        // Resume from `midiBeats` (16th notes since the session start): Song
+        // Position Pointer, then Continue. Start (0xFA) always means "from bar
+        // 1", so playing from mid-session must not send it.
+        void sendContinueFrom (int midiBeats)
+        {
+            const juce::ScopedLock sl (lock);
+            send (juce::MidiMessage::songPositionPointer (juce::jlimit (0, 16383, midiBeats)));
+            send (juce::MidiMessage::midiContinue());
+            msAtLastPulse.store ((double) juce::Time::getMillisecondCounterHiRes(),
+                                 std::memory_order_relaxed);
+            running.store (true, std::memory_order_release);
+        }
+
+        // Engine wiring, set once before the clock is enabled: is the
+        // transport still rolling? The player stops by itself at the session
+        // end, and reorder / session load / a device stop halt it directly --
+        // none of that goes through stopPlayback(), so the clock thread sends
+        // Stop when it sees the transport has stopped under it.
+        void setTransportProbe (std::function<bool()> rolling) { transportRolling = std::move (rolling); }
+
         void sendStop()
         {
             const juce::ScopedLock sl (lock);
-            if (output != nullptr) output->sendMessageNow (juce::MidiMessage::midiStop());
+            send (juce::MidiMessage::midiStop());
             running.store (false, std::memory_order_release);
         }
 
@@ -118,6 +147,12 @@ namespace zynforge
             if (! enabled.load (std::memory_order_acquire)
                 || ! running.load (std::memory_order_acquire)) return;
 
+            if (transportRolling && ! transportRolling())
+            {
+                sendStop();   // slaves would otherwise keep running on their own
+                return;
+            }
+
             const float bpm     = tempoBpm.load (std::memory_order_relaxed);
             const double pulseMs = 60000.0 / (double) (bpm * 24.0f);
 
@@ -129,12 +164,17 @@ namespace zynforge
             {
                 {
                     const juce::ScopedLock sl (lock);
-                    if (output != nullptr)
-                        output->sendMessageNow (juce::MidiMessage::midiClock());
+                    send (juce::MidiMessage::midiClock());
                 }
                 last += pulseMs;
             }
             msAtLastPulse.store (last, std::memory_order_relaxed);
+        }
+
+        void send (const juce::MidiMessage& m)   // caller holds `lock`
+        {
+            if (output != nullptr) output->sendMessageNow (m);
+            if (testSink) testSink (m);
         }
 
         void stop()
@@ -146,6 +186,8 @@ namespace zynforge
 
         mutable juce::CriticalSection       lock;
         std::unique_ptr<juce::MidiOutput>   output;
+        std::function<void (const juce::MidiMessage&)> testSink;
+        std::function<bool()>               transportRolling;
         std::atomic<float>  tempoBpm { 120.0f };
         std::atomic<bool>   enabled  { false };
         std::atomic<bool>   running        { false };
