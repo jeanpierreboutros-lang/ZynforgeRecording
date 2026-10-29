@@ -416,6 +416,26 @@ namespace zynforge
                     server.stop();
                 }
             }
+
+            beginTest ("Deeply nested /cmd JSON is refused without crashing the server");
+            {
+                // juce::JSON::parse recurses once per bracket with no depth cap;
+                // a 200 KB run of '[' overflowed the worker's stack.
+                AudioEngine engine;
+                CompanionServer server (engine);
+                const int port = startOnFreePort (server, 19420);
+                expect (port != 0, "companion server failed to start");
+                if (port != 0)
+                {
+                    const auto tok = server.getAccessToken();
+                    const auto bomb = juce::String::repeatedString ("[", 200000);
+                    expect (httpPost (port, "/cmd?t=" + tok, bomb).contains ("400"),
+                            "deeply nested JSON was not refused");
+                    expect (httpGet (port, "/state.json?t=" + tok).contains ("200"),
+                            "server stopped answering after nested JSON");
+                    server.stop();
+                }
+            }
             AudioEngine::setTestModeSkipAudioInit (false);
         }
     };

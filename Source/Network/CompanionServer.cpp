@@ -106,6 +106,30 @@ namespace zynforge
             }
         }
 
+        // juce::JSON::parse recurses once per '[' / '{' with no depth limit, so
+        // a 1 MB body of '[' overflowed a worker's stack and took the app down.
+        // A command is one flat object; refuse deeper nesting before parsing.
+        constexpr int kMaxJsonDepth = 16;
+        bool jsonDepthWithin (const juce::String& text, int maxDepth)
+        {
+            int depth = 0;
+            bool inString = false, escaped = false;
+            for (auto p = text.getCharPointer(); ! p.isEmpty(); ++p)
+            {
+                const auto c = *p;
+                if (inString)
+                {
+                    if (escaped)        escaped = false;
+                    else if (c == '\\') escaped = true;
+                    else if (c == '"')  inString = false;
+                }
+                else if (c == '"')             inString = true;
+                else if (c == '[' || c == '{') { if (++depth > maxDepth) return false; }
+                else if (c == ']' || c == '}') depth = juce::jmax (0, depth - 1);
+            }
+            return true;
+        }
+
         // True once a streaming client has hung up (EOF) or its socket failed.
         // Discards anything it sends after its request; nothing reads that.
         bool peerHungUp (juce::StreamingSocket& s)
@@ -723,6 +747,8 @@ poll();
 
     void CompanionServer::handleCommand (juce::StreamingSocket& s, const juce::String& body)
     {
+        if (! jsonDepthWithin (body, kMaxJsonDepth))
+        { writeRaw (s, "400 Bad Request", "text/plain", "json expected"); return; }
         const auto parsed = juce::JSON::parse (body);
         if (! parsed.isObject()) { writeRaw (s, "400 Bad Request", "text/plain", "json expected"); return; }
         const auto action = parsed.getProperty ("action", "").toString();
