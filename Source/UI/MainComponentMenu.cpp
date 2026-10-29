@@ -18,6 +18,7 @@
 #include "MirrorDrivesDialog.h"
 #include "TimecodeSyncDialog.h"
 #include "ControlSurfacesDialog.h"
+#include "SessionSettingsDialog.h"
 
 using namespace zynforge;
 
@@ -392,92 +393,102 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     }
     juce::Logger::writeToLog ("[ZF] menuItemSelected id=" + juce::String (id));
 
-    if (id == 1)         confirmSessionReplacement ([this] { onLoadSessionClicked(); });
-    else if (id == 2)    onSaveSessionState();
-    else if (id == 951)  showAutosaveSettings();
-    else if (id == 952)  runQcAnalysis();
-    else if (id == 953)  detectSongsToMarkers();
-    else if (id == 954)  promptConsoleConnect();
-    else if (id == 955)  consoleToggleSoundcheck();
-    else if (id == 956)  consoleCaptureGains();
-    else if (id == 957)  consoleRestoreGains();
-    else if (id == 958)  toggleCaptureDaemon();
-    else if (id == 961)
-    {
-        const auto url = engine.getCompanionAccessUrl().replace ("/?t=", "/confidence?t=");
-        if (engine.isCompanionServerRunning() && url.isNotEmpty())
-        {
-            juce::SystemClipboard::copyTextToClipboard (url);
-            showStatus ("Read-only confidence URL copied. Use a TLS tunnel for another device.");
-        }
-        else
-            showStatus ("Start the companion server before copying its confidence URL");
-    }
-    else if (id == 962)  exportShowHandoff();
-    else if (id == 3)    onSaveSessionAs();
-    else if (id == 4)    onImportAudioFiles();
-    else if (id == 7)    confirmSessionReplacement ([this] { createSessionFromCsv(); });
-    else if (id == 5)    confirmSessionReplacement ([this] { launchNewSessionDialog(); });
-    else if (id == 6)    closeSession();
-    else if (id == 10)   onExportAllTracks();
-    else if (id == 11)   onExportIndividualTracks();
-    else if (id == 12)   onBounceStems();
-    else if (id == 13)   onBounceStereoMix();
-    else if (id == 14)   exportTimelineCsv();
-    else if (id == 70)   promptSaveSessionTemplate();
-    else if (id == 71)   printSetlist();
-    else if (id >= 200 && id < 250)
+    if (menuCommands.isEmpty()) registerMenuCommands();
+    menuCommands.dispatch (id);
+
+}
+
+// ── Menu command table ─────────────────────────────────────────────────────
+// Every menu-bar id maps here. Exact ids always win over ranges, ranges may
+// not overlap, and MenuDispatchTests fails on any exact id inside a range or
+// any built menu item without a handler (MenuCommandTable.h). The former
+// if/else chain also carried handlers for ids nothing built any more (OSC
+// dialects 110..116 -- the OSC button and Control Surfaces own those; LTC/MTC
+// 610..699 -- the Timecode Sync dialog; per-track export 100..199 -- the
+// export popup dispatches itself); they are gone.
+void MainComponent::registerMenuCommands()
+{
+    auto& m = menuCommands;
+    auto replaceSession = [this] (std::function<void()> next)
+    { return [this, next] { confirmSessionReplacement (next); }; };
+
+    // File
+    m.add (1,   replaceSession ([this] { onLoadSessionClicked(); }));
+    m.add (2,   [this] { onSaveSessionState(); });
+    m.add (3,   [this] { onSaveSessionAs(); });
+    m.add (4,   [this] { onImportAudioFiles(); });
+    m.add (5,   replaceSession ([this] { launchNewSessionDialog(); }));
+    m.add (6,   [this] { closeSession(); });
+    m.add (7,   replaceSession ([this] { createSessionFromCsv(); }));
+    m.add (10,  [this] { onExportAllTracks(); });
+    m.add (11,  [this] { onExportIndividualTracks(); });
+    m.add (12,  [this] { onBounceStems(); });
+    m.add (13,  [this] { onBounceStereoMix(); });
+    m.add (14,  [this] { exportTimelineCsv(); });
+    m.add (962, [this] { exportShowHandoff(); });
+    m.add (70,  [this] { promptSaveSessionTemplate(); });
+    m.add (71,  [this] { printSetlist(); });
+    m.addRange (200, 249, [this] (int offset)
     {
         const auto list = listSessionTemplates();
-        const int idx = id - 200;
-        if (idx >= 0 && idx < list.size())
+        if (offset < list.size())
         {
-            const auto selected = list[idx];
+            const auto selected = list[offset];
             confirmSessionReplacement ([this, selected] { launchNewSessionDialog (selected); });
         }
-    }
-    else if (id == 250)  promptDeleteSessionTemplate();
-    else if (id == 260)  setDefaultTemplate ({});
-    else if (id >= 2000 && id < 2100)
+    });
+    m.add (250, [this] { promptDeleteSessionTemplate(); });
+    m.add (260, [this] { setDefaultTemplate ({}); });
+    m.addRange (2000, 2099, [this] (int offset)
     {
         const auto list = listSessionTemplates();
-        const int idx = id - 2000;
-        if (idx >= 0 && idx < list.size()) setDefaultTemplate (list[idx]);
-    }
-    else if (id == 900)  showKeyboardShortcuts();
-    else if (id == 901)  showFirstRunTutorial();   // the tour -- NOT showStartupWelcome (which reloads the session + discards unsaved changes)
-    else if (id == 902)  showAboutDialog();
-    else if (id == 903)  showUserGuide();
-    else if (id == 99)   confirmAndQuit();
-    // Track-export sub-menu uses ids 100..199. Tightened from the
-    // previous open-ended `>= 100` which was swallowing 110..115
-    // (OSC dialects), 200..230 (settings menu), and 250 (Session
-    // Settings) -- sending all of them to onExportIndividualTrack.
-    // OSC dialect picks under Session ▶ OSC ▶ -- must be checked BEFORE
-    // the export range below, otherwise IDs 110..115 fall through to
-    // onExportIndividualTrack(10..15) and silently no-op.
-    else if (id >= 110 && id <= 114)
+        if (offset < list.size()) setDefaultTemplate (list[offset]);
+    });
+    m.add (60,  [this] { onBackupClicked(); });
+    m.add (61,  [this] { MirrorDrivesDialog::launch (engine); });
+    m.add (99,  [this] { confirmAndQuit(); });
+
+    // Session
+    m.add (50,  [this] { zynforge::PatchPage::launch (engine); });
+    m.add (51,  [this] { zynforge::Meterbridge::launch (engine); });
+    m.add (52,  [this] { onVscClicked(); });
+    m.add (53,  [this] { zynforge::MarkerListDialog::launch (engine); });
+    m.add (54,  [this] { showPreflightChecklist(); });
+    m.add (55,  [this] { toggleNdiBroadcast(); });
+    m.add (56,  [this] { dropMarkerAndPromptName(); });
+    m.add (62,  [this]
     {
-        const int dialect = id - 110;
-        const int port = oscListenPort();
-        if (engine.startOsc (port, dialect))
-            showStatus ("OSC listening on " + juce::String (port) + " (" +
-                        juce::StringArray ({"Generic","DiGiCo","A&H","SSL","Yamaha"})[dialect] + ")"
-                        + (dialect == 0 ? " -- token " + engine.getOscAccessToken() : juce::String()));
-        else
-            showStatus ("OSC failed to bind UDP " + juce::String (port) + " -- port already in use?");
-    }
-    else if (id == 115)  { engine.stopOsc(); showStatus ("OSC stopped"); }
-    else if (id == 116)  promptOscPort();
-    else if (id == 400)
+        engine.setAutoArmOnInputDetect (! engine.isAutoArmOnInputDetect());
+        showStatus (engine.isAutoArmOnInputDetect() ? "Auto-arm on input detect: ON"
+                                                    : "Auto-arm on input detect: OFF");
+    });
+    m.add (251, [this] { showSessionProperties(); });
+    m.add (255, [this]
+    {
+        SessionSettingsDialog::launch (engine,
+            [self = juce::Component::SafePointer<MainComponent> (this)] { if (self != nullptr) self->relocateActiveSession(); },
+            [self = juce::Component::SafePointer<MainComponent> (this)] (double sr) { if (self != nullptr) self->applySessionSampleRate (sr); });
+    });
+    m.add (256, [this]
+    {
+        const bool on = ! engine.isTrimFollowEnabled();
+        engine.setTrimFollowEnabled (on);
+        showStatus (on ? "Trim-Follow ON -- console input-gain moves now track the recorded soundcheck"
+                       : "Trim-Follow OFF -- recorded tracks play at their printed level");
+    });
+    m.add (280, [this] { runSpectralAutoName(); });
+    m.add (281, [this] { writeSoundcheckReport(); });
+    m.add (282, [this] { runNoiseAnalysis(); });
+    m.add (290, [this] { promptMirrorHost(); });
+    m.add (400, [this]
     {
         engine.getMidiClockOut().setEnabled (false);
         showStatus ("MIDI clock stopped");
-    }
-    else if (id >= 401 && id < 431)
+    });
+    m.addRange (401, 430, [this] (int offset)
     {
         const auto outs = zynforge::MidiClockOut::listOutputs();
-        const int idx = id - 401;
+        const int idx = offset;
         if (idx >= 0 && idx < outs.size())
         {
             engine.getMidiClockOut().setOutputDevice (outs[idx]);
@@ -485,142 +496,9 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
             engine.getMidiClockOut().setEnabled (true);
             showStatus ("MIDI clock -> " + outs[idx]);
         }
-    }
-    else if (id == 959)
-    {
-        // Run the configured cloud-upload command with {SESSION} expanded.
-        const auto sessionDir = engine.getActiveSessionDir();
-        if (! sessionDir.isDirectory()) { showStatus ("No session active -- load or record first"); return; }
-        auto* props = engine.getAppProps();
-        const auto tmpl = props != nullptr ? props->getValue ("cloudUploadCommand") : juce::String();
-        if (tmpl.isEmpty())
-        {
-            showStatus ("No upload command configured -- pick \"Configure cloud upload command...\" first");
-            return;
-        }
-        if (zynforge::cloud::launchUpload (tmpl, sessionDir))
-        {
-            showStatus ("Cloud upload started: " + sessionDir.getFileName());
-        }
-        else
-        {
-            showStatus ("Cloud upload failed to launch -- check the configured command");
-        }
-    }
-    else if (id == 950)
-    {
-        if (engine.isCompanionServerRunning())
-        {
-            engine.stopCompanionServer();
-            showStatus ("Companion server stopped");
-        }
-        else if (engine.startCompanionServer (9000))
-        {
-            const auto url = engine.getCompanionAccessUrl();
-            // Show + copy the full URL (with access token) so the
-            // engineer can paste it on their phone without typing
-            // the 32-hex token. Companion is loopback-only by
-            // default; for phone / off-machine access put a tunnel in
-            // front of loopback (Tailscale / Cloudflare / SSH -L) -- it
-            // gives real TLS, unlike serving plaintext HTTP over Wi-Fi.
-            // See README "Companion server -- Security & secure remote access".
-            juce::SystemClipboard::copyTextToClipboard (url);
-            if (engine.isCompanionExposedOnLan())
-                showStatus ("! Companion EXPOSED ON LAN (plaintext) -- use a tunnel for remote access, not raw Wi-Fi");
-            else
-                showStatus ("Companion on (loopback-only) -- URL copied. For phone access, tunnel to 127.0.0.1:9000 (see README)");
-        }
-        else
-        {
-            showStatus ("Companion failed to bind port 9000 -- try a different port");
-        }
-    }
-    else if (id == 960)
-    {
-        // Edit the upload command template.
-        auto* aw = new juce::AlertWindow ("Cloud upload command",
-                                          "Shell command to upload a session. Use {SESSION} as a "
-                                          "placeholder for the session directory's absolute path. "
-                                          "Examples:\n"
-                                          "  rclone copy {SESSION} myremote:zynforge-sessions/\n"
-                                          "  aws s3 sync {SESSION} s3://my-bucket/sessions/\n"
-                                          "  rsync -a {SESSION} engineer@studio:/sessions/",
-                                          juce::MessageBoxIconType::NoIcon);
-        aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
-        const auto current = engine.getAppProps() != nullptr
-                              ? engine.getAppProps()->getValue ("cloudUploadCommand")
-                              : juce::String();
-        aw->addTextEditor ("cmd", current, {});
-        dialog::primeNameEditor (*aw, "cmd");
-        aw->addButton ("Save",   1, juce::KeyPress (juce::KeyPress::returnKey));
-        aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-        juce::Component::SafePointer<MainComponent> self (this);
-        aw->enterModalState (true,
-            juce::ModalCallbackFunction::create (
-                [self, aw] (int result)
-                {
-                    if (result == 1 && self != nullptr && self->engine.getAppProps() != nullptr)
-                    {
-                        const auto v = aw->getTextEditorContents ("cmd").trim();
-                        self->engine.getAppProps()->setValue ("cloudUploadCommand", v);
-                        self->engine.getAppProps()->saveIfNeeded();
-                        self->showStatus (v.isEmpty() ? juce::String ("Cloud upload command cleared")
-                                                : juce::String ("Cloud upload command saved"));
-                    }
-                    delete aw;
-                }),
-            false);
-    }
-    else if (id >= 100 && id < 200) onExportIndividualTrack (id - 100);
-    else if (id == 50)   zynforge::PatchPage::launch (engine);
-    else if (id == 51)   zynforge::Meterbridge::launch (engine);
-    else if (id == 52)   onVscClicked();
-    else if (id == 53)   zynforge::MarkerListDialog::launch (engine);
-    else if (id == 54)   showPreflightChecklist();
-    else if (id == 56)   dropMarkerAndPromptName();
-    else if (id == 55)
-    {
-        auto& bridge = engine.getNDIBridge();
-        if (bridge.isEnabled())
-        {
-            bridge.stop();
-            showStatus ("NDI broadcast stopped");
-        }
-        else
-        {
-            const auto runtime = zynforge::NDIBridge::findRuntimePath();
-            if (runtime.isEmpty())
-            {
-                juce::AlertWindow::showMessageBoxAsync (
-                    juce::MessageBoxIconType::NoIcon,
-                    "NDI runtime not found",
-                    "Install the free NDI runtime from ndi.tv (the 'NDI Tools' bundle "
-                    "ships with libndi.dylib in /usr/local/lib). Re-launch the app "
-                    "after installing to broadcast over NDI.", "OK");
-                return;
-            }
-            auto sr = engine.getDeviceManager().getCurrentAudioDevice() != nullptr
-                ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
-                : 48000.0;
-            const auto host = juce::SystemStats::getComputerName();
-            if (bridge.start ("Zynforge -- " + host, sr))
-                showStatus ("NDI broadcasting as 'Zynforge -- " + host + "'");
-            else
-                showStatus ("NDI start failed -- check ndi.tv runtime install");
-        }
-    }
-    else if (id == 251) showSessionProperties();
-    else if (id == 280) runSpectralAutoName();
-    else if (id == 281) writeSoundcheckReport();
-    else if (id == 282) runNoiseAnalysis();
-    else if (id == 256)
-    {
-        const bool on = ! engine.isTrimFollowEnabled();
-        engine.setTrimFollowEnabled (on);
-        showStatus (on ? "Trim-Follow ON -- console input-gain moves now track the recorded soundcheck"
-                       : "Trim-Follow OFF -- recorded tracks play at their printed level");
-    }
-    else if (id == 720)
+    });
+    m.add (600, [this] { zynforge::TimecodeSyncDialog::launch (engine); });
+    m.add (720, [this]
     {
         juce::Component::SafePointer<MainComponent> self (this);
         zynforge::ControlSurfacesDialog::launch (engine, [self]
@@ -630,279 +508,197 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
             self->confirmSessionReplacement ([continuation]
             { if (continuation != nullptr) continuation->createSessionFromConsole(); });
         });
-    }
-    else if (id == 600)  zynforge::TimecodeSyncDialog::launch (engine);
-    else if (id == 610)
+    });
+    m.add (950, [this] { toggleCompanionServer(); });
+    m.add (951, [this] { showAutosaveSettings(); });
+    m.add (952, [this] { runQcAnalysis(); });
+    m.add (953, [this] { detectSongsToMarkers(); });
+    m.add (954, [this] { promptConsoleConnect(); });
+    m.add (955, [this] { consoleToggleSoundcheck(); });
+    m.add (956, [this] { consoleCaptureGains(); });
+    m.add (957, [this] { consoleRestoreGains(); });
+    m.add (958, [this] { toggleCaptureDaemon(); });
+    m.add (959, [this] { runCloudUpload(); });
+    m.add (960, [this] { editCloudUploadCommand(); });
+    m.add (961, [this] { copyConfidenceUrl(); });
+
+    // Help
+    m.add (900, [this] { showKeyboardShortcuts(); });
+    m.add (901, [this] { showFirstRunTutorial(); });   // the tour -- NOT showStartupWelcome (which reloads the session + discards unsaved changes)
+    m.add (902, [this] { showAboutDialog(); });
+    m.add (903, [this] { showUserGuide(); });
+
+    // Edit
+    m.add (300, [this] { editUndo(); });
+    m.add (301, [this] { editRedo(); });
+    m.add (302, [this] { editCutSelected (true); });
+    m.add (303, [this] { editCutSelected (false); });
+    m.add (304, [this] { editPasteSelected(); });
+    m.add (305, [this] { confirmDeleteChannels ([this] { deleteSelectedStrips(); }); });
+    m.add (306, [this] { editCropToLoopRange(); });
+    m.add (307, [this] { editSoloSelection(); });
+    m.add (308, [this] { editSetRangeToLoopRange(); });
+    m.add (309, [this] { editToggleSnap(); });
+    m.add (310, [this]
     {
-        engine.setChaseMode (zynforge::AudioEngine::ChaseMode::Off);
-        engine.setMtcInputByName ({});
-        showStatus ("Timecode chase off");
-    }
-    else if (id >= 620 && id < 640)         // LTC from input strip
+        if (engine.getPlayer().hasLoopRegion()) editSeparateAtSelection();
+        else                                    editSplitAtPlayhead();
+    });
+    m.add (311, [this] { editStartRange(); });
+    m.add (312, [this] { editFinishRange(); });
+    m.add (313, [this] { removeLastCapture(); });
+    m.add (314, [this] { togglePunchMode(); });
+    m.add (315, [this] { editHealSeparation(); });
+    m.add (316, [this] { editStripSilence(); });
+    m.add (317, [this] { editConsolidateSelection(); });
+    m.add (318, [this]
     {
-        const int strip1 = id - 620 + 1;
-        engine.setMtcInputByName ({});
-        engine.setLtcSourceStrip (strip1);
-        engine.setChaseMode (zynforge::AudioEngine::ChaseMode::Ltc);
-        showStatus ("Chasing LTC on Input " + juce::String (strip1)
-                    + " -- transport follows incoming timecode");
-    }
-    else if (id >= 640 && id < 700)         // MTC from MIDI device
+        zeroCrossSnap = ! zeroCrossSnap;
+        showStatus (zeroCrossSnap ? "Zero-crossing snap on (click-free cuts)" : "Zero-crossing snap off");
+    });
+
+    // Track
+    m.add (320, [this] { showBatchRenameDialog(); });
+    m.add (321, [this] { showBatchColourDialog(); });
+    m.add (322, [this] { importChannelNamesFromCsv(); });
+    m.add (330, [this] { moveSelectedStrips (-1); });
+    m.add (331, [this] { moveSelectedStrips ( 1); });
+    m.add (332, [this] { colourSelectedStrips(); });
+    m.add (333, [this] { confirmDeleteChannels ([this] { deleteSelectedStrips(); }); });
+    m.add (334, [this] { clearStripSelection(); });
+    m.add (335, [this] { selectAllStrips(); });
+}
+
+void MainComponent::copyConfidenceUrl()
+{
+    const auto url = engine.getCompanionAccessUrl().replace ("/?t=", "/confidence?t=");
+    if (engine.isCompanionServerRunning() && url.isNotEmpty())
     {
-        const auto names = engine.getMidiInputNames();
-        const int j = id - 640;
-        if (j >= 0 && j < names.size())
-        {
-            if (engine.setMtcInputByName (names[j]))
+        juce::SystemClipboard::copyTextToClipboard (url);
+        showStatus ("Read-only confidence URL copied. Use a TLS tunnel for another device.");
+    }
+    else
+        showStatus ("Start the companion server before copying its confidence URL");
+}
+
+void MainComponent::runCloudUpload()
+{
+    // Run the configured cloud-upload command with {SESSION} expanded.
+    const auto sessionDir = engine.getActiveSessionDir();
+    if (! sessionDir.isDirectory()) { showStatus ("No session active -- load or record first"); return; }
+    auto* props = engine.getAppProps();
+    const auto tmpl = props != nullptr ? props->getValue ("cloudUploadCommand") : juce::String();
+    if (tmpl.isEmpty())
+    {
+        showStatus ("No upload command configured -- pick \"Configure cloud upload command...\" first");
+        return;
+    }
+    if (zynforge::cloud::launchUpload (tmpl, sessionDir))
+    {
+        showStatus ("Cloud upload started: " + sessionDir.getFileName());
+    }
+    else
+    {
+        showStatus ("Cloud upload failed to launch -- check the configured command");
+    }
+}
+
+void MainComponent::toggleCompanionServer()
+{
+    if (engine.isCompanionServerRunning())
+    {
+        engine.stopCompanionServer();
+        showStatus ("Companion server stopped");
+    }
+    else if (engine.startCompanionServer (9000))
+    {
+        const auto url = engine.getCompanionAccessUrl();
+        // Show + copy the full URL (with access token) so the
+        // engineer can paste it on their phone without typing
+        // the 32-hex token. Companion is loopback-only by
+        // default; for phone / off-machine access put a tunnel in
+        // front of loopback (Tailscale / Cloudflare / SSH -L) -- it
+        // gives real TLS, unlike serving plaintext HTTP over Wi-Fi.
+        // See README "Companion server -- Security & secure remote access".
+        juce::SystemClipboard::copyTextToClipboard (url);
+        if (engine.isCompanionExposedOnLan())
+            showStatus ("! Companion EXPOSED ON LAN (plaintext) -- use a tunnel for remote access, not raw Wi-Fi");
+        else
+            showStatus ("Companion on (loopback-only) -- URL copied. For phone access, tunnel to 127.0.0.1:9000 (see README)");
+    }
+    else
+    {
+        showStatus ("Companion failed to bind port 9000 -- try a different port");
+    }
+}
+
+void MainComponent::editCloudUploadCommand()
+{
+    // Edit the upload command template.
+    auto* aw = new juce::AlertWindow ("Cloud upload command",
+                                      "Shell command to upload a session. Use {SESSION} as a "
+                                      "placeholder for the session directory's absolute path. "
+                                      "Examples:\n"
+                                      "  rclone copy {SESSION} myremote:zynforge-sessions/\n"
+                                      "  aws s3 sync {SESSION} s3://my-bucket/sessions/\n"
+                                      "  rsync -a {SESSION} engineer@studio:/sessions/",
+                                      juce::MessageBoxIconType::NoIcon);
+    aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
+    const auto current = engine.getAppProps() != nullptr
+                          ? engine.getAppProps()->getValue ("cloudUploadCommand")
+                          : juce::String();
+    aw->addTextEditor ("cmd", current, {});
+    dialog::primeNameEditor (*aw, "cmd");
+    aw->addButton ("Save",   1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    juce::Component::SafePointer<MainComponent> self (this);
+    aw->enterModalState (true,
+        juce::ModalCallbackFunction::create (
+            [self, aw] (int result)
             {
-                engine.setChaseMode (zynforge::AudioEngine::ChaseMode::Mtc);
-                showStatus ("Chasing MTC from " + names[j] + " -- transport follows incoming timecode");
-            }
-            else
-                showStatus ("Couldn't open MIDI input \"" + names[j] + "\"");
-        }
-    }
-    else if (id == 290) promptMirrorHost();
-    else if (id == 255)
-    {
-        struct SessionFormatContent final : public juce::Component
-        {
-            SessionFormatContent (AudioEngine& e, MainComponent& o) : eng (e), owner (o) { rebuild(); setSize (440, 360); }
-
-            void rebuild()
-            {
-                using F = zynforge::CaptureFormat;
-                const auto cur = eng.getRecorder().getCaptureFormat();
-                // Show the SESSION's intended rate (what the session was
-                // created/opened at), NOT the live device rate -- a Dante
-                // clock-slave often runs a different rate than the session.
-                const double sr = eng.getSessionSampleRate() > 0.0
-                                    ? eng.getSessionSampleRate()
-                                    : eng.getDeviceManager().getAudioDeviceSetup().sampleRate;
-
-                fmtL.setText ("Audio Format", juce::dontSendNotification);
-                rateL.setText ("Sample Rate", juce::dontSendNotification);
-                bitsL.setText ("Bit Depth", juce::dontSendNotification);
-                for (auto* l : { &fmtL, &rateL, &bitsL })
-                    { l->setColour (juce::Label::textColourId, brand::textPrimary); addAndMakeVisible (*l); }
-
-                fmtBox.addItem ("WAV",  1);
-                fmtBox.addItem ("AIFF", 2);
-                fmtBox.addItem ("FLAC", 3);
-                int container = (cur == F::Wav16 || cur == F::Wav24 || cur == F::Wav32Float) ? 1
-                              : (cur == F::Aiff16 || cur == F::Aiff24 || cur == F::Aiff32Float) ? 2 : 3;
-                fmtBox.setSelectedId (container, juce::dontSendNotification);
-                fmtBox.onChange = [this] { refreshBits(); };
-                addAndMakeVisible (fmtBox);
-
-                rateBox.addItem ("44.1 kHz",  1);
-                rateBox.addItem ("48 kHz",    2);
-                rateBox.addItem ("88.2 kHz",  3);
-                rateBox.addItem ("96 kHz",    4);
-                rateBox.addItem ("176.4 kHz", 5);
-                rateBox.addItem ("192 kHz",   6);
-                rateBox.setSelectedId (rateIdFromHz (sr), juce::dontSendNotification);
-                addAndMakeVisible (rateBox);
-
-                addAndMakeVisible (bitsBox);
-                refreshBits();
-                bitsBox.setSelectedId ((cur == F::Wav16 || cur == F::Aiff16 || cur == F::Flac16) ? 1
-                                     : (cur == F::Wav32Float || cur == F::Aiff32Float) ? 3 : 2,
-                                     juce::dontSendNotification);
-
-                // Recording location -- the active session folder. "Change..."
-                // moves the whole session (recorded audio included) elsewhere.
-                pathL.setText ("Recording Path", juce::dontSendNotification);
-                pathL.setColour (juce::Label::textColourId, brand::textPrimary);
-                addAndMakeVisible (pathL);
-
-                const auto dir = eng.getActiveSessionDir();
-                pathVal.setText (dir.isDirectory() ? dir.getFullPathName()
-                                                   : juce::String ("(no active session)"),
-                                 juce::dontSendNotification);
-                pathVal.setColour (juce::Label::textColourId, brand::textSecondary);
-                pathVal.setFont (brand::type::caption());
-                pathVal.setTooltip (pathVal.getText());
-                addAndMakeVisible (pathVal);
-
-                changePathB.setButtonText ("Change...");
-                changePathB.setEnabled (dir.isDirectory() && ! eng.isRecording());
-                changePathB.onClick = [this]
+                if (result == 1 && self != nullptr && self->engine.getAppProps() != nullptr)
                 {
-                    close();                          // dismiss settings first
-                    owner.relocateActiveSession();    // then run the move flow
-                };
-                addAndMakeVisible (changePathB);
+                    const auto v = aw->getTextEditorContents ("cmd").trim();
+                    self->engine.getAppProps()->setValue ("cloudUploadCommand", v);
+                    self->engine.getAppProps()->saveIfNeeded();
+                    self->showStatus (v.isEmpty() ? juce::String ("Cloud upload command cleared")
+                                            : juce::String ("Cloud upload command saved"));
+                }
+                delete aw;
+            }),
+        false);
+}
 
-                stereoMixB.setButtonText ("Record optional stereo stream mix");
-                stereoMixB.setTooltip ("Also records the stream-send bus to Export Files; multitrack capture is unchanged.");
-                stereoMixB.setToggleState (eng.getRecordStereoMix(), juce::dontSendNotification);
-                addAndMakeVisible (stereoMixB);
-
-                applyB.setButtonText ("Apply");
-                cancelB.setButtonText ("Cancel");
-                applyB.onClick  = [this] { apply(); };
-                cancelB.onClick = [this] { close(); };
-                addAndMakeVisible (applyB);
-                addAndMakeVisible (cancelB);
-            }
-
-            static int rateIdFromHz (double hz)
-            {
-                if (juce::approximatelyEqual (hz, 44100.0))  return 1;
-                if (juce::approximatelyEqual (hz, 88200.0))  return 3;
-                if (juce::approximatelyEqual (hz, 96000.0))  return 4;
-                if (juce::approximatelyEqual (hz, 176400.0)) return 5;
-                if (juce::approximatelyEqual (hz, 192000.0)) return 6;
-                return 2;   // 48 kHz default
-            }
-            static double hzFromRateId (int id)
-            {
-                switch (id) { case 1: return 44100.0;  case 3: return 88200.0;
-                              case 4: return 96000.0;  case 5: return 176400.0;
-                              case 6: return 192000.0; }
-                return 48000.0;
-            }
-
-            void refreshBits()
-            {
-                const int prev = bitsBox.getSelectedId();
-                bitsBox.clear (juce::dontSendNotification);
-                bitsBox.addItem ("16-bit PCM", 1);
-                bitsBox.addItem ("24-bit PCM", 2);
-                if (fmtBox.getSelectedId() != 3) bitsBox.addItem ("32-bit float", 3);
-                if (prev > 0) bitsBox.setSelectedId (prev, juce::dontSendNotification);
-                if (bitsBox.getSelectedId() == 0)
-                    bitsBox.setSelectedId (2, juce::dontSendNotification);
-            }
-
-            void apply()
-            {
-                if (eng.isRecording()) { close(); return; }
-                using F = zynforge::CaptureFormat;
-                F f = F::Wav24;
-                const int c = fmtBox.getSelectedId(), b = bitsBox.getSelectedId();
-                if      (c == 1) f = b == 1 ? F::Wav16 : b == 2 ? F::Wav24 : F::Wav32Float;
-                else if (c == 2) f = b == 1 ? F::Aiff16 : b == 2 ? F::Aiff24 : F::Aiff32Float;
-                else             f = b == 1 ? F::Flac16 : F::Flac24;
-                eng.getRecorder().setCaptureFormat (f);
-                eng.setRecordStereoMix (stereoMixB.getToggleState());
-
-                // Change the SESSION rate (updates pendingSampleRate + the
-                // record-guard, and asks the device to follow) via the host,
-                // so it actually sticks instead of only nudging the device.
-                owner.applySessionSampleRate (hzFromRateId (rateBox.getSelectedId()));
-                close();
-            }
-
-            void close()
-            {
-                if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
-                    dw->exitModalState (0);
-            }
-
-            void resized() override
-            {
-                auto r = getLocalBounds().reduced (16);
-                const int rowH = 30, labelW = 120;
-                auto row = [&] (juce::Label& l, juce::ComboBox& b)
-                {
-                    auto rr = r.removeFromTop (rowH);
-                    l.setBounds (rr.removeFromLeft (labelW));
-                    b.setBounds (rr);
-                    r.removeFromTop (brand::space::sm);
-                };
-                row (fmtL, fmtBox); row (rateL, rateBox); row (bitsL, bitsBox);
-
-                // Recording-path row: label on top, path + Change... below.
-                r.removeFromTop (brand::space::sm);
-                pathL.setBounds (r.removeFromTop (20));
-                auto pr = r.removeFromTop (rowH);
-                changePathB.setBounds (pr.removeFromRight (110));
-                pr.removeFromRight (brand::space::sm);
-                pathVal.setBounds (pr);
-
-                r.removeFromTop (brand::space::md);
-                stereoMixB.setBounds (r.removeFromTop (28));
-
-                r.removeFromTop (brand::space::lg);
-                auto br = r.removeFromBottom (32);
-                applyB .setBounds (br.removeFromRight (110));
-                br.removeFromRight (brand::space::md);
-                cancelB.setBounds (br.removeFromRight (110));
-            }
-
-            void paint (juce::Graphics& g) override
-            {
-                auto r = getLocalBounds().toFloat();
-                g.setGradientFill (brand::verticalGradient (brand::bgPanel, r, 0.08f, 0.14f));
-                g.fillRect (r);
-            }
-
-            AudioEngine& eng;
-            MainComponent& owner;
-            juce::Label fmtL, rateL, bitsL, pathL, pathVal;
-            juce::ComboBox fmtBox, rateBox, bitsBox;
-            juce::TextButton applyB, cancelB, changePathB;
-            juce::ToggleButton stereoMixB;
-        };
-
-        auto* content = new SessionFormatContent (engine, *this);
-
-        juce::DialogWindow::LaunchOptions opts;
-        opts.content.setOwned (content);
-        opts.dialogTitle                  = "Session Settings";
-        opts.dialogBackgroundColour       = brand::bgPanel;
-        opts.escapeKeyTriggersCloseButton = true;
-        opts.useNativeTitleBar            = true;
-        opts.resizable                    = false;
-        if (auto* dw = opts.launchAsync())
-        {
-            dw->setAlwaysOnTop (true);
-            dw->toFront (true);
-        }
-    }
-    else if (id == 60)   onBackupClicked();
-    else if (id == 61)   MirrorDrivesDialog::launch (engine);
-    else if (id == 62)
+void MainComponent::toggleNdiBroadcast()
+{
+    auto& bridge = engine.getNDIBridge();
+    if (bridge.isEnabled())
     {
-        engine.setAutoArmOnInputDetect (! engine.isAutoArmOnInputDetect());
-        showStatus (engine.isAutoArmOnInputDetect()
-                      ? "Auto-arm on input detect: ON"
-                      : "Auto-arm on input detect: OFF");
+        bridge.stop();
+        showStatus ("NDI broadcast stopped");
     }
-    // Edit menu
-    else if (id == 300)  editUndo();
-    else if (id == 301)  editRedo();
-    else if (id == 302)  editCutSelected (true);
-    else if (id == 303)  editCutSelected (false);
-    else if (id == 304)  editPasteSelected();
-    else if (id == 305)  confirmDeleteChannels ([this] { deleteSelectedStrips(); });
-    else if (id == 306)  editCropToLoopRange();
-    else if (id == 307)  editSoloSelection();
-    else if (id == 308)  editSetRangeToLoopRange();
-    else if (id == 309)  editToggleSnap();
-    else if (id == 318)  { zeroCrossSnap = ! zeroCrossSnap;
-                           showStatus (zeroCrossSnap ? "Zero-crossing snap on (click-free cuts)"
-                                                     : "Zero-crossing snap off"); }
-    else if (id == 310)  { if (engine.getPlayer().hasLoopRegion()) editSeparateAtSelection();
-                           else                                    editSplitAtPlayhead(); }
-    else if (id == 311)  editStartRange();
-    else if (id == 312)  editFinishRange();
-    else if (id == 313)  removeLastCapture();
-    else if (id == 314)  togglePunchMode();
-    else if (id == 315)  editHealSeparation();
-    else if (id == 316)  editStripSilence();
-    else if (id == 317)  editConsolidateSelection();
-    else if (id == 320)  showBatchRenameDialog();
-    else if (id == 322)  importChannelNamesFromCsv();
-    else if (id == 321)  showBatchColourDialog();
-    else if (id == 330)  moveSelectedStrips (-1);
-    else if (id == 331)  moveSelectedStrips ( 1);
-    else if (id == 332)  colourSelectedStrips();
-    else if (id == 333)  confirmDeleteChannels ([this] { deleteSelectedStrips(); });
-    else if (id == 334)  clearStripSelection();
-    else if (id == 335)  selectAllStrips();
+    else
+    {
+        const auto runtime = zynforge::NDIBridge::findRuntimePath();
+        if (runtime.isEmpty())
+        {
+            juce::AlertWindow::showMessageBoxAsync (
+                juce::MessageBoxIconType::NoIcon,
+                "NDI runtime not found",
+                "Install the free NDI runtime from ndi.tv (the 'NDI Tools' bundle "
+                "ships with libndi.dylib in /usr/local/lib). Re-launch the app "
+                "after installing to broadcast over NDI.", "OK");
+            return;
+        }
+        auto sr = engine.getDeviceManager().getCurrentAudioDevice() != nullptr
+            ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
+            : 48000.0;
+        const auto host = juce::SystemStats::getComputerName();
+        if (bridge.start ("Zynforge -- " + host, sr))
+            showStatus ("NDI broadcasting as 'Zynforge -- " + host + "'");
+        else
+            showStatus ("NDI start failed -- check ndi.tv runtime install");
+    }
 }
 
 
@@ -914,41 +710,3 @@ int MainComponent::oscListenPort() const
     return 8000;
 }
 
-void MainComponent::promptOscPort()
-{
-    auto* aw = new juce::AlertWindow (
-        "OSC Port",
-        "UDP port this app listens on for OSC from your console / controller "
-        "(1-65535, default 8000). Point the desk's OSC target at this Mac's IP "
-        "address and this port.",
-        juce::MessageBoxIconType::NoIcon);
-    aw->setLookAndFeel (&laf);
-    aw->addTextEditor ("port", juce::String (oscListenPort()), "Port:");
-    aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
-    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-    dialog::primeNameEditor (*aw, "port");
-
-    juce::Component::SafePointer<MainComponent> self (this);
-    aw->enterModalState (true, juce::ModalCallbackFunction::create (
-        [self, aw] (int result)
-        {
-            std::unique_ptr<juce::AlertWindow> dispose (aw);
-            if (self == nullptr || result != 1) return;
-
-            const int port = juce::jlimit (1, 65535,
-                                           aw->getTextEditorContents ("port").getIntValue());
-            if (auto* p = self->engine.getAppProps())
-            {
-                p->setValue ("oscListenPort", port);
-                p->saveIfNeeded();
-            }
-            // Rebind immediately if we were already listening.
-            if (self->engine.isOscListening())
-            {
-                const int dialect = self->engine.getOscDialect();
-                self->engine.stopOsc();
-                self->engine.startOsc (port, dialect);
-            }
-            self->showStatus ("OSC port set to " + juce::String (port));
-        }), false);
-}

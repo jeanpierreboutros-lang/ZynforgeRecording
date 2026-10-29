@@ -170,7 +170,13 @@ Stop takes, save, and quit the GUI and helper gracefully before launching a seco
 
 ```bash
 open -n "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app" --args --isolated-settings
+# Unattended: also quit through the normal shutdown path after N seconds
+# (skips the quit prompt; honoured only with --isolated-settings).
+open -n -W "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app" \
+     --args --isolated-settings --smoke-quit-after=35
 ```
+
+The app is single-instance: a smoke launch while another copy is open is forwarded to that copy and exits. The quit prompt is drawn by JUCE, so scripted keystrokes only reach it when the controlling process has macOS Accessibility permission; `--smoke-quit-after` avoids needing it.
 
 Wait through startup, identify the exact new process and its executable path, then sample its PID with `ps -p <pid> -o pid,rss,etime,%cpu` at 10, 20 and 30 seconds. Check the visible window, runtime errors and newly created `~/Library/Logs/DiagnosticReports/Zynforge*.ips`, then quit through the app. Record the actual CPU/RSS and UI state rather than treating old measurements as fixed pass thresholds. The October 4 isolated smoke settled near 120 MiB RSS / 3% CPU at 30 seconds on this Mac. An installed-app launch with saved preferences is a separate check; see [INSTALL.md](INSTALL.md).
 

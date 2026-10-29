@@ -272,6 +272,23 @@ public:
             splash.reset();
             mainWindow = std::make_unique<MainWindow> (getApplicationName(), pendingDocument);
         });
+
+        // Smoke runs: `--isolated-settings --smoke-quit-after=<seconds>` quits
+        // through the normal shutdown path (window + component destructors,
+        // session-job joins, metadata-writer drain) after the delay, without
+        // the interactive quit prompt, so an unattended smoke also verifies a
+        // clean exit. Ignored without --isolated-settings: it can never skip
+        // the prompt on an engineer's real session.
+        if (commandLine.contains ("--isolated-settings"))
+            for (const auto& arg : getCommandLineParameterArray())
+                if (arg.startsWith ("--smoke-quit-after="))
+                {
+                    const int seconds = juce::jlimit (5, 3600, arg.fromFirstOccurrenceOf ("=", false, false).getIntValue());
+                    juce::Timer::callAfterDelay (seconds * 1000, []
+                    {
+                        if (auto* app = juce::JUCEApplicationBase::getInstance()) app->quit();
+                    });
+                }
     }
 
     void anotherInstanceStarted (const juce::String& commandLine) override

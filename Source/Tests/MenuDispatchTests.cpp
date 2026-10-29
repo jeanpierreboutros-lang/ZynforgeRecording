@@ -1,38 +1,36 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <map>
 #include "../UI/MainComponent.h"
+#include "../UI/MenuCommandTable.h"
 #include "../Audio/AudioEngine.h"
 
 namespace zynforge
 {
-    // Audits every menu the app builds for the id-collision class that has
-    // bitten this project repeatedly: (a) one id used by two different items
-    // (e.g. "Delete Template" + "Session Format" both = 250), and (b) a menu
-    // id landing inside a dispatch range that maps elsewhere (e.g. Control
-    // Surfaces = 130 falling in the per-track-export range 100..199). Both
-    // would have been caught here. Builds MainComponent headlessly via the
-    // s_testConstruct hook (no timers / dialogs / menu-bar registration).
+    // Audits every menu the app builds against the dispatch table for the
+    // id-collision class that has bitten this project repeatedly:
+    //   (a) one id used by two different items ("Delete Template" + "Session
+    //       Format" were both 250);
+    //   (b) an exact id lying inside a dispatch RANGE (the companion-server
+    //       item sat at 270 inside a template range and never ran);
+    //   (c) a built menu item with no handler at all.
+    // The table reports (b) itself via conflicts(), so this no longer depends
+    // on a hand-kept list of ranges -- the old list had already gone stale.
+    // Builds MainComponent headlessly via the s_testConstruct hook (no timers /
+    // dialogs / menu-bar registration).
     class MenuDispatchTests final : public juce::UnitTest
     {
     public:
         MenuDispatchTests() : UnitTest ("Menu dispatch", "zynforge") {}
 
-        void collect (const juce::PopupMenu& menu, std::map<int, juce::String>& seen,
-                      bool& dup, bool& rangeHit)
+        void collect (const juce::PopupMenu& menu, std::map<int, juce::String>& seen, bool& dup)
         {
             for (juce::PopupMenu::MenuItemIterator it (menu); it.next();)
             {
                 const auto& item = it.getItem();
-                if (item.subMenu != nullptr) collect (*item.subMenu, seen, dup, rangeHit);
+                if (item.subMenu != nullptr) collect (*item.subMenu, seen, dup);
 
                 const int id = item.itemID;
                 if (id <= 0) continue;   // separators / disabled placeholders
-
-                // The per-track-export handler (id-100) is dynamic-only: no
-                // static menu item should sit in [100,199].
-                if (id >= 100 && id < 200)
-                { rangeHit = true; logMessage ("id " + juce::String (id) + " ('" + item.text
-                                               + "') collides with the export range 100-199"); }
 
                 const auto existing = seen.find (id);
                 if (existing != seen.end() && existing->second != item.text)
@@ -45,45 +43,48 @@ namespace zynforge
 
         void runTest() override
         {
-            beginTest ("No menu id is reused, and none collide with a dispatch range");
-
             AudioEngine::setTestModeSkipAudioInit (true);
             MainComponent::s_testConstruct = true;
             {
                 MainComponent mc;
                 std::map<int, juce::String> seen;
-                bool dup = false, rangeHit = false;
+                bool dup = false;
                 for (int top = 0; top < 5; ++top)
-                    collect (mc.getMenuForIndex (top, {}), seen, dup, rangeHit);
+                    collect (mc.getMenuForIndex (top, {}), seen, dup);
+                const auto& table = mc.getMenuCommands();
 
-                expect (! dup,      "a menu id is claimed by two different items");
-                expect (! rangeHit, "a menu id falls inside the per-track-export range 100-199");
+                beginTest ("No menu id is reused");
+                expect (! dup, "a menu id is claimed by two different items");
                 expect ((int) seen.size() > 25, "expected to walk a populated menu bar");
 
-                // Dispatch-RANGE collision guard: a static single-purpose item
-                // must not reuse an id that a menuItemSelected RANGE handler
-                // claims, or its real handler becomes dead code. The companion
-                // item was id 270, which sat inside the 261..289 template range
-                // -> "Start companion server" never reached its handler. Assert
-                // the marquee static items live outside every dispatch range.
-                static const std::pair<int,int> reservedRanges[] = {
-                    { 100, 199 },   // per-track export + OSC dialects
-                    { 200, 249 },   // session templates
-                    { 261, 289 },   // template-as-default
-                    { 401, 430 },   // MIDI clock outputs
-                    { 620, 699 },   // LTC / MTC sources
-                };
-                for (const auto& [mid, text] : seen)
-                    if (text.containsIgnoreCase ("companion server")
-                        || text.containsIgnoreCase ("Auto-Save"))
-                        for (const auto& r : reservedRanges)
-                            expect (mid < r.first || mid > r.second,
-                                    "menu item '" + text + "' (id " + juce::String (mid)
-                                    + ") falls inside dispatch range " + juce::String (r.first)
-                                    + ".." + juce::String (r.second) + " -> its handler is dead code");
+                beginTest ("No exact menu id lies inside a dispatch range, and no ranges overlap");
+                const auto conflicts = table.conflicts();
+                for (const auto& c : conflicts) logMessage (c);
+                expect (conflicts.isEmpty(), "dispatch table conflicts: " + conflicts.joinIntoString ("; "));
+
+                beginTest ("Every item the menu bar builds has a handler");
+                for (const auto& [id, text] : seen)
+                    expect (table.handles (id), "menu item '" + text + "' (id " + juce::String (id)
+                                                + ") has no handler -- selecting it does nothing");
             }
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);
+
+            beginTest ("The table prefers exact ids and reports conflicts");
+            {
+                MenuCommandTable t;
+                int hit = 0, rangeOffset = -1;
+                t.add (5, [&hit] { hit = 5; });
+                t.addRange (100, 199, [&rangeOffset] (int offset) { rangeOffset = offset; });
+                expect (t.dispatch (5) && hit == 5);
+                expect (t.dispatch (142) && rangeOffset == 42);
+                expect (! t.dispatch (300) && ! t.handles (300));
+                expect (t.conflicts().isEmpty());
+                t.add (150, [&hit] { hit = 150; });           // exact inside the range
+                t.addRange (190, 210, [] (int) {});           // overlapping range
+                expect (t.dispatch (150) && hit == 150, "exact ids win over ranges");
+                expectEquals (t.conflicts().size(), 2);
+            }
         }
     };
 

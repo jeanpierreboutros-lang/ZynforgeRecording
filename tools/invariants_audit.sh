@@ -394,8 +394,8 @@ report "UI workers never hold the structure lock across a render" \
        "$HITS"
 
 HITS=""
-grep -q "eng.setRecordStereoMix (stereoMixB.getToggleState())" Source/UI/MainComponentMenu.cpp \
-    || HITS="Source/UI/MainComponentMenu.cpp: optional stereo-mix recorder has no user-facing control"
+grep -q "eng.setRecordStereoMix (stereoMixB.getToggleState())" Source/UI/SessionSettingsDialog.cpp \
+    || HITS="Source/UI/SessionSettingsDialog.cpp: optional stereo-mix recorder has no user-facing control"
 grep -q "stereoMixWriter->write" Source/Audio/AudioEngine.cpp \
     && grep -q "stereoMixWriteFailed.store (true" Source/Audio/AudioEngine.cpp \
     || HITS+=$'\nSource/Audio/AudioEngine.cpp: stereo-mix FIFO/write failure is ignored'

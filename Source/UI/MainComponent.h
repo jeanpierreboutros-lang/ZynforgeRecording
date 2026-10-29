@@ -22,6 +22,7 @@
 #include "WelcomeDialog.h"
 #include "PerfDashboard.h"
 #include "SetlistBar.h"
+#include "MenuCommandTable.h"
 #include "SessionJobRunner.h"
 #include "SessionMetadataWriter.h"
 #include "TempoBar.h"
@@ -61,8 +62,21 @@ public:
     juce::StringArray getMenuBarNames() override;
     juce::PopupMenu   getMenuForIndex (int topLevelMenuIndex, const juce::String& menuName) override;
     void              menuItemSelected (int menuItemID, int topLevelMenuIndex) override;
+    // The menu bar's dispatch table (built on first use). Public so the menu
+    // tests can check every built item against it.
+    const zynforge::MenuCommandTable& getMenuCommands()
+    { if (menuCommands.isEmpty()) registerMenuCommands(); return menuCommands; }
 
 private:
+    zynforge::MenuCommandTable menuCommands;
+    void registerMenuCommands();
+    // Menu handlers too long to sit inline in the table.
+    void copyConfidenceUrl();
+    void runCloudUpload();
+    void toggleCompanionServer();
+    void editCloudUploadCommand();
+    void toggleNdiBroadcast();
+
     void rebuildStrips();
     void updateMixerPlaceholder();   // show/hide the MIXER empty-state overlay
     void onRecordClicked();
@@ -196,10 +210,9 @@ private:
     // location, then re-pin everything from there. Stopped-only; the copy
     // runs on a background thread so a cross-volume move can't freeze the UI.
     void relocateActiveSession();
-    // OSC listen port (persisted in appProps, default 8000) + a prompt to
-    // change it; changing it while listening rebinds on the new port.
+    // OSC listen port (persisted in appProps, default 8000); the Control
+    // Surfaces dialog edits it.
     int  oscListenPort() const;
-    void promptOscPort();
     // Export a portable timeline sidecar (tracks + timecode-stamped markers
     // + cues) to a CSV an editor can use to rebuild the session elsewhere.
     void exportTimelineCsv();
