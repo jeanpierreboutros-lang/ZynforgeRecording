@@ -225,13 +225,11 @@ namespace zynforge
                 if (ext != ".wav" && ext != ".flac" && ext != ".aif" && ext != ".aiff")
                     continue;
                 if (f.getFileName().containsIgnoreCase (".punchbase")) continue;
-                const auto stem = f.getFileNameWithoutExtension();   // "Track_04" or "Track_04_part02"
-                if (stem.containsIgnoreCase ("_part"))
-                    continue;   // continuation parts belong to their main file, not a separate row
-                // Index from the Track_NN PREFIX. The old last-"_" parse turned
-                // "Track_04_part02" into "part02" -> 0 -> idx -1 and silently
-                // dropped continuation-recorded takes from the report.
-                const int idx = stem.fromFirstOccurrenceOf ("Track_", false, false).getIntValue() - 1;
+                const auto stem = f.getFileNameWithoutExtension();
+                // Main take files only: a continuation part belongs to its
+                // main file's row, and a Track_NN_consolidated_K render is no
+                // take at all (it added a duplicate row under track NN's name).
+                const int idx = mainTakeTrackNumber (f) - 1;
                 if (idx < 0) continue;
                 const auto nm = trackNameOf ? trackNameOf (idx) : stem;
                 findings.push_back (analyseFile (f, idx, nm));

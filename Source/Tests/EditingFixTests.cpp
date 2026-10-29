@@ -6,6 +6,7 @@
 
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MultiPartReader.h"
+#include "../Audio/NoiseAnalyzer.h"
 
 namespace zynforge
 {
@@ -209,6 +210,23 @@ public:
                 if (c.muted) { ++muted; expectEquals (c.timelineStartSamples, (juce::int64) 4800); }
             expectEquals (muted, 1, "Strip Silence deleted the muted clip");
         }
+
+        beginTest ("Analysis scans ignore consolidate renders and punch sidecars");
+        {
+            Folder f; expect (write (f.track()));
+            expect (write (f.audio ("Track_01_consolidated_1.wav"), 4800));
+            expect (write (f.audio ("Track_01.punchbase.wav"), 4800));
+            const auto findings = NoiseAnalyzer::analyseSession (f.dir, nullptr);
+            expectEquals ((int) findings.size(), 1, "a sidecar became a phantom noise-report row");
+
+            // Track 2 was never recorded; consolidating a clip pasted onto it
+            // leaves only Track_02_consolidated_1.wav, whose clicks must not
+            // become track 2's transients.
+            expect (writeClicks (f.audio ("Track_02_consolidated_1.wav")));
+            AudioEngine e; setup (e, 2); e.loadSession (f.dir);
+            expect (e.getTransientsForTrack (2).empty(),
+                    "a consolidate render's onsets were filed under track 2");
+        }
     }
 
     // Peak of one player output channel at `pos`, polling while the
@@ -229,6 +247,22 @@ public:
             juce::Thread::sleep (5);
         }
         return 0.0f;
+    }
+
+    // Silence with three loud bursts, 48 kHz mono.
+    static bool writeClicks (const juce::File& file)
+    {
+        file.getParentDirectory().createDirectory();
+        juce::WavAudioFormat format;
+        std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
+            file.createOutputStream().release(), 48000.0, 1, 24, {}, 0));
+        if (! writer) return false;
+        juce::AudioBuffer<float> audio (1, 96000);
+        audio.clear();
+        for (const int at : { 24000, 48000, 72000 })
+            for (int i = 0; i < 2400; ++i)
+                audio.setSample (0, at + i, (i % 2 == 0) ? 0.6f : -0.6f);
+        return writer->writeFromAudioSampleBuffer (audio, 0, 96000);
     }
 };
 

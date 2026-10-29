@@ -1117,13 +1117,10 @@ namespace zynforge
                          "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff");
         for (auto& f : files)
         {
-            const auto stem = f.getFileNameWithoutExtension();
-            if (stem.containsIgnoreCase ("_part")) continue;
-            // Parse the index from the Track_NN PREFIX. fromLastOccurrenceOf("_")
-            // turned "Track_04_part02" into "part02" and, worse, is fragile for
-            // any suffixed sidecar -- the prefix parse is what the other
-            // analyzers (QC, noise, song detect) already use.
-            const int idx = stem.fromFirstOccurrenceOf ("Track_", false, false).getIntValue();
+            // Main take files only: detectInFile already reads a main file's
+            // parts, and a punch sidecar or Track_NN_consolidated_K render
+            // (onsets relative to its own start) must not replace track NN's.
+            const int idx = mainTakeTrackNumber (f);
             if (idx <= 0) continue;
             if ((int) perTrackOut.size() < idx) perTrackOut.resize ((size_t) idx);
             auto onsets = zynforge::TransientDetector::detectInFile (f);
