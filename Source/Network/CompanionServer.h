@@ -66,6 +66,7 @@ namespace zynforge
         std::function<void()> streamReadTestHook;
         friend class AuditSecurityTests;
         std::function<bool(void*, size_t)> entropyProviderForTests;
+        friend class CompanionServerTests;
 
         AudioEngine&     engine;
         std::atomic<bool> running     { false };

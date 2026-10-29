@@ -385,6 +385,37 @@ namespace zynforge
                     server.stop();
                 }
             }
+
+            beginTest ("A closed audition stream releases its worker while no audio flows");
+            {
+                // With the device stopped nothing is written to the ring, and the
+                // drain loop only ever touched the socket to WRITE -- so a client
+                // that hung up was never noticed and held a worker until quit.
+                AudioEngine engine;   // test mode: no audio device, no samples
+                CompanionServer server (engine);
+                const int port = startOnFreePort (server, 19410);
+                expect (port != 0, "companion server failed to start");
+                if (port != 0)
+                {
+                    {
+                        juce::StreamingSocket client;
+                        expect (client.connect ("127.0.0.1", port, 1000));
+                        const auto req = "GET /stream.wav?t=" + server.getAccessToken()
+                                         + " HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+                        client.write (req.toRawUTF8(), (int) req.getNumBytesAsUTF8());
+                        char header[128];
+                        expect (client.waitUntilReady (true, 2000) == 1, "no stream header");
+                        expect (client.read (header, sizeof (header), false) > 0);
+                        expect (server.streamRing.active.load() == 1, "stream consumer not registered");
+                    }   // the client hangs up
+                    const auto deadline = juce::Time::getMillisecondCounter() + 2000;
+                    while (server.streamRing.active.load() != 0 && juce::Time::getMillisecondCounter() < deadline)
+                        juce::Thread::sleep (10);
+                    expectEquals (server.streamRing.active.load(), 0,
+                                  "a hung-up /stream.wav client kept its worker while audio was stopped");
+                    server.stop();
+                }
+            }
             AudioEngine::setTestModeSkipAudioInit (false);
         }
     };

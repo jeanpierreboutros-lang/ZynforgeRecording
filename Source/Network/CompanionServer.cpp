@@ -106,6 +106,17 @@ namespace zynforge
             }
         }
 
+        // True once a streaming client has hung up (EOF) or its socket failed.
+        // Discards anything it sends after its request; nothing reads that.
+        bool peerHungUp (juce::StreamingSocket& s)
+        {
+            const int ready = s.waitUntilReady (true, 0);
+            if (ready < 0)  return true;
+            if (ready == 0) return false;
+            char scratch[256];
+            return s.read (scratch, (int) sizeof (scratch), false) <= 0;
+        }
+
         const char* kHtmlPage = R"HTML(<!doctype html>
 <html><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no"/>
@@ -881,7 +892,16 @@ poll();
             const double nowSr = engine.getDeviceSampleRate();
             if (nowSr > 0.0 && std::abs (nowSr - (double) sr) > 1.0) break;   // rate changed
             const auto wIdx = streamRing.writeIdx.load (std::memory_order_acquire);
-            if (wIdx == readIdx) { juce::Thread::sleep (10); continue; }
+            if (wIdx == readIdx)
+            {
+                // Nothing to send (device stopped or lost). A failed write is
+                // the only other way a dead client is noticed, so without this
+                // a hung-up audition held its worker -- and a slot toward
+                // kMaxConcurrentWorkers -- until audio resumed.
+                if (peerHungUp (s)) break;
+                juce::Thread::sleep (10);
+                continue;
+            }
 
             const auto cap   = streamRing.capacity();
             // Resync when the producer has lapped us. The reader only ever
