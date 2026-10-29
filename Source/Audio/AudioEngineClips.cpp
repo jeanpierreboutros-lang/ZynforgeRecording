@@ -1904,6 +1904,16 @@ namespace zynforge
                 break;
             }
         }
+        // A trim can leave the clip shorter than its fades. Shrink both in
+        // proportion so fade-in + fade-out fit again: a fade longer than the
+        // clip never reaches full gain, and setClipFades (in + out <= length)
+        // then refused every fade-handle drag on it.
+        if (const auto fades = c.fadeInSamples + c.fadeOutSamples; fades > c.fileLengthSamples)
+        {
+            c.fadeInSamples  = (juce::int64) ((double) c.fadeInSamples * (double) c.fileLengthSamples
+                                              / (double) fades);
+            c.fadeOutSamples = c.fileLengthSamples - c.fadeInSamples;
+        }
         // Publish the updated list to the player so playback honours
         // the edit on the next audio block.
         player.setTrackClips (track, list);

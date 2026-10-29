@@ -177,6 +177,25 @@ public:
             expect (ownAudio, "the recorded audio is missing from the arrangement");
             expectWithinAbsoluteError (renderedAt (e, 2, 9600, 6000), 0.5f, 0.001f);
         }
+
+        beginTest ("Trimming a clip shorter than its fades shrinks the fades to fit");
+        {
+            Folder f; expect (write (f.track(), 4800));
+            for (const auto mode : { AudioEngine::ClipEdit::TrimRight, AudioEngine::ClipEdit::TrimLeft })
+            {
+                AudioEngine e; setup (e); e.loadSession (f.dir);
+                expect (e.setClipFades (0, 0, 2000, 2000));
+                const auto delta = mode == AudioEngine::ClipEdit::TrimRight ? -3000 : 3000;
+                expect (e.editClip (0, 0, mode, delta));
+                const auto& c = e.clipsFor (0)[0];
+                expectEquals (c.fileLengthSamples, (juce::int64) 1800);
+                expect (c.fadeInSamples + c.fadeOutSamples <= c.fileLengthSamples,
+                        "fades are longer than the trimmed clip");
+                expect (c.fadeInSamples > 0 && c.fadeOutSamples > 0, "a fade was dropped");
+                // The fade handles must still work.
+                expect (e.setClipFades (0, 0, c.fadeInSamples, c.fadeOutSamples));
+            }
+        }
     }
 
     // Peak of one player output channel at `pos`, polling while the
