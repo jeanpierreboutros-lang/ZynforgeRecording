@@ -143,6 +143,24 @@ namespace zynforge
                         "the normal even case must not regress; got: " + txt);
             }
 
+            // ── A smaller device shows what the strip hears ─────────────────
+            // The saved patch (input 4) is kept on a 2-input device; live, the
+            // strip wraps onto input 2, and that is what the row must show --
+            // the same thing the engine captures and the PATCH page draws.
+            beginTest ("On a smaller device the row shows the input the strip hears");
+            {
+                Host h (4);
+                h.engine.setTrackInputRouting (3, 3);
+                h.engine.setDeviceInputCountForTests (2);
+                EditPage::TrackRow row (3, false, h.engine, h.formats, h.cache);
+                row.refreshRoutingSelection();
+                const auto txt = row.getInputRoutingTextForTests();
+                expect (txt.startsWith ("In 2"), "expected In 2, got: " + txt);
+                expectEquals (h.engine.getRecorder().getTrack (3).inputRouting.load(), 3,
+                              "displaying the wrapped input rewrote the saved patch");
+                h.engine.setDeviceInputCountForTests (0);
+            }
+
             // ── Unrouted stays unrouted ──────────────────────────────────────
             beginTest ("An unrouted strip reads (unrouted)");
             {

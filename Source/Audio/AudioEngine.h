@@ -84,6 +84,9 @@ namespace zynforge
         // call `audioDeviceIOCallbackWithContext` directly with
         // synthetic buffers and assert what comes out.
         void prepareForTests (double sampleRate, int blockSize);
+        // Test-only: with no device open, report `n` active inputs, so the
+        // smaller-device routing rules run without hardware.
+        void setDeviceInputCountForTests (int n) noexcept { testDeviceInputs.store (n, std::memory_order_relaxed); }
 
         juce::AudioDeviceManager& getDeviceManager() noexcept { return deviceManager; }
         MultitrackRecorder&       getRecorder()      noexcept { return recorder; }
@@ -325,8 +328,11 @@ namespace zynforge
         // Per-block ramp stepper -- called from the audio callback.
         void  tickRamps (int numSamples) noexcept;
 
-        // Routing. -1 = unrouted; values clamped to current device's range.
+        // Routing. -1 = unrouted. The input is stored as REQUESTED (and
+        // saved that way); getEffectiveInputRouting is what the strip hears
+        // on the current device -- what MIXER / EDIT / PATCH display.
         void  setTrackInputRouting  (int channelIndex, int deviceCh);
+        int   getEffectiveInputRouting (int channelIndex);
         void  setTrackOutputRouting (int channelIndex, int deviceCh);
 
         // Sets both input AND output for the strip to the same hardware
@@ -1131,6 +1137,7 @@ namespace zynforge
 
         TimecodeChase    timecodeChase;
         std::atomic<int> ltcSourceStrip { -1 };   // 0-based strip index, -1 = none
+        std::atomic<int> testDeviceInputs { 0 };  // see setDeviceInputCountForTests
         std::atomic<int>  chaseMode      { 0 };    // 0=Off 1=LTC 2=MTC
         std::atomic<bool> keepRollingOnSyncLoss { false };
         std::unique_ptr<juce::MidiInput> mtcInput;

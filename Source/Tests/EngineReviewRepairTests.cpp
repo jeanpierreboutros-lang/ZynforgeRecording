@@ -43,8 +43,80 @@ namespace zynforge
                 expectEquals (e.getLtcSourceStrip(), 1, "LTC source stayed on the old index");
                 expect (e.removeStripAt (0));
                 expectEquals (e.getLtcSourceStrip(), 0, "a deleted LTC strip left a stale source");
+                e.clearAllStripOverrides();
                 e.setStripCount (0);
             }
+
+            beginTest ("A smaller device never rewrites the saved input patch");
+            {
+                AudioEngine e;
+                e.setStripCount (4);
+                e.prepareForTests (48000.0, 256);
+                for (int i = 0; i < 4; ++i) e.setTrackInputRouting (i, i);
+
+                // Laptop prep, or a fallback to the built-in device after an
+                // interface dropout: two inputs, and the device (re)start
+                // re-applies every strip's state.
+                e.setDeviceInputCountForTests (2);
+                e.prepareForTests (48000.0, 256);
+                auto saved = inRoutes (e);
+                expectEquals (saved[2], 2, "session_mix.json saved the wrapped input");
+                expectEquals (saved[3], 3, "session_mix.json saved the wrapped input");
+
+                // A reorder re-persists every strip's routing.
+                expect (e.swapTracks (0, 1));
+                saved = inRoutes (e);
+                expectEquals (saved[0], 1); expectEquals (saved[1], 0);
+                expectEquals (saved[2], 2, "a reorder persisted the wrapped input");
+                expectEquals (saved[3], 3, "a reorder persisted the wrapped input");
+
+                // Live on the small device the strip still hears something:
+                // strip 4 wraps onto input 2.
+                expect (monitorHears (e, 3, 1, 2), "strip 4 lost its live input on a 2-input device");
+
+                // Back on the full rig, strip 4 records input 4 again.
+                e.setDeviceInputCountForTests (4);
+                e.prepareForTests (48000.0, 256);
+                expect (monitorHears (e, 3, 3, 4), "strip 4 is not on input 4 back on the rig");
+                expect (! monitorHears (e, 3, 1, 4), "strip 4 still records the wrapped input");
+                e.setDeviceInputCountForTests (0);
+                e.clearAllStripOverrides();
+                e.setStripCount (0);
+            }
+        }
+
+    private:
+        static juce::Array<int> inRoutes (AudioEngine& e)
+        {
+            juce::Array<int> routes;
+            const auto mix = juce::JSON::parse (e.captureSessionMixJson());
+            if (auto* strips = mix["strips"].getArray())
+                for (const auto& s : *strips) routes.add ((int) s["inRoute"]);
+            return routes;
+        }
+
+        // Runs one callback with DC on device input `input` only and strip
+        // `strip` the only one monitored; true when the master hears it.
+        static bool monitorHears (AudioEngine& e, int strip, int input, int numInputs)
+        {
+            constexpr int block = 256;
+            e.getMasterState().muted.store (false);
+            e.getMasterState().gainDb.store (0.0f);
+            e.setMasterStereo (true);
+            e.setMasterOutputs (0, 1);
+            for (int i = 0; i < e.getRecorder().getNumTracks(); ++i)
+            {
+                auto& t = e.getRecorder().getTrack (i);
+                t.monitor.store (i == strip); t.armed.store (false);
+                t.muted.store (false); t.soloed.store (false);
+                t.gainDb.store (0.0f); t.pan.store (0.0f); t.vcaGroup.store (-1);
+            }
+            juce::AudioBuffer<float> in (numInputs, block), out (2, block);
+            in.clear(); out.clear();
+            for (int i = 0; i < block; ++i) in.setSample (input, i, 0.5f);
+            e.audioDeviceIOCallbackWithContext (in.getArrayOfReadPointers(), numInputs,
+                                                out.getArrayOfWritePointers(), 2, block, {});
+            return out.getMagnitude (0, 0, block) > 0.1f;
         }
     };
 

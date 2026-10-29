@@ -1474,15 +1474,13 @@ namespace zynforge
             // default to "ungrouped / normal channel" via TrackState
             // construction.
 
-            // Default to channel i, but clamp to the device's active
-            // input count so a 4-strip session on a 1-input device still
-            // captures sound (strip i wraps to i % numInputs).
-            int wantIn = stripRouting.hasInput (i) ? stripRouting.getInput (i) : i;
-            const int numInputs = (deviceManager.getCurrentAudioDevice() != nullptr)
-                ? deviceManager.getCurrentAudioDevice()->getActiveInputChannels().countNumberOfSetBits()
-                : 0;
-            if (numInputs > 0 && (wantIn < -1 || wantIn >= numInputs))
-                wantIn = i % numInputs;
+            // Default to channel i. A request past a smaller device's last
+            // input is KEPT: the callback wraps it live (strip i hears
+            // i % numInputs, effectiveInputRouting), so a 4-strip session on a
+            // 1-input device still captures sound, while every save path keeps
+            // writing the patch the show rig needs. Storing the wrapped value
+            // here leaked it into session_mix.json on the next save or reorder.
+            const int wantIn = stripRouting.hasInput (i) ? stripRouting.getInput (i) : i;
             t.inputRouting .store (wantIn, std::memory_order_relaxed);
             // Default per-channel output is -1 (unrouted) → audio only
             // reaches the hardware via the master bus. Engineer picks a
@@ -2205,7 +2203,15 @@ namespace zynforge
     {
         if (auto* d = deviceManager.getCurrentAudioDevice())
             return d->getActiveInputChannels().countNumberOfSetBits();
-        return 0;
+        return testDeviceInputs.load (std::memory_order_relaxed);
+    }
+
+    int AudioEngine::getEffectiveInputRouting (int channelIndex)
+    {
+        if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return -1;
+        return effectiveInputRouting (channelIndex,
+                                      recorder.getTrack (channelIndex).inputRouting.load (std::memory_order_relaxed),
+                                      getCurrentDeviceInputCount());
     }
 
     int AudioEngine::getCurrentDeviceOutputCount() const
@@ -2616,7 +2622,8 @@ namespace zynforge
         const float* routedInputs[kMaxStrips] = {};
         for (int i = 0; i < numTracks && i < kMaxStrips; ++i)
         {
-            const int dev = recorder.getTrack (i).inputRouting.load (std::memory_order_relaxed);
+            const int dev = effectiveInputRouting (
+                i, recorder.getTrack (i).inputRouting.load (std::memory_order_relaxed), numInputs);
             routedInputs[i] = (dev >= 0 && dev < numInputs) ? inputs[dev] : nullptr;
         }
 
