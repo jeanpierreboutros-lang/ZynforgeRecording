@@ -968,31 +968,49 @@ namespace zynforge
             // below then overlays its content. Skip the substrate when the
             // arrangement was emptied (all clips deleted) so the deleted
             // waveform doesn't linger behind the lane.
+            // The substrate sits on the SAME timeline as the points drawn over
+            // it (laneTimelineSamples): each clip's file region at its timeline
+            // span, like the clip blocks. Stretching the whole file across the
+            // lane drew rides against the wrong audio on any track shorter than
+            // the session, or with moved / trimmed / deleted clips.
             if (laneMode != LaneMode::Waveform && ! engine.isTrackArrangementEmpty (index))
             {
-                if (stereo)
+                const double srB = engine.getPlayer().getSampleRate() > 0.0
+                                     ? engine.getPlayer().getSampleRate() : 48000.0;
+                const auto backdrop = TimelineMapper::forLane (inner, laneTimelineSamples());
+                auto drawSpan = [&] (juce::int64 timelineStart, juce::int64 fileStart, juce::int64 length)
                 {
-                    const int laneH = inner.getHeight() / 2;
-                    auto laneL = inner.withHeight (laneH);
-                    auto laneR = inner.withTrimmedTop (laneH);
-                    if (thumbnailL.getTotalLength() > 0.0)
-                    {
-                        g.setColour (waveColour.withAlpha (zynforge::brand::alpha::muted));
-                        drawLaneL (g, laneL, 0.0,
-                                   thumbnailL.getTotalLength(), waveZoom (thumbnailL));
-                    }
-                    if (thumbnailR.getTotalLength() > 0.0)
-                    {
-                        g.setColour (waveColour.withAlpha (zynforge::brand::alpha::muted));
-                        drawLaneR (g, laneR, 0.0,
-                                   thumbnailR.getTotalLength(), waveZoom (thumbnailR));
-                    }
-                }
-                else if (thumbnailL.getTotalLength() > 0.0)
-                {
+                    const int xL = backdrop.toX (timelineStart);
+                    const int xR = backdrop.toX (timelineStart + length);
+                    if (xR <= xL) return;
+                    const juce::Rectangle<int> span (xL, inner.getY(), xR - xL, inner.getHeight());
+                    const double t0 = (double) fileStart / srB;
+                    const double t1 = (double) (fileStart + length) / srB;
                     g.setColour (waveColour.withAlpha (zynforge::brand::alpha::muted));
-                    drawThumbnailVisible (g, thumbnailL, inner, 0.0,
-                                          thumbnailL.getTotalLength(), -1, waveZoom (thumbnailL));
+                    if (stereo)
+                    {
+                        const int laneH = span.getHeight() / 2;
+                        if (thumbnailL.getTotalLength() > 0.0)
+                            drawLaneL (g, span.withHeight (laneH), t0, t1, waveZoom (thumbnailL));
+                        if (thumbnailR.getTotalLength() > 0.0)
+                            drawLaneR (g, span.withTrimmedTop (laneH), t0, t1, waveZoom (thumbnailR));
+                    }
+                    else if (thumbnailL.getTotalLength() > 0.0)
+                    {
+                        drawThumbnailVisible (g, thumbnailL, span, t0, t1, -1, waveZoom (thumbnailL));
+                    }
+                };
+                if (const auto* backdropClips = engine.tryClipsFor (index);
+                    backdropClips != nullptr && ! backdropClips->empty())
+                {
+                    for (const auto& c : *backdropClips)
+                        drawSpan (c.timelineStartSamples, c.fileStartSamples, c.fileLengthSamples);
+                }
+                else
+                {
+                    const double fileSec = juce::jmax (thumbnailL.getTotalLength(),
+                                                       stereo ? thumbnailR.getTotalLength() : 0.0);
+                    drawSpan (0, 0, (juce::int64) (fileSec * srB));
                 }
             }
 

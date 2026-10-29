@@ -784,6 +784,18 @@ namespace zynforge
         // just the file being read back.
         const auto sessionDir = engine.getActiveSessionDir();
 
+        // A clip selection is (track, clip index). Once strips move, are
+        // deleted or relinked (the generation bumps) or another session
+        // opens, it names whichever clip now sits there -- and Delete /
+        // Nudge / Duplicate would act on that clip.
+        const int gen = engine.getRecorder().getTrackGeneration();
+        if (gen != selectionTrackGen || sessionDir != selectionSessionDir)
+        {
+            clearSelectedClip();
+            selectionTrackGen   = gen;
+            selectionSessionDir = sessionDir;
+        }
+
         // When the session changes, pull the on-disk WaveCache.wfm
         // into the thumbnail cache BEFORE the new TrackRows ask
         // their thumbnails for sources -- otherwise the thumbnails
@@ -1250,10 +1262,14 @@ namespace zynforge
         if (totalSamples <= 0) return;
         const int contentW = list->getWidth();
         if (contentW <= 0) return;
+        // Centre the sample in the VISIBLE lane, right of the pinned header,
+        // using the lane's own mapping (header + 4 px insets each side).
+        constexpr int kHeaderW = brand::space::editHeaderW;   // == TrackRow::headerW (same token)
         const double prop = (double) sample / (double) totalSamples;
-        const int    targetX = (int) (prop * (double) contentW);
-        const int    halfV   = viewport.getViewWidth() / 2;
-        viewport.setViewPosition (juce::jmax (0, targetX - halfV),
+        const int    targetX = kHeaderW + 4 + (int) (prop * (double) juce::jmax (1, contentW - kHeaderW - 8));
+        const int    viewW   = viewport.getViewWidth();
+        const int    centreX = kHeaderW + juce::jmax (0, viewW - kHeaderW) / 2;
+        viewport.setViewPosition (juce::jmax (0, targetX - centreX),
                                   viewport.getViewPositionY());
     }
 
@@ -1264,10 +1280,18 @@ namespace zynforge
         const auto total = player.isLoaded() ? player.getTotalLengthSamples() : 0;
         if (total <= 0 || b <= a) return;
         pauseFollowForZoom();
-        // Zoom so the selection ~fills the viewport (a little headroom), then
-        // centre on it. setZoom applies the finalized/live limits.
+        // Zoom so the selection ~fills the VISIBLE lane (a little headroom),
+        // then centre on it. The pinned header covers the first editHeaderW
+        // px of the view and the lane is inset 4 px each side of the content
+        // width, so solve contentW = viewport width * zoom for that. setZoom
+        // applies the finalized/live limits.
+        constexpr int kHeaderW = brand::space::editHeaderW;   // == TrackRow::headerW (same token)
         const double frac = (double) (b - a) / (double) total;
-        if (frac > 0.0) setZoom ((float) juce::jlimit (1.0, (double) kMaxTimelineZoom, 0.9 / frac));
+        const double visibleLane = (double) juce::jmax (1, viewport.getViewWidth() - kHeaderW);
+        if (frac > 0.0)
+            setZoom ((float) juce::jlimit (1.0, (double) kMaxTimelineZoom,
+                                           (0.9 * visibleLane / frac + kHeaderW + 8)
+                                               / (double) juce::jmax (1, viewport.getWidth())));
         scrollToSample ((a + b) / 2);
     }
 

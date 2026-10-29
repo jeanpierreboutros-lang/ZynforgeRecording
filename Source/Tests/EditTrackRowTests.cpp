@@ -778,6 +778,99 @@ namespace zynforge
                 expectWithinAbsoluteError (s.clips (0)[1].gainDb, 0.0f, 0.001f, "the gain handle took the trim edge");
             }
 
+            // ── #10: the backdrop under an automation lane sits on its timeline ─
+            beginTest ("The waveform behind an automation lane is drawn where the audio plays");
+            {
+                // Track 1 is half the session: its audio covers the left half only.
+                Session s (2, { 24000, 48000 });
+                EditPage::TrackRow row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                row.laneMode = Lane::Volume;
+                auto render = [&row]
+                {
+                    juce::Image img (juce::Image::ARGB, row.getWidth(), row.getHeight(), true);
+                    juce::Graphics g (img);
+                    row.paint (g);
+                    return img;
+                };
+                row.setWaveformFiles (s.take (1), {});
+                expect (pumpUntil ([&] { return row.waveformsLoaded()
+                                             && row.getWaveformSecondsForTests() > 0.0; }, 5000),
+                        "thumbnail scan");
+                const auto withWave = render();
+                row.setWaveformFiles ({}, {});
+                const auto noWave = render();
+                auto columnsDiffer = [&] (double fromFrac, double toFrac)
+                {
+                    int differing = 0;
+                    for (int x = laneX (row, fromFrac); x < laneX (row, toFrac); ++x)
+                        for (int y = 8; y < row.getHeight() - 8; ++y)
+                            if (withWave.getPixelAt (x, y) != noWave.getPixelAt (x, y)) ++differing;
+                    return differing;
+                };
+                expect (columnsDiffer (0.05, 0.45) > 0, "setup: the backdrop must draw under the audio");
+                expectEquals (columnsDiffer (0.55, 0.85), 0,
+                              "the backdrop stretched the take across time where the track is silent");
+            }
+
+            // ── #11: a clip selection does not survive a strip move ──────────
+            beginTest ("Moving or deleting strips, or changing session, clears the clip selection");
+            {
+                Session s (2, { 48000, 48000 });
+                EditPage page (s.engine);
+                page.setBounds (0, 0, 1400, 500);
+                page.refresh();
+                page.setSelectedClip (1, 0);
+                expect (s.engine.reorderTracks ({ 1, 0 }));
+                page.refresh();   // what the host's onTracksReordered handler does
+                expect (page.getSelectedClips().empty(),
+                        "the selection now names another strip's clip");
+                expectEquals (page.getSelectedClipTrack(), -1);
+
+                page.setSelectedClip (0, 0);
+                const auto other = s.dir.getSiblingFile (s.dir.getFileName() + "-other");
+                expect (other.createDirectory().wasOk());
+                s.engine.setActiveSessionDir (other);
+                page.refresh();
+                expect (page.getSelectedClips().empty(), "a new session kept the old selection");
+                other.deleteRecursively();
+            }
+
+            // ── #14: the ruler's playhead readout rolls over to the next second ─
+            beginTest ("Ruler time labels round tenths into the next second");
+            {
+                expectEquals (EditTimeRuler::formatTime (83.97, 1), juce::String ("1:24.0"));
+                expectEquals (EditTimeRuler::formatTime (59.96, 1), juce::String ("1:00.0"));
+                expectEquals (EditTimeRuler::formatTime (3599.98, 1), juce::String ("1:00:00.0"));
+                expectEquals (EditTimeRuler::formatTime (83.94, 1), juce::String ("1:23.9"));
+                expectEquals (EditTimeRuler::formatTime (83.97, 0), juce::String ("1:23"));
+            }
+
+            // ── #15: Zoom to Selection puts the whole selection on screen ────
+            beginTest ("Zoom to Selection fits the range right of the pinned header");
+            {
+                Session s (1, { 480000 });   // 10 s
+                EditPage page (s.engine);
+                page.setBounds (0, 0, 1500, 500);
+                page.refresh();
+                page.zoomToSamples (200000, 240000);
+                EditTimeRuler* ruler = nullptr;
+                for (auto* child : page.getChildren())
+                    if (auto* r = dynamic_cast<EditTimeRuler*> (child)) ruler = r;
+                expect (ruler != nullptr, "setup: ruler");
+                if (ruler != nullptr)
+                {
+                    const double pps = ruler->rulerPxPerSec (10.0);
+                    const int xa = ruler->rulerTimeToX (200000 / 48000.0, pps);
+                    const int xb = ruler->rulerTimeToX (240000 / 48000.0, pps);
+                    const int headerW = brand::space::editHeaderW;
+                    expect (xa >= headerW, "selection start is under the pinned header: x=" + juce::String (xa));
+                    expect (xb <= page.getWidth(), "selection end is off screen: x=" + juce::String (xb));
+                    expect (xb - xa >= (page.getWidth() - headerW) * 3 / 4,
+                            "the selection should nearly fill the visible lane: " + juce::String (xb - xa) + " px");
+                }
+            }
+
             //@@MORE_TESTS@@
 
             AudioEngine::setTestModeSkipAudioInit (false);

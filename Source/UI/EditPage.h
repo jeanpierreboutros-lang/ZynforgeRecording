@@ -353,6 +353,8 @@ namespace zynforge
         int        selectedClipTrack   { -1 };   // primary clip (Copy / Nudge anchor)
         int        selectedClipIndex   { -1 };
         std::set<std::pair<int, int>> selClips;  // multi-selection (track, clipIdx)
+        int        selectionTrackGen   { -1 };   // track generation the selection was made under
+        juce::File selectionSessionDir;          // ...and session; refresh() clears it on a change
         int        focusedPointIdx     { -1 };
         AutomationToolbar*             toolbar  { nullptr };
         std::unique_ptr<EditToolsBar>  toolsBar;

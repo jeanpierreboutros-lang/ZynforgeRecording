@@ -505,12 +505,17 @@ namespace zynforge
             }
         }
 
+    public:
         // Wall-clock label. Below an hour: M:SS; an hour or more:
         // H:MM:SS. `decimals` appends fractional seconds (tenths) so the
         // scale stays readable when zoomed past one major-tick / second.
+        // Public so the suite can check the label text (test seam).
         static juce::String formatTime (double sec, int decimals)
         {
             if (sec < 0.0) sec = 0.0;
+            // Round to tenths BEFORE splitting off the whole seconds, so .95
+            // and up rolls into the next second instead of reading ".10".
+            if (decimals > 0) sec = std::round (sec * 10.0) / 10.0;
             const int whole = (int) std::floor (sec);
             const int h = whole / 3600;
             const int m = (whole % 3600) / 60;
@@ -526,6 +531,7 @@ namespace zynforge
             return out;
         }
 
+    private:
         // Maps a pixel x on the time-scale strip back to a session
         // sample position. Returns 0 when x is left of the header.
         juce::int64 pixelToSample (int xPx) const
