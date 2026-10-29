@@ -2294,37 +2294,23 @@ namespace zynforge
             const double prop = (double) (p.x - inner.getX()) / juce::jmax (1, inner.getWidth());
             const juce::int64 samplePos = (juce::int64) (juce::jlimit (0.0, 1.0, prop) * (double) total);
 
-            // Y → value depends on the active param.
+            // Y → value depends on the lane this row shows.
             float value = 0.0f;
-            if (toolbar != nullptr)
+            const float yProp = juce::jlimit (0.0f, 1.0f,
+                                              (float) (p.y - inner.getY()) / juce::jmax (1, inner.getHeight()));
+            switch (currentLaneParam())
             {
-                const float yProp = juce::jlimit (0.0f, 1.0f,
-                                                  (float) (p.y - inner.getY()) / juce::jmax (1, inner.getHeight()));
-                switch (toolbar->getParam())
-                {
-                    case AutomationToolbar::Param::Volume:
-                        value = (1.0f - yProp) * 72.0f - 60.0f; // 1..0 → -60..+12
-                        break;
-                    case AutomationToolbar::Param::Pan:
-                        value = 1.0f - yProp * 2.0f;            // 1..0 → -1..+1 inverted
-                        break;
-                    case AutomationToolbar::Param::Mute:
-                        value = yProp < 0.5f ? 1.0f : 0.0f;
-                        break;
-                }
+                case AudioEngine::AutomationParam::Volume:
+                    value = (1.0f - yProp) * 72.0f - 60.0f; // 1..0 → -60..+12
+                    break;
+                case AudioEngine::AutomationParam::Pan:
+                    value = 1.0f - yProp * 2.0f;            // 1..0 → -1..+1 inverted
+                    break;
+                case AudioEngine::AutomationParam::Mute:
+                    value = yProp < 0.5f ? 1.0f : 0.0f;
+                    break;
             }
             return { samplePos, value };
-        }
-
-        static AudioEngine::AutomationParam toEngineParam (AutomationToolbar::Param p)
-        {
-            switch (p)
-            {
-                case AutomationToolbar::Param::Volume: return AudioEngine::AutomationParam::Volume;
-                case AutomationToolbar::Param::Pan:    return AudioEngine::AutomationParam::Pan;
-                case AutomationToolbar::Param::Mute:   return AudioEngine::AutomationParam::Mute;
-            }
-            return AudioEngine::AutomationParam::Volume;
         }
 
         void mouseDown (const juce::MouseEvent& e) override
@@ -2780,25 +2766,23 @@ namespace zynforge
                 }
             }
 
-            // Lane-area interaction -- only when the toolbar is wired and
-            // this row isn't the Click track itself.
-            if (toolbar != nullptr && index != clickRowIdx && inWavePane (e.x))
+            // Lane-area interaction -- only when the toolbar is wired, this
+            // row isn't the Click track itself, and the row SHOWS an editable
+            // lane (Volume / Pan / Mute, or the shared Tempo lane). A Waveform,
+            // Markers or Click lane draws no points: a click there (a gap
+            // between clips, past a short take, an empty session) used to fall
+            // through to here and add, delete or grab a HIDDEN point -- or
+            // write the tempo map -- with whatever the toolbar last held.
+            const bool showsEditableLane = laneMode == LaneMode::Volume || laneMode == LaneMode::Pan
+                                        || laneMode == LaneMode::Mute   || laneMode == LaneMode::Tempo;
+            if (toolbar != nullptr && index != clickRowIdx && showsEditableLane && inWavePane (e.x))
             {
                 const auto coord = laneCoordAt (e.getPosition());
-                const auto p     = toEngineParam (toolbar->getParam());
+                const auto p     = currentLaneParam();
 
-                // The Click lane is a playback-only metronome overview, NOT a
-                // per-track automation lane. toEngineParam() folds Click onto
-                // Volume, so without this guard an Add/Delete here would
-                // silently write/erase the real Volume automation. Ignore
-                // lane edits on the Click lane (Tempo is handled separately
-                // just below).
-                if (toolbar->getParam() == AutomationToolbar::Param::Click)
-                    return;
-
-                // Special case: Tempo param edits the engine's shared
+                // Special case: the Tempo lane edits the engine's shared
                 // tempo map instead of the per-track point store.
-                if (toolbar->getParam() == AutomationToolbar::Param::Tempo)
+                if (laneMode == LaneMode::Tempo)
                 {
                     const juce::int64 totalSamples = laneTimelineSamples();
                     const juce::int64 tol = juce::jmax<juce::int64> (1,
@@ -3151,8 +3135,7 @@ namespace zynforge
             // continuous-shape escape hatch from any preset.
             if (toolbar != nullptr
                 && toolbar->getTool() == AutomationToolbar::Tool::Select
-                && draggingTensionSegIdx >= 0
-                && toolbar->getParam() != AutomationToolbar::Param::Mute)
+                && draggingTensionSegIdx >= 0)
             {
                 const auto p = currentLaneParam();
                 if (p == AudioEngine::AutomationParam::Mute) return;
@@ -3176,7 +3159,7 @@ namespace zynforge
                 && toolbar->getTool() == AutomationToolbar::Tool::Select
                 && draggingPointIdx >= 0)
             {
-                const auto p     = toEngineParam (toolbar->getParam());
+                const auto p     = currentLaneParam();
                 const auto coord = laneCoordAt (e.getPosition());
                 // Easiest path: re-add with the new (samplePos, value);
                 // addAutomationPoint replaces inside its tolerance, so
@@ -3187,9 +3170,18 @@ namespace zynforge
                 {
                     auto moved = lane[(size_t) draggingPointIdx];
                     engine.removeAutomationPointNear (index, p, moved.samplePos, 1);
+                    // Land on a FREE sample. pasteAutomationRange clears
+                    // [target, target] before inserting, and a neighbour placed
+                    // at this zoom sits on the same pixel grid laneCoordAt
+                    // produces -- so dropping the point onto it erased it.
+                    juce::int64 target = coord.samplePos;
+                    const auto& rest = engine.getAutomation (index, p);
+                    while (std::any_of (rest.begin(), rest.end(),
+                                        [target] (const auto& pt) { return pt.samplePos == target; }))
+                        ++target;
                     moved.samplePos = 0;
                     moved.value = coord.value;
-                    engine.pasteAutomationRange (index, p, coord.samplePos, { moved });
+                    engine.pasteAutomationRange (index, p, target, { moved });
 
                     // RE-RESOLVE the index. The lane is kept sorted by
                     // samplePos, so the moment the dragged point crosses a
@@ -3197,15 +3189,10 @@ namespace zynforge
                     // draggingPointIdx then referred to a DIFFERENT point, which
                     // the next drag event deleted and dragged to the cursor.
                     // Dragging one point across three used to consume all three.
+                    // The point now sits alone at `target`, so match it exactly.
                     const auto& after = engine.getAutomation (index, p);
-                    int nearest = -1;
-                    juce::int64 bestDist = std::numeric_limits<juce::int64>::max();
                     for (int i = 0; i < (int) after.size(); ++i)
-                    {
-                        const auto d = std::abs (after[(size_t) i].samplePos - coord.samplePos);
-                        if (d < bestDist) { bestDist = d; nearest = i; }
-                    }
-                    if (nearest >= 0) draggingPointIdx = nearest;
+                        if (after[(size_t) i].samplePos == target) { draggingPointIdx = i; break; }
                     repaint();
                 }
             }
@@ -3722,11 +3709,7 @@ namespace zynforge
         {
             if (laneMode == LaneMode::Waveform || laneMode == LaneMode::Markers)
                 return -1;
-            const auto engineParam =
-                laneMode == LaneMode::Pan  ? AudioEngine::AutomationParam::Pan
-              : laneMode == LaneMode::Mute ? AudioEngine::AutomationParam::Mute
-                                            : AudioEngine::AutomationParam::Volume;
-            const auto& lane = engine.getAutomation (index, engineParam);
+            const auto& lane = engine.getAutomation (index, currentLaneParam());
             if (lane.empty()) return -1;
 
             // Must match paint()'s span exactly (was sr*300 -> 5x off paint's
@@ -3748,23 +3731,14 @@ namespace zynforge
         }
 
         // Resolves the lane parameter that's CURRENTLY painted on
-        // this row. Mirrors the paint loop's chosenParam logic so
-        // the hit-test and drag handlers don't read from a different
-        // lane than the one the engineer sees. Falls through to
-        // Volume for Click / Tempo / unknown.
+        // this row -- its own VIEW (laneMode). paint, the readout, every
+        // hit-test, the drags and the right-click menus all read it, so
+        // they never disagree. It used to prefer the toolbar's param,
+        // which a VIEW pick on ANOTHER row changes silently: this row then
+        // drew Volume points under a "pan C" readout while its menus
+        // edited Pan. Falls through to Volume for Click / Tempo / unknown.
         AudioEngine::AutomationParam currentLaneParam() const
         {
-            if (toolbar != nullptr)
-            {
-                switch (toolbar->getParam())
-                {
-                    case AutomationToolbar::Param::Volume: return AudioEngine::AutomationParam::Volume;
-                    case AutomationToolbar::Param::Pan:    return AudioEngine::AutomationParam::Pan;
-                    case AutomationToolbar::Param::Mute:   return AudioEngine::AutomationParam::Mute;
-                    case AutomationToolbar::Param::Click:
-                    case AutomationToolbar::Param::Tempo:  break;     // not per-track lanes
-                }
-            }
             switch (laneMode)
             {
                 case LaneMode::Pan:  return AudioEngine::AutomationParam::Pan;
@@ -3885,10 +3859,7 @@ namespace zynforge
 
         void showCurvePickerMenu (int pointIdx, juce::Point<int> screenPos)
         {
-            const auto engineParam =
-                laneMode == LaneMode::Pan  ? AudioEngine::AutomationParam::Pan
-              : laneMode == LaneMode::Mute ? AudioEngine::AutomationParam::Mute
-                                            : AudioEngine::AutomationParam::Volume;
+            const auto engineParam = currentLaneParam();
             const auto& lane = engine.getAutomation (index, engineParam);
             if (pointIdx < 0 || pointIdx >= (int) lane.size()) return;
             const auto current = lane[(size_t) pointIdx].curve;
@@ -3966,10 +3937,7 @@ namespace zynforge
             const auto inSample  = player.getLoopStart();
             const auto outSample = player.getLoopEnd();
 
-            const auto engineParam =
-                laneMode == LaneMode::Pan  ? AudioEngine::AutomationParam::Pan
-              : laneMode == LaneMode::Mute ? AudioEngine::AutomationParam::Mute
-                                            : AudioEngine::AutomationParam::Volume;
+            const auto engineParam = currentLaneParam();
 
             juce::PopupMenu m;
             const auto rangePoints = engine.copyAutomationRange (index, engineParam,
