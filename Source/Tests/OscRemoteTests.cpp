@@ -225,6 +225,32 @@ namespace zynforge
                 expect (! engine.getRemotes().requestConsoleChannelNames ("", port));   // empty host -> false
             }
 
+            beginTest ("Console trim values are finite and inside a real preamp range");
+            {
+                // Console trim arrives without the Generic token. With trim-follow
+                // on, +inf / NaN / 200 dB went straight into the playback gain.
+                AudioEngine engine;
+                engine.setStripCount (1);
+                OscRemote osc (engine);
+                osc.setDialect (OscRemote::Dialect::DiGiCo);
+
+                osc.dispatchForTest (juce::OSCMessage ("/Console/Channels/1/gain", -6.0f));
+                expectWithinAbsoluteError (engine.getTrackTrimDelta (0), -6.0f, 0.001f);
+                for (const float bad : { std::numeric_limits<float>::infinity(),
+                                         -std::numeric_limits<float>::infinity(),
+                                         std::numeric_limits<float>::quiet_NaN() })
+                {
+                    osc.dispatchForTest (juce::OSCMessage ("/Console/Channels/1/gain", bad));
+                    expectWithinAbsoluteError (engine.getTrackTrimDelta (0), -6.0f, 0.001f,
+                                               "a non-finite trim replaced the last real reading");
+                }
+                osc.dispatchForTest (juce::OSCMessage ("/Console/Channels/1/gain", 200.0f));
+                expectWithinAbsoluteError (engine.getTrackTrimDelta (0), 72.0f, 0.001f,
+                                           "a trim above any desk's preamp range was not clamped");
+                engine.setTrackLiveInputGain (0, -1000.0f);   // every caller goes through the setter
+                expectWithinAbsoluteError (engine.getTrackTrimDelta (0), -96.0f, 0.001f);
+            }
+
             beginTest ("The bounded OSC parser reads what JUCE writes and refuses deep or malformed packets");
             {
                 // Real wire bytes: let JUCE's own sender serialise them.

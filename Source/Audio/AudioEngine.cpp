@@ -128,9 +128,15 @@ namespace zynforge
 
     void AudioEngine::setTrackLiveInputGain (int channelIndex, float dB)
     {
+        // Console trim arrives unauthenticated, and with trim-follow on it
+        // drives playback gain: +inf / NaN / 200 dB went straight to the PA.
+        // Drop non-finite readings; clamp to the travel real desks have, from
+        // -96 dB (Yamaha digital-gain floor; attenuation only) to +72 dB (above
+        // the widest supported preamp, Yamaha's +66 dB HA).
+        if (! std::isfinite (dB)) return;
         if (channelIndex < 0 || channelIndex >= recorder.getNumTracks()) return;
         auto& t = recorder.getTrack (channelIndex);
-        t.liveInputGainDb.store (dB, std::memory_order_relaxed);
+        t.liveInputGainDb.store (juce::jlimit (-96.0f, 72.0f, dB), std::memory_order_relaxed);
         // The reference is fixed at capture start. Zero dB is a valid gain,
         // never a sentinel permitting a console update to rebaseline a take.
     }
