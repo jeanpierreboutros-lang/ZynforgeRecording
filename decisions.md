@@ -752,6 +752,18 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 ---
 
+## TrackState lifetime is shared; views poll one generation — 2026-10-29
+
+**Status:** Accepted (supersedes the "condemn before every free" obligation in the 2026-08 audit ADRs)
+**Context:** `ChannelStrip`, `LedMeter` and `MiniSpectrum` cache a `TrackState&` and read it on their own timers. Any recorder shrink -- and a device restart that reshapes the track set in `MultitrackRecorder::prepare()` -- freed those objects while the views kept reading them until the next rebuild tick. Four audits closed it one call site at a time with `condemnAllStrips()` plus a grep gate. Separately, mixer undo built and stringified a JSON snapshot of every strip on every 10 Hz tick, including every tick of a take.
+**Decision:** The recorder owns `TrackState`s through `shared_ptr` (`enable_shared_from_this`); each caching surface holds a keep-alive taken from the reference it is given. Every layout change bumps the recorder's track generation (now including `reorderTracks`), which both views already poll. Mixer undo detects change with an allocation-free fingerprint over the same field table as its snapshot.
+**Rationale:** Ownership makes the use-after-free impossible rather than avoided; the audio thread only dereferences, so no refcount or deallocation reaches it. Engine-to-UI change notifications were considered but track sets also change on device restarts off the message thread, so a polled generation counter is the simpler robust signal. Command-based mixer undo would need per-gesture wiring in every mixer control; the fingerprint keeps the "catches every edit, including ones outside the UndoManager" property at negligible cost.
+**Consequences:** A removed track's view can show a stale value for one tick (condemn still stops its timers immediately). Adding a mixer field means adding it to `MixerSnapshot.h`'s table. ASan now proves the lifetime contract (*Strip lifetime* suite).
+**Alternatives Considered:** Keep condemn-only (rejected: correctness rests on every future caller remembering); `juce::ChangeBroadcaster` notifications (rejected for now, above); hashing the JSON string (rejected: still allocates the whole snapshot each tick).
+**Related Documents:** `Source/Audio/TrackState.h`; `Source/UI/MixerSnapshot.h`; `Source/Tests/StripLifetimeTests.cpp`; CLAUDE.md *Real-time discipline*.
+
+---
+
 ## Template
 
 ```

@@ -284,8 +284,9 @@ private:
     void         pollMixerUndo();
     void         rebaselineMixerUndo();
     juce::var    committedMixerState;       // last state captured as an undo baseline
-    juce::String committedMixerSig;         // JSON of committedMixerState (fast compare)
-    juce::String lastSeenMixerSig;          // previous tick's state (settle detection)
+    juce::uint64 committedMixerFp  { 0 };   // fingerprint of committedMixerState (MixerSnapshot.h)
+    int          committedMixerCount { -1 };// strip count at the baseline (structural changes re-baseline)
+    juce::uint64 lastSeenMixerFp   { 0 };   // previous tick's fingerprint (settle detection)
     int          mixerChangeStableTicks { 0 };
     bool         mixerUndoReady { false };  // baseline established yet?
     void editCutSelected (bool cut);

@@ -158,6 +158,9 @@ namespace zynforge
 
         int          stripIndex;
         TrackState&  state;
+        // Keeps `state` valid after the recorder drops it, until this
+        // surface is rebuilt. Empty for a TrackState the recorder doesn't own.
+        const std::shared_ptr<TrackState> keepAlive;
         TrackState*  pairState { nullptr };   // R partner when this is a stereo strip
         juce::Colour personality;
         ColourCallback colourCb;

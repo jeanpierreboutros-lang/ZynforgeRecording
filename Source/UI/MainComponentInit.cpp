@@ -47,15 +47,13 @@ MainComponent::MainComponent()
         clipClipboard = juce::var(); // any copied implicit track index is now stale
         undoManager.clearUndoHistory(); // old per-index snapshots must not undo onto different audio
         rebaselineMixerUndo();
-        // A block move can change the stereo LAYOUT without changing the track
-        // or row count ([mono, stereo] -> [stereo, mono]), which a count check
-        // never notices. Rebuild the strips on the next tick, and refresh EDIT
+        // reorderTracks bumps the track generation, so the strips rebuild on
+        // the next tick even when a block move keeps the count. Refresh EDIT
         // asynchronously: this callback can run inside an EDIT row's own
         // mouseUp, and refresh() destroys and recreates the rows. The rename
         // keeps each row's file PATH, so the path-keyed peaks must be rescanned
         // or a lane shows its previous occupant's audio -- for a MIXER move as
         // much as an EDIT drag.
-        lastTrackCount = -1;
         if (editPage != nullptr)
             juce::MessageManager::callAsync ([safePage = juce::Component::SafePointer<EditPage> (editPage.get())]
             {

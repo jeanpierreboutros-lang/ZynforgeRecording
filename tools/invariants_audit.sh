@@ -48,6 +48,15 @@ CACHERS=$(grep -rln "TrackState& *[a-zA-Z_]*;" $SCOPE --include=*.h 2>/dev/null 
 MISSING=""
 for f in $CACHERS; do
     grep -q "detach\|invalidate\|condemn" "$f" || MISSING+="$f (stores TrackState& with no detach/invalidate/condemn)"$'\n'
+    # Structural guard (2026-10-29): the cached reference must also hold a
+    # keep-alive, taken in the constructor from weak_from_this(), so a track
+    # the recorder drops stays valid until this surface is rebuilt.
+    grep -q "std::shared_ptr<TrackState> keepAlive" "$f" \
+        || MISSING+="$f (stores TrackState& without a std::shared_ptr<TrackState> keepAlive)"$'\n'
+    impl="${f%.h}.cpp"
+    { grep -q "keepAlive (s.weak_from_this().lock())" "$f" \
+      || { [ -f "$impl" ] && grep -q "keepAlive (s.weak_from_this().lock())" "$impl"; }; } \
+        || MISSING+="$f (keepAlive is never taken from the cached TrackState)"$'\n'
 done
 report "cached TrackState& consumers expose a detach hook" \
        "add detach()/invalidate() AND wire it into MainComponent::condemnAllStrips()" \

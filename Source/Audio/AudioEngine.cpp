@@ -1907,6 +1907,9 @@ namespace zynforge
         {
             recorder.setTrackCount ((int) order.size());
             persist ((int) order.size());
+            // A reorder can move a stereo pair without changing the count;
+            // every view rebuilds on a generation change.
+            recorder.bumpTrackGeneration();
         }
         if (disk) player.loadSession (session);
         sourceTrackLengths.clear();

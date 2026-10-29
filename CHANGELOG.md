@@ -31,6 +31,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 - Dragging a strip's colour swatch in EDIT now shows a drop line where the strip will land, autoscrolls the track list near its top and bottom edges, and moves the strip **once, on release**. A strip can now move past a strip of a different width (mono past a stereo pair); stereo pairs always move as one.
 
+### Fixed — strip lifetime and mixer undo
+
+- Removing strips, closing or opening a session, or an audio-device change that alters the input count can no longer leave a meter, spectrum or channel strip reading freed memory for a moment before the screen rebuilds. Strips now keep their track data alive until they are rebuilt.
+- Mixer undo no longer rebuilds a full copy of the mixer ten times a second -- and no longer does so throughout every recording. It checks a cheap fingerprint and copies the mixer only when a change is committed.
+- Mixer undo snapshots read strip names safely while a console or remote surface renames them.
+
 ### Fixed — session jobs and bounce
 
 - Quitting during a track export no longer leaves the session stuck "busy". The export's cancel path skipped releasing the session-I/O reservation, so every later quit, save, open and edit answered "wait for the session operation to finish" until the app was force-quit. All session-file jobs (export, bounce, import, Save As, relocate, handoff, click render) now run on one worker that always releases the reservation.

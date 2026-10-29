@@ -2,7 +2,22 @@
 
 ## October 29 structural-debt pass (source after `69aab9f`)
 
-Current source: universal Release build, **575 groups / 0 failures**, both static gates clean (the invariants gate now has 29 checks). New suites: *Strip reorder* (6 groups, drives the EDIT row's real mouse handlers) and *Session jobs* (6 groups, including a strip removal in the middle of a stereo-mix render). Each new test and gate rule was shown to fail against an injected regression before landing. ThreadSanitizer and ASan/UBSan runs for this pass are **not yet repeated**; the counts below for those suites describe `443c769`. Nothing from this pass is installed on either Mac.
+Current source: universal Release build, **578 groups / 0 failures**, and the same 578 groups pass under **ASan/UBSan/float-cast-overflow** and under **ThreadSanitizer** (arm64 Debug builds; no sanitizer report files; runtimes confirmed linked with `otool -L`). Both static gates are clean (the invariants gate has 29 checks). New suites: *Strip reorder* (6 groups, drives the EDIT row's real mouse handlers), *Session jobs* (6 groups, including a strip removal in the middle of a stereo-mix render) and *Strip lifetime and mixer fingerprint* (3 groups; ASan reports a heap-use-after-free in it when the keep-alives are removed). Each new test and gate rule was shown to fail against an injected regression before landing. Nothing from this pass is installed on either Mac.
+
+Sanitizer recipe used for this pass (separate build trees, never combined; reuse the Release tree's JUCE checkout):
+
+```bash
+cmake -S . -B build-asan -G Xcode -DCMAKE_OSX_ARCHITECTURES=arm64 \
+  -DFETCHCONTENT_SOURCE_DIR_JUCE="$PWD/build/_deps/juce-src" \
+  -DCMAKE_C_FLAGS='-fsanitize=address,undefined,float-cast-overflow -fno-omit-frame-pointer' \
+  -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined,float-cast-overflow -fno-omit-frame-pointer' \
+  -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined,float-cast-overflow'
+cmake --build build-asan --config Debug
+open -n -W --env ASAN_OPTIONS=halt_on_error=1:log_path=/tmp/zf-asan \
+  'build-asan/ZynforgeRecording_artefacts/Debug/Zynforge Recording.app' \
+  --args --run-tests --test-report=/tmp/zf-asan-tests.log
+# TSan: same with build-tsan, -fsanitize=thread, TSAN_OPTIONS=halt_on_error=1:log_path=/tmp/zf-tsan
+```
 
 Run one suite with `--run-tests --test-filter="<suite name>"`. After adding a test file to `CMakeLists.txt`, re-run `cmake -B build -G Xcode` explicitly before building -- the Xcode build's automatic regeneration missed one such edit.
 
@@ -179,7 +194,7 @@ tail -1 /private/tmp/zynforge-tests.log   # "[zynforge tests] N test groups, 0 f
 
 ```bash
 tools/design_audit.sh       # 7 brand rules   -- raw colours/fonts/alphas/radii/tints, spacing ratchet
-tools/invariants_audit.sh   # 27 correctness rules -- recurring bug classes
+tools/invariants_audit.sh   # 29 correctness rules -- recurring bug classes
 tools/install_hooks.sh      # once per clone: wires both as a pre-commit hook (hooks aren't in git)
 ```
 

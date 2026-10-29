@@ -36,6 +36,9 @@ namespace zynforge
         static constexpr int kFftSize     = 1 << kFftOrder;
 
         TrackState& state;
+        // Keeps `state` valid after the recorder drops it, until this
+        // surface is rebuilt. Empty for a TrackState the recorder doesn't own.
+        const std::shared_ptr<TrackState> keepAlive;
 
         juce::dsp::FFT                            fft   { kFftOrder };
         juce::dsp::WindowingFunction<float>       window { kFftSize, juce::dsp::WindowingFunction<float>::hann };

@@ -13,6 +13,7 @@
 #include "MainComponent.h"
 #include "../Theme/DialogChrome.h"
 #include "MarkerListDialog.h"
+#include "MixerSnapshot.h"
 
 #include <algorithm>
 #include <vector>
@@ -32,48 +33,10 @@ namespace
         return 0;
     }
 
-    // Serialise the strip's state (name, colour, gain, pan, routing,
-    // mute/solo/mon/arm) into a JSON object. Used by Cut / Copy / Paste.
-    juce::var snapshotStrip (zynforge::AudioEngine& eng, int physical)
-    {
-        if (physical < 0 || physical >= eng.getRecorder().getNumTracks())
-            return {};
-        auto& t = eng.getRecorder().getTrack (physical);
-        auto obj = new juce::DynamicObject();
-        obj->setProperty ("name",     t.name);
-        obj->setProperty ("colour",   (int) t.colourARGB.load (std::memory_order_relaxed));
-        obj->setProperty ("gainDb",   (double) t.gainDb     .load (std::memory_order_relaxed));
-        obj->setProperty ("pan",      (double) t.pan        .load (std::memory_order_relaxed));
-        obj->setProperty ("in",       t.inputRouting .load (std::memory_order_relaxed));
-        obj->setProperty ("out",      t.outputRouting.load (std::memory_order_relaxed));
-        obj->setProperty ("outMute",  t.outputMuted.load (std::memory_order_relaxed));
-        obj->setProperty ("stream",   t.streamSend .load (std::memory_order_relaxed));
-        obj->setProperty ("mute",     t.muted   .load (std::memory_order_relaxed));
-        obj->setProperty ("solo",     t.soloed  .load (std::memory_order_relaxed));
-        obj->setProperty ("mon",      t.monitor .load (std::memory_order_relaxed));
-        obj->setProperty ("rec",      t.armed   .load (std::memory_order_relaxed));
-        return juce::var (obj);
-    }
-
-    void restoreStrip (zynforge::AudioEngine& eng, int physical, const juce::var& v)
-    {
-        if (physical < 0 || physical >= eng.getRecorder().getNumTracks()) return;
-        auto* obj = v.getDynamicObject();
-        if (obj == nullptr) return;
-        auto& t = eng.getRecorder().getTrack (physical);
-        eng.setTrackName  (physical, obj->getProperty ("name").toString());
-        eng.setTrackColour(physical, juce::Colour ((juce::uint32) (int) obj->getProperty ("colour")));
-        eng.setTrackGainDb(physical, (float) (double) obj->getProperty ("gainDb"));
-        eng.setTrackPan   (physical, (float) (double) obj->getProperty ("pan"));
-        eng.setTrackInputRouting  (physical, (int) obj->getProperty ("in"));
-        eng.setTrackOutputRouting (physical, (int) obj->getProperty ("out"));
-        t.outputMuted.store ((bool) obj->getProperty ("outMute"), std::memory_order_relaxed);
-        t.streamSend .store ((bool) obj->getProperty ("stream"),  std::memory_order_relaxed);
-        t.muted   .store ((bool) obj->getProperty ("mute"), std::memory_order_relaxed);
-        t.soloed  .store ((bool) obj->getProperty ("solo"), std::memory_order_relaxed);
-        t.monitor .store ((bool) obj->getProperty ("mon"),  std::memory_order_relaxed);
-        if (! eng.isRecording()) t.armed.store ((bool) obj->getProperty ("rec"), std::memory_order_relaxed);
-    }
+    // Strip snapshot/restore for Cut / Copy / Paste and mixer undo share one
+    // field table with the undo change fingerprint (MixerSnapshot.h).
+    using zynforge::mixersnapshot::snapshotStrip;
+    using zynforge::mixersnapshot::restoreStrip;
 
     int physicalFromLogical (zynforge::AudioEngine& eng, int logical)
     {
@@ -201,17 +164,15 @@ void MainComponent::recordUndoSnapshot (const juce::String& label)
 
 juce::var MainComponent::captureMixerSnapshot()
 {
-    juce::Array<juce::var> arr;
-    for (int i = 0; i < engine.getRecorder().getNumTracks(); ++i)
-        arr.add (snapshotStrip (engine, i));
-    return juce::var (arr);
+    return zynforge::mixersnapshot::snapshotAll (engine);
 }
 
 void MainComponent::rebaselineMixerUndo()
 {
     committedMixerState  = captureMixerSnapshot();
-    committedMixerSig    = juce::JSON::toString (committedMixerState);
-    lastSeenMixerSig     = committedMixerSig;
+    committedMixerFp     = zynforge::mixersnapshot::fingerprint (engine);
+    committedMixerCount  = engine.getRecorder().getNumTracks();
+    lastSeenMixerFp      = committedMixerFp;
     mixerChangeStableTicks = 0;
     mixerUndoReady = true;
 }
@@ -219,36 +180,32 @@ void MainComponent::rebaselineMixerUndo()
 void MainComponent::pollMixerUndo()
 {
     // Never turn the act of recording into an undo step -- arm flags churn
-    // while rolling, and a captured take must not be undoable. Re-baseline so
-    // the post-record state becomes the next undo anchor.
-    if (engine.isRecording()) { rebaselineMixerUndo(); return; }
+    // while rolling, and a captured take must not be undoable. Mark the
+    // baseline stale instead of rebuilding it every tick of the take; the
+    // first idle tick after the take re-baselines once.
+    if (engine.isRecording()) { mixerUndoReady = false; return; }
 
-    const auto cur    = captureMixerSnapshot();
-    const auto curSig = juce::JSON::toString (cur);
-
-    if (! mixerUndoReady) { committedMixerState = cur; committedMixerSig = curSig;
-                            lastSeenMixerSig = curSig; mixerUndoReady = true; return; }
+    // Change detection is the allocation-free fingerprint; the JSON snapshot
+    // is built only when a baseline is (re)taken or a step is committed.
+    const auto fp = zynforge::mixersnapshot::fingerprint (engine);
+    if (! mixerUndoReady) { rebaselineMixerUndo(); return; }
 
     // A strip count change is structural (add / remove channel) -- re-baseline
     // rather than snapshot (MixerSnapshotAction restores per-existing-strip and
     // can't grow/shrink the mixer). Add/remove-channel undo is a separate task.
-    const auto* curArr = cur.getArray();
-    const auto* comArr = committedMixerState.getArray();
-    if (curArr != nullptr && comArr != nullptr && curArr->size() != comArr->size())
-    { committedMixerState = cur; committedMixerSig = curSig; lastSeenMixerSig = curSig;
-      mixerChangeStableTicks = 0; return; }
+    if (engine.getRecorder().getNumTracks() != committedMixerCount) { rebaselineMixerUndo(); return; }
 
-    if (curSig == committedMixerSig) { lastSeenMixerSig = curSig; mixerChangeStableTicks = 0; return; }
+    if (fp == committedMixerFp) { lastSeenMixerFp = fp; mixerChangeStableTicks = 0; return; }
 
     // Changed vs the committed baseline. Wait for it to stop moving (so a fader
     // drag commits one step) by counting ticks where the state held steady.
-    if (curSig != lastSeenMixerSig) { lastSeenMixerSig = curSig; mixerChangeStableTicks = 0; return; }
+    if (fp != lastSeenMixerFp) { lastSeenMixerFp = fp; mixerChangeStableTicks = 0; return; }
     if (++mixerChangeStableTicks < 3) return;   // ~300 ms settle at 10 Hz
 
     undoManager.beginNewTransaction ("Mixer change");
     undoManager.perform (new MixerSnapshotAction (engine, committedMixerState));
-    committedMixerState = cur;
-    committedMixerSig   = curSig;
+    committedMixerState = captureMixerSnapshot();
+    committedMixerFp    = fp;
     mixerChangeStableTicks = 0;
 }
 
@@ -302,18 +259,14 @@ void MainComponent::editUndo()
     // wouldn't have recorded it as an undo step yet.
     if (mixerUndoReady)
     {
-        const auto cur    = captureMixerSnapshot();
-        const auto curSig = juce::JSON::toString (cur);
-        const auto* curArr = cur.getArray();
-        const auto* comArr = committedMixerState.getArray();
-        const bool structural = (curArr != nullptr && comArr != nullptr
-                                 && curArr->size() != comArr->size());
-        if (curSig != committedMixerSig && ! structural)
+        const auto fp = zynforge::mixersnapshot::fingerprint (engine);
+        const bool structural = engine.getRecorder().getNumTracks() != committedMixerCount;
+        if (fp != committedMixerFp && ! structural)
         {
             undoManager.beginNewTransaction ("Mixer change");
             undoManager.perform (new MixerSnapshotAction (engine, committedMixerState));
-            committedMixerState = cur; committedMixerSig = curSig;
-            lastSeenMixerSig = curSig; mixerChangeStableTicks = 0;
+            committedMixerState = captureMixerSnapshot(); committedMixerFp = fp;
+            lastSeenMixerFp = fp; mixerChangeStableTicks = 0;
         }
     }
 

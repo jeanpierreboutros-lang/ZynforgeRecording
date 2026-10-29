@@ -700,6 +700,7 @@ namespace zynforge
                                 FloatCallback  panRCallback)
         : stripIndex (index),
           state (s),
+          keepAlive (s.weak_from_this().lock()),
           pairState (stereoPartner),
           personality (brand::stripColour (index)),
           colourCb (std::move (colourCallback)),

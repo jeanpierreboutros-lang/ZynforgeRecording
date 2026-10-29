@@ -150,7 +150,7 @@ namespace zynforge
             preRoll.clear();
             for (int i = 0; i < numInputs; ++i)
             {
-                auto t = std::make_unique<TrackState>();
+                auto t = std::make_shared<TrackState>();
                 t->setNameThreadSafe (juce::String (i + 1));
                 tracks.push_back (std::move (t));
 
@@ -222,7 +222,7 @@ namespace zynforge
         const int fifoSize = juce::nextPowerOfTwo ((int) (sampleRate * kFifoSeconds));
 
         const juce::ScopedLock sl (structureLock);
-        auto t = std::make_unique<TrackState>();
+        auto t = std::make_shared<TrackState>();
         t->setNameThreadSafe (juce::String ((int) tracks.size() + 1));
         tracks.push_back (std::move (t));
 

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <atomic>
+#include <memory>
 #include <juce_core/juce_core.h>
 
 namespace zynforge
@@ -13,7 +14,12 @@ namespace zynforge
     // the meters still move (signal-present check), just less often.
     inline std::atomic<bool> gTransportActive { false };
 
-    struct TrackState
+    // Owned by MultitrackRecorder through shared_ptr. UI surfaces that cache a
+    // TrackState& take a keep-alive with weak_from_this().lock(), so a track
+    // the recorder drops (shrink, or a device restart reshaping the set) stays
+    // valid until the surface holding it is rebuilt. The audio thread only
+    // dereferences the recorder's pointers and never copies one.
+    struct TrackState : std::enable_shared_from_this<TrackState>
     {
         static constexpr int kFftSize = 1024;
 

@@ -690,7 +690,7 @@ namespace zynforge
         double sampleRate { 48000.0 };
         int    blockSize  { 512 };
 
-        std::vector<std::unique_ptr<TrackState>>     tracks;
+        std::vector<std::shared_ptr<TrackState>>     tracks;   // shared: UI surfaces hold keep-alives (TrackState.h)
         // Guards STRUCTURAL changes to `tracks` against off-thread readers.
         // See getStructureLock(). Not taken by the audio thread.
         mutable juce::CriticalSection                structureLock;

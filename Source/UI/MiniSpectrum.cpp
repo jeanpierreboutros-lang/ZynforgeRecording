@@ -4,7 +4,7 @@
 
 namespace zynforge
 {
-    MiniSpectrum::MiniSpectrum (TrackState& s) : state (s)
+    MiniSpectrum::MiniSpectrum (TrackState& s) : state (s), keepAlive (s.weak_from_this().lock())
     {
         startTimerHz (24);
     }
