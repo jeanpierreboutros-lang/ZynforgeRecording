@@ -784,6 +784,18 @@ namespace zynforge
         // just the file being read back.
         const auto sessionDir = engine.getActiveSessionDir();
 
+        // A clip selection is (track, clip index). Once strips move, are
+        // deleted or relinked (the generation bumps) or another session
+        // opens, it names whichever clip now sits there -- and Delete /
+        // Nudge / Duplicate would act on that clip.
+        const int gen = engine.getRecorder().getTrackGeneration();
+        if (gen != selectionTrackGen || sessionDir != selectionSessionDir)
+        {
+            clearSelectedClip();
+            selectionTrackGen   = gen;
+            selectionSessionDir = sessionDir;
+        }
+
         // When the session changes, pull the on-disk WaveCache.wfm
         // into the thumbnail cache BEFORE the new TrackRows ask
         // their thumbnails for sources -- otherwise the thumbnails
@@ -807,7 +819,13 @@ namespace zynforge
         // row keeps showing its already-recorded waveform -- arming one track
         // and rolling no longer blanks the tracks you captured earlier. The
         // armed rows' real waveforms scan in once, cleanly, on stop.
-        if (engine.isRecording())
+        if (engine.isCaptureFinalizing())
+        {
+            // An async STOP is still draining, closing and (for a punch)
+            // splicing the take files. Leave every row on what it showed during
+            // the take; timerCallback refreshes and rescans once it settles.
+        }
+        else if (engine.isRecording())
         {
             // A normal take is being WRITTEN to its file -> skip the armed rows
             // (scanning a growing file paints garbage; the live envelope owns
@@ -859,6 +877,13 @@ namespace zynforge
     {
         clearReorderPreview();
         auto report = [this] (const juce::String& message) { if (onStatus) onStatus (message); };
+        // reorderTracks refuses during capture and its finalization; say so
+        // rather than report its failure as a disk-permission problem.
+        if (readOnlyWhileRecording || engine.isRecording() || engine.isSessionTransitionActive())
+        {
+            report ("Strip move refused: wait for the take to finish recording and saving");
+            return false;
+        }
         auto& recorder = engine.getRecorder();
         const auto blocks = trackorder::logicalBlocks (trackorder::stereoFlags (recorder));
         const int n = recorder.getNumTracks();
@@ -937,6 +962,9 @@ namespace zynforge
         // session loaded, session changed, ...
         const bool loaded = engine.getPlayer().isLoaded();
         const bool rec    = engine.isRecording();
+        // A local STOP clears `recording` at once, but the take files are
+        // drained, closed and (for a punch) spliced on a worker afterwards.
+        const bool finalizing = engine.isCaptureFinalizing();
         const auto& player = engine.getPlayer();
         const double liveRate = engine.getDeviceSampleRate() > 0.0
             ? engine.getDeviceSampleRate()
@@ -954,7 +982,11 @@ namespace zynforge
                 if (onZoomChanged) onZoomChanged (zoom);
             }
         }
-        setReadOnlyWhileRecording (rec);
+        // OR, never overwrite: the host also locks while an async STOP
+        // finalizes and metadata saves are pending, after `recording` has
+        // cleared. Writing `rec` alone here at 24 Hz fought the host's 10 Hz
+        // write, so the lock flickered and mouse edits got through.
+        applyReadOnly (hostReadOnly || rec);
         const bool transportActive = rec || engine.getPlayer().isPlaying();
         const bool wasFollowing = followState.isFollowing();
         const bool wasTransportActive = followState.isTransportActive();
@@ -963,6 +995,10 @@ namespace zynforge
             || wasTransportActive != followState.isTransportActive())
             syncFollowButton();
         const bool recJustStopped = (! rec && lastRecording);
+        // The take files are final: recording over AND finalization done. A
+        // synchronous stop settles on the same tick `recording` clears.
+        const bool captureJustSettled = ! rec && ! finalizing && (lastRecording || lastFinalizing);
+        lastFinalizing = finalizing;
 
         // Live capture envelope: arming is now SELF-DRIVEN per row inside
         // pushRecLevels (below), every tick, from the live recording+armed
@@ -977,7 +1013,8 @@ namespace zynforge
         // thumbnail scans in -- the lane shows the just-captured waveform
         // instantly instead of blanking for the duration of the scan.
         if (recJustStopped && list != nullptr) list->holdLiveEnvelopesUntilScanned();
-        if (loaded != lastLoaded || rec != lastRecording || engine.getActiveSessionDir() != lastSessionDir)
+        if (loaded != lastLoaded || rec != lastRecording || captureJustSettled
+            || engine.getActiveSessionDir() != lastSessionDir)
         {
             if (engine.getActiveSessionDir() != lastSessionDir)
                 waveCacheSaved = false;   // new session -> its cache needs (re)writing
@@ -993,7 +1030,10 @@ namespace zynforge
 
         // Drop pre-recording peaks before testing whether the scan is complete.
         // Saving first could mark an old cache as final for this session.
-        if (recJustStopped && list != nullptr)
+        // Wait for the capture to SETTLE: rescanning at the STOP edge read
+        // files an async finalization still had open (the last ~5 s missing,
+        // a punch not yet spliced) and nothing rescanned once it completed.
+        if (captureJustSettled && list != nullptr)
             list->forceRefreshWaveforms();
 
         // Persist WaveCache.wfm as soon as the background scan finishes for the
@@ -1003,7 +1043,7 @@ namespace zynforge
         // freshly-imported session that wasn't quit cleanly re-scanned on the
         // next open. Done once per session; skipped while recording (files
         // still growing).
-        if (! waveCacheSaved && ! rec && list != nullptr && list->rowCount() > 0
+        if (! waveCacheSaved && ! rec && ! finalizing && list != nullptr && list->rowCount() > 0
             && engine.getActiveSessionDir().isDirectory()
             && list->allWaveformsLoaded())
         {
@@ -1222,10 +1262,14 @@ namespace zynforge
         if (totalSamples <= 0) return;
         const int contentW = list->getWidth();
         if (contentW <= 0) return;
+        // Centre the sample in the VISIBLE lane, right of the pinned header,
+        // using the lane's own mapping (header + 4 px insets each side).
+        constexpr int kHeaderW = brand::space::editHeaderW;   // == TrackRow::headerW (same token)
         const double prop = (double) sample / (double) totalSamples;
-        const int    targetX = (int) (prop * (double) contentW);
-        const int    halfV   = viewport.getViewWidth() / 2;
-        viewport.setViewPosition (juce::jmax (0, targetX - halfV),
+        const int    targetX = kHeaderW + 4 + (int) (prop * (double) juce::jmax (1, contentW - kHeaderW - 8));
+        const int    viewW   = viewport.getViewWidth();
+        const int    centreX = kHeaderW + juce::jmax (0, viewW - kHeaderW) / 2;
+        viewport.setViewPosition (juce::jmax (0, targetX - centreX),
                                   viewport.getViewPositionY());
     }
 
@@ -1236,10 +1280,18 @@ namespace zynforge
         const auto total = player.isLoaded() ? player.getTotalLengthSamples() : 0;
         if (total <= 0 || b <= a) return;
         pauseFollowForZoom();
-        // Zoom so the selection ~fills the viewport (a little headroom), then
-        // centre on it. setZoom applies the finalized/live limits.
+        // Zoom so the selection ~fills the VISIBLE lane (a little headroom),
+        // then centre on it. The pinned header covers the first editHeaderW
+        // px of the view and the lane is inset 4 px each side of the content
+        // width, so solve contentW = viewport width * zoom for that. setZoom
+        // applies the finalized/live limits.
+        constexpr int kHeaderW = brand::space::editHeaderW;   // == TrackRow::headerW (same token)
         const double frac = (double) (b - a) / (double) total;
-        if (frac > 0.0) setZoom ((float) juce::jlimit (1.0, (double) kMaxTimelineZoom, 0.9 / frac));
+        const double visibleLane = (double) juce::jmax (1, viewport.getViewWidth() - kHeaderW);
+        if (frac > 0.0)
+            setZoom ((float) juce::jlimit (1.0, (double) kMaxTimelineZoom,
+                                           (0.9 * visibleLane / frac + kHeaderW + 8)
+                                               / (double) juce::jmax (1, viewport.getWidth())));
         scrollToSample ((a + b) / 2);
     }
 
@@ -1273,6 +1325,12 @@ namespace zynforge
     }
 
     void EditPage::setReadOnlyWhileRecording (bool readOnly)
+    {
+        hostReadOnly = readOnly;
+        applyReadOnly (readOnly || engine.isRecording());
+    }
+
+    void EditPage::applyReadOnly (bool readOnly)
     {
         if (readOnlyWhileRecording == readOnly) return;
         readOnlyWhileRecording = readOnly;

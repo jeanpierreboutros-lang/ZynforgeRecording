@@ -752,6 +752,7 @@ namespace zynforge
 
         // Audit-only scheduling seam. Tests install this before stop, and the
         // worker owns a snapshot; normal capture never installs callbacks.
+        friend class EditViewAuditTests;           // EDIT post-STOP rescan fixture
         friend struct ConcurrencyAuditAccess;
         friend class MainTransportRegressionTests; // deterministic STOP failure-latch fixtures
         friend class AsyncStopAuditTests;
