@@ -607,6 +607,53 @@ namespace zynforge
         void allocatePreRollBuffers();
         void dumpPreRollToWriters();
 
+        // ── startRecording stages ───────────────────────────────────────
+        // startRecording (MultitrackRecorder.cpp) runs these in order under
+        // structureLock. TakeStart is the working state of ONE call and is
+        // defined in the .cpp. A stage that returns false refuses the take;
+        // from stashPunchBases on, a refusing stage undoes its own media moves.
+        struct TakeStart;
+        struct TakeFormat { int container { 0 }; int bitDepth { 24 }; const char* ext { ".wav" }; };
+        static TakeFormat takeFormatFor (CaptureFormat) noexcept;
+        bool isArmedCapture (std::size_t track) const noexcept;
+        bool opensOwnCaptureFile (std::size_t track) const noexcept;
+        bool validateTakeStart (const TakeStart&);
+        bool createTakeFolders (TakeStart&);
+        void resolveTakeMirrors (const TakeStart&);
+        bool claimCopy (const TakeStart&, const juce::File& root);
+        void reportCopyConflict (const TakeStart&, const juce::File& root);
+        bool claimTakeCopies (TakeStart&);
+        bool recoverTakeCopies (const TakeStart&);
+        bool adoptExistingTakeFormat (const juce::File& copyAudioDir, TakeFormat& selected);
+        bool resolveTakeFormats (TakeStart&);
+        bool prepareBackupCopy (TakeStart&);
+        bool resolveMirrorFormats (TakeStart&);
+        bool continuationBasesIntact (const TakeStart&);
+        void noteExistingPrimaryBases (TakeStart&);
+        void invalidateReportsBeforeMediaMutation (TakeStart&);
+        bool stashForPunch (TakeStart&, const juce::File& target);
+        void restorePunchStashes (TakeStart&);
+        bool stashPunchBases (TakeStart&);
+        bool measureContinuationBase (TakeStart&);
+        void openTakeWriters (TakeStart&);
+        bool padNewTrackLeadIns (TakeStart&);
+        void abandonTakeStart (TakeStart&);
+        void goLive (const TakeStart&);
+
+        // ── finishFinalization stages ───────────────────────────────────
+        // TakeStop: totals + each writer's files, captured before the
+        // writers close. SessionReport: everything session.report.json says,
+        // by value, so the background hashing thread can rebuild it.
+        struct TakeStop;
+        struct SessionReport;
+        void quiesceWritersForStop();
+        TakeStop snapshotTakeAtStop();
+        void reattachWriterShards();
+        void splicePunchedTracks (TakeStop&);
+        void manifestSessionMedia (TakeStop&);
+        SessionReport buildSessionReport (TakeStop&);
+        void publishSessionReport (SessionReport);
+
         // Open a writer at the given path with the given format.
         // containerCode: 0 = WAV, 1 = AIFF, 2 = FLAC. Used both at
         // startRecording and by the drain loop's auto-split path so a

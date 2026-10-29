@@ -14,6 +14,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 - Add new entries under `## [Unreleased]
 
+### Changed — recorder start and stop are named stages
+
+- `MultitrackRecorder::startRecording` (786 lines) is now a 30-line sequence of named stages sharing one `TakeStart` struct; `finishFinalization` (603 lines) is a 20-line sequence over `TakeStop` and a by-value `SessionReport`. The code moved unchanged except for one helper, `opensOwnCaptureFile`, that replaces four copies of the "armed, and not the right half of an armed stereo pair" test. No behaviour change: the full suite passes unchanged.
+
 ### Changed — one set of mix rules for playback and bounce
 
 - The solo / mute / VCA gate, the stereo-pair automation rule, lane resolution, the post-fader mute, send gain, the pan law and master gain now live in `Source/Audio/MixKernel.h`, called by both the audio callback and the offline stereo bounce. Each path used to carry its own copy.
