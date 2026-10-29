@@ -1893,16 +1893,21 @@ namespace zynforge
                         // begins, the way a real DAW does.)
 
                         // Fade-in diagonal -- from the bottom-left corner
-                        // of the clip up to the top of (start + fadeIn).
+                        // of the clip up to the top of (start + fadeIn). A
+                        // piece of a split fade draws only its part of the
+                        // ramp (levelY: 0 = bottom, 1 = top).
+                        const auto levelY = [&inner2] (float level)
+                        { return (float) inner2.getBottom() - level * (float) inner2.getHeight(); };
                         {
                             const int xL = sampleToX (c.timelineStartSamples);
                             const int xF = sampleToX (c.timelineStartSamples + c.fadeInSamples);
                             if (c.fadeInSamples > 0)
                             {
+                                const auto [from, to] = fadeInLevels (c);
                                 g.setColour (brand::accentStatus.withAlpha (zynforge::brand::alpha::ghost));
                                 juce::Path p;
-                                p.startNewSubPath ((float) xL, (float) inner2.getBottom());
-                                p.lineTo ((float) xF, (float) inner2.getY());
+                                p.startNewSubPath ((float) xL, levelY (from));
+                                p.lineTo ((float) xF, levelY (to));
                                 g.strokePath (p, juce::PathStrokeType (1.4f));
                             }
                             // Drag handle at the apex (top of the diagonal).
@@ -1922,10 +1927,11 @@ namespace zynforge
                             const int xF = sampleToX (c.timelineStartSamples + c.fileLengthSamples - c.fadeOutSamples);
                             if (c.fadeOutSamples > 0)
                             {
+                                const auto [from, to] = fadeOutLevels (c);
                                 g.setColour (brand::accentStatus.withAlpha (zynforge::brand::alpha::ghost));
                                 juce::Path p;
-                                p.startNewSubPath ((float) xF, (float) inner2.getY());
-                                p.lineTo ((float) xR, (float) inner2.getBottom());
+                                p.startNewSubPath ((float) xF, levelY (from));
+                                p.lineTo ((float) xR, levelY (to));
                                 g.strokePath (p, juce::PathStrokeType (1.4f));
                             }
                             if (c.fadeOutSamples > 0 || showFadeGrips)

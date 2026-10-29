@@ -1062,6 +1062,10 @@ void MainComponent::editClipboardCut (bool cut)
             o->setProperty ("fileLength", c.fileLengthSamples);
             o->setProperty ("fadeIn", c.fadeInSamples);
             o->setProperty ("fadeOut", c.fadeOutSamples);
+            o->setProperty ("fadeInRamp", c.fadeInRampSamples);
+            o->setProperty ("fadeInRampOffset", c.fadeInRampOffsetSamples);
+            o->setProperty ("fadeOutRamp", c.fadeOutRampSamples);
+            o->setProperty ("fadeOutRampOffset", c.fadeOutRampOffsetSamples);
             o->setProperty ("gainDb", c.gainDb);
             o->setProperty ("muted", c.muted);
             o->setProperty ("name", c.name);
@@ -1121,6 +1125,10 @@ void MainComponent::editClipboardPaste()
                 juce::File (entry["audioFile"].toString()), (int) entry["sourceChannel"], (int) entry["fadeCurve"]);
             if (idx >= 0)
             {
+                engine.setClipFadeRamps (dest, idx, (juce::int64) entry["fadeInRamp"],
+                                         (juce::int64) entry["fadeInRampOffset"],
+                                         (juce::int64) entry["fadeOutRamp"],
+                                         (juce::int64) entry["fadeOutRampOffset"]);
                 engine.setClipMuted (dest, idx, (bool) entry["muted"]);
                 pasted.emplace_back (dest, idx);
             }

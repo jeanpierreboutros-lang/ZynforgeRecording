@@ -346,6 +346,35 @@ public:
             expectLessThan (worstComp, 1.0e-6f, "the comped range does not play Take 1's audio");
         }
 
+        beginTest ("Split fades survive a playlist JSON round trip; old JSON loads unchanged");
+        {
+            Folder f; expect (writeSine (f.track()));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            expect (e.setClipFades (0, 0, 20000, 20000));
+            const auto plain = e.playlistsToJson();
+            const auto before = render (e, 0, 48000);
+            expect (e.splitTrackAtSample (0, 8000));
+            expect (e.splitTrackAtSample (0, 40000));
+            const auto json = juce::JSON::parse (juce::JSON::toString (e.playlistsToJson()));
+
+            AudioEngine reopened; setup (reopened); reopened.loadSession (f.dir);
+            reopened.loadPlaylistsFromJson (json);
+            expectEquals ((int) reopened.clipsFor (0).size(), 3);
+            expectLessThan (maxDiff (before, render (reopened, 0, 48000)), 1.0e-6f,
+                            "the saved split lost its ramps");
+
+            // A save written before the ramp fields existed has none of them.
+            auto legacy = juce::JSON::parse (juce::JSON::toString (plain));
+            for (auto& track : *legacy.getArray())
+                for (auto& take : *track["takes"].getArray())
+                    for (auto& clip : *take["clips"].getArray())
+                        for (auto* key : { "fadeInRamp", "fadeInRampOffset", "fadeOutRamp", "fadeOutRampOffset" })
+                            clip.getDynamicObject()->removeProperty (key);
+            AudioEngine old; setup (old); old.loadSession (f.dir);
+            old.loadPlaylistsFromJson (legacy);
+            expectLessThan (maxDiff (before, render (old, 0, 48000)), 1.0e-6f, "a legacy save loads differently");
+        }
+
         beginTest ("Editing one fade of a split half makes it ordinary; the other keeps its ramp");
         {
             Folder f; expect (writeSine (f.track()));

@@ -373,6 +373,10 @@ namespace zynforge
                     cObj->setProperty ("fadeIn",      (juce::int64) c.fadeInSamples);
                     cObj->setProperty ("fadeOut",     (juce::int64) c.fadeOutSamples);
                     cObj->setProperty ("fadeCurve",   c.fadeCurve);
+                    cObj->setProperty ("fadeInRamp",        (juce::int64) c.fadeInRampSamples);
+                    cObj->setProperty ("fadeInRampOffset",  (juce::int64) c.fadeInRampOffsetSamples);
+                    cObj->setProperty ("fadeOutRamp",       (juce::int64) c.fadeOutRampSamples);
+                    cObj->setProperty ("fadeOutRampOffset", (juce::int64) c.fadeOutRampOffsetSamples);
                     // Cross-track clips reference another track's file --
                     // store the NAME only so the session stays portable.
                     if (c.audioFile != juce::File() && c.audioFile.isAChildOf (getActiveSessionDir()))
@@ -464,6 +468,14 @@ namespace zynforge
                             || c.fileLengthSamples > maxSample - c.fileStartSamples)
                             continue;
                         c.fadeCurve            = (int) cObj->getProperty ("fadeCurve");   // 0 if absent
+                        // Fade ramps (absent in older saves = ordinary fades);
+                        // a malformed one degrades to an ordinary fade.
+                        for (auto [key, field] : { std::pair { "fadeInRamp",        &c.fadeInRampSamples },
+                                                   std::pair { "fadeInRampOffset",  &c.fadeInRampOffsetSamples },
+                                                   std::pair { "fadeOutRamp",       &c.fadeOutRampSamples },
+                                                   std::pair { "fadeOutRampOffset", &c.fadeOutRampOffsetSamples } })
+                            if (! readSampleCoordinate (cObj->getProperty (key), *field)) *field = 0;
+                        normaliseFadeRamps (c);
                         c.sourceChannel        = cObj->hasProperty ("sourceChannel") ? (int) cObj->getProperty ("sourceChannel") : -1;
                         const auto afName = cObj->getProperty ("audioFile").toString();
                         if (afName.isNotEmpty())

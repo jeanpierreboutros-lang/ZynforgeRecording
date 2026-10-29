@@ -277,6 +277,32 @@ public:
             }
             MainComponent::s_testConstruct = false;
         }
+        beginTest ("Cut and paste keep the ramp of a fade split in two");
+        {
+            Folder f; expect (write (f.track(), 48000));
+            MainComponent::s_testConstruct = true;
+            {
+                MainComponent main; setup (main.engine, 1); main.engine.loadSession (f.dir);
+                main.currentView = MainComponent::View::Edit;
+                auto& e = main.engine;
+                expect (e.setClipFades (0, 0, 20000, 0));
+                expect (e.splitTrackAtSample (0, 8000));       // right half starts mid-ramp
+                juce::AudioBuffer<float> split, pasted;
+                expect (e.renderTrackArrangement (0, split, 48000));
+                main.editPage->setSelectedClips ({ { 0, 1 } }, { 0, 1 });
+                main.editClipboardCut (true);
+                expectEquals ((int) e.clipsFor (0).size(), 1);
+                e.getPlayer().setPositionSamples (8000);
+                main.editClipboardPaste();
+                expectEquals ((int) e.clipsFor (0).size(), 2);
+                expect (e.renderTrackArrangement (0, pasted, 48000));
+                float worst = 0.0f;
+                for (int i = 0; i < 48000; ++i)
+                    worst = juce::jmax (worst, std::abs (pasted.getSample (0, i) - split.getSample (0, i)));
+                expectLessThan (worst, 1.0e-6f, "the pasted half restarted its fade from silence");
+            }
+            MainComponent::s_testConstruct = false;
+        }
         beginTest ("Slow snapped drag accumulates motion and keeps the original group peer");
         {
             Folder f; expect (write (f.track(), 48000)); expect (write (f.track (2), 48000));
