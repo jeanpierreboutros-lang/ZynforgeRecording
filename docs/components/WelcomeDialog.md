@@ -63,7 +63,7 @@ Two items only — `New` and `Open`. Earlier builds had Sketch / Cloud / Learn e
 | Item | Right pane content |
 |---|---|
 | New | Form: name / location / format / sample rate / I/O preset → `[Cancel] [Create]` |
-| Open | `FileChooser` style picker rooted at `defaultLocation`, plus a recent-sessions list pulled from `appProps` |
+| Open | `FileChooser` style picker rooted at `defaultLocation`, plus up to six recent sessions (`AudioEngine::getRecentSessions()`, remembered on record and open) as buttons |
 
 ## States
 

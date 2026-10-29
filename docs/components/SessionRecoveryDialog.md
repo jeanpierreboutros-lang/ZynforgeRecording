@@ -8,7 +8,7 @@ A `juce::Component` hosted via `juce::DialogWindow::LaunchOptions` with `DialogC
 
 ## When to use
 
-Called from `MainComponent::offerSessionRecovery()` during startup. Skips silently when `findIncompleteSessions()` returns empty.
+Called from `MainComponent::offerSessionRecovery()` during startup, after a capture-daemon take has been reattached; the live daemon session is never listed. Skips silently when `findIncompleteSessions()` returns empty.
 
 ## API
 
@@ -58,7 +58,7 @@ Recovery of an interrupted track-order transaction is handled by the session-ope
 
 | Action | What it does |
 |---|---|
-| **Recover selected** | Deletes the `recording.session` marker in the picked session dir, calls `onOpen(dir)` so the host can load it. Closes the dialog with exit code 1. |
+| **Recover selected** | Calls `onOpen(dir)` so the host can load it; the host deletes the `recording.session` marker only after `openSessionFolder` succeeds (a failed open keeps the session listed and its error status). Closes the dialog with exit code 1. |
 | **Delete...** | Confirm-then-delete the entire session directory recursively. **Audio is lost** — the confirm dialog calls this out explicitly. Removes the row from the local model and refreshes. If the list empties, the dialog closes itself. |
 | **Skip** | Closes with exit code 0. Orphans stay on disk; they reappear in the dialog on next launch. |
 

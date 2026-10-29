@@ -40,7 +40,9 @@ The right pane's content adapts to a per-row `LaneMode`:
 | `Tempo` | Tempo map points | Add / Delete tempo changes |
 | `Markers` | Marker tick stripe | Read-only — markers live on the time ruler |
 
-Switching mode: per-row VIEW menu in the header. The toolbar's `Param` choice ALSO drives this — if the engineer picks "Pan" in the toolbar, every row's lane shows the pan automation regardless of individual VIEW mode.
+Switching mode: per-row VIEW menu in the header. Since 2026-10-29 a row draws, labels and edits only the lane its own VIEW shows (`currentLaneParam()` reads `laneMode`); a Waveform, Markers or Click lane never adds, moves or deletes automation or writes the tempo map, whatever the toolbar's last pick.
+
+Clip-menu and take/comp actions apply to both halves of a stereo row and to each edit-group peer's OWN clip under the clicked one (`peerClipTargets`, `stripTracks()`). Waveforms are drawn through `drawThumbnailVisible`, which reads only the visible columns, so deep zoom stays responsive. Crossfades pair clips in timeline order. While the timeline is read-only (recording or finalizing), drags already in flight stop editing.
 
 ## Height presets
 
@@ -111,7 +113,8 @@ At long time scales, the overview combines a short-window median body with thin 
 | Pro Tools-style clip waveform | Wave pane | Waveform lane mode — light `waveBg = lift(stripColour)` clip block + DARK `waveDark = sink(waveBg)` thumbnail on top, source-level waveform with bounded display gain; clip gain scales the waveform |
 | Live-capture envelope | Wave pane, `meterHot` | While the row is armed + recording (incl. continue / punch) — placed by timeline fraction; dims to the channel colour on stop |
 | Detected transient ticks | Top of wave pane, 6 px engagedAmber strokes | When `engine.getTransientsForTrack(index+1)` returns non-empty |
-| Crossfade visualisation | Overlap between adjacent clips, paints X-shape | Always when two clips overlap |
+| Crossfade visualisation | Overlap between adjacent clips (in timeline order), paints X-shape | Always when two clips overlap |
+| Partial fade ramp | Fade diagonal | A piece of a split fade draws only its part of the original ramp |
 | Curve-aware automation path | Lane area | When points are present, walks segments + applies curve interpolation matching `automationValueAt` |
 | Tension drag handle | Segment midpoints | Non-Hold segments, ≥18 px wide, non-flat (start != end) |
 | Take chip "TAKE N / M" | Header, top-right | When the track has > 1 take |

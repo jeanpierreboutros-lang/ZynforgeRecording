@@ -28,7 +28,7 @@ TransportBar (AudioEngine& engine);
 | `onRequestPlay` | `void()` | Host play/pause handling |
 | `onRequestStop` | `void()` | Host normal two-tap guard and one-press punch stop |
 
-START, END and LOOP are wired inside the bar. There are no `onSkipBack`/`onSkipFwd` public callbacks.
+START, END and LOOP are wired inside the bar. There are no `onSkipBack`/`onSkipFwd` public callbacks. LOOP refuses to turn on while recording or in PUNCH mode (a loop wrap would keep a punch recording past its out point); START/END are inert while recording.
 
 ## Capture-daemon host contract
 

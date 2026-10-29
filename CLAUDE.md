@@ -293,6 +293,8 @@ a rebuild or relaunch is unnecessary. Run smoke launches only when no user captu
 is active, following the isolation guidance in [testing.md](testing.md).
 Current measured startup limits are recorded in [INSTALL.md](INSTALL.md).
 
+**Test-runner gotchas (2026-10-29).** The tests app is single-instance: if any `Zynforge Recording Tests` process is running (another checkout or agent), a new launch hands off and exits 0 with an EMPTY log; only trust a log containing `[zynforge tests] N test groups` (or run with a private `CFFIXED_USER_HOME`). After a change that adds a test FILE to CMakeLists, the first incremental Xcode build may not compile it: check the suite names in the log, not just the total.
+
 ## Sibling project
 
 ZynForge Live (plugin-insert host) lives elsewhere. They share the visual identity (`Source/Theme/`) but not code. Cross-pollinate brand changes; do not cross-pollinate features.

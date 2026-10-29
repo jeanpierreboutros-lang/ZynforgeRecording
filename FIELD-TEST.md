@@ -237,11 +237,21 @@ Also reopen the five-hour take and zoom to a few-minute span to observe the deta
 - [ ] Finish a clean continuation after a take with a known capture warning. The final `session.report.json` must list and hash all earlier and new parts and retain the earlier warning. Run `verify_take.sh` on a clean continued session and on a deliberately gapped disposable copy; only the complete, warning-free copy should pass.
 - [ ] If using `tools/auto_stop.sh`, run it against a disposable live session with its companion token. Confirm it pins the intended session, performs the two-tap STOP, waits for a successful finalization acknowledgment, then confirms `recording:false` for the same session. Pending finalization must not count as success; the timeout or a terminal error must fail visibly. The success path passed on `TEST NEWWWWWW` on 2026-10-02; the real-device failure path remains untested. Never use an untested timer to stop show material.
 
+### 2026-10-29 bug-hunt delta (current source; disposable sessions only)
+
+- [ ] During a selection punch and a manual punch while rolling: press cue digits, Cmd+digit, numpad +/- and the Loop button. The playhead must not move, Loop must not turn on, and the status line must say the playhead is locked. After STOP, compare the punched region against where it was played.
+- [ ] Manual punch while playback rolls on a 56-track session: the punched audio must line up with the backing at the moment RECORD was pressed (no early splice).
+- [ ] Continue a long take with one newly armed track and with an empty backup drive added: RECORD must start at once (no freeze); after STOP the lead-in files appear and the take plays aligned. Quit the app hard only on a disposable copy mid-take, reopen, and confirm the lead-in is completed.
+- [ ] Open a session prepared on a laptop (fewer inputs) on the show interface: every strip must record its saved SD5 input, not a wrapped one.
+- [ ] LTC chase at 25 fps from the real source: LOCK only with timecode present, correct position, LOCK drops when timecode stops; program audio on the LTC strip must never LOCK.
+- [ ] Companion RECORD tapped twice during a take must not stop it. A Yamaha/A&H console link unplugged mid-session must show as lost.
+- [ ] Split a clip inside a fade-in and inside a fade-out, play and bounce: no audible change at the split.
+
 ### 2026-09-24 punch and import delta (historical build; repeat applicable checks on the current DMG)
 
 - [ ] On a disposable session, start with loop playback enabled and select a very short punch range. RECORD must pass through playback pre-roll, replace only the selected samples, continue post-roll and stop; the loop must not wrap before punch-out, and its former enabled state must return afterward.
 - [ ] While punching a known existing take, listen to both master and any configured direct outputs at safe level: hear the old take before/after and the live input **instead of old + live together** inside the punch. Manually punch in/out with RECORD or STOP once, reopen the same session, and compare before/new/after audio and original file path.
-- [ ] Punch and continue with a newly armed track after an existing take. The new track must be silent before its start and sample-aligned on playback/export. Repeat on a long disposable session and note any start delay or disk-space pressure from the silent lead-in.
+- [ ] Punch and continue with a newly armed track after an existing take. The new track must be silent before its start and sample-aligned on playback/export. Since 2026-10-29 RECORD must start immediately even on a long take: the silence is written after STOP as `Track_NN` and the new audio is `Track_NN_part02`; check both exist and that `Audio Files/Pending Lead-ins/` is gone after STOP.
 - [ ] On disposable primary + backup/mirror copies, attempt a punch with a newly configured copy missing the original base. Capture must refuse without changing the primary. After populating the copy, punch again and inspect every result independently.
 - [ ] Simulate an interrupted punch only on a disposable copy: retain `.punchbase`, leave a partial replacement, reopen, and confirm the original is restored and the partial is archived under that session's `Session File Backups/Interrupted Punch*`. Never perform this test on show material.
 - [ ] Import a known four-channel source into a disposable session. Confirm four separate mono tracks, correct channel order, sample rate, playback routing and export, with no channels silently dropped.

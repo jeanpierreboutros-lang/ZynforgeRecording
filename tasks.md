@@ -1,5 +1,19 @@
 # Project Tasks
 
+## October bug hunt — 2026-10-29
+
+Seven read-only reviewers covered capture, the real-time engine, editing/renders, session I/O, the EDIT view, the main window and network (about 100 findings). All are fixed or closed, each with a test that fails on the old code (see [CHANGELOG.md](CHANGELOG.md) and [testing.md](testing.md)). 689 groups pass in Release, ASan/UBSan, TSan and CI.
+
+- [x] Critical: Loop or playhead jumps during a punch overwrote audio past the punch-out (punch take now locks the playhead and loop); a refused punch/continue left its arm set (arms exclusive, consumed by every refusal); New Session under a live take re-patched it (refused at the mutation); one nested-bundle OSC packet crashed the listener (`OscPacketReceiver`).
+- [x] Capture: rolling punches splice at the captured origin; per-copy splice rollback with an `Unspliced Punch` archive; empty punches are not failures; every refusal names its reason; remote arms race-free; pre-roll written per shard; the capture daemon pumps its run loop.
+- [x] **Lead-ins deferred** (user decision): RECORD never writes silence; reserved part slots are filled after STOP; markers make a crash recoverable. ADR in [decisions.md](decisions.md).
+- [x] Engine: requested input patch persisted, live wrap only; LTC decoder rewritten (real frames, fps from the frame period); locate CAS; held lanes on a missed try-lock; pans persisted; pair link syncs R; StripGains coalesced; MIDI clock Stop/SPP; -60 dB floor; NDI timecode.
+- [x] EDIT view: no hidden automation edits; menus act on stereo halves and each peer's own clip; deep zoom draws only the visible slice; lock holds through finalization; plus 10 medium/low items.
+- [x] Editing: range edits split every crossing clip; **split inside a fade is exact** (user decision: clip fade-ramp fields); paste undo; strips above the last Track_NN; analysis main-take filter; CSV import; trims, Strip Silence, handoff CSV, Tab-to-transient.
+- [x] Session and main window: undo cleared on New Session; analysis refused during a take; crash recovery after daemon reattach; export stale indices; layout saves during jobs; stereo link/strip delete/patch/VCA/LOCK/DEVICE fixes; Welcome recents.
+- [x] Closed as not reproducible: the AppleDouble `._X.zfproj` lookup (macOS hides those files from directory listings; filter kept as defence in depth).
+- [ ] Physical checks on the installed build: see the October bug-hunt section in [FIELD-TEST.md](FIELD-TEST.md).
+
 ## Handover back to Claude Code + structural-debt pass — 2026-10-29
 
 Development moved from OpenAI Codex back to Claude Code. The working copy now lives at `/Volumes/PJ /zynforge/ZynforgeRecording` (exFAT). A read-only scan of `69aab9f` found structural debt that the repeated audit passes kept patching around rather than removing. Each item below lands as its own commit with a green full suite.
