@@ -16,7 +16,7 @@ namespace zynforge
         StripGains();
 
         // Test isolation -- see StripNames::setTestMode. Flipped on by the
-        // --run-tests path so unit tests never write to the engineer's
+        // test-runner app (Tests/TestMain.cpp) so unit tests never write to the engineer's
         // real per-channel gains/pans.
         static void setTestMode (bool on) noexcept { testModeFlag() = on; if (on) isolateSettings(); }
 

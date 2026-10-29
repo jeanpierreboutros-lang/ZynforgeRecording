@@ -496,7 +496,7 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 ## Test harness lives inside the GUI binary, behind `ZYNFORGE_RUN_TESTS=1` — 2026-05-24
 
-**Status:** Accepted
+**Status:** Superseded 2026-10-29 by *Tests run in their own app against a shared core library*
 **Context:** Until 2026-05-24 there were zero tests. Every change shipped on "the app launched at 49 MB and didn't crash for 9 seconds." A separate test target was discussed but adds CMake complexity (link-graph surgery, JUCE module duplication) and slows the dev loop.
 **Decision:** The GUI app binary doubles as a test runner. Setting `ZYNFORGE_RUN_TESTS=1` (or passing `--run-tests`) at launch makes `Main.cpp` instantiate a `juce::UnitTestRunner`, run every registered `juce::UnitTest`, print results to stderr AND `~/Library/Logs/Zynforge/test-report.log`, then `quit()` with the failure count as exit code. `AudioEngine::setTestModeSkipAudioInit(true)` lets tests construct the engine without opening a 256-channel audio device.
 **Rationale:** Lowest friction -- no extra target to maintain, the test binary always has the latest engine code, and adding a new test is one file (`Source/Tests/*.cpp`). Exit-code semantics let CI / shell scripts gate on test pass/fail.
@@ -761,6 +761,18 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 **Consequences:** A removed track's view can show a stale value for one tick (condemn still stops its timers immediately). Adding a mixer field means adding it to `MixerSnapshot.h`'s table. ASan now proves the lifetime contract (*Strip lifetime* suite).
 **Alternatives Considered:** Keep condemn-only (rejected: correctness rests on every future caller remembering); `juce::ChangeBroadcaster` notifications (rejected for now, above); hashing the JSON string (rejected: still allocates the whole snapshot each tick).
 **Related Documents:** `Source/Audio/TrackState.h`; `Source/UI/MixerSnapshot.h`; `Source/Tests/StripLifetimeTests.cpp`; CLAUDE.md *Real-time discipline*.
+
+---
+
+## Tests run in their own app against a shared core library — 2026-10-29
+
+**Status:** Accepted (supersedes *Test harness lives inside the GUI binary*, 2026-05-24)
+**Context:** By October the suite was 70 files and ~16k lines compiled into the shipping recorder, reachable through `--run-tests` / `ZYNFORGE_RUN_TESTS=1`, with the recorder's application identity switching on a command-line flag. The 2026-05 decision avoided a separate target because of "link-graph surgery, JUCE module duplication".
+**Decision:** The recorder's code is a `ZynforgeCore` static library. JUCE modules link to it PRIVATE (their sources compile into it once) and its include paths / module definitions are re-exported to consumers. The shipping app is `Main.cpp` + the library; `ZynforgeRecordingTests` is `Source/Tests` + `TestMain.cpp` + the same library, embedding the capture helper the same way so daemon suites exercise the shipping discovery path.
+**Rationale:** The module-duplication concern is solved by private linkage plus interface re-export; nothing compiles twice. The shipped binary no longer contains test suites or a test identity switch.
+**Consequences:** Run tests from the test app (CLAUDE.md, testing.md). CI checks the recorder's symbols for `runTest`. `*ForTests` hooks and test `friend` declarations remain in production headers (inert in the recorder).
+**Alternatives Considered:** An INTERFACE "shared sources" library (rejected: every source compiled twice); keeping the in-binary harness (rejected: ships test code and a mode switch).
+**Related Documents:** `CMakeLists.txt`; `Source/Tests/TestMain.cpp`; `.github/workflows/ci.yml`; testing.md *How to Run Tests*.
 
 ---
 

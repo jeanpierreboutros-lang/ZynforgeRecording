@@ -4,8 +4,6 @@
 #include "UI/MainComponent.h"
 #include "Theme/BrandColors.h"
 #include "Theme/BrandTokens.h"
-#include "Audio/StripNames.h"
-#include "Audio/StripGains.h"
 
 // Branded launch splash: a borderless rounded card shown on top for a few
 // seconds before the main window opens. Paints the brand (forge-Z over a
@@ -103,22 +101,10 @@ class ZynforgeRecordingApp final : public juce::JUCEApplication
 public:
     ZynforgeRecordingApp() = default;
 
-    static bool isTestInvocation()
-    {
-        if (juce::SystemStats::getEnvironmentVariable ("ZYNFORGE_RUN_TESTS", "0") != "0")
-            return true;
-        for (const auto& argument : getCommandLineParameterArray())
-            if (argument.unquoted() == "--run-tests") return true;
-        return false;
-    }
-
-    const juce::String getApplicationName() override
-    {
-        // JUCE keys its single-instance lock by application name. Tests use a
-        // separate fixed identity so they never forward arguments to the live
-        // recorder, while still excluding overlapping test processes.
-        return isTestInvocation() ? "Zynforge Recording Tests" : "Zynforge Recording";
-    }
+    // The unit tests run in their own app, ZynforgeRecordingTests
+    // (Source/Tests/TestMain.cpp), so this binary carries no test code and
+    // its single-instance identity is always the recorder's.
+    const juce::String getApplicationName() override { return "Zynforge Recording"; }
     // Single-sourced from CMake (project VERSION -> the target's JUCE_VERSION
     // -> this macro). It used to be a hardcoded literal here as well as in
     // three places in CMakeLists, so the About box and every crash report kept
@@ -146,117 +132,6 @@ public:
         // Opt-in isolated preferences for repeatable UI smoke runs.
         if (commandLine.contains ("--isolated-settings")) zynforge::isolateSettings();
 
-        // ZYNFORGE_RUN_TESTS=1 (or --run-tests on the cmd line) runs
-        // every juce::UnitTest registered in the binary, prints the
-        // results to stderr, and quits with a non-zero exit when any
-        // test failed. Lets CI / scripts catch regressions without
-        // standing up a separate test target.
-        if (isTestInvocation())
-        {
-            juce::String testFilter, reportPath;
-            bool hasTestFilter = false;
-            for (const auto& parameter : getCommandLineParameterArray())
-            {
-                const auto argument = parameter.unquoted();
-                if (argument.startsWith ("--test-filter="))
-                {
-                    hasTestFilter = true;
-                    testFilter = argument.substring (juce::String ("--test-filter=").length());
-                }
-                else if (argument.startsWith ("--test-report="))
-                {
-                    reportPath = argument.substring (juce::String ("--test-report=").length());
-                    if (! juce::File::isAbsolutePath (reportPath))
-                    {
-                        std::cerr << "[zynforge tests] ERROR: --test-report requires an absolute file path\n";
-                        setApplicationReturnValue (2);
-                        quit();
-                        return;
-                    }
-                }
-            }
-
-            // GUI-app bundles don't get a controlling TTY when
-            // launched outside Terminal -- stdout / stderr go
-            // nowhere. Keep the normal report path unless the audit runner
-            // explicitly requests its own --test-report=/absolute/path.
-            const auto defaultReportDir = juce::File::getSpecialLocation (
-                                       juce::File::userApplicationDataDirectory)
-                                       .getChildFile ("Logs/Zynforge");
-            const auto reportFile = reportPath.isEmpty()
-                ? defaultReportDir.getChildFile ("test-report.log") : juce::File (reportPath);
-            if (reportFile.getParentDirectory().createDirectory().failed()
-                || (reportFile.exists() && ! reportFile.deleteFile())
-                || reportFile.create().failed())
-            {
-                std::cerr << "[zynforge tests] ERROR: cannot create test report: "
-                          << reportFile.getFullPathName().toRawUTF8() << "\n";
-                setApplicationReturnValue (2);
-                quit();
-                return;
-            }
-
-            struct DualLogger : public juce::Logger
-            {
-                juce::File f;
-                explicit DualLogger (const juce::File& file) : f (file) {}
-                void logMessage (const juce::String& m) override
-                {
-                    std::cerr << m.toRawUTF8() << "\n";
-                    f.appendText (m + "\n");
-                }
-            };
-            DualLogger dual (reportFile);
-            juce::Logger::setCurrentLogger (&dual);
-
-            // Isolate persistent state so the tests never write to the
-            // engineer's real per-channel names / gains / pans.
-            zynforge::StripNames::setTestMode (true);
-            zynforge::StripGains::setTestMode (true);
-
-            juce::UnitTestRunner runner;
-            runner.setAssertOnFailure (false);
-            int failed = 0;
-            bool invalidSelection = false;
-            if (hasTestFilter)
-            {
-                juce::Array<juce::UnitTest*> selected;
-                if (testFilter.isNotEmpty())
-                    for (auto* test : juce::UnitTest::getAllTests())
-                        if (test->getName().containsIgnoreCase (testFilter))
-                            selected.add (test);
-                if (selected.isEmpty())
-                {
-                    invalidSelection = true;
-                    failed = 1;
-                    dual.logMessage ("[zynforge tests] ERROR: no registered test names match --test-filter="
-                                     + testFilter);
-                }
-                else
-                {
-                    dual.logMessage ("[zynforge tests] Selected " + juce::String (selected.size())
-                                     + " registered test suite(s) matching: " + testFilter);
-                    runner.runTests (selected);
-                }
-            }
-            else
-            {
-                runner.runAllTests();
-            }
-            for (int i = 0; i < runner.getNumResults(); ++i)
-                failed += runner.getResult (i)->failures;
-            const auto summary = juce::String ("[zynforge tests] ")
-                               + juce::String (runner.getNumResults())
-                               + " test groups, " + juce::String (failed)
-                               + " failure(s)";
-            std::cerr << summary << "\n";
-            reportFile.appendText (summary + "\n");
-
-            juce::Logger::setCurrentLogger (nullptr);
-            setApplicationReturnValue (invalidSelection ? 2 : failed == 0 ? 0 : 1);
-            quit();
-            return;
-        }
         for (const auto& arg : getCommandLineParameterArray())
         {
             const juce::File candidate (arg.unquoted());

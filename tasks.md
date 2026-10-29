@@ -15,7 +15,7 @@ Development moved from OpenAI Codex back to Claude Code. The working copy now li
 - [x] `MainComponent::onRecordClicked` (394 lines) split into named stages with a `RecordStartPlan`; every refusal now runs before the routing auto-fix (a refused press used to rewrite and persist armed channels' input routing).
 - [ ] Split `MainComponent` (one class over 11 files) into controllers; split `EditTrackRow.h`; extract steps from `MultitrackRecorder::startRecording` / `finishFinalization`; move app/network ownership out of `AudioEngine`.
 - [x] UI timer: the free-space readout queried the session volume (stat + statfs) on every 10 Hz tick; now at most every 2 s. Left as is: the NDI send inside the audio callback (`NDIBridge.h`) -- whether it can block depends on the NDI SDK, which is not in the repo to verify.
-- [ ] Build: tests out of the shipping app (core library + test target); CI cache keyed on the JUCE SHA, faster Debug job.
+- [x] Build: the recorder's code is one `ZynforgeCore` static library (compiled once) linked by the shipping app and by a new `ZynforgeRecordingTests` app; the recorder carries no test code (CI checks its symbols). CI runs Debug (arm64) and Release (universal) in parallel with a JUCE-keyed cache: ~26 min -> ~13.5 min.
 - [ ] Organise test files by feature rather than by audit/month.
 
 ## Current follow-up and documentation — 2026-10-05

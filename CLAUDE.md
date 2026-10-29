@@ -255,6 +255,7 @@ The `Video Files/` placeholder folder is **not** created. `.zfproj` is registere
 ```bash
 cmake -B build -G Xcode                                                  # first time only
 cmake --build build --config Release                                     # code/build changes
+"build/ZynforgeRecordingTests_artefacts/Release/Zynforge Recording Tests.app/Contents/MacOS/Zynforge Recording Tests"  # full suite (add --test-filter=<suite>)
 open "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"  # smoke-test
 pgrep -x "Zynforge Recording" | xargs -I {} ps -p {} -o pid,rss,etime,%cpu # observe; no latency acceptance
 ls -lt ~/Library/Logs/DiagnosticReports/Zynforge*.ips | head -1          # check no new crash

@@ -14,12 +14,12 @@ cmake -S . -B build-asan -G Xcode -DCMAKE_OSX_ARCHITECTURES=arm64 \
   -DCMAKE_EXE_LINKER_FLAGS='-fsanitize=address,undefined,float-cast-overflow'
 cmake --build build-asan --config Debug
 open -n -W --env ASAN_OPTIONS=halt_on_error=1:log_path=/tmp/zf-asan \
-  'build-asan/ZynforgeRecording_artefacts/Debug/Zynforge Recording.app' \
-  --args --run-tests --test-report=/tmp/zf-asan-tests.log
+  'build-asan/ZynforgeRecordingTests_artefacts/Debug/Zynforge Recording Tests.app' \
+  --args --test-report=/tmp/zf-asan-tests.log
 # TSan: same with build-tsan, -fsanitize=thread, TSAN_OPTIONS=halt_on_error=1:log_path=/tmp/zf-tsan
 ```
 
-Run one suite with `--run-tests --test-filter="<suite name>"`. After adding a test file to `CMakeLists.txt`, re-run `cmake -B build -G Xcode` explicitly before building -- the Xcode build's automatic regeneration missed one such edit.
+Run one suite with `--test-filter="<suite name>"` on the test-runner app. After adding a test file to `CMakeLists.txt`, re-run `cmake -B build -G Xcode` explicitly before building -- the Xcode build's automatic regeneration missed one such edit.
 
 ## October 5 follow-up verification
 
@@ -121,12 +121,12 @@ The strategy is **build + unit + smoke + field**. The unit-test harness is in pl
 ```
         ╱╲          field rehearsal     — every change touching Source/Audio/
        ╱  ╲         smoke-test         — every change, automated by Claude
-      ╱────╲        unit tests         — `--run-tests`, headless, every change
+      ╱────╲        unit tests         — `ZynforgeRecordingTests`, headless, every change
      ╱──────╲       build              — every change, blocking
 ```
 
 - **Build** — `cmake --build build --config Release`. Must succeed. No warnings-as-errors yet, but new warnings should be addressed.
-- **Unit tests** — `juce::UnitTest` groups in `Source/Tests/`, run via `--run-tests` (or `ZYNFORGE_RUN_TESTS=1`). No physical CoreAudio device; UI regressions use the real message thread and bounded native-loop pumping. Add a test with every bug fix and every new audio-thread / persistence path.
+- **Unit tests** — `juce::UnitTest` groups in `Source/Tests/`, run by the `ZynforgeRecordingTests` app (`--test-filter=<substring>`, `--test-report=<absolute path>`). No physical CoreAudio device; UI regressions use the real message thread and bounded native-loop pumping. Add a test with every bug fix and every new audio-thread / persistence path.
 - **Smoke-test** — Launch the built app, exercise the changed surface, verify RSS / CPU / no new crash report. Documented in `CLAUDE.md` under *Build + smoke test recipe*.
 - **Field rehearsal** — User-driven. Anything touching the audio callback, the recorder, or the player must be exercised in a real (or simulated) session before being declared shippable. The user is the only authority for this stage.
 
@@ -141,7 +141,7 @@ The strategy is **build + unit + smoke + field**. The unit-test harness is in pl
 ## Frameworks and Tools in Use
 
 - **CMake / Xcode** — build orchestration.
-- **JUCE's built-in `juce::UnitTest`** — the test groups in `Source/Tests/` register themselves as static instances and run via `--run-tests` inside the normal app binary (no separate test target). `AudioEngine::setTestModeSkipAudioInit(true)` + `prepareForTests(sr, blockSize)` let tests construct an engine and drive `audioDeviceIOCallbackWithContext` without a real audio device.
+- **JUCE's built-in `juce::UnitTest`** — the test groups in `Source/Tests/` register themselves as static instances in the separate **`ZynforgeRecordingTests`** app (`Source/Tests/TestMain.cpp`), which links the same `ZynforgeCore` static library as the recorder. The recorder itself carries no test code (CI checks its symbols). `AudioEngine::setTestModeSkipAudioInit(true)` + `prepareForTests(sr, blockSize)` let tests construct an engine and drive `audioDeviceIOCallbackWithContext` without a real audio device.
 - **macOS unified log** + `~/Library/Logs/DiagnosticReports/` — primary post-launch signal source. `log show --process "Zynforge Recording" --predicate 'messageType == error or messageType == fault' --last 1m` surfaces runtime errors and faults.
 - **`ps` / Activity Monitor** — RSS and CPU snapshots during smoke-test.
 
@@ -176,7 +176,7 @@ open -n -W "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app" \
      --args --isolated-settings --smoke-quit-after=35
 ```
 
-The app is single-instance: a smoke launch while another copy is open is forwarded to that copy and exits. The quit prompt is drawn by JUCE, so scripted keystrokes only reach it when the controlling process has macOS Accessibility permission; `--smoke-quit-after` avoids needing it.
+The app is single-instance: a smoke launch while another copy is open is forwarded to that copy and exits. Each rebuild is ad-hoc signed with a new code identity, so macOS may ask again for microphone consent: until that prompt is answered, the main thread sits inside `AudioEngine()` -> `AudioDeviceManager::initialiseDefault` -> CoreAudio `AudioDeviceStart` and no window appears (observed 2026-10-29 with the built-in mic/speakers as defaults; `sample <pid>` shows it). `--smoke-quit-after` fires only once startup completes. Do not force-kill a stuck smoke instance; answer the prompt. The quit prompt is drawn by JUCE, so scripted keystrokes only reach it when the controlling process has macOS Accessibility permission; `--smoke-quit-after` avoids needing it.
 
 Wait through startup, identify the exact new process and its executable path, then sample its PID with `ps -p <pid> -o pid,rss,etime,%cpu` at 10, 20 and 30 seconds. Check the visible window, runtime errors and newly created `~/Library/Logs/DiagnosticReports/Zynforge*.ips`, then quit through the app. Record the actual CPU/RSS and UI state rather than treating old measurements as fixed pass thresholds. The October 4 isolated smoke settled near 120 MiB RSS / 3% CPU at 30 seconds on this Mac. An installed-app launch with saved preferences is a separate check; see [INSTALL.md](INSTALL.md).
 
@@ -186,10 +186,11 @@ The audit-follow-up regressions cover stale daemon status, remote STOP confirmat
 The 2026-09-23 idle smoke launch showed a normal window and no new `.ips` crash report (about 118 MB RSS / 5.9% CPU on this development machine), but AppKit logged transient negative-view-geometry runtime faults. Treat that as an open native-UI follow-up, not a fully clean runtime log.
 
 ```bash
-# Test mode has a separate identity and isolated preferences. Run one suite
-# at a time, away from live capture; never kill a user app/daemon to run tests.
-APP="build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
-open -W -n "$APP" --args --run-tests --test-report=/private/tmp/zynforge-tests.log
+# The test runner is its own app with a separate identity and isolated
+# preferences. Run one suite at a time, away from live capture; never kill a
+# user app/daemon to run tests.
+APP="build/ZynforgeRecordingTests_artefacts/Release/Zynforge Recording Tests.app"
+open -W -n "$APP" --args --test-report=/private/tmp/zynforge-tests.log
 # Launch the bundle through LaunchServices. On newer macOS, invoking the raw
 # GUI executable can abort in NSApplication registration before tests start.
 # Inspect the freshly written explicit report; open's exit code is insufficient.
@@ -223,7 +224,7 @@ This is the same failure mode as the stale test-report mtime below, one layer do
 
 **Test isolation — BETWEEN tests, not just from your settings.** Within one process, all five settings writers share one uniquely named temporary `zynforge-tests-<UUID>.settings`, so any suite that writes per-strip state (`setTrackStereo` → `strip_stereo_N`, routing → `strip_in_N`, gains, colours) **leaks into every later suite** that constructs an engine and calls `applyPersistedStripState()`. `EditTrackRowTests` broke *Player maps files by Track_NN index* exactly this way. A suite that mutates per-strip state must call `engine.clearAllStripOverrides()` on setup AND teardown — see that file's `Host` struct.
 
-**Settings isolation:** `Source/Audio/SettingsFile.h` provides `makeSettingsFile()` for `AudioEngine` and all four `Strip*` settings writers. `--run-tests` and `--isolated-settings` enable process-wide isolation before construction; once enabled, later audio-initialization changes cannot restore production preference writes. Each process gets a unique temporary settings file. Tests that construct an engine should set `AudioEngine::setTestModeSkipAudioInit(true)` first; suites that need callback initialization must still retain settings isolation. Shared state within a process still requires setup/teardown cleanup.
+**Settings isolation:** `Source/Audio/SettingsFile.h` provides `makeSettingsFile()` for `AudioEngine` and all four `Strip*` settings writers. The test runner and `--isolated-settings` enable process-wide isolation before construction; once enabled, later audio-initialization changes cannot restore production preference writes. Each process gets a unique temporary settings file. Tests that construct an engine should set `AudioEngine::setTestModeSkipAudioInit(true)` first; suites that need callback initialization must still retain settings isolation. Shared state within a process still requires setup/teardown cleanup.
 
 Notable suites: `CompanionServerTests` (loopback server end-to-end), `MenuDispatchTests` (id-collision + dispatch-range guard), `CompoundFileTests`/`FastHashTests`/`SessionBackupTests` (capture-side helpers), `AudioCallbackTests` (audio-thread integration, including RF64 policy, 64-channel throughput, StereoMix capture without physical stream outputs, and windowed offline-render equivalence), `AuditFixTests` (record collision, redundancy, Strip Silence, external-record transport, and filename boundaries), `CaptureLinkTests`/`CaptureDaemonTests` (protocol handshake, completion and daemon failure paths), `PreflightTests` (measured disk-speed/writability/headroom), `QcAnalyzerTests` (peak/clip/floor against synthesized WAVs), `SongDetectorTests` (multi-track quorum, incl. an always-hot ambient mic detecting nothing alone), `CrashScanTests` (.ips filter + summary), and `ConsoleLinkTests` (full X32 query→stash→flip→restore state machine through a transport seam, plus a real connect→disconnect→reconnect socket-rebind regression).
 

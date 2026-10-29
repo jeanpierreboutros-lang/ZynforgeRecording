@@ -2,7 +2,7 @@
 """Opt-in, isolated runtime audit probes; never targets an existing process.
 
   python3 tools/audit_runtime_probe.py signals --daemon /absolute/candidate/ZynforgeCapture
-  python3 tools/audit_runtime_probe.py disk-full --app /absolute/candidate/App.app/Contents/MacOS/App
+  python3 tools/audit_runtime_probe.py disk-full --app "/absolute/build/ZynforgeRecordingTests_artefacts/Release/Zynforge Recording Tests.app/Contents/MacOS/Zynforge Recording Tests"
 
 Signals use an empty --no-device take: this verifies signal handling and file
 finalization, not audio continuity. Disk-full creates a disposable 32 MiB HFS+
@@ -232,7 +232,8 @@ def disk_full_probe(args, artifacts):
         report = artifacts / "disk-full-tests.log"
         stdout = artifacts / "disk-full-stdout.log"
         with stdout.open("wb") as output:
-            tested = subprocess.run([str(app), "--run-tests", "--isolated-settings",
+            # --app is the test-runner executable (the recorder carries no tests).
+            tested = subprocess.run([str(app), "--isolated-settings",
                                      "--test-filter=Audit bounded volume export", f"--test-report={report}"],
                                     env=environment, stdout=output, stderr=subprocess.STDOUT, timeout=90)
         require(tested.returncode == 0, "bounded-volume export tests failed; inspect retained logs")

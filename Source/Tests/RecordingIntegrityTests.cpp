@@ -12,7 +12,7 @@
 //
 // This is the regression guard for the "files come out different lengths /
 // truncated / glitchy" class of bug that otherwise needs a live Dante rig
-// to reproduce. Run with:  ZYNFORGE_RUN_TESTS=1 open ... (or --run-tests).
+// to reproduce. Run with the ZynforgeRecordingTests app (--test-filter=...).
 
 #include <juce_core/juce_core.h>
 #include <juce_audio_formats/juce_audio_formats.h>

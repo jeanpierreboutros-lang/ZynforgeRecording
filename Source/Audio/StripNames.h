@@ -19,7 +19,7 @@ namespace zynforge
         // Test isolation: when enabled (before any StripNames is built),
         // names persist to a SEPARATE "(tests)" settings file so the unit
         // tests can't pollute the real per-channel names the engineer set.
-        // The test runner flips this on in Main.cpp's --run-tests path.
+        // The test-runner app (Tests/TestMain.cpp) flips this on before any test runs.
         static void setTestMode (bool on) noexcept { testModeFlag() = on; if (on) isolateSettings(); }
 
         bool         hasName (int channelIndex) const;

@@ -1,6 +1,6 @@
 name: build-and-test
 
-# Build the app and run the headless unit-test suite (--run-tests exits
+# Build the app and run the headless unit-test suite (the ZynforgeRecordingTests app exits
 # non-zero on any failure) on every push / PR to main. Mirrors the local
 # recipe in CLAUDE.md: Xcode generator, Debug assertions plus Release.
 #
@@ -70,9 +70,11 @@ jobs:
       - name: Build (${{ matrix.config }})
         run: cmake --build build --config ${{ matrix.config }}
 
+      # The suite is its own app (ZynforgeRecordingTests); the shipping
+      # recorder carries no test code.
       - name: Headless tests (${{ matrix.config }})
         run: |
-          "build/ZynforgeRecording_artefacts/${{ matrix.config }}/Zynforge Recording.app/Contents/MacOS/Zynforge Recording" --run-tests
+          "build/ZynforgeRecordingTests_artefacts/${{ matrix.config }}/Zynforge Recording Tests.app/Contents/MacOS/Zynforge Recording Tests"
 
       - name: Verify bundled capture daemon
         if: matrix.config == 'Release'
@@ -80,6 +82,8 @@ jobs:
           test -x "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app/Contents/MacOS/ZynforgeCapture"
           codesign --verify --deep --strict "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app"
           lipo -archs "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app/Contents/MacOS/Zynforge Recording" | grep -q 'x86_64 arm64\|arm64 x86_64'
+          # The shipping binary must not contain the test suites.
+          ! nm "build/ZynforgeRecording_artefacts/Release/Zynforge Recording.app/Contents/MacOS/Zynforge Recording" | grep -q 'Tests7runTestEv'
 
       - name: Upload test report
         if: always()

@@ -82,8 +82,13 @@ juce_add_binary_data(ZynforgeFonts SOURCES
     Source/Theme/Fonts/JetBrainsMono-Bold.ttf
 )
 
-target_sources(ZynforgeRecording PRIVATE
-    Source/Main.cpp
+# ── ZynforgeCore: the recorder's code, compiled ONCE ───────────────────────
+# Everything except Main.cpp and the tests. The shipping app and the test
+# runner both link it; neither recompiles it. The JUCE modules are linked
+# PRIVATE so their sources compile into this library only, and the resulting
+# include paths / module definitions are re-exported to consumers so they
+# compile against the identical JUCE configuration.
+add_library(ZynforgeCore STATIC
     Source/UI/MainComponent.cpp
     Source/UI/MainComponentInit.cpp
     Source/UI/MainComponentTimer.cpp
@@ -98,77 +103,6 @@ target_sources(ZynforgeRecording PRIVATE
     Source/UI/MainComponentStrips.cpp
     Source/UI/TrackSelectDialog.cpp
     Source/UI/SessionSettingsDialog.cpp
-    Source/Tests/AuditFixTests.cpp
-    Source/Tests/AudioImportTests.cpp
-    Source/Tests/ClickTrackRendererTests.cpp
-    Source/Tests/SeptemberRegressionTests.cpp
-    Source/Tests/OctoberRegressionTests.cpp
-    Source/Tests/DialogAuditTests.cpp
-    Source/Tests/NetworkAuditTests.cpp
-    Source/Tests/EditViewFixTests.cpp
-    Source/Tests/EditTrackRowTests.cpp
-    Source/Tests/TrackReorderTests.cpp
-    Source/Tests/SessionJobsTests.cpp
-    Source/Tests/StripLifetimeTests.cpp
-    Source/Tests/ConsoleTransportTests.cpp
-    Source/Tests/AutomationTests.cpp
-    Source/Tests/MarkerTests.cpp
-    Source/Tests/EngineStateTests.cpp
-    Source/Tests/SettingsBatchAuditTests.cpp
-    Source/Tests/RecorderPlayerTests.cpp
-    Source/Tests/RecordingIntegrityTests.cpp
-    Source/Tests/PunchSpliceTests.cpp
-    Source/Tests/PunchRecordTests.cpp
-    Source/Tests/MultiPartPlaybackTests.cpp
-    Source/Tests/LiveWaveTests.cpp
-    Source/Tests/LivePeakHistoryTests.cpp
-    Source/Tests/LiveWaveContinueTests.cpp
-    Source/Tests/SessionRecoverySortTests.cpp
-    Source/Tests/TransientTests.cpp
-    Source/Tests/TimecodeTests.cpp
-    Source/Tests/TimelineExportTests.cpp
-    Source/Tests/OscRemoteTests.cpp
-    Source/Tests/ChannelCsvTests.cpp
-    Source/Tests/McuProtocolTests.cpp
-    Source/Tests/MenuDispatchTests.cpp
-    Source/Tests/AudioCallbackTests.cpp
-    Source/Tests/PlaceholderViewTests.cpp
-    Source/Tests/ChannelStripAccessibilityTests.cpp
-    Source/Tests/TransportBarAccessibilityTests.cpp
-    Source/Tests/SetlistBarAccessibilityTests.cpp
-    Source/Tests/EditToolsBarAccessibilityTests.cpp
-    Source/Tests/MasterStripAccessibilityTests.cpp
-    Source/Tests/VcaPanelAccessibilityTests.cpp
-    Source/Tests/AutomationToolbarAccessibilityTests.cpp
-    Source/Tests/EditPageAccessibilityTests.cpp
-    Source/Tests/EditRulerScrollTests.cpp
-    Source/Tests/CompanionServerTests.cpp
-    Source/Tests/CompoundFileTests.cpp
-    Source/Tests/AafTests.cpp
-    Source/Tests/FastHashTests.cpp
-    Source/Tests/SessionBackupTests.cpp
-    Source/Tests/ShowHandoffTests.cpp
-    Source/Tests/PreflightTests.cpp
-    Source/Tests/QcAnalyzerTests.cpp
-    Source/Tests/SongDetectorTests.cpp
-    Source/Tests/CrashScanTests.cpp
-    Source/Tests/ConsoleLinkTests.cpp
-    Source/Tests/StereoExportTests.cpp
-    Source/Tests/EngineStatusTests.cpp
-    Source/Tests/CaptureProtocolTests.cpp
-    Source/Tests/CaptureLinkTests.cpp
-    Source/Tests/CaptureDaemonTests.cpp
-    Source/Tests/CaptureSupervisorTests.cpp
-    Source/Tests/MainTransportRegressionTests.cpp
-    Source/Tests/ConcurrencyAuditTests.cpp
-    Source/Tests/AsyncStopAuditTests.cpp
-    Source/Tests/PlaylistBoundaryTests.cpp
-    Source/Tests/AuditSecurityTests.cpp
-    Source/Tests/ReviewUiFormatRepairTests.cpp
-    Source/Tests/ReviewPersistenceRepairTests.cpp
-    Source/Tests/ReviewNetworkRepairTests.cpp
-    Source/Tests/ReviewCaptureRepairTests.cpp
-    Source/Tests/ReviewFloatFinalizeTests.cpp
     Source/Network/CaptureLink.cpp
     Source/Capture/CaptureDaemon.cpp
     Source/Capture/CaptureSupervisor.cpp
@@ -216,30 +150,141 @@ target_sources(ZynforgeRecording PRIVATE
     Source/Theme/ZynForgeLookAndFeel.cpp
 )
 
-target_include_directories(ZynforgeRecording PRIVATE Source)
+target_include_directories(ZynforgeCore PUBLIC Source)
 
-target_compile_definitions(ZynforgeRecording PRIVATE
+target_compile_definitions(ZynforgeCore PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_DISPLAY_SPLASH_SCREEN=0
     JUCE_REPORT_APP_USAGE=0
+)
+
+target_link_libraries(ZynforgeCore
+    PRIVATE
+        juce::juce_audio_utils
+        juce::juce_audio_devices
+        juce::juce_audio_formats
+        juce::juce_gui_extra
+        juce::juce_dsp
+        juce::juce_osc
+        juce::juce_cryptography
+    PUBLIC
+        ZynforgeFonts
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags
+)
+
+target_include_directories(ZynforgeCore INTERFACE
+    $<TARGET_PROPERTY:ZynforgeCore,INCLUDE_DIRECTORIES>)
+target_compile_definitions(ZynforgeCore INTERFACE
+    $<TARGET_PROPERTY:ZynforgeCore,COMPILE_DEFINITIONS>)
+
+# ── The shipping recorder: Main.cpp + ZynforgeCore, no test code ──────────
+target_sources(ZynforgeRecording PRIVATE
+    Source/Main.cpp
+)
+
+target_compile_definitions(ZynforgeRecording PRIVATE
     JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:ZynforgeRecording,JUCE_PRODUCT_NAME>"
     JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:ZynforgeRecording,JUCE_VERSION>"
 )
 
-target_link_libraries(ZynforgeRecording PRIVATE
-    ZynforgeFonts
-    juce::juce_audio_utils
-    juce::juce_audio_devices
-    juce::juce_audio_formats
-    juce::juce_gui_extra
-    juce::juce_dsp
-    juce::juce_osc
-    juce::juce_cryptography
-    juce::juce_recommended_config_flags
-    juce::juce_recommended_lto_flags
-    juce::juce_recommended_warning_flags
+target_link_libraries(ZynforgeRecording PRIVATE ZynforgeCore)
+
+# ── ZynforgeRecordingTests: the unit-test runner app ───────────────────────
+# Same core library, plus Source/Tests. A GUI app because the suites build
+# real components and pump the message loop. Run:
+#   "ZynforgeRecordingTests_artefacts/<cfg>/Zynforge Recording Tests.app/
+#    Contents/MacOS/Zynforge Recording Tests" [--test-filter=...]
+juce_add_gui_app(ZynforgeRecordingTests
+    PRODUCT_NAME                  "Zynforge Recording Tests"
+    COMPANY_NAME                  "ZynForge"
+    BUNDLE_ID                     "com.zynforge.recording.tests"
+    VERSION                       ${PROJECT_VERSION}
 )
+
+target_sources(ZynforgeRecordingTests PRIVATE
+    Source/Tests/TestMain.cpp
+    Source/Tests/AafTests.cpp
+    Source/Tests/AsyncStopAuditTests.cpp
+    Source/Tests/AudioCallbackTests.cpp
+    Source/Tests/AudioImportTests.cpp
+    Source/Tests/AuditFixTests.cpp
+    Source/Tests/AuditSecurityTests.cpp
+    Source/Tests/AutomationTests.cpp
+    Source/Tests/AutomationToolbarAccessibilityTests.cpp
+    Source/Tests/CaptureDaemonTests.cpp
+    Source/Tests/CaptureLinkTests.cpp
+    Source/Tests/CaptureProtocolTests.cpp
+    Source/Tests/CaptureSupervisorTests.cpp
+    Source/Tests/ChannelCsvTests.cpp
+    Source/Tests/ChannelStripAccessibilityTests.cpp
+    Source/Tests/ClickTrackRendererTests.cpp
+    Source/Tests/CompanionServerTests.cpp
+    Source/Tests/CompoundFileTests.cpp
+    Source/Tests/ConcurrencyAuditTests.cpp
+    Source/Tests/ConsoleLinkTests.cpp
+    Source/Tests/ConsoleTransportTests.cpp
+    Source/Tests/CrashScanTests.cpp
+    Source/Tests/DialogAuditTests.cpp
+    Source/Tests/EditPageAccessibilityTests.cpp
+    Source/Tests/EditRulerScrollTests.cpp
+    Source/Tests/EditToolsBarAccessibilityTests.cpp
+    Source/Tests/EditTrackRowTests.cpp
+    Source/Tests/EditViewFixTests.cpp
+    Source/Tests/EngineStateTests.cpp
+    Source/Tests/EngineStatusTests.cpp
+    Source/Tests/FastHashTests.cpp
+    Source/Tests/LivePeakHistoryTests.cpp
+    Source/Tests/LiveWaveContinueTests.cpp
+    Source/Tests/LiveWaveTests.cpp
+    Source/Tests/MainTransportRegressionTests.cpp
+    Source/Tests/MarkerTests.cpp
+    Source/Tests/MasterStripAccessibilityTests.cpp
+    Source/Tests/McuProtocolTests.cpp
+    Source/Tests/MenuDispatchTests.cpp
+    Source/Tests/MultiPartPlaybackTests.cpp
+    Source/Tests/NetworkAuditTests.cpp
+    Source/Tests/OctoberRegressionTests.cpp
+    Source/Tests/OscRemoteTests.cpp
+    Source/Tests/PlaceholderViewTests.cpp
+    Source/Tests/PlaylistBoundaryTests.cpp
+    Source/Tests/PreflightTests.cpp
+    Source/Tests/PunchRecordTests.cpp
+    Source/Tests/PunchSpliceTests.cpp
+    Source/Tests/QcAnalyzerTests.cpp
+    Source/Tests/RecorderPlayerTests.cpp
+    Source/Tests/RecordingIntegrityTests.cpp
+    Source/Tests/ReviewCaptureRepairTests.cpp
+    Source/Tests/ReviewFloatFinalizeTests.cpp
+    Source/Tests/ReviewNetworkRepairTests.cpp
+    Source/Tests/ReviewPersistenceRepairTests.cpp
+    Source/Tests/ReviewUiFormatRepairTests.cpp
+    Source/Tests/SeptemberRegressionTests.cpp
+    Source/Tests/SessionBackupTests.cpp
+    Source/Tests/SessionJobsTests.cpp
+    Source/Tests/SessionRecoverySortTests.cpp
+    Source/Tests/SetlistBarAccessibilityTests.cpp
+    Source/Tests/SettingsBatchAuditTests.cpp
+    Source/Tests/ShowHandoffTests.cpp
+    Source/Tests/SongDetectorTests.cpp
+    Source/Tests/StereoExportTests.cpp
+    Source/Tests/StripLifetimeTests.cpp
+    Source/Tests/TimecodeTests.cpp
+    Source/Tests/TimelineExportTests.cpp
+    Source/Tests/TrackReorderTests.cpp
+    Source/Tests/TransientTests.cpp
+    Source/Tests/TransportBarAccessibilityTests.cpp
+    Source/Tests/VcaPanelAccessibilityTests.cpp
+)
+
+target_compile_definitions(ZynforgeRecordingTests PRIVATE
+    JUCE_APPLICATION_NAME_STRING="$<TARGET_PROPERTY:ZynforgeRecordingTests,JUCE_PRODUCT_NAME>"
+    JUCE_APPLICATION_VERSION_STRING="$<TARGET_PROPERTY:ZynforgeRecordingTests,JUCE_VERSION>"
+)
+
+target_link_libraries(ZynforgeRecordingTests PRIVATE ZynforgeCore)
 
 # ── zynforge-capture: headless capture daemon (capture-split Phase 1c) ──────
 # Owns the audio device + MultitrackRecorder out-of-process; the GUI talks to
@@ -280,21 +325,25 @@ target_link_libraries(ZynforgeCapture PRIVATE
 # artefacts directory, so copying/distributing the apparently complete .app
 # made daemon mode fail with "binary not found". Make the GUI target depend on
 # the helper and embed it in every built app bundle.
+# The test runner embeds the helper the same way, so the daemon suites
+# exercise the shipping discovery path (Contents/MacOS/ZynforgeCapture).
 if(APPLE)
-    add_dependencies(ZynforgeRecording ZynforgeCapture)
-    add_custom_command(TARGET ZynforgeRecording POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "$<TARGET_FILE:ZynforgeCapture>"
-                "$<TARGET_BUNDLE_DIR:ZynforgeRecording>/Contents/MacOS/ZynforgeCapture"
-        # Unix Makefiles leave GUI bundles with only the linker's executable
-        # signature: resources are unsealed, and copying the helper afterwards
-        # also invalidates any earlier bundle signature. Give local/CI builds a
-        # complete ad-hoc seal after embedding. Xcode or a release pipeline can
-        # replace this with the configured Developer ID signature afterwards.
-        COMMAND /usr/bin/codesign --force --sign -
-                "$<TARGET_BUNDLE_DIR:ZynforgeRecording>/Contents/MacOS/ZynforgeCapture"
-        COMMAND /usr/bin/codesign --force --sign -
-                "$<TARGET_BUNDLE_DIR:ZynforgeRecording>"
-        COMMENT "Embedding ZynforgeCapture and sealing the application bundle"
-        VERBATIM)
+    foreach(app ZynforgeRecording ZynforgeRecordingTests)
+        add_dependencies(${app} ZynforgeCapture)
+        add_custom_command(TARGET ${app} POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "$<TARGET_FILE:ZynforgeCapture>"
+                    "$<TARGET_BUNDLE_DIR:${app}>/Contents/MacOS/ZynforgeCapture"
+            # Unix Makefiles leave GUI bundles with only the linker's executable
+            # signature: resources are unsealed, and copying the helper afterwards
+            # also invalidates any earlier bundle signature. Give local/CI builds a
+            # complete ad-hoc seal after embedding. Xcode or a release pipeline can
+            # replace this with the configured Developer ID signature afterwards.
+            COMMAND /usr/bin/codesign --force --sign -
+                    "$<TARGET_BUNDLE_DIR:${app}>/Contents/MacOS/ZynforgeCapture"
+            COMMAND /usr/bin/codesign --force --sign -
+                    "$<TARGET_BUNDLE_DIR:${app}>"
+            COMMENT "Embedding ZynforgeCapture and sealing the ${app} bundle"
+            VERBATIM)
+    endforeach()
 endif()
