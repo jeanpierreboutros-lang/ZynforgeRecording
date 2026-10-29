@@ -2,6 +2,7 @@
 
 #include <juce_core/juce_core.h>
 #include <atomic>
+#include <limits>
 #include <thread>
 #include <vector>
 
@@ -25,6 +26,7 @@ namespace zynforge
     // Multi-channel NDI Audio v3 + AES67 support are future work.
     class NDIBridge
     {
+        friend class EngineReviewRepairTests;   // drives pushStereo through a fake sender
     public:
         NDIBridge() = default;
         ~NDIBridge() { stop(); }
@@ -199,7 +201,11 @@ namespace zynforge
             f.sample_rate              = (int) sr.load (std::memory_order_relaxed);
             f.no_channels              = 2;
             f.no_samples               = n;
-            f.timecode                 = (juce::int64) -1;
+            // NDIlib_send_timecode_synthesize (INT64_MAX in the SDK headers):
+            // the SDK stamps each frame from the running sample count. -1 gave
+            // every frame the same timecode, which receivers that align on
+            // timecode can misplace or drop.
+            f.timecode                 = std::numeric_limits<juce::int64>::max();
             f.p_data                   = scratch.data();
             f.channel_stride_in_bytes  = n * (int) sizeof (float);
             f.p_metadata               = nullptr;

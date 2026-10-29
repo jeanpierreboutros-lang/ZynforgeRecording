@@ -9,6 +9,7 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MidiControlSurface.h"
 
+#include <limits>
 #include <mutex>
 #include <thread>
 
@@ -192,6 +193,29 @@ namespace zynforge
                 e.getMidiClockOut().setMessageSinkForTests ({});
                 e.setStripCount (0);
                 dir.deleteRecursively();
+            }
+
+            beginTest ("NDI audio frames ask the SDK to synthesize timecode");
+            {
+                // NDIlib_audio_frame_v2_t, as the SDK lays it out.
+                struct Frame { int sampleRate, channels, samples; juce::int64 timecode;
+                               float* data; int strideBytes; const char* metadata; juce::int64 timestamp; };
+                static juce::int64 sentTimecode = 0;
+                using SendFn = void (*) (void*, const Frame*);
+                const SendFn fakeSend = [] (void*, const Frame* f) { sentTimecode = f->timecode; };
+
+                NDIBridge ndi;
+                ndi.scratch.assign ((size_t) NDIBridge::kMaxScratchSamples * 2, 0.0f);
+                static int fakeSender = 0;
+                ndi.sender      = &fakeSender;
+                ndi.sendAudioFn = reinterpret_cast<void*> (fakeSend);
+                ndi.enabled.store (true);
+                std::vector<float> l (64, 0.1f), r (64, -0.1f);
+                ndi.pushStereo (l.data(), r.data(), 64);
+                ndi.enabled.store (false);
+                ndi.sender = nullptr; ndi.sendAudioFn = nullptr;
+                expect (sentTimecode == std::numeric_limits<juce::int64>::max(),
+                        "frame timecode " + juce::String (sentTimecode) + " is not NDIlib_send_timecode_synthesize");
             }
 
             beginTest ("A locate that lands while a block renders is not overwritten");
