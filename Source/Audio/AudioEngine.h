@@ -976,6 +976,10 @@ namespace zynforge
         // Fade shape for a clip: 0 = linear, 1 = equal-power (constant-
         // power crossfade). Persisted in the .zfproj playlists.
         bool setClipFadeCurve (int track, int clipIndex, int curve);
+        // Restore a pasted clip's fade ramps (Clip::fadeInRampSamples etc.).
+        bool setClipFadeRamps (int track, int clipIndex,
+                               juce::int64 inRamp, juce::int64 inRampOffset,
+                               juce::int64 outRamp, juce::int64 outRampOffset);
 
         // The rest of the clip toolkit. Every call republishes the
         // updated clip list to the player so audio honours the change

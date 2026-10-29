@@ -8,6 +8,11 @@
 #include "../Audio/MultiPartReader.h"
 #include "../Audio/NoiseAnalyzer.h"
 
+#include <atomic>
+#if JUCE_MAC
+ #include <CoreFoundation/CoreFoundation.h>
+#endif
+
 namespace zynforge
 {
 class EditingFixTests final : public juce::UnitTest
@@ -246,6 +251,201 @@ public:
             const auto back = e.prevTransientSample (59000, 1);
             expect (std::abs (back - 12000) < 600, "Shift+Tab: " + juce::String (back));
         }
+
+        // ── Split inside a fade keeps the original ramp on both halves ─────
+        for (const int curve : { 0, 1 })
+        {
+            beginTest ("Splitting inside a fade-in plays what the whole clip did (curve "
+                       + juce::String (curve) + ")");
+            Folder f; expect (writeSine (f.track()));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            expect (e.setClipFades (0, 0, 20000, 0));
+            expect (e.setClipFadeCurve (0, 0, curve));
+            const auto before = render (e, 0, 48000);
+            expect (e.splitTrackAtSample (0, 8000));
+            expectEquals ((int) e.clipsFor (0).size(), 2);
+            expectLessThan (maxDiff (before, render (e, 0, 48000)), 1.0e-6f, "offline render changed");
+            expectLessThan (playerDiff (e, before, 7680), 1.0e-6f, "live playback changed");
+        }
+
+        for (const int curve : { 0, 1 })
+        {
+            beginTest ("Splitting inside a fade-out plays what the whole clip did (curve "
+                       + juce::String (curve) + ")");
+            Folder f; expect (writeSine (f.track()));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            expect (e.setClipFades (0, 0, 0, 20000));
+            expect (e.setClipFadeCurve (0, 0, curve));
+            const auto before = render (e, 0, 48000);
+            expect (e.splitTrackAtSample (0, 40000));
+            expectLessThan (maxDiff (before, render (e, 0, 48000)), 1.0e-6f, "offline render changed");
+            expectLessThan (playerDiff (e, before, 39680), 1.0e-6f, "live playback changed");
+        }
+
+        beginTest ("Splitting a crossfade cuts both ramps exactly; healing restores both clips");
+        {
+            Folder f; expect (writeSine (f.track()));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            // A = [0, 30000) fading out over its last 10000; B = [20000, 48000)
+            // from the same file fading in over its first 10000.
+            expect (e.editClip (0, 0, AudioEngine::ClipEdit::TrimRight, -18000));
+            expect (e.setClipFades (0, 0, 0, 10000));
+            expect (e.pasteClip (0, 20000, 20000, 28000, 10000, 0, 0.0f, "B", juce::File(), -1) >= 0);
+            const auto original = e.clipsFor (0);
+            const auto before = render (e, 0, 48000);
+            expect (e.splitTrackAtSample (0, 25000));
+            expectEquals ((int) e.clipsFor (0).size(), 4);
+            expectLessThan (maxDiff (before, render (e, 0, 48000)), 1.0e-6f, "split crossfade changed");
+            expectLessThan (playerDiff (e, before, 24832), 1.0e-6f, "live playback changed");
+            expectEquals (e.healSeparationRange (0, 24000, 26000), 2, "the halves no longer heal");
+            expectLessThan (maxDiff (before, render (e, 0, 48000)), 1.0e-6f, "healed crossfade changed");
+            const auto healed = e.clipsFor (0);
+            expectEquals ((int) healed.size(), 2);
+            for (size_t i = 0; i < healed.size() && i < original.size(); ++i)
+            {
+                expectEquals (healed[i].fadeInSamples,  original[i].fadeInSamples);
+                expectEquals (healed[i].fadeOutSamples, original[i].fadeOutSamples);
+            }
+        }
+
+        beginTest ("Extending the first half of a split fade-in reveals the original ramp");
+        {
+            Folder f; expect (writeSine (f.track()));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            expect (e.setClipFades (0, 0, 20000, 0));
+            const auto before = render (e, 0, 48000);
+            expect (e.splitTrackAtSample (0, 8000));
+            expect (e.deleteClip (0, 1));
+            expect (e.editClip (0, 0, AudioEngine::ClipEdit::TrimRight, 4000));
+            const auto after = render (e, 0, 12000);
+            expectLessThan (maxDiff (before, after, 12000), 1.0e-6f, "the extended half lost the ramp");
+        }
+
+        beginTest ("Crop and comp keep the audio a fade played inside the range");
+        {
+            Folder f; expect (writeSine (f.track()));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            expect (e.setClipFades (0, 0, 20000, 0));
+            const auto before = render (e, 0, 48000);
+            expectEquals (e.cropToRange (8000, 30000), 1);
+            const auto cropped = render (e, 0, 22000);
+            float worst = 0.0f;
+            for (int i = 0; i < 22000; ++i)
+                worst = juce::jmax (worst, std::abs (cropped.getSample (0, i) - before.getSample (0, 8000 + i)));
+            expectLessThan (worst, 1.0e-6f, "the cropped piece got a fresh fade-in");
+
+            AudioEngine c; setup (c); c.loadSession (f.dir);
+            expect (c.setClipFades (0, 0, 20000, 0));               // Take 1: faded
+            expectEquals (c.newTakeFromCurrent (0, "Take 2"), 1);
+            expect (c.setClipFades (0, 0, 0, 0));                   // Take 2: plain
+            expect (c.compRangeFromTake (0, 0, 8000, 16000));
+            const auto comped = render (c, 0, 48000);
+            float worstComp = 0.0f;
+            for (int i = 8000; i < 16000; ++i)
+                worstComp = juce::jmax (worstComp, std::abs (comped.getSample (0, i) - before.getSample (0, i)));
+            expectLessThan (worstComp, 1.0e-6f, "the comped range does not play Take 1's audio");
+        }
+
+        beginTest ("Editing one fade of a split half makes it ordinary; the other keeps its ramp");
+        {
+            Folder f; expect (writeSine (f.track()));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            expect (e.setClipFades (0, 0, 20000, 20000));
+            expect (e.splitTrackAtSample (0, 8000));
+            const auto right = [&e] { return e.clipsFor (0)[1]; };
+            expectEquals (right().fadeInSamples, (juce::int64) 12000);
+            expectEquals (right().fadeInRampSamples, (juce::int64) 20000);
+            expectEquals (right().fadeInRampOffsetSamples, (juce::int64) 8000);
+            expectWithinAbsoluteError (clipFadeGain (right(), 0), 0.4f, 1.0e-6f);
+            expect (e.setClipFades (0, 1, 12000, 10000));            // fade-out only
+            expectEquals (right().fadeInRampSamples, (juce::int64) 20000, "untouched fade lost its ramp");
+            expectEquals (right().fadeOutRampSamples, (juce::int64) 0);
+            expect (e.setClipFades (0, 1, 6000, 10000));             // now the fade-in
+            expectEquals (right().fadeInRampSamples, (juce::int64) 0);
+            expectEquals (right().fadeInRampOffsetSamples, (juce::int64) 0);
+            expectWithinAbsoluteError (clipFadeGain (right(), 0), 0.0f, 1.0e-6f);
+        }
+
+        beginTest ("A background Strip Silence does not overwrite a fade-ramp edit made meanwhile");
+        {
+            Folder f; expect (writeSine (f.track()));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            expect (e.setClipFades (0, 0, 20000, 0));
+            expect (e.splitTrackAtSample (0, 8000));
+            std::atomic<bool> done { false };
+            int processed = -1;
+            e.stripSilenceAsync ({ 0 }, -60.0f, 4800, 4800, 0,
+                                 [&] (int p, int, bool) { processed = p; done = true; });
+            // The scan publishes on the message thread, so this edit lands first.
+            expect (e.setClipFadeRamps (0, 1, 20001, 8000, 0, 0));
+            for (int i = 0; i < 2000 && ! done; ++i)
+            {
+               #if JUCE_MAC
+                CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.005, true);
+               #else
+                juce::Thread::sleep (5);
+               #endif
+            }
+            expect (done.load(), "Strip Silence never finished");
+            expectEquals (processed, 0, "the stale result was published over the edit");
+            expectEquals (e.clipsFor (0)[1].fadeInRampSamples, (juce::int64) 20001);
+        }
+    }
+
+    // Mono 24-bit WAV of a 441 Hz sine at half scale: every sample differs, so
+    // any change in a fade's gain shows up in a sample-for-sample compare.
+    static bool writeSine (const juce::File& file, int samples = 48000)
+    {
+        file.getParentDirectory().createDirectory();
+        juce::WavAudioFormat format;
+        std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
+            file.createOutputStream().release(), 48000.0, 1, 24, {}, 0));
+        if (! writer) return false;
+        juce::AudioBuffer<float> audio (1, samples);
+        for (int i = 0; i < samples; ++i)
+            audio.setSample (0, i, 0.5f * std::sin (2.0f * juce::MathConstants<float>::pi * 441.0f * (float) i / 48000.0f));
+        return writer->writeFromAudioSampleBuffer (audio, 0, samples);
+    }
+
+    juce::AudioBuffer<float> render (AudioEngine& e, int track, juce::int64 total)
+    {
+        juce::AudioBuffer<float> out;
+        expect (e.renderTrackArrangement (track, out, total), "render failed");
+        return out;
+    }
+
+    // Largest per-sample difference over the first `length` samples (all of
+    // the shorter buffer by default); 1 if either render is too short.
+    static float maxDiff (const juce::AudioBuffer<float>& a, const juce::AudioBuffer<float>& b, int length = -1)
+    {
+        const int n = length >= 0 ? length : juce::jmin (a.getNumSamples(), b.getNumSamples());
+        if (n <= 0 || a.getNumSamples() < n || b.getNumSamples() < n) return 1.0f;
+        float worst = 0.0f;
+        for (int i = 0; i < n; ++i)
+            worst = juce::jmax (worst, std::abs (a.getSample (0, i) - b.getSample (0, i)));
+        return worst;
+    }
+
+    // Worst difference between one live player block at `pos` (track 0) and
+    // the offline render, polling while the background readers fill.
+    static float playerDiff (AudioEngine& e, const juce::AudioBuffer<float>& offline, juce::int64 pos)
+    {
+        auto& player = e.getPlayer();
+        juce::AudioBuffer<float> out (1, 512);
+        float worst = 1.0f;
+        for (int attempt = 0; attempt < 120 && worst > 1.0e-6f; ++attempt)
+        {
+            if (attempt > 0) juce::Thread::sleep (5);
+            out.clear();
+            player.setPositionSamples (pos);
+            player.start();
+            player.processBlock (out.getArrayOfWritePointers(), 1, 512);
+            player.stop();
+            worst = 0.0f;
+            for (int i = 0; i < 512; ++i)
+                worst = juce::jmax (worst, std::abs (out.getSample (0, i) - offline.getSample (0, (int) pos + i)));
+        }
+        return worst;
     }
 
     // Peak of one player output channel at `pos`, polling while the

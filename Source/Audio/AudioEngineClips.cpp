@@ -243,13 +243,10 @@ namespace zynforge
                 const juce::int64 ie = juce::jmin (ce, endSample);
                 if (ie <= is) continue;                                 // clip outside range
 
-                Clip nc = c;
-                const juce::int64 lead = is - cs;                       // trimmed off the front
-                nc.fileStartSamples     = c.fileStartSamples + lead;
-                nc.fileLengthSamples    = ie - is;
+                // The piece plays exactly what the clip played there, fades
+                // and all (a fresh fade at the range edge changed the audio).
+                Clip nc = clipSlice (c, is - cs, ie - is);
                 nc.timelineStartSamples = is - startSample;             // range start -> timeline 0
-                nc.fadeInSamples  = juce::jmin (nc.fadeInSamples,  nc.fileLengthSamples);
-                nc.fadeOutSamples = juce::jmin (nc.fadeOutSamples, nc.fileLengthSamples);
                 out.push_back (nc);
             }
 
@@ -729,22 +726,12 @@ namespace zynforge
                         || ! rd->read (&tmp, 0, span, fileReadStart, true, true)) return false;
 
                     const float clipGain = juce::Decibels::decibelsToGain (c.gainDb, -60.0f);
-                    const bool  eq        = (c.fadeCurve == 1);
-                    const juce::int64 fIn = c.fadeInSamples, fOut = c.fadeOutSamples;
-                    const juce::int64 fOutStart = c.fileLengthSamples - fOut;
                     const juce::int64 spanOffsetInClip = writeBeg - tlStart;
                     const auto* s = tmp.getReadPointer (ch);
                     auto* d = dst + (int) (writeBeg - winStart);
+                    // The player's fade envelope (ClipModel.h), so render == monitor.
                     for (int i = 0; i < span; ++i)
-                    {
-                        const juce::int64 clipPos = spanOffsetInClip + i;
-                        float g = clipGain;
-                        if (fIn > 0 && clipPos < fIn)
-                        { const float t = (float) clipPos / (float) fIn; g *= eq ? std::sin (t * 1.57079633f) : t; }
-                        else if (fOut > 0 && clipPos >= fOutStart)
-                        { const float t = (float) (c.fileLengthSamples - clipPos) / (float) fOut; g *= eq ? std::sin (t * 1.57079633f) : t; }
-                        d[i] += s[i] * g;
-                    }
+                        d[i] += s[i] * (clipGain * clipFadeGain (c, spanOffsetInClip + i));
                 }
                 return true;
             }
@@ -839,16 +826,21 @@ namespace zynforge
                     const auto a = juce::jmax (clipA, r.first);
                     const auto b = juce::jmin (clipB, r.second);
                     if (b <= a) continue;
-                    Clip slice = c;
-                    slice.timelineStartSamples = a;
-                    slice.fileStartSamples = c.fileStartSamples + (a - clipA);
-                    slice.fileLengthSamples = b - a;
-                    slice.fadeInSamples = (a == clipA)
-                        ? juce::jmin (c.fadeInSamples, slice.fileLengthSamples / 2)
-                        : juce::jmin (fade, slice.fileLengthSamples / 2);
-                    slice.fadeOutSamples = (b == clipB)
-                        ? juce::jmin (c.fadeOutSamples, slice.fileLengthSamples / 2)
-                        : juce::jmin (fade, slice.fileLengthSamples / 2);
+                    // A clip edge keeps its own fade (ramp and all) when it
+                    // fits in half the slice; an edge Strip Silence made gets a
+                    // short ordinary anti-click fade.
+                    Clip slice = clipSlice (c, a - clipA, b - a);
+                    const auto half = slice.fileLengthSamples / 2;
+                    if (a != clipA || slice.fadeInSamples > half)
+                    {
+                        slice.fadeInSamples = a == clipA ? half : juce::jmin (fade, half);
+                        slice.fadeInRampSamples = slice.fadeInRampOffsetSamples = 0;
+                    }
+                    if (b != clipB || slice.fadeOutSamples > half)
+                    {
+                        slice.fadeOutSamples = b == clipB ? half : juce::jmin (fade, half);
+                        slice.fadeOutRampSamples = slice.fadeOutRampOffsetSamples = 0;
+                    }
                     out.push_back (std::move (slice));
                 }
             }
@@ -873,6 +865,10 @@ namespace zynforge
                     || x.fileLengthSamples != y.fileLengthSamples
                     || x.fadeInSamples != y.fadeInSamples
                     || x.fadeOutSamples != y.fadeOutSamples
+                    || x.fadeInRampSamples != y.fadeInRampSamples
+                    || x.fadeInRampOffsetSamples != y.fadeInRampOffsetSamples
+                    || x.fadeOutRampSamples != y.fadeOutRampSamples
+                    || x.fadeOutRampOffsetSamples != y.fadeOutRampOffsetSamples
                     || x.fadeCurve != y.fadeCurve || x.gainDb != y.gainDb
                     || x.muted != y.muted || x.locked != y.locked)
                     return false;
@@ -1247,26 +1243,56 @@ namespace zynforge
 
     namespace
     {
+        // The one clip that adjacent clips a + b would be: a's start and
+        // fade-in, b's end and fade-out, and a fade that one half's ramp
+        // carries across the join continuing into the other half.
+        Clip joinedClip (const Clip& a, const Clip& b)
+        {
+            Clip m = a;
+            m.fileLengthSamples = a.fileLengthSamples + b.fileLengthSamples;
+            if (a.fadeInSamples == a.fileLengthSamples && b.fadeInSamples > 0)
+                m.fadeInSamples = a.fadeInSamples + b.fadeInSamples;
+            m.fadeOutSamples           = b.fadeOutSamples;
+            m.fadeOutRampSamples       = b.fadeOutRampSamples;
+            m.fadeOutRampOffsetSamples = b.fadeOutRampOffsetSamples;
+            if (b.fadeOutSamples == b.fileLengthSamples && a.fadeOutSamples > 0)
+                m.fadeOutSamples = a.fadeOutSamples + b.fadeOutSamples;
+            normaliseFadeRamps (m);
+            return m;
+        }
+
+        bool sameFades (const Clip& x, const Clip& y)
+        {
+            return x.fadeInSamples == y.fadeInSamples && x.fadeOutSamples == y.fadeOutSamples
+                && x.fadeInRampSamples == y.fadeInRampSamples
+                && x.fadeInRampOffsetSamples == y.fadeInRampOffsetSamples
+                && x.fadeOutRampSamples == y.fadeOutRampSamples
+                && x.fadeOutRampOffsetSamples == y.fadeOutRampOffsetSamples;
+        }
+
         // Two adjacent clips can be healed (rejoined) only if they're a clean
         // split: same source file, butt-jointed in BOTH the file and the
-        // timeline, neither locked. (A moved / slip-trimmed clip fails these.)
+        // timeline, neither locked, and cutting the joined clip at the join
+        // gives both back fades included -- a hard cut on both sides, or one
+        // fade's ramp running across the join. (A moved / slip-trimmed clip,
+        // or a fade added at the seam, fails these.)
         bool clipsAreHealable (const Clip& a, const Clip& b)
         {
-            return ! a.locked && ! b.locked
-                && a.audioFile == b.audioFile
-                && a.sourceChannel == b.sourceChannel && a.gainDb == b.gainDb
-                && a.muted == b.muted && a.fadeCurve == b.fadeCurve
-                && a.fadeOutSamples == 0 && b.fadeInSamples == 0
-                && a.fileStartSamples + a.fileLengthSamples == b.fileStartSamples
-                && a.timelineStartSamples + a.fileLengthSamples == b.timelineStartSamples;
+            if (a.locked || b.locked
+                || a.audioFile != b.audioFile
+                || a.sourceChannel != b.sourceChannel || a.gainDb != b.gainDb
+                || a.muted != b.muted || a.fadeCurve != b.fadeCurve
+                || a.fileStartSamples + a.fileLengthSamples != b.fileStartSamples
+                || a.timelineStartSamples + a.fileLengthSamples != b.timelineStartSamples)
+                return false;
+            const auto m = joinedClip (a, b);
+            return sameFades (clipSlice (m, 0, a.fileLengthSamples), a)
+                && sameFades (clipSlice (m, a.fileLengthSamples, b.fileLengthSamples), b);
         }
 
         void mergeClipPair (std::vector<Clip>& list, int i)
         {
-            auto& a = list[(size_t) i];
-            const auto& b = list[(size_t) (i + 1)];
-            a.fileLengthSamples += b.fileLengthSamples;
-            a.fadeOutSamples     = b.fadeOutSamples;   // the join had a hard cut; keep the tail fade
+            list[(size_t) i] = joinedClip (list[(size_t) i], list[(size_t) (i + 1)]);
             list.erase (list.begin() + i + 1);
         }
     }
@@ -1785,14 +1811,8 @@ namespace zynforge
             const auto is = juce::jmax (cs, start);
             const auto ie = juce::jmin (ce, end);
             if (ie <= is) continue;
-            Clip nc = c;
-            const auto lead = is - cs;
-            nc.fileStartSamples     = c.fileStartSamples + lead;
-            nc.fileLengthSamples    = ie - is;
-            nc.timelineStartSamples = is;
-            nc.fadeInSamples  = juce::jmin (nc.fadeInSamples,  nc.fileLengthSamples);
-            nc.fadeOutSamples = juce::jmin (nc.fadeOutSamples, nc.fileLengthSamples);
-            dst.push_back (nc);
+            // The source take's audio exactly as that take played it.
+            dst.push_back (clipSlice (c, is - cs, ie - is));
         }
 
         std::sort (dst.begin(), dst.end(),
@@ -1906,16 +1926,29 @@ namespace zynforge
                 break;
             }
         }
+        // Each fade's ramp moves with its own edge. A ramp longer than the
+        // fade it shows (a piece cut out of a longer fade) shows as much of
+        // itself as now fits, so extending that piece brings the original
+        // ramp back; an ordinary fade keeps its length.
+        if (c.fadeInRampSamples > 0)
+            c.fadeInSamples = juce::jmin (c.fadeInRampSamples - c.fadeInRampOffsetSamples,
+                                          c.fileLengthSamples);
+        if (c.fadeOutRampSamples > 0)
+            c.fadeOutSamples = juce::jmin (c.fadeOutRampSamples - c.fadeOutRampOffsetSamples,
+                                           c.fileLengthSamples);
         // A trim can leave the clip shorter than its fades. Shrink both in
-        // proportion so fade-in + fade-out fit again: a fade longer than the
-        // clip never reaches full gain, and setClipFades (in + out <= length)
-        // then refused every fade-handle drag on it.
+        // proportion (as ordinary fades) so fade-in + fade-out fit again: a
+        // fade longer than the clip never reaches full gain, and setClipFades
+        // (in + out <= length) then refused every fade-handle drag on it.
         if (const auto fades = c.fadeInSamples + c.fadeOutSamples; fades > c.fileLengthSamples)
         {
             c.fadeInSamples  = (juce::int64) ((double) c.fadeInSamples * (double) c.fileLengthSamples
                                               / (double) fades);
             c.fadeOutSamples = c.fileLengthSamples - c.fadeInSamples;
+            c.fadeInRampSamples = c.fadeInRampOffsetSamples = 0;
+            c.fadeOutRampSamples = c.fadeOutRampOffsetSamples = 0;
         }
+        normaliseFadeRamps (c);
         // Publish the updated list to the player so playback honours
         // the edit on the next audio block.
         player.setTrackClips (track, list);
@@ -1936,8 +1969,31 @@ namespace zynforge
         fadeOutSamples = juce::jmax<juce::int64> (0, fadeOutSamples);
         if (fadeInSamples + fadeOutSamples > c.fileLengthSamples) return false;
 
+        // A fade the engineer changes becomes an ordinary fade of that length;
+        // the one left alone keeps its ramp (a piece of a split fade).
+        if (fadeInSamples != c.fadeInSamples)   c.fadeInRampSamples  = c.fadeInRampOffsetSamples  = 0;
+        if (fadeOutSamples != c.fadeOutSamples) c.fadeOutRampSamples = c.fadeOutRampOffsetSamples = 0;
         c.fadeInSamples  = fadeInSamples;
         c.fadeOutSamples = fadeOutSamples;
+        player.setTrackClips (track, list);
+        syncActiveTake (track);
+        return true;
+    }
+
+    bool AudioEngine::setClipFadeRamps (int track, int clipIndex,
+                                        juce::int64 inRamp, juce::int64 inRampOffset,
+                                        juce::int64 outRamp, juce::int64 outRampOffset)
+    {
+        if (track < 0 || track >= (int) trackClips.size()) return false;
+        auto& list = trackClips[(size_t) track];
+        if (clipIndex < 0 || clipIndex >= (int) list.size()) return false;
+        auto& c = list[(size_t) clipIndex];
+        if (c.locked) return false;
+        c.fadeInRampSamples        = inRamp;
+        c.fadeInRampOffsetSamples  = inRampOffset;
+        c.fadeOutRampSamples       = outRamp;
+        c.fadeOutRampOffsetSamples = outRampOffset;
+        normaliseFadeRamps (c);
         player.setTrackClips (track, list);
         syncActiveTake (track);
         return true;
