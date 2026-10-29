@@ -525,6 +525,8 @@ namespace zynforge
     {
         // Decoded on the MIDI thread -> TimecodeChase atomics (no locks). The
         // message-thread chase poll reads getChaseTargetSamples() to seek.
+        // Only while MTC is the chase source: LTC shares the time readout.
+        if (getChaseMode() != ChaseMode::Mtc) return;
         if (m.isQuarterFrame())
             timecodeChase.feedMtcQuarterFrame (m.getRawData()[1]);
         else if (m.isFullFrame())
@@ -1776,6 +1778,10 @@ namespace zynforge
         {
             recorder.setTrackCount ((int) order.size());
             persist ((int) order.size());
+            // The LTC source follows its strip; deleting that strip clears it.
+            const int ltc = ltcSourceStrip.load();
+            if (ltc >= 0 && ltc < n && destination[(size_t) ltc] != ltc)
+                setLtcSourceStrip (destination[(size_t) ltc] + 1);
             // A reorder can move a stereo pair without changing the count;
             // every view rebuilds on a generation change.
             recorder.bumpTrackGeneration();
@@ -2982,12 +2988,13 @@ namespace zynforge
         }
         }   // release stereoMixLock
 
-        // LTC presence detection -- analyzes the input of a designated
-        // strip every block. Engineer routes the desk's timecode line
-        // to that strip and toggles 'LTC source' to it from the UI.
+        // LTC decode -- analyzes the input of a designated strip every
+        // block while LTC is the chase source. Engineer routes the desk's
+        // timecode line to that strip and picks it in Transport Sync.
         {
             const int srcStrip = ltcSourceStrip.load (std::memory_order_relaxed);
-            if (srcStrip >= 0 && srcStrip < trackCount && routedInputs[srcStrip] != nullptr)
+            if (srcStrip >= 0 && srcStrip < trackCount && routedInputs[srcStrip] != nullptr
+                && chaseMode.load (std::memory_order_relaxed) == (int) ChaseMode::Ltc)
             {
                 const auto sr = deviceManager.getCurrentAudioDevice() != nullptr
                                 ? deviceManager.getCurrentAudioDevice()->getCurrentSampleRate()

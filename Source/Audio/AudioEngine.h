@@ -112,8 +112,15 @@ namespace zynforge
         juce::StringArray getMidiInputNames() const;
         bool              setMtcInputByName (const juce::String& name);
         juce::String      getMtcInputName() const { return mtcInputName; }
-        // True while a chase source is selected AND timecode is live.
-        bool        isChaseLive() const noexcept { return getChaseMode() != ChaseMode::Off && timecodeChase.isRunning(); }
+        // True while a chase source is selected AND that source is live:
+        // decoded, consistent LTC frames, or MTC still streaming. Per mode,
+        // so an MTC port left open can't make an LTC chase look locked.
+        bool        isChaseLive() const noexcept
+        {
+            const auto mode = getChaseMode();
+            return mode == ChaseMode::Ltc ? timecodeChase.isLtcLocked()
+                 : mode == ChaseMode::Mtc && timecodeChase.isMtcRunning();
+        }
         // The position (in the player's sample domain) the chased timecode
         // currently points at, and a HH:MM:SS:FF string for display.
         juce::int64  getChaseTargetSamples() const;
