@@ -570,20 +570,46 @@ namespace zynforge
                 thumb.setSource (new juce::FileInputSource (main));
         }
 
+        // Every waveform the row draws through JUCE's AudioThumbnail goes
+        // through here. channel < 0 draws all channels (a whole mono file).
+        // JUCE refills its per-pixel cache across the WHOLE area it is given,
+        // whatever the graphics clip: at deep zoom a clip block (or the lane)
+        // is ~a million pixels wide, and below 128 samples per pixel every one
+        // of those pixels is a read of the take on the message thread -- a
+        // multi-second freeze per repaint. Narrow the area and time range to
+        // the visible columns first so the work scales with the screen. A
+        // fully visible area (normal zoom) is drawn exactly as before.
+        static void drawThumbnailVisible (juce::Graphics& g, juce::AudioThumbnail& thumb,
+                                          juce::Rectangle<int> area, double t0, double t1,
+                                          int channel, float zoom)
+        {
+            const auto visible = area.getIntersection (g.getClipBounds());
+            if (visible.isEmpty()) return;
+            if (visible.getX() != area.getX() || visible.getRight() != area.getRight())
+            {
+                const double secondsPerPixel = (t1 - t0) / area.getWidth();
+                const double v0 = t0 + (visible.getX()     - area.getX()) * secondsPerPixel;
+                const double v1 = t0 + (visible.getRight() - area.getX()) * secondsPerPixel;
+                area = { visible.getX(), area.getY(), visible.getWidth(), area.getHeight() };
+                t0 = v0;
+                t1 = v1;
+            }
+            if (channel < 0) thumb.drawChannels (g, area, t0, t1, zoom);
+            else             thumb.drawChannel  (g, area, t0, t1, channel, zoom);
+        }
+
         // Draw one stereo lane. When the pair is a single interleaved file
         // (stereoOneFile) the L lane is file channel 0 and the R lane channel
         // 1; otherwise each thumbnail is a whole mono file -> drawChannels.
         void drawLaneL (juce::Graphics& g, juce::Rectangle<int> area,
                         double t0, double t1, float zoom)
         {
-            if (stereoOneFile) thumbnailL.drawChannel  (g, area, t0, t1, 0, zoom);
-            else               thumbnailL.drawChannels (g, area, t0, t1, zoom);
+            drawThumbnailVisible (g, thumbnailL, area, t0, t1, stereoOneFile ? 0 : -1, zoom);
         }
         void drawLaneR (juce::Graphics& g, juce::Rectangle<int> area,
                         double t0, double t1, float zoom)
         {
-            if (stereoOneFile) thumbnailR.drawChannel  (g, area, t0, t1, 1, zoom);
-            else               thumbnailR.drawChannels (g, area, t0, t1, zoom);
+            drawThumbnailVisible (g, thumbnailR, area, t0, t1, stereoOneFile ? 1 : -1, zoom);
         }
 
         // Use a short-window median for the body of a zoomed-out take while
@@ -724,8 +750,7 @@ namespace zynforge
             auto existing = area.withWidth ((int) (area.getWidth() * juce::jlimit (0.0, 1.0, existingFrac)));
             if (existing.getWidth() <= 0) return;
             g.setColour (brand::accentPlay.withAlpha (zynforge::brand::alpha::muted));   // existing take = dim context
-            if (wholeFile) thumb.drawChannels (g, existing, 0.0, thumb.getTotalLength(), zoom);
-            else           thumb.drawChannel  (g, existing, 0.0, thumb.getTotalLength(), chan, zoom);
+            drawThumbnailVisible (g, thumb, existing, 0.0, thumb.getTotalLength(), wholeFile ? -1 : chan, zoom);
         }
 
         // Take stopped: stop appending, but KEEP the envelope drawn as a
@@ -867,8 +892,7 @@ namespace zynforge
                     && drawOverviewWave (g, thumb, area, chan, t0, t1, zoom,
                                          waveDark, waveDark.withAlpha (brand::alpha::muted)))
                     return;
-                if (wholeFile) thumb.drawChannels (g, area, t0, t1, zoom);
-                else           thumb.drawChannel  (g, area, t0, t1, chan, zoom);
+                drawThumbnailVisible (g, thumb, area, t0, t1, wholeFile ? -1 : chan, zoom);
             };
 
             // ─── Timeline grid ─────────────────────────────────────────
@@ -964,8 +988,8 @@ namespace zynforge
                 else if (thumbnailL.getTotalLength() > 0.0)
                 {
                     g.setColour (waveColour.withAlpha (zynforge::brand::alpha::muted));
-                    thumbnailL.drawChannels (g, inner, 0.0,
-                                             thumbnailL.getTotalLength(), waveZoom (thumbnailL));
+                    drawThumbnailVisible (g, thumbnailL, inner, 0.0,
+                                          thumbnailL.getTotalLength(), -1, waveZoom (thumbnailL));
                 }
             }
 
@@ -1471,9 +1495,9 @@ namespace zynforge
                             const int xR = mapper.toX (c.timelineStartSamples + c.fileLengthSamples);
                             juce::Rectangle<int> cr (xL, laneR.getY() + 1,
                                                      juce::jmax (1, xR - xL), laneR.getHeight() - 2);
-                            thumbnailL.drawChannels (g, cr,
+                            drawThumbnailVisible (g, thumbnailL, cr,
                                 (double) c.fileStartSamples / sr,
-                                (double) (c.fileStartSamples + c.fileLengthSamples) / sr, 1.0f);
+                                (double) (c.fileStartSamples + c.fileLengthSamples) / sr, -1, 1.0f);
                         }
                         if (isHot)
                         {
@@ -1712,7 +1736,7 @@ namespace zynforge
                                            && drawOverviewWave (g, thumbnailL, waveArea, 0, t0, t1,
                                                             waveZoom (thumbnailL) * gz, mutedCol,
                                                             mutedCol.withAlpha (brand::alpha::subtle))))
-                                        thumbnailL.drawChannels (g, waveArea, t0, t1, waveZoom (thumbnailL) * gz);
+                                        drawThumbnailVisible (g, thumbnailL, waveArea, t0, t1, -1, waveZoom (thumbnailL) * gz);
                                 }
                                 else
                                 {

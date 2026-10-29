@@ -20,6 +20,7 @@
 #include "../UI/EditTrackRow.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #if JUCE_MAC
  #include <CoreFoundation/CoreFoundation.h>
@@ -225,6 +226,31 @@ namespace zynforge
                     audio.setSample (c, i, 0.8f * std::sin ((float) i * 0.05f));
             return writer->writeFromAudioSampleBuffer (audio, 0, samples);
         }
+
+        // An in-memory sine take that counts how often JUCE reads it.
+        struct CountingReader final : public juce::AudioFormatReader
+        {
+            std::atomic<int>& reads;
+            CountingReader (std::atomic<int>& counter, juce::int64 length)
+                : juce::AudioFormatReader (nullptr, "counting"), reads (counter)
+            {
+                sampleRate = 48000.0;
+                bitsPerSample = 32;
+                usesFloatingPointData = true;
+                numChannels = 1;
+                lengthInSamples = length;
+            }
+            bool readSamples (int* const* dest, int numDestChannels, int startOffsetInDestBuffer,
+                              juce::int64 startSampleInFile, int numSamples) override
+            {
+                ++reads;
+                for (int c = 0; c < numDestChannels; ++c)
+                    if (auto* d = reinterpret_cast<float*> (dest[c]))
+                        for (int i = 0; i < numSamples; ++i)
+                            d[startOffsetInDestBuffer + i] = 0.8f * std::sin ((float) (startSampleInFile + i) * 0.05f);
+                return true;
+            }
+        };
 
         static juce::MouseEvent mouseAt (juce::Component& c, juce::Point<int> p,
                                          juce::Point<int> down, bool dragged,
@@ -490,6 +516,65 @@ namespace zynforge
                 row.applyTakeMenuChoice (852);   // delete the active take
                 expectEquals (s.engine.getTakeCount (0), s.engine.getTakeCount (1),
                               "delete take left L and R with different take lists");
+            }
+
+            // ── #4: deep zoom draws only the visible columns ────────────────
+            beginTest ("Deep zoom reads only the visible part of a waveform, and normal zoom draws the same pixels");
+            {
+                juce::AudioFormatManager fm;
+                fm.registerBasicFormats();
+                juce::AudioThumbnailCache thumbCache (4);
+                juce::AudioThumbnail thumb (128, fm, thumbCache);
+                std::atomic<int> reads { 0 };
+                thumb.setReader (new CountingReader (reads, 20 * 48000), 0x5eed);
+                expect (pumpUntil ([&] { return thumb.isFullyLoaded(); }, 10000), "thumbnail scan");
+
+                // 2 s across 200,000 px (0.48 samples/px) seen through a 400 px
+                // window scrolled into the middle: the work must scale with the
+                // window, not the clip.
+                {
+                    juce::Image img (juce::Image::ARGB, 400, 60, true);
+                    juce::Graphics g (img);
+                    g.setOrigin ({ -100000, 0 });
+                    reads = 0;
+                    EditPage::TrackRow::drawThumbnailVisible (g, thumb, { 0, 0, 200000, 60 }, 0.0, 2.0, 0, 1.0f);
+                    expect (reads.load() < 4000,
+                            "the draw read the take once per lane pixel: " + juce::String (reads.load()) + " reads");
+                }
+
+                // Same pixels as JUCE's own whole-area draw: fully visible
+                // (normal zoom) and scrolled at a detailed and a zoomed-out scale.
+                auto render = [&] (bool viaRow, int areaW, int originX, double t1)
+                {
+                    juce::Image img (juce::Image::ARGB, 400, 60, true);
+                    juce::Graphics g (img);
+                    g.setOrigin ({ -originX, 0 });
+                    g.setColour (juce::Colours::black);
+                    const juce::Rectangle<int> area (0, 0, areaW, 60);
+                    if (viaRow) EditPage::TrackRow::drawThumbnailVisible (g, thumb, area, 0.0, t1, 0, 1.0f);
+                    else        thumb.drawChannel (g, area, 0.0, t1, 0, 1.0f);
+                    return img;
+                };
+                struct Case { int areaW, originX; double t1; const char* what; };
+                for (const auto& c : { Case { 400,  0,    20.0, "fully visible" },
+                                       Case { 4000, 1600, 2.0,  "scrolled, detailed" },
+                                       Case { 4000, 1600, 20.0, "scrolled, zoomed out" } })
+                {
+                    const auto a = render (true, c.areaW, c.originX, c.t1);
+                    const auto b = render (false, c.areaW, c.originX, c.t1);
+                    int differing = 0, inked = 0;
+                    for (int y = 0; y < 60; ++y)
+                        for (int x = 0; x < 400; ++x)
+                        {
+                            if (a.getPixelAt (x, y) != b.getPixelAt (x, y)) ++differing;
+                            if (b.getPixelAt (x, y).getAlpha() > 0) ++inked;
+                        }
+                    expect (inked > 400, juce::String ("setup: nothing drawn, ") + c.what);
+                    logMessage (juce::String (c.what) + ": " + juce::String (differing) + " of "
+                                + juce::String (inked) + " inked pixels differ from JUCE's whole-area draw");
+                    expect (differing <= inked / 100,
+                            juce::String (c.what) + ": " + juce::String (differing) + " pixels differ");
+                }
             }
 
             //@@MORE_TESTS@@
