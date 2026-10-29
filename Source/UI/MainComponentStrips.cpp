@@ -538,7 +538,8 @@ void MainComponent::importChannelNamesFromCsv()
             const int n = self->engine.getRecorder().getNumTracks();
             int applied = 0;
             for (int i = 0; i < names.size() && i < n; ++i)
-            { self->engine.setTrackName (i, names[i]); ++applied; }
+                if (names[i].isNotEmpty())   // an unnamed channel keeps its name
+                { self->engine.setTrackName (i, names[i]); ++applied; }
             self->lastTrackCount = -1;
             self->showStatus ("Imported " + juce::String (applied) + " channel name(s) from "
                         + f.getFileName()
@@ -588,7 +589,8 @@ void MainComponent::createSessionFromCsv()
             self->engine.clearAllStripOverrides();
             self->engine.setStripCount (names.size());
             for (int i = 0; i < names.size(); ++i)
-                self->engine.setTrackName (i, names[i]);
+                if (names[i].isNotEmpty())
+                    self->engine.setTrackName (i, names[i]);
             self->lastTrackCount = -1;
             self->loadSetlistFromActiveSession();
             self->loadUILayoutFromActiveSession();

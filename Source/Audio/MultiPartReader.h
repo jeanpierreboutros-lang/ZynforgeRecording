@@ -6,6 +6,25 @@
 
 namespace zynforge
 {
+    // The 1-based track number of a take's MAIN file -- exactly
+    // "Track_NN.<ext>" in a supported container -- or 0 for everything else a
+    // Track_* glob also matches: continuation parts (Track_NN_partXX), punch
+    // sidecars (Track_NN.punchbase.<ext>) and consolidate renders
+    // (Track_NN_consolidated_K). Parsing "Track_" + getIntValue() read
+    // "02_consolidated_1" as track 2, so the analyzers (QC, noise, song
+    // detection, the transient cache) treated a consolidate render as that
+    // track's take. Only main files count, as in SessionPlayer.
+    inline int mainTakeTrackNumber (const juce::File& f)
+    {
+        const auto ext = f.getFileExtension().toLowerCase();
+        if (ext != ".wav" && ext != ".flac" && ext != ".aif" && ext != ".aiff") return 0;
+        const auto stem = f.getFileNameWithoutExtension();
+        if (! stem.startsWith ("Track_")) return 0;
+        const auto digits = stem.substring (6);
+        if (digits.isEmpty() || digits.length() > 3 || ! digits.containsOnly ("0123456789")) return 0;
+        return digits.getIntValue();
+    }
+
     // The files that make up one take, in playback order: the main
     // Track_NN.<ext> followed by its Track_NN_partXX.<ext> continuations
     // (from auto-split past the container cap, or from continue-recording).

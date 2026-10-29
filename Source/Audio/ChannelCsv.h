@@ -1,6 +1,8 @@
 #pragma once
 
 #include <juce_core/juce_core.h>
+#include <limits>
+#include <vector>
 
 namespace zynforge::channelcsv
 {
@@ -8,6 +10,8 @@ namespace zynforge::channelcsv
     // exported. Tolerant by design: accepts one-name-per-line, or rows like
     // "1,Kick" / "Ch 1,Kick,..." (numeric first column = channel number ->
     // take the next field), quoted fields, and skips an obvious header row.
+    // The result is indexed by channel: a numbered row lands on its own
+    // channel, and a channel with no name is an empty entry.
 
     inline juce::StringArray splitCsvLine (const juce::String& line)
     {
@@ -32,10 +36,27 @@ namespace zynforge::channelcsv
         return fields;
     }
 
+    // The channel number a first-column label carries -- "3", "Ch 3", "CH03",
+    // "Ch.3", "Input 3" -- or -1 when the field is not a channel label.
+    inline int channelNumberOf (const juce::String& field)
+    {
+        const auto f = field.trim();
+        int digitsAt = f.length();
+        while (digitsAt > 0 && juce::CharacterFunctions::isDigit (f[digitsAt - 1])) --digitsAt;
+        if (digitsAt == f.length()) return -1;
+        const auto label = f.substring (0, digitsAt).trimCharactersAtEnd (" .#:").toLowerCase();
+        if (label.isNotEmpty() && label != "ch" && label != "chan" && label != "channel"
+            && label != "in" && label != "input")
+            return -1;
+        const auto digits = f.substring (digitsAt);
+        return digits.length() > 6 ? std::numeric_limits<int>::max() : digits.getIntValue();
+    }
+
     inline juce::StringArray parseNames (const juce::String& text)
     {
-        juce::StringArray out;
-        bool headerChecked = false;
+        struct Row { int channel; juce::String name; };   // channel -1 = unnumbered
+        std::vector<Row> rows;
+        bool headerChecked = false, zeroBased = false;
         for (auto line : juce::StringArray::fromLines (text))
         {
             line = line.trim();
@@ -43,20 +64,22 @@ namespace zynforge::channelcsv
 
             const auto fields = splitCsvLine (line);
             juce::String name;
+            int channel = -1;
             if (fields.size() == 1)
                 name = fields[0];
             else
             {
-                // Numeric first column = channel number -> the name is the
-                // first non-numeric, non-empty field after it.
-                const bool firstIsNumber = fields[0].trim().containsOnly ("0123456789");
-                name = firstIsNumber ? fields[1] : fields[0];
-                if (name.trim().isEmpty() && fields.size() > 1) name = fields[1];
+                // Channel-number first column -> the name is the next field.
+                channel = channelNumberOf (fields[0]);
+                name = channel >= 0 ? fields[1] : fields[0];
+                if (channel < 0 && name.trim().isEmpty()) name = fields[1];
             }
             name = name.trim();
-            if (name.isEmpty()) continue;
+            // A numbered row keeps its channel even without a name; dropping
+            // it shifted every later name onto the wrong channel.
+            if (name.isEmpty() && channel < 0) continue;
 
-            if (! headerChecked)
+            if (! headerChecked && name.isNotEmpty())
             {
                 headerChecked = true;
                 const auto low = name.toLowerCase();
@@ -64,8 +87,29 @@ namespace zynforge::channelcsv
                     || low == "ch" || low == "channel name")
                     continue;   // drop the header row
             }
-            out.add (name);
+            zeroBased = zeroBased || channel == 0;
+            rows.push_back ({ channel, name });
         }
-        return out;
+
+        // Numbered rows go to their own channel (first one wins), so a gap in
+        // the numbering leaves that channel unnamed instead of pulling the
+        // next name onto it. Unnumbered rows fill in order, as before.
+        constexpr int kMaxChannels = 256;
+        juce::StringArray out;
+        for (const auto& r : rows)
+        {
+            const int slot = r.channel < 0 || r.channel == std::numeric_limits<int>::max()
+                           ? -1 : r.channel - (zeroBased ? 0 : 1);
+            if (slot >= 0 && slot < kMaxChannels)
+            {
+                while (out.size() <= slot) out.add ({});
+                if (out[slot].isEmpty()) out.set (slot, r.name);
+            }
+            else if (r.name.isNotEmpty())
+                out.add (r.name);
+        }
+        for (const auto& name : out)
+            if (name.isNotEmpty()) return out;
+        return {};
     }
 }

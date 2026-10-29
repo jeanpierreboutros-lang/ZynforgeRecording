@@ -1534,23 +1534,15 @@ juce::String MainComponent::buildTimelineCsv()
     if (! dir.isDirectory()) return {};
 
     namespace tx = zynforge::timelineexport;
-    std::vector<tx::TrackEntry> tracks;
     auto& rec = engine.getRecorder();
-    // Name the file that's ACTUALLY on disk. This hardcoded ".wav", so the CSV
-    // handed to the mix engineer referenced files that don't exist in a FLAC or
-    // AIFF session. Resolve the real container per track; fall back to the
-    // current capture format's extension when the track was never recorded.
-    const auto audioDir = dir.getChildFile ("Audio Files").isDirectory()
-                            ? dir.getChildFile ("Audio Files") : dir;
+    // Name the files a strip ACTUALLY reads, in their real container: the
+    // R strip of a native-stereo take reads channel 2 of the L file, and a
+    // continued take lists every part. A never-recorded strip names none.
+    juce::StringArray names;
     for (int i = 0; i < rec.getNumTracks(); ++i)
-    {
-        const auto stem = "Track_" + juce::String (i + 1).paddedLeft ('0', 2);
-        juce::String fileName = stem + ".wav";
-        for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
-            if (audioDir.getChildFile (stem + ext).existsAsFile())
-            { fileName = stem + ext; break; }
-        tracks.push_back ({ i + 1, rec.getTrack (i).name, fileName });
-    }
+        names.add (rec.getTrack (i).name);
+    const auto tracks = tx::trackEntries (names, [this] (int track, int& channel)
+                                          { return engine.getTrackAudioFile (track, &channel); });
 
     std::vector<tx::MarkEntry> markers;
     auto& mk = engine.getMarkers();
@@ -1566,7 +1558,9 @@ juce::String MainComponent::buildTimelineCsv()
 
     const double sr = engine.getSessionSampleRate() > 0.0 ? engine.getSessionSampleRate()
                                                           : pendingSampleRate;
-    return tx::buildCsv (dir.getFileName(), sr, 30, tracks, markers, cueList);
+    return tx::buildCsv (dir.getFileName(), sr,
+                         tx::frameRateFor (engine.getTimecodeChase().getFps()),
+                         tracks, markers, cueList);
 }
 
 void MainComponent::exportTimelineCsv()

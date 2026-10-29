@@ -1,4 +1,6 @@
 #include <juce_core/juce_core.h>
+#include <juce_audio_formats/juce_audio_formats.h>
+#include "../Audio/AudioEngine.h"
 #include "../Audio/TimelineExport.h"
 
 namespace zynforge
@@ -62,6 +64,64 @@ namespace zynforge
                 expect (csv.contains ("00:00:01:00,48000,\"user\",\"Verse\""));
                 expect (csv.contains ("[Cues]"));
                 expect (csv.contains ("00:00:02:00,96000,\"Song 1\""));
+            }
+
+            beginTest ("Track rows name the files a strip really reads, every part included");
+            {
+                AudioEngine::setTestModeSkipAudioInit (true);
+                const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                     .getChildFile ("zf-timeline-" + juce::Uuid().toString());
+                const auto audio = dir.getChildFile ("Audio Files");
+                audio.createDirectory();
+                const auto write = [&audio] (const juce::String& name, int channels)
+                {
+                    juce::WavAudioFormat wav;
+                    std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (
+                        audio.getChildFile (name).createOutputStream().release(),
+                        48000.0, (unsigned) channels, 24, {}, 0));
+                    juce::AudioBuffer<float> b (channels, 480);
+                    b.clear();
+                    return w != nullptr && w->writeFromAudioSampleBuffer (b, 0, 480);
+                };
+                expect (write ("Track_01.wav", 2));          // native stereo: strips 1 (L) + 2 (R)
+                expect (write ("Track_03.wav", 1));          // mono take with a continuation
+                expect (write ("Track_03_part02.wav", 1));   // strip 4 was never recorded
+
+                AudioEngine engine;
+                engine.setActiveSessionDir (dir);
+                const auto rows = trackEntries ({ "Keys L", "Keys R", "Vox", "Spare" },
+                    [&engine] (int track, int& channel) { return engine.getTrackAudioFile (track, &channel); });
+
+                const auto has = [&rows] (int index1, const juce::String& file, int channel1, int part)
+                {
+                    for (const auto& r : rows)
+                        if (r.index1 == index1 && r.file == file && r.channel1 == channel1 && r.part == part)
+                            return true;
+                    return false;
+                };
+                expect (has (1, "Track_01.wav", 1, 1), "L strip must read channel 1 of the stereo file");
+                expect (has (2, "Track_01.wav", 2, 1), "R strip pointed at a Track_02 file that doesn't exist");
+                expect (has (3, "Track_03.wav", 0, 1));
+                expect (has (3, "Track_03_part02.wav", 0, 2), "the continuation part is missing");
+                expect (has (4, {}, 0, 1), "an unrecorded strip must not name a file");
+                for (const auto& r : rows)
+                    expect (r.file.isEmpty() || audio.getChildFile (r.file).existsAsFile(),
+                            "listed file does not exist: " + r.file);
+
+                const auto csv = buildCsv ("Show", 48000.0, 25, rows, {}, {});
+                expect (csv.contains ("Index,Name,File,Channel,Part"));
+                expect (csv.contains ("2,\"Keys R\",\"Track_01.wav\",2,1"));
+                expect (csv.contains ("3,\"Vox\",\"Track_03_part02.wav\",,2"));
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Frame rate follows learned house timecode, 30 fps when none");
+            {
+                expectEquals (frameRateFor (0.0f), 30);
+                expectEquals (frameRateFor (24.0f), 24);
+                expectEquals (frameRateFor (25.0f), 25);
+                expectEquals (frameRateFor (29.97f), 30);
+                expectEquals (frameRateFor (30.0f), 30);
             }
 
             beginTest ("buildCsv with no markers/cues still emits the section headers");

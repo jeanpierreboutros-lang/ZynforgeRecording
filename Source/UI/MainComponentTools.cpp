@@ -524,8 +524,8 @@ void MainComponent::runQcAnalysis()
             // last "_" segment -> 0 -> track 1) and miss the later audio. Parse
             // the index from the Track_NN PREFIX, matching NoiseAnalyzer/song
             // detect (the fix pass fixed those two analyzers but not this one).
-            if (stem.containsIgnoreCase ("_part")) continue;
-            const int idx = stem.fromFirstOccurrenceOf ("Track_", false, false).getIntValue() - 1;
+            // Also skips punch sidecars and Track_NN_consolidated_K renders.
+            const int idx = zynforge::mainTakeTrackNumber (f) - 1;
             if (idx < 0) continue;
             auto q = zynforge::qc::analyzeFile (f);
             q.trackIndex = idx;
@@ -936,8 +936,9 @@ void MainComponent::detectSongsToMarkers()
             // Skip continuation parts: envelopeFlags treats every file as
             // starting at t=0, so a Track_NN_partXX would fold set-2 audio onto
             // the timeline START and add a phantom voice to the quorum, landing
-            // song markers all over the session. Scan main files only.
-            if (f.getFileNameWithoutExtension().containsIgnoreCase ("_part"))
+            // song markers all over the session. Scan main files only (a
+            // consolidate render or punch sidecar is the same phantom voice).
+            if (zynforge::mainTakeTrackNumber (f) <= 0)
                 continue;
             double fileSr = 0.0;
             auto fl = zynforge::songs::envelopeFlags (f, params.thresholdDb,

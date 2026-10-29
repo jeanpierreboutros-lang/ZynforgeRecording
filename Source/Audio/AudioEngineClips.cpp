@@ -72,9 +72,9 @@ namespace zynforge
         // the true session-OPEN path passes false, and its .zfproj restore
         // overwrites these seeds anyway. See the seedDefaultClips ADR.
         const int n = player.getNumTracks();
-        if (n <= 0)
+        if (n <= 0 && ! preserveEdits)
         {
-            if (! preserveEdits) { trackClips.clear(); trackPlaylists.clear(); sourceTrackLengths.clear(); }
+            trackClips.clear(); trackPlaylists.clear(); sourceTrackLengths.clear();
             return;
         }
 
@@ -133,8 +133,11 @@ namespace zynforge
             {
                 // A continuation adds source media after the prior end. Keep
                 // every existing split/trim/comp verbatim and expose only the
-                // newly recorded span as a new clip on the active take.
-                if (appendRecordedAudio && oldLength > 0 && newLength > oldLength)
+                // newly recorded span as a new clip on the active take. A
+                // strip with no media before (oldLength 0) whose arrangement
+                // holds pasted clips gets its whole new take the same way --
+                // requiring oldLength > 0 left that recording out entirely.
+                if (appendRecordedAudio && newLength > oldLength)
                 {
                     Clip appended;
                     appended.name = juce::String::formatted ("Track_%02d continued", i + 1);
@@ -174,6 +177,17 @@ namespace zynforge
             trackPlaylists[(size_t) i].takes.push_back (std::move (t1));
             trackPlaylists[(size_t) i].activeTake = 0;
         }
+
+        // Strips above the highest recorded Track_NN keep their clip lists
+        // (grow-only above), but the player's track count was just reset to
+        // the files on disk, so it no longer renders them. Republish, or a
+        // clip pasted there goes silent in playback after every take stop or
+        // reload while EDIT still shows it and the bounce still renders it.
+        if (preserveEdits)
+            for (int i = juce::jmax (0, n); i < (int) trackClips.size(); ++i)
+                if (! trackClips[(size_t) i].empty()
+                    || (i < (int) trackPlaylists.size() && ! trackPlaylists[(size_t) i].takes.empty()))
+                    player.setTrackClips (i, trackClips[(size_t) i]);
     }
 
     void AudioEngine::syncActiveTake (int track)
@@ -410,6 +424,7 @@ namespace zynforge
 
         // Resize storage to match (seedDefaultClips has already
         // populated this on session load; we overwrite per-track here).
+        std::vector<char> hasTakes;   // tracks the JSON gives at least one take
         for (const auto& item : *arr)
         {
             auto* pObj = item.getDynamicObject();
@@ -468,6 +483,11 @@ namespace zynforge
                 }
                 pl.takes.push_back (std::move (tk));
             }
+            if (! pl.takes.empty())
+            {
+                if (t >= (int) hasTakes.size()) hasTakes.resize ((size_t) t + 1, 0);
+                hasTakes[(size_t) t] = 1;
+            }
 
             // Reapply the active take to the live trackClips +
             // SessionPlayer so playback matches the persisted state.
@@ -475,6 +495,26 @@ namespace zynforge
             {
                 trackClips[(size_t) t] = pl.takes[(size_t) pl.activeTake].clips;
                 player.setTrackClips (t, trackClips[(size_t) t]);
+            }
+        }
+
+        // A strip the JSON gives no take -- absent (it had no playlist when an
+        // undo snapshot was taken) or an empty take list -- used to keep the
+        // clips it holds now. Undoing a paste onto a never-recorded strip so
+        // left the clip visible, audible and bounced while the playlist, and
+        // so the next save, no longer had it. Return such a strip to "no
+        // arrangement", but only when it has no media of its own: a take
+        // recorded after an older undo snapshot must keep its clips.
+        const auto tracks = juce::jmax (trackClips.size(), trackPlaylists.size());
+        for (size_t t = 0; t < tracks; ++t)
+        {
+            if ((t < hasTakes.size() && hasTakes[t] != 0)
+                || player.getTrackLengthSamples ((int) t) > 0) continue;
+            if (t < trackPlaylists.size()) trackPlaylists[t] = {};
+            if (t < trackClips.size() && ! trackClips[t].empty())
+            {
+                trackClips[t].clear();
+                player.setTrackClips ((int) t, trackClips[t]);
             }
         }
     }
@@ -499,10 +539,15 @@ namespace zynforge
 
     namespace
     {
-        // Split whichever clip in `list` straddles `timelineSample`.
-        // Returns true if a cut landed (sample strictly inside a clip).
+        // Split EVERY clip in `list` that straddles `timelineSample`.
+        // Returns true if at least one cut landed (sample strictly inside a
+        // clip). Clips may overlap (a paste or move over a neighbour), so
+        // stopping at the first one left the others crossing a range edge:
+        // Clear / Ripple / Comp kept them playing inside the range, and
+        // Consolidate played them again on top of its own render.
         bool splitListAtTimeline (std::vector<Clip>& list, juce::int64 timelineSample)
         {
+            bool cut = false;
             for (int i = 0; i < (int) list.size(); ++i)
             {
                 const auto& c = list[(size_t) i];
@@ -511,10 +556,12 @@ namespace zynforge
                 {
                     const auto fileOffset = c.fileStartSamples
                                           + (timelineSample - c.timelineStartSamples);
-                    return splitClipAt (list, i, fileOffset);
+                    // The right half is inserted at i + 1 and starts exactly
+                    // at the cut, so step over it.
+                    if (splitClipAt (list, i, fileOffset)) { cut = true; ++i; }
                 }
             }
-            return false;
+            return cut;
         }
     }
 
@@ -781,7 +828,9 @@ namespace zynforge
                 (juce::int64) (sr * 0.005), (juce::int64) win);
             for (const auto& c : original)
             {
-                if (c.locked) { out.push_back (c); continue; }
+                // A muted clip renders silence above, so it would get no
+                // slice and vanish. Keep it, like a locked clip.
+                if (c.locked || c.muted) { out.push_back (c); continue; }
                 const auto clipA = c.timelineStartSamples;
                 const auto clipB = clipA + c.fileLengthSamples;
                 for (const auto& r : ranges)
@@ -1856,6 +1905,16 @@ namespace zynforge
                                                                    c.timelineStartSamples + deltaSamples);
                 break;
             }
+        }
+        // A trim can leave the clip shorter than its fades. Shrink both in
+        // proportion so fade-in + fade-out fit again: a fade longer than the
+        // clip never reaches full gain, and setClipFades (in + out <= length)
+        // then refused every fade-handle drag on it.
+        if (const auto fades = c.fadeInSamples + c.fadeOutSamples; fades > c.fileLengthSamples)
+        {
+            c.fadeInSamples  = (juce::int64) ((double) c.fadeInSamples * (double) c.fileLengthSamples
+                                              / (double) fades);
+            c.fadeOutSamples = c.fileLengthSamples - c.fadeInSamples;
         }
         // Publish the updated list to the player so playback honours
         // the edit on the next audio block.
