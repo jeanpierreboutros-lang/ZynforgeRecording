@@ -62,6 +62,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 - QC, the noise report, song detection and Tab transients ignore `Track_NN_consolidated_K` renders and punch sidecars: no duplicate rows or phantom song markers.
 - Channel-name CSV import keeps every name on its channel number, including blank-name rows, numbering gaps and "Ch 1"-style labels.
 - Trimming a clip below its fade lengths shrinks the fades; Strip Silence no longer deletes muted clips.
+- **Splitting inside a fade-in or fade-out no longer changes the audio:** both halves keep the original ramp, so the split plays and bounces sample for sample like the unsplit clip, including at the range edges of Clear, Ripple, Comp and Consolidate. Crop and Comp pieces play exactly what the source clip played there, instead of re-applying its fade at the cut. Healing two halves of a split fade restores the original fade, and cut/paste and save/reopen keep a split fade's ramp. (Older builds open such a session with the halves as ordinary fades.)
 - The handoff timeline CSV lists the files each strip actually reads (stereo channel and every continuation part) and uses the learned house frame rate.
 - Tab-to-transient covers the whole take (it stopped after 30 minutes) and lands where the edited arrangement plays each transient.
 
