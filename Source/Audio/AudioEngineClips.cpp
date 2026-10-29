@@ -828,7 +828,9 @@ namespace zynforge
                 (juce::int64) (sr * 0.005), (juce::int64) win);
             for (const auto& c : original)
             {
-                if (c.locked) { out.push_back (c); continue; }
+                // A muted clip renders silence above, so it would get no
+                // slice and vanish. Keep it, like a locked clip.
+                if (c.locked || c.muted) { out.push_back (c); continue; }
                 const auto clipA = c.timelineStartSamples;
                 const auto clipB = clipA + c.fileLengthSamples;
                 for (const auto& r : ranges)

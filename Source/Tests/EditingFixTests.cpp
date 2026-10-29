@@ -196,6 +196,19 @@ public:
                 expect (e.setClipFades (0, 0, c.fadeInSamples, c.fadeOutSamples));
             }
         }
+
+        beginTest ("Strip Silence leaves muted clips in place");
+        {
+            Folder f; expect (write (f.track(), 9600));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            expect (e.splitTrackAtSample (0, 4800));
+            e.setClipMuted (0, 1, true);
+            e.stripSilence (0, -40.0f, 480, 480, 0);
+            int muted = 0;
+            for (const auto& c : e.clipsFor (0))
+                if (c.muted) { ++muted; expectEquals (c.timelineStartSamples, (juce::int64) 4800); }
+            expectEquals (muted, 1, "Strip Silence deleted the muted clip");
+        }
     }
 
     // Peak of one player output channel at `pos`, polling while the
