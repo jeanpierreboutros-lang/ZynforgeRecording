@@ -714,6 +714,70 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
+            // ── #8: a clip dragged past the session end follows the mouse ────
+            beginTest ("Dragging a clip past the session end moves it at the scale it was grabbed at");
+            {
+                Session s (2, { 48000, 48000 });   // 1000 px lane = 48 samples/px
+                EditPage::TrackRow row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                drag (row, { laneX (row, 0.5), 50 }, { laneX (row, 0.5) + 200, 50 });
+                expectEquals (s.clips (0)[0].timelineStartSamples, (juce::int64) (200 * 48),
+                              "the clip outran the mouse as the session grew under the drag");
+            }
+
+            // ── #12: a clip moved past its neighbour shows no fake crossfade ─
+            beginTest ("A clip moved past its neighbour has no crossfade handle to grab");
+            {
+                Session s (1, { 48000 });
+                expect (s.engine.splitTrackAtSample (0, 24000));
+                // Move the left piece past the right one: the list is now
+                // [A 50k..74k, B 24k..48k] -- out of timeline order, no overlap.
+                expect (s.engine.editClip (0, 0, AudioEngine::ClipEdit::Move, 50000));
+                EditPage::TrackRow row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                const auto total = s.engine.getPlayer().getTotalLengthSamples();
+                auto floorX = [&] (juce::int64 sample)
+                { return row.getHeaderWidth() + 4 + (int) ((double) sample / (double) total * kLaneW); };
+                // Where list-adjacency drew the fake X band's midpoint handle.
+                const int fakeMid = (floorX (24000) + floorX (74000)) / 2;
+                drag (row, { fakeMid, 50 }, { fakeMid + 120, 50 });
+                for (const auto& c : s.clips (0))
+                {
+                    expectEquals (c.fadeInSamples,  (juce::int64) 0, "a fake crossfade wrote a fade-in");
+                    expectEquals (c.fadeOutSamples, (juce::int64) 0, "a fake crossfade wrote a fade-out");
+                }
+            }
+
+            // ── #13: the clip-gain handle is only grabbable where it is drawn ─
+            beginTest ("A narrow clip's hidden gain handle does not steal the next clip's click");
+            {
+                Session s (1, { 48000 });   // 48 samples/px
+                expect (s.engine.splitTrackAtSample (0, 96));   // clip 0 is 2 px wide
+                EditPage::TrackRow row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                const int x = laneX (row, 0.0) + 15;             // inside clip 1, left of its body
+                drag (row, { x, 80 }, { x, 40 });                // ride up 40 px
+                expectWithinAbsoluteError (s.clips (0)[0].gainDb, 0.0f, 0.001f,
+                                           "the 2 px clip's undrawn gain handle took the click");
+                expect (s.clips (0)[1].gainDb > 1.0f, "the visible clip's own handle should ride");
+            }
+
+            beginTest ("On a Micro row the trim edge wins over the clip-gain handle");
+            {
+                Session s (1, { 48000 });
+                expect (s.engine.splitTrackAtSample (0, 24000));
+                // Leave a gap so the click is unambiguously clip 1's left edge.
+                expect (s.engine.editClip (0, 1, AudioEngine::ClipEdit::Move, 4800));
+                EditPage::TrackRow row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row, 28);                               // Micro: the handle covers the lane
+                const auto total = s.engine.getPlayer().getTotalLengthSamples();
+                const int edge = row.getHeaderWidth() + 4
+                               + juce::roundToInt (28800.0 / (double) total * kLaneW) + 2;   // clip 1's left trim zone
+                drag (row, { edge, 14 }, { edge + 50, 14 });
+                expect (s.clips (0)[1].timelineStartSamples > 28800, "the trim edge did not trim");
+                expectWithinAbsoluteError (s.clips (0)[1].gainDb, 0.0f, 0.001f, "the gain handle took the trim edge");
+            }
+
             //@@MORE_TESTS@@
 
             AudioEngine::setTestModeSkipAudioInit (false);

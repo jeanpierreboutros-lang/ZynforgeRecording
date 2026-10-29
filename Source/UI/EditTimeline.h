@@ -7,8 +7,11 @@
 // hardcoded 48 kHz in the tempo lane on top of that.
 
 #include <juce_core/juce_core.h>
+#include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numeric>
+#include <utility>
 #include <vector>
 
 #include "../Audio/ClipModel.h"
@@ -138,4 +141,32 @@ namespace zynforge
                 return i;
         }
         return -1;
-    }}
+    }
+
+    // Overlapping neighbours IN TIMELINE ORDER, as (outgoing, incoming) list
+    // indices -- the crossfades the EDIT lane draws and lets you drag. A Move
+    // never re-sorts a clip list, so list neighbours are not timeline
+    // neighbours: pairing them drew a crossfade across a clip dragged past
+    // its neighbour (and the gap between them), and its handle wrote fades
+    // as long as both clips. Overlaps under minOverlap samples are too small
+    // to read and are skipped.
+    inline std::vector<std::pair<int, int>> timelineCrossfades (const std::vector<Clip>& clips,
+                                                                juce::int64 minOverlap = 64)
+    {
+        std::vector<int> order (clips.size());
+        std::iota (order.begin(), order.end(), 0);
+        std::stable_sort (order.begin(), order.end(), [&clips] (int a, int b)
+        {
+            return clips[(size_t) a].timelineStartSamples < clips[(size_t) b].timelineStartSamples;
+        });
+        std::vector<std::pair<int, int>> pairs;
+        for (size_t k = 0; k + 1 < order.size(); ++k)
+        {
+            const auto& a = clips[(size_t) order[k]];
+            const auto& b = clips[(size_t) order[k + 1]];
+            if (a.timelineStartSamples + a.fileLengthSamples - b.timelineStartSamples >= minOverlap)
+                pairs.emplace_back (order[k], order[k + 1]);
+        }
+        return pairs;
+    }
+}

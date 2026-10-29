@@ -186,18 +186,21 @@ namespace zynforge
         ClipDrag draggingClipMode { ClipDrag::TrimLeft };
         // Crossfade-midpoint drag. When >= 0, the engineer grabbed
         // the 6 px dot that paints at the midpoint of an overlap
-        // between adjacent clips. draggingXfadeAIdx is the OUTGOING
-        // clip's index in the per-track list; the incoming is
-        // AIdx + 1. We slide the equal-power crossfade point by
+        // between timeline-adjacent clips. draggingXfadeAIdx is the
+        // OUTGOING clip's index in the per-track list, draggingXfadeBIdx
+        // the incoming one's (not necessarily AIdx + 1: a Move leaves the
+        // list unsorted). We slide the equal-power crossfade point by
         // updating both clips' fade lengths so the midpoint follows
         // the mouse.
         int draggingXfadeAIdx { -1 };
+        int draggingXfadeBIdx { -1 };
         int dragStartX          {  0 };
         juce::int64 lastDragSamples { 0 };
         juce::int64 dragStartFadeIn  { 0 };
         juce::int64 dragStartFadeOut { 0 };
         float       dragStartGainDb  { 0.0f };   // clip-gain handle drag (ClipDrag::ClipGain)
         int         dragStartGainY   { 0 };      // mouse y at gain-drag start (relative ride)
+        juce::int64 dragTimelineSamples { 0 };   // session length when a clip drag was grabbed
 
         // Strip reorder drag -- armed on swatch-column mouseDown, activates
         // once vertical movement exceeds 8 px. While dragging, EditPage only
@@ -1928,15 +1931,12 @@ namespace zynforge
                     // tell at a glance that "these two clips
                     // crossfade" instead of seeing two separate
                     // hard edits.
-                    for (size_t ci = 0; ci + 1 < clips->size(); ++ci)
+                    for (auto [ai, bi] : timelineCrossfades (*clips))
                     {
-                        const auto& a = (*clips)[ci];
-                        const auto& b = (*clips)[ci + 1];
+                        const auto& a = (*clips)[(size_t) ai];
+                        const auto& b = (*clips)[(size_t) bi];
                         const auto aEnd   = a.timelineStartSamples + a.fileLengthSamples;
                         const auto bStart = b.timelineStartSamples;
-                        if (bStart >= aEnd) continue;          // no overlap
-                        const auto overlap = aEnd - bStart;
-                        if (overlap < 64) continue;            // too small to read
                         const int xL = sampleToX (bStart);
                         const int xR = sampleToX (aEnd);
                         if (xR - xL < 4) continue;
@@ -2613,10 +2613,11 @@ namespace zynforge
             // rather than starting a clip move on the underlying clip.
             if (laneMode == LaneMode::Waveform && inWavePane (e.x))
             {
-                const int xfadeA = hitTestCrossfadeHandle (e.getPosition());
-                if (xfadeA >= 0)
+                const auto xfade = hitTestCrossfadeHandle (e.getPosition());
+                if (xfade.first >= 0)
                 {
-                    draggingXfadeAIdx = xfadeA;
+                    draggingXfadeAIdx = xfade.first;
+                    draggingXfadeBIdx = xfade.second;
                     return;
                 }
             }
@@ -2644,6 +2645,7 @@ namespace zynforge
                         const int hitZone = 6;
                         const int fadeHandleZone = 8;
                         const int laneTop = inner.getY();
+                        dragTimelineSamples = totalSamples;   // drag scale, fixed at the grab
                         for (int i = 0; i < (int) clips->size(); ++i)
                         {
                             const auto& c = (*clips)[(size_t) i];
@@ -2653,42 +2655,6 @@ namespace zynforge
                             const int xFadeOut = sampleToX (c.timelineStartSamples
                                                             + c.fileLengthSamples
                                                             - c.fadeOutSamples);
-
-                            // Clip-gain handle grab (Smart / Grabber): the
-                            // bottom-left fader corner rides the clip's level.
-                            // Takes priority over body Move; edges + fade
-                            // handles still win above.
-                            if (! c.locked
-                                && (activeTool == EditToolsBar::Tool::Smart
-                                 || activeTool == EditToolsBar::Tool::Grabber
-                                 || activeTool == EditToolsBar::Tool::None))
-                            {
-                                const int gHeadH = juce::jmin (12, juce::jmax (0, inner.getHeight() - 6));
-                                juce::Rectangle<int> gBlk (xL, inner.getY(),
-                                                           juce::jmax (1, xR - xL), inner.getHeight());
-                                if (clipGainHandleRect (gBlk, gHeadH).contains (e.getPosition()))
-                                {
-                                    // Alt/Option-click resets clip gain to 0 dB.
-                                    if (e.mods.isAltDown())
-                                    {
-                                        auto* page = findParentComponentOfClass<EditPage>();
-                                        if (page != nullptr) page->beginClipEdit();
-                                        for (int peer : editGroupPeers())
-                                            if (const int pi = peerClipIndex (peer, i); pi >= 0)
-                                                engine.setClipGainDb (peer, pi, 0.0f);
-                                        if (page != nullptr) page->commitClipEdit ("Reset clip gain");
-                                        repaint();
-                                        return;
-                                    }
-                                    draggingClipIdx     = i;
-                                    draggingClipMode = ClipDrag::ClipGain;
-                                    dragStartGainDb     = c.gainDb;
-                                    dragStartGainY      = e.y;
-                                    if (auto* page = findParentComponentOfClass<EditPage>())
-                                        page->beginClipEdit();
-                                    return;
-                                }
-                            }
 
                             // Only grab a fade handle where it's actually
                             // DRAWN -- i.e. a fade already exists on this edge,
@@ -2725,6 +2691,52 @@ namespace zynforge
                                 dragStartFadeIn     = c.fadeInSamples;
                                 dragStartFadeOut    = c.fadeOutSamples;
                                 return;
+                            }
+
+                            // Clip-gain handle grab (Smart / Grabber): the
+                            // bottom-left fader corner rides the clip's level.
+                            // Takes priority over body Move; the fade handles
+                            // above and (Smart) the 6 px trim edges still win.
+                            // Only where paint DRAWS the handle (a block wider
+                            // than 22 px): the hit rect is at least 22 px wide,
+                            // so a hidden handle on a sliver of a clip stole
+                            // clicks from the next clip -- and on a Micro row
+                            // it covered the left trim edge and fade-in grip.
+                            if (! c.locked
+                                && (activeTool == EditToolsBar::Tool::Smart
+                                 || activeTool == EditToolsBar::Tool::Grabber
+                                 || activeTool == EditToolsBar::Tool::None))
+                            {
+                                const int gHeadH = juce::jmin (12, juce::jmax (0, inner.getHeight() - 6));
+                                juce::Rectangle<int> gBlk (xL, inner.getY(),
+                                                           juce::jmax (1, xR - xL), inner.getHeight());
+                                const auto gHandle = clipGainHandleRect (gBlk, gHeadH);
+                                const bool onTrimEdge = activeTool != EditToolsBar::Tool::Grabber
+                                                     && (std::abs (e.x - xL) <= hitZone
+                                                      || std::abs (e.x - xR) <= hitZone);
+                                if (gBlk.getWidth() > 22 && gHandle.getHeight() >= 12
+                                    && ! onTrimEdge && gHandle.contains (e.getPosition()))
+                                {
+                                    // Alt/Option-click resets clip gain to 0 dB.
+                                    if (e.mods.isAltDown())
+                                    {
+                                        auto* page = findParentComponentOfClass<EditPage>();
+                                        if (page != nullptr) page->beginClipEdit();
+                                        for (int peer : editGroupPeers())
+                                            if (const int pi = peerClipIndex (peer, i); pi >= 0)
+                                                engine.setClipGainDb (peer, pi, 0.0f);
+                                        if (page != nullptr) page->commitClipEdit ("Reset clip gain");
+                                        repaint();
+                                        return;
+                                    }
+                                    draggingClipIdx     = i;
+                                    draggingClipMode = ClipDrag::ClipGain;
+                                    dragStartGainDb     = c.gainDb;
+                                    dragStartGainY      = e.y;
+                                    if (auto* page = findParentComponentOfClass<EditPage>())
+                                        page->beginClipEdit();
+                                    return;
+                                }
                             }
 
                             const bool inClipBody = (e.x >= xL && e.x <= xR);
@@ -2923,7 +2935,8 @@ namespace zynforge
             if (draggingXfadeAIdx >= 0)
             {
                 auto* clips = engine.tryClipsFor (index);
-                if (clips != nullptr && draggingXfadeAIdx + 1 < (int) clips->size())
+                if (clips != nullptr && draggingXfadeAIdx < (int) clips->size()
+                    && draggingXfadeBIdx >= 0 && draggingXfadeBIdx < (int) clips->size())
                 {
                     const auto& player = engine.getPlayer();
                     const juce::int64 totalSamples = player.isLoaded()
@@ -2935,7 +2948,7 @@ namespace zynforge
                             (double) (e.x - inner.getX()) / (double) juce::jmax (1, inner.getWidth()));
                         const juce::int64 midSample = (juce::int64) (prop * (double) totalSamples);
                         const auto& a = (*clips)[(size_t) draggingXfadeAIdx];
-                        const auto& b = (*clips)[(size_t) (draggingXfadeAIdx + 1)];
+                        const auto& b = (*clips)[(size_t) draggingXfadeBIdx];
                         const auto aEnd   = a.timelineStartSamples + a.fileLengthSamples;
                         const auto bStart = b.timelineStartSamples;
                         // Guard the degenerate overlap. With an overlap of <= 2
@@ -2956,7 +2969,7 @@ namespace zynforge
                         for (int peer : editGroupPeers())
                         {
                             const int pa = peerClipIndex (peer, draggingXfadeAIdx);
-                            const int pb = peerClipIndex (peer, draggingXfadeAIdx + 1);
+                            const int pb = peerClipIndex (peer, draggingXfadeBIdx);
                             if (pa < 0 || pb < 0) continue;
                             engine.setClipFades (peer, pa, a.fadeInSamples, aFadeOut);
                             engine.setClipFades (peer, pb, bFadeIn, b.fadeOutSamples);
@@ -3057,8 +3070,12 @@ namespace zynforge
             if (draggingClipIdx >= 0)
             {
                 const auto& player = engine.getPlayer();
-                const juce::int64 totalSamples = player.isLoaded()
-                    ? player.getTotalLengthSamples() : 0;
+                // Map pixels at the scale the clip was GRABBED at. Dragging the
+                // last clip right grows the session on every step, and re-reading
+                // it here made the clip outrun the mouse (about W / (W - dx) x)
+                // while the lanes rescaled under it.
+                const juce::int64 totalSamples = dragTimelineSamples > 0 ? dragTimelineSamples
+                                               : player.isLoaded() ? player.getTotalLengthSamples() : 0;
                 const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
 
                 // Clip-gain handle drag (ClipDrag::ClipGain): relative ride from the grab
@@ -3285,7 +3302,9 @@ namespace zynforge
             draggingClipIdx  = -1;
             draggingClipMode = ClipDrag::TrimLeft;
             draggingXfadeAIdx = -1;
+            draggingXfadeBIdx = -1;
             lastDragSamples  = 0;
+            dragTimelineSamples = 0;
             if ((wasDraggingPoint || wasDraggingTension) && automationDragEnd)
                 automationDragEnd (wasDraggingTension ? "Bend automation curve"
                                                       : "Move automation point");
@@ -3772,38 +3791,36 @@ namespace zynforge
         // (row-local) position, or -1 if none. Hit tolerance is 7 px
         // around the painted handle (which is 7 px wide), so a sloppy
         // right-click still lands the menu.
-        // Returns the index of the OUTGOING clip whose crossfade
-        // midpoint handle is under the cursor, or -1. Mirrors the
-        // paint code's overlap detection. 6 px tolerance around
+        // Returns the (outgoing, incoming) clip indices of the crossfade
+        // whose midpoint handle is under the cursor, or { -1, -1 }. Mirrors
+        // the paint code's overlap detection. 6 px tolerance around
         // the handle.
-        int hitTestCrossfadeHandle (juce::Point<int> pos) const
+        std::pair<int, int> hitTestCrossfadeHandle (juce::Point<int> pos) const
         {
             const auto* clips = engine.tryClipsFor (index);
-            if (clips == nullptr || clips->size() < 2) return -1;
+            if (clips == nullptr || clips->size() < 2) return { -1, -1 };
             const auto& player = engine.getPlayer();
             const juce::int64 totalSamples = player.isLoaded()
                 ? player.getTotalLengthSamples() : 0;
-            if (totalSamples <= 0) return -1;
+            if (totalSamples <= 0) return { -1, -1 };
             const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
             auto sampleToX = [&] (juce::int64 sp) -> int
             { return TimelineMapper::forLane (inner, totalSamples).toXFloor (sp); };
-            for (size_t i = 0; i + 1 < clips->size(); ++i)
+            for (auto [ai, bi] : timelineCrossfades (*clips))
             {
-                const auto& a = (*clips)[i];
-                const auto& b = (*clips)[i + 1];
+                const auto& a = (*clips)[(size_t) ai];
+                const auto& b = (*clips)[(size_t) bi];
                 const auto aEnd   = a.timelineStartSamples + a.fileLengthSamples;
                 const auto bStart = b.timelineStartSamples;
-                if (bStart >= aEnd) continue;
-                if (aEnd - bStart < 64) continue;
                 const int xL = sampleToX (bStart);
                 const int xR = sampleToX (aEnd);
                 if (xR - xL < 4) continue;
                 const int xMid = (xL + xR) / 2;
                 const int yMid = inner.getY() + inner.getHeight() / 2;
                 if (std::abs (pos.x - xMid) <= 6 && std::abs (pos.y - yMid) <= 6)
-                    return (int) i;
+                    return { ai, bi };
             }
-            return -1;
+            return { -1, -1 };
         }
 
         int hitTestAutomationPoint (juce::Point<int> pos) const
