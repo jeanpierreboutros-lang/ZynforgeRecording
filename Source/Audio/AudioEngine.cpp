@@ -2707,16 +2707,24 @@ namespace zynforge
                                                          : (juce::int64) -1;
 
         // Resolve every strip's lane-driven inputs ONCE for this block, under
-        // ONE try-lock (see resolvedMix). Losing the lock -- the UI is
-        // mid-edit -- or SUSPEND makes the whole block use the static values,
-        // consistently, instead of a per-call mix of both. The rules live in
-        // MixKernel.h, shared with the offline bounce.
+        // ONE try-lock (see resolvedMix). SUSPEND makes the whole block use
+        // the static values, consistently, instead of a per-call mix of both.
+        // Losing the lock while rolling -- the UI is mid-edit, WRITE thinning,
+        // the strip poll -- HOLDS the previous block's values: dropping to the
+        // static ones let a Mute-lane-muted strip blip through for a block and
+        // jumped every volume lane to its fader. Held only while the same
+        // strips sit in the same order as when they were resolved. The rules
+        // live in MixKernel.h, shared with the offline bounce.
         {
             const juce::ScopedTryLock automationStl (automationLock);
             const bool rolling   = autoPlayPos >= 0;
-            const bool readLanes = rolling && automationStl.isLocked()
-                                && ! automationReadSuspended.load (std::memory_order_acquire);
-            for (int i = 0; i < numTracks && i < kMaxResolvedStrips; ++i)
+            const bool suspended = automationReadSuspended.load (std::memory_order_acquire);
+            const bool readLanes = rolling && automationStl.isLocked() && ! suspended;
+            const int  generation = recorder.getTrackGeneration();
+            const bool holdLanes = rolling && ! suspended && ! automationStl.isLocked()
+                                && resolvedMixFromLanes && resolvedMixTracks == numTracks
+                                && resolvedMixGeneration == generation;
+            for (int i = 0; ! holdLanes && i < numTracks && i < kMaxResolvedStrips; ++i)
             {
                 auto& t = recorder.getTrack (i);
                 const int autoCh = mix::automationChannel (
@@ -2728,6 +2736,12 @@ namespace zynforge
                     t.muted.load (std::memory_order_relaxed),
                     autoPlayPos, rolling, readLanes);
             }
+            if (! holdLanes)
+            {
+                resolvedMixFromLanes  = readLanes;
+                resolvedMixTracks     = numTracks;
+                resolvedMixGeneration = generation;
+            }
         }
 
         const auto effectiveGainDb = [this] (int i) noexcept -> float
@@ -2736,8 +2750,8 @@ namespace zynforge
             float dB = i < kMaxResolvedStrips ? resolvedMix[(size_t) i].volDb
                                               : t.gainDb.load (std::memory_order_relaxed);
             const int g = t.vcaGroup.load (std::memory_order_relaxed);
-            if (g >= 0 && g < kNumVcas)
-                dB += vcas[(size_t) g].gainDb.load (std::memory_order_relaxed);
+            dB = mix::stripDb (dB, g >= 0 && g < kNumVcas
+                                     ? vcas[(size_t) g].gainDb.load (std::memory_order_relaxed) : 0.0f);
             // Trim-follow: track the console's input-gain change since capture
             // so soundcheck preamp moves shift the recorded track like a live mic.
             if (trimFollowEnabled.load (std::memory_order_relaxed))
@@ -3067,8 +3081,8 @@ namespace zynforge
             // though it worked on the routed outputs (which go through
             // effectiveGainDb). Fold the VCA gain in so the monitor matches.
             const int vgrp = t.vcaGroup.load (std::memory_order_relaxed);
-            if (vgrp >= 0 && vgrp < kNumVcas)
-                dBVal += vcas[(size_t) vgrp].gainDb.load (std::memory_order_relaxed);
+            dBVal = mix::stripDb (dBVal, vgrp >= 0 && vgrp < kNumVcas
+                                           ? vcas[(size_t) vgrp].gainDb.load (std::memory_order_relaxed) : 0.0f);
 
             const double dB   = (double) dBVal;
             const double gain = juce::Decibels::decibelsToGain (dB, -60.0);

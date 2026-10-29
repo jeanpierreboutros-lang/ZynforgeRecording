@@ -1077,7 +1077,7 @@ namespace zynforge
                     if (! cp->needed || cp->isBus) continue;
                     const bool muted = mix::postFaderMuted (cp->muted, cp->vcaMuted, cp->lanes.muteLane);
                     const float postGain = muted ? 0.0f
-                        : juce::Decibels::decibelsToGain (cp->lanes.volDb + cp->vcaDb, -60.0f);
+                        : juce::Decibels::decibelsToGain (mix::stripDb (cp->lanes.volDb, cp->vcaDb), -60.0f);
                     for (const auto& send : cp->sends)
                     {
                         const int bus = send.bus;
@@ -1090,7 +1090,7 @@ namespace zynforge
                 for (auto& cp : live)
                 {
                     if (! cp->audible || cp->lanes.monitorMuted) continue;
-                    const double gain = juce::Decibels::decibelsToGain ((double) (cp->lanes.volDb + cp->vcaDb), -60.0);
+                    const double gain = juce::Decibels::decibelsToGain ((double) mix::stripDb (cp->lanes.volDb, cp->vcaDb), -60.0);
                     const auto [gL, gR] = mix::constantPowerPan (gain, cp->lanes.pan);
                     const auto* s = raw.getReadPointer (cp->track);
                     for (int k = 0; k < n; ++k)

@@ -16,6 +16,9 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_audio_devices/juce_audio_devices.h>
 
+#include <atomic>
+#include <thread>
+
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MultitrackRecorder.h"
 #include "../Audio/LoudnessMeter.h"
@@ -441,6 +444,90 @@ namespace zynforge
                 const float pk = f.peakOut (0, 256);
                 expect (pk > 0.20f);
                 expect (pk < 0.50f);
+            }
+
+            beginTest ("A fader or VCA at its -60 dB floor is off, whatever the other one says");
+            {
+                // Strip and VCA dB are summed: a strip pulled to the floor
+                // under a VCA at +12 played at -48 dB, and a VCA pulled to
+                // the floor still passed strips set above 0 dB.
+                CallbackFixture f (1, 1, 2);
+                auto& t = f.engine.getRecorder().getTrack (0);
+                t.monitor.store (true);
+                f.engine.setMasterOutputs (0, 1);
+                f.engine.setTrackVcaGroup (0, 0);
+
+                t.gainDb.store (-60.0f);
+                f.engine.getVca (0).gainDb.store (12.0f);
+                f.writeInput (0, 0.5f, 256);
+                f.process (256);
+                expectEquals (f.peakOut (0, 256), 0.0f, "strip fader at the floor is audible under a +12 dB VCA");
+
+                t.gainDb.store (12.0f);
+                f.engine.getVca (0).gainDb.store (-60.0f);
+                f.writeInput (0, 0.5f, 256);
+                f.process (256);
+                expectEquals (f.peakOut (0, 256), 0.0f, "VCA at the floor passes a strip set to +12 dB");
+
+                t.gainDb.store (-6.0f);
+                f.engine.getVca (0).gainDb.store (3.0f);
+                f.writeInput (0, 0.5f, 256);
+                f.process (256);
+                expect (f.peakOut (0, 256) > 0.2f, "above the floor the two still sum");
+                f.engine.setTrackVcaGroup (0, -1);
+            }
+
+            beginTest ("Losing the automation try-lock mid-roll holds the lanes instead of un-muting");
+            {
+                // Any message-thread holder of automationLock (an automation
+                // edit, WRITE thinning, the strip poll) made the callback's
+                // try-lock fail, and that block fell back to static values:
+                // Mute-lane-muted strips blipped through, volume lanes jumped
+                // to the fader.
+                const auto dir = recordTestSession (1, 0.5f);
+                {
+                    CallbackFixture f (1, 1, 2);
+                    expect (f.engine.loadSession (dir, false, false) == 1);
+                    f.engine.setMasterOutputs (0, 1);
+                    f.engine.getClickEngine().setEnabled (false);
+                    f.engine.startPlayback();
+                    expect (fillPlaybackBuffer (f) > 0.05f, "session never became audible");
+
+                    using P = AudioEngine::AutomationParam;
+                    f.engine.addAutomationPoint (0, P::Volume, 0, -20.0f);
+                    f.engine.getPlayer().setPositionSamples (0);
+                    f.process (256);
+                    const float laneLevel = f.peakOut (0, 256);
+                    expect (laneLevel > 0.01f);
+
+                    auto renderWithLockHeld = [&f]
+                    {
+                        std::atomic<bool> held { false }, release { false };
+                        std::thread holder ([&]
+                        {
+                            const juce::ScopedLock sl (f.engine.automationLock);
+                            held.store (true);
+                            while (! release.load()) juce::Thread::sleep (1);
+                        });
+                        while (! held.load()) juce::Thread::sleep (1);
+                        f.engine.getPlayer().setPositionSamples (0);
+                        f.process (256);
+                        release.store (true);
+                        holder.join();
+                        return f.peakOut (0, 256);
+                    };
+
+                    expectWithinAbsoluteError (renderWithLockHeld(), laneLevel, 0.002f,
+                                               "a missed try-lock jumped the volume lane to the fader");
+
+                    f.engine.addAutomationPoint (0, P::Mute, 0, 1.0f);
+                    f.engine.getPlayer().setPositionSamples (0);
+                    f.process (256);
+                    expectEquals (f.peakOut (0, 256), 0.0f);
+                    expectEquals (renderWithLockHeld(), 0.0f, "a missed try-lock un-muted a Mute-lane strip");
+                    f.engine.stopPlayback();
+                }
+                dir.deleteRecursively();
             }
 
             // ─── Click track follows the monitor bus ─────────────────

@@ -35,6 +35,7 @@ namespace zynforge
 {
 
     class MainTransportRegressionTests;
+    class AudioCallbackTests;
 
     class AudioEngine final : public juce::AudioIODeviceCallback,
                               public juce::MidiInputCallback,
@@ -42,6 +43,7 @@ namespace zynforge
     {
         friend class SettingsBatchAuditTests;
         friend class MainTransportRegressionTests; // deterministic STOP failure-latch fixtures
+        friend class AudioCallbackTests;           // holds automationLock to force a missed try-lock
     public:
         AudioEngine();
         ~AudioEngine() override;
@@ -1326,6 +1328,12 @@ namespace zynforge
         // another. The offline bounce resolves the same struct per step.
         static constexpr int kMaxResolvedStrips = 256;   // == setStripCount's ceiling
         std::array<mix::StripLanes, kMaxResolvedStrips> resolvedMix {};
+        // What resolvedMix was last resolved from (audio thread only): a
+        // missed try-lock mid-roll holds it only if it came from the lanes
+        // for the same strips (count + track generation).
+        bool resolvedMixFromLanes  { false };
+        int  resolvedMixTracks     { -1 };
+        int  resolvedMixGeneration { -1 };
 
         // mix::resolveLanes over this engine's lanes at `pos`. The caller holds
         // automationLock -- the callback via its one try-lock per block, the

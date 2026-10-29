@@ -115,6 +115,18 @@ namespace zynforge
                 expectWithinAbsoluteError (mix::masterGain (false, -6.0f),
                                            juce::Decibels::decibelsToGain (-6.0), 1.0e-12);
             }
+
+            beginTest ("A fader or VCA at the -60 dB floor is off; above it they sum");
+            {
+                auto gain = [] (float fader, float vca) { return juce::Decibels::decibelsToGain (mix::stripDb (fader, vca), -60.0f); };
+                expectEquals (gain (-60.0f, 12.0f), 0.0f);
+                expectEquals (gain (12.0f, -60.0f), 0.0f);
+                expectEquals (gain (-60.0f, 0.0f), 0.0f);
+                // Even a trim added afterwards (trim-follow) stays off.
+                expect (mix::stripDb (-60.0f, 12.0f) + 24.0f < mix::kFaderFloorDb);
+                expectWithinAbsoluteError (mix::stripDb (-6.0f, 3.0f), -3.0f, 1.0e-6f);
+                expectWithinAbsoluteError (mix::stripDb (-59.0f, 12.0f), -47.0f, 1.0e-6f);
+            }
         }
     };
 

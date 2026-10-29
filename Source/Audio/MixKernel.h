@@ -98,6 +98,18 @@ namespace zynforge::mix
         return m;
     }
 
+    // A strip's fader (or Volume lane) and its VCA meet in dB, and either one
+    // at its -60 dB floor is OFF, as on a console. Summing first left a strip
+    // pulled to the floor at -48 dB under a VCA at +12, and a VCA at the floor
+    // still passed strips set above 0 dB. `vcaDb` is 0 for an unassigned
+    // strip. kOffDb stays far below the floor even after a trim is added.
+    inline constexpr float kFaderFloorDb = -60.0f;
+    inline constexpr float kOffDb        = -200.0f;
+    constexpr float stripDb (float faderDb, float vcaDb) noexcept
+    {
+        return (faderDb <= kFaderFloorDb || vcaDb <= kFaderFloorDb) ? kOffDb : faderDb + vcaDb;
+    }
+
     // A POST-fader send follows the channel mute like a real console: the
     // strip's own mute, its VCA's mute and the drawn Mute lane all silence it.
     constexpr bool postFaderMuted (bool staticMute, bool vcaMuted, bool muteLane) noexcept
