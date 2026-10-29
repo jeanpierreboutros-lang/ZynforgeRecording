@@ -31,6 +31,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 - Dragging a strip's colour swatch in EDIT now shows a drop line where the strip will land, autoscrolls the track list near its top and bottom edges, and moves the strip **once, on release**. A strip can now move past a strip of a different width (mono past a stereo pair); stereo pairs always move as one.
 
+### Fixed — UI timer disk polling
+
+- The free-space readout no longer queries the session drive ten times a second. On a busy or slow external drive each query could stall the screen; it now refreshes every two seconds, or at once when the session changes.
+
 ### Fixed — RECORD pre-flight
 
 - A RECORD press that is then refused -- device clock does not match the session, StereoMix has no stream sends, or the drive lacks 30 minutes of space -- no longer quietly rewrites the input routing of armed channels first. The routing auto-fix now runs only once every check has passed.

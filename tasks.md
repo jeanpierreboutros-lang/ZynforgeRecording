@@ -14,6 +14,7 @@ Development moved from OpenAI Codex back to Claude Code. The working copy now li
 - [x] `MainComponent` menu: `menuItemSelected` (525 lines) is now guards + a `MenuCommandTable` dispatch; the Session Settings dialog moved to its own file; dead handlers for ids nothing built (OSC 110–116, LTC/MTC 610–699, per-track export 100–199) and the dead `promptOscPort` removed; the menu test now proves every built item has a handler and no exact id sits in a range (the old hand-kept range list was stale).
 - [x] `MainComponent::onRecordClicked` (394 lines) split into named stages with a `RecordStartPlan`; every refusal now runs before the routing auto-fix (a refused press used to rewrite and persist armed channels' input routing).
 - [ ] Split `MainComponent` (one class over 11 files) into controllers; split `EditTrackRow.h`; extract steps from `MultitrackRecorder::startRecording` / `finishFinalization`; move app/network ownership out of `AudioEngine`.
+- [x] UI timer: the free-space readout queried the session volume (stat + statfs) on every 10 Hz tick; now at most every 2 s. Left as is: the NDI send inside the audio callback (`NDIBridge.h`) -- whether it can block depends on the NDI SDK, which is not in the repo to verify.
 - [ ] Build: tests out of the shipping app (core library + test target); CI cache keyed on the JUCE SHA, faster Debug job.
 - [ ] Organise test files by feature rather than by audit/month.
 

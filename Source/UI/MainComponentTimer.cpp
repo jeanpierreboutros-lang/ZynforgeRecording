@@ -278,15 +278,25 @@ void MainComponent::timerCallback()
     // hardcode ~/Music/Zynforge Sessions, so an engineer recording to an
     // external drive (the `sessionsRoot` override, or any session opened from
     // elsewhere) watched the free-space figure for the wrong disk all show.
-    const auto sessRoot = [this]
+    // The query is a stat + statfs on the session volume -- the drive taking
+    // the heaviest writes during a show, often a slow USB/exFAT or network
+    // volume where either call can stall. Free space at GB resolution does
+    // not need 10 Hz: re-query at most every 2 s, or at once when the session
+    // directory changes.
     {
         const auto active = engine.getActiveSessionDir();
-        if (active.isDirectory()) return active;
-        return getSessionsRoot();
-    }();
-    const auto bytesFree = sessRoot.exists() ? sessRoot.getBytesFreeOnVolume()
-                                              : juce::File ("/").getBytesFreeOnVolume();
-    const double freeGB = (double) bytesFree / (1024.0 * 1024.0 * 1024.0);
+        const auto nowMs  = juce::Time::getMillisecondCounter();
+        if (active != diskQueryDir || nowMs - lastDiskQueryMs >= 2000 || lastDiskQueryMs == 0)
+        {
+            diskQueryDir    = active;
+            lastDiskQueryMs = juce::jmax ((juce::uint32) 1, nowMs);
+            const auto sessRoot = active.isDirectory() ? active : getSessionsRoot();
+            const auto bytesFree = sessRoot.exists() ? sessRoot.getBytesFreeOnVolume()
+                                                      : juce::File ("/").getBytesFreeOnVolume();
+            cachedFreeGB = (double) bytesFree / (1024.0 * 1024.0 * 1024.0);
+        }
+    }
+    const double freeGB = cachedFreeGB;
 
     // This estimate groups copies by physical volume and selects the first
     // volume to fill. Dividing one drive's free space by the aggregate write

@@ -317,6 +317,11 @@ private:
     int          committedMixerCount { -1 };// strip count at the baseline (structural changes re-baseline)
     juce::uint64 lastSeenMixerFp   { 0 };   // previous tick's fingerprint (settle detection)
     int          mixerChangeStableTicks { 0 };
+    // Free-space readout cache: timerCallback re-queries the session volume
+    // at most every 2 s (or when the session directory changes).
+    juce::File   diskQueryDir;
+    juce::uint32 lastDiskQueryMs { 0 };
+    double       cachedFreeGB { 0.0 };
     bool         mixerUndoReady { false };  // baseline established yet?
     void editCutSelected (bool cut);
     void editPasteSelected();
