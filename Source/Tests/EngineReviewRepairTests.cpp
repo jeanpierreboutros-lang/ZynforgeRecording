@@ -223,6 +223,7 @@ namespace zynforge
                     while (blocks.load() < start + n) std::this_thread::yield();
                 };
 
+                const auto total = p.getTotalLengthSamples();
                 int lost = 0;
                 for (int k = 0; k < 300; ++k)
                 {
@@ -232,12 +233,16 @@ namespace zynforge
                     p.start();
                     pause.store (false);
                     waitBlocks (2);
+                    const int before = blocks.load();
                     p.setPositionSamples (target);   // lands mid-render most of the time
                     waitBlocks (2);
                     pause.store (true);
                     while (! paused.load()) std::this_thread::yield();
+                    // From the target, the playhead can only have moved on by
+                    // the blocks rendered since (plus the one in flight).
+                    const auto rendered = (juce::int64) (blocks.load() - before + 1);
                     const auto pos = p.getPositionSamples();
-                    if (pos < target || pos > target + 48000) ++lost;
+                    if (pos < target || pos > juce::jmin (total, target + rendered * 256)) ++lost;
                 }
                 quit.store (true);
                 audio.join();
