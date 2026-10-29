@@ -263,10 +263,17 @@ namespace zynforge
                 // List every strip on this VCA bus, click to unassign.
                 int assignedCount = 0;
                 juce::PopupMenu assigned;
-                for (int t = 0; t < engine.getRecorder().getNumTracks(); ++t)
+                auto& rec = engine.getRecorder();
+                for (int t = 0; t < rec.getNumTracks(); ++t)
                 {
-                    auto& ts = engine.getRecorder().getTrack (t);
-                    if (ts.vcaGroup.load (std::memory_order_relaxed) == index)
+                    // A stereo pair is one logical strip: list it once, by its
+                    // L half (unassigning clears both halves below).
+                    if (t > 0 && rec.getTrack (t - 1).isStereo.load (std::memory_order_relaxed)) continue;
+                    auto& ts = rec.getTrack (t);
+                    const bool pairOnBus = ts.isStereo.load (std::memory_order_relaxed)
+                        && t + 1 < rec.getNumTracks()
+                        && rec.getTrack (t + 1).vcaGroup.load (std::memory_order_relaxed) == index;
+                    if (ts.vcaGroup.load (std::memory_order_relaxed) == index || pairOnBus)
                     {
                         const auto nm = ts.name.isEmpty()
                                           ? juce::String ("Strip ") + juce::String (t + 1)
@@ -294,8 +301,13 @@ namespace zynforge
                     }
                     else if (chosen >= 100)
                     {
-                        // Unassign a strip from this VCA.
-                        safe->engine.setTrackVcaGroup (chosen - 100, -1);
+                        // Unassign a strip (both halves of a pair) from this VCA.
+                        const int t = chosen - 100;
+                        auto& r = safe->engine.getRecorder();
+                        safe->engine.setTrackVcaGroup (t, -1);
+                        if (t >= 0 && t + 1 < r.getNumTracks()
+                            && r.getTrack (t).isStereo.load (std::memory_order_relaxed))
+                            safe->engine.setTrackVcaGroup (t + 1, -1);
                     }
                 });
             }

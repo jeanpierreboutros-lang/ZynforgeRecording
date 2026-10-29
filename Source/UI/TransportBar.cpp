@@ -282,6 +282,10 @@ namespace zynforge
             // the edit selection) -- toggling off just stops the wrap.
             auto& p = engine.getPlayer();
             const bool nowOn = ! p.isLoopEnabled();
+            // A punch ends by crossing its out point. Looping back would keep
+            // it recording, and the splice would then overwrite audio after
+            // the out point, so loop stays off for PUNCH mode and any take.
+            if (nowOn && (engine.isRecording() || engine.isPunchModeOn())) { refreshStates(); return; }
             if (nowOn && ! p.hasLoopRegion())
             {
                 const auto total = p.getTotalLengthSamples();

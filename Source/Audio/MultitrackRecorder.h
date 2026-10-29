@@ -45,7 +45,11 @@ namespace zynforge
 
         // Real-time safe: pushes input samples and updates meters.
         // Called from the audio thread.
-        void processBlock (const float* const* inputs, int numChannels, int numSamples) noexcept;
+        // playheadAtBlock: the player position of inputs[.][0] while playback
+        // rolls, else -1. A punch splices where its first sample was captured
+        // (see punchCaptureOrigin).
+        void processBlock (const float* const* inputs, int numChannels, int numSamples,
+                           juce::int64 playheadAtBlock = -1) noexcept;
 
         bool startRecording (const juce::File& sessionDir);
         juce::String getStartError() const { return startError; }
@@ -69,6 +73,7 @@ namespace zynforge
         void armPunchIn (juce::int64 punchInSample) noexcept
         {
             if (isFinalizing()) return;
+            continueAsPart = false;   // one arm per start: punch and continue never combine
             punchInActive = true;
             punchInPos    = juce::jmax ((juce::int64) 0, punchInSample);
             // The fresh punch file records from sample 0, but on the TIMELINE
@@ -103,10 +108,27 @@ namespace zynforge
         void armContinue (juce::int64 baseSamples) noexcept
         {
             if (isFinalizing()) return;
+            punchInActive     = false;   // see armPunchIn
+            punchInPos        = 0;
             continueAsPart    = true;
             recordBaseSamples = juce::jmax ((juce::int64) 0, baseSamples);
         }
         bool isContinueArmed() const noexcept { return continueAsPart; }
+
+        // Drop a punch or continue arm that no take consumed. Every refused
+        // start calls this: a stale arm would turn the NEXT RECORD into a
+        // punch, a continue, or both at once, which splices silence over the
+        // original take. No-op while a take is live or finalizing, because
+        // the stop path still reads the arm.
+        void discardTakeArms() noexcept
+        {
+            if (recording.load() || isFinalizing()) return;
+            punchInActive     = false;
+            punchInPos        = 0;
+            continueAsPart    = false;
+            recordBaseSamples = 0;
+            punchCaptureOrigin.store (-1, std::memory_order_relaxed);
+        }
 
         // Recording position ON THE TIMELINE: the take base (0 for a normal
         // take, the existing length for a continue) + samples captured so far.
@@ -384,6 +406,10 @@ namespace zynforge
             // Never taken on the audio thread (drainShard is consumer-side).
             juce::CriticalSection drainLock;
 
+            // Set by goLive for a fresh take with pre-roll; the shard writes
+            // its channels' history (under drainLock) before draining.
+            bool preRollPending { false };
+
             // Reused planar staging buffers for the stereo-pair write path:
             // a 2-channel writer needs its two source channels as contiguous
             // arrays (writeFromFloatArrays is planar, not interleaved), but
@@ -570,7 +596,7 @@ namespace zynforge
 
         // Per-channel rolling history used for pre-roll. The audio thread is
         // the only writer (push, continuously -- NOT gated on recording); the
-        // message thread reads once via dumpPreRollToWriters() at record start.
+        // writer threads read the detached copy once per take (dumpPreRollForShard).
         // No lock: push publishes its data writes with a release store on
         // totalWritten that readHistory pairs with an acquire load, and the
         // ring is over-allocated by kPreRollSafetySec seconds BEYOND the
@@ -605,7 +631,12 @@ namespace zynforge
         void closeWriters();
         void finalizeWriterHandles();
         void allocatePreRollBuffers();
-        void dumpPreRollToWriters();
+        // Pre-roll: goLive sizes it, then each writer thread writes its own
+        // channels' history before their first live samples (see goLive).
+        void preparePreRollDump();
+        void dumpPreRollForShard (ShardClient&);
+        int  preRollHistorySamples { 0 };
+        std::atomic<int> preRollShardsPending { 0 };
 
         // ── startRecording stages ───────────────────────────────────────
         // startRecording (MultitrackRecorder.cpp) runs these in order under
@@ -725,6 +756,7 @@ namespace zynforge
         friend class MainTransportRegressionTests; // deterministic STOP failure-latch fixtures
         friend class AsyncStopAuditTests;
         friend class ReviewCaptureRepairTests;
+        friend class PunchSessionGuardTests;   // splice-failure fixtures
         std::function<void()> afterFifoReservationForTests;
         struct ReportTestHooks
         {
@@ -851,6 +883,16 @@ namespace zynforge
         // audio is spliced in at.
         std::atomic<bool> punchInActive { false };
         juce::int64 punchInPos    { 0 };
+        // Where the first captured sample of a punch sat on the timeline, set
+        // once by the audio thread (-1 = not yet, or playback not rolling).
+        // Start work runs while playback rolls, so capture begins after the
+        // armed point; the splice uses this so the new audio lands where it
+        // was played, not hundreds of ms early.
+        std::atomic<juce::int64> punchCaptureOrigin { -1 };
+        // Per channel: this take wrote a silent lead-in up to punchInPos at
+        // start (a track with no base). If capture began later than that, the
+        // first live block opens a silent gap of the difference in its FIFO.
+        std::vector<char> leadInGapTracks;
         std::atomic<bool> continueAsPart { false };   // append a new part instead of overwriting
         std::atomic<juce::int64> recordBaseSamples { 0 };       // timeline offset for a continue take
 

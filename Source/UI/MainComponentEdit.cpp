@@ -271,20 +271,22 @@ void MainComponent::editUndo()
     }
 
     if (! undoManager.canUndo()) { showStatus ("Nothing to undo"); return; }
+    const auto undone = undoManager.getUndoDescription();   // read before undo() moves the stack
     undoManager.undo();
     lastTrackCount = -1;
     rebaselineMixerUndo();   // the restored state is the new baseline, not a fresh change
-    showStatus ("Undo: " + undoManager.getUndoDescription());
+    showStatus ("Undo: " + undone);
 }
 
 void MainComponent::editRedo()
 {
     if (! canMutateTimeline()) return;
     if (! undoManager.canRedo()) { showStatus ("Nothing to redo"); return; }
+    const auto redone = undoManager.getRedoDescription();
     undoManager.redo();
     lastTrackCount = -1;
     rebaselineMixerUndo();   // the restored state is the new baseline, not a fresh change
-    showStatus ("Redo: " + undoManager.getRedoDescription());
+    showStatus ("Redo: " + redone);
 }
 
 // ─── Cut / copy / paste / delete on the strip selection ──────────────

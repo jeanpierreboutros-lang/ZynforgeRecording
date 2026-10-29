@@ -297,23 +297,45 @@ namespace zynforge
         // Release old storage outside the audio boundary lock.
     }
 
-    void MultitrackRecorder::dumpPreRollToWriters()
+    void MultitrackRecorder::preparePreRollDump()
     {
         // Pre-record history belongs only to a fresh take. A punch inserts
         // its new file at punchInPos, and a continuation starts at the old
         // take's end; prepending history to either shifts the edit boundary.
-        if (preRollSeconds <= 0 || punchInActive || continueAsPart) return;
+        preRollHistorySamples = 0;
+        if (preRollSeconds <= 0 || punchInActive || continueAsPart)
+        {
+            preRollSnapshot.clear();
+            return;
+        }
 
         const int wanted = (int) (sampleRate * preRollSeconds);
-        std::vector<float> tmp ((std::size_t) wanted, 0.0f);
-
-        std::vector<float> tmpR ((std::size_t) wanted, 0.0f);
-
-        int historySamples = 0;
         for (std::size_t i = 0; i < writers.size() && i < preRollSnapshot.size(); ++i)
             if (writers[i].active)
-                historySamples = juce::jmax (historySamples, (int) juce::jmin (
+                preRollHistorySamples = juce::jmax (preRollHistorySamples, (int) juce::jmin (
                     (juce::int64) wanted, preRollSnapshot[i]->totalWritten.load()));
+        if (preRollHistorySamples <= 0)
+        {
+            preRollSnapshot.clear();
+            return;
+        }
+        samplesSinceStart.fetch_add (preRollHistorySamples, std::memory_order_relaxed);
+        preRollShardsPending.store ((int) shards.size(), std::memory_order_relaxed);
+        for (auto& sh : shards) sh->preRollPending = true;
+    }
+
+    // Runs on the shard's writer thread (or the final drain at STOP) under its
+    // drainLock, before the shard's first live samples. Writing the history
+    // here, per shard and in parallel, keeps every other shard draining; the
+    // old synchronous dump held all writers off while the live FIFO (about
+    // 5.5 s) filled, so a long pre-roll, especially to FLAC on three copies,
+    // could drop samples right after it.
+    void MultitrackRecorder::dumpPreRollForShard (ShardClient& shard)
+    {
+        shard.preRollPending = false;
+        const int historySamples = preRollHistorySamples;
+        std::vector<float> tmp ((std::size_t) historySamples, 0.0f);
+        std::vector<float> tmpR ((std::size_t) historySamples, 0.0f);
         const auto history = [&] (std::size_t channel, std::vector<float>& destination)
         {
             const int got = preRollSnapshot[channel]->readHistory (destination.data(), historySamples);
@@ -326,7 +348,9 @@ namespace zynforge
                 std::fill_n (destination.data(), historySamples - got, 0.0f);
             }
         };
-        for (std::size_t i = 0; i < writers.size() && i < preRollSnapshot.size(); ++i)
+        const auto first = (std::size_t) juce::jmax (0, shard.firstChannel);
+        const auto last  = (std::size_t) juce::jmax (0, shard.lastChannel);
+        for (std::size_t i = first; i < last && i < writers.size() && i < preRollSnapshot.size(); ++i)
         {
             auto& w = writers[i];
             // Participation gate, not `writer != nullptr` -- a channel whose
@@ -402,8 +426,10 @@ namespace zynforge
             const float* const arr[] = { tmp.data() };
             fanOut (arr, 1, historySamples);
         }
-        samplesSinceStart.fetch_add (historySamples, std::memory_order_relaxed);
-        preRollSnapshot.clear();
+
+        // The last shard to finish frees the detached history.
+        if (preRollShardsPending.fetch_sub (1, std::memory_order_acq_rel) == 1)
+            preRollSnapshot.clear();
     }
 
     void MultitrackRecorder::release()
@@ -432,11 +458,30 @@ namespace zynforge
 
     void MultitrackRecorder::processBlock (const float* const* inputs,
                                            int numChannels,
-                                           int numSamples) noexcept
+                                           int numSamples,
+                                           juce::int64 playheadAtBlock) noexcept
     {
         const juce::SpinLock::ScopedLockType boundaryGuard (captureBoundary);
         const int n = juce::jmin (numChannels, (int) fifos.size());
         const bool rec = recording.load (std::memory_order_acquire);
+
+        juce::int64 leadInGap = 0;
+        if (rec && playheadAtBlock >= 0 && punchInActive.load (std::memory_order_relaxed))
+        {
+            juce::int64 unset = -1;
+            if (punchCaptureOrigin.compare_exchange_strong (unset, playheadAtBlock,
+                                                            std::memory_order_acq_rel))
+            {
+                recordBaseSamples.store (playheadAtBlock, std::memory_order_relaxed);
+                leadInGap = juce::jmax ((juce::int64) 0, playheadAtBlock - punchInPos);
+            }
+        }
+        const auto openLeadInGap = [&] (ChannelFifo& fifo, int ch) noexcept
+        {
+            if (leadInGap > 0 && ch < (int) leadInGapTracks.size()
+                && leadInGapTracks[(std::size_t) ch] != 0)
+                fifo.accountCapture (0, (int) juce::jmin (leadInGap, (juce::int64) std::numeric_limits<int>::max()));
+        };
 
         for (int ch = 0; ch < n; ++ch)
         {
@@ -512,6 +557,7 @@ namespace zynforge
                 const int  n0  = juce::jmin (numSamples, (int) scratch.size());
                 if (n0 <= 0) continue;
                 auto& cfz = *fifos[(std::size_t) ch];
+                openLeadInGap (cfz, ch);
                 const auto zs = cfz.fifo.write (cfz.canAcceptAudio() ? n0 : 0);
                 if (zs.blockSize1 > 0)
                     std::memcpy (cfz.data.data() + zs.startIndex1, scratch.data(),
@@ -583,6 +629,7 @@ namespace zynforge
                 t.liveWavePush (src, numSamples);
 
                 auto& cf = *fifos[(std::size_t) ch];
+                openLeadInGap (cf, ch);
                 const auto scope = cf.fifo.write (cf.canAcceptAudio() ? numSamples : 0);
                 const int wrote = scope.blockSize1 + scope.blockSize2;
                 cf.accountCapture (wrote, numSamples);
@@ -786,22 +833,45 @@ namespace zynforge
         const juce::ScopedLock structureGuard (structureLock);
         startError.clear();
         if (recording.load() || isFinalizing()) return false;
+
+        // A punch/continue arm belongs to this one start. Consume it on every
+        // refusal below as well as on success (see discardTakeArms).
+        bool wentLive = false;
+        const juce::ScopeGuard consumeArms { [&] { if (! wentLive) discardTakeArms(); } };
         if (tracks.empty())   return false;
+
+        // Every refusal names its reason: an empty startError made the UI
+        // fall back to "could not open writer files" for unrelated causes.
+        const auto refuse = [this] (const char* why)
+        {
+            if (startError.isEmpty()) startError = why;
+            return false;
+        };
 
         TakeStart take;
         take.sessionDir = sessionDir;
-        if (! validateTakeStart (take))       return false;
-        if (! createTakeFolders (take))       return false;
+        if (! validateTakeStart (take))
+            return refuse ("Recording refused: the backup folder is inside this session; choose another backup folder.");
+        if (! createTakeFolders (take))
+            return refuse ("Recording refused: the session folders could not be created; check the recording drive.");
         resolveTakeMirrors (take);
-        if (! claimTakeCopies (take))         return false;
-        if (! recoverTakeCopies (take))       return false;
-        if (! resolveTakeFormats (take))      return false;
-        if (! prepareBackupCopy (take))       return false;
-        if (! resolveMirrorFormats (take))    return false;
-        if (! continuationBasesIntact (take)) return false;
+        if (! claimTakeCopies (take))
+            return refuse ("Recording refused: a backup or mirror copy could not be claimed for this session.");
+        if (! recoverTakeCopies (take))
+            return refuse ("An interrupted punch was put back on a backup or mirror copy. Reopen the session, then record again.");
+        if (! resolveTakeFormats (take))
+            return refuse ("Recording refused: the existing take files are in mixed formats and cannot be continued safely.");
+        if (! prepareBackupCopy (take))
+            return refuse ("Recording refused: the backup copy could not be prepared; check the backup drive.");
+        if (! resolveMirrorFormats (take))
+            return refuse ("Recording refused: a mirror copy could not be prepared; check the mirror drives.");
+        if (! continuationBasesIntact (take))
+            return refuse ("Recording refused: a copy of the existing take is incomplete, so it cannot be continued safely.");
         noteExistingPrimaryBases (take);
-        if (! stashPunchBases (take))         return false;
-        if (! measureContinuationBase (take)) return false;
+        if (! stashPunchBases (take))
+            return refuse ("Punch refused: the existing take could not be moved aside safely; it was left untouched.");
+        if (! measureContinuationBase (take))
+            return refuse ("Recording refused: the existing take could not be read.");
         openTakeWriters (take);
 
         // Hard error: if we tried to open primary writers but EVERY one failed
@@ -819,6 +889,7 @@ namespace zynforge
         }
 
         goLive (take);
+        wentLive = true;
         return true;
     }
 
@@ -1559,6 +1630,7 @@ namespace zynforge
         // Do this before capture goes live; pre-roll is disabled for these
         // edit passes so no history can shift the boundary back again.
         bool paddingFailed = false;
+        leadInGapTracks.assign (tracks.size(), 0);
         if ((continueAsPart || punchInActive) && recordBaseSamples > 0)
         {
             constexpr int kPadBlock = 16384;
@@ -1568,6 +1640,9 @@ namespace zynforge
             {
                 if (! writers[i].active || (! continueAsPart && hadPrimaryBase[i])) continue;
                 auto& w = writers[i];
+                if (punchInActive)
+                    for (int c = 0; c < w.numChannels && i + (std::size_t) c < leadInGapTracks.size(); ++c)
+                        leadInGapTracks[i + (std::size_t) c] = 1;
                 const auto pad = [&] (auto& writer, juce::int64 priorLength, int bytesPerSample,
                                       juce::int64& samples, juce::int64& bytes)
                 {
@@ -1688,10 +1763,10 @@ namespace zynforge
             const juce::SpinLock::ScopedLockType guard (captureBoundary);
             preRollSnapshot.swap (preRoll);
             preRoll.swap (replacement);
+            punchCaptureOrigin.store (-1, std::memory_order_relaxed);
             recording.store (true, std::memory_order_release);
         }
-        dumpPreRollToWriters();
-        preRollSnapshot.clear();
+        preparePreRollDump();
         writersReady.store (true,  std::memory_order_release);
     }
 
@@ -1995,6 +2070,7 @@ namespace zynforge
         punchInActive     = false;
         continueAsPart    = false;   // consume the continue arm
         recordBaseSamples = 0;
+        punchCaptureOrigin.store (-1, std::memory_order_relaxed);
 
         manifestSessionMedia (stop);
         publishSessionReport (buildSessionReport (stop));
@@ -2113,7 +2189,8 @@ namespace zynforge
         auto& writerSnapshots = stop.writers;
 
         juce::AudioFormatManager fm; fm.registerBasicFormats();
-        const auto punchPos = punchInPos;
+        const auto origin   = punchCaptureOrigin.load (std::memory_order_acquire);
+        const auto punchPos = origin >= 0 ? origin : punchInPos;
         // Map a stashed sidecar back to its real take file:
         //   Track_NN.punchbase.ext      -> Track_NN.ext
         //   Track_NN_part02.punchbase.ext -> Track_NN_part02.ext
@@ -2174,6 +2251,38 @@ namespace zynforge
             return len;
         };
 
+        // Punch audio that could not be spliced is archived beside the copy it
+        // belongs to, never deleted: it is a performance the engineer may still
+        // want (recoverInterruptedPunches keeps interrupted punches the same way).
+        const auto archiveUnspliced = [&stop] (const juce::File& source, const juce::String& asName)
+        {
+            if (! source.existsAsFile()) return true;
+            const auto audioDir = source.getParentDirectory();
+            const auto copyRoot = audioDir.getFileName() == "Audio Files" ? audioDir.getParentDirectory() : audioDir;
+            const auto dir = copyRoot.getChildFile ("Session File Backups")
+                .getChildFile ("Unspliced Punch " + stop.stoppedAt.formatted ("%Y-%m-%d %H-%M-%S"));
+            if (! dir.isDirectory() && ! dir.createDirectory().wasOk()) return false;
+            return source.moveFileTo (dir.getNonexistentChildFile (
+                juce::File::createFileWithoutCheckingPath (asName).getFileNameWithoutExtension(),
+                juce::File::createFileWithoutCheckingPath (asName).getFileExtension(), false));
+        };
+        // Put one copy back to its pre-punch take. The fresh file (or, if the
+        // install got as far as removing it, the spliced temp) is archived.
+        const auto rollBack = [&] (CopySplice& c, bool archive)
+        {
+            const auto name = c.fresh.getFileName();
+            if (archive && c.fresh.existsAsFile())    { if (! archiveUnspliced (c.fresh, name)) c.fresh.deleteFile(); }
+            else if (archive && c.tmp.existsAsFile()) { if (! archiveUnspliced (c.tmp, name))   c.tmp.deleteFile(); }
+            c.tmp.deleteFile();
+            c.fresh.deleteFile();
+            for (auto& part : c.baseParts)
+                part.moveFileTo (sidecarToTake (part));
+        };
+        const auto install = [] (CopySplice& c)
+        {
+            return (! c.fresh.existsAsFile() || c.fresh.deleteFile()) && c.tmp.moveFileTo (c.fresh);
+        };
+
         for (size_t i = 0; i < punchFiles.size() && i < writerSnapshots.size(); ++i)
         {
             // Prepare a splice for every copy of this track: [primary,
@@ -2186,34 +2295,46 @@ namespace zynforge
 
             if (! copies[0].attempted) continue;    // primary not stashed -> not a punched track
 
-            // Commit only if EVERY stashed copy spliced OK; otherwise roll
-            // them ALL back to the pre-punch base so no two copies diverge.
-            bool allOk = true;
-            for (auto& c : copies)
-                if (c.attempted && ! c.spliced) allOk = false;
-
-            if (allOk)
+            // Nothing was captured (a selection punch stopped during its
+            // pre-roll): there is no punch, so every copy simply keeps its take.
+            if (readLen (copies[0].fresh) == 0)
             {
-                // Keep every original .punchbase until EVERY destination
-                // has installed its spliced result. A late backup/mirror
-                // move failure must still be able to roll the primary
-                // back to the exact pre-punch file.
                 for (auto& c : copies)
-                {
-                    if (! c.attempted) continue;
-                    if ((c.fresh.existsAsFile() && ! c.fresh.deleteFile())
-                        || ! c.tmp.moveFileTo (c.fresh))
-                    {
-                        allOk = false;
-                        break;
-                    }
-                }
+                    if (c.attempted) rollBack (c, false);
+                continue;
             }
 
-            if (allOk)
+            // The primary decides whether the punch landed. A backup or mirror
+            // that cannot splice (its writer never opened, its drive filled)
+            // keeps its pre-punch take and is reported failed; it must not
+            // throw away a good primary punch. If the primary cannot splice,
+            // every copy goes back to its base so they agree.
+            auto& primary = copies[0];
+            if (primary.spliced && install (primary))
             {
-                for (auto& c : copies)
-                    for (auto& s : c.baseParts) s.deleteFile();
+                for (auto& part : primary.baseParts) part.deleteFile();
+                for (size_t ci = 1; ci < copies.size(); ++ci)
+                {
+                    auto& c = copies[ci];
+                    if (! c.attempted) { c.tmp.deleteFile(); continue; }
+                    if (c.spliced && install (c))
+                    {
+                        for (auto& part : c.baseParts) part.deleteFile();
+                        continue;
+                    }
+                    rollBack (c, true);
+                    if (ci == 1)
+                    {
+                        backupFailed.store (true, std::memory_order_relaxed);
+                        stop.backupHadFailure = true;
+                    }
+                    else
+                    {
+                        mirrorFailed.store (true, std::memory_order_relaxed);
+                        if (ci - 2 < writerSnapshots[i].mirrors.size())
+                            writerSnapshots[i].mirrors[ci - 2].failed = true;
+                    }
+                }
             }
             else
             {
@@ -2221,10 +2342,7 @@ namespace zynforge
                 for (auto& c : copies)
                 {
                     if (! c.attempted) { c.tmp.deleteFile(); continue; }
-                    c.tmp.deleteFile();
-                    c.fresh.deleteFile();
-                    for (auto& s : c.baseParts)
-                        s.moveFileTo (sidecarToTake (s));
+                    rollBack (c, true);
                 }
             }
 
@@ -2891,6 +3009,7 @@ namespace zynforge
         // must not read the single-reader FIFO concurrently. Consumer-side
         // only -- never contends the audio thread.
         const juce::ScopedLock sl (shard.drainLock);
+        if (shard.preRollPending) dumpPreRollForShard (shard);
 
         const auto t0 = juce::Time::getMillisecondCounterHiRes();
         juce::int64 totalWritten = 0;

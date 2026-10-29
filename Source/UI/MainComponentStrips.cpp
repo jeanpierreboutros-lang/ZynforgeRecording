@@ -29,14 +29,21 @@ void MainComponent::moveSelectedStrips (int delta)
     auto blocks = trackorder::logicalBlocks (trackorder::stereoFlags (engine.getRecorder()));
     std::vector<int> selected (selectedLogical.begin(), selectedLogical.end());
     if (delta > 0) std::reverse (selected.begin(), selected.end());
-    std::set<int> next;
+    // Walk from the edge we move toward. A selected strip that cannot move
+    // (at the edge, or behind one that cannot) stays put; swapping it with
+    // its selected neighbour would just reorder the selection.
+    std::set<int> next, pinned;
+    bool moved = false;
     for (int i : selected)
     {
         const int target = i + delta;
         if (i < 0 || i >= (int) blocks.size()) continue;
-        if (target < 0 || target >= (int) blocks.size()) { next.insert (i); continue; }
+        if (target < 0 || target >= (int) blocks.size() || pinned.count (target) > 0)
+        { pinned.insert (i); next.insert (i); continue; }
         std::swap (blocks[(size_t) i], blocks[(size_t) target]); next.insert (target);
+        moved = true;
     }
+    if (! moved) { showStatus ("Selected strips are already at the edge"); return; }
     if (engine.reorderTracks (trackorder::flatten (blocks)))
     { selectedLogical = std::move (next); showStatus ("Moved selected strips"); }
     else showStatus ("Move failed; check disk permissions and Session File Backups before retrying");
@@ -568,7 +575,7 @@ void MainComponent::createSessionFromCsv()
             const auto dir  = self->createSessionFolderStructure (r);
             if (! dir.isDirectory())
             {
-                self->showStatus ("Couldn't create session -- check permissions / free space");
+                self->showStatus (self->sessionCreateFailureMessage());
                 return;
             }
 
@@ -641,7 +648,7 @@ void MainComponent::createSessionFromConsole()
         const auto dir  = self->createSessionFolderStructure (r);
         if (! dir.isDirectory())
         {
-            self->showStatus ("Couldn't create session -- check permissions / free space");
+            self->showStatus (self->sessionCreateFailureMessage());
             return;
         }
 

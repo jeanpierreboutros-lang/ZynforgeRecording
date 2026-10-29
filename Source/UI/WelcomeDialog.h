@@ -50,6 +50,7 @@ namespace zynforge
                             CaptureFormat         lastCaptureFormat,
                             const DeviceChoices&  devices,
                             OnCreateNew           onCreate,
-                            OnOpenExisting        onOpen);
+                            OnOpenExisting        onOpen,
+                            const juce::Array<juce::File>& recentSessions = {});
     };
 }

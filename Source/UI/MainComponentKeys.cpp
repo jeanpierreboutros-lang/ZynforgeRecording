@@ -211,6 +211,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         {
             const int targetIdx = code - '1';
             const auto& list = engine.getMarkers().getAll();
+            if (playheadLockedForPunch()) return true;
             if (targetIdx < (int) list.size())
             {
                 const auto& m = list[(size_t) targetIdx];
@@ -413,6 +414,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
             else
             {
                 // No clip selected -> nudge the playhead by the nudge value.
+                if (playheadLockedForPunch()) return true;
                 auto& player = engine.getPlayer();
                 const double sr = juce::jmax (1.0, player.getSampleRate());
                 const auto step = (juce::int64) (sr * (double) nudgeMs / 1000.0);

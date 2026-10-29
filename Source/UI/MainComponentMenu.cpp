@@ -310,12 +310,11 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                        engine.getRecorder().getNumTracks() > 0);
             m.addItem (281, "Write soundcheck report",
                        engine.getActiveSessionDir().isDirectory());
-            m.addItem (282, "Analyse for noise / hum / bumps...",
-                       engine.getActiveSessionDir().isDirectory());
-            m.addItem (952, "Post-show QC report...",
-                       engine.getActiveSessionDir().isDirectory());
-            m.addItem (953, "Detect songs -> markers...",
-                       engine.getActiveSessionDir().isDirectory());
+            // Each reads every take file in full: never during a take.
+            const bool canAnalyse = engine.getActiveSessionDir().isDirectory() && ! engine.isRecording();
+            m.addItem (282, "Analyse for noise / hum / bumps...", canAnalyse);
+            m.addItem (952, "Post-show QC report...",             canAnalyse);
+            m.addItem (953, "Detect songs -> markers...",         canAnalyse);
             menu.addSubMenu ("Analysis & Reports", m);
         }
 

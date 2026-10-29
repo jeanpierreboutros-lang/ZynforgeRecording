@@ -430,7 +430,8 @@ namespace zynforge
         {
         public:
             OpenPanel (const juce::File& defaultLocation,
-                       std::function<void (const juce::File&)> onChoose)
+                       std::function<void (const juce::File&)> onChoose,
+                       const juce::Array<juce::File>& recent)
                 : defaultDir (defaultLocation), chooseCallback (std::move (onChoose))
             {
                 addAndMakeVisible (header);
@@ -455,10 +456,21 @@ namespace zynforge
                 recentHeader.setColour (juce::Label::textColourId, brand::textMuted);
 
                 addAndMakeVisible (recentHint);
-                recentHint.setText ("(recent sessions appear here after a save)",
+                recentHint.setText ("(sessions you record or open appear here)",
                                     juce::dontSendNotification);
                 recentHint.setFont (brand::type::caption());
                 recentHint.setColour (juce::Label::textColourId, brand::textMuted);
+                recentHint.setVisible (recent.isEmpty());
+
+                for (const auto& dir : recent)
+                {
+                    if (recentButtons.size() >= kMaxRecentShown) break;
+                    auto* b = recentButtons.add (new juce::TextButton (dir.getFileName()));
+                    b->setTooltip (dir.getFullPathName());
+                    dialog::styleSecondary (*b);
+                    b->onClick = [this, dir] { if (chooseCallback) chooseCallback (dir); };
+                    addAndMakeVisible (b);
+                }
             }
 
             void resized() override
@@ -473,6 +485,11 @@ namespace zynforge
                 recentHeader.setBounds (b.removeFromTop (brand::space::ctrlH));
                 b.removeFromTop (brand::space::xs);
                 recentHint.setBounds (b.removeFromTop (brand::space::ioH));
+                for (auto* rb : recentButtons)
+                {
+                    rb->setBounds (b.removeFromTop (brand::space::ctrlH).removeFromLeft (360));
+                    b.removeFromTop (brand::space::xs);
+                }
             }
 
         private:
@@ -497,6 +514,8 @@ namespace zynforge
             std::function<void (const juce::File&)> chooseCallback;
             juce::Label header, hint, recentHeader, recentHint;
             juce::TextButton pickButton;
+            static constexpr int kMaxRecentShown = 6;
+            juce::OwnedArray<juce::TextButton> recentButtons;
             std::unique_ptr<juce::FileChooser> folderChooser;
         };
 
@@ -509,7 +528,8 @@ namespace zynforge
                      CaptureFormat     lastFmt,
                      const WelcomeDialog::DeviceChoices& dev,
                      WelcomeDialog::OnCreateNew    onCreate_,
-                     WelcomeDialog::OnOpenExisting onOpen_)
+                     WelcomeDialog::OnOpenExisting onOpen_,
+                     const juce::Array<juce::File>& recent)
                 : onCreate (std::move (onCreate_)),
                   onOpen   (std::move (onOpen_)),
                   newPanel (std::make_unique<NewPanel> (defaultLocation, lastSR, lastFmt, dev)),
@@ -518,7 +538,7 @@ namespace zynforge
                       {
                           if (onOpen) onOpen (f);
                           dismiss();
-                      }))
+                      }, recent))
             {
                 // Side rail items.
                 newItem  = std::make_unique<SideRailItem> ("New",  makeNewGlyph());
@@ -688,10 +708,12 @@ namespace zynforge
                                 CaptureFormat        lastFmt,
                                 const DeviceChoices& devices,
                                 OnCreateNew          onCreate,
-                                OnOpenExisting       onOpen)
+                                OnOpenExisting       onOpen,
+                                const juce::Array<juce::File>& recentSessions)
     {
         auto content = std::make_unique<Content> (defaultLocation, lastSR, lastFmt, devices,
-                                                  std::move (onCreate), std::move (onOpen));
+                                                  std::move (onCreate), std::move (onOpen),
+                                                  recentSessions);
         juce::DialogWindow::LaunchOptions opts;
         opts.dialogTitle                  = "Welcome";
         opts.content.setOwned (content.release());

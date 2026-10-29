@@ -374,6 +374,7 @@ namespace zynforge
 
     void SessionPlayer::setPositionSamples (juce::int64 s)
     {
+        if (isSeekLocked()) return;
         const auto total = totalLength.load (std::memory_order_relaxed);
         position.store (juce::jlimit<juce::int64> (0, total, s), std::memory_order_release);
     }

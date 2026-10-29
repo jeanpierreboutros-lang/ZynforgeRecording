@@ -576,9 +576,13 @@ MainComponent::MainComponent()
         tempoBar.setBpm (engine.getSessionTempoBpm());   // clamp echo
 
         // If a click track has already been created in this session,
-        // regenerate it so the metronome stays locked to the new tempo.
+        // regenerate it so the metronome stays locked to the new tempo. A take
+        // or session job refuses the render; the timer redoes it afterwards.
         if (clickTrackIndex >= 0)
-            generateOrRefreshClickTrack();
+        {
+            if (engine.isRecording() || sessionIoBusy.load()) clickRefreshPending = true;
+            else generateOrRefreshClickTrack();
+        }
     };
     tempoBar.onCreateClickTrack = [this]
     {
@@ -794,17 +798,16 @@ MainComponent::MainComponent()
     // left rolling by a crashed/quit GUI is adopted, not orphaned.
     if (engine.getAppProps() != nullptr
         && engine.getAppProps()->getBoolValue ("useCaptureDaemon", false))
-    {
         useCaptureDaemon = true;
-        juce::Timer::callAfterDelay (brand::motion::launchDelayMs + 800,
-                                     [startupSelf]
-                                     { if (startupSelf != nullptr) startupSelf->connectCaptureDaemon (true); });
-    }
 
     juce::Timer::callAfterDelay (brand::motion::launchDelayMs, [startupSelf, firstRun]
     {
         auto self = startupSelf;
         if (self == nullptr) return;
+        // Reattach a daemon take BEFORE the crash-recovery scan: that take's
+        // folder still has its recording.session marker, and the dialog would
+        // otherwise offer Delete on a session that is still being written.
+        if (self->useCaptureDaemon) self->connectCaptureDaemon (true);
         // The tutorial + Welcome/auto-reopen step. It MUST run only after any
         // recovery dialog closes -- running it underneath auto-reopened the
         // orphan being recovered, so "Delete" then nuked the loaded session.
@@ -1133,7 +1136,16 @@ void MainComponent::rebuildStrips()
         // Right-click menu wiring.
         auto deleteCb     = [this, i, step]
         {
-            if (engine.isRecording() || sessionIoBusy.load()) return;
+            if (engine.isRecording() || sessionIoBusy.load())
+            {
+                // The strip already stopped its meter timer (ChannelStrip
+                // invalidates before calling this). Rebuild it, or it stays
+                // frozen for the rest of the show.
+                lastTrackCount = -1;
+                showStatus (engine.isRecording() ? "Stop recording before removing a strip"
+                                                 : "Wait for the session operation to finish");
+                return;
+            }
             std::vector<int> order;
             for (int t = 0; t < engine.getRecorder().getNumTracks(); ++t)
                 if (t < i || t >= i + step) order.push_back (t);
@@ -1151,6 +1163,10 @@ void MainComponent::rebuildStrips()
             if (! wasStereo && engine.getRecorder().getTrack (i + 1).isStereo.load())
             { showStatus ("Unlink the neighbouring stereo pair first"); return; }
             engine.setTrackStereo (i, ! wasStereo);
+            // The engine refuses while a take is live; then the pans must not
+            // move either (they reach the monitor, stream and NDI mid-show).
+            if (engine.getRecorder().getTrack (i).isStereo.load() == wasStereo)
+            { showStatus ("Stop recording before linking or unlinking a stereo pair"); return; }
             // Newly linked stereo -> hard-pan L/R for the full image; unlinked
             // back to mono -> recentre both halves so a mono strip isn't left
             // stuck hard-right. (Buses sum centred, so skip them.)

@@ -192,8 +192,7 @@ namespace zynforge
         {
             const auto* r = selectedRow();
             if (r == nullptr) return;
-            r->dir.getChildFile ("recording.session").deleteFile();
-            const auto dir = r->dir;
+            const auto dir = r->dir;   // openCb clears the crash marker once the open succeeds
             if (openCb) openCb (dir);
             if (auto* dw = findParentComponentOfClass<juce::DialogWindow>())
                 dw->exitModalState (1);

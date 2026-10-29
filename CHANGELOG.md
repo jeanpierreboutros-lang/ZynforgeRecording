@@ -12,7 +12,36 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## How this file is maintained
 
-- Add new entries under `## [Unreleased]
+- Add new entries under `## [Unreleased]` as you ship changes.
+- When cutting a release, rename the section to `## [X.Y.Z] – YYYY-MM-DD` and start a fresh `## [Unreleased]`.
+- Use the categories below. If none apply, the entry probably isn't user-visible and doesn't belong here.
+- Keep entries terse but specific. Link to commits or `decisions.md` ADRs when context matters.
+
+**Categories:** `Added` · `Changed` · `Fixed` · `Removed` · `Deprecated` · `Security`.
+
+---
+
+## [Unreleased]
+
+### Fixed — October bug hunt: punch, capture and session safety
+
+- **Loop or a playhead jump during a punch no longer overwrites audio after the punch-out.** A punch take now locks the playhead and loop until it stops (`SessionPlayer::setSeekLocked`, set by `AudioEngine::startRecording`, cleared by both stop paths). Cue recall, marker jumps, nudges, EDIT/ruler clicks and the MCU jog no longer move it mid-punch (the mixer part of a cue recall still applies), and the transport Loop button refuses to turn on during PUNCH mode or any take.
+- **A refused punch or continue no longer leaves its arm set.** Punch and continue arms are exclusive, and every refused start, in the recorder or the engine, drops the arm. Previously the next RECORD could run punch and continue together and splice silence over the original take on every copy.
+- **New Session can no longer run under a live take.** All four paths (dialog, Welcome, CSV, console) are refused at `createSessionFolderStructure`; `clearSessionState` and `resetAllStripState` also refuse during a take. Previously a remote RECORD during the dialog meant the take was re-patched to identity inputs mid-show and STOP saved the wiped state over the session.
+- **A rolling manual punch (and a PUNCH-mode punch-in) is spliced where capture actually began**, not where it was armed. The start work (opening every writer) takes hundreds of ms while playback rolls; the audio callback now records the first captured sample's playhead and the splice, the take clock and new-track lead-ins use it.
+- **A punch that cannot be spliced no longer deletes the new audio.** The primary copy decides: a backup or mirror that cannot splice keeps its original take and is reported failed, while the primary punch lands. If the primary cannot splice, every copy goes back to its original and the new audio is moved to `Session File Backups/Unspliced Punch <time>/` on each copy.
+- A selection punch stopped during its pre-roll is no longer reported (and permanently recorded in `session.report.json`) as a failed splice.
+- Every refused record start now says why, instead of the generic "could not open writer files".
+- A companion/OSC arm change that races a record start is refused instead of landing on the rolling take after its arm list was frozen.
+- Capture daemon: the daemon now runs its message loop instead of sleeping, so an unplugged interface or a sample-rate change mid-take is detected (JUCE reports both through timers).
+- New Session clears the previous session's undo history; Cmd+Z can no longer apply session A's clip and mixer edits to session B. The Undo/Redo status line names the step it actually undid.
+- Session ▸ Analysis (noise, QC, song detection) refuses during a take or session job; song markers go through the same edit gate as every other timeline edit.
+- Crash recovery: a daemon take is reattached before the recovery scan and never offered for Delete; Recover clears the crash marker only after the session actually opened, and reports the real error otherwise.
+- Sessions on exFAT/FAT/SMB: the project lookup ignores macOS AppleDouble `._X.zfproj` files, which could make a session load without cues or automation and refuse every save.
+- Mixer and patch: stereo link/unlink during a take no longer re-pans the pair; "Delete channel" during a take no longer freezes the strip's meter; a linked input/output patch change during a take is refused whole instead of half-applied; Move up/down at the list edge no longer swaps the selected strips with each other; VCA Unassign clears both halves of a stereo pair; LOCK also locks the VCA panel and the floating PATCH and DEVICE windows.
+- Closing the DEVICE panel without Apply only reverts a change the panel itself made, and only if nothing else has changed the device since.
+- A tempo change during a take re-renders the click track once the take ends.
+- Export refuses channel indices that went stale while its dialogs were open; layout changes during a session job are saved when the job ends instead of showing a false "Save failed"; moving a session no longer changes the default sessions folder; Close Session returns to the Welcome screen after a Finder open; the Welcome "Recent" list now lists recent sessions.
 
 ### Changed — remote control moved out of the audio engine
 
@@ -35,15 +64,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 ### Installed and cleaned up — October 5, both Macs
 
 - Both Macs and the current universal DMG now use the verified `443c769` GUI/helper pair. Complete bundle hashes, universal architectures and strict signatures match. Removed 12 superseded items plus five temporary staging artifacts on the development Mac and three on the mini after verification; no old app rollback bundle remains. Sessions, recordings and settings were preserved. Both apps were launched without a new crash report; mini startup is waiting in CoreAudio initialization. See [installation evidence](INSTALL.md).` as you ship changes.
-- When cutting a release, rename the section to `## [X.Y.Z] – YYYY-MM-DD` and start a fresh `## [Unreleased]`.
-- Use the categories below. If none apply, the entry probably isn't user-visible and doesn't belong here.
-- Keep entries terse but specific. Link to commits or `decisions.md` ADRs when context matters.
-
-**Categories:** `Added` · `Changed` · `Fixed` · `Removed` · `Deprecated` · `Security`.
-
----
-
-## [Unreleased]
 
 ### Changed — EDIT strip reorder
 

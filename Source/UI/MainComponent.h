@@ -36,7 +36,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
+namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -140,6 +140,7 @@ private:
     void showUserGuide();
     void launchNewSessionDialog (juce::File templateFile = {});
     juce::File createSessionFolderStructure (const zynforge::NewSessionDialog::Result&);
+    juce::String sessionCreateFailureMessage() const;
     // Canonical "open this session folder" sequence: pin the active dir,
     // restore setlist + UI layout, load the audio, restore the full mixer
     // state, force a strip rebuild. Returns the track count loaded. Used by
@@ -237,6 +238,7 @@ private:
     void applySessionSampleRate (double sr);
     void runSpectralAutoName();
     void writeSoundcheckReport();
+    bool refuseAnalysisNow();
     void runNoiseAnalysis();
     void runQcAnalysis();
     void detectSongsToMarkers();
@@ -265,6 +267,7 @@ private:
     juce::int64 punchPostRollEnd   { 0 };
     bool        punchLoopWasEnabled { false };
     bool        punchLoopNeedsRestore { false };
+    bool playheadLockedForPunch();
     void suspendLoopForPunch();
     void restoreLoopAfterPunch();
 
@@ -462,6 +465,7 @@ private:
     static constexpr int kCaptureDaemonPort = 17890;
 
     friend class zynforge::MainTransportRegressionTests;
+    friend class zynforge::PunchSessionGuardTests;
     friend class zynforge::OctoberRegressionTests;
     friend class zynforge::ReviewPersistenceRepairTests;
     friend class zynforge::ReviewUiFormatRepairTests;
@@ -523,6 +527,7 @@ private:
 
     std::atomic<bool> sessionLocked { false };
     bool explicitDocumentOpened { false };
+    bool uiLayoutSavePending { false };   // a layout change arrived during a session job
 
     std::unique_ptr<juce::FileChooser> chooser;
     std::shared_ptr<juce::ChangeListener> batchColourListenerHandle;
@@ -592,6 +597,7 @@ private:
     // is delivered on the message thread after the file is installed/reloaded.
     void generateOrRefreshClickTrack (std::function<void (bool)> completion = {});
     int  clickTrackIndex { -1 };   // -1 = not yet created in this session
+    bool clickRefreshPending { false };   // tempo changed while the render was refused
 
     // Arm state captured the moment a punch-in fires. servicePunch force-writes
     // `armed = punchArmed` on every track so only the punch-armed ones capture;

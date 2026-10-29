@@ -16,7 +16,10 @@ namespace zynforge
         if (! dir.isDirectory()) return {};
         const auto canonical = dir.getChildFile (dir.getFileName() + ".zfproj");
         if (canonical.existsAsFile()) return canonical;
-        auto candidates = dir.findChildFiles (juce::File::findFiles, false, "*.zfproj");
+        // Skip hidden files: on exFAT/FAT/SMB macOS writes AppleDouble
+        // "._X.zfproj" companions, which sort first and are not JSON.
+        auto candidates = dir.findChildFiles (juce::File::findFiles | juce::File::ignoreHiddenFiles,
+                                              false, "*.zfproj");
         candidates.sort();
         return candidates.isEmpty() ? canonical : candidates.getFirst();
     }

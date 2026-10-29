@@ -358,6 +358,9 @@ namespace zynforge
                     if (col < 0 || col >= numStrips) return;
                     const auto& ls = logical[(std::size_t) col];
                     const int totalTracks = engine.getRecorder().getNumTracks();
+                    // setTrackStereo refuses during a take; the pans below must
+                    // not move then either (monitor, stream and NDI hear them).
+                    if (engine.isRecording()) { dragActive = false; return; }
                     if (! ls.stereo)
                     {
                         // Going mono → stereo. Need a right partner.

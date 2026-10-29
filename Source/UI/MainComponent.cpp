@@ -35,7 +35,7 @@ namespace
         if (recorder.getMirrorsSkippedAtStart() > 0) failures.add ("configured mirror did not open");
         if (recorder.hasRecoveryMarkerFailed()) failures.add ("recovery marker failed");
         if (recorder.hasReportWriteFailed()) failures.add ("integrity report could not be saved");
-        if (recorder.hasPunchSpliceFailed()) failures.add ("punch could not be spliced; original audio was retained");
+        if (recorder.hasPunchSpliceFailed()) failures.add ("punch could not be spliced; the original take was kept and the new audio is in Session File Backups/Unspliced Punch");
         if (engine.hasStereoMixWriteFailed()) failures.add ("optional stereo mix is incomplete");
         return failures.isEmpty() ? juce::String()
             : "Recording stopped, but finalization failed: " + failures.joinIntoString (", ");
@@ -928,6 +928,10 @@ void MainComponent::applyLockState()
         if (auto* tools = editPage->getEditToolsBar()) tools->setEnabled (e);
     }
     if (automationToolbar != nullptr) automationToolbar->setEnabled (e);
+    // Floating panels that change the mix or the patch lock with the rest.
+    if (vcaPanel != nullptr) vcaPanel->setEnabled (e);
+    if (patchDialog != nullptr) patchDialog->setEnabled (e);
+    if (deviceDialog != nullptr) deviceDialog->setEnabled (e);
 
     lockButton.setButtonText (sessionLocked ? "UNLOCK" : "LOCK");
     showStatus (sessionLocked ? "LOCKED -- click UNLOCK to resume control"
@@ -1114,7 +1118,8 @@ void MainComponent::removeLastCapture()
     juce::Array<juce::File> dirs;
     for (const auto& d : root.findChildFiles (juce::File::findDirectories, false))
         if (d.getChildFile ("Audio Files").isDirectory()
-            || ! d.findChildFiles (juce::File::findFiles, false, "*.zfproj").isEmpty())
+            || ! d.findChildFiles (juce::File::findFiles | juce::File::ignoreHiddenFiles,
+                                   false, "*.zfproj").isEmpty())
             dirs.add (d);
     if (dirs.isEmpty()) { showStatus ("No sessions to remove"); return; }
 
@@ -1157,7 +1162,7 @@ bool MainComponent::deleteCaptureSession (const juce::File& target)
         engine.setStripCount (0);
         cues.clear(); currentCueIndex = -1; clickTrackIndex = -1; lastTrackCount = -1;
         undoManager.clearUndoHistory();
-        updateTransportLabels(); showStartupWelcome();
+        updateTransportLabels(); explicitDocumentOpened = false; showStartupWelcome();
     }
     showStatus ("Removed: " + target.getFileName());
     return true;

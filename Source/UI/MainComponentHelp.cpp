@@ -412,7 +412,7 @@ void MainComponent::showStartupWelcome()
         const auto sessionFolder = self->createSessionFolderStructure (n);
         if (! sessionFolder.isDirectory())
         {
-            self->showStatus ("Couldn't create session -- check permissions / free space");
+            self->showStatus (self->sessionCreateFailureMessage());
             return;
         }
 
@@ -514,7 +514,8 @@ void MainComponent::showStartupWelcome()
 
     zynforge::WelcomeDialog::launch (defaultRoot, curSr, curFormat, devices,
                                      std::move (onCreate),
-                                     std::move (onOpen));
+                                     std::move (onOpen),
+                                     engine.getRecentSessions());
 }
 
 void MainComponent::launchNewSessionDialog (juce::File templateFile)
@@ -542,7 +543,7 @@ void MainComponent::launchNewSessionDialog (juce::File templateFile)
         const auto sessionFolder = self->createSessionFolderStructure (r);
         if (! sessionFolder.isDirectory())
         {
-            self->showStatus ("Couldn't create session -- check permissions / free space");
+            self->showStatus (self->sessionCreateFailureMessage());
             return;
         }
 
@@ -615,7 +616,14 @@ void MainComponent::launchNewSessionDialog (juce::File templateFile)
 
 bool MainComponent::offerSessionRecovery (std::function<void()> onClosed)
 {
-    const auto incomplete = zynforge::AudioEngine::findIncompleteSessions (getSessionsRoot());
+    auto incomplete = zynforge::AudioEngine::findIncompleteSessions (getSessionsRoot());
+    // A take that is still rolling (an adopted daemon take) is not a crash.
+    if (engine.isRecording() || captureSupervisor.isDaemonRecording())
+    {
+        const auto live = captureSupervisor.isDaemonRecording()
+            ? juce::File (captureSupervisor.lastStatus().sessionPath) : engine.getActiveSessionDir();
+        incomplete.removeIf ([&live] (const juce::File& d) { return d == live; });
+    }
     // Nothing to recover -> no dialog, no onClosed; the caller runs its
     // continuation itself (return false means "I didn't show a dialog").
     if (incomplete.isEmpty()) return false;
@@ -636,7 +644,11 @@ bool MainComponent::offerSessionRecovery (std::function<void()> onClosed)
             // Bare loadSession left the previous session's mixer + cues in
             // place, so the next Save/autosave wrote them into the recovered
             // session's files -- corrupting exactly what we recovered.
-            self->openSessionFolder (dir);
+            // Clear the crash marker only once the session really opened: a
+            // failed open (interrupted punch, incomplete move) keeps it listed
+            // so the engineer can try again, and keeps its own error status.
+            if (self->openSessionFolder (dir) < 0) return;
+            dir.getChildFile ("recording.session").deleteFile();
             self->showStatus ("Recovered: " + dir.getFileName());
             self->updateTransportLabels();
         },

@@ -74,6 +74,9 @@ namespace zynforge
 
     void AudioEngine::resetAllStripState()
     {
+        // A live take records from inputRouting and captures stereo pairs by
+        // isStereo; resetting them mid-take would change what it records.
+        if (isRecording()) return;
         const int n = recorder.getNumTracks();
         // Each domain reloads the shared file once, preserving sibling keys
         // and updating its own cache before the next domain publishes.
@@ -154,16 +157,22 @@ namespace zynforge
 
     bool AudioEngine::startRecording (const juce::File& sessionDir)
     {
-        if (isCaptureFinalizing()) return false;
+        // Every refusal here also drops a punch/continue arm the caller set
+        // for this start; discardTakeArms is a no-op while a take is live.
+        if (isCaptureFinalizing()) { recorder.discardTakeArms(); return false; }
         if (captureFinalizationPending.load()) stopRecording();
         stereoMixWriteFailed.store (false, std::memory_order_relaxed);
         if (isRecording() || sessionTransitionActive.load (std::memory_order_acquire))
+        {
+            recorder.discardTakeArms();
             return false;
+        }
         // Bypass-proof guard: refuse to capture if the device clock disagrees
         // with the session rate (silent wrong-speed/pitch take). Covers every
         // caller -- record button, transport bar, punch auto-record, companion.
         if (isSampleRateMismatched())
         {
+            recorder.discardTakeArms();
             DBG ("startRecording refused: sample-rate mismatch (device "
                  << (deviceManager.getCurrentAudioDevice()
                         ? deviceManager.getCurrentAudioDevice()->getCurrentSampleRate() : 0.0)
@@ -173,6 +182,9 @@ namespace zynforge
 
         if (! recorder.startRecording (sessionDir)) return false;
         invalidateExternalCaptureStatus();
+        // A punch take's capture window and splice point are player positions:
+        // hold the playhead (and loop) still until the take stops.
+        player.setSeekLocked (recorder.isPunchInArmed());
 
         // A take makes the live capture position authoritative -- drop any
         // sticky EDIT cursor left from soundcheck so markers land at the take.
@@ -277,6 +289,7 @@ namespace zynforge
         const auto recordEnd = interrupted ? interruptedCaptureEnd.load() : recorder.getRecordTimelineSamples();
         recorder.stopRecording();
         clearCaptureWindow();
+        player.setSeekLocked (false);
         // Fresh audio on disk -- the transient cache from the last
         // session is now stale.
         invalidateTransientCache();
@@ -325,6 +338,7 @@ namespace zynforge
         job->completion = std::move (completion);
         job->id = ++captureStopSequence;
         clearCaptureWindow();
+        player.setSeekLocked (false);
         player.stop();
         {
             const juce::ScopedLock sl (stereoMixLock);
@@ -706,7 +720,14 @@ namespace zynforge
     bool AudioEngine::setTrackSoloed (int i, bool v)
     { return applyToPair (recorder, i, &TrackState::soloed, v, recorder.getStructureLock()); }
     bool AudioEngine::setTrackArmed (int i, bool v)
-    { return ! isRecording() && applyToPair (recorder, i, &TrackState::armed, v, recorder.getStructureLock()); }
+    {
+        // Test the take state UNDER the structure lock. startRecording holds it
+        // while it snapshots the arms, so a remote arm racing a start either
+        // lands before the snapshot or is refused -- never silently after it,
+        // where the R button would light for a track that is not recording.
+        const juce::ScopedLock sl (recorder.getStructureLock());
+        return ! isRecording() && applyToPair (recorder, i, &TrackState::armed, v, recorder.getStructureLock());
+    }
 
     template <typename Member>
     static bool togglePair (MultitrackRecorder& rec, int index, Member member,
@@ -1735,7 +1756,8 @@ namespace zynforge
                 saved = atomicfile::writeText (session.getChildFile ("session_mix.json"),
                                                juce::JSON::toString (mix));
             }
-            for (const auto& f : session.findChildFiles (juce::File::findFiles, false, "*.zfproj"))
+            for (const auto& f : session.findChildFiles (juce::File::findFiles | juce::File::ignoreHiddenFiles,
+                                                          false, "*.zfproj"))
             {
                 auto project = juce::JSON::parse (f);
                 if (auto* root = project.getDynamicObject())
@@ -2055,6 +2077,8 @@ namespace zynforge
     {
         if (isCaptureFinalizing()) return;
         if (captureFinalizationPending.load()) stopRecording();
+        // Never under a live take: resetAllStripState re-patches its inputs.
+        if (isRecording()) return;
         stopPlayback();
         player.unload();
         player.clearAllClips();
@@ -2229,7 +2253,10 @@ namespace zynforge
     void AudioEngine::setTrackLinkedRouting (int channelIndex, int deviceCh)
     {
         // Single source of truth -- sets BOTH sides of the patch so the
-        // PATCH page + the per-strip dropdowns stay in lockstep.
+        // PATCH page + the per-strip dropdowns stay in lockstep. The input
+        // side is refused during a take, so the output must be too, or the
+        // link breaks for the next virtual soundcheck.
+        if (isRecording()) return;
         setTrackInputRouting  (channelIndex, deviceCh);
         setTrackOutputRouting (channelIndex, deviceCh);
     }
@@ -2657,7 +2684,9 @@ namespace zynforge
                 captureInputs[i] = routedInputs[i] != nullptr
                     ? routedInputs[i] + punchOffset : nullptr;
             recorder.processBlock (captureInputs, juce::jmin (numTracks, kMaxStrips),
-                                   punchSamples);
+                                   punchSamples,
+                                   playerWasRolling ? playbackBlockStart + punchOffset
+                                                    : (juce::int64) -1);
         }
 
         // While punching, the recorded input replaces the old take on armed

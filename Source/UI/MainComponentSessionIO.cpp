@@ -322,7 +322,9 @@ void MainComponent::closeSession()
             self->showStatus (result == 1 ? "Saved + closed session" : "Session closed");
 
             // activeSessionDir is empty now -> this shows the Welcome dialog
-            // (New / Open) instead of auto-reopening the last session.
+            // (New / Open) instead of auto-reopening the last session. A
+            // Finder/command-line open only suppresses the LAUNCH Welcome.
+            self->explicitDocumentOpened = false;
             self->showStartupWelcome();
             };
             if (result == 1)
@@ -488,6 +490,11 @@ void MainComponent::requestUILayoutSave()
     if (restoringUILayout || engine.isRecording()) return;
     const auto dir = engine.getActiveSessionDir();
     if (dir == juce::File()) return;
+    // A session job (export, bounce, import, Save As...) owns the I/O. Layout
+    // is cosmetic: save it when the job ends instead of failing loudly.
+    if (sessionIoBusy.load() && pendingMetadataSaves == 0 && ! captureMetadataPending)
+    { uiLayoutSavePending = true; return; }
+    uiLayoutSavePending = false;
     zynforge::SessionMetadataSnapshot snapshot;
     snapshot.directory = dir;
     juce::DynamicObject::Ptr patch (new juce::DynamicObject());
@@ -659,6 +666,14 @@ void MainComponent::startExportTracksTo (const juce::File& destDir,
     sourceFormats.registerBasicFormats();
 
     auto& rec = engine.getRecorder();
+    // The channels were chosen before the select / format / folder dialogs; a
+    // session open or the mirror poll can shrink the strip list meanwhile.
+    for (int i : channelIndices)
+        if (i < 0 || i >= rec.getNumTracks())
+        {
+            showStatus ("The channel list changed while the export was set up -- choose the channels again");
+            return;
+        }
     for (int i : channelIndices)
     {
         // A stereo pair exports as ONE interleaved stereo file from its L
@@ -1741,7 +1756,7 @@ void MainComponent::relocateActiveSession()
             showStatus ("Moving session to " + newParent.getFullPathName() + " ...");
 
             juce::Component::SafePointer<MainComponent> self (this);
-            sessionJobs.launch ([self, oldDir, newDir, newParent] (const std::atomic<bool>& cancel)
+            sessionJobs.launch ([self, oldDir, newDir] (const std::atomic<bool>& cancel)
                                 -> zynforge::SessionJobRunner::Completion
             {
                 bool relocated = oldDir.moveFileTo (newDir);   // instant within a volume
@@ -1758,7 +1773,7 @@ void MainComponent::relocateActiveSession()
                         newDir.deleteRecursively();
                 }
 
-                return [self, relocated, oldCopyRemains, oldDir, newDir, newParent]
+                return [self, relocated, oldCopyRemains, oldDir, newDir]
                 {
                     if (self == nullptr) return;
                     self->engine.setSessionTransitionActive (false);
@@ -1767,11 +1782,9 @@ void MainComponent::relocateActiveSession()
                         self->showStatus ("Move failed -- check permissions / free space. Session left in place.");
                         return;
                     }
-                    if (auto* p = self->engine.getAppProps())
-                    {
-                        p->setValue ("sessionsRoot", newParent.getFullPathName());
-                        p->saveIfNeeded();
-                    }
+                    // The default sessions folder stays where it was: moving one
+                    // session to an archive drive must not send every New
+                    // Session, import and crash-recovery scan there too.
                     self->openSessionFolder (newDir);   // re-pin paths + reload audio from the new home
                     self->showStatus (oldCopyRemains
                         ? "Session moved, but the old folder could not be fully removed: "
@@ -2055,8 +2068,22 @@ juce::File MainComponent::makeNewSessionDir() const
     return root.getNonexistentChildFile ("Session_" + stamp, {}, false);
 }
 
+juce::String MainComponent::sessionCreateFailureMessage() const
+{
+    return engine.isRecording() || engine.isCaptureFinalizing()
+        ? "Recording -- the new session was not created. Stop the take first."
+        : "Couldn't create session -- check permissions / free space";
+}
+
 juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessionDialog::Result& r)
 {
+    // Guard at the mutation. Every New Session path (dialog, Welcome, CSV,
+    // console) gets here after an async step, and a take can start meanwhile
+    // (a remote RECORD). Clearing the strips would re-patch that take live,
+    // and STOP would then save the wiped state over the real session.
+    if (engine.isRecording() || engine.isCaptureFinalizing())
+        return {};
+
     // Resolve a safe folder name even if the engineer typed something
     // with slashes / colons in the picker.
     auto safeName = juce::File::createLegalFileName (r.name);
@@ -2113,5 +2140,10 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
     engine.clearSessionState();
     engine.clearAllStripOverrides();
     clickTrackIndex = -1;
+    // The previous session's undo steps would apply to this one's files and
+    // strips. Retake the mixer baseline on the next idle tick, after the
+    // caller has applied its template, so that is not an undo step either.
+    undoManager.clearUndoHistory();
+    mixerUndoReady = false;
     return sessionFolder;
 }

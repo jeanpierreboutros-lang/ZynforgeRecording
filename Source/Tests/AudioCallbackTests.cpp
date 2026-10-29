@@ -2670,10 +2670,12 @@ namespace zynforge
                     auto& track = f.engine.getRecorder().getTrack (0);
                     track.armed.store (true);
                     constexpr juce::int64 start = 950, punchIn = 1000, punchOut = 1100;
+                    // Position first, as startSelectionPunch does: a punch take
+                    // locks the playhead once it is open.
+                    f.engine.getPlayer().setPositionSamples (start);
                     f.engine.setCaptureWindow (punchIn, punchOut);
                     f.engine.armPunchIn (punchIn);
                     expect (f.engine.startRecording (dir));
-                    f.engine.getPlayer().setPositionSamples (start);
                     f.engine.startPlayback();
                     f.writeInput (0, -0.3f, 256);
                     f.process (256);

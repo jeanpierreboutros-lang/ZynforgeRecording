@@ -14,12 +14,29 @@
 
 #include <atomic>
 #include <csignal>
+#if JUCE_MAC
+ #include <CoreFoundation/CoreFoundation.h>
+#endif
 
 namespace
 {
     std::atomic<bool> shouldQuit  { false };
     std::atomic<int>  signalCount { 0 };
     void onSignal (int) { shouldQuit.store (true); signalCount.fetch_add (1); }
+
+    // Run the message loop for ~100 ms rather than sleeping. JUCE's CoreAudio
+    // device reports an unplugged interface or a nominal-rate change through
+    // a Timer, and timers only fire while this thread dispatches messages:
+    // with a bare sleep, a daemon take kept reporting "recording" after its
+    // interface was gone, or wrote new-rate audio under the old header.
+    void pumpMessages()
+    {
+       #if JUCE_MAC
+        CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.1, false);
+       #else
+        juce::Thread::sleep (100);
+       #endif
+    }
 }
 
 int main (int argc, char* argv[])
@@ -56,7 +73,7 @@ int main (int argc, char* argv[])
                               + ", " + juce::String (inputs) + " inputs");
 
     while (! shouldQuit.load())
-        juce::Thread::sleep (100);
+        pumpMessages();
 
     // Take-safety: a SIGTERM/SIGINT must not truncate a rolling take, matching
     // the daemon's "Quit refused mid-take" rule. Wait for the take to finish
@@ -65,7 +82,7 @@ int main (int argc, char* argv[])
     // SECOND signal (operator insists) forces the stop -- which still finalises
     // the take cleanly (files + manifest), so it is never data loss.
     while (daemon.isRecording() && signalCount.load() < 2)
-        juce::Thread::sleep (100);
+        pumpMessages();
 
     // Clean stop: closes the take (files + manifest) before comms/device.
     daemon.stop();

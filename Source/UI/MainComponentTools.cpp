@@ -212,6 +212,15 @@ void MainComponent::togglePunchMode()
     }
 }
 
+// A punch take holds the playhead (SessionPlayer::setSeekLocked), so the
+// player ignores jumps. Say so rather than doing nothing visible.
+bool MainComponent::playheadLockedForPunch()
+{
+    if (! engine.getPlayer().isSeekLocked()) return false;
+    showStatus ("Punch recording -- the playhead stays put until STOP");
+    return true;
+}
+
 void MainComponent::suspendLoopForPunch()
 {
     if (punchLoopNeedsRestore) return;
@@ -400,8 +409,20 @@ juce::String MainComponent::noiseAnalysisSummary (const std::vector<zynforge::No
         + juce::String (bumpCount) + " with mic bumps. Report saved to noise_report.json.";
 }
 
+// Analysis reads every take file in full on the capture drive. Never while a
+// take (local or daemon) is writing there, or beside another session job.
+bool MainComponent::refuseAnalysisNow()
+{
+    if (engine.isRecording() || captureMetadataPending)
+    { showStatus ("Analysis runs after recording stops -- it reads every take file"); return true; }
+    if (sessionIoBusy.load())
+    { showStatus ("Wait for the session operation to finish"); return true; }
+    return false;
+}
+
 void MainComponent::runNoiseAnalysis()
 {
+    if (refuseAnalysisNow()) return;
     const auto sessionDir = engine.getActiveSessionDir();
     if (! sessionDir.isDirectory())
     {
@@ -465,6 +486,7 @@ void MainComponent::runNoiseAnalysis()
 
 void MainComponent::runQcAnalysis()
 {
+    if (refuseAnalysisNow()) return;
     const auto sessionDir = engine.getActiveSessionDir();
     if (! sessionDir.isDirectory())
     {
@@ -882,6 +904,7 @@ void MainComponent::showCrashReportNotice (const juce::Array<juce::File>& report
 
 void MainComponent::detectSongsToMarkers()
 {
+    if (refuseAnalysisNow()) return;
     const auto sessionDir = engine.getActiveSessionDir();
     if (! sessionDir.isDirectory())
     {
@@ -937,6 +960,8 @@ void MainComponent::detectSongsToMarkers()
                 self->showStatus ("No songs detected -- try Marker List to add them by hand.");
                 return;
             }
+            // Markers are a timeline edit: a take may have started during the scan.
+            if (! self->canMutateTimeline ("adding song markers")) return;
             auto& markers = self->engine.getMarkers();
             int n = 0;
             for (const auto& s : found)

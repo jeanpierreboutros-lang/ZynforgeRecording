@@ -250,7 +250,8 @@ void MainComponent::jumpToCue (int index)
     const auto& cue = cues[(size_t) index];
 
     auto& player = engine.getPlayer();
-    player.setPositionSamples (cue.samplePos);
+    if (! playheadLockedForPunch())   // the mixer recall below still runs
+        player.setPositionSamples (cue.samplePos);
     const bool hadTempoMap = ! engine.getTempoMap().empty();
     bool clickNeedsRefresh = false;
 

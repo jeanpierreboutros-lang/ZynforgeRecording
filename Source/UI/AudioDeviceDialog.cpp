@@ -254,7 +254,12 @@ namespace zynforge
                 // (the panel can be closed while armed), leave the device
                 // exactly as it is -- protecting the take beats restoring a
                 // setting the engineer can put back afterwards.
-                if (! applied && ! engine.isRecording())
+                // Revert only what THIS panel changed, and only if nothing else
+                // (Session Format, New Session, the Welcome screen) has set the
+                // device since: restoring the open-time snapshot over that
+                // would leave the device at a rate the session doesn't use.
+                if (! applied && ! engine.isRecording() && panelChangedDevice
+                    && engine.getDeviceManager().getAudioDeviceSetup() == panelSetup)
                 {
                     if (snapshot != nullptr)
                         // Restore with the SAME channel counts the app boots with
@@ -546,6 +551,7 @@ namespace zynforge
                 }
 
                 const auto err = dm.setAudioDeviceSetup (setup, true);
+                notePanelSetup();
                 statusLabel.setText (err.isEmpty() ? juce::String ("Device set -- Apply to keep it.")
                                                   : err,
                                      juce::dontSendNotification);
@@ -566,6 +572,7 @@ namespace zynforge
                         setup.sampleRate = rates[idx];
                 }
                 dm.setAudioDeviceSetup (setup, true);
+                notePanelSetup();
             }
 
             void onBufferSizeChanged()
@@ -583,6 +590,13 @@ namespace zynforge
                         setup.bufferSize = buffers[idx];
                 }
                 dm.setAudioDeviceSetup (setup, true);
+                notePanelSetup();
+            }
+
+            void notePanelSetup()
+            {
+                panelChangedDevice = true;
+                engine.getDeviceManager().getAudioDeviceSetup (panelSetup);
             }
 
             // Close correctly for BOTH launch modes. The tracked floating
@@ -625,6 +639,8 @@ namespace zynforge
             // open and restore on Cancel too.
             int origMasterL { 0 }, origMasterR { 1 };
             bool applied    { false };
+            bool panelChangedDevice { false };                       // see ~DialogContent
+            juce::AudioDeviceManager::AudioDeviceSetup panelSetup;   // the setup this panel last set
             bool refreshing { false };
             bool lastRecording { false };
         };

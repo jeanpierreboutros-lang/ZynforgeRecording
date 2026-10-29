@@ -83,8 +83,21 @@ namespace zynforge
         // the Selector / , / .) is also the edit selection, so merely having a
         // region shouldn't force playback to loop. Playback wraps within the
         // region only when loop-play is enabled (the transport ⟲ button).
-        void setLoopEnabled (bool on) noexcept { loopEnabled.store (on, std::memory_order_relaxed); }
+        void setLoopEnabled (bool on) noexcept
+        {
+            if (on && isSeekLocked()) return;
+            loopEnabled.store (on, std::memory_order_relaxed);
+        }
         bool isLoopEnabled() const noexcept    { return loopEnabled.load (std::memory_order_relaxed); }
+
+        // While a punch take captures, the playhead is the punch clock: the
+        // capture window and the splice point are player positions, so a seek
+        // or a loop wrap mid-punch records the wrong span and the splice
+        // overwrites original audio past the punch-out. The engine holds this
+        // lock for the whole punch take; setPositionSamples and turning loop
+        // on are ignored meanwhile, whichever key, cue, click or remote asked.
+        void setSeekLocked (bool on) noexcept { seekLocked.store (on, std::memory_order_release); }
+        bool isSeekLocked() const noexcept    { return seekLocked.load (std::memory_order_acquire); }
 
         // RT-safe: fills outputs[i] with samples from track i, position advances.
         void processBlock (float* const* outputs, int numOutputs, int numSamples) noexcept;
@@ -174,6 +187,7 @@ namespace zynforge
         std::atomic<juce::int64> loopStart   { -1 };
         std::atomic<juce::int64> loopEnd     { -1 };
         std::atomic<bool>        loopEnabled { false };
+        std::atomic<bool>        seekLocked  { false };
 
         double deviceSampleRate { 48000.0 };
         double fileSampleRate   { 48000.0 };
