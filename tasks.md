@@ -12,7 +12,8 @@ Seven read-only reviewers covered capture, the real-time engine, editing/renders
 - [x] Editing: range edits split every crossing clip; **split inside a fade is exact** (user decision: clip fade-ramp fields); paste undo; strips above the last Track_NN; analysis main-take filter; CSV import; trims, Strip Silence, handoff CSV, Tab-to-transient.
 - [x] Session and main window: undo cleared on New Session; analysis refused during a take; crash recovery after daemon reattach; export stale indices; layout saves during jobs; stereo link/strip delete/patch/VCA/LOCK/DEVICE fixes; Welcome recents.
 - [x] Closed as not reproducible: the AppleDouble `._X.zfproj` lookup (macOS hides those files from directory listings; filter kept as defence in depth).
-- [ ] Physical checks on the installed build: see the October bug-hunt section in [FIELD-TEST.md](FIELD-TEST.md).
+- [x] Installed `281c6c0` on both Macs and packaged the universal DMG (see [INSTALL.md](INSTALL.md)).
+- [ ] Physical checks on the installed build: see the October bug-hunt section in [FIELD-TEST.md](FIELD-TEST.md). Not launched on the mini yet.
 
 ## Handover back to Claude Code + structural-debt pass — 2026-10-29
 

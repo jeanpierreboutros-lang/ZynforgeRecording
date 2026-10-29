@@ -32,8 +32,8 @@ static gates pass. Every repaired path has recorded pre-fix failing evidence.
 
 See [the follow-up repair register](docs/history/REVIEW-REPAIRS-2026-10-05.md) for the
 21-item test mapping, commands, evidence location, startup observation and
-runtime limits. The verified `443c769` pair is now installed on the development
-Mac; see [INSTALL.md](INSTALL.md) for matching hashes and rollback. Historical
+runtime limits. That `443c769` pair has since been superseded on both Macs by
+`281c6c0` (2026-10-29); see [INSTALL.md](INSTALL.md) for hashes and rollback. Historical
 S6 results below remain evidence for the previous build. The isolated launch
 reached main-component rendering with unchanged production settings. The later
 installed launch with normal preferences also reached rendering, produced no new

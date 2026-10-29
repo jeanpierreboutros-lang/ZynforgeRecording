@@ -1,6 +1,29 @@
 # Show readiness — planned SD5 recording
 
-## Decision as of 2026-10-05
+## Decision as of 2026-10-29
+
+Both Macs and the current DMG have verified `281c6c0` / protocol 4 (see
+[INSTALL.md](INSTALL.md)). It fixes the October bug hunt's critical items:
+- a Loop or playhead jump during a punch could overwrite audio past the punch-out;
+- a refused punch could leave an arm that spliced silence over the take;
+- New Session under a live take re-patched it;
+- one crafted OSC packet crashed the listener.
+
+It also fixes two show-relevant highs:
+- a session prepared on a smaller device saved a wrapped input patch, so the
+  SD5 rig would record the wrong inputs;
+- the companion RECORD button acted as STOP during a take.
+
+RECORD no longer waits on lead-in silence. 689 test groups pass in Release,
+ASan/UBSan, TSan and CI.
+
+None of this is a physical acceptance. The October bug-hunt checks in
+[FIELD-TEST.md](FIELD-TEST.md), microphone/device checks on both Macs, the
+physical record/STOP check and the planned 56-input rehearsal remain open. The
+mini restarted about 15 minutes before installation; its PCIe restart history is
+unresolved.
+
+## Previous decision as of 2026-10-05
 
 Both Macs and the current DMG have verified `443c769` / protocol 4. The mini
 launch is waiting in CoreAudio initialization; its startup acceptance is open. The current source passed

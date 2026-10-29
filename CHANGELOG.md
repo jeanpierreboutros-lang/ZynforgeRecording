@@ -23,6 +23,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+### Installed — October 29, both Macs
+
+- Both Macs and a new universal DMG run `281c6c0` with its protocol-4 helper: every October bug-hunt fix, deferred lead-ins and exact split fades. Hashes, rollback paths and the startup observation are in [INSTALL.md](INSTALL.md); no recording was made at installation.
+
 ### Fixed — October bug hunt: engine and playback
 
 - **A session prepared on a smaller device keeps its saved input patch.** Strips wrap onto the available inputs only while that device is in use, so the show rig records the right inputs (the wrapped patch used to be saved).

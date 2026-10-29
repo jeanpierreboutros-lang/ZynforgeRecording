@@ -8,7 +8,7 @@ Never force-quit, unplug hardware or delete sessions during production recording
 
 ---
 
-## October 5 follow-up acceptance — `443c769`, not yet performed
+## October 5 follow-up acceptance — `443c769`, not yet performed (repeat on the installed `281c6c0`)
 
 Run these checks on disposable sessions; retain measured results and leave
 unchecked items open. [The repair register](docs/history/REVIEW-REPAIRS-2026-10-05.md)

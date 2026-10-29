@@ -4,15 +4,18 @@ Live multitrack recorder + virtual soundcheck for macOS. Built on JUCE 8 / C++20
 
 A focused recording surface for engineers running front-of-house or monitors: capture console inputs and play those tracks back through the same outputs during soundcheck. **Not a DAW** — no plugins, no in-the-box effects. No recording system can guarantee against every failure; use independent redundancy for important shows.
 
-## Status — 2026-10-05
+## Status — 2026-10-29
 
-**Source since then (2026-10-29):** development moved back to Claude Code; after a structural-debt pass, an October bug hunt is being fixed (punch, capture and session safety first; see [CHANGELOG.md](CHANGELOG.md)). The source is ahead of the installed `443c769` build and passes 689 test groups in Release, ASan/UBSan, TSan and CI. The installation notes below describe `443c769`.
+Both Macs and the [universal installer](dist/Zynforge-Recording-281c6c0-macOS-universal.dmg)
+now use verified `281c6c0` and its matching protocol-4 helper. This build contains
+every fix from the October bug hunt (punch, capture and session safety, network
+hardening, engine/playback, EDIT view, clip editing), RECORD no longer waiting on
+lead-in silence, and exact splits inside fades. It passes **689 test groups in
+Release, ASan/UBSan, TSan and CI**. [INSTALL.md](INSTALL.md) owns hashes,
+rollback paths and what was and was not checked at installation;
+[CHANGELOG.md](CHANGELOG.md) lists the changes.
 
-Both Macs and the [universal installer](dist/Zynforge-Recording-443c769-macOS-universal.dmg)
-now use verified `443c769` and its matching protocol-4 helper. Superseded apps,
-rollback bundles and installers were removed at the user's request. Development
-startup was observed; the mini launch is waiting in CoreAudio initialization.
-[INSTALL.md](INSTALL.md) owns executable hashes, startup limits and cleanup evidence.
+Earlier status (2026-10-05, `443c769`, superseded):
 
 All 21 follow-up findings are repaired. **563 test groups passed in each full
 Release, ThreadSanitizer and ASan/UBSan/float-cast-overflow suite**, with no

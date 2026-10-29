@@ -8,11 +8,10 @@ It is **not** a mixer or DAW. No plugins, no effects, no talkback. Architectural
 
 ## Current baseline and owned STOP/persistence work
 
-The development Mac runs `443c769` with its matching protocol-v4 helper.
-Release, TSan and ASan/UBSan/float-cast-overflow each pass 563 groups with zero
-failures and no sanitizer reports. Normal startup reached main-component
-rendering; interactive and physical capture acceptance remains open. The mini
-and DMG remain `c563b00` / protocol 3. [INSTALL.md](INSTALL.md) owns package
+Both Macs and the current DMG run `281c6c0` with its matching protocol-v4
+helper (installed 2026-10-29). Release, TSan and ASan/UBSan/float-cast-overflow
+each pass 689 groups with zero failures and no sanitizer reports; interactive and
+physical capture acceptance remains open. [INSTALL.md](INSTALL.md) owns package
 identities; [the follow-up register](docs/history/REVIEW-REPAIRS-2026-10-05.md) and
 [earlier S6 audit](docs/history/AUDIT-2026-10-05.md) retain separate evidence.
 

@@ -1,9 +1,9 @@
 # Documentation index
 
-Reconciled on 2026-10-05 against source repair `443c769` and its verified
+Reconciled on 2026-10-29 against source `281c6c0` and its verified
 installation. Later documentation commits do not change the installed binaries.
-Both Macs and the current DMG use `443c769` / protocol 4; superseded apps and
-installers were removed in the subsequent two-Mac cleanup. Refer to the owning documents below instead of copying
+Both Macs and the current DMG use `281c6c0` / protocol 4; each Mac keeps its
+previous `443c769` app as a dated backup. Refer to the owning documents below instead of copying
 package hashes, test counts or acceptance claims into new guides.
 
 ## Current guides and ownership
