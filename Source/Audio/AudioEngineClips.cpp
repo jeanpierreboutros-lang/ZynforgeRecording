@@ -2003,7 +2003,7 @@ namespace zynforge
         return targetDbFS - juce::Decibels::gainToDecibels (peak);
     }
 
-    void AudioEngine::normalizeClipGroupAsync (std::vector<int> tracks, int clipIndex,
+    void AudioEngine::normalizeClipGroupAsync (std::vector<std::pair<int, int>> targets,
                                                float targetDbFS,
                                                std::function<void (bool)> completion)
     {
@@ -2016,6 +2016,7 @@ namespace zynforge
         struct Job
         {
             int track { -1 };
+            int clipIndex { -1 };
             Clip clip;
             juce::File file;
             int firstChannel { 0 };
@@ -2024,15 +2025,16 @@ namespace zynforge
             float gainDb { std::numeric_limits<float>::quiet_NaN() };
         };
 
-        std::sort (tracks.begin(), tracks.end());
-        tracks.erase (std::unique (tracks.begin(), tracks.end()), tracks.end());
+        std::sort (targets.begin(), targets.end());
+        targets.erase (std::unique (targets.begin(), targets.end()), targets.end());
         std::vector<Job> jobs;
-        for (const int track : tracks)
+        for (const auto [track, clipIndex] : targets)
         {
             auto* list = validClipList (trackClips, track, clipIndex);
             if (list == nullptr || (*list)[(size_t) clipIndex].locked) continue;
             Job job;
             job.track = track;
+            job.clipIndex = clipIndex;
             job.clip = (*list)[(size_t) clipIndex];
             job.file = job.clip.audioFile;
             if (job.file == juce::File())
@@ -2058,7 +2060,7 @@ namespace zynforge
 
         const auto sessionDir = getActiveSessionDir();
         const auto handle = asyncHandle;
-        juce::Thread::launch ([handle, sessionDir, clipIndex, targetDbFS,
+        juce::Thread::launch ([handle, sessionDir, targetDbFS,
                                jobs = std::move (jobs),
                                completion = std::move (completion)] () mutable
         {
@@ -2098,7 +2100,7 @@ namespace zynforge
             }
 
             juce::MessageManager::callAsync (
-                [handle, sessionDir, clipIndex, jobs = std::move (jobs), sharedGain, found,
+                [handle, sessionDir, jobs = std::move (jobs), sharedGain, found,
                  completion = std::move (completion)] () mutable
             {
                 auto* engine = handle->load (std::memory_order_acquire);
@@ -2111,9 +2113,9 @@ namespace zynforge
                     // trimmed, or replaced while the worker was running.
                     for (const auto& job : jobs)
                     {
-                        auto* list = validClipList (engine->trackClips, job.track, clipIndex);
+                        auto* list = validClipList (engine->trackClips, job.track, job.clipIndex);
                         if (list == nullptr) { applied = false; break; }
-                        const auto& current = (*list)[(size_t) clipIndex];
+                        const auto& current = (*list)[(size_t) job.clipIndex];
                         if (current.audioFile != job.clip.audioFile
                             || current.timelineStartSamples != job.clip.timelineStartSamples
                             || current.fileStartSamples != job.clip.fileStartSamples
@@ -2123,7 +2125,7 @@ namespace zynforge
                 }
                 if (applied)
                     for (const auto& job : jobs)
-                        engine->setClipGainDb (job.track, clipIndex, sharedGain);
+                        engine->setClipGainDb (job.track, job.clipIndex, sharedGain);
                 if (completion) completion (applied);
             });
         });

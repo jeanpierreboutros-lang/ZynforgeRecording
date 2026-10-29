@@ -3219,7 +3219,8 @@ namespace zynforge
                     {
                         auto* page = findParentComponentOfClass<EditPage>();
                         if (page != nullptr) page->beginClipEdit();
-                        engine.compRangeFromTake (index, tk, a, b);
+                        for (int t : stripTracks())
+                            engine.compRangeFromTake (t, tk, a, b);
                         if (page != nullptr) page->commitClipEdit ("Comp swipe");
                     }
                 }
@@ -3407,6 +3408,30 @@ namespace zynforge
             return clipIndexAtMidpoint (*dst, sc.timelineStartSamples, sc.fileLengthSamples);
         }
 
+        // Every edit peer's OWN clip for this row's clip `srcIdx` -- the stereo
+        // R half and each EDIT-group member -- as (track, clipIndex). Resolve
+        // BEFORE mutating anything: a delete / duplicate on one track shifts
+        // the source clip a later peerClipIndex() lookup would read.
+        std::vector<std::pair<int, int>> peerClipTargets (int srcIdx) const
+        {
+            std::vector<std::pair<int, int>> targets;
+            for (int peer : editGroupPeers())
+                if (const int pi = peerClipIndex (peer, srcIdx); pi >= 0)
+                    targets.emplace_back (peer, pi);
+            return targets;
+        }
+
+        // The physical tracks this row's take / comp operations apply to. A
+        // stereo row is ONE logical strip, so L and R must keep one
+        // arrangement: switching, creating or comping a take on L alone left
+        // the R half playing another one.
+        std::vector<int> stripTracks() const
+        {
+            if (stereo && index + 1 < engine.getRecorder().getNumTracks())
+                return { index, index + 1 };
+            return { index };
+        }
+
         // True once the background thumbnail scan has finished for this row's
         // file(s) (an empty/no-source thumbnail counts as loaded). Lets the
         // page persist WaveCache.wfm the moment the whole session is scanned.
@@ -3424,11 +3449,203 @@ namespace zynforge
             return pixelsFor (rowSize, fitFallback, customH);
         }
 
+        // Apply one item of a clip's right-click menu to clip `clipIdx` of this
+        // row. Split out of showFadeMenu's async callback so the suite can drive
+        // the menu actions without a popup (test seam).
+        void applyClipMenuChoice (int clipIdx, int chosen)
+        {
+            const auto* rowClips = engine.tryClipsFor (index);
+            if (rowClips == nullptr || clipIdx < 0 || clipIdx >= (int) rowClips->size()) return;
+            const auto& clip = (*rowClips)[(size_t) clipIdx];
+            const auto  fIn      = clip.fadeInSamples;
+            const auto  fOut     = clip.fadeOutSamples;
+            const bool  muted    = clip.muted;
+            const bool  locked   = clip.locked;
+            const float gainDb   = clip.gainDb;
+            const int   curveNow = clip.fadeCurve;
+            auto msToSamples = [this] (int ms) { return clipMenuMsToSamples (ms); };
+            juce::Component::SafePointer<TrackRow> self (this);
+            // Every item applies to each edit peer's OWN clip (the stereo R
+            // half + EDIT-group members), never the raw clipIdx: a peer with a
+            // different arrangement holds another region at that index.
+            const auto targets = peerClipTargets (clipIdx);
+
+            // Route every clip-mutating menu action through the EDIT
+            // page's clip-undo bridge so it joins Cmd+Z, consistent
+            // with the drag-edit and Split/Crop paths. The before/after
+            // guard in pushClipUndo drops no-ops (e.g. selecting the
+            // gain the clip already has).
+            auto withUndo = [self] (const juce::String& label, auto&& op)
+            {
+                auto* page = self->findParentComponentOfClass<EditPage>();
+                if (page != nullptr) page->beginClipEdit();
+                op();
+                if (page != nullptr) page->commitClipEdit (label);
+                self->repaint();
+            };
+
+            switch (chosen)
+            {
+                // Per-clip ops mirror to every edit peer -- a collapsed stereo
+                // row carries its R partner (editGroupPeers appends it), so
+                // mute / lock / duplicate / delete / consolidate hit BOTH
+                // channels and the pair stays in sync. Without this they
+                // edited only the LEFT half (the parallel clip lists drift).
+                case 400: withUndo (muted  ? "Unmute clip" : "Mute clip",   [&]{ for (auto [p, pi] : targets) self->engine.setClipMuted  (p, pi, ! muted); });  return;
+                case 401: withUndo (locked ? "Unlock clip" : "Lock clip",   [&]{ for (auto [p, pi] : targets) self->engine.setClipLocked (p, pi, ! locked); }); return;
+                case 410: withUndo ("Duplicate clip", [&]{ for (auto [p, pi] : targets) self->engine.duplicateClip (p, pi); });           return;
+                case 411: withUndo ("Delete clip",    [&]{ for (auto [p, pi] : targets) self->engine.deleteClip    (p, pi); });           return;
+                case 414:
+                {
+                    auto* page = self->findParentComponentOfClass<EditPage>();
+                    if (page != nullptr) page->beginClipEdit();
+                    self->setEnabled (false);
+                    self->engine.normalizeClipGroupAsync (
+                        targets, -0.3f,
+                        [self] (bool)
+                    {
+                        if (self == nullptr) return;
+                        self->setEnabled (true);
+                        if (auto* pageNow = self->findParentComponentOfClass<EditPage>())
+                            pageNow->commitClipEdit ("Normalize clip");
+                        self->repaint();
+                    });
+                    return;
+                }
+                case 413:
+                {
+                    auto* clips = self->engine.tryClipsFor (self->index);
+                    if (clips == nullptr || clipIdx >= (int) clips->size()) return;
+                    const auto start = (*clips)[(size_t) clipIdx].timelineStartSamples;
+                    const auto end = start + (*clips)[(size_t) clipIdx].fileLengthSamples;
+                    if (auto* page = self->findParentComponentOfClass<EditPage>())
+                        page->beginClipEdit();
+                    self->setEnabled (false);
+                    self->engine.consolidateRangeAsync (
+                        self->editGroupPeers(), start, end,
+                        [self] (int, bool)
+                    {
+                        if (self == nullptr) return;
+                        self->setEnabled (true);
+                        if (auto* pageNow = self->findParentComponentOfClass<EditPage>())
+                            pageNow->commitClipEdit ("Consolidate clip");
+                        self->repaint();
+                    });
+                    return;
+                }
+                case 412:
+                {
+                    juce::String cur;
+                    if (auto* cl = self->engine.tryClipsFor (self->index))
+                        if (clipIdx < (int) cl->size()) cur = (*cl)[(size_t) clipIdx].name;
+                    auto* aw = new juce::AlertWindow ("Rename clip",
+                        "Clip name:", juce::MessageBoxIconType::NoIcon);
+                    aw->setLookAndFeel (&self->getLookAndFeel());
+                    aw->addTextEditor ("name", cur);
+                    dialog::primeNameEditor (*aw, "name");
+                    aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
+                    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+                    juce::Component::SafePointer<TrackRow> rowSafe (self);
+                    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+                        [aw, rowSafe, clipIdx] (int r)
+                    {
+                        std::unique_ptr<juce::AlertWindow> own (aw);
+                        if (r != 1 || rowSafe == nullptr) return;
+                        const auto nm = own->getTextEditorContents ("name").trim();
+                        if (nm.isEmpty()) return;
+                        auto* page = rowSafe->findParentComponentOfClass<EditPage>();
+                        if (page != nullptr) page->beginClipEdit();
+                        for (auto [p, pi] : rowSafe->peerClipTargets (clipIdx))
+                            rowSafe->engine.setClipName (p, pi, nm);
+                        if (page != nullptr) page->commitClipEdit ("Rename clip");
+                        rowSafe->repaint();
+                    }));
+                    return;
+                }
+                // Gain presets apply to every peer (stereo R partner +
+                // edit-group members), like the gain-handle drag.
+                case 501: withUndo ("Clip gain", [&]{ for (auto [p, pi] : targets) self->engine.setClipGainDb (p, pi, -12.0f); }); return;
+                case 502: withUndo ("Clip gain", [&]{ for (auto [p, pi] : targets) self->engine.setClipGainDb (p, pi,  -6.0f); }); return;
+                case 503: withUndo ("Clip gain", [&]{ for (auto [p, pi] : targets) self->engine.setClipGainDb (p, pi,  -3.0f); }); return;
+                case 504: withUndo ("Clip gain", [&]{ for (auto [p, pi] : targets) self->engine.setClipGainDb (p, pi,   0.0f); }); return;
+                case 505: withUndo ("Clip gain", [&]{ for (auto [p, pi] : targets) self->engine.setClipGainDb (p, pi,   3.0f); }); return;
+                case 506: withUndo ("Clip gain", [&]{ for (auto [p, pi] : targets) self->engine.setClipGainDb (p, pi,   6.0f); }); return;
+                case 320: withUndo ("Fade curve", [&]{ for (auto [p, pi] : targets) self->engine.setClipFadeCurve (p, pi, curveNow == 1 ? 0 : 1); }); return;
+                case 510:
+                {
+                    auto* aw = new juce::AlertWindow ("Clip gain",
+                        "Enter clip gain in dB (-60 .. +12).",
+                        juce::MessageBoxIconType::NoIcon);
+                    aw->setLookAndFeel (&self->getLookAndFeel());   // grey ZynForge chrome
+                    aw->addTextEditor ("dB", juce::String (gainDb, 2));
+                    dialog::primeNameEditor (*aw, "dB");
+                    aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
+                    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+                    juce::Component::SafePointer<TrackRow> rowSafe (self);
+                    aw->enterModalState (true, juce::ModalCallbackFunction::create (
+                        [aw, rowSafe, clipIdx] (int r)
+                    {
+                        std::unique_ptr<juce::AlertWindow> own (aw);
+                        if (r != 1 || rowSafe == nullptr) return;
+                        const auto txt = own->getTextEditorContents ("dB");
+                        const float dB = juce::jlimit (-60.0f, 12.0f, txt.getFloatValue());
+                        auto* page = rowSafe->findParentComponentOfClass<EditPage>();
+                        if (page != nullptr) page->beginClipEdit();
+                        for (auto [p, pi] : rowSafe->peerClipTargets (clipIdx))
+                            rowSafe->engine.setClipGainDb (p, pi, dB);
+                        if (page != nullptr) page->commitClipEdit ("Clip gain");
+                        rowSafe->repaint();
+                    }));
+                    return;
+                }
+                default: break;
+            }
+
+            juce::int64 newIn  = fIn;
+            juce::int64 newOut = fOut;
+            switch (chosen)
+            {
+                case 101: newIn  = 0;                   break;
+                case 102: newIn  = msToSamples (10);    break;
+                case 103: newIn  = msToSamples (50);    break;
+                case 104: newIn  = msToSamples (200);   break;
+                case 105: newIn  = msToSamples (500);   break;
+                case 106: newIn  = msToSamples (1000);  break;
+                case 201: newOut = 0;                   break;
+                case 202: newOut = msToSamples (10);    break;
+                case 203: newOut = msToSamples (50);    break;
+                case 204: newOut = msToSamples (200);   break;
+                case 205: newOut = msToSamples (500);   break;
+                case 206: newOut = msToSamples (1000);  break;
+                case 300: newIn = 0; newOut = 0;        break;
+                default: return;
+            }
+            // Each peer keeps its own fade on the edge this item doesn't set.
+            const bool setsIn  = chosen < 200 || chosen == 300;
+            const bool setsOut = chosen >= 200;
+            withUndo ("Clip fades", [&]
+            {
+                for (auto [p, pi] : targets)
+                    if (const auto* pc = self->engine.tryClipsFor (p); pc != nullptr && pi < (int) pc->size())
+                        self->engine.setClipFades (p, pi,
+                                                   setsIn  ? newIn  : (*pc)[(size_t) pi].fadeInSamples,
+                                                   setsOut ? newOut : (*pc)[(size_t) pi].fadeOutSamples);
+            });
+        }
+
     private:
         bool hovered { false };
         // False once invalidate() has run -- the backing TrackState is being
         // destroyed, so updatePollState() must stop dereferencing it too.
         bool rowValid { true };
+
+        juce::int64 clipMenuMsToSamples (int ms) const
+        {
+            const double sr = engine.getPlayer().getSampleRate() > 0.0
+                                 ? engine.getPlayer().getSampleRate()
+                                 : 48000.0;
+            return (juce::int64) ((double) ms * sr / 1000.0);
+        }
 
         void showFadeMenu (int clipIdx, juce::Point<int> screenPos)
         {
@@ -3446,13 +3663,7 @@ namespace zynforge
             const float gainDb = clip.gainDb;
             const int  curveNow = clip.fadeCurve;
 
-            const double sr = engine.getPlayer().getSampleRate() > 0.0
-                                 ? engine.getPlayer().getSampleRate()
-                                 : 48000.0;
-            auto msToSamples = [sr] (int ms) -> juce::int64
-            {
-                return (juce::int64) ((double) ms * sr / 1000.0);
-            };
+            auto msToSamples = [this] (int ms) { return clipMenuMsToSamples (ms); };
 
             juce::PopupMenu fadeIn;
             fadeIn.addItem (101, "Off",     true, fIn == 0);
@@ -3499,162 +3710,12 @@ namespace zynforge
             juce::Component::SafePointer<TrackRow> self (this);
             menu.showMenuAsync (juce::PopupMenu::Options()
                                   .withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 }),
-                [self, clipIdx, fIn, fOut, muted, locked, gainDb, curveNow, msToSamples] (int chosen)
+                [self, clipIdx] (int chosen)
             {
                 if (self == nullptr) return;
                 self->menuOpen = false;
                 if (chosen == 0) return;
-
-                // Route every clip-mutating menu action through the EDIT
-                // page's clip-undo bridge so it joins Cmd+Z, consistent
-                // with the drag-edit and Split/Crop paths. The before/after
-                // guard in pushClipUndo drops no-ops (e.g. selecting the
-                // gain the clip already has).
-                auto withUndo = [self] (const juce::String& label, auto&& op)
-                {
-                    auto* page = self->findParentComponentOfClass<EditPage>();
-                    if (page != nullptr) page->beginClipEdit();
-                    op();
-                    if (page != nullptr) page->commitClipEdit (label);
-                    self->repaint();
-                };
-
-                switch (chosen)
-                {
-                    case 400: withUndo (muted  ? "Unmute clip" : "Mute clip",   [&]{ self->engine.setClipMuted  (self->index, clipIdx, ! muted); });  return;
-                    // Structural per-clip ops mirror to every edit peer -- a
-                    // collapsed stereo row carries its R partner (editGroupPeers
-                    // appends it), so lock / duplicate / delete / consolidate hit
-                    // BOTH channels and the pair stays in sync. Without this they
-                    // edited only the LEFT half (the parallel clip lists drift).
-                    case 401: withUndo (locked ? "Unlock clip" : "Lock clip",   [&]{ for (int p : self->editGroupPeers()) self->engine.setClipLocked (p, clipIdx, ! locked); }); return;
-                    case 410: withUndo ("Duplicate clip", [&]{ for (int p : self->editGroupPeers()) self->engine.duplicateClip (p, clipIdx); });           return;
-                    case 411: withUndo ("Delete clip",    [&]{ for (int p : self->editGroupPeers()) self->engine.deleteClip    (p, clipIdx); });           return;
-                    case 414:
-                    {
-                        auto* page = self->findParentComponentOfClass<EditPage>();
-                        if (page != nullptr) page->beginClipEdit();
-                        self->setEnabled (false);
-                        self->engine.normalizeClipGroupAsync (
-                            self->editGroupPeers(), clipIdx, -0.3f,
-                            [self] (bool)
-                        {
-                            if (self == nullptr) return;
-                            self->setEnabled (true);
-                            if (auto* pageNow = self->findParentComponentOfClass<EditPage>())
-                                pageNow->commitClipEdit ("Normalize clip");
-                            self->repaint();
-                        });
-                        return;
-                    }
-                    case 413:
-                    {
-                        auto* clips = self->engine.tryClipsFor (self->index);
-                        if (clips == nullptr || clipIdx >= (int) clips->size()) return;
-                        const auto start = (*clips)[(size_t) clipIdx].timelineStartSamples;
-                        const auto end = start + (*clips)[(size_t) clipIdx].fileLengthSamples;
-                        if (auto* page = self->findParentComponentOfClass<EditPage>())
-                            page->beginClipEdit();
-                        self->setEnabled (false);
-                        self->engine.consolidateRangeAsync (
-                            self->editGroupPeers(), start, end,
-                            [self] (int, bool)
-                        {
-                            if (self == nullptr) return;
-                            self->setEnabled (true);
-                            if (auto* pageNow = self->findParentComponentOfClass<EditPage>())
-                                pageNow->commitClipEdit ("Consolidate clip");
-                            self->repaint();
-                        });
-                        return;
-                    }
-                    case 412:
-                    {
-                        juce::String cur;
-                        if (auto* cl = self->engine.tryClipsFor (self->index))
-                            if (clipIdx < (int) cl->size()) cur = (*cl)[(size_t) clipIdx].name;
-                        auto* aw = new juce::AlertWindow ("Rename clip",
-                            "Clip name:", juce::MessageBoxIconType::NoIcon);
-                        aw->setLookAndFeel (&self->getLookAndFeel());
-                        aw->addTextEditor ("name", cur);
-                        dialog::primeNameEditor (*aw, "name");
-                        aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
-                        aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-                        juce::Component::SafePointer<TrackRow> rowSafe (self);
-                        aw->enterModalState (true, juce::ModalCallbackFunction::create (
-                            [aw, rowSafe, clipIdx] (int r)
-                        {
-                            std::unique_ptr<juce::AlertWindow> own (aw);
-                            if (r != 1 || rowSafe == nullptr) return;
-                            const auto nm = own->getTextEditorContents ("name").trim();
-                            if (nm.isEmpty()) return;
-                            auto* page = rowSafe->findParentComponentOfClass<EditPage>();
-                            if (page != nullptr) page->beginClipEdit();
-                            rowSafe->engine.setClipName (rowSafe->index, clipIdx, nm);
-                            if (page != nullptr) page->commitClipEdit ("Rename clip");
-                            rowSafe->repaint();
-                        }));
-                        return;
-                    }
-                    // Gain presets apply to every peer (stereo R partner +
-                    // edit-group members), like the gain-handle drag.
-                    case 501: withUndo ("Clip gain", [&]{ for (int p : self->editGroupPeers()) self->engine.setClipGainDb (p, clipIdx, -12.0f); }); return;
-                    case 502: withUndo ("Clip gain", [&]{ for (int p : self->editGroupPeers()) self->engine.setClipGainDb (p, clipIdx,  -6.0f); }); return;
-                    case 503: withUndo ("Clip gain", [&]{ for (int p : self->editGroupPeers()) self->engine.setClipGainDb (p, clipIdx,  -3.0f); }); return;
-                    case 504: withUndo ("Clip gain", [&]{ for (int p : self->editGroupPeers()) self->engine.setClipGainDb (p, clipIdx,   0.0f); }); return;
-                    case 505: withUndo ("Clip gain", [&]{ for (int p : self->editGroupPeers()) self->engine.setClipGainDb (p, clipIdx,   3.0f); }); return;
-                    case 506: withUndo ("Clip gain", [&]{ for (int p : self->editGroupPeers()) self->engine.setClipGainDb (p, clipIdx,   6.0f); }); return;
-                    case 320: withUndo ("Fade curve", [&]{ self->engine.setClipFadeCurve (self->index, clipIdx, curveNow == 1 ? 0 : 1); }); return;
-                    case 510:
-                    {
-                        auto* aw = new juce::AlertWindow ("Clip gain",
-                            "Enter clip gain in dB (-60 .. +12).",
-                            juce::MessageBoxIconType::NoIcon);
-                        aw->setLookAndFeel (&self->getLookAndFeel());   // grey ZynForge chrome
-                        aw->addTextEditor ("dB", juce::String (gainDb, 2));
-                        dialog::primeNameEditor (*aw, "dB");
-                        aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
-                        aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-                        juce::Component::SafePointer<TrackRow> rowSafe (self);
-                        aw->enterModalState (true, juce::ModalCallbackFunction::create (
-                            [aw, rowSafe, clipIdx] (int r)
-                        {
-                            std::unique_ptr<juce::AlertWindow> own (aw);
-                            if (r != 1 || rowSafe == nullptr) return;
-                            const auto txt = own->getTextEditorContents ("dB");
-                            const float dB = juce::jlimit (-60.0f, 12.0f, txt.getFloatValue());
-                            auto* page = rowSafe->findParentComponentOfClass<EditPage>();
-                            if (page != nullptr) page->beginClipEdit();
-                            for (int p : rowSafe->editGroupPeers())
-                                rowSafe->engine.setClipGainDb (p, clipIdx, dB);
-                            if (page != nullptr) page->commitClipEdit ("Clip gain");
-                            rowSafe->repaint();
-                        }));
-                        return;
-                    }
-                    default: break;
-                }
-
-                juce::int64 newIn  = fIn;
-                juce::int64 newOut = fOut;
-                switch (chosen)
-                {
-                    case 101: newIn  = 0;                   break;
-                    case 102: newIn  = msToSamples (10);    break;
-                    case 103: newIn  = msToSamples (50);    break;
-                    case 104: newIn  = msToSamples (200);   break;
-                    case 105: newIn  = msToSamples (500);   break;
-                    case 106: newIn  = msToSamples (1000);  break;
-                    case 201: newOut = 0;                   break;
-                    case 202: newOut = msToSamples (10);    break;
-                    case 203: newOut = msToSamples (50);    break;
-                    case 204: newOut = msToSamples (200);   break;
-                    case 205: newOut = msToSamples (500);   break;
-                    case 206: newOut = msToSamples (1000);  break;
-                    case 300: newIn = 0; newOut = 0;        break;
-                    default: return;
-                }
-                withUndo ("Clip fades", [&]{ self->engine.setClipFades (self->index, clipIdx, newIn, newOut); });
+                self->applyClipMenuChoice (clipIdx, chosen);
             });
         }
 
@@ -4089,68 +4150,85 @@ namespace zynforge
                     return;
                 }
 
-                // Take pick -- 800..829.
-                if (chosen >= 800 && chosen < 830)
-                {
-                    row->engine.setActiveTake (row->index, chosen - 800);
-                    row->repaint();
-                    return;
-                }
-                // Comp selection from take -- 870..899.
-                if (chosen >= 870 && chosen < 900)
-                {
-                    auto& player = row->engine.getPlayer();
-                    if (! player.hasLoopRegion()) return;
-                    auto* page = row->findParentComponentOfClass<EditPage>();
-                    if (page != nullptr) page->beginClipEdit();
-                    row->engine.compRangeFromTake (row->index, chosen - 870,
-                                                   player.getLoopStart(), player.getLoopEnd());
-                    if (page != nullptr) page->commitClipEdit ("Comp selection from take");
-                    row->repaint();
-                    return;
-                }
-                if (chosen == 850)   // new take from current
-                {
-                    row->engine.newTakeFromCurrent (row->index, {});
-                    row->repaint();
-                    return;
-                }
-                if (chosen == 860)   // toggle comp lanes
-                {
-                    row->showCompLanes = ! row->showCompLanes;
-                    row->repaint();
-                    return;
-                }
-                if (chosen == 851)   // rename active take
-                {
-                    const int active = row->engine.getActiveTakeIdx (row->index);
-                    const auto cur   = row->engine.getTakeName (row->index, active);
-                    auto* aw = new juce::AlertWindow ("Rename take",
-                        "Take name:", juce::MessageBoxIconType::NoIcon);
-                    aw->setLookAndFeel (&row->getLookAndFeel());   // grey ZynForge chrome
-                    aw->addTextEditor ("n", cur, {});
-                    dialog::primeNameEditor (*aw, "n");
-                    aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
-                    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-                    juce::Component::SafePointer<TrackRow> rs (row);
-                    aw->enterModalState (true, juce::ModalCallbackFunction::create (
-                        [aw, rs, active] (int r)
-                    {
-                        std::unique_ptr<juce::AlertWindow> own (aw);
-                        if (r != 1 || rs == nullptr) return;
-                        rs->engine.renameTake (rs->index, active, own->getTextEditorContents ("n").trim());
-                        rs->repaint();
-                    }));
-                    return;
-                }
-                if (chosen == 852)   // delete active take
-                {
-                    const int active = row->engine.getActiveTakeIdx (row->index);
-                    row->engine.deleteTake (row->index, active);
-                    row->repaint();
-                    return;
-                }
+                row->applyTakeMenuChoice (chosen);
             });
+        }
+
+    public:
+        // Apply one item of the row menu's Take submenu (800.. pick, 850 new
+        // take, 851 rename, 852 delete, 860 comp lanes, 870.. comp selection).
+        // Split out of showSizeMenu's async callback so the suite can drive
+        // the take actions without a popup (test seam). Every item applies to
+        // both halves of a stereo row (stripTracks) so L and R keep one
+        // arrangement.
+        void applyTakeMenuChoice (int chosen)
+        {
+            auto* row = this;
+            // Take pick -- 800..829.
+            if (chosen >= 800 && chosen < 830)
+            {
+                for (int t : row->stripTracks())
+                    row->engine.setActiveTake (t, chosen - 800);
+                row->repaint();
+                return;
+            }
+            // Comp selection from take -- 870..899.
+            if (chosen >= 870 && chosen < 900)
+            {
+                auto& player = row->engine.getPlayer();
+                if (! player.hasLoopRegion()) return;
+                auto* page = row->findParentComponentOfClass<EditPage>();
+                if (page != nullptr) page->beginClipEdit();
+                for (int t : row->stripTracks())
+                    row->engine.compRangeFromTake (t, chosen - 870,
+                                                   player.getLoopStart(), player.getLoopEnd());
+                if (page != nullptr) page->commitClipEdit ("Comp selection from take");
+                row->repaint();
+                return;
+            }
+            if (chosen == 850)   // new take from current
+            {
+                for (int t : row->stripTracks())
+                    row->engine.newTakeFromCurrent (t, {});
+                row->repaint();
+                return;
+            }
+            if (chosen == 860)   // toggle comp lanes
+            {
+                row->showCompLanes = ! row->showCompLanes;
+                row->repaint();
+                return;
+            }
+            if (chosen == 851)   // rename active take
+            {
+                const int active = row->engine.getActiveTakeIdx (row->index);
+                const auto cur   = row->engine.getTakeName (row->index, active);
+                auto* aw = new juce::AlertWindow ("Rename take",
+                    "Take name:", juce::MessageBoxIconType::NoIcon);
+                aw->setLookAndFeel (&row->getLookAndFeel());   // grey ZynForge chrome
+                aw->addTextEditor ("n", cur, {});
+                dialog::primeNameEditor (*aw, "n");
+                aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
+                aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+                juce::Component::SafePointer<TrackRow> rs (row);
+                aw->enterModalState (true, juce::ModalCallbackFunction::create (
+                    [aw, rs, active] (int r)
+                {
+                    std::unique_ptr<juce::AlertWindow> own (aw);
+                    if (r != 1 || rs == nullptr) return;
+                    for (int t : rs->stripTracks())
+                        rs->engine.renameTake (t, active, own->getTextEditorContents ("n").trim());
+                    rs->repaint();
+                }));
+                return;
+            }
+            if (chosen == 852)   // delete active take
+            {
+                for (int t : row->stripTracks())
+                    row->engine.deleteTake (t, row->engine.getActiveTakeIdx (t));
+                row->repaint();
+                return;
+            }
         }
 
     public:

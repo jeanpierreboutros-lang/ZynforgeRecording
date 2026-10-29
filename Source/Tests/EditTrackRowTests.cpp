@@ -384,6 +384,114 @@ namespace zynforge
                 h.engine.clearAutomation (AP::Volume);
             }
 
+            // ── #2: clip menu items on a stereo row edit BOTH halves ─────────
+            beginTest ("Clip menu mute, fades and curve apply to both halves of a stereo row");
+            {
+                Session s (2, { 48000, 48000 });
+                s.engine.setTrackStereo (0, true);
+                EditPage::TrackRow row (0, true, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                expect (! s.clips (0).empty() && ! s.clips (1).empty(), "setup: both halves hold a clip");
+
+                row.applyClipMenuChoice (0, 400);   // Mute clip
+                row.applyClipMenuChoice (0, 105);   // Fade in 500 ms
+                row.applyClipMenuChoice (0, 320);   // Equal-power fades
+                for (int t : { 0, 1 })
+                {
+                    if (s.clips (t).empty()) continue;
+                    const auto& c = s.clips (t)[0];
+                    const auto half = juce::String (t == 0 ? "L" : "R");
+                    expect (c.muted, half + " clip not muted");
+                    expectEquals (c.fadeInSamples, (juce::int64) 24000, half + " fade-in");
+                    expectEquals (c.fadeCurve, 1, half + " fade curve");
+                }
+            }
+
+            // ── 4757: menu items resolve each group peer's OWN clip ──────────
+            beginTest ("Clip menu delete, lock and normalize act on each group peer's own clip");
+            {
+                Session s (2, { 48000, 48000 });
+                s.engine.setTrackEditGroup (0, 0);
+                s.engine.setTrackEditGroup (1, 0);
+                // A = [0,24k)[24k,48k); B = [0,6k)[6k,12k)[12k,48k).
+                expect (s.engine.splitTrackAtSample (0, 24000));
+                expect (s.engine.splitTrackAtSample (1, 6000));
+                expect (s.engine.splitTrackAtSample (1, 12000));
+                expectEquals ((int) s.clips (0).size(), 2, "setup A");
+                expectEquals ((int) s.clips (1).size(), 3, "setup B");
+                EditPage::TrackRow row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+
+                // Lock A's first clip [0,24k): B's clip under it (midpoint 12k) is #2.
+                row.applyClipMenuChoice (0, 401);
+                expect (s.clips (0)[0].locked);
+                expect (! s.clips (1)[0].locked, "Lock hit B's clip #0 by raw index");
+                expect (s.clips (1)[2].locked, "Lock missed the peer clip under the source");
+                for (int t : { 0, 1 })
+                    for (int i = 0; i < (int) s.clips (t).size(); ++i)
+                        s.engine.setClipLocked (t, i, false);
+
+                // Normalize A's second clip [24k,48k): B's clip under it is #2.
+                row.applyClipMenuChoice (1, 414);
+                expect (pumpUntil ([&] { return row.isEnabled(); }, 5000), "normalize never completed");
+                expect (s.clips (0)[1].gainDb > 1.0f, "source clip normalized");
+                expectWithinAbsoluteError (s.clips (1)[1].gainDb, 0.0f, 0.001f,
+                                           "Normalize changed B's clip #1 by raw index");
+                expect (s.clips (1)[2].gainDb > 1.0f, "Normalize missed the peer clip under the source");
+
+                // Delete A's second clip [24k,48k): B must lose #2 [12k,48k), not #1.
+                row.applyClipMenuChoice (1, 411);
+                expectEquals ((int) s.clips (0).size(), 1);
+                expectEquals ((int) s.clips (1).size(), 2);
+                if (s.clips (1).size() == 2)
+                {
+                    expectEquals (s.clips (1)[0].timelineStartSamples, (juce::int64) 0);
+                    expectEquals (s.clips (1)[1].timelineStartSamples, (juce::int64) 6000,
+                                  "Delete removed B's clip #1 by raw index");
+                }
+            }
+
+            // ── #3: takes and comps on a stereo row move BOTH halves ─────────
+            beginTest ("Take and comp operations on a stereo row keep L and R on one arrangement");
+            {
+                Session s (2, { 48000, 48000 });
+                s.engine.setTrackStereo (0, true);
+                EditPage::TrackRow row (0, true, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                const int takesBefore = s.engine.getTakeCount (0);
+                expectEquals (s.engine.getTakeCount (1), takesBefore, "setup");
+
+                row.applyTakeMenuChoice (850);   // New take from current
+                expectEquals (s.engine.getTakeCount (0), takesBefore + 1);
+                expectEquals (s.engine.getTakeCount (1), takesBefore + 1, "R missed the new take");
+
+                // Edit the new take on both halves (as a stereo clip edit does).
+                expect (s.engine.splitTrackAtSample (0, 24000));
+                expect (s.engine.splitTrackAtSample (1, 24000));
+                row.applyTakeMenuChoice (800);   // back to the first take
+                expectEquals ((int) s.clips (0).size(), 1);
+                expectEquals ((int) s.clips (1).size(), 1, "R kept the edited take");
+
+                // Comp a range of the edited take into the first take.
+                s.engine.getPlayer().setLoopRegion (30000, 40000);
+                row.applyTakeMenuChoice (870 + takesBefore);
+                expectEquals ((int) s.clips (0).size(), (int) s.clips (1).size(),
+                              "comp selection spliced only one half");
+                s.engine.getPlayer().clearLoopRegion();
+
+                // Comp-lane swipe pulls the swiped range into BOTH halves.
+                row.applyTakeMenuChoice (860);   // show take lanes
+                const int before0 = (int) s.clips (0).size();
+                drag (row, { laneX (row, 0.05), 70 }, { laneX (row, 0.3), 70 });   // the second take's lane
+                expect ((int) s.clips (0).size() != before0, "setup: the swipe comped L");
+                expectEquals ((int) s.clips (0).size(), (int) s.clips (1).size(),
+                              "the swipe comped only L");
+
+                row.applyTakeMenuChoice (852);   // delete the active take
+                expectEquals (s.engine.getTakeCount (0), s.engine.getTakeCount (1),
+                              "delete take left L and R with different take lists");
+            }
+
             //@@MORE_TESTS@@
 
             AudioEngine::setTestModeSkipAudioInit (false);

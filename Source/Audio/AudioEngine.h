@@ -970,8 +970,11 @@ namespace zynforge
         // that would skew it. Returns NaN if the clip has no scannable audio.
         float clipNormalizeGainDb (int track, int clipIndex, float targetDbFS = -0.3f);
         // Peak-scan a mono/stereo edit group off the message thread, then apply
-        // one conservative gain to every unchanged peer clip.
-        void normalizeClipGroupAsync (std::vector<int> tracks, int clipIndex,
+        // one conservative gain to every unchanged peer clip. `targets` holds
+        // each peer's OWN (track, clipIndex): clip indices are per-track, so one
+        // index for every track scanned whichever clip sat there on a peer with
+        // a different arrangement.
+        void normalizeClipGroupAsync (std::vector<std::pair<int, int>> targets,
                                       float targetDbFS,
                                       std::function<void (bool)> completion);
         // Offline (read-only) nearest-zero-crossing search around a timeline
