@@ -859,6 +859,13 @@ namespace zynforge
     {
         clearReorderPreview();
         auto report = [this] (const juce::String& message) { if (onStatus) onStatus (message); };
+        // reorderTracks refuses during capture and its finalization; say so
+        // rather than report its failure as a disk-permission problem.
+        if (readOnlyWhileRecording || engine.isRecording() || engine.isSessionTransitionActive())
+        {
+            report ("Strip move refused: wait for the take to finish recording and saving");
+            return false;
+        }
         auto& recorder = engine.getRecorder();
         const auto blocks = trackorder::logicalBlocks (trackorder::stereoFlags (recorder));
         const int n = recorder.getNumTracks();
@@ -954,7 +961,11 @@ namespace zynforge
                 if (onZoomChanged) onZoomChanged (zoom);
             }
         }
-        setReadOnlyWhileRecording (rec);
+        // OR, never overwrite: the host also locks while an async STOP
+        // finalizes and metadata saves are pending, after `recording` has
+        // cleared. Writing `rec` alone here at 24 Hz fought the host's 10 Hz
+        // write, so the lock flickered and mouse edits got through.
+        applyReadOnly (hostReadOnly || rec);
         const bool transportActive = rec || engine.getPlayer().isPlaying();
         const bool wasFollowing = followState.isFollowing();
         const bool wasTransportActive = followState.isTransportActive();
@@ -1273,6 +1284,12 @@ namespace zynforge
     }
 
     void EditPage::setReadOnlyWhileRecording (bool readOnly)
+    {
+        hostReadOnly = readOnly;
+        applyReadOnly (readOnly || engine.isRecording());
+    }
+
+    void EditPage::applyReadOnly (bool readOnly)
     {
         if (readOnlyWhileRecording == readOnly) return;
         readOnlyWhileRecording = readOnly;

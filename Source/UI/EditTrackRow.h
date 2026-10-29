@@ -2901,6 +2901,13 @@ namespace zynforge
 
         void mouseDrag (const juce::MouseEvent& e) override
         {
+            // Capture (or its finalization) locked the timeline mid-gesture --
+            // a remote / LTC-chase / R-key start. Click-through stops NEW
+            // gestures, not one already in flight, so refuse the rest of it.
+            if (auto* page = findParentComponentOfClass<EditPage>();
+                page != nullptr && page->isTimelineReadOnly())
+                return;
+
             if (compDragTake >= 0) { compDragCurX = e.x; repaint(); return; }   // comp swipe
 
             // Crossfade midpoint drag. Convert the mouse x to a
@@ -3224,6 +3231,10 @@ namespace zynforge
 
         void mouseUp (const juce::MouseEvent& e) override
         {
+            // A gesture released after the timeline locked commits nothing.
+            const auto* lockPage = findParentComponentOfClass<EditPage>();
+            const bool timelineLocked = lockPage != nullptr && lockPage->isTimelineReadOnly();
+
             // Comp-lanes swipe finished: pull the swiped range from that
             // take into the active comp.
             if (compDragTake >= 0)
@@ -3232,7 +3243,7 @@ namespace zynforge
                 compDragTake = -1;
                 const auto& player = engine.getPlayer();
                 const auto totalS = player.isLoaded() ? player.getTotalLengthSamples() : 0;
-                if (totalS > 0 && tk != engine.getActiveTakeIdx (index))
+                if (totalS > 0 && ! timelineLocked && tk != engine.getActiveTakeIdx (index))
                 {
                     auto innerC = getLocalBounds().withTrimmedLeft (headerW)
                                                   .reduced (brand::space::xs, brand::space::sm);
@@ -3298,8 +3309,10 @@ namespace zynforge
                 // rebuilds rows and rescans peaks asynchronously.
                 if (auto* page = findParentComponentOfClass<EditPage>())
                 {
-                    if (reorderInsertBefore >= 0) page->commitReorder (index, reorderInsertBefore);
-                    else                          page->clearReorderPreview();
+                    if (reorderInsertBefore >= 0 && ! timelineLocked)
+                        page->commitReorder (index, reorderInsertBefore);
+                    else
+                        page->clearReorderPreview();
                 }
             }
             reorderArmed        = false;

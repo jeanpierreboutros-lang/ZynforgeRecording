@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <functional>
 #if JUCE_MAC
  #include <CoreFoundation/CoreFoundation.h>
 #endif
@@ -302,6 +303,32 @@ namespace zynforge
             return predicate();
         }
 
+        // The page's TrackRows, top to bottom (as TrackReorderTests walks them).
+        static std::vector<EditPage::TrackRow*> rowsOf (EditPage& page)
+        {
+            std::vector<EditPage::TrackRow*> rows;
+            std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+            {
+                for (auto* child : c.getChildren())
+                {
+                    if (auto* row = dynamic_cast<EditPage::TrackRow*> (child)) rows.push_back (row);
+                    walk (*child);
+                }
+            };
+            walk (page);
+            std::sort (rows.begin(), rows.end(), [] (auto* a, auto* b) { return a->getY() < b->getY(); });
+            return rows;
+        }
+
+        // The component the page's viewport scrolls (the row list).
+        static juce::Component* listOf (EditPage& page)
+        {
+            for (auto* child : page.getChildren())
+                if (auto* vp = dynamic_cast<juce::Viewport*> (child))
+                    return vp->getViewedComponent();
+            return nullptr;
+        }
+
         // Row geometry used throughout: a 1000 px inner lane (the wave pane
         // minus its 4 px insets) starting 4 px right of the header.
         static constexpr int kLaneW = 1000;
@@ -574,6 +601,63 @@ namespace zynforge
                                 + juce::String (inked) + " inked pixels differ from JUCE's whole-area draw");
                     expect (differing <= inked / 100,
                             juce::String (c.what) + ": " + juce::String (differing) + " pixels differ");
+                }
+            }
+
+            // ── #6: the host's EDIT lock is not overwritten by the page timer ─
+            beginTest ("The host's EDIT lock holds through the page timer after recording stops");
+            {
+                Session s (2, { 48000, 48000 });
+                EditPage page (s.engine);
+                page.setBounds (0, 0, 1400, 500);
+                page.refresh();
+                auto* list = listOf (page);
+                expect (list != nullptr, "setup: row list");
+                // STOP has cleared `recording`, but finalization / the metadata
+                // save is still pending, so the host keeps the timeline locked.
+                page.setReadOnlyWhileRecording (true);
+                pumpUntil ([] { return false; }, 250);   // ~6 page-timer ticks
+                bool clicks = true, childClicks = true;
+                if (list != nullptr) list->getInterceptsMouseClicks (clicks, childClicks);
+                expect (! clicks && ! childClicks, "the page timer unlocked rows the host had locked");
+                page.setReadOnlyWhileRecording (false);
+                if (list != nullptr) list->getInterceptsMouseClicks (clicks, childClicks);
+                expect (clicks && childClicks, "the host's unlock must take effect");
+            }
+
+            beginTest ("A drag already in flight stops editing when the timeline locks");
+            {
+                Session s (2, { 48000, 48000 });
+                int reorders = 0;
+                s.engine.onTracksReordered = [&reorders] (const std::vector<int>&) { ++reorders; };
+                EditPage page (s.engine);
+                page.setBounds (0, 0, 1400, 500);
+                page.refresh();
+                auto rows = rowsOf (page);
+                expect (rows.size() == 2, "setup: two rows");
+                if (rows.size() == 2)
+                {
+                    auto& row = *rows[0];
+                    const int lane0 = row.getHeaderWidth() + 4;
+                    const int laneW = row.getWidth() - row.getHeaderWidth() - 8;
+                    const juce::Point<int> down (lane0 + laneW / 2, row.getHeight() / 2);
+                    row.mouseDown (mouseAt (row, down, down, false));      // grab the clip body (Move)
+                    page.setReadOnlyWhileRecording (true);                  // capture starts mid-drag
+                    for (int dx = 4; dx <= 120; dx += 4)
+                        row.mouseDrag (mouseAt (row, down + juce::Point<int> (dx, 0), down, true));
+                    row.mouseUp (mouseAt (row, down + juce::Point<int> (120, 0), down, true));
+                    expectEquals (s.clips (0)[0].timelineStartSamples, (juce::int64) 0,
+                                  "the in-flight drag kept moving the clip under the lock");
+                    page.setReadOnlyWhileRecording (false);
+
+                    // A swatch reorder released under the lock must not commit.
+                    const juce::Point<int> swatch (4, 10);
+                    row.mouseDown (mouseAt (row, swatch, swatch, false));
+                    row.mouseDrag (mouseAt (row, { 4, 200 }, swatch, true));
+                    page.setReadOnlyWhileRecording (true);
+                    row.mouseUp (mouseAt (row, { 4, 200 }, swatch, true));
+                    expectEquals (reorders, 0, "a reorder committed under the lock");
+                    page.setReadOnlyWhileRecording (false);
                 }
             }
 

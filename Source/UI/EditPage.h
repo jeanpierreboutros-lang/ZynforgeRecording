@@ -64,8 +64,12 @@ namespace zynforge
         float getVerticalZoom() const noexcept { return vZoom; }
 
         // Lock timeline and track mutations during capture without disabling
-        // the viewport, zoom controls, minimap, or FOLLOW navigation.
+        // the viewport, zoom controls, minimap, or FOLLOW navigation. The
+        // host's lock is wider than isRecording() (async STOP finalization,
+        // pending metadata saves); the page's own timer only adds a live
+        // capture on top of it, never clears it.
         void setReadOnlyWhileRecording (bool readOnly);
+        bool isTimelineReadOnly() const noexcept { return readOnlyWhileRecording; }
 
         // Wheel-zoom helpers, called from the row list. Horizontal zooms
         // around the viewport centre (keeps the visible time stable);
@@ -280,6 +284,7 @@ namespace zynforge
         class TrackList;
 
         void timerCallback() override;
+        void applyReadOnly (bool readOnly);
         void syncFollowButton();
         void pauseFollowForZoom();
 
@@ -322,6 +327,7 @@ namespace zynforge
         TimelineFollowState                followState;
         bool                               programmaticViewportChange { false };
         bool                               readOnlyWhileRecording { false };
+        bool                               hostReadOnly { false };   // last setReadOnlyWhileRecording
         juce::Label                        recordingEditLabel { {}, "REC  EDIT LOCKED" };
         int                                lastViewportX { 0 };
         std::unique_ptr<TrackList>         list;
