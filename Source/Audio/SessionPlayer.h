@@ -68,6 +68,10 @@ namespace zynforge
 
         void start();
         void stop();
+        // True when start() would actually play something: a session is
+        // loaded and the playhead has audio ahead of it, or loop-play will
+        // wrap it back into the session.
+        bool hasAudioAhead() const noexcept;
         void rewind();
         void setPositionSamples (juce::int64 s);
 

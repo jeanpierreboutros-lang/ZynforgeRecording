@@ -508,9 +508,16 @@ void MainComponent::editSetRangeToLoopRange()
     if (! player.hasLoopRegion())
     {
         // Engineer hit it without a loop set -- start one at the playhead.
-        const auto pos = currentPlayheadSamples (engine);
-        player.setLoopRegion (pos, pos + (juce::int64) (player.getSampleRate() * 2.0));
-        showStatus ("No loop region set -- defaulted to 2 s at the playhead");
+        // Parked at the take end (where STOP leaves it) there is nothing after
+        // the playhead to loop, so take the last 2 s of the session instead.
+        const auto pos   = currentPlayheadSamples (engine);
+        const auto len   = (juce::int64) (player.getSampleRate() * 2.0);
+        const auto total = player.getTotalLengthSamples();
+        const bool atEnd = total > 0 && pos >= total;
+        const auto start = atEnd ? juce::jmax ((juce::int64) 0, total - len) : pos;
+        player.setLoopRegion (start, start + len);
+        showStatus (atEnd ? "No loop region set -- defaulted to the last 2 s of the session"
+                          : "No loop region set -- defaulted to 2 s at the playhead");
         return;
     }
     auto& m = engine.getMarkers();

@@ -9,6 +9,8 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MidiControlSurface.h"
 
+#include <thread>
+
 namespace zynforge
 {
     class EngineReviewRepairTests final : public juce::UnitTest
@@ -143,9 +145,110 @@ namespace zynforge
                 e.clearAllStripOverrides();
                 e.setStripCount (0);
             }
+
+            beginTest ("A locate that lands while a block renders is not overwritten");
+            {
+                const auto dir = writeSession (4.0);
+                AudioEngine e;
+                e.setStripCount (1);
+                expect (e.loadSession (dir) == 1);
+                auto& p = e.getPlayer();
+                p.prepare (kRate, 256);
+
+                std::atomic<bool> quit { false }, pause { true }, paused { true };
+                std::atomic<int>  blocks { 0 };
+                std::thread audio ([&]
+                {
+                    std::vector<float> buf (256);
+                    float* out[1] = { buf.data() };
+                    while (! quit.load())
+                    {
+                        if (pause.load()) { paused.store (true); std::this_thread::yield(); continue; }
+                        paused.store (false);
+                        p.processBlock (out, 1, 256);
+                        blocks.fetch_add (1);
+                    }
+                });
+                auto waitBlocks = [&] (int n)
+                {
+                    const int start = blocks.load();
+                    while (blocks.load() < start + n) std::this_thread::yield();
+                };
+
+                int lost = 0;
+                for (int k = 0; k < 300; ++k)
+                {
+                    const juce::int64 from   = (k % 2) != 0 ? 100000 : 10000;
+                    const juce::int64 target = (k % 2) != 0 ? 10000 : 100000;
+                    p.setPositionSamples (from);
+                    p.start();
+                    pause.store (false);
+                    waitBlocks (2);
+                    p.setPositionSamples (target);   // lands mid-render most of the time
+                    waitBlocks (2);
+                    pause.store (true);
+                    while (! paused.load()) std::this_thread::yield();
+                    const auto pos = p.getPositionSamples();
+                    if (pos < target || pos > target + 48000) ++lost;
+                }
+                quit.store (true);
+                audio.join();
+                expectEquals (lost, 0, "locates lost to a block that was rendering");
+                e.setStripCount (0);
+                dir.deleteRecursively();
+            }
+
+            beginTest ("Loop-play wraps when the loop region runs past the session end");
+            {
+                const auto dir = writeSession (2.0);
+                AudioEngine e;
+                e.setStripCount (1);
+                expect (e.loadSession (dir) == 1);
+                auto& p = e.getPlayer();
+                p.prepare (kRate, 512);
+                const auto total = p.getTotalLengthSamples();
+                p.setLoopRegion (total - 24000, total + 72000);
+                p.setLoopEnabled (true);
+                p.setPositionSamples (total - 1000);
+                p.start();
+                std::vector<float> buf (512);
+                float* out[1] = { buf.data() };
+                for (int b = 0; b < 10; ++b) p.processBlock (out, 1, 512);
+                expect (p.isPlaying(), "loop-play stopped at the session end");
+                const auto pos = p.getPositionSamples();
+                expect (pos >= total - 24000 && pos < total, "playhead did not wrap to the loop start");
+                p.stop();
+                p.setLoopEnabled (false);
+                p.clearLoopRegion();
+                e.setStripCount (0);
+                dir.deleteRecursively();
+            }
         }
 
     private:
+        static constexpr double kRate = 48000.0;
+
+        // A one-track session folder with `seconds` of DC in Audio Files.
+        static juce::File writeSession (double seconds)
+        {
+            const auto dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                                 .getChildFile ("zf-engine-review-" + juce::Uuid().toString());
+            const auto audio = dir.getChildFile ("Audio Files");
+            audio.createDirectory();
+            const int len = (int) (seconds * kRate);
+            std::vector<float> samples ((size_t) len, 0.25f);
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::OutputStream> os (audio.getChildFile ("Track_01.wav").createOutputStream());
+            std::unique_ptr<juce::AudioFormatWriter> w (wav.createWriterFor (os.get(), kRate, 1, 24, {}, 0));
+            if (w != nullptr)
+            {
+                os.release();
+                const float* ch[1] = { samples.data() };
+                w->writeFromFloatArrays (ch, 1, len);
+            }
+            return dir;
+        }
+
         static juce::Array<int> inRoutes (AudioEngine& e)
         {
             juce::Array<int> routes;
