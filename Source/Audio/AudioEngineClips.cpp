@@ -410,6 +410,7 @@ namespace zynforge
 
         // Resize storage to match (seedDefaultClips has already
         // populated this on session load; we overwrite per-track here).
+        std::vector<char> hasTakes;   // tracks the JSON gives at least one take
         for (const auto& item : *arr)
         {
             auto* pObj = item.getDynamicObject();
@@ -468,6 +469,11 @@ namespace zynforge
                 }
                 pl.takes.push_back (std::move (tk));
             }
+            if (! pl.takes.empty())
+            {
+                if (t >= (int) hasTakes.size()) hasTakes.resize ((size_t) t + 1, 0);
+                hasTakes[(size_t) t] = 1;
+            }
 
             // Reapply the active take to the live trackClips +
             // SessionPlayer so playback matches the persisted state.
@@ -475,6 +481,26 @@ namespace zynforge
             {
                 trackClips[(size_t) t] = pl.takes[(size_t) pl.activeTake].clips;
                 player.setTrackClips (t, trackClips[(size_t) t]);
+            }
+        }
+
+        // A strip the JSON gives no take -- absent (it had no playlist when an
+        // undo snapshot was taken) or an empty take list -- used to keep the
+        // clips it holds now. Undoing a paste onto a never-recorded strip so
+        // left the clip visible, audible and bounced while the playlist, and
+        // so the next save, no longer had it. Return such a strip to "no
+        // arrangement", but only when it has no media of its own: a take
+        // recorded after an older undo snapshot must keep its clips.
+        const auto tracks = juce::jmax (trackClips.size(), trackPlaylists.size());
+        for (size_t t = 0; t < tracks; ++t)
+        {
+            if ((t < hasTakes.size() && hasTakes[t] != 0)
+                || player.getTrackLengthSamples ((int) t) > 0) continue;
+            if (t < trackPlaylists.size()) trackPlaylists[t] = {};
+            if (t < trackClips.size() && ! trackClips[t].empty())
+            {
+                trackClips[t].clear();
+                player.setTrackClips ((int) t, trackClips[t]);
             }
         }
     }

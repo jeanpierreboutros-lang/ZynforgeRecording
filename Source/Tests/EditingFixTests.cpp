@@ -111,6 +111,46 @@ public:
             expectWithinAbsoluteError (renderedAt (e, 0, 48000, 20000), 0.25f, 0.001f,
                                        "the comped range must hold Take 1's audio only");
         }
+
+        beginTest ("Undo of a paste onto a never-recorded strip removes the pasted clip");
+        {
+            Folder f; expect (write (f.track()));
+            AudioEngine e; setup (e, 4); e.loadSession (f.dir);
+            const auto before = e.playlistsToJson();       // strip 4 has no Track_04 and no playlist
+            expect (e.pasteClip (3, 0, 0, 4800, 0, 0, 0.0f, "copied", f.track(), 0) >= 0);
+            const auto after = e.playlistsToJson();
+            expectEquals (e.getTakeCount (3), 1);
+
+            e.loadPlaylistsFromJson (before);                // ClipSnapshotAction::undo
+            expect (e.tryClipsFor (3) == nullptr, "the pasted clip survived the undo");
+            expectEquals (e.getTakeCount (3), 0);
+            expectWithinAbsoluteError (renderedAt (e, 3, 4800, 1000), 0.0f, 0.00001f,
+                                       "the undone paste still renders");
+
+            e.loadPlaylistsFromJson (after);                 // redo
+            expect (e.tryClipsFor (3) != nullptr && e.tryClipsFor (3)->size() == 1);
+            expectWithinAbsoluteError (renderedAt (e, 3, 4800, 1000), 0.25f, 0.001f);
+
+            // Same with the strip present in the snapshot as an empty playlist.
+            e.loadPlaylistsFromJson (before);
+            const auto emptyEntry = e.playlistsToJson();
+            e.pasteClip (3, 0, 0, 4800, 0, 0, 0.0f, "copied", f.track(), 0);
+            e.loadPlaylistsFromJson (emptyEntry);
+            expect (e.tryClipsFor (3) == nullptr, "an empty restored playlist kept the clip");
+        }
+
+        beginTest ("Restoring an older clip snapshot keeps a take recorded since");
+        {
+            Folder f; expect (write (f.track()));
+            AudioEngine e; setup (e, 2); e.loadSession (f.dir);
+            const auto before = e.playlistsToJson();       // knows only Track_01
+            expect (write (f.track (2)));
+            e.loadSession (f.dir, true, true);               // the take stop reload
+            expectEquals ((int) e.clipsFor (1).size(), 1);
+            e.loadPlaylistsFromJson (before);
+            expectEquals ((int) e.clipsFor (1).size(), 1, "undo wiped a newer recording");
+            expectWithinAbsoluteError (renderedAt (e, 1, 48000, 1000), 0.25f, 0.001f);
+        }
     }
 };
 
