@@ -28,6 +28,7 @@ namespace zynforge
 
     private:
         friend class OctoberRegressionTests;
+        friend class EngineReviewRepairTests;
         void handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage&) override;
         void timerCallback() override;   // push fader / name / LED state to the surface
 

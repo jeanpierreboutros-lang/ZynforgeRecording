@@ -7,6 +7,7 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "../Audio/AudioEngine.h"
+#include "../Audio/MidiControlSurface.h"
 
 namespace zynforge
 {
@@ -80,6 +81,65 @@ namespace zynforge
                 expect (monitorHears (e, 3, 3, 4), "strip 4 is not on input 4 back on the rig");
                 expect (! monitorHears (e, 3, 1, 4), "strip 4 still records the wrapped input");
                 e.setDeviceInputCountForTests (0);
+                e.clearAllStripOverrides();
+                e.setStripCount (0);
+            }
+
+            beginTest ("Pans set by a cue ramp or an MCU V-pot survive a device restart");
+            {
+                AudioEngine e;
+                e.setStripCount (2);
+                e.prepareForTests (48000.0, 256);
+                e.setTrackPan (0, -0.3f);
+                e.setTrackPan (1, 0.0f);
+                e.setTrackPanRamped (0, 0.6f, 0.25);   // cue recall
+                e.tickRamps (48000);
+                expectWithinAbsoluteError (e.getRecorder().getTrack (0).pan.load(), 0.6f, 0.001f);
+
+                MidiControlSurface mcu (e);   // V-pot 2, four ticks clockwise
+                mcu.handleIncomingMidiMessage (nullptr, juce::MidiMessage::controllerEvent (1, 0x11, 4));
+                expectWithinAbsoluteError (e.getRecorder().getTrack (1).pan.load(), 0.2f, 0.001f);
+
+                e.prepareForTests (48000.0, 256);   // device restart: strip state re-applied
+                expectWithinAbsoluteError (e.getRecorder().getTrack (0).pan.load(), 0.6f, 0.001f,
+                                           "a cue-recalled pan snapped back after a restart");
+                expectWithinAbsoluteError (e.getRecorder().getTrack (1).pan.load(), 0.2f, 0.001f,
+                                           "a V-pot pan snapped back after a restart");
+                e.clearAllStripOverrides();
+                e.setStripCount (0);
+            }
+
+            beginTest ("Linking a stereo pair brings the R half onto the L half's state");
+            {
+                AudioEngine e;
+                e.setStripCount (2);
+                auto& l = e.getRecorder().getTrack (0);
+                auto& r = e.getRecorder().getTrack (1);
+                e.setTrackMuted (0, true);
+                e.setTrackGainDb (0, -10.0f);
+                e.setTrackVcaGroup (0, 2);
+                e.setTrackEditGroup (0, 1);
+                e.setTrackArmed (0, true);
+                e.setTrackInputRouting (0, 4);
+                e.setTrackOutputRouting (0, 6);
+                l.monitor.store (true); l.outputMuted.store (true); l.streamSend.store (true);
+                e.setTrackInputRouting (1, 9);
+                e.setTrackOutputRouting (1, 9);
+                e.setTrackPan (1, 0.4f);
+
+                e.setTrackStereo (0, true);
+                expect (r.muted.load(), "R stayed audible under a muted pair");
+                expectWithinAbsoluteError (r.gainDb.load(), -10.0f, 0.001f, "R kept its own fader");
+                expectEquals (r.vcaGroup.load(), 2, "R does not follow the pair's VCA");
+                expectEquals (r.editGroup.load(), 1);
+                expect (r.armed.load(), "R is unarmed in an armed pair");
+                expect (r.monitor.load() && r.outputMuted.load() && r.streamSend.load());
+                expectEquals (r.inputRouting.load(), 5, "R records its own old input");
+                expectEquals (r.outputRouting.load(), 7);
+                expectWithinAbsoluteError (r.pan.load(), 0.4f, 0.001f, "pan stays per channel");
+
+                e.prepareForTests (48000.0, 256);   // the synced fader is persisted too
+                expectWithinAbsoluteError (r.gainDb.load(), -10.0f, 0.001f);
                 e.clearAllStripOverrides();
                 e.setStripCount (0);
             }

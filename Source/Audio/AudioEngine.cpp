@@ -1512,8 +1512,29 @@ namespace zynforge
             && (channelIndex + 1 >= recorder.getNumTracks()
                 || (channelIndex > 0 && recorder.getTrack (channelIndex - 1).isStereo.load())
                 || recorder.getTrack (channelIndex + 1).isStereo.load())) return;
+        const bool wasStereo = recorder.getTrack (channelIndex).isStereo.load();
         recorder.getTrack (channelIndex).isStereo.store (isStereoPair,
                                                           std::memory_order_release);
+        // Linking makes the pair ONE strip in every view, and that strip
+        // shows and edits the L half -- so bring the R half onto it now.
+        // Otherwise R kept playing (and recording) by its own mute, fader,
+        // VCA, arm and routing until each control happened to be touched.
+        // Pan stays per channel: that is the stereo image.
+        if (isStereoPair && ! wasStereo)
+        {
+            auto& l = recorder.getTrack (channelIndex);
+            auto& r = recorder.getTrack (channelIndex + 1);
+            for (auto flag : { &TrackState::muted, &TrackState::soloed, &TrackState::armed,
+                               &TrackState::monitor, &TrackState::outputMuted, &TrackState::streamSend })
+                (r.*flag).store ((l.*flag).load (std::memory_order_relaxed), std::memory_order_relaxed);
+            setTrackGainDb   (channelIndex + 1, l.gainDb.load (std::memory_order_relaxed));
+            setTrackVcaGroup (channelIndex + 1, l.vcaGroup.load (std::memory_order_relaxed));
+            setTrackEditGroup (channelIndex + 1, l.editGroup.load (std::memory_order_relaxed));
+            const int in  = l.inputRouting .load (std::memory_order_relaxed);
+            const int out = l.outputRouting.load (std::memory_order_relaxed);
+            if (in  != -2) setTrackInputRouting  (channelIndex + 1, in  >= 0 ? in  + 1 : -1);
+            if (out != -2) setTrackOutputRouting (channelIndex + 1, out >= 0 ? out + 1 : -1);
+        }
         // Bump the track generation so EVERY view (MIXER, EDIT, and the
         // meterbridge) rebuilds and re-collapses the pair -- a stereo link from
         // the PATCH page changed the engine but left the other views showing two
@@ -2295,6 +2316,10 @@ namespace zynforge
         t.rampSamplesRemaining.store (samples, std::memory_order_relaxed);
         if (samples == 0)
             t.pan.store (pan, std::memory_order_relaxed);
+        // Persisted target, like the gain ramp: applyPersistedStripState
+        // re-reads StripGains on +CH / device restart, which otherwise
+        // snapped a cue-recalled pan back to the last manual value.
+        stripGains.setPan (channelIndex, pan);
     }
 
     void AudioEngine::setVcaGainDb (int idx, float dB)
