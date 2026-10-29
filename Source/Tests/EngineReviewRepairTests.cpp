@@ -9,6 +9,7 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MidiControlSurface.h"
 
+#include <mutex>
 #include <thread>
 
 namespace zynforge
@@ -146,6 +147,53 @@ namespace zynforge
                 e.setStripCount (0);
             }
 
+            beginTest ("MIDI clock: Start at the top, Song Position + Continue mid-session, Stop when playback ends");
+            {
+                const auto dir = writeSession (2.0);
+                AudioEngine e;
+                e.setStripCount (1);
+                e.prepareForTests (kRate, 512);
+                expect (e.loadSession (dir) == 1);
+                e.setSessionTempoBpm (120.0f);
+                e.clearTempoMap();
+                auto& p = e.getPlayer();
+                const auto total = p.getTotalLengthSamples();
+
+                MidiLog log;
+                e.getMidiClockOut().setMessageSinkForTests ([&log] (const juce::MidiMessage& m) { log.add (m); });
+                e.getMidiClockOut().setEnabled (true);
+
+                p.setPositionSamples (0);
+                e.startPlayback();
+                expect (log.has (0xFA), "no Start from the top");
+
+                // The player reaches the session end and stops by itself.
+                std::vector<float> buf (512);
+                float* out[1] = { buf.data() };
+                for (int b = 0; b < 1000 && p.isPlaying(); ++b) p.processBlock (out, 1, 512);
+                expect (! p.isPlaying());
+                expect (log.waitFor (0xFC, 1000), "no Stop after playback ended by itself");
+
+                log.clear();
+                p.setPositionSamples ((juce::int64) kRate);   // 1 s = 2 beats = 8 sixteenths
+                e.startPlayback();
+                expect (! log.has (0xFA), "mid-session play sent Start (slaves restart at bar 1)");
+                expectEquals (log.songPosition(), 8, "no Song Position Pointer before Continue");
+                expect (log.has (0xFB), "no Continue after the Song Position Pointer");
+                e.stopPlayback();
+
+                log.clear();
+                p.setPositionSamples (total);   // e.g. chase target past the last take
+                e.startPlayback();
+                expect (! p.isPlaying());
+                expect (! log.has (0xFA) && ! log.has (0xFB), "Start sent with nothing to play");
+
+                e.getMidiClockOut().setEnabled (false);
+                e.getMidiClockOut().setMessageSinkForTests ({});
+                e.setStripCount (0);
+                dir.deleteRecursively();
+            }
+
             beginTest ("A locate that lands while a block renders is not overwritten");
             {
                 const auto dir = writeSession (4.0);
@@ -248,6 +296,48 @@ namespace zynforge
             }
             return dir;
         }
+
+        // Thread-safe record of what the MIDI clock sent (the clock thread
+        // sends 0xF8 pulses and the transport Stop).
+        struct MidiLog
+        {
+            void add (const juce::MidiMessage& m)
+            {
+                const std::lock_guard<std::mutex> g (mutex);
+                if (! m.isMidiClock()) messages.push_back (m);
+            }
+            void clear() { const std::lock_guard<std::mutex> g (mutex); messages.clear(); }
+            bool has (int status)
+            {
+                const std::lock_guard<std::mutex> g (mutex);
+                for (const auto& m : messages)
+                    if (m.getRawDataSize() > 0 && m.getRawData()[0] == status) return true;
+                return false;
+            }
+            bool waitFor (int status, int ms)
+            {
+                for (int t = 0; t < ms; t += 5)
+                {
+                    if (has (status)) return true;
+                    juce::Thread::sleep (5);
+                }
+                return has (status);
+            }
+            // Value of the first Song Position Pointer, -1 if none; it must
+            // come before any Continue.
+            int songPosition()
+            {
+                const std::lock_guard<std::mutex> g (mutex);
+                for (const auto& m : messages)
+                {
+                    if (m.isMidiContinue()) return -1;
+                    if (m.isSongPositionPointer()) return m.getSongPositionPointerMidiBeat();
+                }
+                return -1;
+            }
+            std::mutex mutex;
+            std::vector<juce::MidiMessage> messages;
+        };
 
         static juce::Array<int> inRoutes (AudioEngine& e)
         {

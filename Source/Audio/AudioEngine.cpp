@@ -557,6 +557,28 @@ namespace zynforge
         return (juce::int64) (secs * rate + 0.5);
     }
 
+    int AudioEngine::midiBeatsAt (juce::int64 samplePos) const
+    {
+        const double rate = player.getSampleRate() > 0.0 ? player.getSampleRate()
+                          : deviceSampleRate.load (std::memory_order_relaxed);
+        if (rate <= 0.0 || samplePos <= 0) return 0;
+        // Same segments the click and the clock pulse rate use: the session
+        // tempo until the first change, then each change's bpm.
+        const juce::ScopedLock sl (tempoLock);
+        double quarters = 0.0, bpm = (double) currentTempoBpm.load (std::memory_order_relaxed);
+        juce::int64 from = 0;
+        for (const auto& tc : tempoMap)
+        {
+            if (tc.samplePos >= samplePos) break;
+            const auto at = juce::jmax (from, tc.samplePos);
+            quarters += (double) (at - from) / rate * bpm / 60.0;
+            from = at;
+            bpm  = (double) tc.bpm;
+        }
+        quarters += (double) (samplePos - from) / rate * bpm / 60.0;
+        return (int) (quarters * 4.0 + 1.0e-6);
+    }
+
     juce::String AudioEngine::getChaseTimecodeString() const
     {
         return juce::String::formatted ("%02d:%02d:%02d:%02d",
@@ -1848,6 +1870,11 @@ namespace zynforge
         opts.storageFormat       = juce::PropertiesFile::storeAsXML;
 
         appProps = makeSettingsFile (opts);
+
+        // The MIDI clock sends Stop when playback ends without stopPlayback()
+        // (session end, reorder, session load, device stop). midiClockOut is
+        // declared after player, so its timer is stopped before player dies.
+        midiClockOut.setTransportProbe ([this] { return player.isPlaying(); });
 
         // Restore the stereo-mix-recording flag from the prefs file so the
         // engineer's preference survives restart.

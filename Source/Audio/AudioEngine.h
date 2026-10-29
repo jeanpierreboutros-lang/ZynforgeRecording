@@ -240,15 +240,25 @@ namespace zynforge
             // chase reach here directly, so the guard belongs at the engine.
             if (isRecording() && ! captureWindowEnabled.load (std::memory_order_acquire)) return;
             const bool wasPlaying = player.isPlaying();
+            // Nothing to roll (no session, or parked at/after the end with no
+            // loop to wrap): don't start, and don't tell slaved gear to -- a
+            // chase target past the last take sent Start ten times a second.
+            if (! wasPlaying && ! player.hasAudioAhead()) return;
             player.start();
-            if (! wasPlaying) midiClockOut.sendStart();
-            else              midiClockOut.sendContinue();
+            const auto pos = player.getPositionSamples();
+            if (wasPlaying)    midiClockOut.sendContinue();
+            else if (pos <= 0) midiClockOut.sendStart();
+            else               midiClockOut.sendContinueFrom (midiBeatsAt (pos));
         }
         void stopPlayback() override
         {
             player.stop();
             midiClockOut.sendStop();
         }
+
+        // 16th notes (MIDI beats, the Song Position Pointer unit) from the
+        // session start to `samplePos`, through the tempo map. Message thread.
+        int midiBeatsAt (juce::int64 samplePos) const;
 
         // MIDI clock master (24 PPQN) -- drives outboard synths /
         // drum machines / DAW slaves from the session tempo.
