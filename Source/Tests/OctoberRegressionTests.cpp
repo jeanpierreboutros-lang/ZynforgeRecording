@@ -291,7 +291,7 @@ public:
             juce::AudioFormatManager fm; fm.registerBasicFormats(); juce::AudioThumbnailCache cache (8);
             EditPage::TrackRow row (0, false, e, fm, cache);
             row.setSize (row.getHeaderWidth() + 1008, 100);
-            row.draggingClipIdx = 0; row.draggingClipModeInt = 2; row.dragStartX = row.getHeaderWidth() + 4;
+            row.draggingClipIdx = 0; row.draggingClipMode = EditPage::TrackRow::ClipDrag::Move; row.dragStartX = row.getHeaderWidth() + 4;
             for (int dx = 1; dx <= 150; ++dx)
             {
                 const juce::Point<float> down ((float) row.dragStartX, 50.0f);
@@ -483,7 +483,7 @@ public:
             e.clipsFor (0)[0].timelineStartSamples = 1000; e.setSnapMode (AudioEngine::SnapMode::Off);
             juce::AudioFormatManager fm; fm.registerBasicFormats(); juce::AudioThumbnailCache cache (8);
             EditPage::TrackRow row (0, false, e, fm, cache); row.setSize (row.getHeaderWidth() + 1008, 100);
-            row.draggingClipIdx = 0; row.draggingClipModeInt = 2; row.dragStartX = row.getHeaderWidth() + 204;
+            row.draggingClipIdx = 0; row.draggingClipMode = EditPage::TrackRow::ClipDrag::Move; row.dragStartX = row.getHeaderWidth() + 204;
             const juce::Point<float> down ((float) row.dragStartX, 50);
             juce::MouseEvent ev (juce::Desktop::getInstance().getMainMouseSource(), down.translated (-100, 0),
                 juce::ModifierKeys::leftButtonModifier, 1, 0, 0, 0, 0, &row, &row,

@@ -168,16 +168,22 @@ namespace zynforge
         int    draggingTensionSegIdx { -1 };
 
         // Clip-edit drag tracking. When the engineer grabs a clip's
-        // left edge, right edge, body, or a fade handle, draggingClipIdx
-        // pins which clip is moving and draggingClipModeInt picks the
-        // edit mode:
-        //   0 = TrimLeft   (slip-trim left edge)
-        //   1 = TrimRight  (extend / shrink right edge)
-        //   2 = Move       (slide on the timeline)
-        //   3 = FadeIn     (drag the fade-in apex)
-        //   4 = FadeOut    (drag the fade-out apex)
-        int draggingClipIdx     { -1 };
-        int draggingClipModeInt {  0 };
+        // left edge, right edge, body, a fade handle or its gain line,
+        // draggingClipIdx pins which clip is moving and draggingClipMode
+        // picks the edit (Scrub / SelectRange are tool drags on the lane).
+        enum class ClipDrag
+        {
+            TrimLeft,     // slip-trim the left edge
+            TrimRight,    // extend / shrink the right edge
+            Move,         // slide on the timeline
+            FadeIn,       // drag the fade-in apex
+            FadeOut,      // drag the fade-out apex
+            Scrub,        // Scrubber tool
+            SelectRange,  // Selector tool range
+            ClipGain      // clip-gain line (relative ride)
+        };
+        int      draggingClipIdx  { -1 };
+        ClipDrag draggingClipMode { ClipDrag::TrimLeft };
         // Crossfade-midpoint drag. When >= 0, the engineer grabbed
         // the 6 px dot that paints at the midpoint of an overlap
         // between adjacent clips. draggingXfadeAIdx is the OUTGOING
@@ -190,7 +196,7 @@ namespace zynforge
         juce::int64 lastDragSamples { 0 };
         juce::int64 dragStartFadeIn  { 0 };
         juce::int64 dragStartFadeOut { 0 };
-        float       dragStartGainDb  { 0.0f };   // clip-gain handle drag (mode 7)
+        float       dragStartGainDb  { 0.0f };   // clip-gain handle drag (ClipDrag::ClipGain)
         int         dragStartGainY   { 0 };      // mouse y at gain-drag start (relative ride)
 
         // Strip reorder drag -- armed on swatch-column mouseDown, activates
@@ -1720,7 +1726,7 @@ namespace zynforge
                         // corner (the grab target). 0 dB = centre; ±12 dB maps
                         // to the inner band.
                         {
-                            const bool active = (draggingClipModeInt == 7 && draggingClipIdx == clipIdx_);
+                            const bool active = (draggingClipMode == ClipDrag::ClipGain && draggingClipIdx == clipIdx_);
                             // NO gain line across the clip. Pro Tools-style: clip
                             // gain shows ONLY as the WAVEFORM getting bigger /
                             // smaller (waveZoom * gz, above) -- never a line. The
@@ -2565,11 +2571,11 @@ namespace zynforge
                         dragStartX          = e.x;
                         lastDragSamples     = sx;     // store anchor sample
                         draggingClipIdx     = -1;
-                        draggingClipModeInt = 6;      // 6 = SelectRange
+                        draggingClipMode = ClipDrag::SelectRange;
                     }
                     else
                     {
-                        draggingClipModeInt = 5;      // 5 = Scrub
+                        draggingClipMode = ClipDrag::Scrub;
                     }
                     repaint();
                     return;
@@ -2663,7 +2669,7 @@ namespace zynforge
                                         return;
                                     }
                                     draggingClipIdx     = i;
-                                    draggingClipModeInt = 7;   // ClipGain
+                                    draggingClipMode = ClipDrag::ClipGain;
                                     dragStartGainDb     = c.gainDb;
                                     dragStartGainY      = e.y;
                                     if (auto* page = findParentComponentOfClass<EditPage>())
@@ -2688,7 +2694,7 @@ namespace zynforge
                                 && std::abs (e.x - xFadeIn) <= fadeHandleZone)
                             {
                                 draggingClipIdx     = i;
-                                draggingClipModeInt = 3;  // FadeIn
+                                draggingClipMode = ClipDrag::FadeIn;
                                 dragStartX          = e.x;
                                 lastDragSamples     = 0;
                                 dragStartFadeIn     = c.fadeInSamples;
@@ -2701,7 +2707,7 @@ namespace zynforge
                                 && std::abs (e.x - xFadeOut) <= fadeHandleZone)
                             {
                                 draggingClipIdx     = i;
-                                draggingClipModeInt = 4;  // FadeOut
+                                draggingClipMode = ClipDrag::FadeOut;
                                 dragStartX          = e.x;
                                 lastDragSamples     = 0;
                                 dragStartFadeIn     = c.fadeInSamples;
@@ -2718,7 +2724,7 @@ namespace zynforge
                                 if (inClipBody)
                                 {
                                     draggingClipIdx     = i;
-                                    draggingClipModeInt = 2;  // Move
+                                    draggingClipMode = ClipDrag::Move;
                                     dragStartX = e.x;
                                     lastDragSamples = 0;
                                     return;
@@ -2735,7 +2741,7 @@ namespace zynforge
                                 {
                                     const bool leftHalf = (e.x - xL) < ((xR - xL) / 2);
                                     draggingClipIdx     = i;
-                                    draggingClipModeInt = leftHalf ? 0 : 1;
+                                    draggingClipMode = leftHalf ? ClipDrag::TrimLeft : ClipDrag::TrimRight;
                                     dragStartX = e.x;
                                     lastDragSamples = 0;
                                     return;
@@ -2748,7 +2754,7 @@ namespace zynforge
                             if (e.x >= xL - hitZone && e.x <= xL + hitZone)
                             {
                                 draggingClipIdx     = i;
-                                draggingClipModeInt = 0;  // TrimLeft
+                                draggingClipMode = ClipDrag::TrimLeft;
                                 dragStartX = e.x;
                                 lastDragSamples = 0;
                                 return;
@@ -2756,7 +2762,7 @@ namespace zynforge
                             if (e.x >= xR - hitZone && e.x <= xR + hitZone)
                             {
                                 draggingClipIdx     = i;
-                                draggingClipModeInt = 1;  // TrimRight
+                                draggingClipMode = ClipDrag::TrimRight;
                                 dragStartX = e.x;
                                 lastDragSamples = 0;
                                 return;
@@ -2764,7 +2770,7 @@ namespace zynforge
                             if (e.x > xL + hitZone && e.x < xR - hitZone)
                             {
                                 draggingClipIdx     = i;
-                                draggingClipModeInt = 2;  // Move
+                                draggingClipMode = ClipDrag::Move;
                                 dragStartX = e.x;
                                 lastDragSamples = 0;
                                 return;
@@ -3000,7 +3006,7 @@ namespace zynforge
             // Scrubber / Selector drag -- playhead chases the mouse;
             // Selector additionally seeds a loop region anchored at the
             // mouseDown position.
-            if (draggingClipModeInt == 5 || draggingClipModeInt == 6)
+            if (draggingClipMode == ClipDrag::Scrub || draggingClipMode == ClipDrag::SelectRange)
             {
                 auto& player = engine.getPlayer();
                 const juce::int64 totalSamples = player.isLoaded()
@@ -3011,7 +3017,7 @@ namespace zynforge
                     const double prop = juce::jlimit (0.0, 1.0,
                         (double) (e.x - inner.getX()) / (double) juce::jmax (1, inner.getWidth()));
                     const juce::int64 sx = (juce::int64) (prop * (double) totalSamples);
-                    if (draggingClipModeInt == 5)
+                    if (draggingClipMode == ClipDrag::Scrub)
                     {
                         player.setPositionSamples (sx);
                     }
@@ -3038,9 +3044,9 @@ namespace zynforge
                     ? player.getTotalLengthSamples() : 0;
                 const auto inner = getLocalBounds().withTrimmedLeft (headerW).reduced (brand::space::xs, brand::space::sm);
 
-                // Clip-gain handle drag (mode 7): relative ride from the grab
+                // Clip-gain handle drag (ClipDrag::ClipGain): relative ride from the grab
                 // point -- drag up = louder. ~0.15 dB per pixel, full range.
-                if (draggingClipModeInt == 7)
+                if (draggingClipMode == ClipDrag::ClipGain)
                 {
                     const auto* clips = engine.tryClipsFor (index);
                     if (clips != nullptr && draggingClipIdx < (int) clips->size())
@@ -3060,7 +3066,7 @@ namespace zynforge
                     const double samplesPerPx = (double) totalSamples / (double) inner.getWidth();
                     const juce::int64 wantSamples = (juce::int64) ((e.x - dragStartX) * samplesPerPx);
 
-                    if (draggingClipModeInt == 3 || draggingClipModeInt == 4)
+                    if (draggingClipMode == ClipDrag::FadeIn || draggingClipMode == ClipDrag::FadeOut)
                     {
                         // Fade handles: absolute targets, not incremental.
                         // Drag the fade-in apex right grows fadeIn;
@@ -3070,7 +3076,7 @@ namespace zynforge
                         if (clips == nullptr || draggingClipIdx >= (int) clips->size())
                             return;
                         const auto& c = (*clips)[(size_t) draggingClipIdx];
-                        if (draggingClipModeInt == 3)
+                        if (draggingClipMode == ClipDrag::FadeIn)
                         {
                             const juce::int64 newIn = juce::jlimit<juce::int64> (
                                 0, c.fileLengthSamples - dragStartFadeOut,
@@ -3097,8 +3103,8 @@ namespace zynforge
                     juce::int64 stepSamples = wantSamples - lastDragSamples;
                     if (std::abs (stepSamples) >= 1)
                     {
-                        const auto mode = draggingClipModeInt == 0 ? AudioEngine::ClipEdit::TrimLeft
-                                       : draggingClipModeInt == 1 ? AudioEngine::ClipEdit::TrimRight
+                        const auto mode = draggingClipMode == ClipDrag::TrimLeft ? AudioEngine::ClipEdit::TrimLeft
+                                       : draggingClipMode == ClipDrag::TrimRight ? AudioEngine::ClipEdit::TrimRight
                                                                   : AudioEngine::ClipEdit::Move;
                         // Honour the snap grid (snapSampleToGrid is an identity
                         // when snap is Off, and snaps to the nearest marker when
@@ -3252,7 +3258,7 @@ namespace zynforge
             draggingPointIdx = -1;
             draggingTensionSegIdx = -1;
             draggingClipIdx  = -1;
-            draggingClipModeInt = 0;
+            draggingClipMode = ClipDrag::TrimLeft;
             draggingXfadeAIdx = -1;
             lastDragSamples  = 0;
             if ((wasDraggingPoint || wasDraggingTension) && automationDragEnd)
