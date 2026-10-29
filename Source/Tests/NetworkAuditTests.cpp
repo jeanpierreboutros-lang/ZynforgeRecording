@@ -11,6 +11,12 @@
 #include "../Network/ConsoleLink.h"
 #include "../Network/ConsoleTransports.h"
 
+#include <cmath>
+#include <limits>
+#if JUCE_MAC
+ #include <CoreFoundation/CoreFoundation.h>
+#endif
+
 namespace zynforge
 {
     class NetworkAuditTests final : public juce::UnitTest
@@ -141,6 +147,84 @@ namespace zynforge
                 expectEquals (m.intArg (0), 3, "the numeric args must still line up");
                 expectEquals ((int) m.args.size(), 3);
             }
+
+            beginTest ("A console TCP link that drops is noticed, not reported as up");
+            {
+                // The SCP / MIDI-over-TCP reader exits when the desk goes away,
+                // but ConsoleLink never asked the transport: the menu kept
+                // offering "disconnect <host>" while names and scene markers
+                // had silently stopped for the rest of the show.
+                int port = 47940;
+                for (const auto kind : { ConsoleProfile::Kind::Yamaha, ConsoleProfile::Kind::AllenHeath })
+                {
+                    juce::StreamingSocket server;
+                    while (port < 47950 && ! server.createListener (port, "127.0.0.1")) ++port;
+                    expect (port < 47950, "test listener failed");
+
+                    ConsoleLink link;
+                    link.setProfile (kind);
+                    juce::StringArray statuses;
+                    link.onStatus = [&] (const juce::String& s) { statuses.add (s); };
+                    expect (link.connect ("127.0.0.1", port), "connect failed");
+                    std::unique_ptr<juce::StreamingSocket> accepted (server.waitForNextConnection());
+                    expect (accepted != nullptr);
+                    if (accepted != nullptr) accepted->close();   // the desk goes away
+                    server.close();
+                    ++port;
+
+                    pumpUntil ([&] { return ! link.isConnected(); }, 3000);
+                    expect (! link.isConnected(), link.getProfile().displayName
+                                                  + ": a dropped link still reports connected");
+                    expect (statuses.joinIntoString ("\n").containsIgnoreCase ("lost"),
+                            "the engineer was not told the console link dropped");
+                }
+            }
+
+            beginTest ("Head-amp gains from the wire are finite and inside the 0..1 wire range");
+            {
+                // The comment in loadJson said "the wire path also clamps"; it
+                // did not. A NaN or out-of-range reply was stored and later sent
+                // back to the desk verbatim by restoreGains.
+                ConsoleLink link;   // X32: the only profile with head-amp capture
+                std::vector<ConsoleMessage> sent;
+                link.setMessageHook ([&] (const ConsoleMessage& m) { sent.push_back (m); });
+                link.captureGains (2);
+                link.injectReply (ConsoleMessage ("/headamp/000/gain",
+                                                  { std::numeric_limits<double>::quiet_NaN() }));
+                expectEquals ((int) link.getCapturedGains().count (0), 0, "a NaN head-amp reply was stored");
+                link.injectReply (ConsoleMessage ("/headamp/000/gain", { 7.5 }));
+                link.injectReply (ConsoleMessage ("/headamp/001/gain", { -3.0 }));
+                expect (link.isGainCaptureComplete());
+                const auto& gains = link.getCapturedGains();
+                if (gains.count (0) == 1) expectEquals (gains.at (0), 1.0f);
+                if (gains.count (1) == 1) expectEquals (gains.at (1), 0.0f);
+
+                sent.clear();
+                link.restoreGains();
+                expectEquals ((int) sent.size(), 2);
+                for (const auto& m : sent)
+                {
+                    const float v = m.floatArg();
+                    expect (std::isfinite (v) && v >= 0.0f && v <= 1.0f,
+                            m.address + " restored an out-of-range gain to the desk");
+                }
+            }
+        }
+
+        static bool pumpUntil (const std::function<bool()>& predicate, int timeoutMs)
+        {
+            const auto end = juce::Time::getMillisecondCounterHiRes() + timeoutMs;
+            while (! predicate() && juce::Time::getMillisecondCounterHiRes() < end)
+            {
+               #if JUCE_MAC
+                CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.005, true);
+               #elif JUCE_MODAL_LOOPS_PERMITTED
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (5);
+               #else
+                juce::Thread::sleep (5);
+               #endif
+            }
+            return predicate();
         }
     };
 

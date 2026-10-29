@@ -8,10 +8,14 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../Audio/AudioEngine.h"
+#include "../Network/CompanionServer.h"
 #include "../Network/CompanionStreamFormat.h"
 
 #include <atomic>
 #include <thread>
+#if JUCE_MAC
+ #include <CoreFoundation/CoreFoundation.h>
+#endif
 
 namespace zynforge
 {
@@ -91,6 +95,31 @@ namespace zynforge
                 }
             }
             return mb.toString();
+        }
+
+        // Run the message loop (the /cmd worker marshals transport onto it)
+        // until `predicate` holds or the timeout passes.
+        static bool pumpUntil (const std::function<bool()>& predicate, int timeoutMs)
+        {
+            const auto end = juce::Time::getMillisecondCounterHiRes() + timeoutMs;
+            while (! predicate() && juce::Time::getMillisecondCounterHiRes() < end)
+            {
+               #if JUCE_MAC
+                CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.005, true);
+               #elif JUCE_MODAL_LOOPS_PERMITTED
+                juce::MessageManager::getInstance()->runDispatchLoopUntil (5);
+               #else
+                juce::Thread::sleep (5);
+               #endif
+            }
+            return predicate();
+        }
+
+        static int startOnFreePort (CompanionServer& server, int first)
+        {
+            for (int p = first; p < first + 10; ++p)
+                if (server.start (p)) return p;
+            return 0;
         }
 
         static void sendInvalidUtf8Request (int port)
@@ -318,6 +347,125 @@ namespace zynforge
                                     "stop waited for the five-second transport timeout");
                     expect (response.contains ("409") || response.isEmpty(),
                             "cancelled transport returned an unexpected response");
+                }
+            }
+
+            beginTest ("Companion RECORD only ever starts a take, never stops one");
+            {
+                // The phone's RECORD button mapped to ToggleRecord, which the
+                // host treats as STOP while a take is rolling: a double-tap
+                // "to make sure" armed and then fired the two-tap STOP.
+                AudioEngine engine;
+                std::vector<AudioEngine::RemoteTransportAction> actions;   // message thread only
+                engine.setRemoteTransportHandler ([&] (auto action, juce::String&) -> std::optional<bool>
+                {
+                    actions.push_back (action);
+                    return true;
+                });
+                CompanionServer server (engine);
+                const int port = startOnFreePort (server, 19400);
+                expect (port != 0, "companion server failed to start");
+                if (port != 0)
+                {
+                    const auto tok = server.getAccessToken();
+                    std::atomic<bool> finished { false };
+                    juce::String response;
+                    std::thread requester ([&]
+                    {
+                        response = httpPost (port, "/cmd?t=" + tok, "{\"action\":\"record\"}");
+                        finished.store (true);
+                    });
+                    pumpUntil ([&] { return finished.load(); }, 3000);
+                    requester.join();
+                    expect (response.contains ("200"), response);
+                    expectEquals ((int) actions.size(), 1);
+                    if (! actions.empty())
+                        expect (actions[0] == AudioEngine::RemoteTransportAction::StartRecord,
+                                "companion RECORD reached the host as a toggle that STOPs a rolling take");
+                    server.stop();
+                }
+            }
+
+            beginTest ("A closed audition stream releases its worker while no audio flows");
+            {
+                // With the device stopped nothing is written to the ring, and the
+                // drain loop only ever touched the socket to WRITE -- so a client
+                // that hung up was never noticed and held a worker until quit.
+                AudioEngine engine;   // test mode: no audio device, no samples
+                CompanionServer server (engine);
+                const int port = startOnFreePort (server, 19410);
+                expect (port != 0, "companion server failed to start");
+                if (port != 0)
+                {
+                    {
+                        juce::StreamingSocket client;
+                        expect (client.connect ("127.0.0.1", port, 1000));
+                        const auto req = "GET /stream.wav?t=" + server.getAccessToken()
+                                         + " HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+                        client.write (req.toRawUTF8(), (int) req.getNumBytesAsUTF8());
+                        char header[128];
+                        expect (client.waitUntilReady (true, 2000) == 1, "no stream header");
+                        expect (client.read (header, sizeof (header), false) > 0);
+                        expect (server.streamRing.active.load() == 1, "stream consumer not registered");
+                    }   // the client hangs up
+                    const auto deadline = juce::Time::getMillisecondCounter() + 2000;
+                    while (server.streamRing.active.load() != 0 && juce::Time::getMillisecondCounter() < deadline)
+                        juce::Thread::sleep (10);
+                    expectEquals (server.streamRing.active.load(), 0,
+                                  "a hung-up /stream.wav client kept its worker while audio was stopped");
+                    server.stop();
+                }
+            }
+
+            beginTest ("Deeply nested /cmd JSON is refused without crashing the server");
+            {
+                // juce::JSON::parse recurses once per bracket with no depth cap;
+                // a 200 KB run of '[' overflowed the worker's stack.
+                AudioEngine engine;
+                CompanionServer server (engine);
+                const int port = startOnFreePort (server, 19420);
+                expect (port != 0, "companion server failed to start");
+                if (port != 0)
+                {
+                    const auto tok = server.getAccessToken();
+                    const auto bomb = juce::String::repeatedString ("[", 200000);
+                    expect (httpPost (port, "/cmd?t=" + tok, bomb).contains ("400"),
+                            "deeply nested JSON was not refused");
+                    expect (httpGet (port, "/state.json?t=" + tok).contains ("200"),
+                            "server stopped answering after nested JSON");
+                    server.stop();
+                }
+            }
+
+            beginTest ("stop() does not wait out a command that registers after the cancel sweep");
+            {
+                // A /cmd worker that reached registerPendingCommand just AFTER
+                // stop() ran cancelPendingCommands waited the full 5 s for a
+                // callAsync the (blocked) message thread could never run.
+                AudioEngine engine;
+                CompanionServer server (engine);
+                const int port = startOnFreePort (server, 19430);
+                expect (port != 0, "companion server failed to start");
+                if (port != 0)
+                {
+                    juce::WaitableEvent reached;
+                    server.commandRegisterTestHook = [&]
+                    {
+                        reached.signal();
+                        while (server.running.load()) juce::Thread::sleep (1);
+                        juce::Thread::sleep (50);   // stop() cancels right after clearing running
+                    };
+                    const auto tok = server.getAccessToken();
+                    std::thread requester ([&]
+                    { httpPost (port, "/cmd?t=" + tok, "{\"action\":\"play\"}"); });
+                    expect (reached.wait (2000), "command never reached registration");
+
+                    const auto started = juce::Time::getMillisecondCounterHiRes();
+                    server.stop();
+                    const auto elapsedMs = juce::Time::getMillisecondCounterHiRes() - started;
+                    requester.join();
+                    expectLessThan (elapsedMs, 1500.0,
+                                    "stop() waited out the five-second transport timeout");
                 }
             }
             AudioEngine::setTestModeSkipAudioInit (false);

@@ -16,6 +16,7 @@
 #include <juce_osc/juce_osc.h>
 
 #include "ConsoleTransport.h"
+#include "OscPacketReceiver.h"
 
 #include <atomic>
 #include <memory>
@@ -25,7 +26,9 @@ namespace zynforge
 {
     // ── OSC over UDP ────────────────────────────────────────────────────────
     // One socket shared by sender + receiver: these desks reply to the
-    // request's SOURCE port, so we must listen where we send from.
+    // request's SOURCE port, so we must listen where we send from. That
+    // socket takes datagrams from ANY host, so it is parsed by the
+    // depth-capped OscPacketReceiver, never juce::OSCReceiver.
     class OscUdpTransport final : public ConsoleTransport,
                                   private juce::OSCReceiver::Listener<
                                       juce::OSCReceiver::MessageLoopCallback>
@@ -93,12 +96,12 @@ namespace zynforge
                 else if (a.isFloat32()) cm.args.emplace_back ((double) a.getFloat32());
                 else if (a.isString())  cm.args.emplace_back (a.getString());
             }
-            if (onMessage) onMessage (cm);   // OSCReceiver already hops to the message thread
+            if (onMessage) onMessage (cm);   // the receiver already hops to the message thread
         }
 
         std::unique_ptr<juce::DatagramSocket> socket;
         juce::OSCSender   sender;
-        juce::OSCReceiver receiver;
+        OscPacketReceiver receiver;
         std::atomic<bool> connected { false };
     };
 

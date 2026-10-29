@@ -66,6 +66,10 @@ namespace zynforge
         std::function<void()> streamReadTestHook;
         friend class AuditSecurityTests;
         std::function<bool(void*, size_t)> entropyProviderForTests;
+        friend class CompanionServerTests;
+        // Set only by tests: runs on the /cmd worker just before a transport
+        // command registers for stop()'s cancellation.
+        std::function<void()> commandRegisterTestHook;
 
         AudioEngine&     engine;
         std::atomic<bool> running     { false };

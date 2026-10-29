@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_osc/juce_osc.h>
+#include "../Network/OscPacketReceiver.h"
 #include <functional>
 
 namespace zynforge
@@ -15,8 +16,10 @@ namespace zynforge
     // remotes.
     //
     // All callbacks fire on the message thread so AudioEngine setters
-    // can be called safely.
-    class OscRemote : private juce::OSCReceiver,
+    // can be called safely. Datagrams are parsed by OscPacketReceiver,
+    // never juce::OSCReceiver: the port is open to the LAN and JUCE's
+    // parser could be crashed by one nested-bundle packet.
+    class OscRemote : private OscPacketReceiver,
                       private juce::OSCReceiver::Listener<
                                   juce::OSCReceiver::MessageLoopCallback>
     {

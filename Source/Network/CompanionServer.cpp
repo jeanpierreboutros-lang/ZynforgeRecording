@@ -106,6 +106,41 @@ namespace zynforge
             }
         }
 
+        // juce::JSON::parse recurses once per '[' / '{' with no depth limit, so
+        // a 1 MB body of '[' overflowed a worker's stack and took the app down.
+        // A command is one flat object; refuse deeper nesting before parsing.
+        constexpr int kMaxJsonDepth = 16;
+        bool jsonDepthWithin (const juce::String& text, int maxDepth)
+        {
+            int depth = 0;
+            bool inString = false, escaped = false;
+            for (auto p = text.getCharPointer(); ! p.isEmpty(); ++p)
+            {
+                const auto c = *p;
+                if (inString)
+                {
+                    if (escaped)        escaped = false;
+                    else if (c == '\\') escaped = true;
+                    else if (c == '"')  inString = false;
+                }
+                else if (c == '"')             inString = true;
+                else if (c == '[' || c == '{') { if (++depth > maxDepth) return false; }
+                else if (c == ']' || c == '}') depth = juce::jmax (0, depth - 1);
+            }
+            return true;
+        }
+
+        // True once a streaming client has hung up (EOF) or its socket failed.
+        // Discards anything it sends after its request; nothing reads that.
+        bool peerHungUp (juce::StreamingSocket& s)
+        {
+            const int ready = s.waitUntilReady (true, 0);
+            if (ready < 0)  return true;
+            if (ready == 0) return false;
+            char scratch[256];
+            return s.read (scratch, (int) sizeof (scratch), false) <= 0;
+        }
+
         const char* kHtmlPage = R"HTML(<!doctype html>
 <html><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0,user-scalable=no"/>
@@ -712,6 +747,8 @@ poll();
 
     void CompanionServer::handleCommand (juce::StreamingSocket& s, const juce::String& body)
     {
+        if (! jsonDepthWithin (body, kMaxJsonDepth))
+        { writeRaw (s, "400 Bad Request", "text/plain", "json expected"); return; }
         const auto parsed = juce::JSON::parse (body);
         if (! parsed.isObject()) { writeRaw (s, "400 Bad Request", "text/plain", "json expected"); return; }
         const auto action = parsed.getProperty ("action", "").toString();
@@ -735,7 +772,13 @@ poll();
         if (action == "play" || action == "stop" || action == "record")
         {
             auto result = std::make_shared<CommandResult>();
+            if (commandRegisterTestHook) commandRegisterTestHook();
             registerPendingCommand (result);
+            // stop() clears `running` BEFORE it cancels pending commands, so a
+            // request that registers after that sweep sees it here. It used to
+            // wait the full 5 s for a callAsync the message thread -- blocked
+            // in stop() joining this worker -- could never run.
+            if (! running.load()) result->complete (false, "server is stopping");
             const auto engineHandle = engine.getAsyncHandle();
             const auto act = action;
             const bool queued = juce::MessageManager::callAsync ([engineHandle, act, result]
@@ -757,7 +800,10 @@ poll();
                 else if (act == "stop")
                     actionToRun = AudioEngine::RemoteTransportAction::StopAll;
                 else
-                    actionToRun = AudioEngine::RemoteTransportAction::ToggleRecord;
+                    // RECORD only ever starts. A toggle meant STOP during a
+                    // take, so a double-tap "to make sure" ended the live
+                    // recording. STOP keeps its own button and two-tap guard.
+                    actionToRun = AudioEngine::RemoteTransportAction::StartRecord;
 
                 juce::String error;
                 const bool ok = eng->performRemoteTransport (actionToRun, error);
@@ -878,7 +924,16 @@ poll();
             const double nowSr = engine.getDeviceSampleRate();
             if (nowSr > 0.0 && std::abs (nowSr - (double) sr) > 1.0) break;   // rate changed
             const auto wIdx = streamRing.writeIdx.load (std::memory_order_acquire);
-            if (wIdx == readIdx) { juce::Thread::sleep (10); continue; }
+            if (wIdx == readIdx)
+            {
+                // Nothing to send (device stopped or lost). A failed write is
+                // the only other way a dead client is noticed, so without this
+                // a hung-up audition held its worker -- and a slot toward
+                // kMaxConcurrentWorkers -- until audio resumed.
+                if (peerHungUp (s)) break;
+                juce::Thread::sleep (10);
+                continue;
+            }
 
             const auto cap   = streamRing.capacity();
             // Resync when the producer has lapped us. The reader only ever
