@@ -72,9 +72,9 @@ namespace zynforge
         // the true session-OPEN path passes false, and its .zfproj restore
         // overwrites these seeds anyway. See the seedDefaultClips ADR.
         const int n = player.getNumTracks();
-        if (n <= 0)
+        if (n <= 0 && ! preserveEdits)
         {
-            if (! preserveEdits) { trackClips.clear(); trackPlaylists.clear(); sourceTrackLengths.clear(); }
+            trackClips.clear(); trackPlaylists.clear(); sourceTrackLengths.clear();
             return;
         }
 
@@ -133,8 +133,11 @@ namespace zynforge
             {
                 // A continuation adds source media after the prior end. Keep
                 // every existing split/trim/comp verbatim and expose only the
-                // newly recorded span as a new clip on the active take.
-                if (appendRecordedAudio && oldLength > 0 && newLength > oldLength)
+                // newly recorded span as a new clip on the active take. A
+                // strip with no media before (oldLength 0) whose arrangement
+                // holds pasted clips gets its whole new take the same way --
+                // requiring oldLength > 0 left that recording out entirely.
+                if (appendRecordedAudio && newLength > oldLength)
                 {
                     Clip appended;
                     appended.name = juce::String::formatted ("Track_%02d continued", i + 1);
@@ -174,6 +177,17 @@ namespace zynforge
             trackPlaylists[(size_t) i].takes.push_back (std::move (t1));
             trackPlaylists[(size_t) i].activeTake = 0;
         }
+
+        // Strips above the highest recorded Track_NN keep their clip lists
+        // (grow-only above), but the player's track count was just reset to
+        // the files on disk, so it no longer renders them. Republish, or a
+        // clip pasted there goes silent in playback after every take stop or
+        // reload while EDIT still shows it and the bounce still renders it.
+        if (preserveEdits)
+            for (int i = juce::jmax (0, n); i < (int) trackClips.size(); ++i)
+                if (! trackClips[(size_t) i].empty()
+                    || (i < (int) trackPlaylists.size() && ! trackPlaylists[(size_t) i].takes.empty()))
+                    player.setTrackClips (i, trackClips[(size_t) i]);
     }
 
     void AudioEngine::syncActiveTake (int track)

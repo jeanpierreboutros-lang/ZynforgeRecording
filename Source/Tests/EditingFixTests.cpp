@@ -151,6 +151,52 @@ public:
             expectEquals ((int) e.clipsFor (1).size(), 1, "undo wiped a newer recording");
             expectWithinAbsoluteError (renderedAt (e, 1, 48000, 1000), 0.25f, 0.001f);
         }
+
+        beginTest ("Clips on strips above the highest Track_NN keep playing after a reload");
+        {
+            Folder f; expect (write (f.track()));
+            AudioEngine e; setup (e, 8); e.loadSession (f.dir);
+            expect (e.pasteClip (5, 1000, 0, 4000, 0, 0, 0.0f, "copied", f.track(), 0) >= 0);
+            e.loadSession (f.dir, true, true);               // stop-record / daemon STOP reload
+            expectEquals ((int) e.clipsFor (5).size(), 1);
+            expect (e.getPlayer().getNumTracks() >= 6,
+                    "the player no longer reaches strip 6 after the reload");
+            expect (playerPeak (e, 8, 5, 2000) > 0.1f, "strip 6 is silent in playback");
+        }
+
+        beginTest ("Recording onto a strip with no prior media joins its edited arrangement");
+        {
+            Folder f; expect (write (f.track()));
+            AudioEngine e; setup (e, 3); e.loadSession (f.dir);
+            expect (e.pasteClip (2, 0, 0, 4800, 0, 0, 0.0f, "copied", f.track(), 0) >= 0);
+            expect (write (f.track (3), 9600, 0.5f));        // the new take's media
+            e.loadSession (f.dir, true, true);
+            bool ownAudio = false;
+            for (const auto& c : e.clipsFor (2))
+                ownAudio |= c.audioFile == juce::File() && c.fileLengthSamples == 9600;
+            expect (ownAudio, "the recorded audio is missing from the arrangement");
+            expectWithinAbsoluteError (renderedAt (e, 2, 9600, 6000), 0.5f, 0.001f);
+        }
+    }
+
+    // Peak of one player output channel at `pos`, polling while the
+    // background readers fill.
+    static float playerPeak (AudioEngine& e, int channels, int channel, juce::int64 pos)
+    {
+        auto& player = e.getPlayer();
+        juce::AudioBuffer<float> out (channels, 512);
+        for (int attempt = 0; attempt < 120; ++attempt)
+        {
+            out.clear();
+            player.setPositionSamples (pos);
+            player.start();
+            player.processBlock (out.getArrayOfWritePointers(), channels, 512);
+            player.stop();
+            const auto peak = out.getMagnitude (channel, 0, 512);
+            if (peak > 0.1f) return peak;
+            juce::Thread::sleep (5);
+        }
+        return 0.0f;
     }
 };
 
