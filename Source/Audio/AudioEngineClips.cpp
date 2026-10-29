@@ -499,10 +499,15 @@ namespace zynforge
 
     namespace
     {
-        // Split whichever clip in `list` straddles `timelineSample`.
-        // Returns true if a cut landed (sample strictly inside a clip).
+        // Split EVERY clip in `list` that straddles `timelineSample`.
+        // Returns true if at least one cut landed (sample strictly inside a
+        // clip). Clips may overlap (a paste or move over a neighbour), so
+        // stopping at the first one left the others crossing a range edge:
+        // Clear / Ripple / Comp kept them playing inside the range, and
+        // Consolidate played them again on top of its own render.
         bool splitListAtTimeline (std::vector<Clip>& list, juce::int64 timelineSample)
         {
+            bool cut = false;
             for (int i = 0; i < (int) list.size(); ++i)
             {
                 const auto& c = list[(size_t) i];
@@ -511,10 +516,12 @@ namespace zynforge
                 {
                     const auto fileOffset = c.fileStartSamples
                                           + (timelineSample - c.timelineStartSamples);
-                    return splitClipAt (list, i, fileOffset);
+                    // The right half is inserted at i + 1 and starts exactly
+                    // at the cut, so step over it.
+                    if (splitClipAt (list, i, fileOffset)) { cut = true; ++i; }
                 }
             }
-            return false;
+            return cut;
         }
     }
 

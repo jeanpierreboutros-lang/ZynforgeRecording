@@ -1,0 +1,118 @@
+// Regression guards for the 2026-10-29 clip-editing / takes / offline-render
+// bug hunt. Each test reproduces one finding headlessly through the engine.
+
+#include <juce_core/juce_core.h>
+#include <juce_audio_formats/juce_audio_formats.h>
+
+#include "../Audio/AudioEngine.h"
+#include "../Audio/MultiPartReader.h"
+
+namespace zynforge
+{
+class EditingFixTests final : public juce::UnitTest
+{
+public:
+    EditingFixTests() : UnitTest ("Editing fixes 2026-10-29", "zynforge") {}
+
+    struct Folder
+    {
+        juce::File dir = juce::File::getSpecialLocation (juce::File::tempDirectory)
+            .getChildFile ("zf-editing-" + juce::Uuid().toString());
+        Folder() { dir.createDirectory(); }
+        ~Folder() { dir.deleteRecursively(); }
+        juce::File audio (const juce::String& name) const
+        { return dir.getChildFile ("Audio Files").getChildFile (name); }
+        juce::File track (int n = 1) const
+        { return audio ("Track_" + juce::String::formatted ("%02d.wav", n)); }
+    };
+
+    // Mono 24-bit WAV holding a constant 0.25.
+    static bool write (const juce::File& file, int samples = 48000, float value = 0.25f)
+    {
+        file.getParentDirectory().createDirectory();
+        juce::WavAudioFormat format;
+        std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
+            file.createOutputStream().release(), 48000.0, 1, 24, {}, 0));
+        if (! writer) return false;
+        juce::AudioBuffer<float> audio (1, samples);
+        juce::FloatVectorOperations::fill (audio.getWritePointer (0), value, samples);
+        return writer->writeFromAudioSampleBuffer (audio, 0, samples);
+    }
+
+    static void setup (AudioEngine& e, int tracks = 1)
+    {
+        e.clearAllStripOverrides(); e.setStripCount (tracks); e.prepareForTests (48000, 256);
+    }
+
+    // Render the edited arrangement and read one sample of it.
+    float renderedAt (AudioEngine& e, int track, juce::int64 total, int sample)
+    {
+        juce::AudioBuffer<float> out;
+        expect (e.renderTrackArrangement (track, out, total), "render failed");
+        return out.getNumSamples() > sample ? out.getSample (0, sample) : -1.0f;
+    }
+
+    // Arrangement for the range tests: the default clip A = [0, 48000) plus a
+    // pasted clip B = [12000, 36000) overlapping it (same file, file [0, 24000)).
+    static void overlapArrangement (AudioEngine& e, const Folder& f)
+    {
+        setup (e); e.loadSession (f.dir);
+        e.pasteClip (0, 12000, 0, 24000, 0, 0, 0.0f, "B", juce::File(), -1);
+    }
+
+    void runTest() override
+    {
+        AudioEngine::setTestModeSkipAudioInit (true);
+
+        beginTest ("Clear range cuts every overlapping clip, not just the first");
+        {
+            Folder f; expect (write (f.track()));
+            AudioEngine e; overlapArrangement (e, f);
+            expectWithinAbsoluteError (renderedAt (e, 0, 48000, 20000), 0.5f, 0.001f, "A + B before");
+            expect (e.clearTrackRange (0, 18000, 24000));
+            for (const auto& c : e.clipsFor (0))
+                expect (c.timelineStartSamples >= 24000
+                        || c.timelineStartSamples + c.fileLengthSamples <= 18000,
+                        "a clip still crosses the cleared range: " + c.name);
+            expectWithinAbsoluteError (renderedAt (e, 0, 48000, 20000), 0.0f, 0.001f,
+                                       "the overlapping clip still plays inside the cleared range");
+            expectWithinAbsoluteError (renderedAt (e, 0, 48000, 30000), 0.5f, 0.001f);
+        }
+
+        beginTest ("Ripple delete shifts the overlapping clip's tail with everything else");
+        {
+            Folder f; expect (write (f.track()));
+            AudioEngine e; overlapArrangement (e, f);
+            expect (e.rippleDeleteRange (0, 18000, 24000));
+            // A's tail now covers [18000, 42000); B's tail [18000, 30000).
+            expectWithinAbsoluteError (renderedAt (e, 0, 48000, 20000), 0.5f, 0.001f);
+            expectWithinAbsoluteError (renderedAt (e, 0, 48000, 32000), 0.25f, 0.001f,
+                                       "B was left unshifted on top of the clips that slid left");
+            expectWithinAbsoluteError (renderedAt (e, 0, 48000, 43000), 0.0f, 0.001f);
+        }
+
+        beginTest ("Consolidate over overlapping clips plays the range once, not doubled");
+        {
+            Folder f; expect (write (f.track()));
+            AudioEngine e; overlapArrangement (e, f);
+            expect (e.consolidateRange (0, 18000, 24000));
+            expectWithinAbsoluteError (renderedAt (e, 0, 48000, 20000), 0.5f, 0.001f,
+                                       "B's surviving piece doubles the consolidated render");
+            expectWithinAbsoluteError (renderedAt (e, 0, 48000, 30000), 0.5f, 0.001f);
+        }
+
+        beginTest ("Comp from a take replaces every overlapping clip in the range");
+        {
+            Folder f; expect (write (f.track()));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            expectEquals (e.newTakeFromCurrent (0, "Take 2"), 1);
+            e.pasteClip (0, 12000, 0, 24000, 0, 0, 0.0f, "B", juce::File(), -1);
+            expect (e.compRangeFromTake (0, 0, 18000, 24000));
+            expectWithinAbsoluteError (renderedAt (e, 0, 48000, 20000), 0.25f, 0.001f,
+                                       "the comped range must hold Take 1's audio only");
+        }
+    }
+};
+
+static EditingFixTests editingFixTests;
+}
