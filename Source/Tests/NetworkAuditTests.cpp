@@ -179,6 +179,36 @@ namespace zynforge
                             "the engineer was not told the console link dropped");
                 }
             }
+
+            beginTest ("Head-amp gains from the wire are finite and inside the 0..1 wire range");
+            {
+                // The comment in loadJson said "the wire path also clamps"; it
+                // did not. A NaN or out-of-range reply was stored and later sent
+                // back to the desk verbatim by restoreGains.
+                ConsoleLink link;   // X32: the only profile with head-amp capture
+                std::vector<ConsoleMessage> sent;
+                link.setMessageHook ([&] (const ConsoleMessage& m) { sent.push_back (m); });
+                link.captureGains (2);
+                link.injectReply (ConsoleMessage ("/headamp/000/gain",
+                                                  { std::numeric_limits<double>::quiet_NaN() }));
+                expectEquals ((int) link.getCapturedGains().count (0), 0, "a NaN head-amp reply was stored");
+                link.injectReply (ConsoleMessage ("/headamp/000/gain", { 7.5 }));
+                link.injectReply (ConsoleMessage ("/headamp/001/gain", { -3.0 }));
+                expect (link.isGainCaptureComplete());
+                const auto& gains = link.getCapturedGains();
+                if (gains.count (0) == 1) expectEquals (gains.at (0), 1.0f);
+                if (gains.count (1) == 1) expectEquals (gains.at (1), 0.0f);
+
+                sent.clear();
+                link.restoreGains();
+                expectEquals ((int) sent.size(), 2);
+                for (const auto& m : sent)
+                {
+                    const float v = m.floatArg();
+                    expect (std::isfinite (v) && v >= 0.0f && v <= 1.0f,
+                            m.address + " restored an out-of-range gain to the desk");
+                }
+            }
         }
 
         static bool pumpUntil (const std::function<bool()>& predicate, int timeoutMs)

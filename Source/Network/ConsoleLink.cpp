@@ -1,6 +1,8 @@
 #include "ConsoleLink.h"
 #include "../Audio/AtomicFile.h"
 
+#include <cmath>
+
 namespace zynforge
 {
     ConsoleLink::ConsoleLink()  = default;
@@ -305,7 +307,12 @@ namespace zynforge
                 // Only the headamps queried by this capture can complete it.
                 // Subscription updates for other headamps are not replies.
                 if (ev.index < 0 || ev.index >= expectedGainReplies) return;
-                gains[ev.index] = ev.value;
+                // The raw wire value is normalised 0..1 and restoreGains sends
+                // it back to the desk verbatim. A NaN is no reading at all
+                // (the capture stays incomplete and cannot be restored);
+                // anything else is clamped to the wire range, as loadJson does.
+                if (! std::isfinite (ev.value)) return;
+                gains[ev.index] = juce::jlimit (0.0f, 1.0f, ev.value);
                 if (expectedGainReplies > 0 && (int) gains.size() >= expectedGainReplies)
                 {
                     gainDeadlineMs = 0;
