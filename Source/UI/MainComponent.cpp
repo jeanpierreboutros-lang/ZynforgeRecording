@@ -65,6 +65,21 @@ void MainComponent::onRecordClicked()
 {
     if (captureMetadataPending || (sessionIoBusy.load() && ! engine.isRecording()))
     { showStatus ("Wait for recording finalization / session saving to finish"); return; }
+    // RECORD is a sequence: a press during a take (or a refused daemon state)
+    // is consumed first; otherwise every pre-flight refusal runs before
+    // anything is changed; then the take starts through the daemon, as a
+    // selection punch, or locally (fresh / append / cursor punch).
+    if (handleRecordPressDuringTake()) return;
+    RecordStartPlan plan;
+    if (! prepareRecordStart (plan)) return;
+    applyRecordAutoRouting (plan);
+    if (daemonModeActive()) { startDaemonTake (plan); return; }
+    if (startSelectionPunch (plan)) return;
+    startLocalTake (plan);
+}
+
+bool MainComponent::handleRecordPressDuringTake()
+{
     // A RECORD-triggered selection punch is in flight (pre-roll / recording /
     // post-roll) -- pressing RECORD again ends it: punch out if recording
     // (splices the take), then stop the transport and tear down.
@@ -79,14 +94,14 @@ void MainComponent::onRecordClicked()
         punchSessionActive = false;
         recordButton.setButtonText ("RECORD");
         if (! wasRecording) statusLabel.setText ("Punch ended", juce::dontSendNotification);
-        return;
+        return true;
     }
 
     if (manualPunchActive && engine.isRecording())
     {
         stopArmedAtMs = 0;
         stopActiveCaptureAsync (false);
-        return;
+        return true;
     }
     if (! engine.isRecording()) manualPunchActive = false;
 
@@ -96,7 +111,7 @@ void MainComponent::onRecordClicked()
     if (useCaptureDaemon && ! captureSupervisor.isAttached())
     {
         showStatus ("Capture daemon is unavailable -- reconnect or disable daemon mode before recording");
-        return;
+        return true;
     }
 
     // StereoMix is produced by the in-process audio callback. The capture
@@ -106,14 +121,14 @@ void MainComponent::onRecordClicked()
     if (daemonModeActive() && engine.getRecordStereoMix())
     {
         showStatus ("Stereo stream-mix recording is unavailable in capture-daemon mode; disable it or use in-process capture");
-        return;
+        return true;
     }
 
     // Phase 1d: a rolling daemon take stops over the wire.
     if (daemonModeActive() && captureSupervisor.isDaemonRecording())
     {
         onStopClicked();
-        return;
+        return true;
     }
 
     if (engine.isRecording())
@@ -133,14 +148,18 @@ void MainComponent::onRecordClicked()
             toast.show ("Tap STOP again to end the recording", Toast::Kind::Warning);
             statusLabel.setText ("STOP armed -- tap again within 2 s to end the take",
                                  juce::dontSendNotification);
-            return;
+            return true;
         }
         stopArmedAtMs = 0;
 
         stopActiveCaptureAsync (false);
-        return;
+        return true;
     }
+    return false;
+}
 
+bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
+{
     // Pre-flight: surface why recording wouldn't capture anything BEFORE
     // we open writers + flip the engine into recording state.
     auto& recorder = engine.getRecorder();
@@ -148,49 +167,35 @@ void MainComponent::onRecordClicked()
     if (numTracks == 0)
     {
         statusLabel.setText ("Add a channel with +CH before recording.", juce::dontSendNotification);
-        return;
+        return false;
     }
 
     auto* device = engine.getDeviceManager().getCurrentAudioDevice();
     if (device == nullptr)
     {
         statusLabel.setText ("No audio device open -- pick one with DEVICE.", juce::dontSendNotification);
-        return;
+        return false;
     }
     const int numInputs = device->getActiveInputChannels().countNumberOfSetBits();
     if (numInputs == 0)
     {
         statusLabel.setText ("Device has 0 active inputs -- open DEVICE and enable inputs.",
                              juce::dontSendNotification);
-        return;
+        return false;
     }
 
-    // Count armed tracks AND auto-fix any strip whose inputRouting points
-    // outside the device's actual input count -- fall back to a sequential
-    // wrap so engineer doesn't have to open PATCH to start recording.
+    // Count armed tracks. The routing auto-fix for armed strips whose input
+    // lies outside the device runs only after every refusal below has passed
+    // (applyRecordAutoRouting) -- it used to rewrite and persist routing even
+    // when the press was then refused for the clock, stereo mix or disk space.
     int armed = 0;
-    int autoRouted = 0;
     for (int i = 0; i < numTracks; ++i)
-    {
-        auto& t = recorder.getTrack (i);
-        const bool isArmed = t.armed.load (std::memory_order_relaxed);
-        if (isArmed) ++armed;
-        const int dev = t.inputRouting.load (std::memory_order_relaxed);
-        // Playback-only strips (notably the generated Click) and buses have
-        // no input by design. Never turn them into live-input strips here.
-        if (isArmed && ! t.isBus.load (std::memory_order_relaxed)
-            && i != clickTrackIndex && (dev < 0 || dev >= numInputs))
-        {
-            const int target = numInputs > 0 ? (i % numInputs) : 0;
-            engine.setTrackInputRouting (i, target);
-            ++autoRouted;
-        }
-    }
+        if (recorder.getTrack (i).armed.load (std::memory_order_relaxed)) ++armed;
     if (armed == 0)
     {
         statusLabel.setText ("Arm at least one track (R button) before recording.",
                              juce::dontSendNotification);
-        return;
+        return false;
     }
 
     if (! daemonModeActive() && engine.getRecordStereoMix())
@@ -202,7 +207,7 @@ void MainComponent::onRecordClicked()
         if (! hasStreamSource)
         {
             showStatus ("StereoMix is enabled but no channel is sent to STREAM; enable a STREAM send before recording");
-            return;
+            return false;
         }
     }
 
@@ -231,7 +236,7 @@ void MainComponent::onRecordClicked()
                                  juce::dontSendNotification);
             srMismatchWarned = 0.0;          // re-arm so the dialog pops again
             checkDeviceSampleRate (devSR);   // show the explanatory warning
-            return;                          // <-- do NOT start recording
+            return false;                    // <-- do NOT start recording
         }
     }
 
@@ -248,10 +253,9 @@ void MainComponent::onRecordClicked()
     const bool existingTakeMedia = takeScanDir.isDirectory()
         && ! takeScanDir.findChildFiles (juce::File::findFiles, false,
                                          "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff").isEmpty();
-    bool continueTake = activeDir.isDirectory()
+    plan.continueTake = activeDir.isDirectory()
                         && (engine.getPlayer().isLoaded() || existingTakeMedia)
                         && ! daemonModeActive();
-    juce::int64 punchAt = -1;
     // While playback rolls, a manual punch uses its CURRENT playhead. The EDIT
     // cursor may still hold the place where playback began; using it here
     // silently turns an intended punch into an append/new part. When stopped,
@@ -260,8 +264,7 @@ void MainComponent::onRecordClicked()
     // end (or a stopped, unplaced playhead at 0) -> APPEND a NEW PART
     // (Track_NN_partXX), which never touches the existing file. An explicitly
     // placed cursor at 0 is a deliberate punch from the start.
-    bool continueAppend = false;
-    if (continueTake)
+    if (plan.continueTake)
     {
         const auto cur   = engine.getEditCursorSample();
         const auto pos   = manualRecordPosition (engine.getPlayer().isPlaying(),
@@ -277,15 +280,17 @@ void MainComponent::onRecordClicked()
             // Works on MULTI-PART takes too: the splice reads the whole take
             // (Track_NN + its parts) via ConcatReader and flattens it, so a take
             // built up by continue-recording can still be punched anywhere.
-            punchAt = pos; continueAppend = false;
+            plan.punchAt = pos; plan.continueAppend = false;
         }
         else
         {
-            continueAppend = true;   // at the start / end -> append a new part
+            plan.continueAppend = true;   // at the start / end -> append a new part
         }
     }
 
-    const auto dir = continueTake ? activeDir : makeNewSessionDir();
+    plan.dir = plan.continueTake ? activeDir : makeNewSessionDir();
+    plan.numTracks = numTracks;
+    plan.armed = armed;
 
     // Disk-space pre-flight -- abort if the drive can't hold at least
     // 30 minutes at current SR × armed-track count × bit depth (assume
@@ -303,9 +308,9 @@ void MainComponent::onRecordClicked()
                || fmt == zynforge::CaptureFormat::Flac16)                                            ? 2
             : (fmt == zynforge::CaptureFormat::Wav32Float || fmt == zynforge::CaptureFormat::Aiff32Float) ? 4
             : 3;
-        const juce::int64 bytesPerSec    = (juce::int64) (sr * armed * bytesPerSample);
+        const juce::int64 bytesPerSec    = (juce::int64) (sr * plan.armed * bytesPerSample);
         const juce::int64 wantBytes      = bytesPerSec * 60 * 30;  // 30 min headroom
-        const juce::int64 freeBytes      = dir.getParentDirectory().getBytesFreeOnVolume();
+        const juce::int64 freeBytes      = plan.dir.getParentDirectory().getBytesFreeOnVolume();
         if (freeBytes > 0 && freeBytes < wantBytes)
         {
             const double freeGB = freeBytes / 1.0e9;
@@ -313,41 +318,75 @@ void MainComponent::onRecordClicked()
                                  + juce::String (freeGB, 1)
                                  + " GB free -- < 30 min headroom. Clear space before recording.",
                                  juce::dontSendNotification);
-            return;
+            return false;
         }
     }
 
-    // Phase 1d (flagged): route the take through the capture daemon. The
-    // GUI keeps its own device open for monitoring/meters/playback; the
-    // daemon writes the files, so a GUI death can no longer stop the take.
-    if (daemonModeActive())
+    return true;
+}
+
+void MainComponent::applyRecordAutoRouting (RecordStartPlan& plan)
+{
+    auto& recorder = engine.getRecorder();
+    const int numTracks = plan.numTracks;
+    auto* device = engine.getDeviceManager().getCurrentAudioDevice();
+    const int numInputs = device != nullptr ? device->getActiveInputChannels().countNumberOfSetBits() : 0;
+    // Auto-fix any armed strip whose inputRouting points outside the device's
+    // actual input count -- fall back to a sequential wrap so the engineer
+    // doesn't have to open PATCH to start recording.
+    int autoRouted = 0;
+    for (int i = 0; i < numTracks; ++i)
     {
-        if (! configureCaptureDaemon())
-        { showStatus ("Daemon recording refused: could not apply the selected device, routing and backup configuration"); return; }
-        juce::BigInteger arms;
-        for (int i = 0; i < numTracks; ++i)
-            if (recorder.getTrack (i).armed.load (std::memory_order_relaxed))
-                arms.setBit (i);
-        if (captureSupervisor.startRecording (dir, numTracks,
-                                              (int) recorder.getCaptureFormat(), arms))
+        auto& t = recorder.getTrack (i);
+        const bool isArmed = t.armed.load (std::memory_order_relaxed);
+        const int dev = t.inputRouting.load (std::memory_order_relaxed);
+        // Playback-only strips (notably the generated Click) and buses have
+        // no input by design. Never turn them into live-input strips here.
+        if (isArmed && ! t.isBus.load (std::memory_order_relaxed)
+            && i != clickTrackIndex && (dev < 0 || dev >= numInputs))
         {
-            engine.setExternalCaptureStatus (captureSupervisor.lastStatus(),
-                                             captureSupervisor.lastStatusAtMs());
-            lastCaptureFinalizationError.clear();
-            engine.setExternalRecording (true);
-            engine.setActiveSessionDir (dir);
-            statusLabel.setText ("DAEMON recording " + juce::String (armed) + "/"
-                                 + juce::String (numTracks) + " tracks -> " + dir.getFileName()
-                                 + "  (take survives a GUI crash)",
-                                 juce::dontSendNotification);
-            recordButton.setButtonText ("STOP");
+            const int target = numInputs > 0 ? (i % numInputs) : 0;
+            engine.setTrackInputRouting (i, target);
+            ++autoRouted;
         }
-        else
-            statusLabel.setText ("Daemon record failed -- check Session > Capture daemon.",
-                                 juce::dontSendNotification);
-        return;
     }
+    plan.autoRouted = autoRouted;
+}
 
+// Phase 1d (flagged): route the take through the capture daemon. The GUI keeps
+// its own device open for monitoring/meters/playback; the daemon writes the
+// files, so a GUI death can no longer stop the take.
+void MainComponent::startDaemonTake (const RecordStartPlan& plan)
+{
+    auto& recorder = engine.getRecorder();
+    if (! configureCaptureDaemon())
+    { showStatus ("Daemon recording refused: could not apply the selected device, routing and backup configuration"); return; }
+    juce::BigInteger arms;
+    for (int i = 0; i < plan.numTracks; ++i)
+        if (recorder.getTrack (i).armed.load (std::memory_order_relaxed))
+            arms.setBit (i);
+    if (captureSupervisor.startRecording (plan.dir, plan.numTracks,
+                                          (int) recorder.getCaptureFormat(), arms))
+    {
+        engine.setExternalCaptureStatus (captureSupervisor.lastStatus(),
+                                         captureSupervisor.lastStatusAtMs());
+        lastCaptureFinalizationError.clear();
+        engine.setExternalRecording (true);
+        engine.setActiveSessionDir (plan.dir);
+        statusLabel.setText ("DAEMON recording " + juce::String (plan.armed) + "/"
+                             + juce::String (plan.numTracks) + " tracks -> " + plan.dir.getFileName()
+                             + "  (take survives a GUI crash)",
+                             juce::dontSendNotification);
+        recordButton.setButtonText ("STOP");
+    }
+    else
+        statusLabel.setText ("Daemon record failed -- check Session > Capture daemon.",
+                             juce::dontSendNotification);
+}
+
+bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)
+{
+    auto& recorder = engine.getRecorder();
     // ── Pro Tools-style SELECTION punch in/out ─────────────────────────────
     // If there's a selection (loop region) on a loaded take, RECORD does a
     // proper punch in AND out: roll the transport from a PRE-ROLL lead-in
@@ -358,7 +397,7 @@ void MainComponent::onRecordClicked()
     // continue below.
     {
         auto& player = engine.getPlayer();
-        const bool haveSelection = continueTake && player.hasLoopRegion()
+        const bool haveSelection = plan.continueTake && player.hasLoopRegion()
                                 && player.getLoopEnd() > player.getLoopStart();
         if (haveSelection)
         {
@@ -373,7 +412,7 @@ void MainComponent::onRecordClicked()
             player.setPositionSamples (juce::jmax ((juce::int64) 0, in - preRollS));
             suspendLoopForPunch();
             snapshotArmStateForPunch();
-            for (int i = 0; i < numTracks; ++i)
+            for (int i = 0; i < plan.numTracks; ++i)
                 engine.setTrackPunchArmed (i, recorder.getTrack (i).armed.load (std::memory_order_relaxed));
             engine.setPunchModeOn (true);
             punchOutSample    = out;
@@ -383,7 +422,7 @@ void MainComponent::onRecordClicked()
             // message-thread timer jitter cannot miss or extend the punch.
             engine.setCaptureWindow (in, out);
             engine.armPunchIn (in);
-            if (! engine.startRecording (dir))
+            if (! engine.startRecording (plan.dir))
             {
                 engine.clearCaptureWindow();
                 recorder.cancelPunchIn();
@@ -392,7 +431,7 @@ void MainComponent::onRecordClicked()
                 restoreLoopAfterPunch();
                 showStatus (recorder.getStartError().isNotEmpty() ? recorder.getStartError()
                     : "Selection punch refused -- check take and backup/mirror copies");
-                return;
+                return true;
             }
             lastCaptureFinalizationError.clear();
             punchSessionActive = true;
@@ -403,38 +442,44 @@ void MainComponent::onRecordClicked()
                                  + "s, out " + juce::String (out / sr, 1)
                                  + "s, pre-roll " + juce::String (preRollSec) + "s",
                                  juce::dontSendNotification);
-            return;
+            return true;
         }
     }
 
+    return false;
+}
+
+void MainComponent::startLocalTake (const RecordStartPlan& plan)
+{
+    auto& recorder = engine.getRecorder();
     // Continue: append a new part (safe, no file touched), or punch-in at the
     // cursor (splice). No-op for tracks with no take (they record fresh).
-    if (continueTake)
+    if (plan.continueTake)
     {
-        if (continueAppend)
+        if (plan.continueAppend)
             // Continue the timeline from the end of the existing take so the
             // clock + playhead carry on instead of restarting at 0.
             engine.armContinue (engine.getCaptureLengthSamples());
         else
-            engine.armPunchIn (punchAt);
+            engine.armPunchIn (plan.punchAt);
     }
 
-    if (engine.startRecording (dir))
+    if (engine.startRecording (plan.dir))
     {
         lastCaptureFinalizationError.clear();
-        manualPunchActive = continueTake && ! continueAppend;
+        manualPunchActive = plan.continueTake && ! plan.continueAppend;
         const double sr = engine.getPlayer().getSampleRate() > 0.0
                               ? engine.getPlayer().getSampleRate() : 48000.0;
-        auto msg = ! continueTake
-                 ? juce::String ("Recording ") + juce::String (armed) + "/"
-                       + juce::String (numTracks) + " tracks -> " + dir.getFileName()
-                 : continueAppend
+        auto msg = ! plan.continueTake
+                 ? juce::String ("Recording ") + juce::String (plan.armed) + "/"
+                       + juce::String (plan.numTracks) + " tracks -> " + plan.dir.getFileName()
+                 : plan.continueAppend
                  ? juce::String ("Continuing take -- recording a new part on ")
-                       + juce::String (armed) + " track(s)"
-                 : juce::String ("Punch-in ") + juce::String (armed)
-                       + " track(s) at " + juce::String (punchAt / sr, 1) + " s";
-        if (autoRouted > 0)
-            msg << " (auto-routed " << autoRouted << ")";
+                       + juce::String (plan.armed) + " track(s)"
+                 : juce::String ("Punch-in ") + juce::String (plan.armed)
+                       + " track(s) at " + juce::String (plan.punchAt / sr, 1) + " s";
+        if (plan.autoRouted > 0)
+            msg << " (auto-routed " << plan.autoRouted << ")";
         // Free-space pre-flight: warn loudly if the engineer is about to
         // start a take with very little room on either the primary or
         // backup volume. Pre-show beats mid-show discovery every time.
@@ -449,7 +494,7 @@ void MainComponent::onRecordClicked()
     else
     {
         statusLabel.setText (recorder.getStartError().isNotEmpty() ? recorder.getStartError()
-                             : continueTake && ! continueAppend
+                             : plan.continueTake && ! plan.continueAppend
                              ? "Punch refused -- could not safely open the existing take or writer files"
                              : "Failed to start recording -- could not open writer files.",
                              juce::dontSendNotification);

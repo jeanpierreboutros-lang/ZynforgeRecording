@@ -31,6 +31,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 - Dragging a strip's colour swatch in EDIT now shows a drop line where the strip will land, autoscrolls the track list near its top and bottom edges, and moves the strip **once, on release**. A strip can now move past a strip of a different width (mono past a stereo pair); stereo pairs always move as one.
 
+### Fixed — RECORD pre-flight
+
+- A RECORD press that is then refused -- device clock does not match the session, StereoMix has no stream sends, or the drive lacks 30 minutes of space -- no longer quietly rewrites the input routing of armed channels first. The routing auto-fix now runs only once every check has passed.
+
 ### Fixed — strip lifetime and mixer undo
 
 - Removing strips, closing or opening a session, or an audio-device change that alters the input count can no longer leave a meter, spectrum or channel strip reading freed memory for a moment before the screen rebuilds. Strips now keep their track data alive until they are rebuilt.

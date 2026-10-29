@@ -80,6 +80,22 @@ private:
     void rebuildStrips();
     void updateMixerPlaceholder();   // show/hide the MIXER empty-state overlay
     void onRecordClicked();
+    // onRecordClicked's stages, in order. A press during a take is consumed
+    // first; prepareRecordStart runs EVERY refusal before anything changes;
+    // then the take starts through exactly one path.
+    struct RecordStartPlan
+    {
+        juce::File  dir;
+        int         numTracks { 0 }, armed { 0 }, autoRouted { 0 };
+        bool        continueTake { false }, continueAppend { false };
+        juce::int64 punchAt { -1 };
+    };
+    bool handleRecordPressDuringTake();
+    bool prepareRecordStart (RecordStartPlan&);
+    void applyRecordAutoRouting (RecordStartPlan&);
+    void startDaemonTake (const RecordStartPlan&);
+    bool startSelectionPunch (const RecordStartPlan&);
+    void startLocalTake (const RecordStartPlan&);
     void onDeviceClicked();
     void onLoadSessionClicked();
     void onPlayClicked();
