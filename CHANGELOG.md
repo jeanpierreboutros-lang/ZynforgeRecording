@@ -14,6 +14,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 - Add new entries under `## [Unreleased]
 
+### Changed — one set of mix rules for playback and bounce
+
+- The solo / mute / VCA gate, the stereo-pair automation rule, lane resolution, the post-fader mute, send gain, the pan law and master gain now live in `Source/Audio/MixKernel.h`, called by both the audio callback and the offline stereo bounce. Each path used to carry its own copy.
+- A new test plays a session live and bounces it offline (fader, VCA, stereo pair, Volume/Pan/Mute lanes, pre- and post-fader sends into a bus, master fader, solo) and compares the two outputs sample for sample. A gate rule refuses a re-derived copy of any rule in the engine files.
+- The bounce reads every strip's automation for a step under one lock instead of taking it up to five times per strip per step.
+
+### Fixed — live automation ran one block late
+
+- Live playback evaluated automation at the END of each audio block (the position after the player advanced), so every drawn move landed one block late (about 5 ms at 256 samples) and the live mix disagreed with the bounce. Lanes are now read at the block's start.
+
 ### Installed and cleaned up — October 5, both Macs
 
 - Both Macs and the current universal DMG now use the verified `443c769` GUI/helper pair. Complete bundle hashes, universal architectures and strict signatures match. Removed 12 superseded items plus five temporary staging artifacts on the development Mac and three on the mini after verification; no old app rollback bundle remains. Sessions, recordings and settings were preserved. Both apps were launched without a new crash report; mini startup is waiting in CoreAudio initialization. See [installation evidence](INSTALL.md).` as you ship changes.

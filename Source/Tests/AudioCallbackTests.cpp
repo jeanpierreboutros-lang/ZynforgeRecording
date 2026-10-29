@@ -2411,6 +2411,92 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
+            beginTest ("Live playback and the offline bounce mix the same session identically");
+            {
+                // MixKernel.h is the one definition of the mix rules. Render
+                // one session through BOTH of its users -- the audio callback
+                // and renderStereoMix -- and compare them sample for sample.
+                // Every rule is in play: fader, VCA, a stereo pair whose right
+                // half follows its left partner's lanes, a Volume ramp, a Pan
+                // ramp, a Mute lane, pre- and post-fader sends into a bus, the
+                // master fader, and then a solo.
+                const auto dir = recordTestSession (3, 0.5f);   // Track_01..03, 49152 samples
+                {
+                    CallbackFixture f (4, 3, 2);                // strip 3 = bus, no file
+                    for (int i = 0; i < 4; ++i)
+                        for (int s = 0; s < TrackState::kNumSends; ++s)
+                            f.engine.setTrackSend (i, s, -1, 0.0f, false);
+                    expect (f.engine.loadSession (dir, false, false) == 3);
+                    f.engine.setMasterOutputs (0, 1);
+                    f.engine.setStreamOutputs (-1, -1);
+                    f.engine.getClickEngine().setEnabled (false);
+
+                    using P = AudioEngine::AutomationParam;
+                    auto& rec = f.engine.getRecorder();
+                    f.engine.setTrackStereo (0, true);          // strips 0 + 1: one pair
+                    rec.getTrack (0).gainDb.store (-3.0f);
+                    rec.getTrack (1).gainDb.store (-3.0f);
+                    rec.getTrack (0).pan.store (-0.6f);
+                    rec.getTrack (1).pan.store ( 0.6f);
+                    f.engine.setTrackVcaGroup (0, 0);
+                    f.engine.setTrackVcaGroup (1, 0);
+                    f.engine.getVca (0).gainDb.store (-2.0f);
+                    f.engine.addAutomationPoint (0, P::Volume, 0, -12.0f);
+                    f.engine.addAutomationPoint (0, P::Volume, 40000, 0.0f);
+                    f.engine.addAutomationPoint (0, P::Mute, 0, 0.0f);
+                    f.engine.addAutomationPoint (0, P::Mute, 24000, 1.0f);
+                    f.engine.setTrackSend (1, 0, 3, -6.0f, true);     // post: follows the pair's mute
+                    rec.getTrack (2).gainDb.store (-4.0f);
+                    f.engine.addAutomationPoint (2, P::Pan, 0, -1.0f);
+                    f.engine.addAutomationPoint (2, P::Pan, 40000, 1.0f);
+                    f.engine.setTrackSend (2, 0, 3, -10.0f, false);   // pre
+                    f.engine.setTrackIsBus (3, true);
+                    rec.getTrack (3).gainDb.store (-1.0f);
+                    rec.getTrack (3).pan.store (0.3f);
+                    f.engine.getMasterState().gainDb.store (-2.0f);
+
+                    const auto arrLen = f.engine.getArrangementLengthSamples();
+                    juce::AudioBuffer<float> offline;
+                    f.engine.startPlayback();
+
+                    // Live blocks start on the bounce's 512-sample automation
+                    // grid, so both paths read every lane at the same position.
+                    // The player buffers on a background thread, so re-render
+                    // the block until it is fully buffered (it then matches).
+                    auto compareAt = [&] (juce::int64 pos, const juce::String& what)
+                    {
+                        float worst = 1.0f;
+                        for (int attempt = 0; attempt < 80 && worst > 1.0e-4f; ++attempt)
+                        {
+                            if (attempt > 0) juce::Thread::sleep (15);
+                            f.engine.getPlayer().setPositionSamples (pos);
+                            f.process (256);
+                            worst = 0.0f;
+                            for (int ch = 0; ch < 2; ++ch)
+                                for (int k = 0; k < 256; ++k)
+                                    worst = juce::jmax (worst, std::abs (f.outBuf.getSample (ch, k)
+                                                             - offline.getSample (ch, (int) pos + k)));
+                        }
+                        expect (offline.getMagnitude ((int) pos, 256) > 0.05f, what + ": nothing to compare");
+                        expectLessThan (worst, 1.0e-4f, what);
+                    };
+
+                    expect (f.engine.renderStereoMix (offline, arrLen));
+                    compareAt (2048,  "early in the ramps");
+                    compareAt (15360, "mid-ramp, pair audible");
+                    compareAt (35840, "pair muted by its lane, its post send silent");
+
+                    rec.getTrack (2).soloed.store (true);
+                    expect (f.engine.renderStereoMix (offline, arrLen));
+                    compareAt (15360, "strip 2 soloed");
+                    rec.getTrack (2).soloed.store (false);
+
+                    f.engine.stopPlayback();
+                    f.engine.setTrackStereo (0, false);         // don't leak the pair into persisted prefs
+                }
+                dir.deleteRecursively();
+            }
+
             beginTest ("Stream bus sums streamSend strips into the configured outputs");
             {
                 const auto dir = recordTestSession (1, 0.5f);

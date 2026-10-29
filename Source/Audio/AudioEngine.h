@@ -18,6 +18,7 @@
 #include "MultitrackRecorder.h"
 #include "SessionPlayer.h"
 #include "LoudnessMeter.h"
+#include "MixKernel.h"
 #include "StripColours.h"
 #include "StripGains.h"
 #include "StripNames.h"
@@ -580,6 +581,10 @@ namespace zynforge
         //   Mute   (0/1, but stored as float so the lane editor can
         //          fade between values if we ever extend the renderer)
         enum class AutomationParam : int { Volume = 0, Pan = 1, Mute = 2 };
+        static_assert ((int) AutomationParam::Volume == (int) mix::Lane::Volume
+                       && (int) AutomationParam::Pan == (int) mix::Lane::Pan
+                       && (int) AutomationParam::Mute == (int) mix::Lane::Mute,
+                       "mix::Lane must mirror AutomationParam");
 
         // Pro Tools-style automation write mode. Off = playback only
         // reads existing points; Touch / Latch / Write progressively
@@ -1353,20 +1358,20 @@ namespace zynforge
 
         // Per-block mix inputs, written and read ONLY by the audio callback.
         // Every automation lane a strip needs is read ONCE per block under ONE
-        // try-lock (resolveStripMix), so the aux sends, routed outputs, stream
-        // bus and monitor all see the same values. They used to make up to six
-        // separate try-locks per strip, so a UI edit landing between two of
-        // them mixed one block from the curve on one path and the fader on
-        // another.
-        struct ResolvedStripMix
-        {
-            float volDb        { 0.0f };   // fader, or the Volume lane (+ trim) while rolling
-            float pan          { 0.0f };   // static pan, or the Pan lane (+ trim) while rolling
-            bool  muteLane     { false };  // the Mute lane is on (false without a lane)
-            bool  monitorMuted { false };  // monitor rule while rolling: lane if present, else static mute
-        };
+        // try-lock (mix::resolveLanes), so the aux sends, routed outputs,
+        // stream bus and monitor all see the same values. They used to make up
+        // to six separate try-locks per strip, so a UI edit landing between two
+        // of them mixed one block from the curve on one path and the fader on
+        // another. The offline bounce resolves the same struct per step.
         static constexpr int kMaxResolvedStrips = 256;   // == setStripCount's ceiling
-        std::array<ResolvedStripMix, kMaxResolvedStrips> resolvedMix {};
+        std::array<mix::StripLanes, kMaxResolvedStrips> resolvedMix {};
+
+        // mix::resolveLanes over this engine's lanes at `pos`. The caller holds
+        // automationLock -- the callback via its one try-lock per block, the
+        // bounce via one blocking lock per automation step.
+        mix::StripLanes resolveStripLanesLocked (int track, int autoCh, float faderDb, float pan,
+                                                 bool staticMute, juce::int64 pos,
+                                                 bool rolling, bool readLanes) const noexcept;
         std::atomic<int>              automationWriteMode { 0 };   // AutomationWriteMode::Off
         std::atomic<bool>             automationTrimMode  { false };
         // SUSPEND: temporarily ignore every lane's stored points at

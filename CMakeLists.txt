@@ -274,6 +274,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/TimecodeTests.cpp
     Source/Tests/TimelineExportTests.cpp
     Source/Tests/TrackReorderTests.cpp
+    Source/Tests/MixKernelTests.cpp
     Source/Tests/TransientTests.cpp
     Source/Tests/TransportBarAccessibilityTests.cpp
     Source/Tests/VcaPanelAccessibilityTests.cpp

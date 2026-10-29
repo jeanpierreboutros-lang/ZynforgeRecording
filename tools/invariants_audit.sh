@@ -156,9 +156,10 @@ report "no bare reload() on the shared settings file" \
 # ── 7. The audio thread's automation read is never used offline ─────────────
 # automationValueAt is try-lock + fall-back-to-static (correct for the audio
 # thread). A render that used it baked static fader values into the file.
+# The bounce resolves each step's lanes under ONE blocking automationLock.
 HITS=$(sed -n '/forEachStereoMixWindow/,/^    bool AudioEngine::renderStereoMix/p' \
-       Source/Audio/AudioEngineClips.cpp 2>/dev/null | grep -n "automationValueAt (")
-report "offline renders use automationValueAtOffline" \
+       Source/Audio/AudioEngineClips.cpp 2>/dev/null | grep -n "automationValueAt (\|ScopedTryLock")
+report "offline renders read automation under a blocking lock" \
        "the RT try-lock variant silently bakes static values into a bounce" \
        "$HITS"
 
@@ -391,6 +392,16 @@ HITS=$(grep -rn "getStructureLock" Source/UI --include='*.cpp' --include='*.h' 2
        | sed 's,//.*,,' | grep "getStructureLock")
 report "UI workers never hold the structure lock across a render" \
        "a bounce holding it froze the message thread (captureStatus) for the whole render" \
+       "$HITS"
+
+# The mix rules have ONE definition, Source/Audio/MixKernel.h, shared by the
+# audio callback and the offline bounce. A pan law, VCA-solo gate, stereo-pair
+# lane rule or send gain re-derived in either file is how the two drifted.
+HITS=$(grep -nE 'MathConstants<double>::halfPi|anyVcaSolo && !|\? *[a-zA-Z_]+ - 1 : [a-zA-Z_]+;|decibelsToGain \((sendDb|send\.levelDb)' \
+       Source/Audio/AudioEngine.cpp Source/Audio/AudioEngineClips.cpp 2>/dev/null \
+       | grep -vE '^[^:]+:[0-9]+: *//')
+report "mix rules live only in MixKernel.h" \
+       "a second copy of a rule lets live playback and the bounce disagree" \
        "$HITS"
 
 HITS=""

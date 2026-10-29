@@ -776,6 +776,14 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 ---
 
+## Mix rules are shared, mix loops are not — 2026-10-29
+
+**Context:** The real-time callback and the offline stereo bounce each carried their own copy of the solo / mute / VCA gate, the stereo-pair lane rule, the mute-lane semantics, the pan law and the send gain. Fixes had to be found and repeated by hand in both, and nothing checked that a bounce matched what was heard.
+
+**Decision:** Each RULE has one definition in `Source/Audio/MixKernel.h` (header-only, `noexcept`, allocation-free, no engine state), called by both paths. The two mix LOOPS stay separate: the callback also handles live input, punch replacement, routed outputs, the stream bus, a 64-bit accumulator and meters, while the bounce renders windows from disk with a 512-sample automation step. A parity test renders one session both ways and compares them sample for sample; an invariants rule refuses a re-derived copy of a rule.
+
+**Consequences:** A rule change is made once and is tested against both paths. The parity test found the live path reading automation one block late, now fixed. Differences that remain are deliberate and listed in CLAUDE.md (no live input, trim-follow or mono fold-down in the bounce). Merging the loops themselves was rejected: it would put disk-render concerns into the real-time path for no rule-level gain.
+
 ## Template
 
 ```

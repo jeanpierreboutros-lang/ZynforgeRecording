@@ -522,6 +522,17 @@ namespace zynforge
         return withTrim ((float) (prev->value + shaped * (next->value - prev->value)));
     }
 
+    mix::StripLanes AudioEngine::resolveStripLanesLocked (int track, int autoCh, float faderDb, float pan,
+                                                          bool staticMute, juce::int64 pos,
+                                                          bool rolling, bool readLanes) const noexcept
+    {
+        return mix::resolveLanes (track, autoCh, faderDb, pan, staticMute, rolling, readLanes,
+            [this, pos] (int channel, mix::Lane lane, float fallback) noexcept
+            {
+                return automationValueAtLocked (channel, (AutomationParam) lane, pos, fallback);
+            });
+    }
+
     float AudioEngine::automationValueAt (int track, AutomationParam p,
                                           juce::int64 samplePos,
                                           float fallback) const noexcept
