@@ -2850,18 +2850,45 @@ namespace zynforge
         // played at the static fader level and a drawn curve did nothing.
         const juce::int64 autoPlayPos = player.isPlaying() ? player.getPositionSamples()
                                                            : (juce::int64) -1;
-        const auto effectiveGainDb = [this, autoPlayPos] (int i) noexcept -> float
+
+        // Resolve every strip's lane-driven inputs ONCE for this block, under
+        // ONE try-lock (see ResolvedStripMix). Losing the lock -- the UI is
+        // mid-edit -- or SUSPEND makes the whole block use the static values,
+        // consistently, instead of a per-call mix of both.
         {
-            auto& t = recorder.getTrack (i);
-            float dB = t.gainDb.load (std::memory_order_relaxed);
-            if (autoPlayPos >= 0)
+            const juce::ScopedTryLock automationStl (automationLock);
+            const bool readLanes = autoPlayPos >= 0 && automationStl.isLocked()
+                                && ! automationReadSuspended.load (std::memory_order_acquire);
+            constexpr float kNoMuteLane = -1.0f;   // Mute lanes hold 0..1
+            for (int i = 0; i < numTracks && i < kMaxResolvedStrips; ++i)
             {
-                // Stereo pairs store automation on the LEFT track, so the
-                // right partner reads its left neighbour's volume lane.
+                auto& t = recorder.getTrack (i);
+                auto& m = resolvedMix[(size_t) i];
+                // Stereo pairs store volume + mute automation on the LEFT
+                // track, so the right partner reads its left neighbour's
+                // lanes. Pan stays per-channel so the image isn't collapsed.
                 const int autoCh = (i > 0 && recorder.getTrack (i - 1).isStereo.load (std::memory_order_relaxed))
                                      ? i - 1 : i;
-                dB = automationValueAt (autoCh, AutomationParam::Volume, autoPlayPos, dB);
+                const bool staticMute = t.muted.load (std::memory_order_relaxed);
+                m.volDb        = t.gainDb.load (std::memory_order_relaxed);
+                m.pan          = t.pan.load (std::memory_order_relaxed);
+                m.muteLane     = false;
+                m.monitorMuted = autoPlayPos >= 0 && staticMute;
+                if (readLanes)
+                {
+                    m.volDb = automationValueAtLocked (autoCh, AutomationParam::Volume, autoPlayPos, m.volDb);
+                    m.pan   = automationValueAtLocked (i,      AutomationParam::Pan,    autoPlayPos, m.pan);
+                    const float lane = automationValueAtLocked (autoCh, AutomationParam::Mute, autoPlayPos, kNoMuteLane);
+                    if (lane >= 0.0f) { m.muteLane = lane > 0.5f; m.monitorMuted = m.muteLane; }
+                }
             }
+        }
+
+        const auto effectiveGainDb = [this] (int i) noexcept -> float
+        {
+            auto& t = recorder.getTrack (i);
+            float dB = i < kMaxResolvedStrips ? resolvedMix[(size_t) i].volDb
+                                              : t.gainDb.load (std::memory_order_relaxed);
             const int g = t.vcaGroup.load (std::memory_order_relaxed);
             if (g >= 0 && g < kNumVcas)
                 dB += vcas[(size_t) g].gainDb.load (std::memory_order_relaxed);
@@ -2899,14 +2926,9 @@ namespace zynforge
             // inline here; default 0 so this reflects only the lane.
             const float stripGain = juce::Decibels::decibelsToGain (effectiveGainDb (i), -60.0f);
             const int vca = src.vcaGroup.load (std::memory_order_relaxed);
-            bool stripMuted = src.muted.load (std::memory_order_relaxed)
-                || (vca >= 0 && vca < kNumVcas && vcas[(size_t) vca].muted.load());
-            if (! stripMuted && autoPlayPos >= 0)
-            {
-                const int autoCh = (i > 0 && recorder.getTrack (i - 1).isStereo.load (std::memory_order_relaxed))
-                                     ? i - 1 : i;
-                stripMuted = automationValueAt (autoCh, AutomationParam::Mute, autoPlayPos, 0.0f) > 0.5f;
-            }
+            const bool stripMuted = src.muted.load (std::memory_order_relaxed)
+                || (vca >= 0 && vca < kNumVcas && vcas[(size_t) vca].muted.load())
+                || (i < kMaxResolvedStrips && resolvedMix[(size_t) i].muteLane);
             const float postGain = stripMuted ? 0.0f : stripGain;
             // Trim-follow compensates recorded playback, never the live mic.
             const float liveDb = effectiveGainDb (i)
@@ -2999,13 +3021,8 @@ namespace zynforge
             // mute lane did nothing on a session routed straight to console
             // channels. Stereo pairs read the L track's lane. Default 0 so this
             // reflects only the lane; the static mute is handled below.
-            if (autoPlayPos >= 0)
-            {
-                const int autoCh = (i > 0 && recorder.getTrack (i - 1).isStereo.load (std::memory_order_relaxed))
-                                     ? i - 1 : i;
-                if (automationValueAt (autoCh, AutomationParam::Mute, autoPlayPos, 0.0f) > 0.5f)
-                    return false;
-            }
+            if (i < kMaxResolvedStrips && resolvedMix[(size_t) i].muteLane)
+                return false;
             const int g = t.vcaGroup.load (std::memory_order_relaxed);
             if (g >= 0 && g < kNumVcas)
             {
@@ -3101,9 +3118,8 @@ namespace zynforge
                 // Honour the Pan automation lane on the stream bus too (it read
                 // the static pan only, so a drawn pan move didn't reach the
                 // stream/broadcast feed the way it reached the monitor mix).
-                float panV = t.pan.load (std::memory_order_relaxed);
-                if (autoPlayPos >= 0)
-                    panV = automationValueAt (i, AutomationParam::Pan, autoPlayPos, panV);
+                const float panV = i < kMaxResolvedStrips ? resolvedMix[(size_t) i].pan
+                                                          : t.pan.load (std::memory_order_relaxed);
                 const float pan  = juce::jlimit (-1.0f, 1.0f, panV);
                 const double panNorm = ((double) pan + 1.0) * 0.5;
                 const double gL = gain * std::cos (panNorm * juce::MathConstants<double>::halfPi);
@@ -3196,37 +3212,18 @@ namespace zynforge
         auto* accL = monitorAccum.getWritePointer (0);
         auto* accR = monitorAccum.getWritePointer (1);
 
-        // Playback position drives automation lookup: when the player
-        // is rolling, gain / pan curves take precedence over the live
-        // slider value; while stopped, the slider value is used.
-        const juce::int64 playPos = player.isPlaying() ? player.getPositionSamples()
-                                                       : juce::int64 (-1);
-
+        // While rolling, gain / pan curves take precedence over the live
+        // slider value (resolved once for this block, with the stereo-pair
+        // lane rule, in resolvedMix); while stopped, the slider value is used.
         for (int ch = 0; ch < trackCount; ++ch)
         {
             auto& t = recorder.getTrack (ch);
             if (! channelAudible (ch)) continue;
 
-            float dBVal  = t.gainDb.load (std::memory_order_relaxed);
-            float panVal = t.pan   .load (std::memory_order_relaxed);
-            bool  muteAuto = false;
-            if (playPos >= 0)
-            {
-                // A stereo pair stores its automation on the LEFT track only.
-                // The RIGHT partner (the channel after an isStereo=true track)
-                // has no lane, so it reads the left track's volume + mute lanes
-                // -- otherwise the right side ignores the curve entirely and a
-                // volume move barely changes the (still full-level) stereo sum.
-                // Pan stays per-channel so the stereo image isn't collapsed.
-                const int autoCh = (ch > 0 && recorder.getTrack (ch - 1).isStereo.load (std::memory_order_relaxed))
-                                     ? ch - 1 : ch;
-                dBVal    = automationValueAt (autoCh, AutomationParam::Volume, playPos, dBVal);
-                panVal   = automationValueAt (ch,     AutomationParam::Pan,    playPos, panVal);
-                const float muteV = automationValueAt (autoCh, AutomationParam::Mute,
-                                                       playPos, t.muted.load() ? 1.0f : 0.0f);
-                muteAuto = muteV > 0.5f;
-            }
-            if (muteAuto) continue;
+            const bool resolved = ch < kMaxResolvedStrips;
+            float dBVal  = resolved ? resolvedMix[(size_t) ch].volDb : t.gainDb.load (std::memory_order_relaxed);
+            float panVal = resolved ? resolvedMix[(size_t) ch].pan   : t.pan   .load (std::memory_order_relaxed);
+            if (resolved && resolvedMix[(size_t) ch].monitorMuted) continue;
 
             // VCA group gain. The monitor sum was applying ONLY the strip's
             // own fader, so pulling a VCA master down did nothing here even

@@ -31,6 +31,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 - Dragging a strip's colour swatch in EDIT now shows a drop line where the strip will land, autoscrolls the track list near its top and bottom edges, and moves the strip **once, on release**. A strip can now move past a strip of a different width (mono past a stereo pair); stereo pairs always move as one.
 
+### Fixed — playback automation consistency
+
+- During playback, each audio block now reads a strip's volume, pan and mute automation once and uses the same values for its routed outputs, aux sends, stream feed and monitor mix. Previously an automation edit (or a running bounce) landing mid-block could make one block play the drawn curve on one output and the static fader on another.
+
 ### Fixed — UI timer disk polling
 
 - The free-space readout no longer queries the session drive ten times a second. On a busy or slow external drive each query could stall the screen; it now refreshes every two seconds, or at once when the session changes.

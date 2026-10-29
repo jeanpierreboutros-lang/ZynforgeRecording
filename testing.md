@@ -2,7 +2,7 @@
 
 ## October 29 structural-debt pass (source after `69aab9f`)
 
-Current source: universal Release build, **578 groups / 0 failures**, and the same 578 groups pass under **ASan/UBSan/float-cast-overflow** and under **ThreadSanitizer** (arm64 Debug builds; no sanitizer report files; runtimes confirmed linked with `otool -L`). Both static gates are clean (the invariants gate has 29 checks). New suites: *Strip reorder* (6 groups, drives the EDIT row's real mouse handlers), *Session jobs* (6 groups, including a strip removal in the middle of a stereo-mix render) and *Strip lifetime and mixer fingerprint* (3 groups; ASan reports a heap-use-after-free in it when the keep-alives are removed). Each new test and gate rule was shown to fail against an injected regression before landing. Nothing from this pass is installed on either Mac.
+Current source: the `ZynforgeRecordingTests` app passes **581 groups / 0 failures** (Release), and the same 581 groups pass under **ASan/UBSan/float-cast-overflow** and under **ThreadSanitizer** (arm64 Debug builds; no sanitizer report files; runtimes confirmed linked with `otool -L`). Both static gates are clean (the invariants gate has 29 checks). New suites: *Strip reorder* (6 groups, drives the EDIT row's real mouse handlers), *Session jobs* (6 groups, including a strip removal in the middle of a stereo-mix render) and *Strip lifetime and mixer fingerprint* (3 groups; ASan reports a heap-use-after-free in it when the keep-alives are removed). Each new test and gate rule was shown to fail against an injected regression before landing. Nothing from this pass is installed on either Mac.
 
 Sanitizer recipe used for this pass (separate build trees, never combined; reuse the Release tree's JUCE checkout):
 

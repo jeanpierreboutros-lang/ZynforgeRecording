@@ -1350,6 +1350,23 @@ namespace zynforge
         };
         std::vector<TrackAutomation> automationData;
         mutable juce::CriticalSection automationLock;
+
+        // Per-block mix inputs, written and read ONLY by the audio callback.
+        // Every automation lane a strip needs is read ONCE per block under ONE
+        // try-lock (resolveStripMix), so the aux sends, routed outputs, stream
+        // bus and monitor all see the same values. They used to make up to six
+        // separate try-locks per strip, so a UI edit landing between two of
+        // them mixed one block from the curve on one path and the fader on
+        // another.
+        struct ResolvedStripMix
+        {
+            float volDb        { 0.0f };   // fader, or the Volume lane (+ trim) while rolling
+            float pan          { 0.0f };   // static pan, or the Pan lane (+ trim) while rolling
+            bool  muteLane     { false };  // the Mute lane is on (false without a lane)
+            bool  monitorMuted { false };  // monitor rule while rolling: lane if present, else static mute
+        };
+        static constexpr int kMaxResolvedStrips = 256;   // == setStripCount's ceiling
+        std::array<ResolvedStripMix, kMaxResolvedStrips> resolvedMix {};
         std::atomic<int>              automationWriteMode { 0 };   // AutomationWriteMode::Off
         std::atomic<bool>             automationTrimMode  { false };
         // SUSPEND: temporarily ignore every lane's stored points at
