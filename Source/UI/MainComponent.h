@@ -398,6 +398,17 @@ private:
     juce::File makeNewSessionDir() const;
     juce::File getSessionsRoot() const;
     void timerCallback() override;
+    // timerCallback's steps (MainComponentTimer.cpp), in call order.
+    void serviceCaptureDaemonLink();
+    void syncFloatingPanelButtons();
+    void rebuildStripsIfLayoutChanged();
+    void updateStatusPills();
+    void updateNextCueCountdown();
+    void syncStripsWithEngine();
+    void surfaceAsyncReportFailure();
+    void updateClockAndDiskCadence (double deviceSR);
+    void updateHeaderFromStatus (const zynforge::EngineStatus& status, bool playing);
+    void updateCaptureWarnings (const zynforge::EngineStatus& status);
     // Open a modal warning if the loaded session's SR doesn't match the device.
     void warnIfSampleRateMismatch();
 

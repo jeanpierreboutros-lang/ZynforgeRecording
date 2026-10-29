@@ -16,6 +16,73 @@ static juce::String samplesToTimecode (juce::int64 samples, double sr)
 
 void MainComponent::timerCallback()
 {
+    // The 10 Hz UI heartbeat (startTimerHz in MainComponentInit). Each step is
+    // a named method below; order matters (strips rebuild before they are
+    // synced, the status snapshot is taken once and feeds the header and the
+    // show-day warnings).
+    serviceCaptureDaemonLink();
+    // Keep the macOS menu's greyed/enabled states in sync with reality
+    // (Undo/Redo, Edit, Track, Export) -- they're cached until we ask for a
+    // refresh, so without this they freeze in the empty launch state.
+    refreshMenuStateIfChanged();
+    // Coalesce any mixer change into a single undo step once it settles.
+    pollMixerUndo();
+    // Periodic auto-save + timestamped backup of the active session.
+    serviceAutosave();
+    syncFloatingPanelButtons();
+    rebuildStripsIfLayoutChanged();
+    updateStatusPills();
+    updateNextCueCountdown();
+
+    if (cueRamp.active) updateCueRamp();
+    if (engine.isPunchModeOn() && engine.getPlayer().hasLoopRegion())
+        servicePunch();
+    if (punchSessionActive)
+        servicePunchSession();
+
+    syncStripsWithEngine();
+    updateTransportLabels();
+
+    const bool playing = engine.isPlaying();
+    if (! playing && playButton.getButtonText() == "PAUSE")
+        playButton.setButtonText ("PLAY");
+
+    surfaceAsyncReportFailure();
+
+    const double deviceSR = [this]() -> double
+    {
+        if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())
+            return d->getCurrentSampleRate();
+        return 48000.0;
+    }();
+    // Warn if the device's actual rate (e.g. the incoming Dante / wordclock)
+    // doesn't match the session's intended rate -- a silent rate mismatch
+    // would record everything at the wrong speed / pitch.
+    checkDeviceSampleRate (deviceSR);
+    // External timecode chase: drive the transport from incoming LTC / MTC.
+    serviceTimecodeChase();
+
+    // Auto-arm on input detect -- only meaningful while NOT recording. Arms a
+    // strip after 12 ticks (1.2 s at 10 Hz) of input above -40 dBFS. Cheap;
+    // skipped instantly when the flag is off.
+    if (! engine.isRecording())
+        engine.serviceAutoArm (12, 0.01f /* -40 dBFS */);
+
+    updateClockAndDiskCadence (deviceSR);
+
+    // Phase-0 status boundary: take ONE EngineStatus snapshot and feed the
+    // header readouts and warnings from it. captureStatus applies the daemon's
+    // receive timestamp and link-loss invalidation; reading lastStatus directly
+    // would paint a dead daemon's final healthy metrics indefinitely.
+    const auto status = engine.captureStatus();
+    updateHeaderFromStatus (status, playing);
+    updateCaptureWarnings (status);
+}
+
+void MainComponent::serviceCaptureDaemonLink()
+{
+    // Capture-daemon watchdog + status (Phase 1d/2); cheap when inactive. tick()
+    // is state-based, so the second call the old body made per tick was redundant.
     if (useCaptureDaemon)
     {
         captureSupervisor.tick();
@@ -33,20 +100,10 @@ void MainComponent::timerCallback()
         // Identical configurations are cached and cause no IPC or reinitialisation.
         if (! engine.isRecording() && captureSupervisor.isAttached()) configureCaptureDaemon();
     }
-    // Keep the macOS menu's greyed/enabled states in sync with reality
-    // (Undo/Redo, Edit, Track, Export) -- they're cached until we ask for a
-    // refresh, so without this they freeze in the empty launch state.
-    refreshMenuStateIfChanged();
+}
 
-    // Coalesce any mixer change (fader / pan / mute / solo / rename / colour /
-    // routing) into a single undo step once it settles -- so Cmd+Z undoes the
-    // everyday operations, not just clip + automation edits. Skips recording.
-    pollMixerUndo();
-
-    // Periodic auto-save + timestamped backup of the active session (interval
-    // from appProps "autosaveMinutes"; only writes when something changed).
-    serviceAutosave();
-
+void MainComponent::syncFloatingPanelButtons()
+{
     // Header "tab" buttons (DEVICE / PATCH / METERS) light up while their
     // floating panel is open and clear when it closes. The non-modal panels
     // only HIDE themselves on their close box, so reap any hidden one here
@@ -63,7 +120,10 @@ void MainComponent::timerCallback()
     syncTab (deviceDialog, deviceButton);
     syncTab (patchDialog,  patchButton);
     syncTab (metersDialog, metersButton);
+}
 
+void MainComponent::rebuildStripsIfLayoutChanged()
+{
     const int n = engine.getRecorder().getNumTracks();
     // Rebuild when the track COUNT changes OR the track SET was replaced
     // (device restart recreates TrackStates at the same count) -- either
@@ -71,7 +131,10 @@ void MainComponent::timerCallback()
     if (n != lastTrackCount
         || engine.getRecorder().getTrackGeneration() != lastTrackGen)
         rebuildStrips();
+}
 
+void MainComponent::updateStatusPills()
+{
     // MIDI clock status pill -- visible reassurance that the engineer's
     // outboard sync is alive. Empty string when disabled hides it.
     {
@@ -98,7 +161,10 @@ void MainComponent::timerCallback()
         { danteLabel.setText (txt, juce::dontSendNotification); resized(); }
         danteLabel.setTooltip (txt);
     }
+}
 
+void MainComponent::updateNextCueCountdown()
+{
     // LCD countdown to next cue -- only when a setlist exists AND the
     // player is rolling. Pre-show or scrub state shows blank so the
     // chip doesn't lie about a still session.
@@ -124,14 +190,10 @@ void MainComponent::timerCallback()
         if (nextCueLabel.getText() != txt)
             nextCueLabel.setText (txt, juce::dontSendNotification);
     }
+}
 
-    if (cueRamp.active) updateCueRamp();
-
-    if (engine.isPunchModeOn() && engine.getPlayer().hasLoopRegion())
-        servicePunch();
-    if (punchSessionActive)
-        servicePunchSession();
-
+void MainComponent::syncStripsWithEngine()
+{
     // Keep each strip's input/output combos in sync with engine state --
     // the PATCH page can mutate routing behind the strip's back. Also
     // refresh name + colour so changes made from the EDIT view show up,
@@ -148,48 +210,27 @@ void MainComponent::timerCallback()
         const bool safe = engine.isTrackAutomationSafe (trackIdx);
         s->setAutomationLed (autoWriting && ! safe, safe);
     }
+}
 
-    updateTransportLabels();
-
-    const bool playing = engine.isPlaying();
-    if (! playing && playButton.getButtonText() == "PAUSE")
-        playButton.setButtonText ("PLAY");
-
+void MainComponent::surfaceAsyncReportFailure()
+{
     auto& recorder = engine.getRecorder();
-    auto& player   = engine.getPlayer();
-    auto& markers  = engine.getMarkers();
-
     if (recorder.isRecording()) asyncReportFailureShown = false;
     else if (recorder.hasAsyncReportFailure() && ! asyncReportFailureShown)
     {
         asyncReportFailureShown = true;
         showStatus ("Integrity report hashing or final write failed; check session.report.json and the take files");
     }
+}
 
-    const double deviceSR = [this]() -> double
-    {
-        if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())
-            return d->getCurrentSampleRate();
-        return 48000.0;
-    }();
-
-    // Warn if the device's actual rate (e.g. the incoming Dante / wordclock)
-    // doesn't match the session's intended rate -- a silent rate mismatch
-    // would record everything at the wrong speed / pitch.
-    checkDeviceSampleRate (deviceSR);
-
-    // External timecode chase: drive the transport from incoming LTC / MTC.
-    serviceTimecodeChase();
-
+void MainComponent::updateClockAndDiskCadence (double deviceSR)
+{
+    auto& recorder = engine.getRecorder();
+    auto& player   = engine.getPlayer();
+    auto& markers  = engine.getMarkers();
     BigClockPanel::Mode m = BigClockPanel::Mode::Idle;
     juce::int64 elapsed = 0;
     double      timerSR = deviceSR;
-
-    // Auto-arm on input detect -- only meaningful while NOT recording.
-    // ~0.5 s sustained input above -40 dBFS arms the strip. Cheap;
-    // skipped instantly when the flag is off.
-    if (! engine.isRecording())
-        engine.serviceAutoArm (12 /* ~0.5 s @ 24 Hz */, 0.01f /* -40 dBFS */);
 
     if (engine.isRecording())
     {
@@ -205,19 +246,19 @@ void MainComponent::timerCallback()
                 timerSR = remote.sampleRate;
         }
 
-        // Refresh the free-space estimate every ~2 s of timer ticks
-        // (the timer runs at 24 Hz, so divide by 48). Querying the
-        // volume's free bytes is one syscall per drive; cheap.
+        // Refresh the minutes-remaining estimate every 48 ticks (4.8 s at
+        // the 10 Hz timer). Querying the volume's free bytes is one
+        // syscall per drive.
         if ((++diskTick % 48) == 0)
             engine.refreshDiskMinutesRemaining();
-        // Update disk-keep-up at the same cadence -- if actual bytes/
-        // sec falls below ~85 % of expected for ~6 s, we flip the
-        // "disk struggling" flag and the status bar warns the engineer
-        // before missed samples start landing.
+        // Disk keep-up every 12 ticks (1.2 s): three consecutive smoothed
+        // samples below ~85 % of the expected bytes/sec (a few seconds,
+        // plus EMA lag) flip the "disk struggling" flag so the status bar
+        // warns before missed samples start landing.
         if ((diskTick % 12) == 0)
             engine.getRecorder().updateDiskHealth (
                 engine.getRecorder().estimateBytesPerSecondForArmedTracks());
-        // Slow SMART status poll -- every ~30 s (24 Hz * 30 = 720 ticks) and
+        // Slow SMART status poll -- every 720 ticks (72 s at 10 Hz), and
         // only when recording. Dispatched to a background thread: `diskutil
         // info` blocks for 50-200 ms normally and can hang outright on an
         // unresponsive volume, which froze the UI mid-take when it ran here.
@@ -246,18 +287,13 @@ void MainComponent::timerCallback()
         }
     }
     bigClock.setArmedReady (anyArmed && ! engine.isRecording() && ! engine.isPlaying());
+}
 
-    // Phase-0 status boundary: take ONE EngineStatus snapshot and feed the
-    // header readouts from it, instead of pulling a dozen individual engine
-    // getters here. When capture moves to a daemon (Phase 1) this becomes the
-    // single point that swaps its source from the local engine to IPC.
-    // Capture-daemon watchdog (Phase 1d/2): cheap when inactive.
-    if (useCaptureDaemon) captureSupervisor.tick();
-
+void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status, bool playing)
+{
     // captureStatus applies the daemon's receive timestamp and link-loss
     // invalidation. Reading lastStatus directly here would bypass both and
     // paint a dead daemon's final healthy metrics indefinitely.
-    const auto status = engine.captureStatus();
     const bool rec = status.recording;
     // Capture locks timeline mutations, but navigation must remain available
     // to inspect a rolling take or a pending metadata save. Media jobs still
@@ -327,7 +363,11 @@ void MainComponent::timerCallback()
         dashWasRecording = rec;
         resized();
     }
+}
 
+void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
+{
+    const bool rec = status.recording;
     // Live show-day warnings -- only while recording, refreshed at the
     // timer cadence. Both flags clear automatically when the condition
     // recovers (e.g. swap drives + the new primary write succeeds, or
