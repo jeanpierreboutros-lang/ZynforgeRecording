@@ -254,10 +254,10 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             m.addSubMenu ("MIDI clock out", midiMenu);
 
             m.addSeparator();
-            const bool compRunning = engine.isCompanionServerRunning();
+            const bool compRunning = engine.getRemotes().isCompanionServerRunning();
             // id 950 -- outside every menuItemSelected dispatch range.
             m.addItem (950, compRunning
-                               ? juce::String ("Stop companion (port " + juce::String (engine.getCompanionServerPort()) + ")")
+                               ? juce::String ("Stop companion (port " + juce::String (engine.getRemotes().getCompanionServerPort()) + ")")
                                : juce::String ("Start companion server on :9000..."));
             m.addItem (961, "Copy read-only confidence URL", compRunning);
             menu.addSubMenu ("Network & Surfaces", m);
@@ -369,7 +369,7 @@ void MainComponent::refreshMenuStateIfChanged()
         // unrelated state change happens to refresh the menu.
         << '|' << (int) consoleLink.canWrite()
         << '|' << (int) useCaptureDaemon
-        << '|' << (int) engine.isCompanionServerRunning()
+        << '|' << (int) engine.getRemotes().isCompanionServerRunning()
         << '|' << (int) captureSupervisor.isAttached()
         << '|' << (int) (useCaptureDaemon && captureSupervisor.isDaemonRecording());
 
@@ -571,8 +571,8 @@ void MainComponent::registerMenuCommands()
 
 void MainComponent::copyConfidenceUrl()
 {
-    const auto url = engine.getCompanionAccessUrl().replace ("/?t=", "/confidence?t=");
-    if (engine.isCompanionServerRunning() && url.isNotEmpty())
+    const auto url = engine.getRemotes().getCompanionAccessUrl().replace ("/?t=", "/confidence?t=");
+    if (engine.getRemotes().isCompanionServerRunning() && url.isNotEmpty())
     {
         juce::SystemClipboard::copyTextToClipboard (url);
         showStatus ("Read-only confidence URL copied. Use a TLS tunnel for another device.");
@@ -605,14 +605,14 @@ void MainComponent::runCloudUpload()
 
 void MainComponent::toggleCompanionServer()
 {
-    if (engine.isCompanionServerRunning())
+    if (engine.getRemotes().isCompanionServerRunning())
     {
-        engine.stopCompanionServer();
+        engine.getRemotes().stopCompanionServer();
         showStatus ("Companion server stopped");
     }
-    else if (engine.startCompanionServer (9000))
+    else if (engine.getRemotes().startCompanionServer (9000))
     {
-        const auto url = engine.getCompanionAccessUrl();
+        const auto url = engine.getRemotes().getCompanionAccessUrl();
         // Show + copy the full URL (with access token) so the
         // engineer can paste it on their phone without typing
         // the 32-hex token. Companion is loopback-only by
@@ -621,7 +621,7 @@ void MainComponent::toggleCompanionServer()
         // gives real TLS, unlike serving plaintext HTTP over Wi-Fi.
         // See README "Companion server -- Security & secure remote access".
         juce::SystemClipboard::copyTextToClipboard (url);
-        if (engine.isCompanionExposedOnLan())
+        if (engine.getRemotes().isCompanionExposedOnLan())
             showStatus ("! Companion EXPOSED ON LAN (plaintext) -- use a tunnel for remote access, not raw Wi-Fi");
         else
             showStatus ("Companion on (loopback-only) -- URL copied. For phone access, tunnel to 127.0.0.1:9000 (see README)");

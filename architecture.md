@@ -68,6 +68,7 @@ graph TB
     Rec[MultitrackRecorder]
     Play[SessionPlayer]
     Mark[MarkersManager]
+    Remote[RemoteControl]
     OSC[OscRemote - 5 dialects]
     Net[CompanionServer]
     TC[TimecodeChase]
@@ -85,8 +86,9 @@ graph TB
     Metadata --> Disk
     Play -->|BufferingAudioReader| Disk
     Eng --> Mark
-    Eng --> OSC
-    Eng --> Net
+    Eng -->|owns by value| Remote
+    Remote --> OSC
+    Remote --> Net
     Eng --> TC
     OSC -.->|message thread post| Eng
     Net -.->|HTTP + audio stream| UI
@@ -149,6 +151,7 @@ ZynforgeRecording/
 │   │   ├── DialogChrome.h             — unified modal chrome helpers
 │   │   └── ZynForgeLookAndFeel.{h,cpp}— JUCE LookAndFeel override
 │   └── Network/                       — non-audio I/O
+│       ├── RemoteControl.{h,cpp}      — owns companion server, console OSC (+ log, name capture), MIDI control surface
 │       ├── CompanionServer.{h,cpp}    — embedded HTTP + device-rate WAV audio stream
 │       ├── NDIBridge.h                — runtime-loaded NDI broadcast
 │       ├── ConsoleLink.{h,cpp}        — outbound console VSC (profile-based; X32 reference)

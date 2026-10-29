@@ -59,16 +59,16 @@ namespace zynforge
         inline bool protoEnabled (AudioEngine& e, const ProtoInfo& pi)
         {
             if (pi.osc)
-                return e.isOscListening() && e.getOscDialect() == pi.dialect;
-            return e.getActiveSurfaceKey() == pi.key;   // MIDI surface is live
+                return e.getRemotes().isOscListening() && e.getRemotes().getOscDialect() == pi.dialect;
+            return e.getRemotes().getActiveSurfaceKey() == pi.key;   // MIDI surface is live
         }
 
         inline void setProtoEnabled (AudioEngine& e, const ProtoInfo& pi, bool on)
         {
             if (pi.osc)
             {
-                if (on) e.startOsc (oscPort (e), pi.dialect);   // switches the single receiver
-                else    e.stopOsc();
+                if (on) e.getRemotes().startOsc (oscPort (e), pi.dialect);   // switches the single receiver
+                else    e.getRemotes().stopOsc();
                 return;
             }
             // MIDI surface: open it on the saved MIDI in/out (one surface at a time).
@@ -77,10 +77,10 @@ namespace zynforge
                 auto* p = e.getAppProps();
                 const auto in  = p ? p->getValue (juce::String ("cs_") + pi.key + "_midiin")  : juce::String();
                 const auto out = p ? p->getValue (juce::String ("cs_") + pi.key + "_midiout") : juce::String();
-                e.enableControlSurface (pi.key, in, out);
+                e.getRemotes().enableControlSurface (pi.key, in, out);
             }
             else
-                e.disableControlSurface();
+                e.getRemotes().disableControlSurface();
         }
 
         // Live OSC traffic log -- so the engineer can verify the request /
@@ -96,7 +96,7 @@ namespace zynforge
                 view.setColour (juce::TextEditor::textColourId, brand::textPrimary);
                 addAndMakeVisible (view);
                 clearB.setButtonText ("Clear"); dialog::styleSecondary (clearB);
-                clearB.onClick = [this] { engine.clearOscLog(); refresh(); };
+                clearB.onClick = [this] { engine.getRemotes().clearOscLog(); refresh(); };
                 closeB.setButtonText ("Close"); dialog::styleSecondary (closeB);
                 closeB.onClick = [this] { if (auto* d = findParentComponentOfClass<juce::DialogWindow>()) d->exitModalState (0); };
                 addAndMakeVisible (clearB); addAndMakeVisible (closeB);
@@ -115,7 +115,7 @@ namespace zynforge
             void timerCallback() override { refresh(); }
             void refresh()
             {
-                const auto txt = engine.getOscLog().joinIntoString ("\n");
+                const auto txt = engine.getRemotes().getOscLog().joinIntoString ("\n");
                 if (txt != view.getText()) { view.setText (txt, false); view.moveCaretToEnd(); }
             }
             AudioEngine& engine;
@@ -190,8 +190,8 @@ namespace zynforge
                     debugToggle.setButtonText ("Debug: log OSC traffic");
                     debugToggle.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
                     debugToggle.setColour (juce::ToggleButton::tickColourId, brand::accentStatus);
-                    debugToggle.setToggleState (engine.isOscDebug(), juce::dontSendNotification);
-                    debugToggle.onClick = [this] { engine.setOscDebug (debugToggle.getToggleState()); };
+                    debugToggle.setToggleState (engine.getRemotes().isOscDebug(), juce::dontSendNotification);
+                    debugToggle.onClick = [this] { engine.getRemotes().setOscDebug (debugToggle.getToggleState()); };
                     logB.setButtonText ("View OSC Log...");
                     dialog::styleSecondary (logB);
                     logB.onClick = [this] { launchOscLog (engine); };
@@ -261,19 +261,19 @@ namespace zynforge
             void rebind()
             {
                 const int port = juce::jlimit (1, 65535, portEd.getText().getIntValue());
-                if (engine.isOscListening() && engine.getOscDialect() == info.dialect)
-                { engine.stopOsc(); engine.startOsc (port, info.dialect); }
+                if (engine.getRemotes().isOscListening() && engine.getRemotes().getOscDialect() == info.dialect)
+                { engine.getRemotes().stopOsc(); engine.getRemotes().startOsc (port, info.dialect); }
                 connVal.setText ("osc.udp://" + juce::SystemStats::getComputerName() + ".local:"
                                  + juce::String (port) + "/", juce::dontSendNotification);
             }
             void requestNames()
             {
                 persist();
-                if (! engine.isOscListening() || engine.getOscDialect() != info.dialect)
-                    engine.startOsc (juce::jlimit (1, 65535, portEd.getText().getIntValue()), info.dialect);   // listen for replies on this dialect
+                if (! engine.getRemotes().isOscListening() || engine.getRemotes().getOscDialect() != info.dialect)
+                    engine.getRemotes().startOsc (juce::jlimit (1, 65535, portEd.getText().getIntValue()), info.dialect);   // listen for replies on this dialect
                 const auto ip = ipEd.getText().trim();
                 const int  rx = juce::jlimit (1, 65535, rxEd.getText().getIntValue());
-                const bool ok = engine.requestConsoleChannelNames (ip, rx, info.dialect);
+                const bool ok = engine.getRemotes().requestConsoleChannelNames (ip, rx, info.dialect);
                 statusL.setText (ok ? "Request sent to " + ip + ":" + juce::String (rx)
                                       + " -- channel names fill in as the console replies."
                                     : "Couldn't send -- check Console IP + Receive Port.",

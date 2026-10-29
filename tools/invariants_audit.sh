@@ -404,6 +404,19 @@ report "mix rules live only in MixKernel.h" \
        "a second copy of a rule lets live playback and the bounce disagree" \
        "$HITS"
 
+# Remote control (companion server, console OSC, MIDI control surface) is ONE
+# by-value AudioEngine member, RemoteControl. By value: their threads call back
+# through engine.getRemotes(), and a unique_ptr is already reset while the
+# object it owned is being destroyed. One member: the engine doesn't regrow
+# its own copies of the servers.
+HITS=$(sed 's,//.*,,' Source/Audio/AudioEngine.h 2>/dev/null \
+       | grep -nE "unique_ptr<(OscRemote|CompanionServer|MidiControlSurface)>")
+grep -qE '^ *RemoteControl +remotes' Source/Audio/AudioEngine.h \
+    || HITS+=$'\nSource/Audio/AudioEngine.h: RemoteControl is not a by-value member named remotes'
+report "remote control is one by-value engine member" \
+       "a remote thread calling back during teardown would dereference a reset pointer" \
+       "$HITS"
+
 HITS=""
 grep -q "eng.setRecordStereoMix (stereoMixB.getToggleState())" Source/UI/SessionSettingsDialog.cpp \
     || HITS="Source/UI/SessionSettingsDialog.cpp: optional stereo-mix recorder has no user-facing control"

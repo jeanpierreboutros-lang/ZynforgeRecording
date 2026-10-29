@@ -694,11 +694,11 @@ namespace zynforge
                         engine.audioDeviceIOCallbackWithContext (input.getArrayOfReadPointers(), 1,
                             output.getArrayOfWritePointers(), 2, 128, {});
                 });
-                expect (engine.startCompanionServer (0));
+                expect (engine.getRemotes().startCompanionServer (0));
                 juce::Thread::sleep (30);
                 run.store (false, std::memory_order_relaxed);
                 audio.join();
-                engine.stopCompanionServer();
+                engine.getRemotes().stopCompanionServer();
             }
 
             beginTest ("TSan: capture status and structural channel changes share one lock");

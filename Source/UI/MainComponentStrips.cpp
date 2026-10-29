@@ -607,12 +607,12 @@ void MainComponent::createSessionFromConsole()
 
     // Listen on the chosen console's dialect so replies are parsed, capture
     // incoming names, then nudge the console to report them.
-    if (! engine.isOscListening() || engine.getOscDialect() != dialect)
-        engine.startOsc (oscListenPort(), dialect);
-    engine.setConsoleNameCapture (true);
-    if (! engine.requestConsoleChannelNames (ip, rx, dialect))
+    if (! engine.getRemotes().isOscListening() || engine.getRemotes().getOscDialect() != dialect)
+        engine.getRemotes().startOsc (oscListenPort(), dialect);
+    engine.getRemotes().setConsoleNameCapture (true);
+    if (! engine.getRemotes().requestConsoleChannelNames (ip, rx, dialect))
     {
-        engine.setConsoleNameCapture (false);
+        engine.getRemotes().setConsoleNameCapture (false);
         showStatus ("Couldn't reach console at " + ip + ":" + juce::String (rx));
         return;
     }
@@ -622,8 +622,8 @@ void MainComponent::createSessionFromConsole()
     juce::Timer::callAfterDelay (3000, [self]
     {
         if (self == nullptr) return;
-        self->engine.setConsoleNameCapture (false);
-        const auto names = self->engine.takeCapturedConsoleNames();
+        self->engine.getRemotes().setConsoleNameCapture (false);
+        const auto names = self->engine.getRemotes().takeCapturedConsoleNames();
         if (names.empty())
         {
             self->showStatus ("No channel names received -- check the desk is sending OSC to this Mac.");

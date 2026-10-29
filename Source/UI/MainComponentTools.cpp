@@ -615,7 +615,7 @@ void MainComponent::promptConsoleConnect()
             self->consoleLink.onChannelName = [self] (int ch1, const juce::String& name)
             {
                 if (self == nullptr || name.trim().isEmpty()) return;
-                self->engine.onConsoleChannelName (ch1, name.trim());
+                self->engine.getRemotes().onConsoleChannelName (ch1, name.trim());
             };
 
             // A scene / snapshot recall drops a marker. This is what makes a

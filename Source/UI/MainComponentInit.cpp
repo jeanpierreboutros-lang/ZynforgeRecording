@@ -372,8 +372,8 @@ MainComponent::MainComponent()
     {
         // Quick menu: pick a console dialect and start listening on 8000.
         juce::PopupMenu menu;
-        menu.addSectionHeader (engine.isOscListening()
-                                ? "OSC listening on port " + juce::String (engine.getOscPort())
+        menu.addSectionHeader (engine.getRemotes().isOscListening()
+                                ? "OSC listening on port " + juce::String (engine.getRemotes().getOscPort())
                                 : "OSC idle");
         menu.addSeparator();
         menu.addItem (1, "Listen -- Generic /zynforge");
@@ -382,22 +382,22 @@ MainComponent::MainComponent()
         menu.addItem (4, "Listen -- SSL Live");
         menu.addItem (5, "Listen -- Yamaha (DM7 / RIVAGE)");
         menu.addSeparator();
-        menu.addItem (10, "Stop", engine.isOscListening());
+        menu.addItem (10, "Stop", engine.getRemotes().isOscListening());
 
         juce::Component::SafePointer<MainComponent> self (this);
         menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&oscButton),
                             [self] (int chosen)
         {
             if (chosen <= 0 || self == nullptr) return;
-            if (chosen == 10) { self->engine.stopOsc(); self->oscButton.setButtonText ("OSC"); self->showStatus ("OSC stopped"); return; }
+            if (chosen == 10) { self->engine.getRemotes().stopOsc(); self->oscButton.setButtonText ("OSC"); self->showStatus ("OSC stopped"); return; }
             const int dialect = chosen - 1;
             const int port = self->oscListenPort();
-            if (self->engine.startOsc (port, dialect))
+            if (self->engine.getRemotes().startOsc (port, dialect))
             {
                 self->oscButton.setButtonText ("OSC *");
                 self->showStatus ("OSC listening on " + juce::String (port) + " (" +
                             juce::StringArray ({"Generic","DiGiCo","A&H","SSL","Yamaha"})[dialect] + ")"
-                            + (dialect == 0 ? " -- token " + self->engine.getOscAccessToken() : juce::String()));
+                            + (dialect == 0 ? " -- token " + self->engine.getRemotes().getOscAccessToken() : juce::String()));
             }
             else self->showStatus ("OSC failed to bind port " + juce::String (port));
         });

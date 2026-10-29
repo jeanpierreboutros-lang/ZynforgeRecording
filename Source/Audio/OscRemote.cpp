@@ -39,7 +39,7 @@ namespace zynforge
     void OscRemote::oscMessageReceived (const juce::OSCMessage& m)
     {
         if (engine.areControlsLocked()) return;
-        if (engine.isOscDebug())
+        if (engine.getRemotes().isOscDebug())
         {
             juce::String args;
             const auto path = m.getAddressPattern().toString();
@@ -55,7 +55,7 @@ namespace zynforge
                 else if (a.isFloat32()) args << " " << juce::String (a.getFloat32(), 2);
                 else if (a.isString())  args << " \"" << a.getString() << "\"";
             }
-            engine.logOsc ("<- " + m.getAddressPattern().toString() + args);
+            engine.getRemotes().logOsc ("<- " + m.getAddressPattern().toString() + args);
         }
 
         // Always try the matching dialect first, fall back to Generic.
@@ -110,7 +110,7 @@ namespace zynforge
     {
         // Route through the engine's capture-aware path so "Create session
         // from console" can collect names for channels that don't exist yet.
-        engine.onConsoleChannelName (idx1, s);
+        engine.getRemotes().onConsoleChannelName (idx1, s);
     }
     // Pair-aware + lock-held: the OSC receiver runs on its own thread, so the
     // old check-then-index was a TOCTOU against the vector shrinking, and it

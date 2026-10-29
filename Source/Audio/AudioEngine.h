@@ -8,6 +8,7 @@
 #include "MidiClockOut.h"
 #include "VcaBus.h"
 #include "../Network/NDIBridge.h"
+#include "../Network/RemoteControl.h"
 
 #include <array>
 #include <functional>
@@ -32,9 +33,6 @@
 
 namespace zynforge
 {
-    class OscRemote;
-    class MidiControlSurface;
-    class CompanionServer;
 
     class MainTransportRegressionTests;
 
@@ -132,15 +130,6 @@ namespace zynforge
         // feeds the LTC zero-crossing analyzer once per audio block.
         void setLtcSourceStrip (int oneBasedIndex) noexcept;
         int  getLtcSourceStrip() const noexcept { return ltcSourceStrip.load() + 1; }
-
-        // Companion HTTP server (read-only iPad / remote-audition).
-        bool startCompanionServer (int port);
-        bool startCompanionServerOnLan (int port);
-        juce::String getCompanionAccessUrl() const;
-        bool         isCompanionExposedOnLan() const;
-        void stopCompanionServer();
-        bool isCompanionServerRunning() const noexcept;
-        int  getCompanionServerPort() const noexcept;
 
         // ── Master bus ────────────────────────────────────────────────
         // The master sums every audible channel's VSC playback plus every
@@ -443,45 +432,11 @@ namespace zynforge
         // The loop region from SessionPlayer doubles as the punch window
         // -- there's only ever one 'do this between A and B' selection.
 
-        // OSC remote: starts/stops a juce::OSCReceiver bound to UDP port,
-        // with a dialect parser for DiGiCo / A&H / SSL / Yamaha consoles
-        // plus a generic /zynforge/* schema for tablet apps.
-        bool  startOsc (int udpPort, int dialectIndex);
-        void  stopOsc();
-        bool  isOscListening() const;
-        int   getOscPort() const;
-        juce::String getOscAccessToken() const;
-
-        // ── Outbound console control (DiGiCo bidirectional link) ────────
-        // Ask the console (at host:port) to report all channel names. The
-        // replies arrive on the normal OSC receive path. Returns false if the
-        // sender couldn't connect.
-        bool  requestConsoleChannelNames (const juce::String& host, int port, int dialect = 1);
-
-        // OSC debug log -- so an engineer can verify the request/reply traffic
-        // against their actual console. When on, sent + received OSC is logged.
-        void  setOscDebug (bool on) noexcept { oscDebug.store (on, std::memory_order_relaxed); }
-        bool  isOscDebug () const noexcept   { return oscDebug.load (std::memory_order_relaxed); }
-        void  logOsc (const juce::String& line);   // thread-safe; keeps the last ~200 lines
-        juce::StringArray getOscLog() const;
-        void  clearOscLog();
-        // Channel-name capture: while on, every console channel name we receive
-        // is collected (1-based index -> name) AND applied to a matching track.
-        // Used by "Create session from console". Enabling clears the buffer.
-        void  setConsoleNameCapture (bool on);
-        bool  isConsoleNameCapture () const noexcept { return consoleCapture.load (std::memory_order_relaxed); }
-        // Called by OscRemote for every incoming console channel name.
-        void  onConsoleChannelName (int oneBasedIndex, const juce::String& name);
-        // Take + clear the captured names (message thread).
-        std::map<int, juce::String> takeCapturedConsoleNames();
-
-        // ── MIDI control surface (Mackie Control / FaderPort) ───────────
-        // Open a control surface on the given MIDI in/out device names. `key`
-        // identifies the active brand (one surface at a time). Returns success.
-        bool         enableControlSurface (const juce::String& key, const juce::String& inName, const juce::String& outName);
-        void         disableControlSurface();
-        juce::String getActiveSurfaceKey() const { return activeSurfaceKey; }
-        int   getOscDialect() const;
+        // Companion server, console OSC (log + channel-name capture) and the
+        // MIDI control surface. Owned here so their lifetime nests inside the
+        // engine's; see Source/Network/RemoteControl.h.
+        RemoteControl&       getRemotes() noexcept       { return remotes; }
+        const RemoteControl& getRemotes() const noexcept { return remotes; }
 
         // Returns recording dir if recording, else loaded playback session,
         // else an empty File.
@@ -1171,13 +1126,6 @@ namespace zynforge
         std::atomic<int> ltcSourceStrip { -1 };   // 0-based strip index, -1 = none
         std::atomic<int>  chaseMode      { 0 };    // 0=Off 1=LTC 2=MTC
         std::atomic<bool> keepRollingOnSyncLoss { false };
-        std::atomic<bool> consoleCapture { false };   // capturing console channel names
-        std::map<int, juce::String> capturedConsoleNames;   // message-thread only
-        std::unique_ptr<MidiControlSurface> surface;
-        juce::String activeSurfaceKey;
-        std::atomic<bool> oscDebug { false };
-        juce::CriticalSection oscLogLock;
-        juce::StringArray oscLog;
         std::unique_ptr<juce::MidiInput> mtcInput;
         juce::String                     mtcInputName;
 
@@ -1230,8 +1178,7 @@ namespace zynforge
     public:
         ClickEngine& getClickEngine() noexcept { return click; }
     private:
-        std::unique_ptr<OscRemote> osc;
-        std::unique_ptr<CompanionServer> companion;
+        RemoteControl remotes { *this };   // companion server, OSC, control surface
         std::unique_ptr<juce::PropertiesFile> appProps;
         RemoteTransportHandler remoteTransportHandler;
 

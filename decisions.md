@@ -784,6 +784,14 @@ Two documented rules were broken by that one line ("Text on a saturated accent: 
 
 **Consequences:** A rule change is made once and is tested against both paths. The parity test found the live path reading automation one block late, now fixed. Differences that remain are deliberate and listed in CLAUDE.md (no live input, trim-follow or mono fold-down in the bounce). Merging the loops themselves was rejected: it would put disk-render concerns into the real-time path for no rule-level gain.
 
+## Remote control is a separate class the engine owns by value — 2026-10-29
+
+**Context:** `AudioEngine` owned the companion HTTP server, the console OSC listener with its log and channel-name capture, and the MIDI control surface directly: 26 public methods and their state in a class that is mainly the audio hub.
+
+**Decision:** Move them into `RemoteControl` (`Source/Network/`). Keep the ENGINE as the owner, as one by-value member: each remote holds `AudioEngine&` and calls back into it from its own thread, so its lifetime must nest inside the engine's (the same rule as `SessionMirror` in `MainComponent`). By value, not `unique_ptr`, because the OSC thread calls back through `engine.getRemotes()` and a `unique_ptr` is reset before its object finishes destructing. `performRemoteTransport` stays on the engine as the single host interception boundary; MTC input, LTC, NDI and the click stay with the engine because the audio callback feeds them.
+
+**Consequences:** The engine header loses the network API and three forward-declared server types; callers say `engine.getRemotes().startOsc (…)`. The control surface is destroyed earlier in teardown than before (inside `remotes`, not after most engine members), which only shortens the window in which its MIDI thread can reach the engine. Preferences (`appProps`, about 150 uses in `AudioEngine.cpp`) were not moved: they are per-strip engine state, and moving them needs a persistence-layer design rather than a mechanical move.
+
 ## Template
 
 ```

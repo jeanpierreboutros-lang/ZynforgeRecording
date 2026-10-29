@@ -930,8 +930,8 @@ namespace zynforge
     bool MultitrackRecorder::claimCopy (const TakeStart& take, const juce::File& root)
     {
         const auto& sessionDir = take.sessionDir;
+        const auto& sessionId  = take.sessionId;
 
-        const auto& sessionId = take.sessionId;
         const auto copy = root.getChildFile (sessionDir.getFileName());
         const auto owner = copy.getChildFile (".zynforge-primary");
         const auto identity = sessionDir.getFullPathName();
@@ -2053,7 +2053,7 @@ namespace zynforge
         for (auto& wc : writers)
         {
             TakeStop::WriterReport wr { wc.totalSamplesPrimary, wc.totalSamplesBackup,
-                              wc.partFilesPrimary, wc.partFilesBackup, {} };
+                                        wc.partFilesPrimary, wc.partFilesBackup, {} };
             for (size_t mi = 0; mi < wc.mirrors.size(); ++mi)
             {
                 const auto& m = wc.mirrors[mi];

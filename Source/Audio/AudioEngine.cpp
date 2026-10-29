@@ -2,12 +2,8 @@
 #include "SettingsFile.h"
 #include "TrackFileTransaction.h"
 #include "AtomicFile.h"
-#include "OscRemote.h"
-#include "MidiControlSurface.h"
-#include <juce_osc/juce_osc.h>
 #include "FastAccumulate.h"
 #include "TransientDetector.h"
-#include "../Network/CompanionServer.h"
 
 namespace zynforge
 {
@@ -408,40 +404,6 @@ namespace zynforge
         if (completion) completion (ok);
     }
 
-    bool AudioEngine::startCompanionServer (int port)
-    {
-        // Default to loopback -- the engineer opts into LAN exposure
-        // via startCompanionServerOnLan when they actually need it.
-        return companion->start (port, "127.0.0.1");
-    }
-
-    bool AudioEngine::startCompanionServerOnLan (int port)
-    {
-        return companion->start (port, "0.0.0.0");
-    }
-
-    juce::String AudioEngine::getCompanionAccessUrl() const
-    {
-        return companion != nullptr ? companion->getAccessUrl() : juce::String();
-    }
-
-    bool AudioEngine::isCompanionExposedOnLan() const
-    {
-        return companion != nullptr && companion->isExposedOnLan();
-    }
-    void AudioEngine::stopCompanionServer()
-    {
-        if (companion != nullptr) companion->stop();
-    }
-    bool AudioEngine::isCompanionServerRunning() const noexcept
-    {
-        return companion != nullptr && companion->isRunning();
-    }
-    int AudioEngine::getCompanionServerPort() const noexcept
-    {
-        return companion != nullptr ? companion->getPort() : -1;
-    }
-
     bool AudioEngine::performRemoteTransport (RemoteTransportAction action,
                                               juce::String& error)
     {
@@ -557,99 +519,6 @@ namespace zynforge
                 return false;
             }
         return false;
-    }
-
-    bool AudioEngine::requestConsoleChannelNames (const juce::String& host, int port, int dialect)
-    {
-        if (host.trim().isEmpty() || port <= 0 || port > 65535) return false;
-        juce::OSCSender sender;
-        if (! sender.connect (host.trim(), port)) return false;
-
-        // Best-effort "report your channels" nudge per console dialect -- their
-        // OSC implementations differ, so we fire a couple of plausible refresh /
-        // subscribe forms. The channel-name replies come back on the normal
-        // receive path (each dialect parser already handles channel/N/name).
-        switch (dialect)
-        {
-            case 2:   // Allen & Heath
-                sender.send (juce::OSCMessage ("/sq/channels/?"));
-                sender.send (juce::OSCMessage ("/sq/refresh"));
-                break;
-            case 3:   // SSL Live
-                sender.send (juce::OSCMessage ("/sslnet/channel/?"));
-                sender.send (juce::OSCMessage ("/sslnet/refresh"));
-                break;
-            case 4:   // Yamaha / RIVAGE
-                sender.send (juce::OSCMessage ("/Yamaha/Channels/?"));
-                sender.send (juce::OSCMessage ("/RIVAGE/Channels/?"));
-                break;
-            default:  // DiGiCo (1) / generic
-                sender.send (juce::OSCMessage ("/Console/Channels/?"));
-                sender.send (juce::OSCMessage ("/Console/Channels", (juce::int32) 1));
-                sender.send (juce::OSCMessage ("/info"));
-                break;
-        }
-        sender.disconnect();
-        if (isOscDebug())
-            logOsc ("-> " + host.trim() + ":" + juce::String (port)
-                    + "  request channel names (dialect " + juce::String (dialect) + ")");
-        return true;
-    }
-
-    void AudioEngine::logOsc (const juce::String& line)
-    {
-        const juce::ScopedLock sl (oscLogLock);
-        oscLog.add (juce::Time::getCurrentTime().formatted ("%H:%M:%S  ") + line);
-        while (oscLog.size() > 200) oscLog.remove (0);
-    }
-    juce::StringArray AudioEngine::getOscLog() const
-    {
-        const juce::ScopedLock sl (oscLogLock);
-        return oscLog;
-    }
-    void AudioEngine::clearOscLog()
-    {
-        const juce::ScopedLock sl (oscLogLock);
-        oscLog.clear();
-    }
-
-    void AudioEngine::setConsoleNameCapture (bool on)
-    {
-        if (on) capturedConsoleNames.clear();
-        consoleCapture.store (on, std::memory_order_relaxed);
-    }
-
-    void AudioEngine::onConsoleChannelName (int oneBasedIndex, const juce::String& name)
-    {
-        if (oneBasedIndex >= 1 && consoleCapture.load (std::memory_order_relaxed))
-            capturedConsoleNames[oneBasedIndex] = name;
-        const int i = oneBasedIndex - 1;
-        if (i >= 0 && i < recorder.getNumTracks())
-            setTrackName (i, name);
-    }
-
-    std::map<int, juce::String> AudioEngine::takeCapturedConsoleNames()
-    {
-        auto out = capturedConsoleNames;
-        capturedConsoleNames.clear();
-        return out;
-    }
-
-    bool AudioEngine::enableControlSurface (const juce::String& key,
-                                            const juce::String& inName, const juce::String& outName)
-    {
-        disableControlSurface();
-        surface = std::make_unique<MidiControlSurface> (*this);
-        const bool ok = surface->start (inName, outName);
-        if (ok) activeSurfaceKey = key;
-        else    { surface.reset(); activeSurfaceKey.clear(); }
-        return ok;
-    }
-
-    void AudioEngine::disableControlSurface()
-    {
-        if (surface != nullptr) { surface->stop(); surface.reset(); }
-        activeSurfaceKey.clear();
     }
 
     void AudioEngine::handleIncomingMidiMessage (juce::MidiInput*, const juce::MidiMessage& m)
@@ -1946,9 +1815,6 @@ namespace zynforge
     AudioEngine::AudioEngine()
         : asyncHandle (std::make_shared<std::atomic<AudioEngine*>> (this))
     {
-        // Publish this stable owner before any device callback can start.
-        // Starting/stopping the listener never changes the pointer's lifetime.
-        companion = std::make_unique<CompanionServer> (*this);
         juce::PropertiesFile::Options opts;
         opts.applicationName     = "Zynforge Recording";
         opts.filenameSuffix      = ".settings";
@@ -2304,34 +2170,6 @@ namespace zynforge
     {
         const juce::ScopedLock sl (tempoLock);
         tempoMap.clear();
-    }
-
-    bool AudioEngine::startOsc (int udpPort, int dialectIndex)
-    {
-        if (osc == nullptr) osc = std::make_unique<OscRemote> (*this);
-        osc->setDialect ((OscRemote::Dialect) juce::jlimit (0, 4, dialectIndex));
-        return osc->start (udpPort);
-    }
-
-    void AudioEngine::stopOsc()
-    {
-        if (osc != nullptr) osc->stop();
-    }
-    bool AudioEngine::isOscListening() const
-    {
-        return osc != nullptr && osc->isListening();
-    }
-    int AudioEngine::getOscPort() const
-    {
-        return osc != nullptr ? osc->getPort() : 0;
-    }
-    juce::String AudioEngine::getOscAccessToken() const
-    {
-        return osc != nullptr ? osc->getAccessToken() : juce::String();
-    }
-    int AudioEngine::getOscDialect() const
-    {
-        return osc != nullptr ? (int) osc->getDialect() : 0;
     }
 
     void AudioEngine::setStreamOutputs (int l, int r)
@@ -3421,7 +3259,7 @@ namespace zynforge
             click.processBlock (L, R, numSamples);
         }
 
-        if (companion != nullptr && companion->isRunning())
+        if (remotes.isCompanionServerRunning())
         {
             const int sOutL = juce::jlimit (0, numOutputs - 1,
                                             masterOutL.load (std::memory_order_relaxed));
@@ -3429,7 +3267,7 @@ namespace zynforge
                                             masterOutR.load (std::memory_order_relaxed));
             const float* L = (sOutL >= 0 && sOutL < numOutputs) ? outputs[sOutL] : nullptr;
             const float* R = (sOutR >= 0 && sOutR < numOutputs) ? outputs[sOutR] : nullptr;
-            companion->feedStreamSamples (L, R, numSamples);
+            remotes.feedCompanionStream (L, R, numSamples);
         }
 
         // NDI Audio transmit -- push the master mix onto the LAN as an

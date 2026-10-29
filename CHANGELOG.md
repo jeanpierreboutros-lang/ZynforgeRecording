@@ -14,6 +14,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 - Add new entries under `## [Unreleased]
 
+### Changed — remote control moved out of the audio engine
+
+- The companion server, the console OSC listener (with its debug log and channel-name capture) and the MIDI control surface moved out of `AudioEngine` into `RemoteControl` (`Source/Network/RemoteControl.{h,cpp}`); 26 methods and about 215 lines left the engine. The engine still owns it, by value, so the remotes' lifetime stays inside the engine's. Callers use `engine.getRemotes()`. The control surface is now torn down before the rest of the engine instead of after most of it. A gate rule keeps the member by value.
+
 ### Changed — recorder start and stop are named stages
 
 - `MultitrackRecorder::startRecording` (786 lines) is now a 30-line sequence of named stages sharing one `TakeStart` struct; `finishFinalization` (603 lines) is a 20-line sequence over `TakeStop` and a by-value `SessionReport`. The code moved unchanged except for one helper, `opensOwnCaptureFile`, that replaces four copies of the "armed, and not the right half of an armed stereo pair" test. No behaviour change: the full suite passes unchanged.

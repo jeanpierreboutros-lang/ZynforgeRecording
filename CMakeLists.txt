@@ -127,6 +127,7 @@ add_library(ZynforgeCore STATIC
     Source/UI/TempoBar.cpp
     Source/UI/ClickSettingsDialog.cpp
     Source/Network/CompanionServer.cpp
+    Source/Network/RemoteControl.cpp
     Source/Network/SessionMirror.cpp
     Source/UI/Meterbridge.cpp
     Source/UI/TransportBar.cpp

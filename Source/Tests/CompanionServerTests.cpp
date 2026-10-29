@@ -129,12 +129,12 @@ namespace zynforge
 
                 int port = 0;
                 for (int p = 19234; p < 19244 && port == 0; ++p)
-                    if (engine.startCompanionServer (p)) port = p;
+                    if (engine.getRemotes().startCompanionServer (p)) port = p;
 
                 expect (port != 0, "companion server failed to start on loopback");
                 if (port != 0)
                 {
-                    const auto url = engine.getCompanionAccessUrl();      // http://127.0.0.1:port/?t=<tok>
+                    const auto url = engine.getRemotes().getCompanionAccessUrl();      // http://127.0.0.1:port/?t=<tok>
                     const auto tok = url.fromFirstOccurrenceOf ("t=", false, false).trim();
                     expect (tok.isNotEmpty(), "no access token minted");
 
@@ -163,7 +163,7 @@ namespace zynforge
                     expect (! httpGet (port, "/stream.wav?t=" + tok).contains ("401"),
                             "tokened stream wrongly rejected");
 
-                    engine.stopCompanionServer();
+                    engine.getRemotes().stopCompanionServer();
                 }
             }
 
@@ -172,17 +172,17 @@ namespace zynforge
                 AudioEngine engine;
                 int port = 0;
                 for (int p = 19244; p < 19250 && port == 0; ++p)
-                    if (engine.startCompanionServer (p)) port = p;
+                    if (engine.getRemotes().startCompanionServer (p)) port = p;
                 expect (port != 0, "companion server failed to start");
                 if (port != 0)
                 {
                     sendInvalidUtf8Request (port);
                     juce::Thread::sleep (100);
-                    const auto tok = engine.getCompanionAccessUrl()
+                    const auto tok = engine.getRemotes().getCompanionAccessUrl()
                                          .fromFirstOccurrenceOf ("t=", false, false).trim();
                     expect (httpGet (port, "/state.json?t=" + tok).contains ("200"),
                             "server stopped responding after malformed input");
-                    engine.stopCompanionServer();
+                    engine.getRemotes().stopCompanionServer();
                 }
             }
 
@@ -195,12 +195,12 @@ namespace zynforge
 
                 int port = 0;
                 for (int p = 19250; p < 19260 && port == 0; ++p)
-                    if (engine.startCompanionServer (p)) port = p;
+                    if (engine.getRemotes().startCompanionServer (p)) port = p;
                 expect (port != 0, "companion server failed to start");
 
                 if (port != 0)
                 {
-                    const auto tok = engine.getCompanionAccessUrl()
+                    const auto tok = engine.getRemotes().getCompanionAccessUrl()
                                          .fromFirstOccurrenceOf ("t=", false, false).trim();
 
                     // /state.json reflects real engine state (names, armed, counts).
@@ -280,7 +280,7 @@ namespace zynforge
                     expect (stream.contains ("audio/wav") || stream.contains ("RIFF") || stream.contains ("WAVE"),
                             "stream response carries no WAV payload");
 
-                    engine.stopCompanionServer();
+                    engine.getRemotes().stopCompanionServer();
                 }
             }
 
@@ -289,12 +289,12 @@ namespace zynforge
                 AudioEngine engine;
                 int port = 0;
                 for (int p = 19270; p < 19280 && port == 0; ++p)
-                    if (engine.startCompanionServer (p)) port = p;
+                    if (engine.getRemotes().startCompanionServer (p)) port = p;
                 expect (port != 0, "companion server failed to start");
 
                 if (port != 0)
                 {
-                    const auto tok = engine.getCompanionAccessUrl()
+                    const auto tok = engine.getRemotes().getCompanionAccessUrl()
                                          .fromFirstOccurrenceOf ("t=", false, false).trim();
                     std::atomic<bool> requestStarted { false };
                     juce::String response;
@@ -310,7 +310,7 @@ namespace zynforge
                     juce::Thread::sleep (150); // allow acceptLoop to queue the command
 
                     const auto started = juce::Time::getMillisecondCounterHiRes();
-                    engine.stopCompanionServer();
+                    engine.getRemotes().stopCompanionServer();
                     const auto elapsedMs = juce::Time::getMillisecondCounterHiRes() - started;
                     requester.join();
 

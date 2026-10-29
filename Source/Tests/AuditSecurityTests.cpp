@@ -21,7 +21,7 @@ public:
             engine.clearAllStripOverrides();
             const juce::ScopeGuard cleanup { [&] { engine.clearAllStripOverrides(); } };
             engine.setStripCount (1);
-            engine.setOscDebug (true);
+            engine.getRemotes().setOscDebug (true);
             OscRemote osc (engine);
             const juce::String canary = "audit-only-capability-canary";
             osc.accessToken = canary;
@@ -31,7 +31,7 @@ public:
                 "/zynforge/channel/1/mute", (juce::int32) 1, canary));
             expect (engine.getRecorder().getTrack (0).muted.load(),
                     "fixture did not exercise an authenticated command");
-            const auto log = engine.getOscLog().joinIntoString ("\n");
+            const auto log = engine.getRemotes().getOscLog().joinIntoString ("\n");
             expect (log.contains ("/zynforge/channel/1/mute"), "diagnostics lost the command address");
             expect (! log.contains (canary), "diagnostic log exposed the authorization token");
         }
