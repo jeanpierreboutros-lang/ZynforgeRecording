@@ -43,9 +43,9 @@ namespace zynforge
         void         feedCompanionStream (const float* L, const float* R, int numSamples) noexcept;
 
         // ── OSC remote ──────────────────────────────────────────────────
-        // A juce::OSCReceiver bound to a UDP port, with a dialect parser for
-        // DiGiCo / A&H / SSL / Yamaha consoles plus a generic /zynforge/*
-        // schema for tablet apps.
+        // A depth-capped OscPacketReceiver bound to a UDP port, with a
+        // dialect parser for DiGiCo / A&H / SSL / Yamaha consoles plus a
+        // generic /zynforge/* schema for tablet apps.
         bool         startOsc (int udpPort, int dialectIndex);
         void         stopOsc();
         bool         isOscListening() const;

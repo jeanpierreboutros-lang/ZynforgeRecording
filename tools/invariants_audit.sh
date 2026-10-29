@@ -436,6 +436,15 @@ report "external inputs fail bounded and validated" \
        "a timed-out child-process read or malformed pre-auth network bytes can freeze/assert the app" \
        "$HITS"
 
+# juce::OSCReceiver parses on its own thread with no #bundle depth cap; one
+# nested-bundle datagram from any LAN host overflowed that thread's stack and
+# crashed the app. Every OSC socket goes through OscPacketReceiver. (Its
+# Listener / MessageLoopCallback types, spelled juce::OSCReceiver::..., are fine.)
+HITS=$(grep -rnE 'juce::OSCReceiver([^:]|$)' $SCOPE 2>/dev/null | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//')
+report "OSC datagrams are parsed by the depth-capped OscPacketReceiver" \
+       "use OscPacketReceiver (Source/Network/OscPacketReceiver.h), never juce::OSCReceiver" \
+       "$HITS"
+
 HITS=""
 grep -q 'COMMAND /usr/bin/codesign --force --sign -' CMakeLists.txt \
     || HITS="CMakeLists.txt: local app bundle is not resealed after the capture helper is embedded"
