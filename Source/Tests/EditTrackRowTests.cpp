@@ -871,8 +871,6 @@ namespace zynforge
                 }
             }
 
-            //@@MORE_TESTS@@
-
             AudioEngine::setTestModeSkipAudioInit (false);
         }
     };
