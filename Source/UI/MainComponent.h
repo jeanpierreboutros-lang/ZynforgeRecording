@@ -17,6 +17,8 @@
 #include "ChannelStrip.h"
 #include "EditPage.h"
 #include "ExportDialog.h"
+#include "ExportSongsDialog.h"
+#include "../Audio/ProjectExport.h"
 #include "MasterStrip.h"
 #include "NewSessionDialog.h"
 #include "WelcomeDialog.h"
@@ -36,7 +38,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
+namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class SongExportTests; class SessionInterchangeTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -120,6 +122,9 @@ private:
     void onExportIndividualTrack (int channelIndex);
     void onExportIndividualTracks();   // tick-box picker → format → destination → export
     void exportShowHandoff();
+    void exportDawProject (zynforge::projectexport::Format);
+    void exportSongs();
+    void startSongExport (zynforge::songexport::Choice);
     juce::String buildTimelineCsv();
     void closeSession();               // unload to the empty/Welcome state without quitting
     void confirmSessionReplacement (std::function<void()> continuation);
@@ -484,6 +489,8 @@ private:
     friend class zynforge::ReviewPersistenceRepairTests;
     friend class zynforge::ReviewUiFormatRepairTests;
     friend class zynforge::ConsoleVscTests;
+    friend class zynforge::SongExportTests;
+    friend class zynforge::SessionInterchangeTests;
     friend struct zynforge::ConcurrencyAuditAccess;
 
     // Live SafePointers to dialog windows opened by the header buttons.
@@ -622,6 +629,7 @@ private:
     void snapshotArmStateForPunch();
     void restoreArmStateAfterPunch();
     int  lastExportFailures { 0 }; // tracks failed in the last exportTracksTo (partial-failure warning)
+    bool songExportRunning { false };   // message thread; turns menu item 967 into its cancel
 
     // Session-I/O reservation: true while a session operation owns the
     // session's files -- a background job below, or pending metadata saves

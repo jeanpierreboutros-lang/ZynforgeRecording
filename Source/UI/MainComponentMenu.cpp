@@ -80,7 +80,16 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         exportMenu.addItem (13, "Bounce Stereo Mix...",            canExport && n > 0);
         exportMenu.addSeparator();
         exportMenu.addItem (14, "Export Timeline (markers/cues/tracks) as CSV...", canExport && n > 0);
+        exportMenu.addItem (966, "Export Reaper Project...", canExport && n > 0);
+        exportMenu.addItem (965, "Export DAWproject...",     canExport && n > 0);
         exportMenu.addItem (962, "Create Verified Show Handoff...", canExport && n > 0);
+        exportMenu.addSeparator();
+        // The same item stops a running export: nothing else in the menus can
+        // reach the job while it holds the session.
+        if (songExportRunning)
+            exportMenu.addItem (967, "Cancel Song Export");
+        else
+            exportMenu.addItem (967, "Export Songs...", canExport && n > 0);
         menu.addSubMenu ("Export", exportMenu);
         menu.addSeparator();
 
@@ -380,7 +389,8 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) useCaptureDaemon
         << '|' << (int) engine.getRemotes().isCompanionServerRunning()
         << '|' << (int) captureSupervisor.isAttached()
-        << '|' << (int) (useCaptureDaemon && captureSupervisor.isDaemonRecording());
+        << '|' << (int) (useCaptureDaemon && captureSupervisor.isDaemonRecording())
+        << '|' << (int) songExportRunning;
 
     if (sig != lastMenuStateSig)
     {
@@ -397,7 +407,8 @@ void MainComponent::menuItemSelected (int id, int /*topLevelIndex*/)
     {
         const bool safeDuringMetadata = pendingMetadataSaves != 0
             && ((id == 2 && ! captureMetadataPending) || id == 334 || id == 335 || id == 303);
-        if (! safeDuringMetadata)
+        const bool stopsSongExport = id == 967 && songExportRunning;
+        if (! safeDuringMetadata && ! stopsSongExport)
         { showStatus ("Wait for the session operation to finish"); return; }
     }
     juce::Logger::writeToLog ("[ZF] menuItemSelected id=" + juce::String (id));
@@ -435,6 +446,13 @@ void MainComponent::registerMenuCommands()
     m.add (13,  [this] { onBounceStereoMix(); });
     m.add (14,  [this] { exportTimelineCsv(); });
     m.add (962, [this] { exportShowHandoff(); });
+    m.add (965, [this] { exportDawProject (projectexport::Format::DawProject); });
+    m.add (966, [this] { exportDawProject (projectexport::Format::Reaper); });
+    m.add (967, [this]
+    {
+        if (songExportRunning) { sessionJobs.cancel(); showStatus ("Cancelling song export..."); }
+        else                   exportSongs();
+    });
     m.add (70,  [this] { promptSaveSessionTemplate(); });
     m.add (71,  [this] { printSetlist(); });
     m.addRange (200, 249, [this] (int offset)

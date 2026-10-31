@@ -33,6 +33,7 @@
 
 namespace zynforge
 {
+    namespace interchange { struct SessionInput; }
 
     class MainTransportRegressionTests;
     class AudioCallbackTests;
@@ -822,6 +823,15 @@ namespace zynforge
                                        const std::function<bool (const float*, juce::int64, int)>& consume);
         bool forEachStereoMixWindow (juce::int64 totalSamples,
                                      const std::function<bool (const juce::AudioBuffer<float>&, juce::int64, int)>& consume);
+        // The same render over [startSample, endSample) of the timeline. A
+        // range is the same span of a whole render, sample for sample, whatever
+        // grid it lands on. A window handed to `consume` starts at the sample
+        // the second argument names.
+        bool forEachStereoMixWindow (juce::int64 startSample, juce::int64 endSample,
+                                     const std::function<bool (const juce::AudioBuffer<float>&, juce::int64, int)>& consume);
+        // A stereo pair's two edited arrangements on one buffer's two channels.
+        bool forEachStereoPairWindow (int trackL, juce::int64 startSample, juce::int64 endSample,
+                                      const std::function<bool (const juce::AudioBuffer<float>&, juce::int64, int)>& consume);
 
         // Streaming bounce variants: identical audio to the renders above,
         // but each window is written straight to a 24-bit WAV instead of
@@ -846,6 +856,15 @@ namespace zynforge
         bool bounceStereoPairToWav (int trackL, const juce::File& dest,
                                     juce::int64 totalSamples, double sampleRate,
                                     const std::atomic<bool>* cancel = nullptr);
+
+        // ── DAW interchange and song export ───────────────────────
+        // Why a session export cannot run now, or empty when it can. Local
+        // takes, daemon takes and a finalizing STOP all refuse: their files
+        // are not finished. Asked before a job starts and by the job itself.
+        juce::String exportRefusal() const;
+        // Plain copies of everything a DAW project carries. Message thread:
+        // it reads the clip lists, which only that thread edits.
+        interchange::SessionInput captureInterchange();
 
         // ── Comp playlists (Take swap) ─────────────────────────────
         // Each track gets a Playlist (vector<Take>). The active Take's

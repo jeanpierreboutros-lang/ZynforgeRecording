@@ -369,6 +369,48 @@ namespace zynforge
         return encodeMp3 (destPcmFile, destWithoutExt, opts, outError);
     }
 
+    ExportFileStream::ExportFileStream (TrackExporter& e, const juce::File& dest,
+                                        const ExportOptions& opts, double renderRate, int numChannels)
+        : exporter (e), destWithoutExt (dest), options (opts)
+    {
+        convertOnCommit = opts.format == ExportFormat::Mp3
+                       || ! juce::approximatelyEqual (renderRate, opts.sampleRate);
+        const auto finalFile = dest.withFileExtension (TrackExporter::extensionFor (opts.format));
+        temporary = temporarySibling (finalFile, ".wav");
+
+        std::unique_ptr<juce::FileOutputStream> stream (temporary.createOutputStream());
+        if (stream == nullptr) return;
+        writer = convertOnCommit
+            ? makePcmWriter (ExportFormat::Wav24, stream.get(), renderRate, (unsigned int) numChannels, 32)
+            : makePcmWriter (opts.format, stream.get(), renderRate, (unsigned int) numChannels,
+                             bitsForFormat (opts.format, opts.bitsPerSample));
+        if (writer != nullptr) stream.release();
+    }
+
+    ExportFileStream::~ExportFileStream()
+    {
+        writer = nullptr;
+        temporary.deleteFile();
+    }
+
+    bool ExportFileStream::write (const juce::AudioBuffer<float>& block, int numSamples)
+    {
+        return writer != nullptr && writer->writeFromAudioSampleBuffer (block, 0, numSamples);
+    }
+
+    bool ExportFileStream::commit (juce::String& error)
+    {
+        if (writer == nullptr) { error = "Cannot write to destination"; return false; }
+        const bool finalized = flushFloatAiffBeforeClose (writer.get());
+        writer = nullptr;
+        if (! finalized) { error = "Final audio header flush failed"; return false; }
+
+        if (convertOnCommit)
+            return exporter.exportTrack (temporary, destWithoutExt, options, error);
+        const auto finalFile = destWithoutExt.withFileExtension (TrackExporter::extensionFor (options.format));
+        return installCompletedExport (temporary, finalFile, error);
+    }
+
     int TrackExporter::mp3EncodeTimeoutMs (double durationSeconds)
     {
         if (! std::isfinite (durationSeconds) || durationSeconds < 0.0)

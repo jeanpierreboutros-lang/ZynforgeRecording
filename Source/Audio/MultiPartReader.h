@@ -69,6 +69,25 @@ namespace zynforge
         return parts;
     }
 
+    // The main file of strip `track` (0-based). A slot in the modern directory
+    // wins over any legacy extension, matching SessionPlayer's per-track
+    // precedence; a session from before Audio Files existed reads its root.
+    inline juce::File findTrackMedia (const juce::File& audioDir, int track)
+    {
+        const auto findIn = [track] (const juce::File& directory)
+        {
+            for (auto* ext : { ".wav", ".flac", ".aif", ".aiff" })
+            {
+                const auto file = directory.getChildFile (juce::String::formatted ("Track_%02d", track + 1) + ext);
+                if (file.existsAsFile()) return file;
+            }
+            return juce::File();
+        };
+        const auto modern = findIn (audioDir);
+        return modern.existsAsFile() || audioDir.getFileName() != "Audio Files"
+            ? modern : findIn (audioDir.getParentDirectory());
+    }
+
     // ── Multi-part take reader ─────────────────────────────────────────────
     // Presents a take split across several part files as ONE seamless reader:
     // owns the per-part readers and maps a global sample position to the part

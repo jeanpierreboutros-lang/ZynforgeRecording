@@ -114,6 +114,7 @@ add_library(ZynforgeCore STATIC
     Source/UI/TimelineStrip.cpp
     Source/UI/StripColourPicker.cpp
     Source/UI/ExportDialog.cpp
+    Source/UI/ExportSongsDialog.cpp
     Source/UI/PatchPage.cpp
     Source/UI/EditPage.cpp
     Source/UI/AudioDeviceDialog.cpp
@@ -146,6 +147,7 @@ add_library(ZynforgeCore STATIC
     Source/Audio/StripGains.cpp
     Source/Audio/StripNames.cpp
     Source/Audio/StripRouting.cpp
+    Source/Audio/SongExport.cpp
     Source/Audio/TrackExporter.cpp
     Source/Audio/OscRemote.cpp
     Source/Audio/MidiControlSurface.cpp
@@ -278,6 +280,8 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/StereoExportTests.cpp
     Source/Tests/StripLifetimeTests.cpp
     Source/Tests/TimecodeTests.cpp
+    Source/Tests/SessionInterchangeTests.cpp
+    Source/Tests/SongExportTests.cpp
     Source/Tests/TimelineExportTests.cpp
     Source/Tests/TrackReorderTests.cpp
     Source/Tests/MixKernelTests.cpp

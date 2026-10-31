@@ -33,6 +33,12 @@ using namespace zynforge;
 
 namespace
 {
+juce::String applicationVersion()
+{
+    auto* app = juce::JUCEApplicationBase::getInstance();
+    return app != nullptr ? app->getApplicationVersion() : juce::String ("unknown");
+}
+
 bool copyDirectoryCancellable (const juce::File& source, const juce::File& dest,
                                const std::atomic<bool>& cancel)
 {
@@ -1588,6 +1594,126 @@ void MainComponent::exportTimelineCsv()
         });
 }
 
+// A project file holds no audio, so this writes in moments, but it opens every
+// take's headers to map clips onto part files: on a big show on a slow drive
+// that is real time, so it runs as a job like the rest.
+void MainComponent::exportDawProject (zynforge::projectexport::Format format)
+{
+    namespace px = zynforge::projectexport;
+    const auto sessionDir = engine.getActiveSessionDir();
+    if (! sessionDir.isDirectory()) { showStatus ("No active session to export"); return; }
+    if (const auto refusal = engine.exportRefusal(); refusal.isNotEmpty()) { showStatus (refusal); return; }
+    if (sessionLocked) { showStatus ("Unlock the session before exporting"); return; }
+    if (! sessionJobs.reserve()) { showStatus ("Another session operation is already running"); return; }
+
+    const auto exportDir = sessionDir.getChildFile ("Export Files");
+    if (exportDir.createDirectory().failed())
+    {
+        sessionJobs.release();
+        showStatus ("Could not create " + exportDir.getFullPathName());
+        return;
+    }
+    const auto input = engine.captureInterchange();
+    const auto dest  = px::uniqueDestination (exportDir, input.sessionName, format);
+    const auto version = applicationVersion();
+
+    engine.setSessionTransitionActive (true);
+    if (editPage != nullptr) editPage->setEnabled (false);
+    showStatus ("Writing " + dest.getFileName() + "...");
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    sessionJobs.launch ([self, input, format, dest, version] (const std::atomic<bool>& cancel)
+                        -> zynforge::SessionJobRunner::Completion
+    {
+        const auto result = px::write (input, format, dest, version, cancel);
+        const bool cancelled = cancel.load (std::memory_order_relaxed);
+        return [self, result, cancelled]
+        {
+            if (self == nullptr) return;
+            self->engine.setSessionTransitionActive (false);
+            if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
+            if (cancelled) return;
+            if (! result.ok)
+            {
+                self->showStatus ("Export failed: " + result.error);
+                return;
+            }
+            self->showStatus ("Exported " + result.file.getFileName()
+                              + (result.notes.isEmpty() ? juce::String()
+                                                        : " -- " + juce::String (result.notes.size()) + " note(s)"));
+            if (! result.notes.isEmpty())
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::NoIcon,
+                                                        "Exported " + result.file.getFileName(),
+                                                        result.notes.joinIntoString ("\n\n"), "OK");
+        };
+    });
+}
+
+void MainComponent::exportSongs()
+{
+    if (! engine.getActiveSessionDir().isDirectory()) { showStatus ("No active session to export"); return; }
+    if (const auto refusal = engine.exportRefusal(); refusal.isNotEmpty()) { showStatus (refusal); return; }
+
+    const auto songs = zynforge::songexport::rangesFromMarkers (engine.getMarkers().getAll(),
+                                                                engine.getArrangementLengthSamples());
+    if (songs.empty())
+    {
+        showStatus ("No songs to export: add markers, or run Detect songs first");
+        return;
+    }
+    juce::Component::SafePointer<MainComponent> self (this);
+    zynforge::ExportSongsDialog::launch (songs, sessionAudioRateFor (engine),
+        [self] (std::optional<zynforge::songexport::Choice> choice)
+    {
+        if (self != nullptr && choice.has_value()) self->startSongExport (std::move (*choice));
+    });
+}
+
+void MainComponent::startSongExport (zynforge::songexport::Choice choice)
+{
+    namespace sx = zynforge::songexport;
+    // The dialog can sit open across a remote RECORD or a session change.
+    const auto sessionDir = engine.getActiveSessionDir();
+    if (! sessionDir.isDirectory()) { showStatus ("No active session to export"); return; }
+    if (const auto refusal = engine.exportRefusal(); refusal.isNotEmpty()) { showStatus (refusal); return; }
+    if (sessionLocked) { showStatus ("Unlock the session before exporting"); return; }
+    if (! sessionJobs.reserve()) { showStatus ("Another session operation is already running"); return; }
+
+    const auto exportDir = sessionDir.getChildFile ("Export Files");
+    const auto plan = sx::buildPlan (engine, choice, exportDir);
+    engine.setSessionTransitionActive (true);
+    if (editPage != nullptr) editPage->setEnabled (false);
+    songExportRunning = true;
+    showStatus ("Exporting songs: " + juce::String (plan.totalFiles()) + " file(s)...");
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    sessionJobs.launch ([self, &eng = engine, plan] (const std::atomic<bool>& cancel)
+                        -> zynforge::SessionJobRunner::Completion
+    {
+        // The render reads clips and lanes under its own brief locks, as the
+        // whole-session bounces do, so the UI timer keeps running.
+        const auto outcome = sx::run (eng, plan, cancel, [self] (int done, int total, const juce::String& song)
+        {
+            juce::MessageManager::callAsync ([self, done, total, song]
+            {
+                if (self != nullptr)
+                    self->showStatus ("Exporting songs: " + juce::String (done) + " of "
+                                      + juce::String (total) + " files -- " + song
+                                      + " (File > Export > Cancel Song Export to stop)");
+            });
+        });
+        return [self, outcome]
+        {
+            if (self == nullptr) return;
+            self->songExportRunning = false;
+            self->engine.setSessionTransitionActive (false);
+            if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
+            self->lastExportFailures = juce::jmax (0, outcome.attempted - outcome.written);
+            self->showStatus (sx::statusLine (outcome, "Export Files/Songs"));
+        };
+    });
+}
+
 void MainComponent::exportShowHandoff()
 {
     const auto source = engine.getActiveSessionDir();
@@ -1639,6 +1765,8 @@ void MainComponent::exportShowHandoff()
             self->showStatus ("Handoff cancelled: session timeline is unavailable");
             return;
         }
+        const auto interchange = self->engine.captureInterchange();
+        const auto version = applicationVersion();
         // A crash or quit mid-copy must leave a visible incomplete marker,
         // not a plausible-looking folder with a few truncated recordings.
         const auto incomplete = dest.getChildFile ("HANDOFF INCOMPLETE.txt");
@@ -1652,12 +1780,14 @@ void MainComponent::exportShowHandoff()
 
         self->engine.setSessionTransitionActive (true);
         self->showStatus ("Creating handoff in background: " + dest.getFileName());
-        self->sessionJobs.launch ([self, source, dest, incomplete, timelineCsv] (const std::atomic<bool>& cancel)
-                                  -> zynforge::SessionJobRunner::Completion
+        self->sessionJobs.launch ([self, source, dest, incomplete, timelineCsv, interchange, version]
+                                  (const std::atomic<bool>& cancel) -> zynforge::SessionJobRunner::Completion
         {
             showhandoff::Result result;
             if (copyDirectoryCancellable (source, dest, cancel))
-                result = showhandoff::verifyAndWrite (source, dest, timelineCsv, cancel);
+                result = showhandoff::verifyAndWrite (source, dest, timelineCsv, cancel,
+                    [&] (const juce::File& copy, juce::String& warning)
+                    { return projectexport::writeForHandoff (interchange, copy, version, cancel, warning); });
             else
                 result = { false, "Copy cancelled or failed" };
 
