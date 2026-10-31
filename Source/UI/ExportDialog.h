@@ -4,11 +4,36 @@
 
 #include <functional>
 #include <optional>
+#include <vector>
 
 #include "../Audio/TrackExporter.h"
 
 namespace zynforge
 {
+    // The format rows every export dialog shares: format, sample rate, bit depth
+    // and MP3 bitrate, with the per-format constraints below.
+    class ExportFormatControls final : public juce::Component
+    {
+    public:
+        // `sessionRate`: see ExportDialog::launch.
+        explicit ExportFormatControls (double sessionRate);
+
+        ExportOptions getOptions() const;
+
+        static constexpr int kPreferredHeight = 162;
+
+        void resized() override;
+
+    private:
+        void refreshAvailability();
+
+        std::vector<double> rateHz;
+        double              sessionRateHz { 48000.0 };
+        juce::Label         srNote;
+        juce::Label         formatLabel, rateLabel, bitsLabel, bitrateLabel;
+        juce::ComboBox      formatBox,   rateBox,   bitsBox,   bitrateBox;
+    };
+
     // Modal dialog: pick format, sample rate, bit depth (or MP3 bitrate).
     // Per-format constraints:
     //   - WAV  : 16 / 24 / 32 (32 = IEEE float)
