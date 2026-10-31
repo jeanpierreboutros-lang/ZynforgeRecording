@@ -103,7 +103,7 @@ namespace zynforge
 
     void OscRemote::sceneRecalled (int scene, const juce::String& sceneName)
     {
-        engine.getRemotes().onConsoleScene (scene, sceneName);
+        engine.getRemotes().onConsoleScene (scene, sceneName, scenefollow::Path::OscListener);
     }
 
     void OscRemote::setChannelName (int idx1, const juce::String& s)

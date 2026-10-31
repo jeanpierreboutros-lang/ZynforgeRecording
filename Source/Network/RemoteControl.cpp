@@ -280,10 +280,13 @@ namespace zynforge
         if (host.revealPosition) host.revealPosition (samplePosition);
     }
 
-    scenefollow::Action RemoteControl::onConsoleScene (int sceneNumber, const juce::String& sceneName)
+    scenefollow::Action RemoteControl::onConsoleScene (int sceneNumber, const juce::String& sceneName,
+                                                       scenefollow::Path path)
     {
         using scenefollow::Action;
         const auto label = scenefollow::sceneLabel (sceneNumber, sceneName);
+        if (recallEchoes.isEcho (path, label, juce::Time::getMillisecondCounter()))
+            return Action::Nothing;
         const auto& markers = engine.getMarkers().getAll();
         const auto decision = scenefollow::decide (sceneFacts(), markers, label,
                                                    engine.getPlayer().getPositionSamples());

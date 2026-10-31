@@ -220,6 +220,41 @@ namespace zynforge
             }
         }
 
+        void testRecallHeardOnBothPaths()
+        {
+            using Filter = scenefollow::RecallEchoFilter;
+            using EchoPath = scenefollow::Path;
+
+            beginTest ("Echo filter: only the other path inside the window is an echo");
+            {
+                Filter f;
+                expect (! f.isEcho (EchoPath::ConsoleLink, "Verse", 1000), "a first recall is never an echo");
+                expect (f.isEcho (EchoPath::OscListener, "verse", 1000 + Filter::kWindowMs - 1));
+                Filter sameName;
+                sameName.isEcho (EchoPath::ConsoleLink, "Verse", 1000);
+                expect (! sameName.isEcho (EchoPath::OscListener, "Chorus", 1001), "a different scene is real");
+                Filter late;
+                late.isEcho (EchoPath::ConsoleLink, "Verse", 1000);
+                expect (! late.isEcho (EchoPath::OscListener, "Verse", 1000 + Filter::kWindowMs), "outside the window");
+                Filter again;
+                again.isEcho (EchoPath::ConsoleLink, "Verse", 1000);
+                expect (! again.isEcho (EchoPath::ConsoleLink, "Verse", 1001),
+                        "the same path again is the engineer firing it again");
+            }
+
+            SceneBench b;
+            beginTest ("A recall heard on both paths steps one duplicate, not two");
+            b.markers().clear();
+            b.markers().drop (at (5.0), "Verse");
+            b.markers().drop (at (15.0), "Verse");
+            b.player().setPositionSamples (at (1.0));
+            b.main.engine.setSceneFollowEnabled (true);
+            fire (b, Path::ConsoleLink, 3, "Verse");
+            fire (b, Path::OscListener, 3, "Verse");
+            expectEquals (b.player().getPositionSamples(), at (5.0));
+            b.main.engine.setSceneFollowEnabled (false);
+        }
+
         void testSceneFollowOnBothPaths()
         {
             SceneBench b;
@@ -1378,6 +1413,7 @@ namespace zynforge
             AudioEngine::setTestModeSkipAudioInit (true);
             testSceneRule();
             testSceneFollowOnBothPaths();
+            testRecallHeardOnBothPaths();
             testMacroParsing();
             testMacroCommands();
             testMacroPanel();

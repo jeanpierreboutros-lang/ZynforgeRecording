@@ -26,6 +26,40 @@ namespace zynforge::scenefollow
         Nothing       // no take, Follow off
     };
 
+    enum class Path : int { ConsoleLink, OscListener };
+
+    // One recall reaches the app twice when the console link and the OSC
+    // listener both watch the same desk: a take would get two markers and a
+    // rehearsal would step past a duplicate name. Only the OTHER path inside
+    // the window is an echo. The same path again is the engineer firing the
+    // snapshot again, which must count. Message thread only.
+    class RecallEchoFilter
+    {
+    public:
+        static constexpr juce::uint32 kWindowMs = 250;
+
+        bool isEcho (Path path, const juce::String& label, juce::uint32 nowMs)
+        {
+            const bool echo = heardOne && path != lastPath
+                              && nowMs - lastMs < kWindowMs
+                              && label.equalsIgnoreCase (lastLabel);
+            lastPath = path;
+            heardOne = true;
+            if (! echo)
+            {
+                lastLabel = label;
+                lastMs = nowMs;
+            }
+            return echo;
+        }
+
+    private:
+        Path         lastPath { Path::ConsoleLink };
+        bool         heardOne { false };
+        juce::String lastLabel;
+        juce::uint32 lastMs { 0 };
+    };
+
     struct Facts
     {
         bool capturing    { false };   // AudioEngine::isRecording(): local or daemon

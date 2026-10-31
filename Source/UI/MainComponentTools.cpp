@@ -674,7 +674,10 @@ void MainComponent::wireConsoleLink()
     };
 
     consoleLink.onSceneRecalled = [self] (int sceneIdx, const juce::String& sceneName)
-    { if (self != nullptr) self->engine.getRemotes().onConsoleScene (sceneIdx, sceneName); };
+    {
+        if (self != nullptr)
+            self->engine.getRemotes().onConsoleScene (sceneIdx, sceneName, zynforge::scenefollow::Path::ConsoleLink);
+    };
 
     consoleLink.onStereoLink = [self] (int leftCh1, bool linked)
     { if (self != nullptr) self->engine.getRemotes().onConsoleStereoLink (leftCh1, linked); };

@@ -112,7 +112,8 @@ namespace zynforge
 
         // Both console paths report a scene / snapshot recall here. The rule
         // is scenefollow::decide; this applies it and tells the engineer.
-        scenefollow::Action onConsoleScene (int sceneNumber, const juce::String& sceneName);
+        scenefollow::Action onConsoleScene (int sceneNumber, const juce::String& sceneName,
+                                            scenefollow::Path path);
         // Move the playhead without touching the transport state.
         void locate (juce::int64 samplePosition);
 
@@ -137,6 +138,7 @@ namespace zynforge
         juce::String getActiveSurfaceKey() const { return activeSurfaceKey; }
 
     private:
+        scenefollow::RecallEchoFilter recallEchoes;
         scenefollow::Facts sceneFacts() const;
 
         AudioEngine& engine;
