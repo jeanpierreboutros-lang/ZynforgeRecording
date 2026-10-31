@@ -186,6 +186,11 @@ namespace zynforge
             return false;
         }
 
+        bwf::TimeAnchor timecode;
+        if (getTimecodeAnchor (timecode)) recorder.setTimeReferenceHint (timecode);
+        else                              recorder.clearTimeReferenceHint();
+        recorder.setClockDevice (deviceManager.getAudioDeviceSetup().inputDeviceName);
+
         if (! recorder.startRecording (sessionDir)) return false;
         invalidateExternalCaptureStatus();
         // A punch take's capture window and splice point are player positions:
@@ -577,6 +582,20 @@ namespace zynforge
         return (juce::int64) (secs * rate + 0.5);
     }
 
+    bool AudioEngine::getTimecodeAnchor (bwf::TimeAnchor& anchor) const
+    {
+        if (! isChaseLive()) return false;
+        const bool ltc = getChaseMode() == ChaseMode::Ltc;
+        anchor = { timecodeChase.timeOfDaySeconds (ltc ? 1 : 2),
+                   juce::Time::getHighResolutionTicks(), ltc ? "ltc" : "mtc" };
+        return true;
+    }
+
+    clocksource::Reading AudioEngine::readClockSource (int timeoutMs)
+    {
+        return recorder.readClockSource (deviceManager.getAudioDeviceSetup().inputDeviceName, timeoutMs);
+    }
+
     int AudioEngine::midiBeatsAt (juce::int64 samplePos) const
     {
         const double rate = player.getSampleRate() > 0.0 ? player.getSampleRate()
@@ -880,6 +899,7 @@ namespace zynforge
         s.stereoMixFailed = hasStereoMixWriteFailed();
         s.diskStruggling   = recorder.isDiskStruggling();
         s.captureFormat    = (int) recorder.getCaptureFormat();
+        s.channelAlarms    = recorder.evaluateChannelAlarms();
 
         s.tracks.reserve ((size_t) s.numTracks);
         for (int i = 0; i < s.numTracks; ++i)

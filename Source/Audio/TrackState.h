@@ -47,6 +47,9 @@ namespace zynforge
 
         std::atomic<float> peak    { 0.0f };
         std::atomic<float> inputPeak { 0.0f }; // input detector; never receives playback meters
+        // Dead-channel detector: the take frame just after the last captured
+        // block whose peak was not exact zero, -1 before any this take.
+        std::atomic<juce::int64> lastInputSignal { -1 };
         std::atomic<bool> referenceMedia { false }; // generated backing bed, not the capture endpoint
         std::atomic<float> rms     { 0.0f };
         std::atomic<bool>  clipped { false };

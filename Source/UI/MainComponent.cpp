@@ -367,8 +367,10 @@ void MainComponent::startDaemonTake (const RecordStartPlan& plan)
     for (int i = 0; i < plan.numTracks; ++i)
         if (recorder.getTrack (i).armed.load (std::memory_order_relaxed))
             arms.setBit (i);
+    zynforge::bwf::TimeAnchor timecode;
     if (captureSupervisor.startRecording (plan.dir, plan.numTracks,
-                                          (int) recorder.getCaptureFormat(), arms))
+                                          (int) recorder.getCaptureFormat(), arms,
+                                          engine.getTimecodeAnchor (timecode) ? timecode.toJson() : juce::var()))
     {
         engine.setExternalCaptureStatus (captureSupervisor.lastStatus(),
                                          captureSupervisor.lastStatusAtMs());
@@ -1451,6 +1453,11 @@ void MainComponent::showPreflightChecklist()
         body << chk (std::abs (fileSr - sr) < 1.0)
              << "Session SR matches device: " << juce::String ((int) fileSr) << " Hz\n";
     }
+
+    // Asked on the probe's own thread: a stalled driver costs this checklist
+    // the wait below, and then reads as "not available".
+    constexpr int kClockReadWaitMs = 250;
+    body << zynforge::clocksource::preflightRow (engine.readClockSource (kClockReadWaitMs)) << "\n";
 
     // Signal presence on armed channels (peaks are live at line check).
     if (armed > 0)

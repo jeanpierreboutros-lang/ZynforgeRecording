@@ -161,7 +161,8 @@ namespace zynforge::capture
     }
 
     bool CaptureSupervisor::startRecording (const juce::File& sessionDir, int trackCount,
-                                            int captureFormat, const juce::BigInteger& armedTracks)
+                                            int captureFormat, const juce::BigInteger& armedTracks,
+                                            const juce::var& timeHint)
     {
         if (! isAttached()) return false;
 
@@ -176,6 +177,7 @@ namespace zynforge::capture
         }
         Command rec; rec.action = Action::StartRecording;
         rec.sessionDir = sessionDir.getFullPathName();
+        rec.configuration = timeHint;
         // Await the daemon's reply (bounded): true ONLY when the daemon
         // confirms the recorder actually started. A socket-write success is
         // NOT proof the take is rolling, so we no longer light Record on it.

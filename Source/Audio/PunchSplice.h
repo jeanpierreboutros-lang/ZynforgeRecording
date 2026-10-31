@@ -8,6 +8,20 @@
 
 namespace zynforge
 {
+    // The bext fields of a WAV take. A spliced file begins with the base's
+    // first sample, so it keeps the base's stamp and text.
+    inline juce::StringPairArray bextFieldsOf (const juce::AudioFormatReader& reader)
+    {
+        juce::StringPairArray kept;
+        for (auto* key : { juce::WavAudioFormat::bwavDescription, juce::WavAudioFormat::bwavOriginator,
+                           juce::WavAudioFormat::bwavOriginatorRef, juce::WavAudioFormat::bwavOriginationDate,
+                           juce::WavAudioFormat::bwavOriginationTime, juce::WavAudioFormat::bwavTimeReference,
+                           juce::WavAudioFormat::bwavCodingHistory })
+            if (reader.metadataValues.containsKey (key))
+                kept.set (key, reader.metadataValues[key]);
+        return kept;
+    }
+
     // Splice core, working from an already-open base READER (single file or a
     // ConcatReader spanning a multi-part take). Writes a brand-new outFile in
     // `baseExt`'s container; never mutates inputs. See splicePunchFile for the
@@ -38,9 +52,10 @@ namespace zynforge
         std::unique_ptr<juce::AudioFormat> fmt;
         int  bits    = (int) baseR.bitsPerSample;
         const bool isFloat = baseR.usesFloatingPointData;
+        juce::StringPairArray metadata;
         if (ext == ".flac")                       { fmt.reset (new juce::FlacAudioFormat());  bits = juce::jmin (bits, 24); }
         else if (ext == ".aif" || ext == ".aiff")   fmt.reset (new juce::AiffAudioFormat());
-        else                                        fmt.reset (new juce::WavAudioFormat());
+        else                                      { fmt.reset (new juce::WavAudioFormat());   metadata = bextFieldsOf (baseR); }
 
         outFile.deleteFile();
         std::unique_ptr<juce::FileOutputStream> os (outFile.createOutputStream());
@@ -50,7 +65,7 @@ namespace zynforge
             isFloat && (ext == ".aif" || ext == ".aiff")
                 ? FloatAiffWriter::create (os.get(), baseR.sampleRate, (unsigned int) chans)
                 : fmt->createWriterFor (os.get(), baseR.sampleRate, (unsigned int) chans,
-                                       isFloat ? 32 : bits, {}, 0));
+                                       isFloat ? 32 : bits, metadata, 0));
         if (w == nullptr) return false;
         os.release();
 

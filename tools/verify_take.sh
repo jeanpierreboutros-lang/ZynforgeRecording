@@ -158,6 +158,11 @@ else
         red "  a mirror writer failed"
         fail=1
     fi
+    # Notes, not failures: neither says anything is wrong with the files.
+    alarms=$(jq -r '.channelAlarms // [] | length' "$REPORT")
+    (( alarms == 0 )) || ylw "  $alarms dead-channel alarm(s) during the take: see channelAlarms in the report"
+    stampFailures=$(jq -r '.timeReferenceStampFailures // [] | length' "$REPORT")
+    (( stampFailures == 0 )) || ylw "  $stampFailures file(s) kept their estimated BWF time: see timeReferenceStampFailures"
 
     # A hash proves only that a file still matches this report. Check the
     # report's frame counts and the complete part sequence as well: otherwise
