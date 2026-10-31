@@ -246,6 +246,24 @@ namespace zynforge
         float getFps() const noexcept { return ltcFps.load (std::memory_order_relaxed); }
         bool  isDropFrame() const noexcept { return ltcDropFrame.load (std::memory_order_relaxed); }
 
+        // The time of day the timecode stands for now, in seconds. A label is
+        // only known once its frame has passed: framesLate is that age (1 for
+        // LTC, whose sync word ends the frame; 2 for MTC, whose eight
+        // quarter-frames span two). The fields are separate atomics, so read
+        // until two passes agree: a tear at a minute boundary is a minute out.
+        double timeOfDaySeconds (int framesLate) const noexcept
+        {
+            int hh = 0, mm = 0, ss = 0, ff = 0;
+            for (int attempt = 0; attempt < 4; ++attempt)
+            {
+                hh = getHours(); mm = getMinutes(); ss = getSeconds(); ff = getFrames();
+                if (hh == getHours() && mm == getMinutes() && ss == getSeconds() && ff == getFrames())
+                    break;
+            }
+            const double rate = getFps() > 0.0f ? (double) getFps() : 30.0;
+            return hh * 3600.0 + mm * 60.0 + ss + (ff + framesLate) / rate;
+        }
+
     private:
         struct MtcAcc
         {

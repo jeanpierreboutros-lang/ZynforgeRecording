@@ -4,6 +4,8 @@
 
 #include <vector>
 
+#include "ChannelAlarm.h"
+
 namespace zynforge
 {
     // A narrow, serialisable snapshot of everything a status consumer (the
@@ -99,6 +101,9 @@ namespace zynforge
         bool          diskStruggling { false };
         bool          captureDeviceLost { false }; // latched if a rolling daemon loses its audio callback
         int           captureFormat { 0 };     // CaptureFormat as int
+        // Live dead-channel alarms. Additive on the daemon wire: a peer that
+        // does not know the field ignores it.
+        std::vector<channelalarm::Alarm> channelAlarms;
         std::vector<TrackStatus> tracks;
 
         juce::var toJson() const
@@ -135,6 +140,9 @@ namespace zynforge
             o->setProperty ("diskStruggling", diskStruggling);
             o->setProperty ("captureDeviceLost", captureDeviceLost);
             o->setProperty ("captureFormat", captureFormat);
+            juce::Array<juce::var> alarms;
+            for (const auto& a : channelAlarms) alarms.add (a.toJson());
+            o->setProperty ("channelAlarms", alarms);
             juce::Array<juce::var> arr;
             for (const auto& t : tracks) arr.add (t.toJson());
             o->setProperty ("tracks", arr);
@@ -175,6 +183,9 @@ namespace zynforge
             s.diskStruggling = (bool) v.getProperty ("diskStruggling", false);
             s.captureDeviceLost = (bool) v.getProperty ("captureDeviceLost", false);
             s.captureFormat = (int) v.getProperty ("captureFormat", 0);
+            if (auto* alarms = v.getProperty ("channelAlarms", {}).getArray())
+                for (const auto& alarm : *alarms)
+                    s.channelAlarms.push_back (channelalarm::Alarm::fromJson (alarm));
             if (auto* a = v.getProperty ("tracks", {}).getArray())
                 for (const auto& tv : *a)
                     s.tracks.push_back (TrackStatus::fromJson (tv));

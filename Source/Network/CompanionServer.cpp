@@ -281,6 +281,7 @@ main { max-width:1100px; margin:auto; padding:16px; }
 #banner.bad { background:#421719; color:var(--bad); }
 #details { margin:14px 0; line-height:1.6; color:var(--muted); }
 #warnings { margin:14px 0; padding-left:24px; color:var(--bad); font-weight:700; }
+#warnings .notice { color:var(--warn); font-weight:400; }
 #metrics { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
 .metric,.track { background:var(--panel); border:1px solid #303038; border-radius:7px; padding:12px; }
 .metric small { display:block; color:var(--muted); }
@@ -335,7 +336,12 @@ function metric(label, value) {
     card.append(small, strong); metrics.append(card);
 }
 function render(state) {
-    const issues = [];
+    const issues = [], notices = [];
+    for (const a of state.channelAlarms || []) {
+        if (a.kind === "stream") issues.unshift("INPUT STREAM LOST: " + a.channels + " channels at digital zero (" + a.name + ")");
+        else if (a.kind === "channel") issues.push("Channel fault, input lost: " + a.name);
+        else notices.push("No signal yet this take: " + a.name);
+    }
     if (state.source === "daemon-unavailable" || (state.source === "daemon" && state.statusAgeMs > 3000))
         issues.push("Capture-daemon status is unavailable or stale");
     if (state.primaryFailed) issues.push("PRIMARY WRITE FAILED");
@@ -354,6 +360,7 @@ function render(state) {
         + " · " + (state.sampleRate || 0) + " Hz · updated " + new Date().toLocaleTimeString();
     warningsEl.replaceChildren();
     for (const issue of issues) { const li = document.createElement("li"); li.textContent = issue; warningsEl.append(li); }
+    for (const notice of notices) { const li = document.createElement("li"); li.className = "notice"; li.textContent = notice; warningsEl.append(li); }
     metrics.replaceChildren();
     metric("Time remaining", state.minutesRemaining > 0 ? state.minutesRemaining + " min" : "—");
     metric("Missed samples", String(state.missedSamples || 0));

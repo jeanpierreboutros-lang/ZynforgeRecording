@@ -465,6 +465,19 @@ namespace zynforge
         const int n = juce::jmin (numChannels, (int) fifos.size());
         const bool rec = recording.load (std::memory_order_acquire);
 
+        // Where this block ends in the take. The first one also pins the
+        // pass's real start for the BWF stamp, read off the audio thread.
+        juce::int64 takeFrames = 0;
+        if (rec)
+        {
+            takeFrames = alarmFrames.load (std::memory_order_relaxed) + numSamples;
+            if (firstLiveTicks.load (std::memory_order_relaxed) == 0)
+            {
+                firstLiveBlock.store (numSamples, std::memory_order_relaxed);
+                firstLiveTicks.store (juce::Time::getHighResolutionTicks(), std::memory_order_release);
+            }
+        }
+
         if (rec && playheadAtBlock >= 0 && punchInActive.load (std::memory_order_relaxed))
         {
             juce::int64 unset = -1;
@@ -510,6 +523,11 @@ namespace zynforge
                                  : lft.armed.load (std::memory_order_relaxed))
                          && ! lft.isBus .load (std::memory_order_relaxed);
             }
+
+            // Exact zero is the fault signature, so any non-zero peak counts.
+            // Pre-fader like the recording itself: a muted strip still counts.
+            if (rec && inputPeak > 0.0f && (armed || pairArmed))
+                t.lastInputSignal.store (takeFrames, std::memory_order_relaxed);
 
             // Histories share a block boundary, including unarmed and unrouted
             // inputs. Changing arm state must not compress a track's history.
@@ -645,7 +663,10 @@ namespace zynforge
         }
 
         if (rec)
+        {
             samplesSinceStart.fetch_add (numSamples, std::memory_order_relaxed);
+            alarmFrames.store (takeFrames, std::memory_order_relaxed);
+        }
     }
 
     // NOTE: punch-in is triggered two ways, both via armPunchIn(): the normal
@@ -824,6 +845,11 @@ namespace zynforge
         const juce::ScopedLock structureGuard (structureLock);
         startError.clear();
         if (recording.load() || isFinalizing()) return false;
+
+        timeAnchor  = hasTimeHint ? timeHint : bwf::TimeAnchor::fromWallClock();
+        hasTimeHint = false;
+        firstLiveTicks.store (0, std::memory_order_relaxed);
+        firstLiveBlock.store (0, std::memory_order_relaxed);
 
         // A punch/continue arm belongs to this one start. Consume it on every
         // refusal below as well as on success (see discardTakeArms).
@@ -1465,6 +1491,10 @@ namespace zynforge
         // lead-in, written after STOP into part slots reserved here (see
         // PendingLeadIn). Returns the part this pass's audio opens at.
         pendingLeadIns.clear();
+        // Only what the estimate stamped at open assumes; preparePreRollDump
+        // sets the real amount once the history is detached.
+        preRollHistorySamples = preRollSeconds > 0 && ! punchInActive && ! continueAsPart
+                                  ? (int) (sampleRate * preRollSeconds) : 0;
         const bool editPass = (continueAsPart || punchInActive) && recordBaseSamples > 0;
         const auto reserveLeadIn = [&] (std::size_t track, int copyIndex, const juce::File& dir,
                                         const juce::String& trackName, const TakeFormat& fmt,
@@ -1538,6 +1568,8 @@ namespace zynforge
             const int chans = (tracks[i]->isStereo.load (std::memory_order_relaxed)
                                && i + 1 < tracks.size()) ? 2 : 1;
             w.numChannels = chans;
+            w.bextNameLeft = tracks[i]->getNameThreadSafe();
+            if (chans == 2) w.bextNameRight = tracks[i + 1]->getNameThreadSafe();
 
             // Primary writer -- under <session>/Audio Files/Track_NN.<ext>.
             // Continue mode appends a NEW part (Track_NN_partXX) so the existing
@@ -1557,7 +1589,7 @@ namespace zynforge
                 w.partNumberPrimary = part;
             }
             invalidateReportsBeforeMediaMutation (take);
-            w.writer.reset (openWriterAtPath (primaryFile, primary.container, primary.bitDepth, chans));
+            w.writer.reset (openWriterAtPath (primaryFile, primary.container, primary.bitDepth, w, 0));
             ++primaryAttempts;
             if (w.writer != nullptr) ++primaryOpened;
             w.primaryBaseFile       = audioFilesDir.getChildFile (trackName);
@@ -1589,7 +1621,7 @@ namespace zynforge
                     backupFile = partFileFor (backupAudioDir, trackName, backup.ext, part);
                     w.partNumberBackup = part;
                 }
-                w.backupWriter.reset (openWriterAtPath (backupFile, backup.container, backup.bitDepth, chans));
+                w.backupWriter.reset (openWriterAtPath (backupFile, backup.container, backup.bitDepth, w, 0));
                 w.backupBaseFile       = backupAudioDir.getChildFile (trackName);
                 w.backupExt            = backup.ext;
                 w.backupBitDepth       = backup.bitDepth;
@@ -1631,7 +1663,7 @@ namespace zynforge
                 }
                 WriterChannel::Mirror m;
                 m.partNumber = mPart;
-                m.writer.reset (openWriterAtPath (mFile, mFmt.container, mFmt.bitDepth, chans));
+                m.writer.reset (openWriterAtPath (mFile, mFmt.container, mFmt.bitDepth, w, 0));
                 m.baseFile       = mirrorSession.getChildFile (trackName);
                 m.ext            = mFmt.ext;
                 m.container      = mFmt.container;
@@ -1872,9 +1904,14 @@ namespace zynforge
         captureDeviceLost.store (false, std::memory_order_relaxed);
         samplesSinceFlush.store (0, std::memory_order_relaxed);
         for (auto& f : fifos) f->resetCaptureTimeline();
+        alarmFrames.store (0, std::memory_order_relaxed);
         // Clear each track's live waveform overview so a new take draws fresh
         // (done before the audio thread starts pushing into it).
-        for (auto& t : tracks) t->liveWaveReset();
+        for (auto& t : tracks)
+        {
+            t->liveWaveReset();
+            t->lastInputSignal.store (-1, std::memory_order_relaxed);
+        }
 
         // Allocate outside the callback boundary, then detach ALL histories
         // and enable live capture in one constant-time transition. Disk I/O
@@ -1894,7 +1931,54 @@ namespace zynforge
             recording.store (true, std::memory_order_release);
         }
         preparePreRollDump();
+        beginChannelAlarms();
         writersReady.store (true,  std::memory_order_release);
+        clockProbe.request (clockDevice);
+    }
+
+    // Runs after preparePreRollDump: alarmOrigin reads the pre-roll length,
+    // and alarmsRunning under alarmLock is what lets another thread do that.
+    void MultitrackRecorder::beginChannelAlarms()
+    {
+        std::vector<channelalarm::Monitor::Input> inputs;
+        std::vector<std::shared_ptr<TrackState>> watched;
+        for (std::size_t i = 0; i < writers.size(); ++i)
+        {
+            if (! writers[i].active) continue;
+            for (int side = 0; side < writers[i].numChannels; ++side)
+            {
+                inputs.push_back ({ (int) i, writers[i].bextNameLeft });
+                watched.push_back (tracks[i + (std::size_t) side]);
+            }
+        }
+        const juce::ScopedLock sl (alarmLock);
+        alarmMonitor.begin (std::move (inputs), sampleRate);
+        alarmTracks = std::move (watched);
+        alarmScratch.assign (alarmTracks.size(), -1);
+        alarmsRunning = true;
+    }
+
+    juce::int64 MultitrackRecorder::alarmOrigin() const noexcept
+    {
+        return recordBaseSamples.load (std::memory_order_relaxed) + preRollHistorySamples;
+    }
+
+    // `now` is read first so a thread stalled between these loads can only see
+    // a channel as more recent than `now`, never raise a false fault.
+    void MultitrackRecorder::updateChannelAlarmsLocked()
+    {
+        const auto now = alarmFrames.load (std::memory_order_relaxed);
+        for (std::size_t i = 0; i < alarmTracks.size(); ++i)
+            alarmScratch[i] = alarmTracks[i]->lastInputSignal.load (std::memory_order_relaxed);
+        alarmMonitor.update (alarmScratch, now);
+    }
+
+    std::vector<channelalarm::Alarm> MultitrackRecorder::evaluateChannelAlarms()
+    {
+        const juce::ScopedLock sl (alarmLock);
+        if (! alarmsRunning) return {};
+        updateChannelAlarmsLocked();
+        return alarmMonitor.live (alarmOrigin());
     }
 
     namespace { std::atomic<juce::int64> s_autoSplitThresholdOverride { 0 }; }
@@ -2059,11 +2143,12 @@ namespace zynforge
     juce::AudioFormatWriter* MultitrackRecorder::openWriterAtPath (const juce::File& target,
                                                                    int containerCode,
                                                                    int bits,
-                                                                   int numChannels) noexcept
+                                                                   WriterChannel& channel,
+                                                                   juce::int64 framesBefore) noexcept
     {
-        // numChannels: 1 = mono (the default, every standalone track),
-        // 2 = interleaved stereo (a stereo pair captured to one file).
-        const unsigned int chans = (unsigned int) juce::jmax (1, numChannels);
+        // 1 = mono (every standalone track), 2 = interleaved stereo (a stereo
+        // pair captured to one file).
+        const unsigned int chans = (unsigned int) juce::jmax (1, channel.numChannels);
 
         // All callers choose a new part or stash a punch target first.
         // Never truncate an unexpected file, including a foreign backup.
@@ -2076,17 +2161,22 @@ namespace zynforge
         juce::FlacAudioFormat flac;
 
         juce::StringPairArray meta;
+        juce::int64 timeReference = 0;
         if (containerCode == 0)   // WAV gets the BWF bext chunk so mix
         {                         // engineers can identify the take.
             const auto now = juce::Time::getCurrentTime();
+            // A crash survivor keeps this estimate; finalization stamps the
+            // exact value (see bwf::stampTimeReference).
+            timeReference = bwf::wrapToDay (passStartSamples() + framesBefore, sampleRate);
             meta.set (juce::WavAudioFormat::bwavDescription,
-                      "Zynforge Recording -- " + activeSessionDir.getFileName()
-                        + " -- " + target.getFileNameWithoutExtension());
+                      bwf::channelDescription ("Zynforge Recording -- " + activeSessionDir.getFileName()
+                                                 + " -- " + target.getFileNameWithoutExtension(),
+                                               channel.bextNameLeft, channel.bextNameRight));
             meta.set (juce::WavAudioFormat::bwavOriginator,      "Zynforge Recording");
             meta.set (juce::WavAudioFormat::bwavOriginatorRef,   activeSessionDir.getFileName());
             meta.set (juce::WavAudioFormat::bwavOriginationDate, now.formatted ("%Y-%m-%d"));
             meta.set (juce::WavAudioFormat::bwavOriginationTime, now.formatted ("%H:%M:%S"));
-            meta.set (juce::WavAudioFormat::bwavTimeReference,   "0");
+            meta.set (juce::WavAudioFormat::bwavTimeReference,   juce::String (timeReference));
         }
 
         juce::AudioFormatWriter* w = nullptr;
@@ -2095,7 +2185,19 @@ namespace zynforge
                                                    : aiff.createWriterFor (out, sampleRate, chans, bits, meta, 0);
         else                         w = wav .createWriterFor (out, sampleRate, chans, bits, meta, 0);
         if (w == nullptr) delete out;
+        else if (containerCode == 0)
+            channel.stampedParts.push_back ({ target, framesBefore, (juce::uint64) timeReference });
         return w;
+    }
+
+    juce::int64 MultitrackRecorder::passStartSamples() const noexcept
+    {
+        const auto firstLive = firstLiveTicks.load (std::memory_order_acquire);
+        const auto liveStart = (juce::int64) std::llround (
+                timeAnchor.secondsAt (firstLive != 0 ? firstLive : juce::Time::getHighResolutionTicks())
+                * sampleRate)
+            - (firstLive != 0 ? firstLiveBlock.load (std::memory_order_relaxed) : 0);
+        return liveStart - preRollHistorySamples;
     }
 
     bool MultitrackRecorder::beginFinalization()
@@ -2149,6 +2251,10 @@ namespace zynforge
         juce::int64 timelineStart {};   // where this pass sits on the timeline (punch origin aware)
         std::vector<WriterReport>     writers;
         std::vector<PunchWriterFiles> punchFiles;
+        std::vector<WriterChannel::StampedPart> stampedParts;
+        juce::int64       timeReference {};
+        juce::StringArray stampFailures;
+        std::vector<channelalarm::Alarm> channelAlarms;
     };
 
     // Everything session.report.json says, captured BY VALUE -- no `this`, no
@@ -2175,6 +2281,11 @@ namespace zynforge
         bool        backupWasRunning {}, reportedBackupFailure {}, reportedPrimaryFailure {},
                     reportedPunchFailure {}, reportedMirrorFailure {}, reportedDeviceLoss {};
         int         reportedMirrorsSkipped {};
+        juce::int64  timeReference {};
+        juce::String timeReferenceSource;
+        juce::StringArray stampFailures;
+        clocksource::Reading clock;
+        juce::Array<juce::var> channelAlarms;
         std::vector<TrackMeta>               trackMetas;
         std::vector<TakeStop::WriterReport>  writerSnaps;
         juce::var                            twin;
@@ -2198,6 +2309,7 @@ namespace zynforge
 
         if (stop.doPunch) splicePunchedTracks (stop);
         completeLeadIns (stop);
+        stampTakeFiles (stop);
         punchInActive     = false;
         continueAsPart    = false;   // consume the continue arm
         recordBaseSamples = 0;
@@ -2209,6 +2321,29 @@ namespace zynforge
         // Clean stop -- remove the recovery marker.
         if (activeSessionDir.isDirectory())
             activeSessionDir.getChildFile ("recording.session").deleteFile();
+    }
+
+    // The exact BWF stamp, on every WAV this pass wrote: the first frame's real
+    // time plus the frames before that part. The only write a closed capture
+    // file ever gets. It runs after every writer closed and before
+    // publishSessionReport starts the hash thread, so the hashes describe the
+    // final bytes. A file that refuses keeps its estimate and goes in the
+    // report; its audio is fine, so no capture failure is latched.
+    void MultitrackRecorder::stampTakeFiles (TakeStop& stop)
+    {
+        if (beforeStampForTests) beforeStampForTests();
+        const auto start = passStartSamples();
+        stop.timeReference = bwf::wrapToDay (start, sampleRate);
+        if (firstLiveTicks.load (std::memory_order_acquire) == 0) return;   // nothing went live
+
+        for (const auto& part : stop.stampedParts)
+        {
+            const auto result = bwf::stampTimeReference (
+                part.file, part.stampedAtOpen,
+                (juce::uint64) bwf::wrapToDay (start + part.framesBefore, sampleRate));
+            if (result != bwf::StampResult::ok)
+                stop.stampFailures.add (part.file.getFullPathName() + ": " + bwf::toString (result));
+        }
     }
 
     // Fill the lead-in slots reserved at start now that the pass's real
@@ -2274,6 +2409,19 @@ namespace zynforge
         stop.totalSeconds     = sampleRate > 0.0 ? (double) stop.totalSamples / sampleRate : 0.0;
         stop.backupWasRunning = backupActive.load (std::memory_order_relaxed);
         stop.backupHadFailure = backupFailed.load (std::memory_order_relaxed);
+        {
+            const juce::ScopedLock sl (alarmLock);
+            if (alarmsRunning)
+            {
+                // A fault that crossed its threshold since the last status tick
+                // still belongs in the report.
+                updateChannelAlarmsLocked();
+                alarmMonitor.finish (alarmFrames.load (std::memory_order_relaxed));
+                stop.channelAlarms = alarmMonitor.history (alarmOrigin());
+                alarmsRunning = false;
+                alarmTracks.clear();
+            }
+        }
 
         // Snapshot per-writer file-part info BEFORE closeWriters clears
         // the writers vector. The report needs this to enumerate the
@@ -2298,6 +2446,8 @@ namespace zynforge
                 wr.mirrors.push_back ({ root, m.totalSamples, m.partFiles, m.failed });
             }
             stop.writers.push_back (std::move (wr));
+            stop.stampedParts.insert (stop.stampedParts.end(),
+                                      wc.stampedParts.begin(), wc.stampedParts.end());
 
             TakeStop::PunchWriterFiles pf;
             if (stop.doPunch)
@@ -2450,6 +2600,12 @@ namespace zynforge
                 copies.push_back (prepareCopy (mf));
 
             if (! copies[0].attempted) continue;    // primary not stashed -> not a punched track
+
+            // A spliced file keeps its base's stamp (bextFieldsOf) and a copy
+            // that rolled back IS its base, so neither takes this pass's time.
+            for (const auto& c : copies)
+                if (c.attempted)
+                    std::erase_if (stop.stampedParts, [&c] (const auto& part) { return part.file == c.fresh; });
 
             // Nothing was captured (a selection punch stopped during its
             // pre-roll): there is no punch, so every copy simply keeps its take.
@@ -2645,6 +2801,21 @@ namespace zynforge
         report.reportedPunchFailure = previousBool ("punchSpliceFailed") || punchFailed;
         report.reportedMirrorFailure = previousMirrorFailure
                                            || mirrorFailed.load (std::memory_order_relaxed);
+
+        // timeReference is the newest stamp written. A punch writes none: its
+        // spliced files keep the take's stamp, so the report keeps it too.
+        const bool keepTakeStamp = stop.doPunch && oldReport.hasProperty ("timeReference");
+        report.timeReference = keepTakeStamp ? (juce::int64) oldReport.getProperty ("timeReference", 0)
+                                             : stop.timeReference;
+        report.timeReferenceSource = keepTakeStamp
+            ? oldReport.getProperty ("timeReferenceSource", "").toString() : timeAnchor.source;
+        if (auto* oldFailures = oldReport.getProperty ("timeReferenceStampFailures", {}).getArray())
+            for (const auto& failure : *oldFailures) report.stampFailures.add (failure.toString());
+        report.stampFailures.addArray (stop.stampFailures);
+        report.clock = clockProbe.latest();
+        if (auto* oldAlarms = oldReport.getProperty ("channelAlarms", {}).getArray())
+            report.channelAlarms.addArray (*oldAlarms);
+        for (const auto& alarm : stop.channelAlarms) report.channelAlarms.add (alarm.toJson());
         return report;
     }
 
@@ -2673,6 +2844,12 @@ namespace zynforge
         report->setProperty ("mirrorsSkipped", reportedMirrorsSkipped);
         report->setProperty ("captureFormat",  fmt);
         report->setProperty ("preRollSeconds", preRoll);
+        report->setProperty ("timeReference", timeReference);
+        report->setProperty ("timeReferenceSource", timeReferenceSource);
+        report->setProperty ("timeReferenceStampFailures", juce::var (stampFailures));
+        report->setProperty ("clockSource", clock.name);
+        report->setProperty ("clockSourceKind", clocksource::kindName (clock.kind));
+        report->setProperty ("channelAlarms", juce::var (channelAlarms));
         report->setProperty ("sha256Pending",  ! withHashes);
         report->setProperty ("sha256Failed", hashingFailed);
 
@@ -3245,7 +3422,7 @@ namespace zynforge
                                            + juce::String::formatted ("%02d", wc.partNumberPrimary)
                                            + wc.primaryExt);
                         wc.writer.reset (openWriterAtPath (nextFile, wc.primaryContainer,
-                                                           wc.primaryBitDepth, wc.numChannels));
+                                                           wc.primaryBitDepth, wc, wc.totalSamplesPrimary));
                         wc.bytesWrittenPrimary = 0;
                         if (wc.writer != nullptr)
                             wc.partFilesPrimary.add (nextFile.getFileName());
@@ -3269,7 +3446,7 @@ namespace zynforge
                                            + juce::String::formatted ("%02d", wc.partNumberBackup)
                                            + wc.backupExt);
                         wc.backupWriter.reset (openWriterAtPath (nextFile, wc.backupContainer,
-                                                                  wc.backupBitDepth, wc.numChannels));
+                                                                  wc.backupBitDepth, wc, wc.totalSamplesBackup));
                         wc.bytesWrittenBackup = 0;
                         if (wc.backupWriter != nullptr)
                             wc.partFilesBackup.add (nextFile.getFileName());
@@ -3294,7 +3471,7 @@ namespace zynforge
                                            + "_part"
                                            + juce::String::formatted ("%02d", m.partNumber)
                                            + m.ext);
-                        m.writer.reset (openWriterAtPath (nextFile, m.container, m.bitDepth, wc.numChannels));
+                        m.writer.reset (openWriterAtPath (nextFile, m.container, m.bitDepth, wc, m.totalSamples));
                         m.bytesWritten = 0;
                         if (m.writer != nullptr)
                             m.partFiles.add (nextFile.getFileName());

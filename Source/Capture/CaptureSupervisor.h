@@ -63,9 +63,11 @@ namespace zynforge::capture
         bool         isDaemonRecording() const   { return lastStatus().recording; }
 
         // Recording control over the wire. startRecording syncs the config
-        // first (track count, format, per-track arms), then starts.
+        // first (track count, format, per-track arms), then starts. timeHint:
+        // a live timecode for the BWF stamp (bwf::TimeAnchor::toJson), or void.
         bool startRecording (const juce::File& sessionDir, int trackCount,
-                             int captureFormat, const juce::BigInteger& armedTracks);
+                             int captureFormat, const juce::BigInteger& armedTracks,
+                             const juce::var& timeHint = {});
         bool stopRecording (bool* didStop = nullptr, juce::String* error = nullptr);
         bool configureCapture (const juce::var&);
         juce::String configuredCapture;

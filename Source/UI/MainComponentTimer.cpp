@@ -399,12 +399,14 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
         // -- which walks the entries -- structurally cannot see it. Without this
         // the engineer runs the whole show believing they have a copy they don't.
         const int mirrorsSkipped = status.mirrorsSkipped;
+        const auto inputAlarms = channelalarm::bannerText (status.channelAlarms);
         if (daemonUnavailable || status.captureDeviceLost || primFail || backupFail || mirrorFail || recoveryFail || mixFail
-            || diskTrouble || smartBad || mirrorsSkipped > 0)
+            || diskTrouble || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty())
         {
             juce::String warn;
             if (status.captureDeviceLost) warn << "!! CAPTURE DEVICE STOPPED -- take ended; inspect audio and reconnect  ";
             if (daemonUnavailable) warn << "!! DAEMON STATUS UNAVAILABLE -- take may still be rolling; reconnect and verify  ";
+            warn << inputAlarms;
             if (smartBad)    warn << "! SMART FAILING -- replace this drive  ";
             if (primFail)    warn << "! PRIMARY WRITE FAILED -- recording on backup/mirror  ";
             if (backupFail)  warn << "! BACKUP WRITE FAILED -- primary recording continues  ";

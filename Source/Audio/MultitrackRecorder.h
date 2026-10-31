@@ -10,6 +10,9 @@
 #include <memory>
 #include <vector>
 
+#include "BwfStamp.h"
+#include "ChannelAlarm.h"
+#include "ClockSource.h"
 #include "TrackState.h"
 
 namespace zynforge
@@ -114,6 +117,26 @@ namespace zynforge
             recordBaseSamples = juce::jmax ((juce::int64) 0, baseSamples);
         }
         bool isContinueArmed() const noexcept { return continueAsPart; }
+
+        // Time of day for the NEXT take's BWF stamp when something better
+        // than the wall clock is running (locked LTC / MTC). The recorder
+        // stays ignorant of where it came from. Set before every start: each
+        // start consumes it, and without one the take uses the wall clock.
+        void setTimeReferenceHint (const bwf::TimeAnchor& anchor) { timeHint = anchor; hasTimeHint = true; }
+        void clearTimeReferenceHint() noexcept { hasTimeHint = false; }
+
+        // The device whose clock source goes into the take's report, by its
+        // JUCE name. Set before start. Empty = no device to ask.
+        void setClockDevice (const juce::String& deviceName) { clockDevice = deviceName; }
+        // Asks that device now, waiting at most timeoutMs. Off the audio thread.
+        clocksource::Reading readClockSource (const juce::String& deviceName, int timeoutMs)
+        { return clockProbe.wait (deviceName, timeoutMs); }
+
+        // Brings the dead-channel alarms up to date and returns the live ones.
+        // Reads only atomics the audio thread stores, so any non-audio thread
+        // may call it, as often as it likes: the 10 Hz status snapshot is the
+        // caller that matters. Empty outside a take.
+        std::vector<channelalarm::Alarm> evaluateChannelAlarms();
 
         // Drop a punch or continue arm that no take consumed. Every refused
         // start calls this: a stale arm would turn the NEXT RECORD into a
@@ -512,6 +535,21 @@ namespace zynforge
             std::unique_ptr<juce::AudioFormatWriter> writer;
             std::unique_ptr<juce::AudioFormatWriter> backupWriter;
 
+            // Strip names for each file's bext Description. Read once at record
+            // start: a roll opens a new part on a writer thread, which must not
+            // touch TrackState::name.
+            juce::String bextNameLeft, bextNameRight;
+            // Every WAV this pass opened for this channel, on any copy, and
+            // what it was stamped with at open: the finalize patch works from
+            // this. Only one thread at a time owns it (see `mirrors` below).
+            struct StampedPart
+            {
+                juce::File   file;
+                juce::int64  framesBefore { 0 };     // of this pass, in earlier parts
+                juce::uint64 stampedAtOpen { 0 };
+            };
+            std::vector<StampedPart> stampedParts;
+
             // Auto-split state. WAV RIFF caps file size at 4 GiB
             // (32-bit unsigned chunk header); AIFF caps at 2 GiB
             // (signed 32-bit). When a writer approaches its format's
@@ -670,6 +708,7 @@ namespace zynforge
         bool writeLeadInMarkers (TakeStart&);
         void abandonTakeStart (TakeStart&);
         void goLive (const TakeStart&);
+        void beginChannelAlarms();
 
         // ── finishFinalization stages ───────────────────────────────────
         // TakeStop: totals + each writer's files, captured before the
@@ -682,6 +721,7 @@ namespace zynforge
         TakeStop snapshotTakeAtStop();
         void reattachWriterShards();
         void splicePunchedTracks (TakeStop&);
+        void stampTakeFiles (TakeStop&);
         void manifestSessionMedia (TakeStop&);
         SessionReport buildSessionReport (TakeStop&);
         void publishSessionReport (SessionReport);
@@ -691,12 +731,18 @@ namespace zynforge
         // startRecording and by the drain loop's auto-split path so a
         // long take that crosses the WAV 4 GiB / AIFF 2 GiB chunk
         // limit gets a fresh Track_NN_partXX.<ext> file instead of a
-        // corrupt-header tail. Returns nullptr on failure (e.g. disk
-        // full, permissions).
+        // corrupt-header tail. framesBefore: what this pass already wrote
+        // to earlier parts of this copy. A WAV joins channel.stampedParts.
+        // Returns nullptr on failure (e.g. disk full, permissions).
         juce::AudioFormatWriter* openWriterAtPath (const juce::File& target,
                                                    int containerCode,
                                                    int bits,
-                                                   int numChannels = 1) noexcept;
+                                                   WriterChannel& channel,
+                                                   juce::int64 framesBefore) noexcept;
+
+        // Samples since midnight of this pass's first written frame, not yet
+        // wrapped into a day. An estimate until the first live block lands.
+        juce::int64 passStartSamples() const noexcept;
 
     public:
         // Safe byte-count ceiling per container. WAV / FLAC: 3.9 GiB.
@@ -766,7 +812,9 @@ namespace zynforge
         friend class ReviewCaptureRepairTests;
         friend class PunchSessionGuardTests;   // splice-failure fixtures
         friend class TwinLinkTests;            // report publication ordering
+        friend class CaptureMetaTests;
         std::function<void()> afterFifoReservationForTests;
+        std::function<void()> beforeStampForTests;
         struct ReportTestHooks
         {
             std::function<void()> beforeScan, beforePublish, afterPublish, finished;
@@ -814,6 +862,31 @@ namespace zynforge
         std::atomic<bool>        writersReady       { false };
         std::atomic<juce::int64> samplesSinceStart  { 0 };
         std::atomic<juce::int64> missedSamples      { 0 };
+
+        // BWF time reference for this pass. The anchor and hint are set before
+        // the writers open and read-only after. The audio thread stores the
+        // first live block's clock reading and size (ticks last, so a reader
+        // that sees the ticks sees the size), so nothing there converts time.
+        bwf::TimeAnchor          timeHint, timeAnchor;
+        bool                     hasTimeHint { false };
+        std::atomic<juce::int64> firstLiveTicks     { 0 };   // 0 = none yet
+        std::atomic<int>         firstLiveBlock     { 0 };
+
+        // Dead-channel alarms. alarmFrames counts the frames the callback has
+        // delivered this take (samplesSinceStart cannot serve: pre-roll lands
+        // in it after capture goes live). alarmLock covers the monitor; the
+        // audio thread never takes it.
+        std::atomic<juce::int64> alarmFrames        { 0 };
+        juce::CriticalSection                    alarmLock;
+        channelalarm::Monitor                    alarmMonitor;
+        std::vector<std::shared_ptr<TrackState>> alarmTracks;
+        std::vector<juce::int64>                 alarmScratch;
+        bool                                     alarmsRunning { false };
+        void updateChannelAlarmsLocked();
+        juce::int64 alarmOrigin() const noexcept;
+
+        juce::String       clockDevice;
+        clocksource::Probe clockProbe;
         std::atomic<bool>        captureDeviceLost  { false };
         std::atomic<int>         lastWriteMs        { 0 };
         // Read-modify-written on the drain thread and reset on the message

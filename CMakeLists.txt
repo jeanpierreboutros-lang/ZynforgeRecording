@@ -145,6 +145,7 @@ add_library(ZynforgeCore STATIC
     Source/Audio/AudioImport.cpp
     Source/Audio/ClickEngine.cpp
     Source/Audio/ClickTrackRenderer.cpp
+    Source/Audio/ClockSource.cpp
     Source/Audio/MultitrackRecorder.cpp
     Source/Audio/SessionPlayer.cpp
     Source/Audio/Markers.cpp
@@ -225,8 +226,10 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/AutomationToolbarAccessibilityTests.cpp
     Source/Tests/CaptureDaemonTests.cpp
     Source/Tests/CaptureLinkTests.cpp
+    Source/Tests/CaptureMetaTests.cpp
     Source/Tests/CaptureProtocolTests.cpp
     Source/Tests/CaptureSupervisorTests.cpp
+    Source/Tests/ChannelAlarmTests.cpp
     Source/Tests/ChannelCsvTests.cpp
     Source/Tests/ChannelStripAccessibilityTests.cpp
     Source/Tests/ClickTrackRendererTests.cpp
@@ -317,6 +320,7 @@ juce_add_console_app(ZynforgeCapture
 target_sources(ZynforgeCapture PRIVATE
     Source/Capture/CaptureMain.cpp
     Source/Capture/CaptureDaemon.cpp
+    Source/Audio/ClockSource.cpp
     Source/Audio/MultitrackRecorder.cpp
     Source/Network/CaptureLink.cpp
 )

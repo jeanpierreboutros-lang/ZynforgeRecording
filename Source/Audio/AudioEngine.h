@@ -135,6 +135,9 @@ namespace zynforge
         // currently points at, and a HH:MM:SS:FF string for display.
         juce::int64  getChaseTargetSamples() const;
         juce::String getChaseTimecodeString() const;
+        // The running timecode as a time of day for a take's BWF stamp. False
+        // unless chase is live right now; the take then uses the wall clock.
+        bool         getTimecodeAnchor (bwf::TimeAnchor& anchor) const;
         // When the timecode master parks/drops, keep playing (free-run) instead
         // of stopping the transport. Off = stop when sync is lost.
         void setKeepRollingOnSyncLoss (bool on) noexcept { keepRollingOnSyncLoss.store (on, std::memory_order_relaxed); }
@@ -1428,6 +1431,9 @@ namespace zynforge
         // into recorder/engine internals. Fills from the atomics; call from
         // the message thread.
         EngineStatus captureStatus();
+        // Clock source of the input device, for pre-flight. Waits at most
+        // timeoutMs for the driver.
+        clocksource::Reading readClockSource (int timeoutMs);
         float  getDiskMBPerSec() const noexcept { return recorder.getDiskBytesPerSec() / (1024.0f * 1024.0f); }
         float  getRingFillPct()  const noexcept { return recorder.getRingFillPct(); }
         // Live device format -- the actual buffer (block) size in samples and

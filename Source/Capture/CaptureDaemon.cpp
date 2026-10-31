@@ -187,6 +187,12 @@ namespace zynforge::capture
                         if (number.isNotEmpty() && number.containsOnly ("0123456789"))
                         { recorder.armContinue (0); break; }
                     }
+                    bwf::TimeAnchor timecode;
+                    if (bwf::TimeAnchor::fromJson (c.configuration, timecode))
+                        recorder.setTimeReferenceHint (timecode);
+                    else
+                        recorder.clearTimeReferenceHint();
+                    recorder.setClockDevice (deviceManager.getAudioDeviceSetup().inputDeviceName);
                     if (recorder.startRecording (dir))
                     { captureDeviceLost.store (false); r.ok = true; }
                     else r.error = recorder.getStartError().isNotEmpty()
@@ -389,6 +395,7 @@ namespace zynforge::capture
         s.recoveryMarkerFailed = recorder.hasRecoveryMarkerFailed();
         s.reportWriteFailed = recorder.hasReportWriteFailed();
         s.diskStruggling = recorder.isDiskStruggling();
+        s.channelAlarms  = recorder.evaluateChannelAlarms();
         s.tracks.reserve ((size_t) s.numTracks);
         for (int i = 0; i < s.numTracks; ++i)
         {
@@ -421,6 +428,13 @@ namespace zynforge::capture
                 // reading. Never hold the command lock across that wait: STOP
                 // must still be able to finalise a rolling take.
                 server.sendStatus (snapshot);
+            }
+            else
+            {
+                // A take outlives its GUI: keep watching, or a fault that comes
+                // and goes while nobody is attached never reaches the report.
+                const std::lock_guard<std::mutex> g (commandLock);
+                recorder.evaluateChannelAlarms();
             }
             for (int i = 0; i < 10 && running.load(); ++i)
                 juce::Thread::sleep (10);
