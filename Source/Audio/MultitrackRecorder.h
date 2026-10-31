@@ -749,6 +749,12 @@ namespace zynforge
         // caller removes an idle session. Caller must first guard active capture.
         static bool deleteSessionAfterCancellingReports (const juce::File& sessionDir);
 
+        // Edit the session.report.json on disk under the lock every report
+        // writer holds. False when there is no readable report to edit. Keys
+        // other than `twin` are replaced by the next report this session writes.
+        static bool editSessionReport (const juce::File& sessionDir,
+                                       const std::function<void (juce::DynamicObject&)>& edit);
+
     private:
 
         // Audit-only scheduling seam. Tests install this before stop, and the
@@ -759,6 +765,7 @@ namespace zynforge
         friend class AsyncStopAuditTests;
         friend class ReviewCaptureRepairTests;
         friend class PunchSessionGuardTests;   // splice-failure fixtures
+        friend class TwinLinkTests;            // report publication ordering
         std::function<void()> afterFifoReservationForTests;
         struct ReportTestHooks
         {
