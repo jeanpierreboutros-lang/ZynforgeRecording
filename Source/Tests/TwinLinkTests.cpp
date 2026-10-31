@@ -1399,6 +1399,48 @@ namespace zynforge
                 a.deleteRecursively();
             }
 
+            beginTest ("A late answer about the last take waits for the take now rolling");
+            {
+                Pair pair;
+                const auto a = tempSession ("late-a"), b = tempSession ("late-b");
+                pair.leaderHost.status.sessionDir = a;
+                pair.followerHost.status.sessionDir = b;
+                pair.followerHost.holdStop = true;
+                if (! bring (pair)) return;
+                startLeaderTake (pair);
+                expect (settle (pair.both, [&] { return pair.followerHost.status.recording; }));
+
+                // The leader finishes; the follower is still finalizing, so its
+                // summary is owed. The leader's own block lands without it.
+                writeReport (a, 2, 4800, 0.1);
+                pair.leaderHost.status.recording = false;
+                pair.leader->noteLocalStopAccepted();
+                expect (settle (pair.both, [&] { return twinBlock (a).isObject()
+                                                     && pair.followerHost.stopCalls == 1; }));
+
+                // A new take starts on the leader before the answer arrives.
+                pair.followerHost.refuse = true;
+                startLeaderTake (pair);
+                run (pair.both, 80);
+                const auto file = a.getChildFile ("session.report.json");
+                const auto rolling = file.loadFileAsString();
+
+                writeReport (b, 2, 4800, 0.1);
+                pair.followerHost.status.finalizing = false;
+                pair.followerHost.heldStop (true, {});
+                expect (settle (pair.both, [&] { return pair.leader->snapshot().compareLine.isNotEmpty(); }),
+                        "the follower's summary never arrived");
+                run (pair.both, 150);
+                expectEquals (file.loadFileAsString(), rolling, "the report was written during a take");
+
+                pair.leaderHost.status.recording = false;
+                pair.leader->noteLocalStopAccepted();
+                expect (settle (pair.both, [&] { return file.loadFileAsString() != rolling; }),
+                        "the late answer was never written");
+                a.deleteRecursively();
+                b.deleteRecursively();
+            }
+
             beginTest ("With the link down the report still says what is known");
             {
                 FakeHost host;

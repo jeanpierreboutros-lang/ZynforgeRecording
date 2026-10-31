@@ -252,6 +252,9 @@ namespace zynforge
                 beginTest ("A link RECORD refuses to punch; a local press may");
                 {
                     const auto session = tempSession();
+                    auto& recorder = main.engine.getRecorder();
+                    recorder.prepare (48000.0, 256, 1);
+                    recorder.getTrack (0).armed.store (true, std::memory_order_relaxed);
                     MainComponent::RecordStartPlan plan;
                     plan.dir = session;
                     plan.continueTake = true;
@@ -263,6 +266,11 @@ namespace zynforge
                     main.twinStartInFlight = false;
                     expect (! main.engine.isRecording(), "a link start opened a punch");
                     expect (main.statusLabel.getText().containsIgnoreCase ("punch"), main.statusLabel.getText());
+                    if (main.engine.isRecording())
+                    {
+                        main.stopActiveCaptureAsync (false);
+                        settleStopped (main);
+                    }
                     session.deleteRecursively();
                 }
 
