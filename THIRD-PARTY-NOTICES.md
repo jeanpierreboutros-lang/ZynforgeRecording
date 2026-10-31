@@ -32,12 +32,6 @@ plug-in builds. CHOC and QuickJS are not linked.
 | NDI runtime | Loads the runtime from its standard install location if the user installed it, for the optional NDI broadcast | NDI® is a registered trademark of Vizrt NDI AB. See https://ndi.video |
 | LAME | Runs the user's own `lame` program for MP3 export, if one is installed | Not distributed with this product |
 
-## Optional, Windows builds only
-
-| Component | What it is for | Notes |
-| --- | --- | --- |
-| Steinberg ASIO SDK | Builds that set `ZYNFORGE_ASIO_SDK_DIR` | Not in this repository and not redistributed. ASIO is a trademark of Steinberg Media Technologies GmbH |
-
 ## Licence texts
 
 ### JUCE
