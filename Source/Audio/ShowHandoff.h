@@ -6,6 +6,7 @@
 #include "TimelineExport.h"
 
 #include <atomic>
+#include <functional>
 #include <map>
 #include <vector>
 
@@ -62,13 +63,20 @@ namespace zynforge::showhandoff
         return csv;
     }
 
+    // Writes extra files into the finished copy and returns them. They join the
+    // manifest as generated files. A problem goes in `warning`: a handoff is a
+    // verified copy first, and a project that could not be written must not
+    // cost the engineer that copy.
+    using GeneratedFiles = std::function<std::vector<juce::File> (const juce::File& dest, juce::String& warning)>;
+
     // The copy itself runs on MainComponent's owned export worker. This pass
     // checks EVERY copied file against the current source and publishes the
     // manifest only after the full tree and generated sidecars are complete.
     // It verifies transfer, not the original capture or external backup disks.
     inline Result verifyAndWrite (const juce::File& source, const juce::File& dest,
                                   const juce::String& timelineCsv,
-                                  const std::atomic<bool>& cancel)
+                                  const std::atomic<bool>& cancel,
+                                  const GeneratedFiles& generateFiles = {})
     {
         if (! source.isDirectory() || ! dest.isDirectory()
             || source.isSymbolicLink() || dest.isSymbolicLink()
@@ -158,22 +166,36 @@ namespace zynforge::showhandoff
 
         const auto mapCsv = channelMapCsv (dest);
         if (mapCsv.isEmpty()) return { false, "Saved channel map is missing or invalid" };
+        const auto addGenerated = [&] (const juce::File& file)
+        {
+            const auto sha = hashing::fileSha256 (file, &cancel);
+            if (sha.isEmpty()) return false;
+            juce::DynamicObject::Ptr entry (new juce::DynamicObject());
+            entry->setProperty ("path", file.getRelativePathFrom (dest));
+            entry->setProperty ("bytes", file.getSize());
+            entry->setProperty ("sha256", sha);
+            entry->setProperty ("kind", "generated");
+            fileEntries.add (juce::var (entry.get()));
+            return true;
+        };
         for (const auto& sidecar : { std::pair<juce::String, juce::String> (kMapName, mapCsv),
                                      std::pair<juce::String, juce::String> (kTimelineName, timelineCsv) })
         {
             if (cancel.load (std::memory_order_relaxed)
                 || ! atomicfile::writeText (dest.getChildFile (sidecar.first), sidecar.second))
                 return { false, "Could not write handoff sidecar: " + sidecar.first };
-            const auto file = dest.getChildFile (sidecar.first);
-            const auto sha = hashing::fileSha256 (file, &cancel);
-            if (sha.isEmpty()) return { false, "Could not hash handoff sidecar" };
-            juce::DynamicObject::Ptr entry (new juce::DynamicObject());
-            entry->setProperty ("path", sidecar.first);
-            entry->setProperty ("bytes", file.getSize());
-            entry->setProperty ("sha256", sha);
-            entry->setProperty ("kind", "generated");
-            fileEntries.add (juce::var (entry.get()));
+            if (! addGenerated (dest.getChildFile (sidecar.first)))
+                return { false, "Could not hash handoff sidecar" };
         }
+
+        int generatedCount = 0;
+        juce::String generatedWarning;
+        if (generateFiles != nullptr)
+            for (const auto& file : generateFiles (dest, generatedWarning))
+            {
+                if (! addGenerated (file)) return { false, "Could not hash handoff sidecar" };
+                ++generatedCount;
+            }
 
         const auto reportFile = dest.getChildFile ("session.report.json");
         const auto report = reportFile.existsAsFile() ? juce::JSON::parse (reportFile) : juce::var();
@@ -240,7 +262,8 @@ namespace zynforge::showhandoff
         if (! atomicfile::writeText (dest.getChildFile (kManifestName),
                                      juce::JSON::toString (juce::var (manifest.get()), true)))
             return { false, "Could not publish handoff manifest" };
-        return { true, captureWarning ? "Copy verified; capture report needs review" : "Copy verified",
-                 (int) originals.size() + 2, totalBytes, captureWarning };
+        return { true, (captureWarning ? "Copy verified; capture report needs review" : "Copy verified")
+                           + (generatedWarning.isNotEmpty() ? "; " + generatedWarning : juce::String()),
+                 (int) originals.size() + 2 + generatedCount, totalBytes, captureWarning };
     }
 }
