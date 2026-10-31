@@ -118,10 +118,10 @@ namespace zynforge
                 osc.dispatchForTest (juce::OSCMessage ("/Console/Channels/2/mute", (juce::int32) 1));
                 expect (! engine.getRecorder().getTrack (1).muted.load());
 
-                // A scene recall drops a marker.
+                // A scene recall outside a take leaves no marker (ConsoleVscTests).
                 const int before = engine.getMarkers().getCount();
                 osc.dispatchForTest (juce::OSCMessage ("/Console/Snapshots/recall", (juce::int32) 5));
-                expect (engine.getMarkers().getCount() >= before);   // marker context may gate it
+                expectEquals (engine.getMarkers().getCount(), before);
             }
 
             beginTest ("Unknown address is ignored (no crash, no state change)");

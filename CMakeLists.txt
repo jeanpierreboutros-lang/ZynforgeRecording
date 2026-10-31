@@ -228,6 +228,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/ConcurrencyAuditTests.cpp
     Source/Tests/ConsoleLinkTests.cpp
     Source/Tests/ConsoleTransportTests.cpp
+    Source/Tests/ConsoleVscTests.cpp
     Source/Tests/CrashScanTests.cpp
     Source/Tests/DialogAuditTests.cpp
     Source/Tests/EditPageAccessibilityTests.cpp
