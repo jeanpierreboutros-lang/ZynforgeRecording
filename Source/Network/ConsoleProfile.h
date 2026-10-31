@@ -144,7 +144,7 @@ namespace zynforge
         p.canReadScenes   = true;
         p.dialectTrusted  = false;   // written from published docs; handshake-gated
         p.dialect         = wingDialect();
-        p.note            = "Reads channel names + drops a marker on every scene recall.";
+        p.note            = "Reads channel names + marks a take at every scene recall.";
         return p;
     }
 
@@ -195,7 +195,7 @@ namespace zynforge
         p.hasNativeVsc    = true;
         p.dialectTrusted  = false;   // written from published docs; handshake-gated
         p.dialect         = allenHeathMidiDialect();
-        p.note            = "MIDI over TCP: drops a marker on every scene recall. Native Virtual Soundcheck on the console.";
+        p.note            = "MIDI over TCP: marks a take at every scene recall. Native Virtual Soundcheck on the console.";
         return p;
     }
 

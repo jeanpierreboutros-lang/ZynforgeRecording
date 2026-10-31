@@ -96,8 +96,8 @@ namespace zynforge
         // A channel name arrived (1-based console channel). The host renames
         // the matching strip so takes land labelled.
         std::function<void (int ch1, const juce::String& name)> onChannelName;
-        // A scene / snapshot was recalled. The host drops a marker, which is
-        // what makes a show navigable the next morning.
+        // A scene / snapshot was recalled. What that does is one shared rule:
+        // RemoteControl::onConsoleScene.
         std::function<void (int sceneIdx, const juce::String& name)> onSceneRecalled;
 
         // Ask the desk for every channel name in [1, count]. No-op unless the

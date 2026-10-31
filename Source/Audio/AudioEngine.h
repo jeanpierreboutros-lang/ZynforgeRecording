@@ -1067,6 +1067,13 @@ namespace zynforge
         {
             return autoArmOnInputFlag.load (std::memory_order_acquire);
         }
+        // A scene recall outside a take moves the playhead to the marker of
+        // that name (SceneFollow.h). Persisted in appProps as "sceneFollow".
+        void setSceneFollowEnabled (bool on);
+        bool isSceneFollowEnabled() const noexcept
+        {
+            return sceneFollowFlag.load (std::memory_order_acquire);
+        }
         // Polls each track's peak; arms unarmed tracks whose peak has
         // stayed above ampThreshold for >= periodTicks consecutive
         // calls. Cheap (one atomic load per track + one int update).
@@ -1239,6 +1246,7 @@ namespace zynforge
         // first serviceAutoArm call; entries grow when strips are
         // added.
         std::atomic<bool>   autoArmOnInputFlag { false };
+        std::atomic<bool>   sceneFollowFlag { false };
         std::vector<int>    autoArmStreaks;
     public:
         int   getEstimatedMinutesRemaining() const noexcept

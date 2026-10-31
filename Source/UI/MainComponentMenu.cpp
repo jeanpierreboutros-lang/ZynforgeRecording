@@ -287,6 +287,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             m.addItem (956, "Console: capture head-amp gains", consoleGains);
             m.addItem (957, "Console: restore head-amp gains", consoleGains);
             m.addSeparator();
+            m.addItem (963, "Console: follow scenes to markers (virtual soundcheck)",
+                       true, engine.isSceneFollowEnabled());
             m.addItem (969, "Console: Save Console Log...", ! engine.isRecording());
             menu.addSubMenu ("Console", m);
         }
@@ -370,6 +372,7 @@ void MainComponent::refreshMenuStateIfChanged()
         // must be in the signature or the write items stay greyed until some
         // unrelated state change happens to refresh the menu.
         << '|' << (int) consoleLink.canWrite()
+        << '|' << (int) engine.isSceneFollowEnabled()
         << '|' << (int) useCaptureDaemon
         << '|' << (int) engine.getRemotes().isCompanionServerRunning()
         << '|' << (int) captureSupervisor.isAttached()
@@ -523,6 +526,13 @@ void MainComponent::registerMenuCommands()
     m.add (959, [this] { runCloudUpload(); });
     m.add (960, [this] { editCloudUploadCommand(); });
     m.add (961, [this] { copyConfidenceUrl(); });
+    m.add (963, [this]
+    {
+        const bool on = ! engine.isSceneFollowEnabled();
+        engine.setSceneFollowEnabled (on);
+        showStatus (on ? "Scene Follow ON -- outside a take, a console scene jumps to the marker of that name"
+                       : "Scene Follow OFF -- console scenes leave the playhead alone");
+    });
     m.add (969, [this] { saveConsoleLog(); });
 
     // Help

@@ -224,6 +224,82 @@ namespace zynforge
         return out;
     }
 
+    bool RemoteControl::isSessionBusy() const
+    {
+        return engine.isSessionTransitionActive() || (host.isSessionBusy && host.isSessionBusy());
+    }
+
+    scenefollow::Facts RemoteControl::sceneFacts() const
+    {
+        scenefollow::Facts f;
+        f.capturing    = engine.isRecording();
+        f.followOn     = engine.isSceneFollowEnabled();
+        f.locked       = engine.areControlsLocked();
+        f.seekLocked   = engine.getPlayer().isSeekLocked();
+        f.sessionBusy  = isSessionBusy();
+        f.playerLoaded = engine.getPlayer().isLoaded();
+        return f;
+    }
+
+    void RemoteControl::locate (juce::int64 samplePosition)
+    {
+        engine.getPlayer().setPositionSamples (samplePosition);
+        // PLAY starts from a placed cursor, so one left behind would send the
+        // next PLAY back to where the engineer last clicked, not to this song.
+        engine.clearEditCursor();
+        if (host.revealPosition) host.revealPosition (samplePosition);
+    }
+
+    scenefollow::Action RemoteControl::onConsoleScene (int sceneNumber, const juce::String& sceneName)
+    {
+        using scenefollow::Action;
+        const auto label = scenefollow::sceneLabel (sceneNumber, sceneName);
+        const auto& markers = engine.getMarkers().getAll();
+        const auto decision = scenefollow::decide (sceneFacts(), markers, label,
+                                                   engine.getPlayer().getPositionSamples());
+        const auto prefix = "Console scene \"" + label + "\" -- ";
+        const auto tell = [&] (const juce::String& outcome)
+        {
+            logOsc ("scene: " + prefix + outcome);
+            showHostStatus (prefix + outcome);
+        };
+        switch (decision.action)
+        {
+            case Action::DropMarker:
+                if (engine.dropMarkerAtCurrentPosition (label) >= 0)
+                    tell ("marker dropped");
+                break;
+
+            case Action::Locate:
+            {
+                const auto position = markers[(size_t) decision.markerIndex].sampleOffset;
+                const auto rate = juce::jmax (1.0, engine.getPlayer().getSampleRate());
+                const auto seconds = (juce::int64) ((double) position / rate);
+                const auto markerNumber = decision.markerIndex + 1;
+                locate (position);
+                tell ("followed to marker " + juce::String (markerNumber)
+                      + " at " + juce::String (seconds / 60).paddedLeft ('0', 2) + ":"
+                      + juce::String (seconds % 60).paddedLeft ('0', 2));
+                break;
+            }
+
+            case Action::NoMatch:
+                tell ("Follow found no marker with that name");
+                break;
+
+            case Action::Refused:
+                tell ("Follow refused: " + decision.refusal);
+                break;
+
+            // Fired constantly while rehearsing, and nothing happened, so the
+            // status line and its toast stay quiet. The log still shows it.
+            case Action::Nothing:
+                logOsc ("scene: " + prefix + "no take rolling and Follow is off");
+                break;
+        }
+        return decision.action;
+    }
+
     bool RemoteControl::enableControlSurface (const juce::String& key,
                                               const juce::String& inName, const juce::String& outName)
     {

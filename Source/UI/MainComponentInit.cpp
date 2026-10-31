@@ -27,6 +27,10 @@ MainComponent::MainComponent()
     // and in-process recording retain the engine's default implementation.
     engine.setRemoteTransportHandler ([this] (auto action, juce::String& error)
     { return handleRemoteTransport (action, error); });
+    engine.getRemotes().setHost ({ [this] (const juce::String& message) { showStatus (message); },
+                                   [this] { return sessionIoBusy.load(); },
+                                   [this] (juce::int64 sample)
+                                   { if (editPage != nullptr) editPage->scrollToSample (sample); } });
     wireConsoleLink();
 
     engine.onTracksReordered = [this] (const std::vector<int>& destination)
@@ -849,6 +853,7 @@ MainComponent::~MainComponent()
     // entering a partially destructed MainComponent. AudioEngine invalidates
     // its own queued-callback handle at the start of its later destruction.
     engine.setRemoteTransportHandler ({});
+    engine.getRemotes().setHost ({});
     sessionMirror.stop();
 
     // Cancel + join any in-flight session job (bounce, export, copy) now,

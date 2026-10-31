@@ -13,8 +13,11 @@
 
 #include <juce_core/juce_core.h>
 
+#include "../Audio/SceneFollow.h"
+
 #include <atomic>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 
@@ -30,6 +33,18 @@ namespace zynforge
     public:
         explicit RemoteControl (AudioEngine& engine);
         ~RemoteControl();
+
+        // What only the host knows or can show. All message thread; all
+        // optional, so a headless engine still runs every rule below.
+        struct Host
+        {
+            std::function<void (const juce::String&)> showStatus;
+            std::function<bool()>                     isSessionBusy;     // sessionIoBusy
+            std::function<void (juce::int64)>         revealPosition;    // scroll EDIT to a locate
+        };
+        void setHost (Host h) { host = std::move (h); }
+        void showHostStatus (const juce::String& message) { if (host.showStatus) host.showStatus (message); }
+        bool isSessionBusy() const;
 
         // ── Companion HTTP server (read-only iPad / remote audition) ────
         // Binds to loopback; the engineer opts into LAN exposure explicitly.
@@ -90,6 +105,12 @@ namespace zynforge
         // Take + clear the captured names (message thread).
         std::map<int, juce::String> takeCapturedConsoleNames();
 
+        // Both console paths report a scene / snapshot recall here. The rule
+        // is scenefollow::decide; this applies it and tells the engineer.
+        scenefollow::Action onConsoleScene (int sceneNumber, const juce::String& sceneName);
+        // Move the playhead without touching the transport state.
+        void locate (juce::int64 samplePosition);
+
         // ── MIDI control surface (Mackie Control / FaderPort) ───────────
         // Open a control surface on the given MIDI in/out device names. `key`
         // identifies the active brand (one surface at a time). Returns success.
@@ -99,7 +120,10 @@ namespace zynforge
         juce::String getActiveSurfaceKey() const { return activeSurfaceKey; }
 
     private:
+        scenefollow::Facts sceneFacts() const;
+
         AudioEngine& engine;
+        Host         host;
 
         // Declaration order is teardown order, reversed: the remotes go
         // first (companion, then OSC, then the surface),

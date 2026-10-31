@@ -101,9 +101,9 @@ namespace zynforge
         engine.dropMarkerAtCurrentPosition (name);
     }
 
-    void OscRemote::dropSceneMarker (int scene)
+    void OscRemote::sceneRecalled (int scene, const juce::String& sceneName)
     {
-        dropMarker ("Scene " + juce::String (scene));
+        engine.getRemotes().onConsoleScene (scene, sceneName);
     }
 
     void OscRemote::setChannelName (int idx1, const juce::String& s)
@@ -149,6 +149,12 @@ namespace zynforge
             if (a.isString()) return a.getString();
             if (a.isInt32())  return juce::String (a.getInt32());
             return {};
+        }
+        // A recall's optional name, after its number (as ConsoleDialect reads
+        // the DiGiCo one). Without it the recall goes by "Scene N".
+        juce::String sceneNameArg (const juce::OSCMessage& m)
+        {
+            return m.size() >= 2 && m[1].isString() ? m[1].getString() : juce::String();
         }
         float toFloat (const juce::OSCArgument& a)
         {
@@ -201,7 +207,7 @@ namespace zynforge
         if (path == "/zynforge/scene")
         {
             if (payloadCount < 1) return false;
-            dropSceneMarker (toInt (m[0], 0));
+            sceneRecalled (toInt (m[0], 0), payloadCount > 1 ? toString (m[1]) : juce::String());
             return true;
         }
 
@@ -259,7 +265,7 @@ namespace zynforge
         const auto path = m.getAddressPattern().toString();
 
         if (path == "/Console/Snapshots/recall" && m.size() >= 1)
-        { dropSceneMarker (toInt (m[0])); return true; }
+        { sceneRecalled (toInt (m[0]), sceneNameArg (m)); return true; }
         if (path == "/Console/Marker")
         { dropMarker (m.size() > 0 ? toString (m[0]) : juce::String()); return true; }
 
@@ -277,7 +283,7 @@ namespace zynforge
         const auto path = m.getAddressPattern().toString();
 
         if (path == "/sq/scene/recall" && m.size() >= 1)
-        { dropSceneMarker (toInt (m[0])); return true; }
+        { sceneRecalled (toInt (m[0]), sceneNameArg (m)); return true; }
         if (path == "/sq/marker")
         { dropMarker (m.size() > 0 ? toString (m[0]) : juce::String()); return true; }
 
@@ -299,7 +305,7 @@ namespace zynforge
         const auto path = m.getAddressPattern().toString();
 
         if (path == "/sslnet/snapshot/recall" && m.size() >= 1)
-        { dropSceneMarker (toInt (m[0])); return true; }
+        { sceneRecalled (toInt (m[0]), sceneNameArg (m)); return true; }
         if (path == "/sslnet/marker")
         { dropMarker (m.size() > 0 ? toString (m[0]) : juce::String()); return true; }
 
@@ -321,7 +327,7 @@ namespace zynforge
         { return path == y || path == r; };
 
         if (eitherIs ("/Yamaha/Scene/recall",  "/RIVAGE/Scene/recall")  && m.size() >= 1)
-        { dropSceneMarker (toInt (m[0])); return true; }
+        { sceneRecalled (toInt (m[0]), sceneNameArg (m)); return true; }
         if (eitherIs ("/Yamaha/Marker",           "/RIVAGE/Marker"))
         { dropMarker (m.size() > 0 ? toString (m[0]) : juce::String()); return true; }
 

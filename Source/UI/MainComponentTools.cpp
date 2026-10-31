@@ -673,19 +673,8 @@ void MainComponent::wireConsoleLink()
         self->engine.getRemotes().onConsoleChannelName (ch1, name.trim());
     };
 
-    // A scene / snapshot recall drops a marker. This is what makes a show
-    // navigable the next morning -- jump straight to the song. Markers need a
-    // session context; if there isn't one yet the recall is simply ignored
-    // rather than dropped at a meaningless position.
     consoleLink.onSceneRecalled = [self] (int sceneIdx, const juce::String& sceneName)
-    {
-        if (self == nullptr || ! self->engine.getMarkers().hasContext()) return;
-        const auto label = sceneName.trim().isNotEmpty()
-                             ? sceneName.trim()
-                             : "Scene " + juce::String (sceneIdx);
-        if (self->engine.dropMarkerAtCurrentPosition (label) >= 0)
-            self->showStatus ("Console scene \"" + label + "\" -- marker dropped");
-    };
+    { if (self != nullptr) self->engine.getRemotes().onConsoleScene (sceneIdx, sceneName); };
 
     consoleLink.onTraffic = [self] (const juce::String& line)
     { if (self != nullptr) self->engine.getRemotes().logOsc (line); };

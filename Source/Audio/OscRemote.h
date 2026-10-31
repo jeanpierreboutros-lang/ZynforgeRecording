@@ -74,7 +74,7 @@ namespace zynforge
         void playStart();
         void playStop();
         void dropMarker (const juce::String& name);
-        void dropSceneMarker (int sceneNumber);
+        void sceneRecalled (int sceneNumber, const juce::String& sceneName = {});
         void setChannelName   (int oneBasedIndex, const juce::String&);
         void setChannelMute   (int oneBasedIndex, bool muted);
         void setChannelArm    (int oneBasedIndex, bool armed);
