@@ -107,6 +107,7 @@ add_library(ZynforgeCore STATIC
     Source/Capture/CaptureDaemon.cpp
     Source/Capture/CaptureSupervisor.cpp
     Source/Network/ConsoleLink.cpp
+    Source/Network/DeskMacro.cpp
     Source/UI/ChannelStrip.cpp
     Source/UI/LedMeter.cpp
     Source/UI/MiniSpectrum.cpp

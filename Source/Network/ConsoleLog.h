@@ -2,7 +2,7 @@
 
 // One line per console message for the OSC debug log: the address as it was on
 // the wire, an OSC-style type-tag string, then the values. Every path that logs
-// (the console link, the OSC listener) formats here, so
+// (the console link, the OSC listener, the desk macro listener) formats here, so
 // credential redaction has one definition. RemoteControl::logOsc is the sink: it
 // scrubs the live token and only then cuts a line to length, so a cut can't leave
 // part of a token behind.
@@ -14,9 +14,11 @@
 namespace zynforge::consolelog
 {
     // The final Generic OSC argument is a credential, including on a failed
-    // attempt.
+    // attempt. Macro addresses carry no token; only their integer is worth
+    // showing, so a stray string there is hidden rather than assumed harmless.
     inline bool isCredential (const juce::String& path, int index, int count, bool isString)
     {
+        if (path.startsWith ("/zynforge/macro/")) return isString;
         return path.startsWith ("/zynforge/") && index == count - 1;
     }
 

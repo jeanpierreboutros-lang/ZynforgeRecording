@@ -5,6 +5,7 @@
 
 #include "CompanionServer.h"
 #include "ConsoleLog.h"
+#include "DeskMacro.h"
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MidiControlSurface.h"
 #include "../Audio/OscRemote.h"
@@ -193,7 +194,13 @@ namespace zynforge
             << consoleLinkSummary << "\n"
             << "OSC listener: "
             << (isOscListening() ? "port " + juce::String (getOscPort()) + ", dialect " + dialects[getOscDialect()]
-                                 : juce::String ("off")) << "\n";
+                                 : juce::String ("off")) << "\n"
+            << "Desk macro listener: "
+            << (isDeskMacroListening() ? "port " + juce::String (getDeskMacroPort())
+                                         + ", desk " + getDeskMacroSource()
+                                         + ", " + juce::String (getDeskMacroDropped())
+                                         + " dropped from other sources"
+                                       : juce::String ("off")) << "\n";
         const auto evicted = getOscLogEvicted();
         if (evicted > 0)
             out << "Oldest " << evicted << " lines were discarded by the "
@@ -258,6 +265,12 @@ namespace zynforge
         return f;
     }
 
+    juce::String RemoteControl::deskLocateRefusal() const
+    {
+        if (engine.isRecording()) return "capture is running";
+        return scenefollow::locateRefusal (sceneFacts());
+    }
+
     void RemoteControl::locate (juce::int64 samplePosition)
     {
         engine.getPlayer().setPositionSamples (samplePosition);
@@ -315,6 +328,38 @@ namespace zynforge
                 break;
         }
         return decision.action;
+    }
+
+    bool RemoteControl::startDeskMacro (int udpPort, const juce::String& deskIp)
+    {
+        if (engine.areControlsLocked()) return false;
+        if (deskMacro == nullptr) deskMacro = std::make_unique<DeskMacroListener> (engine);
+        return deskMacro->start (udpPort, deskIp);
+    }
+
+    void RemoteControl::stopDeskMacro()
+    {
+        if (deskMacro != nullptr) deskMacro->stop();
+    }
+    bool RemoteControl::isDeskMacroListening() const
+    {
+        return deskMacro != nullptr && deskMacro->isListening();
+    }
+    int RemoteControl::getDeskMacroPort() const
+    {
+        return deskMacro != nullptr ? deskMacro->getPort() : 0;
+    }
+    juce::String RemoteControl::getDeskMacroSource() const
+    {
+        return deskMacro != nullptr ? deskMacro->getSourceIp() : juce::String();
+    }
+    juce::int64 RemoteControl::getDeskMacroDropped() const
+    {
+        return deskMacro != nullptr ? deskMacro->getDroppedSourceCount() : 0;
+    }
+    juce::String RemoteControl::getDeskMacroLastDropped() const
+    {
+        return deskMacro != nullptr ? deskMacro->getLastDroppedSource() : juce::String();
     }
 
     bool RemoteControl::enableControlSurface (const juce::String& key,

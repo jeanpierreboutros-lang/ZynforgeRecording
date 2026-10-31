@@ -18,6 +18,7 @@
 #include "MirrorDrivesDialog.h"
 #include "TimecodeSyncDialog.h"
 #include "ControlSurfacesDialog.h"
+#include "DeskMacroDialog.h"
 #include "SessionSettingsDialog.h"
 #include "../Audio/AtomicFile.h"
 
@@ -289,6 +290,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             m.addSeparator();
             m.addItem (963, "Console: follow scenes to markers (virtual soundcheck)",
                        true, engine.isSceneFollowEnabled());
+            m.addItem (964, "Console: desk macro control...",
+                       true, engine.getRemotes().isDeskMacroListening());
             m.addItem (969, "Console: Save Console Log...", ! engine.isRecording());
             menu.addSubMenu ("Console", m);
         }
@@ -373,6 +376,7 @@ void MainComponent::refreshMenuStateIfChanged()
         // unrelated state change happens to refresh the menu.
         << '|' << (int) consoleLink.canWrite()
         << '|' << (int) engine.isSceneFollowEnabled()
+        << '|' << (int) engine.getRemotes().isDeskMacroListening()
         << '|' << (int) useCaptureDaemon
         << '|' << (int) engine.getRemotes().isCompanionServerRunning()
         << '|' << (int) captureSupervisor.isAttached()
@@ -535,6 +539,7 @@ void MainComponent::registerMenuCommands()
         showStatus (on ? "Scene Follow ON -- outside a take, a console scene jumps to the marker of that name"
                        : "Scene Follow OFF -- console scenes leave the playhead alone");
     });
+    m.add (964, [this] { zynforge::DeskMacroDialog::launch (engine); });
     m.add (969, [this] { saveConsoleLog(); });
 
     // Help

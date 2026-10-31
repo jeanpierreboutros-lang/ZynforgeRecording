@@ -68,7 +68,8 @@ namespace zynforge::scenefollow
         return first;
     }
 
-    // Empty when the playhead may move.
+    // Empty when the playhead may move. The desk macro's marker commands use
+    // this too, so a locate has one list of refusals.
     inline juce::String locateRefusal (const Facts& f)
     {
         if (f.locked)        return "session is locked";
@@ -88,5 +89,23 @@ namespace zynforge::scenefollow
         const int index = findMarker (markers, label, playhead);
         if (index < 0) return { Action::NoMatch };
         return { Action::Locate, index };
+    }
+
+    // Marker navigation for a desk macro.
+    inline int nextMarker (const std::vector<Marker>& markers, juce::int64 playhead)
+    {
+        for (int i = 0; i < (int) markers.size(); ++i)
+            if (markers[(size_t) i].sampleOffset > playhead) return i;
+        return -1;
+    }
+
+    // `grace`: a rolling playhead has always just left the marker it was sent
+    // to, so without it a second PREV would land on the same marker and the
+    // desk could never step back past one while playing.
+    inline int previousMarker (const std::vector<Marker>& markers, juce::int64 playhead, juce::int64 grace)
+    {
+        for (int i = (int) markers.size() - 1; i >= 0; --i)
+            if (markers[(size_t) i].sampleOffset < playhead - grace) return i;
+        return -1;
     }
 }

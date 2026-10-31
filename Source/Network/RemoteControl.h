@@ -2,7 +2,7 @@
 
 // Remote control of the engine from outside the app: the companion HTTP
 // server, the console OSC listener (and its debug log + channel-name
-// capture), and a MIDI control surface.
+// capture), the desk macro listener, and a MIDI control surface.
 //
 // AudioEngine owns ONE RemoteControl by value, declared where these members
 // used to sit, so every remote's lifetime stays nested inside the engine's:
@@ -25,6 +25,7 @@ namespace zynforge
 {
     class AudioEngine;
     class OscRemote;
+    class DeskMacroListener;
     class MidiControlSurface;
     class CompanionServer;
 
@@ -115,6 +116,18 @@ namespace zynforge
         // Move the playhead without touching the transport state.
         void locate (juce::int64 samplePosition);
 
+        // ── Desk macro listener (DeskMacro.h) ───────────────────────────
+        // Off until the engineer starts it, on every launch. Refused under
+        // LOCK, and without one usable desk address.
+        bool         startDeskMacro (int udpPort, const juce::String& deskIp);
+        void         stopDeskMacro();
+        bool         isDeskMacroListening() const;
+        int          getDeskMacroPort() const;
+        juce::String getDeskMacroSource() const;
+        juce::int64  getDeskMacroDropped() const;
+        juce::String getDeskMacroLastDropped() const;
+        juce::String deskLocateRefusal() const;
+
         // ── MIDI control surface (Mackie Control / FaderPort) ───────────
         // Open a control surface on the given MIDI in/out device names. `key`
         // identifies the active brand (one surface at a time). Returns success.
@@ -130,7 +143,7 @@ namespace zynforge
         Host         host;
 
         // Declaration order is teardown order, reversed: the remotes go
-        // first (companion, then OSC, then the surface),
+        // first (companion, then OSC, then the macro listener and the surface),
         // while the log and capture state they write to are still alive.
         std::atomic<bool>           consoleCapture { false };
         std::map<int, juce::String> capturedConsoleNames;   // message-thread only
@@ -145,6 +158,7 @@ namespace zynforge
         juce::String                activeSurfaceKey;
 
         std::unique_ptr<MidiControlSurface> surface;
+        std::unique_ptr<DeskMacroListener>  deskMacro;
         std::unique_ptr<OscRemote>          osc;
         std::unique_ptr<CompanionServer>    companion;
 
