@@ -69,6 +69,9 @@ juce_add_gui_app(ZynforgeRecording
     HARDENED_RUNTIME_OPTIONS      "com.apple.security.device.audio-input"
     MICROPHONE_PERMISSION_ENABLED TRUE
     MICROPHONE_PERMISSION_TEXT    "Zynforge Recording needs audio input access to record."
+    # macOS 15+ blocks local-network traffic for an app without this text: the
+    # console link, desk macros and twin link all depend on it.
+    PLIST_TO_MERGE                "<plist><dict><key>NSLocalNetworkUsageDescription</key><string>Zynforge Recording talks to your mixing console and to a second recorder on the local network.</string></dict></plist>"
 )
 
 juce_generate_juce_header(ZynforgeRecording)
