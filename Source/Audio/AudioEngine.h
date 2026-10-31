@@ -69,6 +69,10 @@ namespace zynforge
         { remoteTransportHandler = std::move (handler); }
         bool performRemoteTransport (RemoteTransportAction, juce::String& error);
 
+        // Told the final name of every marker dropped at the transport, from
+        // whichever surface dropped it. Fires on the caller's thread.
+        std::function<void (const juce::String&)> onMarkerDropped;
+
         // Queued callbacks must not capture a raw AudioEngine*.  The handle is
         // nulled at the very start of destruction and remains alive for any
         // already-queued callback that needs to notice shutdown safely.

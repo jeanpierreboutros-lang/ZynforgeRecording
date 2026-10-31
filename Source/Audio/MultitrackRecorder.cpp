@@ -2177,9 +2177,11 @@ namespace zynforge
         int         reportedMirrorsSkipped {};
         std::vector<TrackMeta>               trackMetas;
         std::vector<TakeStop::WriterReport>  writerSnaps;
+        juce::var                            twin;
 
         juce::String toJson (bool withHashes, bool hashingFailed,
-                             const std::map<juce::String, juce::String>& shaByPath) const;
+                             const std::map<juce::String, juce::String>& shaByPath,
+                             const juce::var& twinBlock) const;
     };
 
     void MultitrackRecorder::finishFinalization()
@@ -2630,6 +2632,7 @@ namespace zynforge
                     for (const auto& mirror : *mirrors)
                         previousMirrorFailure = previousMirrorFailure
                             || (bool) mirror.getProperty ("failed", false);
+        report.twin = oldReport.getProperty ("twin", {});
         report.reportedSamples = previousInt ("totalSamples") + stop.totalSamples;
         report.reportedSeconds = (oldReport.isObject()
                                          ? (double) oldReport.getProperty ("totalSeconds", 0.0) : 0.0)
@@ -2651,7 +2654,8 @@ namespace zynforge
     // fill the hashes in afterwards. SessionReport holds only values, so
     // a copy of it travels into the background thread.
     juce::String MultitrackRecorder::SessionReport::toJson (bool withHashes, bool hashingFailed,
-                                                           const std::map<juce::String, juce::String>& shaByPath) const
+                                                           const std::map<juce::String, juce::String>& shaByPath,
+                                                           const juce::var& twinBlock) const
     {
         juce::DynamicObject::Ptr report (new juce::DynamicObject());
         report->setProperty ("stoppedAt",      stoppedAt.toISO8601 (true));
@@ -2753,6 +2757,7 @@ namespace zynforge
             trackArray.add (juce::var (t.get()));
         }
         report->setProperty ("tracks", juce::var (trackArray));
+        if (twinBlock.isObject()) report->setProperty ("twin", twinBlock);
         return juce::JSON::toString (juce::var (report.get()), true);
     }
 
@@ -2776,7 +2781,7 @@ namespace zynforge
         //    (or if the app is killed before hashing finishes).
         reportWriteFailed.store (
             ! atomicfile::writeText (report.sessionDir.getChildFile ("session.report.json"),
-                                     report.toJson (false, false, {})),
+                                     report.toJson (false, false, {}, report.twin)),
             std::memory_order_relaxed);
         publication.unlock();
 
@@ -2851,9 +2856,13 @@ namespace zynforge
                 // new pending reports, media mutation, and session removal.
                 const std::lock_guard<std::mutex> publish (reportState->publication);
                 if (! current()) return;
-                const bool wrote = atomicfile::writeText (
-                    sessionDir.getChildFile ("session.report.json"),
-                    report.toJson (true, hashingFailed, shaByPath));
+                // The twin link adds its block after STOP, and in daemon mode
+                // from the other process, so the file is the only place to
+                // find it. Hashing can outlast that by many minutes.
+                const auto reportFile = sessionDir.getChildFile ("session.report.json");
+                const bool wrote = atomicfile::writeText (reportFile,
+                    report.toJson (true, hashingFailed, shaByPath,
+                                   juce::JSON::parse (reportFile).getProperty ("twin", {})));
                 if (testHooks && testHooks->afterPublish) testHooks->afterPublish();
                 if ((! wrote || hashingFailed)
                     && asyncState->generation.load (std::memory_order_acquire) == asyncGen)
@@ -2869,6 +2878,19 @@ namespace zynforge
         const std::lock_guard<std::mutex> lock (state->publication);
         outGeneration = state->generation.fetch_add (1, std::memory_order_acq_rel) + 1;
         return { state, &state->generation };
+    }
+
+    bool MultitrackRecorder::editSessionReport (const juce::File& sessionDir,
+                                                const std::function<void (juce::DynamicObject&)>& edit)
+    {
+        const auto state = sessionReportState (sessionDir);
+        const std::lock_guard<std::mutex> lock (state->publication);
+        const auto file = sessionDir.getChildFile ("session.report.json");
+        auto report = file.existsAsFile() ? juce::JSON::parse (file) : juce::var();
+        auto* object = report.getDynamicObject();
+        if (object == nullptr) return false;
+        edit (*object);
+        return atomicfile::writeText (file, juce::JSON::toString (report, true));
     }
 
     bool MultitrackRecorder::deleteSessionAfterCancellingReports (const juce::File& directory)

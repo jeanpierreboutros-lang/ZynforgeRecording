@@ -104,6 +104,7 @@ add_library(ZynforgeCore STATIC
     Source/UI/MainComponentHelp.cpp
     Source/UI/MainComponentTools.cpp
     Source/UI/MainComponentStrips.cpp
+    Source/UI/MainComponentTwin.cpp
     Source/UI/TrackSelectDialog.cpp
     Source/UI/SessionSettingsDialog.cpp
     Source/Network/CaptureLink.cpp
@@ -134,6 +135,7 @@ add_library(ZynforgeCore STATIC
     Source/Network/CompanionServer.cpp
     Source/Network/RemoteControl.cpp
     Source/Network/SessionMirror.cpp
+    Source/Network/TwinLink.cpp
     Source/UI/Meterbridge.cpp
     Source/UI/TransportBar.cpp
     Source/UI/BigClockPanel.cpp
@@ -287,6 +289,8 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/SongExportTests.cpp
     Source/Tests/TimelineExportTests.cpp
     Source/Tests/TrackReorderTests.cpp
+    Source/Tests/TwinLinkTests.cpp
+    Source/Tests/TwinLinkHostTests.cpp
     Source/Tests/MixKernelTests.cpp
     Source/Tests/TransientTests.cpp
     Source/Tests/TransportBarAccessibilityTests.cpp

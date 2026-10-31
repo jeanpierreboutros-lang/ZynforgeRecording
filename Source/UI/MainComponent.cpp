@@ -72,10 +72,36 @@ void MainComponent::onRecordClicked()
     if (handleRecordPressDuringTake()) return;
     RecordStartPlan plan;
     if (! prepareRecordStart (plan)) return;
+    runRecordPlan (plan);
+}
+
+bool MainComponent::recordPlanHasSelection (const RecordStartPlan& plan)
+{
+    auto& player = engine.getPlayer();
+    return plan.continueTake && player.hasLoopRegion() && player.getLoopEnd() > player.getLoopStart();
+}
+
+bool MainComponent::recordPlanPunches (const RecordStartPlan& plan)
+{
+    return plan.punchAt >= 0 || recordPlanHasSelection (plan);
+}
+
+void MainComponent::runRecordPlan (RecordStartPlan& plan)
+{
+    const bool punch = recordPlanPunches (plan);
+    // A press on this Mac can punch on purpose. A twin start cannot: nobody
+    // here chose that cursor, and a punch replaces audio in this Mac's take.
+    if (punch && twinStartInFlight)
+    {
+        showStatus ("Twin RECORD refused -- this Mac would punch into its take; clear the EDIT cursor or selection and stop playback");
+        return;
+    }
     applyRecordAutoRouting (plan);
-    if (daemonModeActive()) { startDaemonTake (plan); return; }
-    if (startSelectionPunch (plan)) return;
-    startLocalTake (plan);
+    if (daemonModeActive()) startDaemonTake (plan);
+    else if (! startSelectionPunch (plan)) startLocalTake (plan);
+    // A punch edits this Mac's own take, so it is not a take the twin joins.
+    // This Mac's capture is already running before the link hears of it.
+    if (! punch && engine.isRecording()) twinLink.noteLocalTakeStarted();
 }
 
 bool MainComponent::handleRecordPressDuringTake()
@@ -153,6 +179,7 @@ bool MainComponent::handleRecordPressDuringTake()
         stopArmedAtMs = 0;
 
         stopActiveCaptureAsync (false);
+        noteTwinStopIfEnded();
         return true;
     }
     return false;
@@ -399,9 +426,7 @@ bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)
     // continue below.
     {
         auto& player = engine.getPlayer();
-        const bool haveSelection = plan.continueTake && player.hasLoopRegion()
-                                && player.getLoopEnd() > player.getLoopStart();
-        if (haveSelection)
+        if (recordPlanHasSelection (plan))
         {
             const double sr  = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
             const auto   in  = player.getLoopStart();
@@ -583,6 +608,7 @@ void MainComponent::onStopClicked()
     }
 
     stopActiveCaptureAsync (true);
+    noteTwinStopIfEnded();
 }
 
 bool MainComponent::stopActiveCapture (bool stopPlaybackAndRewind, bool persistMetadata)
@@ -934,6 +960,7 @@ void MainComponent::applyLockState()
     if (vcaPanel != nullptr) vcaPanel->setEnabled (e);
     if (patchDialog != nullptr) patchDialog->setEnabled (e);
     if (deviceDialog != nullptr) deviceDialog->setEnabled (e);
+    if (twinDialog != nullptr) twinDialog->setEnabled (e);
 
     lockButton.setButtonText (sessionLocked ? "UNLOCK" : "LOCK");
     showStatus (sessionLocked ? "LOCKED -- click UNLOCK to resume control"
