@@ -177,6 +177,10 @@ void MainComponent::resized()
     srWarnLabel.setBounds (rateWarning
         ? row1.removeFromLeft (juce::jmin (245, row1.getWidth() / 2)).reduced (0, 4)
         : juce::Rectangle<int>());
+    twinStatusLabel.setBounds (twinStatusLabel.getText().isNotEmpty()
+        ? row1.removeFromLeft (juce::jmin (124, row1.getWidth() / 2)).reduced (0, brand::space::xs)
+        : juce::Rectangle<int>());
+    if (twinStatusLabel.isVisible()) row1.removeFromLeft (brand::space::sm);
     const int optionalWidth = juce::jmax (0, row1.getWidth() - 220);
     int pillWidth = optionalWidth;
     if (midiStatusLabel.getText().isNotEmpty() && danteLabel.getText().isNotEmpty())

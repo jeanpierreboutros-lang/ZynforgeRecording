@@ -1367,6 +1367,9 @@ namespace zynforge
             return -1;
 
         markers.drop (pos, name);
+        if (onMarkerDropped)
+            for (const auto& dropped : markers.getAll())
+                if (dropped.runtimeId == markers.lastDroppedId) { onMarkerDropped (dropped.name); break; }
         return markers.getCount();
     }
 

@@ -260,6 +260,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                                ? juce::String ("Stop companion (port " + juce::String (engine.getRemotes().getCompanionServerPort()) + ")")
                                : juce::String ("Start companion server on :9000..."));
             m.addItem (961, "Copy read-only confidence URL", compRunning);
+            m.addSeparator();
+            m.addItem (968, "Twin Recorder...", true, twinLink.isEnabled());
             menu.addSubMenu ("Network & Surfaces", m);
         }
 
@@ -359,6 +361,7 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) engine.isTrimFollowEnabled()
         << '|' << (int) engine.getChaseMode()
         << '|' << engine.getLtcSourceStrip()
+        << '|' << (int) twinLink.isEnabled()
         << '|' << (int) consoleLink.isConnected()
         << '|' << (int) consoleLink.getPatch()
         << '|' << (int) consoleLink.getProfile().canRepatch
@@ -520,6 +523,7 @@ void MainComponent::registerMenuCommands()
     m.add (959, [this] { runCloudUpload(); });
     m.add (960, [this] { editCloudUploadCommand(); });
     m.add (961, [this] { copyConfidenceUrl(); });
+    m.add (968, [this] { showTwinRecorderDialog(); });
 
     // Help
     m.add (900, [this] { showKeyboardShortcuts(); });

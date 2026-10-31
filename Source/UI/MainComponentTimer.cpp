@@ -21,6 +21,8 @@ void MainComponent::timerCallback()
     // synced, the status snapshot is taken once and feeds the header and the
     // show-day warnings).
     serviceCaptureDaemonLink();
+    twinLink.tick();
+    updateTwinStatusLabel();
     // Keep the macOS menu's greyed/enabled states in sync with reality
     // (Undo/Redo, Edit, Track, Export) -- they're cached until we ask for a
     // refresh, so without this they freeze in the empty launch state.

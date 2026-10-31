@@ -10,6 +10,7 @@
 #include "../Capture/CaptureSupervisor.h"
 #include "../Network/ConsoleLink.h"
 #include "../Network/SessionMirror.h"
+#include "../Network/TwinLink.h"
 #include "../Theme/ZynForgeLookAndFeel.h"
 #include "AutomationToolbar.h"
 #include "BigClockPanel.h"
@@ -36,12 +37,13 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
+namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class TwinLinkHostTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
                             public juce::MenuBarModel,
-                            private juce::Timer
+                            private juce::Timer,
+                            private zynforge::twin::TwinHost
 {
 public:
     MainComponent();
@@ -92,6 +94,9 @@ private:
     };
     bool handleRecordPressDuringTake();
     bool prepareRecordStart (RecordStartPlan&);
+    bool recordPlanHasSelection (const RecordStartPlan&);
+    bool recordPlanPunches (const RecordStartPlan&);
+    void runRecordPlan (RecordStartPlan&);
     void applyRecordAutoRouting (RecordStartPlan&);
     void startDaemonTake (const RecordStartPlan&);
     bool startSelectionPunch (const RecordStartPlan&);
@@ -107,6 +112,17 @@ private:
     void stopActiveCaptureAsync (bool rewind, std::function<void (bool)> completion = {});
     std::optional<bool> handleRemoteTransport (
         zynforge::AudioEngine::RemoteTransportAction, juce::String& error);
+    // Twin Recorder (MainComponentTwin.cpp). The link only ever enters through
+    // these, on the message thread, and a follower's take takes the same
+    // RECORD path as any other remote.
+    zynforge::twin::MacStatus twinStatus() override;
+    bool twinStartRecord (juce::String& refusal) override;
+    void twinStopRecord (std::function<void (bool, juce::String)> done) override;
+    void twinDropMarker (const juce::String& name) override;
+    void twinNotify (const juce::String& text) override;
+    void noteTwinStopIfEnded();
+    void showTwinRecorderDialog();
+    void updateTwinStatusLabel();
     void onFileMenuClicked();
     void onSaveSessionState();
     void onSaveSessionAs();
@@ -463,8 +479,13 @@ private:
     zynforge::capture::CaptureSupervisor captureSupervisor;
     bool useCaptureDaemon { false };
     static constexpr int kCaptureDaemonPort = 17890;
+    // Off by default; Session > Network & Surfaces > Twin Recorder. Destroyed
+    // before everything above, so its threads never outlive what the host uses.
+    zynforge::twin::TwinLink twinLink { *this };
+    bool twinStartInFlight { false };   // this RECORD arrived over the twin link
 
     friend class zynforge::MainTransportRegressionTests;
+    friend class zynforge::TwinLinkHostTests;
     friend class zynforge::PunchSessionGuardTests;
     friend class zynforge::OctoberRegressionTests;
     friend class zynforge::ReviewPersistenceRepairTests;
@@ -477,6 +498,7 @@ private:
     juce::Component::SafePointer<juce::DialogWindow> deviceDialog;
     juce::Component::SafePointer<juce::DialogWindow> patchDialog;
     juce::Component::SafePointer<juce::DialogWindow> metersDialog;
+    juce::Component::SafePointer<juce::DialogWindow> twinDialog;
 
     juce::Label  titleLabel        { {}, "ZYNFORGE  RECORDING" };
     juce::Label  statusLabel       { {}, "Idle" };
@@ -485,6 +507,7 @@ private:
     juce::Label  nextCueLabel      { {}, "" };
     juce::Label  danteLabel        { {}, "" };
     juce::Label  srWarnLabel       { {}, "" };   // persistent sample-rate mismatch banner
+    juce::Label  twinStatusLabel   { {}, "" };   // link state; empty while the link is off
     juce::Label  sessionLabel      { {}, "No session loaded" };
     juce::Label  transportLabel    { {}, "00:00 / 00:00" };
     // Header chrome -- IconButton paints a glyph next to each label so

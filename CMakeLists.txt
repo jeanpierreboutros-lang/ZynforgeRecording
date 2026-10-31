@@ -101,6 +101,7 @@ add_library(ZynforgeCore STATIC
     Source/UI/MainComponentHelp.cpp
     Source/UI/MainComponentTools.cpp
     Source/UI/MainComponentStrips.cpp
+    Source/UI/MainComponentTwin.cpp
     Source/UI/TrackSelectDialog.cpp
     Source/UI/SessionSettingsDialog.cpp
     Source/Network/CaptureLink.cpp
@@ -280,6 +281,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/TimelineExportTests.cpp
     Source/Tests/TrackReorderTests.cpp
     Source/Tests/TwinLinkTests.cpp
+    Source/Tests/TwinLinkHostTests.cpp
     Source/Tests/MixKernelTests.cpp
     Source/Tests/TransientTests.cpp
     Source/Tests/TransportBarAccessibilityTests.cpp

@@ -27,6 +27,7 @@ MainComponent::MainComponent()
     // and in-process recording retain the engine's default implementation.
     engine.setRemoteTransportHandler ([this] (auto action, juce::String& error)
     { return handleRemoteTransport (action, error); });
+    engine.onMarkerDropped = [this] (const juce::String& name) { twinLink.noteLocalMarker (name); };
 
     engine.onTracksReordered = [this] (const std::vector<int>& destination)
     {
@@ -114,6 +115,12 @@ MainComponent::MainComponent()
     srWarnLabel.setJustificationType (juce::Justification::centredLeft);
     srWarnLabel.setFont (brand::type::ui (12.0f, true));
     addAndMakeVisible (srWarnLabel);
+
+    // Twin Recorder state while the link is on: a flat red block for TWIN LOST.
+    twinStatusLabel.setJustificationType (juce::Justification::centred);
+    twinStatusLabel.setFont (brand::type::ui (12.0f, true));
+    twinStatusLabel.setMinimumHorizontalScale (0.8f);
+    addChildComponent (twinStatusLabel);
 
     sessionLabel.setFont (brand::type::caption());
     sessionLabel.setColour (juce::Label::textColourId, brand::textMuted);
@@ -848,6 +855,9 @@ MainComponent::~MainComponent()
     // entering a partially destructed MainComponent. AudioEngine invalidates
     // its own queued-callback handle at the start of its later destruction.
     engine.setRemoteTransportHandler ({});
+    engine.onMarkerDropped = nullptr;
+    delete twinDialog.getComponent();
+    twinLink.stop();
     sessionMirror.stop();
 
     // Cancel + join any in-flight session job (bounce, export, copy) now,
