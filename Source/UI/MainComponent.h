@@ -251,6 +251,10 @@ private:
     void toggleCaptureDaemon();
     void connectCaptureDaemon (bool announceReattach);
     void promptConsoleConnect();
+    void wireConsoleLink();
+    void saveConsoleLog();
+    void writeConsoleLog (const juce::File&);
+    juce::String consoleLinkSummary() const;
     void consoleToggleSoundcheck();
     void consoleCaptureGains();
     void consoleRestoreGains();

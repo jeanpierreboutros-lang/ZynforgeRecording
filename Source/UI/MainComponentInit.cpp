@@ -27,6 +27,7 @@ MainComponent::MainComponent()
     // and in-process recording retain the engine's default implementation.
     engine.setRemoteTransportHandler ([this] (auto action, juce::String& error)
     { return handleRemoteTransport (action, error); });
+    wireConsoleLink();
 
     engine.onTracksReordered = [this] (const std::vector<int>& destination)
     {

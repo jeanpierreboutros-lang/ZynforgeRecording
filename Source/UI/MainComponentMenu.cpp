@@ -19,6 +19,7 @@
 #include "TimecodeSyncDialog.h"
 #include "ControlSurfacesDialog.h"
 #include "SessionSettingsDialog.h"
+#include "../Audio/AtomicFile.h"
 
 using namespace zynforge;
 
@@ -285,6 +286,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                        consoleRepatch);
             m.addItem (956, "Console: capture head-amp gains", consoleGains);
             m.addItem (957, "Console: restore head-amp gains", consoleGains);
+            m.addSeparator();
+            m.addItem (969, "Console: Save Console Log...", ! engine.isRecording());
             menu.addSubMenu ("Console", m);
         }
 
@@ -520,6 +523,7 @@ void MainComponent::registerMenuCommands()
     m.add (959, [this] { runCloudUpload(); });
     m.add (960, [this] { editCloudUploadCommand(); });
     m.add (961, [this] { copyConfidenceUrl(); });
+    m.add (969, [this] { saveConsoleLog(); });
 
     // Help
     m.add (900, [this] { showKeyboardShortcuts(); });
@@ -566,6 +570,64 @@ void MainComponent::registerMenuCommands()
     m.add (333, [this] { confirmDeleteChannels ([this] { deleteSelectedStrips(); }); });
     m.add (334, [this] { clearStripSelection(); });
     m.add (335, [this] { selectAllStrips(); });
+}
+
+void MainComponent::saveConsoleLog()
+{
+    if (engine.isRecording())
+    { showStatus ("Stop recording first -- the console log stays in memory until then"); return; }
+    if (engine.getRemotes().getOscLogTail (1).isEmpty())
+    {
+        showStatus ("The console log is empty -- turn on \"Debug: log OSC traffic\" in Control Surfaces first");
+        return;
+    }
+
+    const auto suggested = juce::File::getSpecialLocation (juce::File::userDesktopDirectory)
+        .getChildFile ("ZynForge Console Log "
+                       + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M") + ".txt");
+    chooser = std::make_unique<juce::FileChooser> ("Save Console Log", suggested, "*.txt");
+    juce::Component::SafePointer<MainComponent> self (this);
+    chooser->launchAsync (juce::FileBrowserComponent::saveMode
+                          | juce::FileBrowserComponent::canSelectFiles
+                          | juce::FileBrowserComponent::warnAboutOverwriting,
+        [self] (const juce::FileChooser& fc)
+        {
+            if (self == nullptr) return;
+            const auto file = fc.getResult();
+            if (file == juce::File()) return;
+            self->writeConsoleLog (file);
+        });
+}
+
+void MainComponent::writeConsoleLog (const juce::File& file)
+{
+    // The chooser can sit open while a take starts.
+    if (engine.isRecording())
+    { showStatus ("Stop recording first -- the console log stays in memory until then"); return; }
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    const bool started = sessionJobs.start (
+        [self, file, text = engine.getRemotes().formatConsoleLog (consoleLinkSummary())]
+        (const std::atomic<bool>&) -> zynforge::SessionJobRunner::Completion
+        {
+            const bool ok = zynforge::atomicfile::writeText (file, text);
+            return [self, file, ok]
+            {
+                if (self != nullptr)
+                    self->showStatus (ok ? "Console log saved: " + file.getFileName()
+                                         : "Could not write the console log to " + file.getFullPathName());
+            };
+        });
+    if (! started) showStatus ("Wait for the session file operation to finish");
+}
+
+juce::String MainComponent::consoleLinkSummary() const
+{
+    const auto& profile = consoleLink.getProfile();
+    if (! consoleLink.isConnected()) return "Console link: not connected";
+    return "Console link: " + profile.displayName + " at " + consoleLink.getHost()
+         + (consoleLink.isDialectConfirmed() ? ", dialect confirmed by the desk"
+                                             : ", dialect not confirmed by the desk");
 }
 
 void MainComponent::copyConfidenceUrl()

@@ -12,11 +12,15 @@
 // kMaxBundleDepth. It accepts what JUCE accepted (OSC 1.0 messages with
 // i / f / s / b / r arguments, bundles, zero padding) and delivers to the same
 // juce::OSCReceiver::Listener interface on the message thread, so OscRemote
-// and OscUdpTransport keep their listener code unchanged.
+// and OscUdpTransport keep their listener code unchanged. The Listener
+// interface carries no sender, so getCurrentSource() supplies it during a
+// delivery.
 
 #include <juce_osc/juce_osc.h>
 
+#include <atomic>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <optional>
 
@@ -199,6 +203,26 @@ namespace zynforge
             catch (const juce::OSCException&) {}   // e.g. an illegal address pattern
             return {};
         }
+
+        // What can be said about a datagram parsePacket refused, for the
+        // traffic log. Only the size, address and type tags: never the
+        // argument bytes, which on /zynforge/* hold a credential. A desk that
+        // sends a type we refuse (a double, a boolean) would otherwise look
+        // exactly like a desk that sends nothing.
+        inline juce::String describeRefused (const void* data, size_t size)
+        {
+            auto out = juce::String ((juce::int64) size) + " bytes, refused by the parser";
+            if (data == nullptr || size == 0) return out;
+            Cursor c { static_cast<const juce::uint8*> (data), 0, size };
+            juce::String address, tags;
+            if (c.data[0] == '/' && c.readString (address))
+            {
+                out << ": " << address.substring (0, 120);
+                if (c.remaining() > 0 && c.readString (tags))
+                    out << " " << tags.substring (0, 32);
+            }
+            return out;
+        }
     }
 
     // Stands in for the part of juce::OSCReceiver this app uses: bind a port or
@@ -209,18 +233,31 @@ namespace zynforge
     public:
         using Listener = juce::OSCReceiver::Listener<juce::OSCReceiver::MessageLoopCallback>;
 
+        // Where a datagram came from.
+        struct Source
+        {
+            juce::String ip;
+            int          port { 0 };
+            juce::String toString() const
+            { return ip.isEmpty() ? juce::String ("(unknown)") : ip + ":" + juce::String (port); }
+        };
+
         OscPacketReceiver() : juce::Thread ("ZynForge OSC receiver") {}
         ~OscPacketReceiver() override { disconnect(); }
 
         // Binds a socket of our own to `port` on every interface, as
-        // juce::OSCReceiver::connect did.
-        bool connect (int port)
+        // juce::OSCReceiver::connect did. With `onlyFrom`, every datagram from
+        // another IPv4 address is dropped on the reader thread, before parsing
+        // and before it can cost the message thread anything.
+        bool connect (int port, const juce::String& onlyFrom = {})
         {
             disconnect();
             auto s = std::make_unique<juce::DatagramSocket> (false);
             if (! s->bindToPort (port)) return false;
             owned = std::move (s);
             socket = owned.get();
+            allowedSource = onlyFrom;
+            droppedSources.store (0, std::memory_order_relaxed);
             startThread();
             return true;
         }
@@ -231,6 +268,7 @@ namespace zynforge
         {
             disconnect();
             socket = &shared;
+            allowedSource.clear();
             startThread();
             return true;
         }
@@ -252,42 +290,105 @@ namespace zynforge
         void addListener (Listener* l)    { listeners.add (l); }
         void removeListener (Listener* l) { listeners.remove (l); }
 
+        // The sender of the packet being delivered. Only meaningful inside a
+        // listener callback.
+        const Source& getCurrentSource() const noexcept { return currentSource; }
+
+        // Datagrams the `onlyFrom` filter refused since connect(), and who sent
+        // the latest: a wrong desk IP then shows the right one.
+        juce::int64  getDroppedSourceCount() const noexcept { return droppedSources.load (std::memory_order_relaxed); }
+        juce::String getLastDroppedSource() const
+        {
+            const juce::SpinLock::ScopedLockType sl (droppedSourceLock);
+            return lastDroppedSource;
+        }
+
+        // Message thread: a datagram no listener will hear about. Bursts are
+        // thinned to kRefusedReportMs apart so junk can't flood the message
+        // thread.
+        std::function<void (const Source&, const juce::String& description)> onRefusedPacket;
+
+        // Runs a delivery as if it had arrived from `from`, without a socket.
+        void deliverForTests (const juce::OSCBundle::Element& element, const Source& from)
+        { deliver (element, from); }
+
     private:
+        static constexpr double kRefusedReportMs = 100.0;
+
         struct Packet final : juce::Message
         {
-            explicit Packet (const juce::OSCBundle::Element& e) : content (e) {}
+            Packet (const juce::OSCBundle::Element& e, Source from)
+                : content (e), source (std::move (from)) {}
             juce::OSCBundle::Element content;
+            Source source;
+        };
+
+        struct RefusedPacket final : juce::Message
+        {
+            RefusedPacket (juce::String d, Source from)
+                : description (std::move (d)), source (std::move (from)) {}
+            juce::String description;
+            Source source;
         };
 
         void run() override
         {
             constexpr int kBufferSize = 65535;
             juce::HeapBlock<char> buffer (kBufferSize);
+            double nextRefusedReportMs = 0.0;
             while (! threadShouldExit())
             {
                 const int ready = socket->waitUntilReady (true, 100);
                 if (ready < 0 || threadShouldExit()) return;
                 if (ready == 0) continue;
-                const int got = socket->read (buffer.getData(), kBufferSize, false);
-                if (got < 4) continue;
-                if (const auto element = oscwire::parsePacket (buffer.getData(), (size_t) got))
-                    postMessage (new Packet (*element));   // MessageListener: dropped if we're gone
+                Source from;
+                const int got = socket->read (buffer.getData(), kBufferSize, false, from.ip, from.port);
+                if (got <= 0) continue;
+                if (allowedSource.isNotEmpty() && from.ip != allowedSource)
+                {
+                    droppedSources.fetch_add (1, std::memory_order_relaxed);
+                    const juce::SpinLock::ScopedLockType sl (droppedSourceLock);
+                    lastDroppedSource = from.ip;
+                    continue;
+                }
+                // MessageListener: a posted packet is dropped if we're gone.
+                const auto element = got >= 4 ? oscwire::parsePacket (buffer.getData(), (size_t) got)
+                                              : std::nullopt;
+                if (element.has_value())
+                    postMessage (new Packet (*element, std::move (from)));
+                else if (const auto now = juce::Time::getMillisecondCounterHiRes(); now >= nextRefusedReportMs)
+                {
+                    nextRefusedReportMs = now + kRefusedReportMs;
+                    postMessage (new RefusedPacket (oscwire::describeRefused (buffer.getData(), (size_t) got),
+                                                    std::move (from)));
+                }
             }
         }
 
-        void handleMessage (const juce::Message& message) override
+        void deliver (const juce::OSCBundle::Element& content, const Source& from)
         {
-            const auto* packet = dynamic_cast<const Packet*> (&message);
-            if (packet == nullptr) return;
-            const auto& content = packet->content;
+            currentSource = from;
             if (content.isMessage())
                 listeners.call ([&] (Listener& l) { l.oscMessageReceived (content.getMessage()); });
             else
                 listeners.call ([&] (Listener& l) { l.oscBundleReceived (content.getBundle()); });
         }
 
+        void handleMessage (const juce::Message& message) override
+        {
+            if (const auto* packet = dynamic_cast<const Packet*> (&message))
+                deliver (packet->content, packet->source);
+            else if (const auto* refused = dynamic_cast<const RefusedPacket*> (&message))
+                if (onRefusedPacket) onRefusedPacket (refused->source, refused->description);
+        }
+
         juce::DatagramSocket*                 socket { nullptr };
         std::unique_ptr<juce::DatagramSocket> owned;
         juce::ListenerList<Listener>          listeners;
+        juce::String                          allowedSource;   // written only while the reader is stopped
+        Source                                currentSource;   // message thread
+        std::atomic<juce::int64>              droppedSources { 0 };
+        juce::SpinLock                        droppedSourceLock;
+        juce::String                          lastDroppedSource;
     };
 }

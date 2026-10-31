@@ -14,6 +14,7 @@
 #include <juce_core/juce_core.h>
 
 #include <atomic>
+#include <deque>
 #include <map>
 #include <memory>
 
@@ -60,12 +61,24 @@ namespace zynforge
         bool requestConsoleChannelNames (const juce::String& host, int port, int dialect = 1);
 
         // OSC debug log -- so an engineer can verify the request/reply traffic
-        // against their actual console. When on, sent + received OSC is logged.
+        // against their actual console. When on, every console path logs here,
+        // in and out. Off, nothing is stored; what was captured stays until
+        // Clear, so it can still be saved.
+        static constexpr int kOscLogMaxLines = 50000;
+        static constexpr int kOscLogMaxChars = 400;
         void              setOscDebug (bool on) noexcept { oscDebug.store (on, std::memory_order_relaxed); }
         bool              isOscDebug() const noexcept    { return oscDebug.load (std::memory_order_relaxed); }
-        void              logOsc (const juce::String& line);   // thread-safe; keeps the last ~200 lines
+        void              logOsc (const juce::String& line);   // message thread
         juce::StringArray getOscLog() const;
+        juce::StringArray getOscLogTail (int maxLines) const;
+        // Bumped by every change, so a view can skip an unchanged log.
+        juce::int64       getOscLogRevision() const;
+        // Oldest lines the cap has discarded since the last clear.
+        juce::int64       getOscLogEvicted() const;
         void              clearOscLog();
+        // The whole log with a header saying what was listening, ready for a
+        // file. `consoleLinkSummary` is the host's line about the console link.
+        juce::String      formatConsoleLog (const juce::String& consoleLinkSummary) const;
 
         // Channel-name capture: while on, every console channel name we receive
         // is collected (1-based index -> name) AND applied to a matching track.
@@ -89,13 +102,17 @@ namespace zynforge
         AudioEngine& engine;
 
         // Declaration order is teardown order, reversed: the remotes go
-        // first (companion, then OSC, then the surface), while the log and
-        // capture state they write to are still alive.
+        // first (companion, then OSC, then the surface),
+        // while the log and capture state they write to are still alive.
         std::atomic<bool>           consoleCapture { false };
         std::map<int, juce::String> capturedConsoleNames;   // message-thread only
         std::atomic<bool>           oscDebug { false };
         juce::CriticalSection       oscLogLock;
-        juce::StringArray           oscLog;
+        // A deque: at the cap every new line evicts one, which a StringArray
+        // would pay for by shifting every line on the message thread.
+        std::deque<juce::String>    oscLog;
+        juce::int64                 oscLogRevision { 0 };
+        juce::int64                 oscLogEvicted { 0 };
         juce::String                activeSurfaceKey;
 
         std::unique_ptr<MidiControlSurface> surface;

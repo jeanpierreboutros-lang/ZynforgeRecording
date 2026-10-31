@@ -4,10 +4,12 @@
 #include "RemoteControl.h"
 
 #include "CompanionServer.h"
+#include "ConsoleLog.h"
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MidiControlSurface.h"
 #include "../Audio/OscRemote.h"
 
+#include <juce_events/juce_events.h>
 #include <juce_osc/juce_osc.h>
 
 namespace zynforge
@@ -83,11 +85,17 @@ namespace zynforge
         return osc != nullptr ? (int) osc->getDialect() : 0;
     }
 
-    bool RemoteControl::requestConsoleChannelNames (const juce::String& host, int port, int dialect)
+    bool RemoteControl::requestConsoleChannelNames (const juce::String& consoleHost, int port, int dialect)
     {
-        if (host.trim().isEmpty() || port <= 0 || port > 65535) return false;
+        if (consoleHost.trim().isEmpty() || port <= 0 || port > 65535) return false;
         juce::OSCSender sender;
-        if (! sender.connect (host.trim(), port)) return false;
+        if (! sender.connect (consoleHost.trim(), port)) return false;
+        const auto target = consoleHost.trim() + ":" + juce::String (port);
+        const auto send = [&] (const juce::OSCMessage& m)
+        {
+            sender.send (m);
+            if (isOscDebug()) logOsc ("osc -> " + target + "  " + consolelog::describe (m));
+        };
 
         // Best-effort "report your channels" nudge per console dialect -- their
         // OSC implementations differ, so we fire a couple of plausible refresh /
@@ -96,45 +104,102 @@ namespace zynforge
         switch (dialect)
         {
             case 2:   // Allen & Heath
-                sender.send (juce::OSCMessage ("/sq/channels/?"));
-                sender.send (juce::OSCMessage ("/sq/refresh"));
+                send (juce::OSCMessage ("/sq/channels/?"));
+                send (juce::OSCMessage ("/sq/refresh"));
                 break;
             case 3:   // SSL Live
-                sender.send (juce::OSCMessage ("/sslnet/channel/?"));
-                sender.send (juce::OSCMessage ("/sslnet/refresh"));
+                send (juce::OSCMessage ("/sslnet/channel/?"));
+                send (juce::OSCMessage ("/sslnet/refresh"));
                 break;
             case 4:   // Yamaha / RIVAGE
-                sender.send (juce::OSCMessage ("/Yamaha/Channels/?"));
-                sender.send (juce::OSCMessage ("/RIVAGE/Channels/?"));
+                send (juce::OSCMessage ("/Yamaha/Channels/?"));
+                send (juce::OSCMessage ("/RIVAGE/Channels/?"));
                 break;
             default:  // DiGiCo (1) / generic
-                sender.send (juce::OSCMessage ("/Console/Channels/?"));
-                sender.send (juce::OSCMessage ("/Console/Channels", (juce::int32) 1));
-                sender.send (juce::OSCMessage ("/info"));
+                send (juce::OSCMessage ("/Console/Channels/?"));
+                send (juce::OSCMessage ("/Console/Channels", (juce::int32) 1));
+                send (juce::OSCMessage ("/info"));
                 break;
         }
         sender.disconnect();
-        if (isOscDebug())
-            logOsc ("-> " + host.trim() + ":" + juce::String (port)
-                    + "  request channel names (dialect " + juce::String (dialect) + ")");
         return true;
     }
 
     void RemoteControl::logOsc (const juce::String& line)
     {
+        if (! isOscDebug()) return;
+        const auto now = juce::Time::getCurrentTime();
+        // The one place every line passes: whatever a formatter or a desk's
+        // string carried, the live token never reaches a copyable log. Scrub
+        // before cutting to length, or a cut could keep part of it.
+        const auto token = getOscAccessToken();
+        const auto clean = token.isNotEmpty() ? line.replace (token, "[redacted]") : line;
+        auto entry = now.formatted ("%Y-%m-%d %H:%M:%S.")
+                   + juce::String (now.getMilliseconds()).paddedLeft ('0', 3) + "  "
+                   + clean.substring (0, kOscLogMaxChars);
+
         const juce::ScopedLock sl (oscLogLock);
-        oscLog.add (juce::Time::getCurrentTime().formatted ("%H:%M:%S  ") + line);
-        while (oscLog.size() > 200) oscLog.remove (0);
+        oscLog.push_back (std::move (entry));
+        ++oscLogRevision;
+        while ((int) oscLog.size() > kOscLogMaxLines)
+        {
+            oscLog.pop_front();
+            ++oscLogEvicted;
+        }
     }
     juce::StringArray RemoteControl::getOscLog() const
     {
         const juce::ScopedLock sl (oscLogLock);
-        return oscLog;
+        juce::StringArray out;
+        out.ensureStorageAllocated ((int) oscLog.size());
+        for (const auto& line : oscLog) out.add (line);
+        return out;
+    }
+    juce::StringArray RemoteControl::getOscLogTail (int maxLines) const
+    {
+        const juce::ScopedLock sl (oscLogLock);
+        juce::StringArray out;
+        const auto skip = oscLog.size() > (size_t) maxLines ? oscLog.size() - (size_t) maxLines : (size_t) 0;
+        for (auto it = oscLog.begin() + (std::ptrdiff_t) skip; it != oscLog.end(); ++it) out.add (*it);
+        return out;
+    }
+    juce::int64 RemoteControl::getOscLogRevision() const
+    {
+        const juce::ScopedLock sl (oscLogLock);
+        return oscLogRevision;
+    }
+    juce::int64 RemoteControl::getOscLogEvicted() const
+    {
+        const juce::ScopedLock sl (oscLogLock);
+        return oscLogEvicted;
     }
     void RemoteControl::clearOscLog()
     {
         const juce::ScopedLock sl (oscLogLock);
         oscLog.clear();
+        oscLogEvicted = 0;
+        ++oscLogRevision;
+    }
+
+    juce::String RemoteControl::formatConsoleLog (const juce::String& consoleLinkSummary) const
+    {
+        static const juce::StringArray dialects { "Generic", "DiGiCo", "Allen & Heath", "SSL", "Yamaha" };
+        juce::String out;
+        out << "ZynForge Recording console log\n";
+        if (auto* app = juce::JUCEApplicationBase::getInstance())
+            out << "Version: " << app->getApplicationVersion() << "\n";
+        out << "Saved: " << juce::Time::getCurrentTime().toString (true, true, true, true) << "\n"
+            << "Computer: " << juce::SystemStats::getComputerName() << "\n"
+            << consoleLinkSummary << "\n"
+            << "OSC listener: "
+            << (isOscListening() ? "port " + juce::String (getOscPort()) + ", dialect " + dialects[getOscDialect()]
+                                 : juce::String ("off")) << "\n";
+        const auto evicted = getOscLogEvicted();
+        if (evicted > 0)
+            out << "Oldest " << evicted << " lines were discarded by the "
+                << kOscLogMaxLines << "-line cap\n";
+        out << "\n" << getOscLog().joinIntoString ("\n") << "\n";
+        return out;
     }
 
     void RemoteControl::setConsoleNameCapture (bool on)

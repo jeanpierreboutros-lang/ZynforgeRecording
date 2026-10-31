@@ -112,13 +112,21 @@ namespace zynforge
                 closeB.setBounds (bottom.removeFromRight (90));
             }
         private:
+            // The log can hold a whole show. Joining and re-laying out all of
+            // it five times a second would stall the message thread, and Save
+            // Console Log is the way to read the lot.
+            static constexpr int kShownLines = 500;
             void timerCallback() override { refresh(); }
             void refresh()
             {
-                const auto txt = engine.getRemotes().getOscLog().joinIntoString ("\n");
-                if (txt != view.getText()) { view.setText (txt, false); view.moveCaretToEnd(); }
+                const auto revision = engine.getRemotes().getOscLogRevision();
+                if (revision == shownRevision) return;
+                shownRevision = revision;
+                view.setText (engine.getRemotes().getOscLogTail (kShownLines).joinIntoString ("\n"), false);
+                view.moveCaretToEnd();
             }
             AudioEngine& engine;
+            juce::int64 shownRevision { -1 };
             juce::TextEditor view;
             juce::TextButton clearB, closeB;
         };

@@ -48,8 +48,8 @@ namespace zynforge
         // path would (parse + dialect dispatch + engine setters). Lets unit
         // tests exercise the full OSC wiring without a UDP socket or the
         // message loop.
-        void dispatchForTest (const juce::OSCMessage& m)
-        { testDispatch = true; oscMessageReceived (m); testDispatch = false; }
+        void dispatchForTest (const juce::OSCMessage& m, const Source& from = {})
+        { testDispatch = true; deliverForTests (juce::OSCBundle::Element (m), from); testDispatch = false; }
         juce::String getAccessToken() const { return accessToken; }
 
     private:
@@ -59,6 +59,7 @@ namespace zynforge
         // current token generation until a regression proves the defect.
         std::function<bool(void*, size_t)> entropyProviderForTests;
         void oscMessageReceived (const juce::OSCMessage&) override;
+        void oscBundleReceived (const juce::OSCBundle&) override;
 
         // Dialect dispatchers -- return true if the message was handled.
         bool handleGeneric    (const juce::OSCMessage&);

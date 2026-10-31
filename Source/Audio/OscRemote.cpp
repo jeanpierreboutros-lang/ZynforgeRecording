@@ -1,5 +1,6 @@
 #include "OscRemote.h"
 #include "AudioEngine.h"
+#include "../Network/ConsoleLog.h"
 #include "../Network/SecureToken.h"
 
 namespace zynforge
@@ -8,6 +9,8 @@ namespace zynforge
     {
         // Match anything -- we route per-dialect inside oscMessageReceived.
         addListener (this);
+        onRefusedPacket = [this] (const Source& from, const juce::String& what)
+        { engine.getRemotes().logOsc ("osc <- " + from.toString() + "  " + what); };
     }
 
     OscRemote::~OscRemote()
@@ -38,25 +41,12 @@ namespace zynforge
 
     void OscRemote::oscMessageReceived (const juce::OSCMessage& m)
     {
-        if (engine.areControlsLocked()) return;
+        // Logged before anything can refuse it: a desk test needs to see what
+        // arrived, and a log can't change the session.
         if (engine.getRemotes().isOscDebug())
-        {
-            juce::String args;
-            const auto path = m.getAddressPattern().toString();
-            for (int i = 0; i < m.size(); ++i)
-            {
-                const auto& a = m[i];
-                // The final Generic argument is a credential, including failed
-                // authentication attempts. Never retain it in copyable logs.
-                if ((path.startsWith ("/zynforge/") && i == m.size() - 1)
-                    || (a.isString() && accessToken.isNotEmpty() && a.getString() == accessToken))
-                    args << " [redacted]";
-                else if (a.isInt32())        args << " " << a.getInt32();
-                else if (a.isFloat32()) args << " " << juce::String (a.getFloat32(), 2);
-                else if (a.isString())  args << " \"" << a.getString() << "\"";
-            }
-            engine.getRemotes().logOsc ("<- " + m.getAddressPattern().toString() + args);
-        }
+            engine.getRemotes().logOsc ("osc <- " + getCurrentSource().toString() + "  " + consolelog::describe (m));
+
+        if (engine.areControlsLocked()) return;
 
         // Always try the matching dialect first, fall back to Generic.
         switch (dialect)
@@ -68,6 +58,16 @@ namespace zynforge
             case Dialect::Generic:     break;
         }
         handleGeneric (m);
+    }
+
+    // Never acted on, so the log is all a bundle gets.
+    void OscRemote::oscBundleReceived (const juce::OSCBundle& bundle)
+    {
+        if (! engine.getRemotes().isOscDebug()) return;
+        juce::StringArray lines;
+        consolelog::describeBundle (bundle, lines);
+        for (const auto& line : lines)
+            engine.getRemotes().logOsc ("osc <- " + getCurrentSource().toString() + "  " + line);
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
