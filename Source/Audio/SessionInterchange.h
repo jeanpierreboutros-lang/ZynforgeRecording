@@ -174,7 +174,8 @@ namespace zynforge::interchange
                     media.channels = (int) reader->numChannels;
                     media.rate     = reader->sampleRate;
                 }
-                else if ((int) reader->numChannels != media.channels || reader->sampleRate != media.rate)
+                else if ((int) reader->numChannels != media.channels
+                         || ! juce::exactlyEqual (reader->sampleRate, media.rate))
                 {
                     media.problem = part.getFileName() + " does not match the rest of its take";
                     return media;
@@ -310,7 +311,7 @@ namespace zynforge::interchange
             return l.file == r.file && l.fileChannels == 2
                 && l.channel == 0 && r.channel == 1
                 && l.position == r.position && l.sourceOffset == r.sourceOffset
-                && l.length == r.length && l.gainDb == r.gainDb
+                && l.length == r.length && juce::exactlyEqual (l.gainDb, r.gainDb)
                 && l.fadeIn == r.fadeIn && l.fadeOut == r.fadeOut
                 && l.fadeCurve == r.fadeCurve && l.muted == r.muted;
         }

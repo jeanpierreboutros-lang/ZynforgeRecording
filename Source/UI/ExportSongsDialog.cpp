@@ -205,8 +205,7 @@ namespace zynforge
     void ExportSongsDialog::launch (const std::vector<songexport::Range>& songs, double sessionRate,
                                     ExportSongsContent::ResultCallback onResult)
     {
-        // Closing with the window's own button sends no result; firing once
-        // keeps Cancel and that path the same.
+        // Wrap so the callback can only fire once.
         auto shared = std::make_shared<ExportSongsContent::ResultCallback> (std::move (onResult));
         auto fireOnce = [shared] (std::optional<songexport::Choice> result)
         {

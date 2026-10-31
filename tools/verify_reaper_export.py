@@ -6,8 +6,8 @@ ZF_EXPORT_FIXTURE_DIR is set, then:
 
   1. renders a copy of the project in REAPER and compares the result with the
      engine's own mix, sample for sample;
-  2. opens the untouched project and reads every track, item, source and
-     marker back through REAPER's scripting API;
+  2. opens the untouched project and reads every track, item, source, marker
+     and note back through REAPER's scripting API;
   3. with --schemas DIR (holding Project.xsd and MetaData.xsd from
      github.com/bitwig/dawproject), validates the .dawproject with xmllint.
 
@@ -192,17 +192,20 @@ for m = 0, markers - 1 do
   line("marker", pos, name)
 end
 out:close()
+reaper.Main_SaveProjectEx(0, %s, 0)
 reaper.Main_OnCommand(40004, 0)
 '''
 
 
 def read_back(project, res, work):
     report = os.path.join(work, "reaper-readback.txt")
-    if os.path.exists(report):
-        os.remove(report)
+    saved = os.path.join(work, "reaper-saved.rpp")
+    for leftover in (report, saved):
+        if os.path.exists(leftover):
+            os.remove(leftover)
     script = os.path.join(work, "readback.lua")
     with open(script, "w", encoding="utf-8") as f:
-        f.write(READBACK % (lua_string(report), lua_string(project)))
+        f.write(READBACK % (lua_string(report), lua_string(project), lua_string(saved)))
     for _ in range(3):
         if run_reaper(res, [script]) and os.path.exists(report):
             break
@@ -218,6 +221,18 @@ def read_back(project, res, work):
             if offline or not os.path.exists(row[15]):
                 print("  ^^ FAIL: source offline")
                 ok = False
+    # What REAPER itself writes back after loading: the settings that have no
+    # scripting getter, and that a render alone would not show were kept.
+    settings = [line.strip() for line in open(saved, encoding="utf-8")
+                if line.split()[:1] in (["ITEMMIX"], ["TIMELOCKMODE"], ["TEMPOENVLOCKMODE"])]
+    print("  kept by REAPER: " + ", ".join(settings))
+    if sorted(settings) != ["ITEMMIX 1", "TEMPOENVLOCKMODE 0", "TIMELOCKMODE 0"]:
+        print("  ^^ FAIL: settings not kept")
+        ok = False
+    notes = [r for r in rows if r[0] == "notes"]
+    if not notes or len(notes[0]) < 2 or not notes[0][1].strip():
+        print("  ^^ FAIL: project notes missing")
+        ok = False
     tracks = sum(1 for r in rows if r[0] == "track")
     items = sum(1 for r in rows if r[0] == "item")
     markers = sum(1 for r in rows if r[0] == "marker")

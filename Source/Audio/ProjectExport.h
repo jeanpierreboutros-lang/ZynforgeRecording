@@ -31,7 +31,8 @@ namespace zynforge::projectexport
         int clipGains = 0, equalPower = 0, oneSide = 0, wideOrNarrow = 0, overlaps = 0;
         for (const auto& track : project.tracks)
         {
-            if (track.channels == 2 && (track.panLeft != -1.0f || track.panRight != 1.0f))
+            if (track.channels == 2
+                && ! (juce::exactlyEqual (track.panLeft, -1.0f) && juce::exactlyEqual (track.panRight, 1.0f)))
                 ++wideOrNarrow;
 
             std::vector<std::pair<juce::int64, juce::int64>> spans;

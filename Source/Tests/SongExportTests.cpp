@@ -129,7 +129,7 @@ namespace zynforge
         {
             int wrong = 0;
             for (int i = 0; i < ranged.getNumSamples(); ++i)
-                if (ranged.getSample (channelR, i) != full.getSample (channelF, (int) start + i)) ++wrong;
+                if (! juce::exactlyEqual (ranged.getSample (channelR, i), full.getSample (channelF, (int) start + i))) ++wrong;
             expectEquals (wrong, 0, what + ": samples differ from the whole-session render");
         }
 

@@ -334,12 +334,17 @@ namespace zynforge
                 expect (r.ok(), r.error);
 
                 const auto& a = r.project.tracks[0].items;
-                expectEquals (a[0].fadeIn, (juce::int64) 4800);
-                expectEquals (a[0].fadeOut, (juce::int64) 2400);
                 const auto& b = r.project.tracks[1].items;
-                expectEquals (b[0].fadeIn, (juce::int64) 1000, "the piece at silence keeps a fade over its own span");
-                expectEquals (b[1].fadeIn, (juce::int64) 0, "a piece starting up the ramp must not dip to silence");
-                expectEquals (b[1].fadeOut, (juce::int64) 2000, "the far end of the clip is an ordinary fade");
+                expectEquals ((int) a.size(), 2);
+                expectEquals ((int) b.size(), 2);
+                if (a.size() == 2 && b.size() == 2)
+                {
+                    expectEquals (a[0].fadeIn, (juce::int64) 4800);
+                    expectEquals (a[0].fadeOut, (juce::int64) 2400);
+                    expectEquals (b[0].fadeIn, (juce::int64) 1000, "the piece at silence keeps a fade over its own span");
+                    expectEquals (b[1].fadeIn, (juce::int64) 0, "a piece starting up the ramp must not dip to silence");
+                    expectEquals (b[1].fadeOut, (juce::int64) 2000, "the far end of the clip is an ordinary fade");
+                }
                 expect (r.project.notes.joinIntoString (" ").contains ("fades cut by a split"), "the approximation must be stated");
 
                 const auto rpp = rppFor (r.project, f.exports().getChildFile ("Show.RPP"));
@@ -368,8 +373,11 @@ namespace zynforge
                 expect (r.ok(), r.error);
                 const auto& items = r.project.tracks[0].items;
                 expectEquals ((int) items.size(), 2);
-                expectEquals (items[0].fadeOut, (juce::int64) 0, "the earlier piece stays at level");
-                expectEquals (items[1].fadeOut, (juce::int64) 4800, "the last piece reaches silence");
+                if (items.size() == 2)
+                {
+                    expectEquals (items[0].fadeOut, (juce::int64) 0, "the earlier piece stays at level");
+                    expectEquals (items[1].fadeOut, (juce::int64) 4800, "the last piece reaches silence");
+                }
             }
 
             beginTest ("Clip gain and clip mute reach the item");
