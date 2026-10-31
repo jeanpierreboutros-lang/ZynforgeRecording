@@ -68,4 +68,32 @@ namespace zynforge
 
         juce::AudioFormatManager formatManager;
     };
+
+    // Takes a render as it streams out of the engine and leaves one finished
+    // export file in the chosen format. The audio stays in a hidden sibling
+    // until commit() installs it, so an abandoned or failed export leaves
+    // nothing behind that could pass for a finished one: the destructor
+    // removes the sibling. A plain WAV, AIFF or FLAC at the render's own rate
+    // is written directly; MP3 or a rate conversion renders to a float WAV
+    // first and hands it to exportTrack, the one path both already take.
+    class ExportFileStream
+    {
+    public:
+        ExportFileStream (TrackExporter& exporter, const juce::File& destWithoutExtension,
+                          const ExportOptions& options, double renderRate, int numChannels);
+        ~ExportFileStream();
+
+        bool isOpen() const noexcept { return writer != nullptr; }
+        bool write (const juce::AudioBuffer<float>& block, int numSamples);
+        bool commit (juce::String& error);
+
+    private:
+        TrackExporter& exporter;
+        juce::File destWithoutExt, temporary;
+        ExportOptions options;
+        bool convertOnCommit { false };
+        std::unique_ptr<juce::AudioFormatWriter> writer;
+
+        JUCE_DECLARE_NON_COPYABLE (ExportFileStream)
+    };
 }
