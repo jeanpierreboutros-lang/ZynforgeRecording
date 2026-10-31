@@ -99,10 +99,15 @@ namespace zynforge
         // A scene / snapshot was recalled. What that does is one shared rule:
         // RemoteControl::onConsoleScene.
         std::function<void (int sceneIdx, const juce::String& name)> onSceneRecalled;
+        // The desk says this odd channel and the next one are a stereo pair.
+        std::function<void (int leftCh1, bool linked)> onStereoLink;
 
         // Ask the desk for every channel name in [1, count]. No-op unless the
         // profile declares canReadNames.
         void requestChannelNames (int count);
+        // Ask for every pair's link state, returning how many were asked. 0
+        // unless the profile declares canReadStereoLinks.
+        int requestStereoLinks();
 
         // Every message in and out, one formatted line each, for the debug log.
         std::function<void (const juce::String& line)> onTraffic;

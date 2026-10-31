@@ -104,6 +104,10 @@ namespace zynforge
         void onConsoleChannelName (int oneBasedIndex, const juce::String& name);
         // Take + clear the captured names (message thread).
         std::map<int, juce::String> takeCapturedConsoleNames();
+        // A desk's stereo link state, kept only during that same capture: a
+        // link changing on the desk later must never restructure a session.
+        void onConsoleStereoLink (int leftCh1, bool linked);
+        std::map<int, bool> takeCapturedStereoLinks();
 
         // Both console paths report a scene / snapshot recall here. The rule
         // is scenefollow::decide; this applies it and tells the engineer.
@@ -130,6 +134,7 @@ namespace zynforge
         // while the log and capture state they write to are still alive.
         std::atomic<bool>           consoleCapture { false };
         std::map<int, juce::String> capturedConsoleNames;   // message-thread only
+        std::map<int, bool>         capturedStereoLinks;    // message-thread only
         std::atomic<bool>           oscDebug { false };
         juce::CriticalSection       oscLogLock;
         // A deque: at the cap every new line evicts one, which a StringArray

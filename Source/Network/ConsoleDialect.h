@@ -34,6 +34,7 @@ namespace zynforge
             SceneRecalled,      // index = scene/snapshot number, text = its name
             HeadAmpGain,        // index = head-amp, value = RAW wire value
             InputBlockRouting,  // index = block, intValue = routing enum
+            StereoLink,         // index = 1-based left channel, intValue = 1 linked
             HandshakeOk         // the probe reply -- the dialect is confirmed
         };
 
@@ -54,6 +55,8 @@ namespace zynforge
         // Read tier -- safe on any desk, never mutates console state.
         std::function<ConsoleMessage (int ch1)>         queryChannelName;
         std::function<ConsoleMessage ()>                subscribe;   // ask for push updates
+        // Is this odd channel linked to the next one? Empty past the last pair.
+        std::function<ConsoleMessage (int leftCh1)>     queryStereoLink;
 
         // Write tier -- gated behind a confirmed handshake.
         std::function<ConsoleMessage (int block)>       queryInBlock;
@@ -75,6 +78,11 @@ namespace zynforge
         d.subscribe        = [] { return ConsoleMessage ("/xremote"); };
         d.queryChannelName = [] (int ch1)
         { return ConsoleMessage ("/ch/" + juce::String (ch1).paddedLeft ('0', 2) + "/config/name"); };
+        d.queryStereoLink = [] (int left)
+        {
+            if (left < 1 || left > 31 || left % 2 == 0) return ConsoleMessage();
+            return ConsoleMessage ("/config/chlink/" + juce::String (left) + "-" + juce::String (left + 1));
+        };
         d.queryInBlock = [] (int b)
         {
             static const char* const a[] = { "/config/routing/IN/1-8",   "/config/routing/IN/9-16",
@@ -123,6 +131,14 @@ namespace zynforge
                                 .upToFirstOccurrenceOf ("/", false, false).getIntValue();
                 if (ch >= 1) return { ConsoleEvent::Type::ChannelName, ch, 0.0f, 0, m.stringArg() };
                 return {};
+            }
+            if (a.startsWith ("/config/chlink/") && m.hasArgs())
+            {
+                const auto tail = a.fromLastOccurrenceOf ("/", false, false);
+                const int left  = tail.upToFirstOccurrenceOf ("-", false, false).getIntValue();
+                if (left < 1 || left > 31 || left % 2 == 0
+                    || tail != juce::String (left) + "-" + juce::String (left + 1)) return {};
+                return { ConsoleEvent::Type::StereoLink, left, 0.0f, m.intArg() != 0 ? 1 : 0 };
             }
             // Scene / snapshot recall pushes the new cue index.
             if (a.startsWith ("/-show/prepos/current") && m.hasArgs())

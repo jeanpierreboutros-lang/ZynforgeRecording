@@ -512,7 +512,9 @@ void MainComponent::registerMenuCommands()
             auto continuation = self;
             self->confirmSessionReplacement ([continuation]
             { if (continuation != nullptr) continuation->createSessionFromConsole(); });
-        });
+        },
+        [self] { return self != nullptr && self->consoleLink.isConnected()
+                     && self->consoleLink.getProfile().canReadNames; });
     });
     m.add (950, [this] { toggleCompanionServer(); });
     m.add (951, [this] { showAutosaveSettings(); });

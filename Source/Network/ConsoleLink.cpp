@@ -161,6 +161,19 @@ namespace zynforge
         if (onStatus) onStatus ("Requested " + juce::String (count) + " channel names...");
     }
 
+    int ConsoleLink::requestStereoLinks()
+    {
+        if (! connected || ! profile.canReadStereoLinks || ! profile.dialect.queryStereoLink) return 0;
+        int asked = 0;
+        for (int left = 1;; left += 2)
+        {
+            const auto query = profile.dialect.queryStereoLink (left);
+            if (query.isEmpty()) return asked;
+            sendMessage (query);
+            ++asked;
+        }
+    }
+
     void ConsoleLink::enterSoundcheck()
     {
         if (! connected) return;
@@ -280,6 +293,10 @@ namespace zynforge
 
             case ConsoleEvent::Type::SceneRecalled:
                 if (onSceneRecalled) onSceneRecalled (ev.index, ev.text);
+                return;
+
+            case ConsoleEvent::Type::StereoLink:
+                if (onStereoLink) onStereoLink (ev.index, ev.intValue != 0);
                 return;
 
             // ── WRITE-TIER REPLIES ───────────────────────────────────────

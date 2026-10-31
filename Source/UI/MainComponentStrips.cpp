@@ -601,73 +601,135 @@ void MainComponent::createSessionFromCsv()
         });
 }
 
+bool MainComponent::setStereoLink (int i, bool link)
+{
+    if (i < 0 || i + 1 >= engine.getRecorder().getNumTracks()) return false;
+    if (link && engine.getRecorder().getTrack (i + 1).isStereo.load())
+    { showStatus ("Unlink the neighbouring stereo pair first"); return false; }
+    engine.setTrackStereo (i, link);
+    // The engine refuses while a take is live; then the pans must not move
+    // either (they reach the monitor, stream and NDI mid-show).
+    if (engine.getRecorder().getTrack (i).isStereo.load() != link)
+    { showStatus ("Stop recording before linking or unlinking a stereo pair"); return false; }
+    // Newly linked stereo -> hard-pan L/R for the full image; unlinked back to
+    // mono -> recentre both halves so a mono strip isn't left stuck hard-right.
+    // (Buses sum centred, so skip them.)
+    if (! engine.getRecorder().getTrack (i).isBus.load())
+    {
+        engine.setTrackPan (i,     link ? -1.0f : 0.0f);
+        engine.setTrackPan (i + 1, link ?  1.0f : 0.0f);
+    }
+    // Trigger a full rebuild on the next timer tick.
+    lastTrackCount = -1;
+    return true;
+}
+
 void MainComponent::createSessionFromConsole()
 {
     if (sessionIoBusy.load()) { showStatus ("Wait for the session file operation to finish"); return; }
     if (engine.isRecording()) { showStatus ("Stop recording before creating a session"); return; }
 
-    auto* p = engine.getAppProps();
-    const int  dialect = p ? p->getIntValue ("cs_console_dialect", 1) : 1;
-    const auto key     = p ? p->getValue ("cs_console_key", "digico") : juce::String ("digico");
-    const auto ip = p ? p->getValue ("cs_" + key + "_ip").trim() : juce::String();
-    const int  rx = p ? p->getIntValue ("cs_" + key + "_port", 8001) : 8001;
-    if (ip.isEmpty())
-    { showStatus ("Set the Console IP first (Control Surfaces -> console -> Console IP)."); return; }
-
-    // Listen on the chosen console's dialect so replies are parsed, capture
-    // incoming names, then nudge the console to report them.
-    if (! engine.getRemotes().isOscListening() || engine.getRemotes().getOscDialect() != dialect)
-        engine.getRemotes().startOsc (oscListenPort(), dialect);
-    engine.getRemotes().setConsoleNameCapture (true);
-    if (! engine.getRemotes().requestConsoleChannelNames (ip, rx, dialect))
+    // A connected console link is the one place an X32 can answer from, and
+    // the only path that hears stereo links. The OSC listener path below is
+    // names only.
+    const bool viaLink = consoleLink.isConnected() && consoleLink.getProfile().canReadNames;
+    int stereoPairsAsked = 0;
+    if (viaLink)
     {
-        engine.getRemotes().setConsoleNameCapture (false);
-        showStatus ("Couldn't reach console at " + ip + ":" + juce::String (rx));
-        return;
+        engine.getRemotes().setConsoleNameCapture (true);
+        consoleLink.requestChannelNames (consoleLink.getProfile().inputChannels);
+        stereoPairsAsked = consoleLink.requestStereoLinks();
+        showStatus ("Requesting channel names from " + consoleLink.getHost() + " -- building session in ~3 s...");
     }
-    showStatus ("Requesting channel names from " + ip + " -- building session in ~3 s...");
+    else
+    {
+        auto* p = engine.getAppProps();
+        const int  dialect = p ? p->getIntValue ("cs_console_dialect", 1) : 1;
+        const auto key     = p ? p->getValue ("cs_console_key", "digico") : juce::String ("digico");
+        const auto ip = p ? p->getValue ("cs_" + key + "_ip").trim() : juce::String();
+        const int  rx = p ? p->getIntValue ("cs_" + key + "_port", 8001) : 8001;
+        if (ip.isEmpty())
+        { showStatus ("Set the Console IP first (Control Surfaces -> console -> Console IP)."); return; }
+
+        // Listen on the chosen console's dialect so replies are parsed, capture
+        // incoming names, then nudge the console to report them.
+        if (! engine.getRemotes().isOscListening() || engine.getRemotes().getOscDialect() != dialect)
+            engine.getRemotes().startOsc (oscListenPort(), dialect);
+        engine.getRemotes().setConsoleNameCapture (true);
+        if (! engine.getRemotes().requestConsoleChannelNames (ip, rx, dialect))
+        {
+            engine.getRemotes().setConsoleNameCapture (false);
+            showStatus ("Couldn't reach console at " + ip + ":" + juce::String (rx));
+            return;
+        }
+        showStatus ("Requesting channel names from " + ip + " -- building session in ~3 s...");
+    }
 
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::Timer::callAfterDelay (3000, [self]
+    juce::Timer::callAfterDelay (3000, [self, viaLink, stereoPairsAsked]
     {
         if (self == nullptr) return;
         self->engine.getRemotes().setConsoleNameCapture (false);
         const auto names = self->engine.getRemotes().takeCapturedConsoleNames();
+        const auto links = self->engine.getRemotes().takeCapturedStereoLinks();
         if (names.empty())
         {
             self->showStatus ("No channel names received -- check the desk is sending OSC to this Mac.");
             return;
         }
-        const int maxCh = names.rbegin()->first;   // highest 1-based channel
-
-        zynforge::NewSessionDialog::Result r;
-        r.name          = "DiGiCo " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M");
-        r.location      = self->getSessionsRoot();
-        r.captureFormat = self->engine.getRecorder().getCaptureFormat();
-        r.sampleRate    = self->pendingSampleRate;
-        r.interleaved   = true;
-        r.ioSettings    = "Last Used";
-        const auto dir  = self->createSessionFolderStructure (r);
-        if (! dir.isDirectory())
-        {
-            self->showStatus (self->sessionCreateFailureMessage());
-            return;
-        }
-
-        self->engine.setActiveSessionDir (dir);
-        self->engine.clearAllStripOverrides();
-        self->condemnAllStrips();   // console-session rebuild resizes the recorder vector; stop strip timers first
-        self->engine.setStripCount (maxCh);
-        for (const auto& kv : names)
-        {
-            const int i = kv.first - 1;
-            if (i >= 0 && i < maxCh) self->engine.setTrackName (i, kv.second);
-        }
-        self->lastTrackCount = -1;
-        self->loadSetlistFromActiveSession();
-        self->loadUILayoutFromActiveSession();
-        self->saveSessionStateTo (dir);
-        self->showStatus ("Session created from console: " + juce::String ((int) names.size())
-                          + " named channel(s)");
+        self->buildSessionFromConsole (names, links, stereoPairsAsked, viaLink ? "Console " : "DiGiCo ");
     });
+}
+
+void MainComponent::buildSessionFromConsole (const std::map<int, juce::String>& names,
+                                             const std::map<int, bool>& stereoLinks,
+                                             int stereoPairsAsked, const juce::String& namePrefix)
+{
+    if (names.empty()) return;
+    int maxCh = names.rbegin()->first;   // highest 1-based channel
+    // A desk leaves a name blank easily, and the right half of a pair is the
+    // usual one. The pair still needs its second strip.
+    for (const auto& [left, linked] : stereoLinks)
+        if (linked && left <= maxCh) maxCh = juce::jmax (maxCh, left + 1);
+
+    zynforge::NewSessionDialog::Result r;
+    r.name          = namePrefix + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M");
+    r.location      = getSessionsRoot();
+    r.captureFormat = engine.getRecorder().getCaptureFormat();
+    r.sampleRate    = pendingSampleRate;
+    r.interleaved   = true;
+    r.ioSettings    = "Last Used";
+    const auto dir  = createSessionFolderStructure (r);
+    if (! dir.isDirectory())
+    {
+        showStatus (sessionCreateFailureMessage());
+        return;
+    }
+
+    engine.setActiveSessionDir (dir);
+    engine.clearAllStripOverrides();
+    condemnAllStrips();   // console-session rebuild resizes the recorder vector; stop strip timers first
+    engine.setStripCount (maxCh);
+    for (const auto& kv : names)
+    {
+        const int i = kv.first - 1;
+        if (i >= 0 && i < maxCh) engine.setTrackName (i, kv.second);
+    }
+    int pairsLinked = 0;
+    for (const auto& [left, linked] : stereoLinks)
+        if (linked && setStereoLink (left - 1, true)) ++pairsLinked;
+    lastTrackCount = -1;
+    loadSetlistFromActiveSession();
+    loadUILayoutFromActiveSession();
+    saveSessionStateTo (dir);
+
+    auto status = "Session created from console: " + juce::String ((int) names.size()) + " named channel(s)";
+    if (stereoPairsAsked == 0)
+        status << " -- this desk reports no stereo data, so link stereo pairs by hand";
+    else if ((int) stereoLinks.size() < stereoPairsAsked)
+        status << ", " << pairsLinked << " stereo pair(s) linked -- only " << (int) stereoLinks.size()
+               << " of " << stereoPairsAsked << " link states arrived, so check the rest by hand";
+    else
+        status << ", " << pairsLinked << " stereo pair(s) linked";
+    showStatus (status);
 }

@@ -21,7 +21,11 @@ namespace zynforge
     public:
         // createFromConsole is invoked by the DiGiCo panel's "Create session
         // from console" button (the host builds the session). Optional.
-        static void launch (AudioEngine& engine, std::function<void()> createFromConsole = {});
+        // consoleLinkUp says whether the connected console link can supply the
+        // session instead; the hub's own button is the way there for a desk
+        // with no OSC panel here, such as an X32.
+        static void launch (AudioEngine& engine, std::function<void()> createFromConsole = {},
+                            std::function<bool()> consoleLinkUp = {});
     };
 
     namespace cs_detail
@@ -391,11 +395,11 @@ namespace zynforge
         };
 
         // ── Hub list ─────────────────────────────────────────────────────
-        class Hub final : public juce::Component, public juce::ListBoxModel
+        class Hub final : public juce::Component, public juce::ListBoxModel, private juce::Timer
         {
         public:
-            Hub (AudioEngine& e, std::function<void()> createFromConsole)
-                : engine (e), onCreateFromConsole (std::move (createFromConsole))
+            Hub (AudioEngine& e, std::function<void()> createFromConsole, std::function<bool()> linkUp)
+                : engine (e), onCreateFromConsole (std::move (createFromConsole)), consoleLinkUp (std::move (linkUp))
             {
                 list.setModel (this);
                 list.setRowHeight (32);
@@ -418,12 +422,23 @@ namespace zynforge
                 settingsB.onClick = [this] { openSettings (list.getSelectedRow()); };
                 addAndMakeVisible (settingsB);
 
+                createB.setButtonText ("Create Session from Connected Console");
+                dialog::styleSecondary (createB);
+                createB.onClick = [this]
+                {
+                    if (onCreateFromConsole) onCreateFromConsole();
+                    if (auto* d = findParentComponentOfClass<juce::DialogWindow>()) d->exitModalState (0);
+                };
+                addAndMakeVisible (createB);
+
                 closeB.setButtonText ("Close");
                 dialog::styleSecondary (closeB);
                 closeB.onClick = [this] { if (auto* d = findParentComponentOfClass<juce::DialogWindow>()) d->exitModalState (0); };
                 addAndMakeVisible (closeB);
 
                 setSize (560, 460);
+                timerCallback();
+                startTimerHz (2);
             }
 
             void paint (juce::Graphics& g) override { dialog::paintChrome (g, *this, "CONTROL SURFACES"); }
@@ -435,8 +450,11 @@ namespace zynforge
                 hint.setBounds (b.removeFromTop (32));
                 auto bottom = b.removeFromBottom (44);
                 list.setBounds (b.reduced (0, 6));
-                settingsB.setBounds (bottom.removeFromLeft (180));
-                closeB.setBounds (bottom.removeFromRight (90));
+                settingsB.setBounds (bottom.removeFromLeft (150));
+                bottom.removeFromLeft (brand::space::sm);
+                closeB.setBounds (bottom.removeFromRight (80));
+                bottom.removeFromRight (brand::space::sm);
+                createB.setBounds (bottom);
             }
 
             int getNumRows() override { return (int) protocols().size(); }
@@ -479,6 +497,10 @@ namespace zynforge
             void listBoxItemDoubleClicked (int row, const juce::MouseEvent&) override { openSettings (row); }
 
         private:
+            // A link can connect or drop while this is open.
+            void timerCallback() override
+            { createB.setEnabled (onCreateFromConsole != nullptr && consoleLinkUp != nullptr && consoleLinkUp()); }
+
             void openSettings (int row)
             {
                 if (row < 0 || row >= getNumRows()) return;
@@ -496,17 +518,19 @@ namespace zynforge
 
             AudioEngine& engine;
             std::function<void()> onCreateFromConsole;
+            std::function<bool()> consoleLinkUp;
             juce::ListBox list { "protocols", nullptr };
             juce::Label title, hint;
-            juce::TextButton settingsB, closeB;
+            juce::TextButton settingsB, createB, closeB;
         };
     }
 
-    inline void ControlSurfacesDialog::launch (AudioEngine& engine, std::function<void()> createFromConsole)
+    inline void ControlSurfacesDialog::launch (AudioEngine& engine, std::function<void()> createFromConsole,
+                                               std::function<bool()> consoleLinkUp)
     {
         juce::DialogWindow::LaunchOptions opts;
         opts.dialogTitle                  = "Control Surfaces";
-        opts.content.setOwned (new cs_detail::Hub (engine, std::move (createFromConsole)));
+        opts.content.setOwned (new cs_detail::Hub (engine, std::move (createFromConsole), std::move (consoleLinkUp)));
         opts.dialogBackgroundColour       = brand::bgPanel;
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar            = true;

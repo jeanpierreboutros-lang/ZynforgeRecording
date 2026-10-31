@@ -676,6 +676,9 @@ void MainComponent::wireConsoleLink()
     consoleLink.onSceneRecalled = [self] (int sceneIdx, const juce::String& sceneName)
     { if (self != nullptr) self->engine.getRemotes().onConsoleScene (sceneIdx, sceneName); };
 
+    consoleLink.onStereoLink = [self] (int leftCh1, bool linked)
+    { if (self != nullptr) self->engine.getRemotes().onConsoleStereoLink (leftCh1, linked); };
+
     consoleLink.onTraffic = [self] (const juce::String& line)
     { if (self != nullptr) self->engine.getRemotes().logOsc (line); };
 }

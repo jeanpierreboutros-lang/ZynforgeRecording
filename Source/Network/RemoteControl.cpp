@@ -204,7 +204,11 @@ namespace zynforge
 
     void RemoteControl::setConsoleNameCapture (bool on)
     {
-        if (on) capturedConsoleNames.clear();
+        if (on)
+        {
+            capturedConsoleNames.clear();
+            capturedStereoLinks.clear();
+        }
         consoleCapture.store (on, std::memory_order_relaxed);
     }
 
@@ -221,6 +225,19 @@ namespace zynforge
     {
         auto out = capturedConsoleNames;
         capturedConsoleNames.clear();
+        return out;
+    }
+
+    void RemoteControl::onConsoleStereoLink (int leftCh1, bool linked)
+    {
+        if (leftCh1 >= 1 && consoleCapture.load (std::memory_order_relaxed))
+            capturedStereoLinks[leftCh1] = linked;
+    }
+
+    std::map<int, bool> RemoteControl::takeCapturedStereoLinks()
+    {
+        auto out = capturedStereoLinks;
+        capturedStereoLinks.clear();
         return out;
     }
 

@@ -205,6 +205,16 @@ private:
     // Request channel names from a DiGiCo console, then build a session from
     // what comes back (the bidirectional console link).
     void createSessionFromConsole();
+    // Builds the session from what the desk reported. `stereoPairsAsked` is
+    // how many link states were requested; 0 means this desk or path can't
+    // report them.
+    void buildSessionFromConsole (const std::map<int, juce::String>& names,
+                                  const std::map<int, bool>& stereoLinks,
+                                  int stereoPairsAsked, const juce::String& namePrefix);
+    // Link or unlink a stereo pair the way a strip's menu does: the L/R pans
+    // and the rebuild come with it. False, with the reason on the status line,
+    // when refused.
+    bool setStereoLink (int leftIndex, bool link);
     void showBatchColourDialog();
     void showSelectionMenu();
     void deleteSelectedStrips();
