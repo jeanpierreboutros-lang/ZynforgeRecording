@@ -342,6 +342,22 @@ namespace zynforge
                     session.deleteRecursively();
                 }
 
+                beginTest ("A STOP the capture daemon did not confirm never reaches the follower");
+                {
+                    FollowerSocket peer;
+                    if (! linkAsLeader (main, peer)) return;
+                    main.engine.setExternalRecording (true);
+                    main.twinLink.noteLocalTakeStarted();
+                    main.onStopClicked();
+                    main.onStopClicked();
+                    expect (main.engine.isRecording(), "the fixture's unconfirmed take ended");
+                    expect (! settle (main, [&] { return peer.count ("stop") > 0; }, 200),
+                            "the follower stopped while this take may still be rolling");
+                    main.engine.setExternalRecording (false);
+                    main.lastCaptureFinalizationError.clear();
+                    main.twinLink.stop();
+                }
+
                 beginTest ("A punch on the leader tells the follower nothing");
                 {
                     FollowerSocket peer;
