@@ -15,6 +15,7 @@
 #include <juce_core/juce_core.h>
 #include <juce_osc/juce_osc.h>
 
+#include "ConsoleLog.h"
 #include "ConsoleTransport.h"
 #include "OscPacketReceiver.h"
 
@@ -34,7 +35,12 @@ namespace zynforge
                                       juce::OSCReceiver::MessageLoopCallback>
     {
     public:
-        OscUdpTransport()           { receiver.addListener (this); }
+        OscUdpTransport()
+        {
+            receiver.addListener (this);
+            receiver.onRefusedPacket = [this] (const OscPacketReceiver::Source& from, const juce::String& what)
+            { if (onUnhandledTraffic) onUnhandledTraffic (from.toString(), what); };
+        }
         ~OscUdpTransport() override { receiver.removeListener (this); disconnect(); }
 
         juce::String getName() const override { return "OSC/UDP"; }
@@ -96,7 +102,18 @@ namespace zynforge
                 else if (a.isFloat32()) cm.args.emplace_back ((double) a.getFloat32());
                 else if (a.isString())  cm.args.emplace_back (a.getString());
             }
+            cm.source = receiver.getCurrentSource().toString();
+            cm.wire   = consolelog::describe (m);   // keeps the blobs `args` drops
             if (onMessage) onMessage (cm);   // the receiver already hops to the message thread
+        }
+
+        void oscBundleReceived (const juce::OSCBundle& bundle) override
+        {
+            if (! onUnhandledTraffic) return;
+            juce::StringArray lines;
+            consolelog::describeBundle (bundle, lines);
+            for (const auto& line : lines)
+                onUnhandledTraffic (receiver.getCurrentSource().toString(), line);
         }
 
         std::unique_ptr<juce::DatagramSocket> socket;

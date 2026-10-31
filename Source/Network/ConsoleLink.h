@@ -96,13 +96,21 @@ namespace zynforge
         // A channel name arrived (1-based console channel). The host renames
         // the matching strip so takes land labelled.
         std::function<void (int ch1, const juce::String& name)> onChannelName;
-        // A scene / snapshot was recalled. The host drops a marker, which is
-        // what makes a show navigable the next morning.
+        // A scene / snapshot was recalled. What that does is one shared rule:
+        // RemoteControl::onConsoleScene.
         std::function<void (int sceneIdx, const juce::String& name)> onSceneRecalled;
+        // The desk says this odd channel and the next one are a stereo pair.
+        std::function<void (int leftCh1, bool linked)> onStereoLink;
 
         // Ask the desk for every channel name in [1, count]. No-op unless the
         // profile declares canReadNames.
         void requestChannelNames (int count);
+        // Ask for every pair's link state, returning how many were asked. 0
+        // unless the profile declares canReadStereoLinks.
+        int requestStereoLinks();
+
+        // Every message in and out, one formatted line each, for the debug log.
+        std::function<void (const juce::String& line)> onTraffic;
 
         // ── HANDSHAKE / SELF-VERIFICATION ───────────────────────────────
         // On connect the link sends the dialect's probe. A parseable reply
@@ -130,7 +138,7 @@ namespace zynforge
             connected = connected || msgHook != nullptr;   // hooked = "connected" for tests
         }
         void injectReply (const juce::OSCMessage& m);
-        void injectReply (const ConsoleMessage& m) { handleMessage (m); }
+        void injectReply (const ConsoleMessage& m) { logInbound (m); handleMessage (m); }
         // Pretend the handshake landed, for tests that exercise the write tier.
         void confirmDialectForTests() noexcept { dialectConfirmed = true; }
 
@@ -158,6 +166,7 @@ namespace zynforge
         static constexpr int kPatchTimeoutMs   = 1200;
         static constexpr int kGainTimeoutMs    = 1500;
         void sendMessage (const ConsoleMessage&);
+        void logInbound (const ConsoleMessage&);
         // Refuse a write the profile/handshake doesn't permit, with a status
         // line explaining why rather than silently doing nothing.
         bool guardWrite (const char* what);
@@ -169,6 +178,7 @@ namespace zynforge
         bool                 connected { false };
         bool                 dialectConfirmed { false };
         juce::String         host;
+        int                  connectedPort { 0 };
 
         Patch                patch { Patch::Unknown };
         std::map<int, int>   stagePatch;     // block idx -> routing enum (stashed)

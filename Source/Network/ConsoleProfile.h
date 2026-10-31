@@ -55,11 +55,13 @@ namespace zynforge
         // scene changes drop markers you can navigate by next morning.
         bool canReadNames    { false };
         bool canReadScenes   { false };
+        bool canReadStereoLinks { false };   // only with an encoder from a public protocol
         // WRITE tier -- can change the desk. Gated behind BOTH this flag and a
         // successful handshake (see `verified`).
         bool canRepatch      { false };   // flip input sources
         bool canCaptureGains { false };   // poll/set head-amp gains
         bool hasNativeVsc    { false };   // the console has its own VSC mode
+        int  inputChannels   { 64 };      // how many names "create session" asks for
 
         // Do we TRUST this dialect's address model?
         //
@@ -109,9 +111,11 @@ namespace zynforge
         p.transport       = ConsoleProfile::Transport::OscUdp;
         p.canReadNames    = true;
         p.canReadScenes   = true;
+        p.canReadStereoLinks = true;
         p.canRepatch      = true;
         p.canCaptureGains = true;
         p.hasNativeVsc    = false;
+        p.inputChannels   = 32;
         p.dialectTrusted  = true;    // documented protocol, encode/parse pinned by ConsoleLinkTests
         p.dialect         = x32Dialect();
         p.note            = "Full OSC control: names, scene markers, repatch + head-amp gains.";
@@ -144,7 +148,7 @@ namespace zynforge
         p.canReadScenes   = true;
         p.dialectTrusted  = false;   // written from published docs; handshake-gated
         p.dialect         = wingDialect();
-        p.note            = "Reads channel names + drops a marker on every scene recall.";
+        p.note            = "Reads channel names + marks a take at every scene recall.";
         return p;
     }
 
@@ -195,7 +199,7 @@ namespace zynforge
         p.hasNativeVsc    = true;
         p.dialectTrusted  = false;   // written from published docs; handshake-gated
         p.dialect         = allenHeathMidiDialect();
-        p.note            = "MIDI over TCP: drops a marker on every scene recall. Native Virtual Soundcheck on the console.";
+        p.note            = "MIDI over TCP: marks a take at every scene recall. Native Virtual Soundcheck on the console.";
         return p;
     }
 

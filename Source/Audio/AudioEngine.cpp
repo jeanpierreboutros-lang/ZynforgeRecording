@@ -630,6 +630,17 @@ namespace zynforge
         }
     }
 
+    void AudioEngine::setSceneFollowEnabled (bool on)
+    {
+        sceneFollowFlag.store (on, std::memory_order_release);
+        if (appProps != nullptr)
+        {
+            reloadAppPropsBeforeWrite();
+            appProps->setValue ("sceneFollow", on);
+            appProps->saveIfNeeded();
+        }
+    }
+
     void AudioEngine::serviceAutoArm (int periodTicks, float ampThreshold)
     {
         if (! autoArmOnInputFlag.load (std::memory_order_acquire)) return;
@@ -1956,6 +1967,8 @@ namespace zynforge
                                    std::memory_order_release);
         autoArmOnInputFlag.store (appProps->getBoolValue ("autoArmOnInput", false),
                                    std::memory_order_release);
+        sceneFollowFlag.store (appProps->getBoolValue ("sceneFollow", false),
+                               std::memory_order_release);
 
         recorder.setMeterUnarmedInputs (autoArmOnInputFlag.load());
 

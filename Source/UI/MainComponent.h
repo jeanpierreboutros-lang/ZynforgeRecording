@@ -36,7 +36,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
+namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -205,6 +205,16 @@ private:
     // Request channel names from a DiGiCo console, then build a session from
     // what comes back (the bidirectional console link).
     void createSessionFromConsole();
+    // Builds the session from what the desk reported. `stereoPairsAsked` is
+    // how many link states were requested; 0 means this desk or path can't
+    // report them.
+    void buildSessionFromConsole (const std::map<int, juce::String>& names,
+                                  const std::map<int, bool>& stereoLinks,
+                                  int stereoPairsAsked, const juce::String& namePrefix);
+    // Link or unlink a stereo pair the way a strip's menu does: the L/R pans
+    // and the rebuild come with it. False, with the reason on the status line,
+    // when refused.
+    bool setStereoLink (int leftIndex, bool link);
     void showBatchColourDialog();
     void showSelectionMenu();
     void deleteSelectedStrips();
@@ -251,6 +261,10 @@ private:
     void toggleCaptureDaemon();
     void connectCaptureDaemon (bool announceReattach);
     void promptConsoleConnect();
+    void wireConsoleLink();
+    void saveConsoleLog();
+    void writeConsoleLog (const juce::File&);
+    juce::String consoleLinkSummary() const;
     void consoleToggleSoundcheck();
     void consoleCaptureGains();
     void consoleRestoreGains();
@@ -469,6 +483,7 @@ private:
     friend class zynforge::OctoberRegressionTests;
     friend class zynforge::ReviewPersistenceRepairTests;
     friend class zynforge::ReviewUiFormatRepairTests;
+    friend class zynforge::ConsoleVscTests;
     friend struct zynforge::ConcurrencyAuditAccess;
 
     // Live SafePointers to dialog windows opened by the header buttons.

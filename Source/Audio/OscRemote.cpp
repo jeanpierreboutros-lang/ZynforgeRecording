@@ -1,5 +1,6 @@
 #include "OscRemote.h"
 #include "AudioEngine.h"
+#include "../Network/ConsoleLog.h"
 #include "../Network/SecureToken.h"
 
 namespace zynforge
@@ -8,6 +9,8 @@ namespace zynforge
     {
         // Match anything -- we route per-dialect inside oscMessageReceived.
         addListener (this);
+        onRefusedPacket = [this] (const Source& from, const juce::String& what)
+        { engine.getRemotes().logOsc ("osc <- " + from.toString() + "  " + what); };
     }
 
     OscRemote::~OscRemote()
@@ -38,25 +41,12 @@ namespace zynforge
 
     void OscRemote::oscMessageReceived (const juce::OSCMessage& m)
     {
-        if (engine.areControlsLocked()) return;
+        // Logged before anything can refuse it: a desk test needs to see what
+        // arrived, and a log can't change the session.
         if (engine.getRemotes().isOscDebug())
-        {
-            juce::String args;
-            const auto path = m.getAddressPattern().toString();
-            for (int i = 0; i < m.size(); ++i)
-            {
-                const auto& a = m[i];
-                // The final Generic argument is a credential, including failed
-                // authentication attempts. Never retain it in copyable logs.
-                if ((path.startsWith ("/zynforge/") && i == m.size() - 1)
-                    || (a.isString() && accessToken.isNotEmpty() && a.getString() == accessToken))
-                    args << " [redacted]";
-                else if (a.isInt32())        args << " " << a.getInt32();
-                else if (a.isFloat32()) args << " " << juce::String (a.getFloat32(), 2);
-                else if (a.isString())  args << " \"" << a.getString() << "\"";
-            }
-            engine.getRemotes().logOsc ("<- " + m.getAddressPattern().toString() + args);
-        }
+            engine.getRemotes().logOsc ("osc <- " + getCurrentSource().toString() + "  " + consolelog::describe (m));
+
+        if (engine.areControlsLocked()) return;
 
         // Always try the matching dialect first, fall back to Generic.
         switch (dialect)
@@ -68,6 +58,16 @@ namespace zynforge
             case Dialect::Generic:     break;
         }
         handleGeneric (m);
+    }
+
+    // Never acted on, so the log is all a bundle gets.
+    void OscRemote::oscBundleReceived (const juce::OSCBundle& bundle)
+    {
+        if (! engine.getRemotes().isOscDebug()) return;
+        juce::StringArray lines;
+        consolelog::describeBundle (bundle, lines);
+        for (const auto& line : lines)
+            engine.getRemotes().logOsc ("osc <- " + getCurrentSource().toString() + "  " + line);
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
@@ -101,9 +101,9 @@ namespace zynforge
         engine.dropMarkerAtCurrentPosition (name);
     }
 
-    void OscRemote::dropSceneMarker (int scene)
+    void OscRemote::sceneRecalled (int scene, const juce::String& sceneName)
     {
-        dropMarker ("Scene " + juce::String (scene));
+        engine.getRemotes().onConsoleScene (scene, sceneName);
     }
 
     void OscRemote::setChannelName (int idx1, const juce::String& s)
@@ -149,6 +149,12 @@ namespace zynforge
             if (a.isString()) return a.getString();
             if (a.isInt32())  return juce::String (a.getInt32());
             return {};
+        }
+        // A recall's optional name, after its number (as ConsoleDialect reads
+        // the DiGiCo one). Without it the recall goes by "Scene N".
+        juce::String sceneNameArg (const juce::OSCMessage& m)
+        {
+            return m.size() >= 2 && m[1].isString() ? m[1].getString() : juce::String();
         }
         float toFloat (const juce::OSCArgument& a)
         {
@@ -201,7 +207,7 @@ namespace zynforge
         if (path == "/zynforge/scene")
         {
             if (payloadCount < 1) return false;
-            dropSceneMarker (toInt (m[0], 0));
+            sceneRecalled (toInt (m[0], 0), payloadCount > 1 ? toString (m[1]) : juce::String());
             return true;
         }
 
@@ -259,7 +265,7 @@ namespace zynforge
         const auto path = m.getAddressPattern().toString();
 
         if (path == "/Console/Snapshots/recall" && m.size() >= 1)
-        { dropSceneMarker (toInt (m[0])); return true; }
+        { sceneRecalled (toInt (m[0]), sceneNameArg (m)); return true; }
         if (path == "/Console/Marker")
         { dropMarker (m.size() > 0 ? toString (m[0]) : juce::String()); return true; }
 
@@ -277,7 +283,7 @@ namespace zynforge
         const auto path = m.getAddressPattern().toString();
 
         if (path == "/sq/scene/recall" && m.size() >= 1)
-        { dropSceneMarker (toInt (m[0])); return true; }
+        { sceneRecalled (toInt (m[0]), sceneNameArg (m)); return true; }
         if (path == "/sq/marker")
         { dropMarker (m.size() > 0 ? toString (m[0]) : juce::String()); return true; }
 
@@ -299,7 +305,7 @@ namespace zynforge
         const auto path = m.getAddressPattern().toString();
 
         if (path == "/sslnet/snapshot/recall" && m.size() >= 1)
-        { dropSceneMarker (toInt (m[0])); return true; }
+        { sceneRecalled (toInt (m[0]), sceneNameArg (m)); return true; }
         if (path == "/sslnet/marker")
         { dropMarker (m.size() > 0 ? toString (m[0]) : juce::String()); return true; }
 
@@ -321,7 +327,7 @@ namespace zynforge
         { return path == y || path == r; };
 
         if (eitherIs ("/Yamaha/Scene/recall",  "/RIVAGE/Scene/recall")  && m.size() >= 1)
-        { dropSceneMarker (toInt (m[0])); return true; }
+        { sceneRecalled (toInt (m[0]), sceneNameArg (m)); return true; }
         if (eitherIs ("/Yamaha/Marker",           "/RIVAGE/Marker"))
         { dropMarker (m.size() > 0 ? toString (m[0]) : juce::String()); return true; }
 

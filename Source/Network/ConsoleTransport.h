@@ -38,6 +38,12 @@ namespace zynforge
         juce::String           address;
         std::vector<juce::var> args;
 
+        // Filled by a transport for the traffic log. Nothing decides on these:
+        // `source` is "ip:port", `wire` is the message as it arrived, for when
+        // `args` can't show all of it.
+        juce::String           source;
+        juce::String           wire;
+
         ConsoleMessage() = default;
         explicit ConsoleMessage (juce::String a, std::vector<juce::var> v = {})
             : address (std::move (a)), args (std::move (v)) {}
@@ -74,6 +80,10 @@ namespace zynforge
 
         // Fired on the MESSAGE THREAD for every inbound message.
         std::function<void (const ConsoleMessage&)> onMessage;
+
+        // Fired on the MESSAGE THREAD for traffic nothing will act on (an OSC
+        // bundle, a datagram the parser refused), so the log can still show it.
+        std::function<void (const juce::String& source, const juce::String& description)> onUnhandledTraffic;
 
     protected:
         // Helper for TCP transports whose reader runs off-thread: hop to the

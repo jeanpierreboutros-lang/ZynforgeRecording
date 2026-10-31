@@ -1,4 +1,5 @@
 #include "ConsoleLink.h"
+#include "ConsoleLog.h"
 #include "../Audio/AtomicFile.h"
 
 #include <cmath>
@@ -35,7 +36,9 @@ namespace zynforge
                 transport = std::make_unique<OscUdpTransport>();   break;
         }
 
-        transport->onMessage = [this] (const ConsoleMessage& m) { handleMessage (m); };
+        transport->onMessage = [this] (const ConsoleMessage& m) { logInbound (m); handleMessage (m); };
+        transport->onUnhandledTraffic = [this] (const juce::String& from, const juce::String& what)
+        { if (onTraffic) onTraffic ("link <- " + from + "  " + what); };
         if (! transport->connect (targetHost, usePort))
         {
             transport.reset();
@@ -43,6 +46,7 @@ namespace zynforge
         }
 
         host      = targetHost;
+        connectedPort = usePort;
         connected = true;
         patch     = Patch::Unknown;
         dialectConfirmed = false;
@@ -74,6 +78,7 @@ namespace zynforge
         if (transport != nullptr)
         {
             transport->onMessage = nullptr;   // no late delivery into a dead link
+            transport->onUnhandledTraffic = nullptr;
             transport->disconnect();
         }
         transport.reset();
@@ -89,8 +94,18 @@ namespace zynforge
     void ConsoleLink::sendMessage (const ConsoleMessage& m)
     {
         if (m.isEmpty()) return;
+        if (onTraffic)
+            onTraffic ("link -> " + host + ":" + juce::String (connectedPort)
+                       + "  " + consolelog::describe (m));
         if (msgHook != nullptr) { msgHook (m); return; }
         if (connected && transport != nullptr) transport->send (m);
+    }
+
+    void ConsoleLink::logInbound (const ConsoleMessage& m)
+    {
+        if (! onTraffic) return;
+        onTraffic ("link <- " + (m.source.isNotEmpty() ? m.source : host + ":" + juce::String (connectedPort))
+                   + "  " + (m.wire.isNotEmpty() ? m.wire : consolelog::describe (m)));
     }
 
     // Every WRITE goes through here. Two independent gates: the profile has to
@@ -135,7 +150,7 @@ namespace zynforge
             else if (a.isFloat32()) cm.args.emplace_back ((double) a.getFloat32());
             else if (a.isString())  cm.args.emplace_back (a.getString());
         }
-        handleMessage (cm);
+        injectReply (cm);
     }
 
     void ConsoleLink::requestChannelNames (int count)
@@ -144,6 +159,19 @@ namespace zynforge
         for (int ch = 1; ch <= juce::jlimit (0, 128, count); ++ch)
             sendMessage (profile.dialect.queryChannelName (ch));
         if (onStatus) onStatus ("Requested " + juce::String (count) + " channel names...");
+    }
+
+    int ConsoleLink::requestStereoLinks()
+    {
+        if (! connected || ! profile.canReadStereoLinks || ! profile.dialect.queryStereoLink) return 0;
+        int asked = 0;
+        for (int left = 1;; left += 2)
+        {
+            const auto query = profile.dialect.queryStereoLink (left);
+            if (query.isEmpty()) return asked;
+            sendMessage (query);
+            ++asked;
+        }
     }
 
     void ConsoleLink::enterSoundcheck()
@@ -265,6 +293,10 @@ namespace zynforge
 
             case ConsoleEvent::Type::SceneRecalled:
                 if (onSceneRecalled) onSceneRecalled (ev.index, ev.text);
+                return;
+
+            case ConsoleEvent::Type::StereoLink:
+                if (onStereoLink) onStereoLink (ev.index, ev.intValue != 0);
                 return;
 
             // ── WRITE-TIER REPLIES ───────────────────────────────────────

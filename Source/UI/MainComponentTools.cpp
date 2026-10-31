@@ -623,37 +623,6 @@ void MainComponent::promptConsoleConnect()
                 : 0;
             self->consoleLink.setProfile (profiles[(size_t) profileIdx].kind);
 
-            self->consoleLink.onStatus = [self] (const juce::String& s)
-            { if (self != nullptr) self->showStatus (s); };
-
-            // ── READ TIER ────────────────────────────────────────────────
-            // The two things a recorder actually wants from a console, both
-            // read-only and therefore safe on any desk, confirmed or not.
-
-            // A channel name lands on the matching strip, so takes arrive
-            // labelled instead of "1, 2, 3". Routed through the engine's
-            // capture-aware path so "New session from console" can also
-            // collect names for channels that don't exist yet.
-            self->consoleLink.onChannelName = [self] (int ch1, const juce::String& name)
-            {
-                if (self == nullptr || name.trim().isEmpty()) return;
-                self->engine.getRemotes().onConsoleChannelName (ch1, name.trim());
-            };
-
-            // A scene / snapshot recall drops a marker. This is what makes a
-            // show navigable the next morning -- jump straight to the song.
-            // Markers need a session context; if there isn't one yet the recall
-            // is simply ignored rather than dropped at a meaningless position.
-            self->consoleLink.onSceneRecalled = [self] (int sceneIdx, const juce::String& sceneName)
-            {
-                if (self == nullptr || ! self->engine.getMarkers().hasContext()) return;
-                const auto label = sceneName.trim().isNotEmpty()
-                                     ? sceneName.trim()
-                                     : "Scene " + juce::String (sceneIdx);
-                if (self->engine.dropMarkerAtCurrentPosition (label) >= 0)
-                    self->showStatus ("Console scene \"" + label + "\" -- marker dropped");
-            };
-
             if (! self->consoleLink.connect (host))
             {
                 self->showStatus ("Console link failed -- check the IP and the network");
@@ -686,6 +655,32 @@ void MainComponent::promptConsoleConnect()
                 self->showStatus ("Console link up: " + host
                             + " -- loaded saved patch + gains from session");
         }), false);
+}
+
+void MainComponent::wireConsoleLink()
+{
+    juce::Component::SafePointer<MainComponent> self (this);
+    consoleLink.onStatus = [self] (const juce::String& s)
+    { if (self != nullptr) self->showStatus (s); };
+
+    // A channel name lands on the matching strip, so takes arrive labelled
+    // instead of "1, 2, 3". Routed through the engine's capture-aware path so
+    // "New session from console" can also collect names for channels that
+    // don't exist yet.
+    consoleLink.onChannelName = [self] (int ch1, const juce::String& name)
+    {
+        if (self == nullptr || name.trim().isEmpty()) return;
+        self->engine.getRemotes().onConsoleChannelName (ch1, name.trim());
+    };
+
+    consoleLink.onSceneRecalled = [self] (int sceneIdx, const juce::String& sceneName)
+    { if (self != nullptr) self->engine.getRemotes().onConsoleScene (sceneIdx, sceneName); };
+
+    consoleLink.onStereoLink = [self] (int leftCh1, bool linked)
+    { if (self != nullptr) self->engine.getRemotes().onConsoleStereoLink (leftCh1, linked); };
+
+    consoleLink.onTraffic = [self] (const juce::String& line)
+    { if (self != nullptr) self->engine.getRemotes().logOsc (line); };
 }
 
 void MainComponent::consoleToggleSoundcheck()

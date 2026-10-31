@@ -107,6 +107,7 @@ add_library(ZynforgeCore STATIC
     Source/Capture/CaptureDaemon.cpp
     Source/Capture/CaptureSupervisor.cpp
     Source/Network/ConsoleLink.cpp
+    Source/Network/DeskMacro.cpp
     Source/UI/ChannelStrip.cpp
     Source/UI/LedMeter.cpp
     Source/UI/MiniSpectrum.cpp
@@ -227,6 +228,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/ConcurrencyAuditTests.cpp
     Source/Tests/ConsoleLinkTests.cpp
     Source/Tests/ConsoleTransportTests.cpp
+    Source/Tests/ConsoleVscTests.cpp
     Source/Tests/CrashScanTests.cpp
     Source/Tests/DialogAuditTests.cpp
     Source/Tests/EditPageAccessibilityTests.cpp

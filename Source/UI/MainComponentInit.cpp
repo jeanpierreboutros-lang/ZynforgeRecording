@@ -27,6 +27,11 @@ MainComponent::MainComponent()
     // and in-process recording retain the engine's default implementation.
     engine.setRemoteTransportHandler ([this] (auto action, juce::String& error)
     { return handleRemoteTransport (action, error); });
+    engine.getRemotes().setHost ({ [this] (const juce::String& message) { showStatus (message); },
+                                   [this] { return sessionIoBusy.load(); },
+                                   [this] (juce::int64 sample)
+                                   { if (editPage != nullptr) editPage->scrollToSample (sample); } });
+    wireConsoleLink();
 
     engine.onTracksReordered = [this] (const std::vector<int>& destination)
     {
@@ -848,6 +853,7 @@ MainComponent::~MainComponent()
     // entering a partially destructed MainComponent. AudioEngine invalidates
     // its own queued-callback handle at the start of its later destruction.
     engine.setRemoteTransportHandler ({});
+    engine.getRemotes().setHost ({});
     sessionMirror.stop();
 
     // Cancel + join any in-flight session job (bounce, export, copy) now,
@@ -1157,26 +1163,8 @@ void MainComponent::rebuildStrips()
         auto addCb        = [this] { engine.addOneStrip(); };
         auto linkStereoCb = [this, i]
         {
-            const int total = engine.getRecorder().getNumTracks();
-            if (i + 1 >= total) return;
-            const bool wasStereo = engine.getRecorder().getTrack (i).isStereo.load();
-            if (! wasStereo && engine.getRecorder().getTrack (i + 1).isStereo.load())
-            { showStatus ("Unlink the neighbouring stereo pair first"); return; }
-            engine.setTrackStereo (i, ! wasStereo);
-            // The engine refuses while a take is live; then the pans must not
-            // move either (they reach the monitor, stream and NDI mid-show).
-            if (engine.getRecorder().getTrack (i).isStereo.load() == wasStereo)
-            { showStatus ("Stop recording before linking or unlinking a stereo pair"); return; }
-            // Newly linked stereo -> hard-pan L/R for the full image; unlinked
-            // back to mono -> recentre both halves so a mono strip isn't left
-            // stuck hard-right. (Buses sum centred, so skip them.)
-            if (! engine.getRecorder().getTrack (i).isBus.load())
-            {
-                engine.setTrackPan (i,     ! wasStereo ? -1.0f : 0.0f);
-                engine.setTrackPan (i + 1, ! wasStereo ?  1.0f : 0.0f);
-            }
-            // Trigger a full rebuild on the next timer tick.
-            lastTrackCount = -1;
+            if (i + 1 < engine.getRecorder().getNumTracks())
+                setStereoLink (i, ! engine.getRecorder().getTrack (i).isStereo.load());
         };
         auto linkOtherCb  = [this, i] (int other) { juce::ignoreUnused (i, other); };
         s->setMenuCallbacks (std::move (deleteCb),

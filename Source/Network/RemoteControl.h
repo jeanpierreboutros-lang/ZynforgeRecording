@@ -2,7 +2,7 @@
 
 // Remote control of the engine from outside the app: the companion HTTP
 // server, the console OSC listener (and its debug log + channel-name
-// capture), and a MIDI control surface.
+// capture), the desk macro listener, and a MIDI control surface.
 //
 // AudioEngine owns ONE RemoteControl by value, declared where these members
 // used to sit, so every remote's lifetime stays nested inside the engine's:
@@ -13,7 +13,11 @@
 
 #include <juce_core/juce_core.h>
 
+#include "../Audio/SceneFollow.h"
+
 #include <atomic>
+#include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 
@@ -21,6 +25,7 @@ namespace zynforge
 {
     class AudioEngine;
     class OscRemote;
+    class DeskMacroListener;
     class MidiControlSurface;
     class CompanionServer;
 
@@ -29,6 +34,18 @@ namespace zynforge
     public:
         explicit RemoteControl (AudioEngine& engine);
         ~RemoteControl();
+
+        // What only the host knows or can show. All message thread; all
+        // optional, so a headless engine still runs every rule below.
+        struct Host
+        {
+            std::function<void (const juce::String&)> showStatus;
+            std::function<bool()>                     isSessionBusy;     // sessionIoBusy
+            std::function<void (juce::int64)>         revealPosition;    // scroll EDIT to a locate
+        };
+        void setHost (Host h) { host = std::move (h); }
+        void showHostStatus (const juce::String& message) { if (host.showStatus) host.showStatus (message); }
+        bool isSessionBusy() const;
 
         // ── Companion HTTP server (read-only iPad / remote audition) ────
         // Binds to loopback; the engineer opts into LAN exposure explicitly.
@@ -60,12 +77,24 @@ namespace zynforge
         bool requestConsoleChannelNames (const juce::String& host, int port, int dialect = 1);
 
         // OSC debug log -- so an engineer can verify the request/reply traffic
-        // against their actual console. When on, sent + received OSC is logged.
+        // against their actual console. When on, every console path logs here,
+        // in and out. Off, nothing is stored; what was captured stays until
+        // Clear, so it can still be saved.
+        static constexpr int kOscLogMaxLines = 50000;
+        static constexpr int kOscLogMaxChars = 400;
         void              setOscDebug (bool on) noexcept { oscDebug.store (on, std::memory_order_relaxed); }
         bool              isOscDebug() const noexcept    { return oscDebug.load (std::memory_order_relaxed); }
-        void              logOsc (const juce::String& line);   // thread-safe; keeps the last ~200 lines
+        void              logOsc (const juce::String& line);   // message thread
         juce::StringArray getOscLog() const;
+        juce::StringArray getOscLogTail (int maxLines) const;
+        // Bumped by every change, so a view can skip an unchanged log.
+        juce::int64       getOscLogRevision() const;
+        // Oldest lines the cap has discarded since the last clear.
+        juce::int64       getOscLogEvicted() const;
         void              clearOscLog();
+        // The whole log with a header saying what was listening, ready for a
+        // file. `consoleLinkSummary` is the host's line about the console link.
+        juce::String      formatConsoleLog (const juce::String& consoleLinkSummary) const;
 
         // Channel-name capture: while on, every console channel name we receive
         // is collected (1-based index -> name) AND applied to a matching track.
@@ -76,6 +105,28 @@ namespace zynforge
         void onConsoleChannelName (int oneBasedIndex, const juce::String& name);
         // Take + clear the captured names (message thread).
         std::map<int, juce::String> takeCapturedConsoleNames();
+        // A desk's stereo link state, kept only during that same capture: a
+        // link changing on the desk later must never restructure a session.
+        void onConsoleStereoLink (int leftCh1, bool linked);
+        std::map<int, bool> takeCapturedStereoLinks();
+
+        // Both console paths report a scene / snapshot recall here. The rule
+        // is scenefollow::decide; this applies it and tells the engineer.
+        scenefollow::Action onConsoleScene (int sceneNumber, const juce::String& sceneName);
+        // Move the playhead without touching the transport state.
+        void locate (juce::int64 samplePosition);
+
+        // ── Desk macro listener (DeskMacro.h) ───────────────────────────
+        // Off until the engineer starts it, on every launch. Refused under
+        // LOCK, and without one usable desk address.
+        bool         startDeskMacro (int udpPort, const juce::String& deskIp);
+        void         stopDeskMacro();
+        bool         isDeskMacroListening() const;
+        int          getDeskMacroPort() const;
+        juce::String getDeskMacroSource() const;
+        juce::int64  getDeskMacroDropped() const;
+        juce::String getDeskMacroLastDropped() const;
+        juce::String deskLocateRefusal() const;
 
         // ── MIDI control surface (Mackie Control / FaderPort) ───────────
         // Open a control surface on the given MIDI in/out device names. `key`
@@ -86,19 +137,28 @@ namespace zynforge
         juce::String getActiveSurfaceKey() const { return activeSurfaceKey; }
 
     private:
+        scenefollow::Facts sceneFacts() const;
+
         AudioEngine& engine;
+        Host         host;
 
         // Declaration order is teardown order, reversed: the remotes go
-        // first (companion, then OSC, then the surface), while the log and
-        // capture state they write to are still alive.
+        // first (companion, then OSC, then the macro listener and the surface),
+        // while the log and capture state they write to are still alive.
         std::atomic<bool>           consoleCapture { false };
         std::map<int, juce::String> capturedConsoleNames;   // message-thread only
+        std::map<int, bool>         capturedStereoLinks;    // message-thread only
         std::atomic<bool>           oscDebug { false };
         juce::CriticalSection       oscLogLock;
-        juce::StringArray           oscLog;
+        // A deque: at the cap every new line evicts one, which a StringArray
+        // would pay for by shifting every line on the message thread.
+        std::deque<juce::String>    oscLog;
+        juce::int64                 oscLogRevision { 0 };
+        juce::int64                 oscLogEvicted { 0 };
         juce::String                activeSurfaceKey;
 
         std::unique_ptr<MidiControlSurface> surface;
+        std::unique_ptr<DeskMacroListener>  deskMacro;
         std::unique_ptr<OscRemote>          osc;
         std::unique_ptr<CompanionServer>    companion;
 
