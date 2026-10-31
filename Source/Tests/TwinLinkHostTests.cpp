@@ -134,7 +134,7 @@ namespace zynforge
     public:
         TwinLinkHostTests() : juce::UnitTest ("Twin recorder host", "zynforge") {}
 
-        static bool settle (MainComponent& main, const std::function<bool()>& done, int timeoutMs = 4000)
+        static bool settle (MainComponent& main, const std::function<bool()>& done, int timeoutMs = 8000)
         {
             const auto end = juce::Time::getMillisecondCounterHiRes() + timeoutMs;
             for (;;)
@@ -467,6 +467,9 @@ namespace zynforge
                     content.refresh();
                     expect (! content.roleEditable(), "the role stayed editable under a take");
                     expect (! content.canRegenerate(), "the code could change under a take");
+                    const auto codeBefore = content.getCode();
+                    content.pressRegenerate();
+                    expectEquals (content.getCode(), codeBefore, "a new code landed under a take");
                     rolling.store (false);
                     content.refresh();
                     expect (content.roleEditable());

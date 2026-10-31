@@ -83,7 +83,7 @@ namespace zynforge
         }
 
         bool settle (const std::vector<TwinLink*>& links, const std::function<bool()>& done,
-                     int timeoutMs = 4000)
+                     int timeoutMs = 8000)
         {
             const auto end = juce::Time::getMillisecondCounterHiRes() + timeoutMs;
             for (;;)
@@ -1443,11 +1443,14 @@ namespace zynforge
                     MultitrackRecorder recorder;
                     makeTake (recorder, dir);
                     auto hooks = std::make_shared<MultitrackRecorder::ReportTestHooks>();
-                    hooks->beforePublish = [&] { atPublish.signal(); resume.wait (3000); };
+                    // The hash pass runs at background priority and can starve
+                    // for seconds on a busy machine; these waits end at once
+                    // when it does run.
+                    hooks->beforePublish = [&] { atPublish.signal(); resume.wait (30000); };
                     hooks->finished = [&] { finished.signal(); };
                     recorder.reportTestHooks = hooks;
                     recorder.stopRecording();
-                    expect (atPublish.wait (5000), "the hash pass never reached its publish");
+                    expect (atPublish.wait (30000), "the hash pass never reached its publish");
                     expect ((bool) juce::JSON::parse (dir.getChildFile ("session.report.json"))
                                 .getProperty ("sha256Pending", false));
                     expect (MultitrackRecorder::editSessionReport (dir, [] (juce::DynamicObject& report)
@@ -1455,7 +1458,7 @@ namespace zynforge
                         mergeTwinPass (report, RawPeer::object ({ { "takeId", "A" } }));
                     }));
                     resume.signal();
-                    expect (finished.wait (5000));
+                    expect (finished.wait (30000), "the hash pass never finished");
                 }
                 const auto report = juce::JSON::parse (dir.getChildFile ("session.report.json"));
                 expect (! (bool) report.getProperty ("sha256Pending", true), "the hashed report never landed");

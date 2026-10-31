@@ -183,6 +183,7 @@ namespace zynforge
             juce::String getStateLine() const { return stateLine.getText(); }
             juce::String getDetails() const   { return details.getText(); }
             juce::String getWarning() const   { return warning.getText(); }
+            void pressRegenerate()            { onRegenerate(); }
 
         private:
             void timerCallback() override { refresh(); }
@@ -218,6 +219,7 @@ namespace zynforge
 
             void onRegenerate()
             {
+                if (isRolling() || link.snapshot().state == twin::LinkState::Linked) return;
                 code.setText (twin::generatePairingCode(), false);
                 if (link.isEnabled()) startLink();
                 refresh();

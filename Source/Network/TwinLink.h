@@ -7,6 +7,7 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <functional>
@@ -310,7 +311,7 @@ namespace zynforge::twin
         double       clockOffsetMs { 0.0 }, clockRttMs { 0.0 };
         MacStatus    local;
         bool         localRolling { false }, localFinishing { false };
-        juce::uint32 nextPublishAtMs { 0 }, rollingChangedAtMs { 0 };
+        juce::uint32 lastPublishMs { 0 }, rollingChangedAtMs { 0 };
         juce::String leaderTakeId;
         bool         leaderTakeActive { false };
         juce::String followerTakeId;     // the take the link started here

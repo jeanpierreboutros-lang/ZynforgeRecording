@@ -1125,8 +1125,9 @@ namespace zynforge::twin
         if (local.armedTracks != peer->armedTracks)
             warnings.add ("ARMED TRACKS differ: " + juce::String (local.armedTracks) + " here, "
                           + juce::String (peer->armedTracks) + " on " + who);
-        if (local.sessionName != peer->sessionName)
-            warnings.add ("SESSION NAME differs: \"" + local.sessionName + "\" here, \""
+        const auto localSession = local.sessionName.substring (0, kNameChars);
+        if (localSession != peer->sessionName)
+            warnings.add ("SESSION NAME differs: \"" + localSession + "\" here, \""
                           + peer->sessionName + "\" on " + who);
 
         if (localRolling != peer->recording
@@ -1183,11 +1184,12 @@ namespace zynforge::twin
         if (auto* record = openRecordOrNull())
             if (status.sessionDir != juce::File()) record->sessionDir = status.sessionDir;
 
+        // Unsigned subtraction: the counter wraps on a Mac up for 49 days.
         const auto now = juce::Time::getMillisecondCounter();
-        if (enabled && now >= nextPublishAtMs)
+        if (enabled && now - lastPublishMs >= (juce::uint32) (config.statusPeriodMs / 2))
         {
             publishStatus (status);
-            nextPublishAtMs = now + (juce::uint32) (config.statusPeriodMs / 2);
+            lastPublishMs = now;
         }
         serviceReports();
         refreshWarnings();
