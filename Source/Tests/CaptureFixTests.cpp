@@ -992,6 +992,19 @@ namespace zynforge
                 expect (main.statusLabel.getText().contains ("Punch-in missed"), main.statusLabel.getText());
             }
 
+            beginTest ("Auto-save stays off the take's drive until the take ends");
+            {
+                Rig rig;
+                if (! bringUp (rig) || ! startTake (rig, rig.session)) return;
+                auto& main = *rig.main;
+                main.engine.getAppProps()->setValue ("autosaveMinutes", 1);
+                main.lastAutosaveMs = juce::Time::getMillisecondCounter() - 120000u;
+                main.serviceAutosave();
+                expectEquals (main.pendingMetadataSaves, 0, "auto-save ran during a take");
+                expect (! main.sessionIoBusy.load(), "M is refused during a take");
+                expect (! rig.session.getChildFile ("session_mix.json").existsAsFile(), "a save reached the take volume");
+            }
+
             beginTest ("A take the daemon ended by itself comes back to the window");
             {
                 Rig rig;

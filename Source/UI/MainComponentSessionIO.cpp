@@ -528,6 +528,13 @@ void MainComponent::saveCueChanges (const juce::String& success)
 void MainComponent::serviceAutosave()
 {
     if (sessionIoBusy.load()) return;
+    // Nothing goes to the take's volume during a take, and a save would refuse
+    // M meanwhile. STOP saves, and the interval starts again from there.
+    if (engine.isRecording())
+    {
+        lastAutosaveMs = juce::Time::getMillisecondCounter();
+        return;
+    }
     auto* props = engine.getAppProps();
     if (props == nullptr) return;
 
