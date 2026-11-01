@@ -892,6 +892,20 @@ namespace zynforge
                 }
             }
 
+            beginTest ("A clip-menu Consolidate that cannot run says so");
+            {
+                Show s (1, { 48000 });
+                auto rows = rowsOf (s.page());
+                if (rows.size() == 1)
+                {
+                    expect (s.engine.setClipLocked (0, 0, true));
+                    rows[0]->applyClipMenuChoice (0, 413);
+                    expect (pumpUntil ([&] { return ! s.main.sessionIoBusy.load(); }, 5000), "the job never released");
+                    expect (s.main.statusLabel.getText().containsIgnoreCase ("failed"),
+                            "it failed with no word: " + s.main.statusLabel.getText());
+                }
+            }
+
             beginTest ("Strip selection and active row do not outlive their layout or session");
             {
                 Show s (3, { 48000, 48000, 48000 });
@@ -1029,6 +1043,20 @@ namespace zynforge
                 s.page().setActiveRowTrackIndex (0);
                 s.main.editClipboardPaste();
                 expectEquals ((int) s.clips (0).size(), 2, "a mono clip landed on one half of a pair");
+            }
+
+            beginTest ("A clip copied in one session does not paste into the next");
+            {
+                Show s (1, { 48000 });
+                s.page().setSelectedClip (0, 0);
+                s.main.editClipboardCut (false);
+                s.page().clearSelectedClip();
+                const auto other = s.dir.getSiblingFile (s.dir.getFileName() + "-other");
+                expect (other.createDirectory().wasOk());
+                s.engine.setActiveSessionDir (other);
+                s.main.editClipboardPaste();
+                expectEquals ((int) s.clips (0).size(), 1, "the paste kept a path into the other session");
+                other.deleteRecursively();
             }
 
             beginTest ("Automation pastes only into the kind of lane it was copied from");
