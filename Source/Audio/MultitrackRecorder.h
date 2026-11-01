@@ -325,7 +325,7 @@ namespace zynforge
 
         // Optional second copy of every track to a backup folder.
         // Pass an empty File to disable. Only effective for the next session.
-        void setBackupDirectory (const juce::File& dir);
+        bool setBackupDirectory (const juce::File& dir);   // false, unchanged, while a take owns it
         juce::File getBackupDirectory() const               { return backupDir; }
         bool       isBackupActive() const noexcept          { return backupActive.load (std::memory_order_relaxed); }
 

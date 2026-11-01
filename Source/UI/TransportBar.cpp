@@ -277,20 +277,15 @@ namespace zynforge
         loop     ->onClick = [this]
         {
             // Loop-PLAY toggle: when on, playback wraps within the selected
-            // range (the loop region) forever. Turning it on with no range
-            // selected loops the whole take. Does NOT clear the region (that's
-            // the edit selection) -- toggling off just stops the wrap.
+            // range (the loop region) forever, or within the whole take when
+            // no range is selected. It never makes or clears a range: that is
+            // the edit selection, and RECORD punches into a selected range.
             auto& p = engine.getPlayer();
             const bool nowOn = ! p.isLoopEnabled();
             // A punch ends by crossing its out point. Looping back would keep
             // it recording, and the splice would then overwrite audio after
             // the out point, so loop stays off for PUNCH mode and any take.
             if (nowOn && (engine.isRecording() || engine.isPunchModeOn())) { refreshStates(); return; }
-            if (nowOn && ! p.hasLoopRegion())
-            {
-                const auto total = p.getTotalLengthSamples();
-                if (total > 0) p.setLoopRegion (0, total);
-            }
             p.setLoopEnabled (nowOn);
             refreshStates();
         };

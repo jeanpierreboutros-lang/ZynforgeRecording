@@ -303,7 +303,10 @@ void MainComponent::jumpToCue (int index)
     // successful completion.
     clickNeedsRefresh = clickTrackIndex >= 0
                      && (clickNeedsRefresh || hadTempoMap || ! cue.tempoCurve.empty());
-    if (clickNeedsRefresh)
+    // A take can't reload the click, so the timer does it after the take stops.
+    if (clickNeedsRefresh && engine.isRecording())
+        clickRefreshPending = true;
+    else if (clickNeedsRefresh)
     {
         const auto cuePosition = cue.samplePos;
         juce::Component::SafePointer<MainComponent> self (this);
@@ -707,6 +710,8 @@ void MainComponent::promptMirrorHost()
 
 void MainComponent::printSetlist()
 {
+    if (engine.isRecording() || captureMetadataPending)
+    { showStatus ("Printing the setlist waits until the take has stopped"); return; }
     if (cues.empty()) { showStatus ("No cues to print"); return; }
 
     const auto dir = engine.getActiveSessionDir();

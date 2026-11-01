@@ -185,26 +185,29 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
 void MainComponent::togglePunchMode()
 {
     const bool on = ! engine.isPunchModeOn();
+    if (on && daemonModeActive())
+    {
+        showStatus ("PUNCH mode needs in-process capture -- the capture daemon cannot punch");
+        return;
+    }
     engine.setPunchModeOn (on);
     if (on)
     {
-        suspendLoopForPunch();
-        // Default: punch-arm every currently-armed track. Engineer can
-        // narrow by un-arming individuals via the track's right-click
-        // menu later.
-        auto& rec = engine.getRecorder();
-        for (int i = 0; i < rec.getNumTracks(); ++i)
-            engine.setTrackPunchArmed (i,
-                rec.getTrack (i).armed.load (std::memory_order_relaxed));
-        showStatus ("Punch mode ON -- set the loop region, then press PLAY");
+        auto& player = engine.getPlayer();
+        const auto pos = player.getPositionSamples();
+        // Only crossing into the range punches, never turning the mode on
+        // inside it.
+        wasInsidePunch = player.isRangeArmed() && pos >= player.getLoopStart() && pos < player.getLoopEnd();
+        showStatus (player.isRangeArmed()
+                        ? "Punch mode ON -- press PLAY; the armed tracks punch through the selected range"
+                        : "Punch mode ON -- select a range in EDIT, then press PLAY");
     }
     else
     {
-        const bool hadCapture = engine.isRecording();
-        if (hadCapture) stopActiveCaptureAsync (false);
-        restoreArmStateAfterPunch();   // leaving punch mode must not keep the forced arms
-        restoreLoopAfterPunch();
-        if (! hadCapture && ! captureMetadataPending) showStatus ("Punch mode OFF");
+        // Only a punch ends here. A live take keeps its two-tap STOP.
+        const bool punchRolling = (punchWindowTakeActive || punchSessionActive) && engine.isRecording();
+        if (punchRolling) stopActiveCaptureAsync (false);
+        if (! punchRolling && ! captureMetadataPending) showStatus ("Punch mode OFF");
     }
 }
 
@@ -215,49 +218,6 @@ bool MainComponent::playheadLockedForPunch()
     if (! engine.getPlayer().isSeekLocked()) return false;
     showStatus ("Punch recording -- the playhead stays put until STOP");
     return true;
-}
-
-void MainComponent::suspendLoopForPunch()
-{
-    if (punchLoopNeedsRestore) return;
-    auto& player = engine.getPlayer();
-    punchLoopWasEnabled = player.isLoopEnabled();
-    punchLoopNeedsRestore = true;
-    player.setLoopEnabled (false); // a loop must not wrap before punch-out
-}
-
-void MainComponent::restoreLoopAfterPunch()
-{
-    if (! punchLoopNeedsRestore) return;
-    engine.getPlayer().setLoopEnabled (punchLoopWasEnabled);
-    punchLoopNeedsRestore = false;
-}
-
-// Capture / restore the engineer's arm layout around a punch. servicePunch has
-// to force `armed = punchArmed` so only the punch-armed tracks hit disk, but
-// that write is destructive: without restoring it, narrowing the punch set (or
-// arming more tracks after enabling PUNCH) silently left those channels
-// disarmed for the NEXT take -- a missed-recording bug on a live rig.
-void MainComponent::snapshotArmStateForPunch()
-{
-    if (! armStateBeforePunch.empty()) return;   // already holding a snapshot
-    auto& rec = engine.getRecorder();
-    const int n = rec.getNumTracks();
-    armStateBeforePunch.resize ((size_t) n);
-    for (int i = 0; i < n; ++i)
-        armStateBeforePunch[(size_t) i] =
-            rec.getTrack (i).armed.load (std::memory_order_relaxed) ? 1 : 0;
-}
-
-void MainComponent::restoreArmStateAfterPunch()
-{
-    if (armStateBeforePunch.empty()) return;
-    auto& rec = engine.getRecorder();
-    const int n = juce::jmin ((int) armStateBeforePunch.size(), rec.getNumTracks());
-    for (int i = 0; i < n; ++i)
-        rec.getTrack (i).armed.store (armStateBeforePunch[(size_t) i] != 0,
-                                      std::memory_order_relaxed);
-    armStateBeforePunch.clear();
 }
 
 void MainComponent::servicePunch()
@@ -281,7 +241,6 @@ void MainComponent::servicePunch()
                 {
                     self->engine.stopPlayback();
                     self->engine.setPunchModeOn (false);
-                    self->restoreLoopAfterPunch();
                     self->punchSessionActive = false;
                     return;
                 }
@@ -289,11 +248,11 @@ void MainComponent::servicePunch()
                 playback.setPositionSamples (self->punchOutSample);
                 self->engine.startPlayback();
             });
-            restoreArmStateAfterPunch();
         }
         return;
     }
-    const auto inside = (pos >= player.getLoopStart() && pos < player.getLoopEnd());
+    // A range nobody selected this run never punches, even in PUNCH mode.
+    const auto inside = player.isRangeArmed() && pos >= player.getLoopStart() && pos < player.getLoopEnd();
 
     // A save owns the session and the engine refuses a take until it ends, so
     // the punch-in waits for it. A window that passes first is reported, not
@@ -312,10 +271,12 @@ void MainComponent::servicePunch()
 
     if (inside && ! wasInsidePunch && player.isPlaying())
     {
-        // Crossed into the punch window -- punch-in on every punch-armed track:
-        // record fresh audio into the CURRENT session and splice it into the
-        // existing take at the punch-in point (audio before the punch-in and
-        // after the punch-out is preserved). The rest keep playing back.
+        // Crossed into the punch window -- punch-in on every track armed right
+        // now, as the R buttons show: startRecording freezes those arms as in
+        // any take. Fresh audio goes into the CURRENT session and is spliced
+        // into the existing take at the punch-in point (audio before the
+        // punch-in and after the punch-out is preserved). The rest keep
+        // playing back.
         if (! engine.isRecording())
         {
             const auto sessionDir = engine.getActiveSessionDir();
@@ -327,18 +288,16 @@ void MainComponent::servicePunch()
                 wasInsidePunch = inside;
                 return;
             }
+            if (sessionLocked || daemonModeActive())
+            {
+                showStatus (sessionLocked ? "Punch-in refused -- session is LOCKed"
+                                          : "Punch-in refused -- the capture daemon cannot punch");
+                wasInsidePunch = inside;
+                return;
+            }
             // Multi-part takes (auto-split, or built up by continue-recording)
             // are fine now: the splice reads the whole take via ConcatReader and
             // flattens it on stop, so no refusal here.
-            auto& rec = engine.getRecorder();
-
-            // Force-arm only the punch-armed tracks for the punch -- but keep
-            // the engineer's real arm layout so it can be put back on punch-out
-            // (see snapshotArmStateForPunch).
-            snapshotArmStateForPunch();
-            for (int i = 0; i < rec.getNumTracks(); ++i)
-                rec.getTrack (i).armed.store (engine.isTrackPunchArmed (i),
-                                              std::memory_order_relaxed);
             // Splice at the ACTUAL playhead where recording begins (one timer
             // tick past loopStart), so the captured audio lands at the right
             // timeline position instead of being nudged earlier to loopStart.
@@ -351,29 +310,30 @@ void MainComponent::servicePunch()
             {
                 engine.clearCaptureWindow();
                 engine.getRecorder().cancelPunchIn();
-                restoreArmStateAfterPunch();
-                showStatus ("Punch-in failed -- existing take was restored");
+                const auto why = engine.getRecorder().getStartError();
+                showStatus ("Punch-in failed -- existing take is untouched"
+                            + (why.isNotEmpty() ? " (" + why + ")" : juce::String()));
                 wasInsidePunch = inside;
                 return;
             }
+            punchWindowTakeActive = true;
             lastCaptureFinalizationError.clear();
         }
     }
-    else if (! inside && wasInsidePunch && engine.isRecording())
+    else if ((! inside || ! player.isPlaying()) && punchWindowTakeActive && engine.isRecording())
     {
-        // Crossed out -- stop recording cleanly (the splice replaces the
-        // punched region; audio after the punch-out is preserved), then put the
-        // engineer's arm layout back exactly as it was before the punch.
+        // Crossed out, or the transport stopped short of the punch-out -- stop
+        // recording cleanly (the splice replaces the punched region; audio
+        // after the punch-out is preserved). A take this window did not open
+        // is not its to end.
         juce::Component::SafePointer<MainComponent> self (this);
         stopActiveCaptureAsync (false, [self] (bool saved)
         {
             if (self == nullptr || saved) return;
             self->engine.stopPlayback();
             self->engine.setPunchModeOn (false);
-            self->restoreLoopAfterPunch();
             self->punchSessionActive = false;
         });
-        restoreArmStateAfterPunch();
     }
     wasInsidePunch = inside;
 }
@@ -396,10 +356,8 @@ void MainComponent::servicePunchSession()
 
     const bool hadCapture = engine.isRecording();
     if (hadCapture) stopActiveCaptureAsync (false); // safety net
-    restoreArmStateAfterPunch();   // no-op if servicePunch already restored it
     engine.stopPlayback();
     engine.setPunchModeOn (false);
-    restoreLoopAfterPunch();
     punchSessionActive = false;
     recordButton.setButtonText ("RECORD");
     if (! hadCapture && lastCaptureFinalizationError.isEmpty()) showStatus ("Punch complete");
@@ -436,6 +394,31 @@ bool MainComponent::refuseAnalysisNow()
     if (analysisBusy.load())
     { showStatus ("An analysis is already running"); return true; }
     return false;
+}
+
+// RECORD must never wait for a report, so a scan holds its own reservation
+// rather than the session's, and the take cancels the scan. Polled from the
+// timer because a take can start from the button, a remote or a punch window.
+void MainComponent::cancelAnalysisForTake()
+{
+    if (analysisBusy.load() && engine.isRecording()) analysisJobs.cancel();
+}
+
+// A report dialog is modal: over a live take it would stand between the
+// engineer and STOP.
+bool MainComponent::analysisResultWanted (const juce::File& scannedSession)
+{
+    if (engine.isRecording() || captureMetadataPending)
+    {
+        showStatus ("Analysis stopped for the take -- run it again after recording");
+        return false;
+    }
+    if (engine.getActiveSessionDir() != scannedSession)
+    {
+        showStatus ("Analysis finished for the previous session; nothing was changed");
+        return false;
+    }
+    return true;
 }
 
 void MainComponent::runNoiseAnalysis()
@@ -493,9 +476,9 @@ void MainComponent::runNoiseAnalysis()
 
         const auto summary = noiseAnalysisSummary (findings);
 
-        return [self, summary, findings]
+        return [self, summary, findings, sessionDir]
         {
-            if (self == nullptr) return;
+            if (self == nullptr || ! self->analysisResultWanted (sessionDir)) return;
             self->showStatus (summary);
             // Sortable table replaces the text dump -- engineer clicks
             // column headers to sort by worst hum / most bumps /
@@ -583,9 +566,9 @@ void MainComponent::runQcAnalysis()
             + (reportSaved ? ". Saved " + reportTxt.getFileName() + "."
                            : ". WARNING: report file could not be saved.");
 
-        return [self, summary, results] () mutable
+        return [self, summary, results, sessionDir] () mutable
         {
-            if (self == nullptr) return;
+            if (self == nullptr || ! self->analysisResultWanted (sessionDir)) return;
             self->showStatus (summary);
             zynforge::QcReportDialog::launch (std::move (results));
         };
@@ -708,8 +691,18 @@ void MainComponent::wireConsoleLink()
     { if (self != nullptr) self->engine.getRemotes().logOsc (line); };
 }
 
+// A repatch or a head-amp write changes what the take records, so neither goes
+// to the desk while one rolls, whoever asks.
+bool MainComponent::refuseConsoleWriteDuringTake()
+{
+    if (! engine.isRecording() && ! captureMetadataPending) return false;
+    showStatus ("Console changes wait until the take has stopped");
+    return true;
+}
+
 void MainComponent::consoleToggleSoundcheck()
 {
+    if (refuseConsoleWriteDuringTake()) return;
     if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
     const auto sess = engine.getActiveSessionDir();
     consoleLink.setSessionDir (sess);
@@ -770,6 +763,7 @@ void MainComponent::consoleCaptureGains()
 
 void MainComponent::consoleRestoreGains()
 {
+    if (refuseConsoleWriteDuringTake()) return;
     if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
     consoleLink.setSessionDir (engine.getActiveSessionDir());
     if (consoleLink.getCapturedGains().empty())
@@ -1090,12 +1084,7 @@ void MainComponent::detectSongsToMarkers()
 
         return [self, found, sessionDir, arrangement]
         {
-            if (self == nullptr) return;
-            if (self->engine.getActiveSessionDir() != sessionDir)
-            {
-                self->showStatus ("Song detection finished for the previous session; no markers were changed");
-                return;
-            }
+            if (self == nullptr || ! self->analysisResultWanted (sessionDir)) return;
             if (found.empty())
             {
                 self->showStatus ("No songs detected -- try Marker List to add them by hand.");
@@ -1120,6 +1109,9 @@ void MainComponent::detectSongsToMarkers()
 
 void MainComponent::writeSoundcheckReport()
 {
+    // Nothing writes to the session volume while a take is rolling.
+    if (engine.isRecording() || captureMetadataPending)
+    { showStatus ("The soundcheck report waits until the take has stopped"); return; }
     const auto sessionDir = engine.getActiveSessionDir();
     if (! sessionDir.isDirectory())
     {
@@ -1228,7 +1220,9 @@ void MainComponent::showSessionProperties()
             : juce::String ("--");
     }
     {
-        const int fmt = obj ? (int) obj->getProperty ("captureFormat") : (int) CaptureFormat::Wav24;
+        // The project file holds the format the session was created with.
+        // The recorder holds the one in use, and only this session is open.
+        const int fmt = (int) engine.getRecorder().getCaptureFormat();
         fields.captureFormat = formatLabel (fmt);
         fields.bitDepth = (fmt == (int) CaptureFormat::Wav16 || fmt == (int) CaptureFormat::Aiff16 || fmt == (int) CaptureFormat::Flac16) ? "16-bit"
                         : (fmt == (int) CaptureFormat::Wav32Float || fmt == (int) CaptureFormat::Aiff32Float)              ? "32-bit float"

@@ -230,11 +230,19 @@ void MainComponent::resized()
     gridButton   .setToggleState (mixerGridView, juce::dontSendNotification);
     row2.removeFromRight (brand::space::lg);
     transportLabel.setBounds (row2.removeFromLeft (140));
+    punchPill.setBounds (punchPill.isVisible()
+        ? row2.removeFromLeft (juce::jmin (176, row2.getWidth())).reduced (0, brand::space::sm)
+        : juce::Rectangle<int>());
+    if (punchPill.isVisible()) row2.removeFromLeft (brand::space::sm);
     sessionLabel  .setBounds (row2);
 
     oscButton    .setBounds ({});
     playButton   .setBounds ({});
     stopButton   .setBounds ({});
+
+    alarmBanner.setBounds (alarmBanner.isVisible()
+        ? r.removeFromTop (60).reduced (brand::space::lg, brand::space::xs)
+        : juce::Rectangle<int>());
 
     auto clockRow = r.removeFromTop (96).reduced (brand::space::lg, brand::space::sm);
     // Give the performance dashboard more room while recording so audio

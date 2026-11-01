@@ -226,6 +226,8 @@ namespace zynforge
             // reset / list assigned strips).
             void mouseDown (const juce::MouseEvent& e) override
             {
+                // A disabled strip still gets mouseDown, so LOCK is checked here.
+                if (! isEnabled()) return;
                 if (e.mods.isPopupMenu() || e.mods.isRightButtonDown())
                 {
                     showContextMenu();
@@ -291,7 +293,7 @@ namespace zynforge
                 menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
                                     [safe] (int chosen)
                 {
-                    if (safe == nullptr || chosen == 0) return;
+                    if (safe == nullptr || chosen == 0 || ! safe->isEnabled()) return;
                     if (chosen == 1) safe->nameLabel.showEditor();
                     else if (chosen == 2) safe->openColourPicker();
                     else if (chosen == 3)

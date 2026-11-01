@@ -12,6 +12,7 @@
 #include "../Network/SessionMirror.h"
 #include "../Network/TwinLink.h"
 #include "../Theme/ZynForgeLookAndFeel.h"
+#include "AlarmBanner.h"
 #include "AutomationToolbar.h"
 #include "BigClockPanel.h"
 #include "IconButton.h"
@@ -40,7 +41,7 @@
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class EditIntegrityTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
+namespace zynforge { class ChannelStrip; class CaptureDaemonLinkTests; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -97,8 +98,12 @@ private:
     };
     bool handleRecordPressDuringTake();
     bool prepareRecordStart (RecordStartPlan&);
+    void planRecordPosition (RecordStartPlan&);
     bool recordPlanHasSelection (const RecordStartPlan&);
     bool recordPlanPunches (const RecordStartPlan&);
+    bool cursorPunchNeedsAnswer (const RecordStartPlan&);
+    void askBeforeCursorPunch (const RecordStartPlan&);
+    void answerCursorPunch (int answer);
     void runRecordPlan (RecordStartPlan&);
     void applyRecordAutoRouting (RecordStartPlan&);
     void startDaemonTake (const RecordStartPlan&);
@@ -144,11 +149,17 @@ private:
     void startSongExport (zynforge::songexport::Choice);
     juce::String buildTimelineCsv();
     void closeSession();               // unload to the empty/Welcome state without quitting
+    // Everything the window holds about a session that clearSessionState cannot
+    // reach. Called beside it, on every way out of a session.
+    void forgetSessionUiState();
     void confirmSessionReplacement (std::function<void()> continuation);
     void onImportAudioFiles();
     void onLockToggled();
     void onBackupClicked();
+    void applyBackupFolder (const juce::File&);
     void onVscClicked();
+    void openPatchWindow();
+    void openMetersWindow();
     void applyLockState();
     // Returns true if the recovery dialog was shown (and onClosed is deferred
     // to its close). Returns false if there was nothing to recover, in which
@@ -156,9 +167,11 @@ private:
     // lets the launch flow avoid auto-reopening a session under the dialog.
     bool offerSessionRecovery (std::function<void()> onClosed = {});
     void showStartupWelcome();
+    void createSessionFromWelcome (const zynforge::WelcomeDialog::NewResult&);
+    void openSessionFromWelcome (const juce::File&);
     void showKeyboardShortcuts();
     void showAboutDialog();
-    void showFirstRunTutorial();
+    void showFirstRunTutorial (std::function<void()> onFinished = {});
     void showUserGuide();
     void launchNewSessionDialog (juce::File templateFile = {});
     juce::File createSessionFolderStructure (const zynforge::NewSessionDialog::Result&);
@@ -280,6 +293,8 @@ private:
     void runSpectralAutoName();
     void writeSoundcheckReport();
     bool refuseAnalysisNow();
+    void cancelAnalysisForTake();
+    bool analysisResultWanted (const juce::File& scannedSession);
     void runNoiseAnalysis();
     void runQcAnalysis();
     void detectSongsToMarkers();
@@ -314,12 +329,14 @@ private:
     void saveConsoleLog();
     void writeConsoleLog (const juce::File&);
     juce::String consoleLinkSummary() const;
+    bool refuseConsoleWriteDuringTake();
     void consoleToggleSoundcheck();
     void consoleCaptureGains();
     void consoleRestoreGains();
     void togglePunchMode();
     void servicePunch();        // called each timerCallback tick
     bool wasInsidePunch { false };
+    bool punchWindowTakeActive { false };   // this take was opened by the PUNCH window
     // Pro Tools-style selection punch driven by the RECORD button: play from a
     // pre-roll lead-in, auto punch-in at the selection start and punch-out at
     // its end, then play a post-roll tail before stopping. servicePunch does
@@ -328,11 +345,7 @@ private:
     bool        punchSessionActive { false };
     juce::int64 punchOutSample     { 0 };
     juce::int64 punchPostRollEnd   { 0 };
-    bool        punchLoopWasEnabled { false };
-    bool        punchLoopNeedsRestore { false };
     bool playheadLockedForPunch();
-    void suspendLoopForPunch();
-    void restoreLoopAfterPunch();
 
     // Snap modes -- cycled by the '4' key (also surfaced in the
     // Edit menu). Off / Markers / Bars; Bars uses the engine's
@@ -502,12 +515,16 @@ private:
     void syncFloatingPanelButtons();
     void rebuildStripsIfLayoutChanged();
     void updateStatusPills();
+    void updatePunchPill();
     void updateNextCueCountdown();
     void syncStripsWithEngine();
     void surfaceAsyncReportFailure();
     void updateClockAndDiskCadence (double deviceSR);
     void updateHeaderFromStatus (const zynforge::EngineStatus& status, bool playing);
     void updateCaptureWarnings (const zynforge::EngineStatus& status);
+    // The loud row: a standing alarm, or a refused RECORD until it times out.
+    void refreshAlarmBanner();
+    void showRecordRefusal (const juce::String& reason);
     // Open a modal warning if the loaded session's SR doesn't match the device.
     void warnIfSampleRateMismatch();
 
@@ -573,6 +590,8 @@ private:
     // before everything above, so its threads never outlive what the host uses.
     zynforge::twin::TwinLink twinLink { *this };
     bool twinStartInFlight { false };   // this RECORD arrived over the twin link
+    bool remoteStartInFlight { false }; // this RECORD arrived from any remote surface
+    bool remotePunchRefused { false };  // and it was refused because it would punch
 
     friend class zynforge::CaptureDaemonLinkTests;
     friend class zynforge::MainTransportRegressionTests;
@@ -584,6 +603,7 @@ private:
     friend class zynforge::ConsoleVscTests;
     friend class zynforge::SongExportTests;
     friend class zynforge::SessionInterchangeTests;
+    friend class zynforge::MainWindowGuardTests;
     friend class zynforge::EditIntegrityTests;
     friend struct zynforge::ConcurrencyAuditAccess;
 
@@ -598,11 +618,15 @@ private:
     juce::Label  titleLabel        { {}, "ZYNFORGE  RECORDING" };
     juce::Label  statusLabel       { {}, "Idle" };
     juce::String activeCaptureWarning;
+    zynforge::AlarmBanner alarmBanner;
+    juce::String recordRefusal;              // shown in the banner, then clears itself
+    juce::uint32 recordRefusalShownMs { 0 };
     juce::Label  midiStatusLabel   { {}, "" };
     juce::Label  nextCueLabel      { {}, "" };
     juce::Label  danteLabel        { {}, "" };
     juce::Label  srWarnLabel       { {}, "" };   // persistent sample-rate mismatch banner
     juce::Label  twinStatusLabel   { {}, "" };   // link state; empty while the link is off
+    juce::Label  punchPill         { {}, "" };   // PUNCH mode, or what the next RECORD will replace
     juce::Label  sessionLabel      { {}, "No session loaded" };
     juce::Label  transportLabel    { {}, "00:00 / 00:00" };
     // Header chrome -- IconButton paints a glyph next to each label so
@@ -663,6 +687,8 @@ private:
     // A manual RECORD into an existing take is a short punch, not a new live
     // take: its next RECORD/STOP press should punch out in one action.
     bool manualPunchActive { false };
+    bool cursorPunchAnswered { false };   // true only around the press that "Replace From Cursor" makes
+    juce::Component::SafePointer<juce::AlertWindow> cursorPunchQuestion;
     // Held during a multi-tick automation drag so endAutomationTransaction
     // can compare against the pre-drag state.
     juce::var pendingAutomationBefore;
@@ -717,13 +743,6 @@ private:
     int  clickTrackIndex { -1 };   // -1 = not yet created in this session
     bool clickRefreshPending { false };   // tempo changed while the render was refused
 
-    // Arm state captured the moment a punch-in fires. servicePunch force-writes
-    // `armed = punchArmed` on every track so only the punch-armed ones capture;
-    // without restoring afterwards that rewrite was PERMANENT, silently
-    // disarming channels for the next take. Empty => no punch snapshot held.
-    std::vector<char> armStateBeforePunch;
-    void snapshotArmStateForPunch();
-    void restoreArmStateAfterPunch();
     int  lastExportFailures { 0 }; // tracks failed in the last exportTracksTo (partial-failure warning)
     bool songExportRunning { false };   // message thread; turns menu item 967 into its cancel
 

@@ -343,6 +343,7 @@ namespace zynforge
 
             void mouseDown (const juce::MouseEvent& e) override
             {
+                if (engine.areControlsLocked()) { dragActive = false; return; }
                 const auto logical  = logicalStrips();
                 const int numStrips = (int) logical.size();
                 const int numHw     = isInput ? engine.getCurrentDeviceInputCount()

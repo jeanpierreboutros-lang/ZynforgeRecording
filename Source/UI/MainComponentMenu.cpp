@@ -96,7 +96,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // Session templates -- save the current strip config (count,
         // names, colours, routings, stereo flags) to a reusable
         // template, or start a new session pre-populated from one.
-        menu.addItem (71, "Print setlist...", ! cues.empty());
+        menu.addItem (71, "Print setlist...", ! cues.empty() && ! engine.isRecording());
         menu.addSeparator();
         menu.addItem (70, "Save Current as Template...",
                       engine.getRecorder().getNumTracks() > 0
@@ -303,7 +303,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             // read-only, so grey the write items rather than offering an action
             // that would be refused.
             const bool consoleWritable = consoleLink.isConnected() && consoleLink.canWrite();
-            const bool consoleRepatch = consoleWritable && consoleLink.getProfile().canRepatch;
+            const bool consoleRepatch = consoleWritable && consoleLink.getProfile().canRepatch
+                                     && ! engine.isRecording() && ! captureMetadataPending;
             const bool consoleGains   = consoleWritable && consoleLink.getProfile().canCaptureGains;
             m.addItem (955, (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck
                             || (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Unknown && consoleLink.hasStagePatch()))
@@ -311,7 +312,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                                : "Console: SOUNDCHECK patch (card returns)",
                        consoleRepatch);
             m.addItem (956, "Console: capture head-amp gains", consoleGains);
-            m.addItem (957, "Console: restore head-amp gains", consoleGains);
+            m.addItem (957, "Console: restore head-amp gains",
+                       consoleGains && ! engine.isRecording() && ! captureMetadataPending);
             m.addSeparator();
             m.addItem (963, "Console: follow scenes to markers (virtual soundcheck)",
                        true, engine.isSceneFollowEnabled());
@@ -342,7 +344,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             m.addItem (280, "Spectral auto-name strips",
                        engine.getRecorder().getNumTracks() > 0);
             m.addItem (281, "Write soundcheck report",
-                       engine.getActiveSessionDir().isDirectory());
+                       engine.getActiveSessionDir().isDirectory() && ! engine.isRecording());
             // Each reads every take file in full: never during a take.
             const bool canAnalyse = engine.getActiveSessionDir().isDirectory() && ! engine.isRecording();
             m.addItem (282, "Analyse for noise / hum / bumps...", canAnalyse);
@@ -496,8 +498,8 @@ void MainComponent::registerMenuCommands()
     m.add (99,  [this] { confirmAndQuit(); });
 
     // Session
-    m.add (50,  [this] { zynforge::PatchPage::launch (engine); });
-    m.add (51,  [this] { zynforge::Meterbridge::launch (engine); });
+    m.add (50,  [this] { openPatchWindow(); });
+    m.add (51,  [this] { openMetersWindow(); });
     m.add (52,  [this] { onVscClicked(); });
     m.add (53,  [this] { zynforge::MarkerListDialog::launch (engine); });
     m.add (54,  [this] { showPreflightChecklist(); });

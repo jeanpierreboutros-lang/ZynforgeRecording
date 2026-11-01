@@ -227,10 +227,11 @@ namespace zynforge
         }
     }
 
-    void MultitrackRecorder::setBackupDirectory (const juce::File& dir)
+    bool MultitrackRecorder::setBackupDirectory (const juce::File& dir)
     {
-        if (isRecording() || isFinalizing()) return;
+        if (isRecording() || isFinalizing()) return false;
         backupDir = dir;
+        return true;
     }
 
     void MultitrackRecorder::addTrack()

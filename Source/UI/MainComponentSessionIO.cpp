@@ -15,6 +15,7 @@
 // report; onDeviceClicked launches the audio-device dialog).
 
 #include "MainComponent.h"
+#include "RecordPosition.h"
 #include "../Audio/AudioImport.h"
 #include "../Audio/AiffRepair.h"
 #include "../Audio/AtomicFile.h"
@@ -139,6 +140,7 @@ int MainComponent::openSessionFolder (const juce::File& dir)
     condemnAllStrips();
     engine.stopPlayback();
     engine.clearSessionState();
+    forgetSessionUiState();
     engine.setActiveSessionDir (dir);        // pin so Save / Save As / Export stay lit
     const int n = engine.loadSession (dir);  // audio -> player + clips
     const bool loadedMix = engine.loadSessionMixFrom (dir);
@@ -165,8 +167,14 @@ int MainComponent::openSessionFolder (const juce::File& dir)
         if (s->hasProperty ("preRollSeconds"))
             engine.getRecorder().setPreRollSeconds (juce::jlimit (0, 30, (int) s->getProperty ("preRollSeconds")));
         if (s->hasProperty ("loopStart") && s->hasProperty ("loopEnd"))
-            engine.getPlayer().setLoopRegion ((juce::int64) s->getProperty ("loopStart"),
-                                             (juce::int64) s->getProperty ("loopEnd"));
+        {
+            // A saved range still loops and edits, but nobody selected it in
+            // this run, so it never arms a punch.
+            const juce::int64 start = s->getProperty ("loopStart"), end = s->getProperty ("loopEnd");
+            auto& player = engine.getPlayer();
+            if (! savedRegionSpansTimeline (start, end, player.getTotalLengthSamples()))
+                player.setLoopRegion (start, end);
+        }
         if (s->hasProperty ("sampleRate")) pendingSampleRate = (double) s->getProperty ("sampleRate");
     }
     if (engine.getPlayer().isLoaded()) pendingSampleRate = engine.getPlayer().getSampleRate();
@@ -324,12 +332,11 @@ void MainComponent::closeSession()
             // slate (mirrors a launch with no session).
             auto& engine = self->engine;
             engine.clearSessionState();
+            self->forgetSessionUiState();
             engine.clearAllStripOverrides();
             self->condemnAllStrips();   // stop strip timers before setStripCount(0) frees the TrackStates
             engine.setStripCount (0);
 
-            self->cues.clear();
-            self->currentCueIndex = -1;
             self->clickTrackIndex = -1;           // session-scoped; must not survive a close
             self->undoManager.clearUndoHistory();
             self->lastTrackCount = -1;            // force a strip rebuild (now empty)
@@ -2300,6 +2307,7 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
     // Only clear the previous session after every filesystem operation has
     // succeeded; a permissions/disk failure must leave the current work open.
     engine.clearSessionState();
+    forgetSessionUiState();
     engine.clearAllStripOverrides();
     clickTrackIndex = -1;
     // The previous session's undo steps would apply to this one's files and

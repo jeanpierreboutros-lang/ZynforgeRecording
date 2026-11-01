@@ -63,7 +63,7 @@ namespace
                 }},
                 { "Edit", {
                     { "A",            "Solo selected strips" },
-                    { "S",            "Split clip at playhead" },
+                    { "S",            "Smart tool (with the EDIT tools showing)" },
                     { ",",            "Set range start at playhead" },
                     { ".",            "Set range end at playhead" },
                     { "Ctrl + 4",     "Toggle snap mode" },
@@ -205,7 +205,7 @@ namespace
     };
 }
 
-void MainComponent::showFirstRunTutorial()
+void MainComponent::showFirstRunTutorial (std::function<void()> onFinished)
 {
     // Sequential walkthrough -- each AlertWindow chains the next via
     // its modal callback. Plain dialogs (not arrow callouts) so the
@@ -224,10 +224,11 @@ void MainComponent::showFirstRunTutorial()
           "On each channel strip, click the red R button to ARM it for recording. "
           "Click the green I button to also monitor (hear) it through your outputs.\n\n"
           "Tip: Shift-click multiple strips to select them, then bulk-arm / delete / "
-          "colour them via Edit > Selection. Esc clears the selection." },
+          "colour them via Track > Selection. Esc clears the selection." },
         { "Step 3 of 5 -- Record + play back",
           "Press the red record button in the transport bar (centre-bottom of "
-          "the header) to start recording. Press it again to stop.\n\n"
+          "the header) to start recording. To stop, press STOP twice within 2 seconds, "
+          "so a stray press can't end a take.\n\n"
           "When you stop, the session auto-loads for playback. Press play "
           "(green triangle) or just SPACEBAR to hear what you captured." },
         { "Step 4 of 5 -- Cue list for shows",
@@ -242,7 +243,7 @@ void MainComponent::showFirstRunTutorial()
 
     juce::Component::SafePointer<MainComponent> self (this);
     std::shared_ptr<std::function<void (int)>> runner = std::make_shared<std::function<void (int)>>();
-    *runner = [self, runner] (int idx)
+    *runner = [self, runner, onFinished] (int idx)
     {
         if (self == nullptr || idx >= (int) steps.size()) return;
         const auto& s = steps[(size_t) idx];
@@ -252,14 +253,18 @@ void MainComponent::showFirstRunTutorial()
         aw->addButton (last ? "OK" : "Next", 1, juce::KeyPress (juce::KeyPress::returnKey));
         if (! last) aw->addButton ("Skip tour", 0, juce::KeyPress (juce::KeyPress::escapeKey));
         aw->enterModalState (true, juce::ModalCallbackFunction::create (
-            [aw, runner, idx, last] (int result)
+            [aw, runner, idx, last, onFinished] (int result)
         {
             std::unique_ptr<juce::AlertWindow> dispose (aw);
             if (result == 1 && ! last && runner)
+            {
                 (*runner) (idx + 1);
-            else if (runner)
+                return;
+            }
+            if (runner)
                 *runner = nullptr;   // tour ended -> break the runner's self-capture, else the
                                      // closure leaks (now repeatable via Help > Quick Start)
+            if (onFinished) onFinished();
         }));
     };
     (*runner) (0);
@@ -367,6 +372,106 @@ void MainComponent::showAboutDialog()
         "OK");
 }
 
+void MainComponent::createSessionFromWelcome (const zynforge::WelcomeDialog::NewResult& r)
+{
+    // The WelcomeDialog::NewResult mirrors NewSessionDialog::Result
+    // 1:1 in field types, so reuse the same builder by hand-rolling
+    // a NewSessionDialog::Result and forwarding.
+    zynforge::NewSessionDialog::Result n;
+    n.name          = r.name;
+    n.location      = r.location;
+    n.captureFormat = r.captureFormat;
+    n.sampleRate    = r.sampleRate;
+    n.interleaved   = r.interleaved;
+    n.ioSettings    = r.ioSettings;
+    const auto sessionFolder = createSessionFolderStructure (n);
+    if (! sessionFolder.isDirectory())
+    {
+        showStatus (sessionCreateFailureMessage());
+        return;
+    }
+    // Whether or not the device has to move, this is now the session's rate.
+    pendingSampleRate = r.sampleRate;
+
+    if (auto* p = engine.getAppProps())
+    {
+        p->setValue ("sessionsRoot", r.location.getFullPathName());
+        p->saveIfNeeded();
+    }
+    engine.getRecorder().setCaptureFormat (r.captureFormat);
+    engine.setActiveSessionDir (sessionFolder);
+
+    // Apply the chosen sample rate + input/output devices to the
+    // hardware immediately, so recording captures from the device
+    // the engineer picked and monitoring goes to the right output.
+    {
+        auto setup = engine.getDeviceManager().getAudioDeviceSetup();
+        bool changed = false;
+        if (! juce::approximatelyEqual (setup.sampleRate, r.sampleRate))
+        {
+            setup.sampleRate = r.sampleRate;
+            changed = true;
+        }
+        if (r.inputDeviceName.isNotEmpty() && r.inputDeviceName != setup.inputDeviceName)
+        {
+            setup.inputDeviceName     = r.inputDeviceName;
+            setup.useDefaultInputChannels = true;
+            changed = true;
+        }
+        if (r.outputDeviceName.isNotEmpty() && r.outputDeviceName != setup.outputDeviceName)
+        {
+            setup.outputDeviceName     = r.outputDeviceName;
+            setup.useDefaultOutputChannels = true;
+            changed = true;
+        }
+        // Skip the device reconfiguration if a take is somehow rolling:
+        // it restarts the device, which stops the recorder. (Creating a
+        // session mid-take shouldn't be reachable, but the take-ending
+        // failure mode is bad enough to guard at the mutation itself.)
+        if (changed && ! engine.isRecording())
+            engine.getDeviceManager().setAudioDeviceSetup (setup, true);
+    }
+
+    // New session = clean slate. Wipe any per-strip persistence
+    // from a previous show AND reset the strip count to zero so
+    // the engineer dials in the channels they want via +CH /
+    // clicking the empty EDIT pane. Matches the legacy
+    // launchNewSessionDialog path.
+    engine.clearAllStripOverrides();
+    condemnAllStrips();   // stop strip timers before setStripCount(0) frees the TrackStates
+    engine.setStripCount (0);
+    lastTrackCount = -1;
+    // Unload the previous session's audio + clips, or the new empty session
+    // inherits them on a freshly-added channel (see launchNewSessionDialog).
+    engine.getPlayer().unload();
+
+    refreshFormatButton();
+    const auto defaultTemplate = getDefaultTemplate();
+    if (defaultTemplate.existsAsFile())
+    {
+        applySessionTemplate (defaultTemplate);
+        if (! saveSessionStateTo (sessionFolder))
+            showStatus ("Session created, but its default template state could not be saved");
+        else
+            showStatus ("Session created from "
+                              + defaultTemplate.getFileNameWithoutExtension());
+    }
+    else
+        showStatus ("Session created: " + sessionFolder.getFileName()
+                          + " -- add channels with +CH");
+}
+
+void MainComponent::openSessionFromWelcome (const juce::File& sessionDir)
+{
+    // Full open (mixer state + active-dir pin + strip rebuild), not just
+    // loadSession -- otherwise the menus (Export / Edit) stayed grey and
+    // gains/colours/routing didn't restore.
+    const int n = openSessionFolder (sessionDir);
+    showStatus (n < 0 || ! sessionDir.isDirectory() ? "Failed to load " + sessionDir.getFileName()
+                      : n > 0 ? "Loaded: " + sessionDir.getFileName()
+                              : "Opened empty session: " + sessionDir.getFileName());
+}
+
 void MainComponent::showStartupWelcome()
 {
     if (explicitDocumentOpened) return;
@@ -385,7 +490,8 @@ void MainComponent::showStartupWelcome()
                 || last.getChildFile ("Audio Files").isDirectory());
         if (isRealSession && ! engine.isRecording())
         {
-            if (openSessionFolder (last) > 0)
+            // Zero tracks is a session that opened empty, not a failure.
+            if (openSessionFolder (last) >= 0)
                 return;   // reopened -- no welcome dialog
         }
     }
@@ -400,105 +506,10 @@ void MainComponent::showStartupWelcome()
     juce::Component::SafePointer<MainComponent> self (this);
 
     auto onCreate = [self] (const zynforge::WelcomeDialog::NewResult& r)
-    {
-        if (self == nullptr) return;
-        // The WelcomeDialog::NewResult mirrors NewSessionDialog::Result
-        // 1:1 in field types, so reuse the same builder by hand-rolling
-        // a NewSessionDialog::Result and forwarding.
-        zynforge::NewSessionDialog::Result n;
-        n.name          = r.name;
-        n.location      = r.location;
-        n.captureFormat = r.captureFormat;
-        n.sampleRate    = r.sampleRate;
-        n.interleaved   = r.interleaved;
-        n.ioSettings    = r.ioSettings;
-        const auto sessionFolder = self->createSessionFolderStructure (n);
-        if (! sessionFolder.isDirectory())
-        {
-            self->showStatus (self->sessionCreateFailureMessage());
-            return;
-        }
-
-        if (auto* p = self->engine.getAppProps())
-        {
-            p->setValue ("sessionsRoot", r.location.getFullPathName());
-            p->saveIfNeeded();
-        }
-        self->engine.getRecorder().setCaptureFormat (r.captureFormat);
-        self->engine.setActiveSessionDir (sessionFolder);
-
-        // Apply the chosen sample rate + input/output devices to the
-        // hardware immediately, so recording captures from the device
-        // the engineer picked and monitoring goes to the right output.
-        {
-            auto setup = self->engine.getDeviceManager().getAudioDeviceSetup();
-            bool changed = false;
-            if (! juce::approximatelyEqual (setup.sampleRate, r.sampleRate))
-            {
-                setup.sampleRate = r.sampleRate;
-                self->pendingSampleRate = r.sampleRate;
-                changed = true;
-            }
-            if (r.inputDeviceName.isNotEmpty() && r.inputDeviceName != setup.inputDeviceName)
-            {
-                setup.inputDeviceName     = r.inputDeviceName;
-                setup.useDefaultInputChannels = true;
-                changed = true;
-            }
-            if (r.outputDeviceName.isNotEmpty() && r.outputDeviceName != setup.outputDeviceName)
-            {
-                setup.outputDeviceName     = r.outputDeviceName;
-                setup.useDefaultOutputChannels = true;
-                changed = true;
-            }
-            // Skip the device reconfiguration if a take is somehow rolling:
-            // it restarts the device, which stops the recorder. (Creating a
-            // session mid-take shouldn't be reachable, but the take-ending
-            // failure mode is bad enough to guard at the mutation itself.)
-            if (changed && ! self->engine.isRecording())
-                self->engine.getDeviceManager().setAudioDeviceSetup (setup, true);
-        }
-
-        // New session = clean slate. Wipe any per-strip persistence
-        // from a previous show AND reset the strip count to zero so
-        // the engineer dials in the channels they want via +CH /
-        // clicking the empty EDIT pane. Matches the legacy
-        // launchNewSessionDialog path.
-        self->engine.clearAllStripOverrides();
-        self->condemnAllStrips();   // stop strip timers before setStripCount(0) frees the TrackStates
-        self->engine.setStripCount (0);
-        self->lastTrackCount = -1;
-        // Unload the previous session's audio + clips, or the new empty session
-        // inherits them on a freshly-added channel (see launchNewSessionDialog).
-        self->engine.getPlayer().unload();
-
-        self->refreshFormatButton();
-        const auto defaultTemplate = self->getDefaultTemplate();
-        if (defaultTemplate.existsAsFile())
-        {
-            self->applySessionTemplate (defaultTemplate);
-            if (! self->saveSessionStateTo (sessionFolder))
-                self->showStatus ("Session created, but its default template state could not be saved");
-            else
-                self->showStatus ("Session created from "
-                                  + defaultTemplate.getFileNameWithoutExtension());
-        }
-        else
-            self->showStatus ("Session created: " + sessionFolder.getFileName()
-                              + " -- add channels with +CH");
-    };
+    { if (self != nullptr) self->createSessionFromWelcome (r); };
 
     auto onOpen = [self] (const juce::File& sessionDir)
-    {
-        if (self == nullptr) return;
-        // Full open (mixer state + active-dir pin + strip rebuild), not just
-        // loadSession -- otherwise the menus (Export / Edit) stayed grey and
-        // gains/colours/routing didn't restore.
-        const int n = self->openSessionFolder (sessionDir);
-        self->showStatus (n > 0
-                          ? "Loaded: " + sessionDir.getFileName()
-                          : "Failed to load " + sessionDir.getFileName());
-    };
+    { if (self != nullptr) self->openSessionFromWelcome (sessionDir); };
 
     // Enumerate the available input / output devices so the New pane can
     // offer them as a record-from / monitor picker.

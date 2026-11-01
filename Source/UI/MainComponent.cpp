@@ -65,7 +65,8 @@ void MainComponent::onRecordClicked()
 {
     if (captureMetadataPending || engine.isCaptureFinalizing()
         || (sessionIoBusy.load() && ! engine.isRecording()))
-    { showStatus ("Wait for recording finalization / session saving to finish"); return; }
+    { showRecordRefusal ("Wait for recording finalization / session saving to finish"); return; }
+    recordRefusal.clear();
     // RECORD is a sequence: a press during a take (or a refused daemon state)
     // is consumed first; otherwise every pre-flight refusal runs before
     // anything is changed; then the take starts through the daemon, as a
@@ -73,13 +74,63 @@ void MainComponent::onRecordClicked()
     if (handleRecordPressDuringTake()) return;
     RecordStartPlan plan;
     if (! prepareRecordStart (plan)) return;
+    if (cursorPunchNeedsAnswer (plan)) { askBeforeCursorPunch (plan); return; }
     runRecordPlan (plan);
+}
+
+// A cursor takes one click to place and can be left anywhere, so on a stopped
+// transport it is not yet a decision to replace audio. A rolling punch and a
+// selected range are deliberate, and a remote press is refused further on.
+bool MainComponent::cursorPunchNeedsAnswer (const RecordStartPlan& plan)
+{
+    return plan.punchAt >= 0
+        && ! cursorPunchAnswered
+        && ! engine.getPlayer().isPlaying()
+        && ! recordPlanHasSelection (plan)
+        && ! remoteStartInFlight && ! twinStartInFlight;
+}
+
+void MainComponent::askBeforeCursorPunch (const RecordStartPlan& plan)
+{
+    if (cursorPunchQuestion != nullptr) return;
+    const auto& player = engine.getPlayer();
+    const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
+    auto* aw = new juce::AlertWindow (
+        "Replace audio?",
+        "The EDIT cursor is at " + juce::String (plan.punchAt / sr, 1) + " s, inside the take.\n\n"
+        "Replacing starts there on " + juce::String (plan.armed) + " armed track(s) and runs until you "
+        "stop. It can't be undone.\n\nRecording after the take leaves everything as it is.",
+        juce::MessageBoxIconType::NoIcon, this);
+    // Return is the safe answer: a hurried press must never replace audio.
+    aw->addButton ("Record After Take", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Replace From Cursor", 2);
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
+    cursorPunchQuestion = aw;
+    juce::Component::SafePointer<MainComponent> self (this);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create ([self, aw] (int answer)
+    {
+        std::unique_ptr<juce::AlertWindow> dispose (aw);
+        if (self != nullptr) self->answerCursorPunch (answer);
+    }));
+}
+
+void MainComponent::answerCursorPunch (int answer)
+{
+    if (answer == 0) return;
+    // This is a fresh press through every refusal, because anything can have
+    // moved while the question was open. A take or playback started since
+    // would give the press another meaning, so it stops here.
+    if (engine.isRecording() || engine.getPlayer().isPlaying())
+    { showRecordRefusal ("The transport moved while RECORD was asking -- press RECORD again"); return; }
+    if (answer == 1) engine.clearEditCursor();
+    const juce::ScopedValueSetter<bool> answered (cursorPunchAnswered, answer == 2);
+    onRecordClicked();
 }
 
 bool MainComponent::recordPlanHasSelection (const RecordStartPlan& plan)
 {
-    auto& player = engine.getPlayer();
-    return plan.continueTake && player.hasLoopRegion() && player.getLoopEnd() > player.getLoopStart();
+    return plan.continueTake && engine.getPlayer().isRangeArmed();
 }
 
 bool MainComponent::recordPlanPunches (const RecordStartPlan& plan)
@@ -90,11 +141,13 @@ bool MainComponent::recordPlanPunches (const RecordStartPlan& plan)
 void MainComponent::runRecordPlan (RecordStartPlan& plan)
 {
     const bool punch = recordPlanPunches (plan);
-    // A press on this Mac can punch on purpose. A twin start cannot: nobody
+    // A press on this Mac can punch on purpose. A remote start cannot: nobody
     // here chose that cursor, and a punch replaces audio in this Mac's take.
-    if (punch && twinStartInFlight)
+    if (punch && (twinStartInFlight || remoteStartInFlight))
     {
-        showStatus ("Twin RECORD refused -- this Mac would punch into its take; clear the EDIT cursor or selection and stop playback");
+        remotePunchRefused = true;
+        showRecordRefusal (juce::String (twinStartInFlight ? "Twin" : "Remote")
+                           + " RECORD refused -- this Mac would punch into its take; clear the EDIT cursor or selection and stop playback");
         return;
     }
     applyRecordAutoRouting (plan);
@@ -114,10 +167,8 @@ bool MainComponent::handleRecordPressDuringTake()
     {
         const bool wasRecording = engine.isRecording();
         if (wasRecording) stopActiveCaptureAsync (false);
-        restoreArmStateAfterPunch();   // put the pre-punch arm layout back
         engine.stopPlayback();
         engine.setPunchModeOn (false);
-        restoreLoopAfterPunch();
         punchSessionActive = false;
         recordButton.setButtonText ("RECORD");
         if (! wasRecording) statusLabel.setText ("Punch ended", juce::dontSendNotification);
@@ -150,7 +201,7 @@ bool MainComponent::handleRecordPressDuringTake()
     // completing a take with the requested deliverable missing.
     if (daemonModeActive() && engine.getRecordStereoMix())
     {
-        showStatus ("Stereo stream-mix recording is unavailable in capture-daemon mode; disable it or use in-process capture");
+        showRecordRefusal ("Stereo stream-mix recording is unavailable in capture-daemon mode; disable it or use in-process capture");
         return true;
     }
 
@@ -175,7 +226,7 @@ bool MainComponent::handleRecordPressDuringTake()
         if (stopArmedAtMs == 0 || (now - stopArmedAtMs) > kArmWindowMs)
         {
             stopArmedAtMs = now;
-            toast.show ("Tap STOP again to end the recording", Toast::Kind::Warning);
+            toast.showNow ("Tap STOP again to end the recording", Toast::Kind::Warning);
             statusLabel.setText ("STOP armed -- tap again within 2 s to end the take",
                                  juce::dontSendNotification);
             return true;
@@ -197,21 +248,20 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
     const int numTracks = recorder.getNumTracks();
     if (numTracks == 0)
     {
-        statusLabel.setText ("Add a channel with +CH before recording.", juce::dontSendNotification);
+        showRecordRefusal ("Add a channel with +CH before recording.");
         return false;
     }
 
     auto* device = engine.getDeviceManager().getCurrentAudioDevice();
     if (device == nullptr)
     {
-        statusLabel.setText ("No audio device open -- pick one with DEVICE.", juce::dontSendNotification);
+        showRecordRefusal ("No audio device open -- pick one with DEVICE.");
         return false;
     }
     const int numInputs = device->getActiveInputChannels().countNumberOfSetBits();
     if (numInputs == 0)
     {
-        statusLabel.setText ("Device has 0 active inputs -- open DEVICE and enable inputs.",
-                             juce::dontSendNotification);
+        showRecordRefusal ("Device has 0 active inputs -- open DEVICE and enable inputs.");
         return false;
     }
 
@@ -224,8 +274,7 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
         if (recorder.getTrack (i).armed.load (std::memory_order_relaxed)) ++armed;
     if (armed == 0)
     {
-        statusLabel.setText ("Arm at least one track (R button) before recording.",
-                             juce::dontSendNotification);
+        showRecordRefusal ("Arm at least one track (R button) before recording.");
         return false;
     }
 
@@ -237,7 +286,7 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
                            || recorder.getTrack (i).streamSend.load (std::memory_order_relaxed);
         if (! hasStreamSource)
         {
-            showStatus ("StereoMix is enabled but no channel is sent to STREAM; enable a STREAM send before recording");
+            showRecordRefusal ("StereoMix is enabled but no channel is sent to STREAM; enable a STREAM send before recording");
             return false;
         }
     }
@@ -261,16 +310,43 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
                 return ((k == std::floor (k)) ? juce::String ((int) k)
                                               : juce::String (k, 1)) + " kHz";
             };
-            statusLabel.setText ("Recording blocked -- device " + khz (devSR)
-                                 + " != session " + khz (sessionSR)
-                                 + ". Match the clock first.",
-                                 juce::dontSendNotification);
+            showRecordRefusal ("Recording blocked -- device " + khz (devSR)
+                               + " != session " + khz (sessionSR)
+                               + ". Match the clock first.");
             srMismatchWarned = 0.0;          // re-arm so the dialog pops again
             checkDeviceSampleRate (devSR);   // show the explanatory warning
             return false;                    // <-- do NOT start recording
         }
     }
 
+    planRecordPosition (plan);
+    plan.dir = plan.continueTake ? engine.getActiveSessionDir() : makeNewSessionDir();
+    plan.numTracks = numTracks;
+    plan.armed = armed;
+
+    // Disk-space pre-flight -- abort if the drive can't hold at least
+    // 30 minutes at current SR × armed-track count × bit depth (assume
+    // 24-bit if unknown). Surface the actual free GB so the engineer
+    // knows what to clear.
+    {
+        const juce::int64 wantBytes = recordHeadroomBytes (device->getCurrentSampleRate(), plan.armed,
+                                                           engine.getRecorder().getCaptureFormat());
+        const auto        volume    = plan.dir.getParentDirectory();
+        const juce::int64 freeBytes = volume.getBytesFreeOnVolume();
+        if (zynforge::preflight::freeSpaceKnown (freeBytes, volume.getVolumeTotalSize()) && freeBytes < wantBytes)
+        {
+            const double freeGB = freeBytes / 1.0e9;
+            showRecordRefusal ("Drive has only " + juce::String (freeGB, 1)
+                               + " GB free -- < 30 min headroom. Clear space before recording.");
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void MainComponent::planRecordPosition (RecordStartPlan& plan)
+{
     // CONTINUE vs FRESH take. If a session is loaded, RECORD continues INTO it
     // (punch-in) instead of spinning up a throwaway new session -- this is how
     // you "keep recording on an existing take". The freshly-recorded audio is
@@ -284,77 +360,30 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
     const bool existingTakeMedia = takeScanDir.isDirectory()
         && ! takeScanDir.findChildFiles (juce::File::findFiles, false,
                                          "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff").isEmpty();
+    auto& player = engine.getPlayer();
     plan.continueTake = activeDir.isDirectory()
-                        && (engine.getPlayer().isLoaded() || existingTakeMedia)
+                        && (player.isLoaded() || existingTakeMedia)
                         && ! daemonModeActive();
+    if (! plan.continueTake) return;
+
     // While playback rolls, a manual punch uses its CURRENT playhead. The EDIT
     // cursor may still hold the place where playback began; using it here
     // silently turns an intended punch into an append/new part. When stopped,
-    // the explicitly placed EDIT cursor remains the insertion point.
-    // INSIDE the take -> record OVER from there (mid-take punch / splice). At the
-    // end (or a stopped, unplaced playhead at 0) -> APPEND a NEW PART
-    // (Track_NN_partXX), which never touches the existing file. An explicitly
-    // placed cursor at 0 is a deliberate punch from the start.
-    if (plan.continueTake)
+    // the explicitly placed EDIT cursor remains the insertion point. Anything
+    // else APPENDS a NEW PART (Track_NN_partXX), which never touches the
+    // existing file. Punches work on MULTI-PART takes too: the splice reads the
+    // whole take (Track_NN + its parts) via ConcatReader and flattens it.
+    const bool rolling = player.isPlaying();
+    const auto cursor  = engine.getEditCursorSample();
+    const auto pos     = manualRecordPosition (rolling, player.getPositionSamples(), cursor);
+    if (manualRecordPunches (rolling, cursor, pos, engine.getCaptureLengthSamples(),
+                             player.getTotalLengthSamples()))
     {
-        const auto cur   = engine.getEditCursorSample();
-        const auto pos   = manualRecordPosition (engine.getPlayer().isPlaying(),
-                                                 engine.getPlayer().getPositionSamples(), cur);
-        const auto total = engine.getCaptureLengthSamples();
-        const bool explicitPosition = cur >= 0 || engine.getPlayer().isPlaying();
-        // A deliberate cursor/rolling punch may be inside a reference bed
-        // beyond the captured material. Only default append ignores the bed.
-        if ((pos < total && (pos > 0 || explicitPosition))
-            || (explicitPosition && pos < engine.getPlayer().getTotalLengthSamples()))
-        {
-            // Mid-take "record OVER from here" -- punch-in at the cursor/playhead.
-            // Works on MULTI-PART takes too: the splice reads the whole take
-            // (Track_NN + its parts) via ConcatReader and flattens it, so a take
-            // built up by continue-recording can still be punched anywhere.
-            plan.punchAt = pos; plan.continueAppend = false;
-        }
-        else
-        {
-            plan.continueAppend = true;   // at the start / end -> append a new part
-        }
+        plan.punchAt = pos;
+        plan.continueAppend = false;
     }
-
-    plan.dir = plan.continueTake ? activeDir : makeNewSessionDir();
-    plan.numTracks = numTracks;
-    plan.armed = armed;
-
-    // Disk-space pre-flight -- abort if the drive can't hold at least
-    // 30 minutes at current SR × armed-track count × bit depth (assume
-    // 24-bit if unknown). Surface the actual free GB so the engineer
-    // knows what to clear.
-    {
-        const double sr = device->getCurrentSampleRate();
-        // Derive bytes-per-sample from the capture format -- hardcoding 24-bit
-        // let a 32-float session start on a drive with < 30 min real headroom
-        // (~33% optimistic), the exact disk-full-mid-set case this guard exists
-        // to prevent. FLAC uses its uncompressed size (conservative).
-        const auto fmt = engine.getRecorder().getCaptureFormat();
-        const int  bytesPerSample =
-              (fmt == zynforge::CaptureFormat::Wav16 || fmt == zynforge::CaptureFormat::Aiff16
-               || fmt == zynforge::CaptureFormat::Flac16)                                            ? 2
-            : (fmt == zynforge::CaptureFormat::Wav32Float || fmt == zynforge::CaptureFormat::Aiff32Float) ? 4
-            : 3;
-        const juce::int64 bytesPerSec    = (juce::int64) (sr * plan.armed * bytesPerSample);
-        const juce::int64 wantBytes      = bytesPerSec * 60 * 30;  // 30 min headroom
-        const auto        volume         = plan.dir.getParentDirectory();
-        const juce::int64 freeBytes      = volume.getBytesFreeOnVolume();
-        if (zynforge::preflight::freeSpaceKnown (freeBytes, volume.getVolumeTotalSize()) && freeBytes < wantBytes)
-        {
-            const double freeGB = freeBytes / 1.0e9;
-            statusLabel.setText ("Drive has only "
-                                 + juce::String (freeGB, 1)
-                                 + " GB free -- < 30 min headroom. Clear space before recording.",
-                                 juce::dontSendNotification);
-            return false;
-        }
-    }
-
-    return true;
+    else
+        plan.continueAppend = true;
 }
 
 void MainComponent::applyRecordAutoRouting (RecordStartPlan& plan)
@@ -394,7 +423,7 @@ void MainComponent::startDaemonTake (const RecordStartPlan& plan)
 {
     auto& recorder = engine.getRecorder();
     if (! configureCaptureDaemon())
-    { showStatus ("Daemon recording refused: could not apply the selected device, routing and backup configuration"); return; }
+    { showRecordRefusal ("Daemon recording refused: could not apply the selected device, routing and backup configuration"); return; }
     juce::BigInteger arms;
     for (int i = 0; i < plan.numTracks; ++i)
         if (recorder.getTrack (i).armed.load (std::memory_order_relaxed))
@@ -438,8 +467,8 @@ void MainComponent::requestDaemonTake (const juce::File& dir, int numTracks, con
         showStatus ("Daemon has not answered RECORD yet -- the take may be rolling");
     }
     else
-        showStatus (refusal.isNotEmpty() ? "Daemon refused RECORD: " + refusal
-                                         : juce::String ("Daemon record failed -- check Session > Capture daemon."));
+        showRecordRefusal (refusal.isNotEmpty() ? "Daemon refused RECORD: " + refusal
+                                                : juce::String ("Daemon record failed -- check Session > Capture daemon."));
 }
 
 bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)
@@ -466,10 +495,6 @@ bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)
 
             engine.stopPlayback();
             player.setPositionSamples (juce::jmax ((juce::int64) 0, in - preRollS));
-            suspendLoopForPunch();
-            snapshotArmStateForPunch();
-            for (int i = 0; i < plan.numTracks; ++i)
-                engine.setTrackPunchArmed (i, recorder.getTrack (i).armed.load (std::memory_order_relaxed));
             engine.setPunchModeOn (true);
             punchOutSample    = out;
             punchPostRollEnd  = out + postRollS;
@@ -482,13 +507,14 @@ bool MainComponent::startSelectionPunch (const RecordStartPlan& plan)
             {
                 engine.clearCaptureWindow();
                 recorder.cancelPunchIn();
-                restoreArmStateAfterPunch();
                 engine.setPunchModeOn (false);
-                restoreLoopAfterPunch();
-                showStatus (recorder.getStartError().isNotEmpty() ? recorder.getStartError()
+                showRecordRefusal (recorder.getStartError().isNotEmpty() ? recorder.getStartError()
                     : "Selection punch refused -- check take and backup/mirror copies");
                 return true;
             }
+            // One selection, one punch. Left armed, the same range would take
+            // the next RECORD too, say the one meant to continue the show.
+            player.disarmRange();
             lastCaptureFinalizationError.clear();
             punchSessionActive = true;
             wasInsidePunch    = false;
@@ -532,6 +558,7 @@ void MainComponent::startLocalTake (const RecordStartPlan& plan)
                  : plan.continueAppend
                  ? juce::String ("Continuing take -- recording a new part on ")
                        + juce::String (plan.armed) + " track(s)"
+                       + (engine.getPlayer().hasLoopRegion() ? " (select the range again to punch it)" : "")
                  : juce::String ("Punch-in ") + juce::String (plan.armed)
                        + " track(s) at " + juce::String (plan.punchAt / sr, 1) + " s";
         if (plan.autoRouted > 0)
@@ -549,11 +576,10 @@ void MainComponent::startLocalTake (const RecordStartPlan& plan)
     }
     else
     {
-        statusLabel.setText (recorder.getStartError().isNotEmpty() ? recorder.getStartError()
-                             : plan.continueTake && ! plan.continueAppend
-                             ? "Punch refused -- could not safely open the existing take or writer files"
-                             : "Failed to start recording -- could not open writer files.",
-                             juce::dontSendNotification);
+        showRecordRefusal (recorder.getStartError().isNotEmpty() ? recorder.getStartError()
+                           : plan.continueTake && ! plan.continueAppend
+                           ? "Punch refused -- could not safely open the existing take or writer files"
+                           : "Failed to start recording -- could not open writer files.");
     }
 }
 
@@ -623,7 +649,7 @@ void MainComponent::onStopClicked()
         {
             // First tap -- arm. Don't actually stop yet.
             stopArmedAtMs = now;
-            toast.show ("Tap STOP again to end the recording", Toast::Kind::Warning);
+            toast.showNow ("Tap STOP again to end the recording", Toast::Kind::Warning);
             statusLabel.setText ("STOP armed -- tap again within 2 s to stop recording",
                                  juce::dontSendNotification);
             return;
@@ -891,7 +917,7 @@ void MainComponent::stopActiveCaptureAsync (bool rewind, std::function<void (boo
         return;
     }
     const bool mediaOk = stopActiveCapture (rewind, false);
-    if (lastCaptureFinalizationError.isNotEmpty()) showStatus (lastCaptureFinalizationError);
+    // The banner already stands for a failed take; an idle STOP repeats nothing.
     if (completion) completion (mediaOk && lastCaptureFinalizationError.isEmpty());
 }
 
@@ -908,6 +934,14 @@ std::optional<bool> MainComponent::handleRemoteTransport (
     {
         if (captureMetadataPending || pendingMetadataSaves != 0)
         { error = "session finalization or saving is pending"; return false; }
+        // Rolling into the selected range in PUNCH mode opens a punch, and no
+        // remote may start one.
+        if (action != A::StopPlay && engine.isPunchModeOn() && ! engine.isPlaying())
+        {
+            error = "PUNCH mode is on; start playback on the host";
+            showStatus ("Remote PLAY refused -- PUNCH mode is on");
+            return false;
+        }
         return std::nullopt;
     }
 
@@ -919,9 +953,11 @@ std::optional<bool> MainComponent::handleRemoteTransport (
         {
             if (captureMetadataPending)
             { error = "recording stopped; finalization pending"; return false; }
+            // A failed take stays reported, but it never holds up stopping
+            // the playback that is rolling now.
+            if (action == A::StopAll) onStopClicked();
             if (lastCaptureFinalizationError.isNotEmpty())
             { error = lastCaptureFinalizationError; return false; }
-            if (action == A::StopAll) onStopClicked();
             return true;
         }
         // Every remote surface uses the same two-tap guard as the local STOP.
@@ -947,13 +983,22 @@ std::optional<bool> MainComponent::handleRemoteTransport (
         if (useCaptureDaemon && ! captureSupervisor.isAttached())
         {
             error = "capture daemon is unavailable";
-            showStatus ("Remote RECORD refused -- capture daemon is unavailable");
+            showRecordRefusal ("Remote RECORD refused -- capture daemon is unavailable");
+            return false;
+        }
+        // During a punch's post-roll a RECORD press would end the punch.
+        if (punchSessionActive)
+        {
+            error = "a punch is in progress on the host";
             return false;
         }
 
+        const juce::ScopedValueSetter<bool> remoteStart (remoteStartInFlight, true);
+        remotePunchRefused = false;
         onRecordClicked();
         if (engine.isRecording()) return true;
-        error = "recording could not start; check the host pre-flight message";
+        error = remotePunchRefused ? "RECORD would punch into the take; clear the cursor or selection on the host"
+                                   : "recording could not start; check the host pre-flight message";
         return false;
     }
 
@@ -1045,6 +1090,9 @@ void MainComponent::applyLockState()
     if (editPage != nullptr)
     {
         editPage->setEnabled (e && (! sessionIoBusy.load() || pendingMetadataSaves != 0 || captureMetadataPending));
+        // Rows and ruler take the mouse by hand, so disabling them is not enough.
+        editPage->setReadOnlyWhileRecording (sessionLocked || engine.isRecording()
+                                             || pendingMetadataSaves != 0 || captureMetadataPending);
         if (auto* tools = editPage->getEditToolsBar()) tools->setEnabled (e);
     }
     if (automationToolbar != nullptr) automationToolbar->setEnabled (e);
@@ -1061,8 +1109,40 @@ void MainComponent::applyLockState()
                                                       : "Idle");
 }
 
+// The header tab and the menu open the same one window. Only a tracked window
+// is reached by LOCK and by the reaper that frees it after its close box.
+void MainComponent::openPatchWindow()
+{
+    if (auto* w = patchDialog.getComponent()) { w->toFront (true); return; }
+    patchDialog = zynforge::PatchPage::launch (engine);
+    if (patchDialog != nullptr) patchDialog->setEnabled (! sessionLocked);
+}
+
+void MainComponent::openMetersWindow()
+{
+    if (auto* w = metersDialog.getComponent()) { w->toFront (true); return; }
+    metersDialog = zynforge::Meterbridge::launch (engine);
+}
+
+void MainComponent::forgetSessionUiState()
+{
+    lastCaptureFinalizationError.clear();
+    recordRefusal.clear();
+    cues.clear();
+    currentCueIndex = -1;
+    setlistBar.setCues (cues, currentCueIndex);
+    cueRamp.active = false;     // its strip indices mean nothing in the next session
+    wasInsidePunch = false;
+    analysisJobs.cancel();
+}
+
 void MainComponent::onVscClicked()
 {
+    // This repatches and saves every output, which setTrackLinkedRouting
+    // refuses during a take for the same reason.
+    if (engine.isRecording() || captureMetadataPending)
+    { showStatus ("Virtual Soundcheck waits until the take has stopped"); return; }
+
     // Virtual Soundcheck: copy each strip's input routing to its output
     // routing, so playback feeds the same hardware channel the live
     // input would have used. The desk sees the recorded tracks on the
@@ -1087,9 +1167,10 @@ void MainComponent::onVscClicked()
 
 void MainComponent::onBackupClicked()
 {
-    if (engine.isRecording())
+    if (engine.isRecording() || sessionIoBusy.load())
     {
-        showStatus ("Stop recording to change the backup folder");
+        showStatus (engine.isRecording() ? "Stop recording to change the backup folder"
+                                         : "Wait for the session operation to finish");
         return;
     }
 
@@ -1123,10 +1204,20 @@ void MainComponent::onBackupClicked()
             self->showStatus ("Backup folder rejected: " + rejection);
             return;
         }
-        self->engine.setBackupDirectory (dir);
-        self->backupButton.setButtonText ("BACKUP OK");
-        self->showStatus ("Backup folder -> " + dir.getFileName());
+        self->applyBackupFolder (dir);
     });
+}
+
+void MainComponent::applyBackupFolder (const juce::File& dir)
+{
+    // The chooser can close after a take started behind it.
+    if (! engine.setBackupDirectory (dir))
+    {
+        showStatus ("Backup folder not changed -- a take is rolling or finalizing");
+        return;
+    }
+    backupButton.setButtonText ("BACKUP OK");
+    showStatus ("Backup folder -> " + dir.getFileName());
 }
 
 
@@ -1280,8 +1371,9 @@ bool MainComponent::deleteCaptureSession (const juce::File& target)
     {
         condemnAllStrips();
         engine.clearSessionState();
+        forgetSessionUiState();
         engine.setStripCount (0);
-        cues.clear(); currentCueIndex = -1; clickTrackIndex = -1; lastTrackCount = -1;
+        clickTrackIndex = -1; lastTrackCount = -1;
         undoManager.clearUndoHistory();
         updateTransportLabels(); explicitDocumentOpened = false; showStartupWelcome();
     }
@@ -1318,6 +1410,10 @@ void MainComponent::applySessionSettings()
 
 void MainComponent::confirmAndQuit()
 {
+    // File > Quit refuses under LOCK; the close box and Cmd+Q come straight
+    // here, and Return on the dialog below would end a locked take.
+    if (sessionLocked)
+    { showStatus ("LOCKED -- click UNLOCK before quitting"); return; }
     if (pendingMetadataSaves != 0 || captureMetadataPending)
     { showStatus ("Session saving is still finishing -- quit again after completion"); return; }
     if (sessionIoBusy.load())
@@ -1398,11 +1494,20 @@ void MainComponent::confirmAndQuit()
         aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
         aw->addButton ("Quit",   kQuit,   juce::KeyPress (juce::KeyPress::returnKey));
         aw->addButton ("Cancel", kCancel, juce::KeyPress (juce::KeyPress::escapeKey));
+        juce::Component::SafePointer<MainComponent> self (this);
         aw->enterModalState (true,
-            juce::ModalCallbackFunction::create ([aw] (int result)
+            juce::ModalCallbackFunction::create ([aw, self] (int result)
             {
                 std::unique_ptr<juce::AlertWindow> dispose (aw);
                 if (result == kCancel) return;       // stay in app
+                // A remote RECORD may have started behind this dialog; that
+                // take gets the proper Stop & Quit, not a bare teardown.
+                if (self != nullptr
+                    && (self->engine.isRecording() || self->captureSupervisor.isDaemonRecording()))
+                {
+                    self->confirmAndQuit();
+                    return;
+                }
                 if (auto* app = juce::JUCEApplication::getInstance())
                     app->quit();
             }),
@@ -1500,18 +1605,10 @@ void MainComponent::showPreflightChecklist()
         : fmt == zynforge::CaptureFormat::Flac16     ? "FLAC/16"
                                                       : "?";
 
-    // 30-minute headroom estimate at the active configuration. Derive the real
-    // bytes-per-sample from the format (was hardcoded to 3 = 24-bit, so a 32f
-    // session read ~33% too optimistic and could hit disk-full mid-set). FLAC
-    // uses its uncompressed size, which is conservative (it compresses).
-    const int bytesPerSample =
-          (fmt == zynforge::CaptureFormat::Wav16 || fmt == zynforge::CaptureFormat::Aiff16
-           || fmt == zynforge::CaptureFormat::Flac16)                                       ? 2
-        : (fmt == zynforge::CaptureFormat::Wav32Float || fmt == zynforge::CaptureFormat::Aiff32Float) ? 4
-        : 3;   // 24-bit WAV / AIFF / FLAC
-    const juce::int64 bytesPerSec = (juce::int64) (sr * juce::jmax (1, armed) * bytesPerSample);
-    const double minHeadroom = bytesPerSec > 0 ? (freeGB * 1.0e9 / (double) bytesPerSec) / 60.0
-                                                : 0.0;
+    // Headroom at the active configuration, by the rule RECORD refuses on, so
+    // this list can never call a disk fine that RECORD then turns away.
+    const auto wantBytes = recordHeadroomBytes (sr, juce::jmax (1, armed), fmt);
+    const double minHeadroom = wantBytes > 0 ? (freeGB * 1.0e9 / (double) wantBytes) * 30.0 : 0.0;
 
     auto chk = [] (bool ok, bool warn = false) -> juce::String
     {
@@ -1538,7 +1635,7 @@ void MainComponent::showPreflightChecklist()
          << chk (! cues.empty(), cues.empty())
                           << "Setlist cues: " << (int) cues.size() << "\n"
          << "\n"
-         << chk (freeGB > 5.0, freeGB > 1.0)
+         << chk (preflightDiskOk (freeGB, wantBytes, armed), freeGB > 1.0)
          << "Disk free:    " << juce::String (freeGB, 1) << " GB ("
          << juce::String (minHeadroom, 0) << " min headroom at " << fmtStr << ")\n"
          << chk (! engine.isRecording())
@@ -1619,9 +1716,9 @@ void MainComponent::showPreflightChecklist()
 
     // Measured write speed of the session volume vs what the armed
     // configuration demands (uncompressed worst case, with 1.5x margin
-    // for filesystem jitter mid-show). Reuses the format-derived
-    // bytesPerSample computed for the headroom estimate above.
-    const double needMBps = zynforge::preflight::requiredWriteMBps (sr, juce::jmax (1, armed), bytesPerSample);
+    // for filesystem jitter mid-show).
+    const double needMBps = zynforge::preflight::requiredWriteMBps (sr, juce::jmax (1, armed),
+                                                                    captureBytesPerSample (fmt));
     if (engine.isRecording())
     {
         // NEVER probe mid-take. measureWriteSpeedMBps writes 16 MB
