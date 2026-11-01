@@ -336,6 +336,7 @@ namespace zynforge
         // (not CPU-derived) keeps the on-disk cache layout portable between
         // machines. WaveCache.wfm stores one length-prefixed section per shard.
         static constexpr int               kNumScanShards = 4;
+        static constexpr int               kScanThreadStopMs = 30000;
         std::vector<std::unique_ptr<juce::AudioThumbnailCache>> thumbnailCaches;
         ScrollViewport                     viewport;
         TimelineFollowState                followState;

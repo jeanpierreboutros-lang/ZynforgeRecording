@@ -498,7 +498,7 @@ namespace zynforge
         {
             auto cache = std::make_unique<juce::AudioThumbnailCache> (256);
             auto& scanThread = cache->getTimeSliceThread();
-            scanThread.stopThread (2000);
+            scanThread.stopThread (kScanThreadStopMs);
             scanThread.startThread (juce::Thread::Priority::background);
             thumbnailCaches.push_back (std::move (cache));
         }
@@ -622,6 +622,11 @@ namespace zynforge
     EditPage::~EditPage()
     {
         stopTimer();
+        // Stopped here because the cache's own destructor allows two seconds.
+        // On a loaded machine a background thread can wait that long for CPU,
+        // and JUCE then kills it, which takes the process down.
+        for (auto& cache : thumbnailCaches) cache->getTimeSliceThread().signalThreadShouldExit();
+        for (auto& cache : thumbnailCaches) cache->getTimeSliceThread().stopThread (kScanThreadStopMs);
         // Flush the waveform cache to WaveCache.wfm in whichever session is
         // active. Best-effort: failure here only means the next launch
         // re-scans waveforms, no data loss -- so SKIP it when the timer
