@@ -49,7 +49,8 @@ namespace zynforge
     inline bool splicePunchFromReader (juce::AudioFormatManager&, juce::AudioFormatReader& baseR,
                                        juce::AudioFormatReader& insR, const juce::String& baseExt,
                                        juce::int64 punchInSample, const juce::File& outFile,
-                                       juce::int64 maxBytesPerFile, std::vector<juce::File>& written)
+                                       juce::int64 maxBytesPerFile, std::vector<juce::File>& written,
+                                       const std::function<void()>& onProgress = {})
     {
 
         const int         chans   = (int) baseR.numChannels;
@@ -118,6 +119,7 @@ namespace zynforge
                 if (! write (done, count)) return false;
                 done += count;
                 room -= count;
+                if (onProgress) onProgress();
             }
             return true;
         };
@@ -142,7 +144,8 @@ namespace zynforge
                                  juce::int64                    punchInSample,
                                  const juce::File&              outFile,
                                  juce::int64                    maxBytesPerFile,
-                                 std::vector<juce::File>&       written)
+                                 std::vector<juce::File>&       written,
+                                 const std::function<void()>&   onProgress = {})
     {
         if (baseParts.empty() || insertParts.empty()) return false;
         auto baseR = ConcatReader::create (fm, baseParts);
@@ -150,7 +153,7 @@ namespace zynforge
         // Never report an unchanged base as a successful punch.
         if (baseR == nullptr || insR == nullptr) return false;
         return splicePunchFromReader (fm, *baseR, *insR, baseParts.front().getFileExtension(),
-                                      punchInSample, outFile, maxBytesPerFile, written);
+                                      punchInSample, outFile, maxBytesPerFile, written, onProgress);
     }
 
     // ── Offline punch-in splice ────────────────────────────────────────────

@@ -1407,6 +1407,138 @@ namespace zynforge
             markersBehindTheTake();
             refusedStartLeavesNothing();
             punchesWithHoles();
+            boundedFinishing();
+        }
+
+        void boundedFinishing()
+        {
+            beginTest ("A copy that keeps writing slowly still has a total limit at STOP");
+            {
+                Dirs dirs;
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                rec.setBackupDirectory (dirs.backup);
+                rec.copyDrainLimitMs = 400.0;
+                // Each chunk is progress, so this drive never trips the stall
+                // limit, however long the ring takes to come out.
+                auto slow = std::make_shared<std::atomic<bool>> (false);
+                rec.beforeCopyWriteForTests = [slow] (Copy& copy)
+                {
+                    if (copy.copyIndex == 1 && slow->load()) juce::Thread::sleep (100);
+                };
+                expect (rec.startRecording (dirs.session));
+                Feeder feeder { rec, 1 };
+                feeder.blocks (20, { 0, 1 });
+                slow->store (true);
+                feeder.blocks ((Copy::kChunkFrames * 40) / kBlock, { 0 });
+
+                const auto started = juce::Time::getMillisecondCounterHiRes();
+                rec.stopRecording();
+                expectLessThan (juce::Time::getMillisecondCounterHiRes() - started, 3000.0,
+                                "STOP sat through the whole drain");
+                expect (rec.hasBackupFailed());
+                expect (rec.getCopyProblems().joinIntoString ("|").contains ("left behind"));
+                expectIntact (dirs.primaryTake(), feeder.frame, "the primary");
+                slow->store (false);
+            }
+
+            beginTest ("A copy stuck in its post-take work costs the primary nothing");
+            {
+                PunchRig rig;
+                if (! rig.recordBase (*this)) return;
+                auto rec = std::make_shared<MultitrackRecorder>();
+                rig.configure (*rec);
+                rec->copyStallLimitMs = 500.0;
+                auto entered  = std::make_shared<juce::WaitableEvent>();
+                auto released = std::make_shared<juce::WaitableEvent> (true);
+                const juce::ScopeGuard letGo { [released] { released->signal(); } };
+                rec->beforeCopyFinishForTests = [entered, released] (Copy& copy)
+                {
+                    if (copy.copyIndex != 2) return;
+                    entered->signal();
+                    released->wait (-1);
+                };
+                rec->armPunchIn (10 * kBlock);
+                expect (rec->startRecording (rig.dirs.session));
+                Feeder feeder { *rec, 1 };
+                feeder.frame = 1000000;
+                feeder.blocks (20, { 0, 1, 2 });
+
+                auto stopped = std::make_shared<juce::WaitableEvent> (true);
+                std::thread ([rec, stopped] { rec->stopRecording(); stopped->signal(); }).detach();
+                expect (entered->wait (10000), "the stuck copy was never reached");
+                expect (! rig.dirs.session.getChildFile ("Audio Files")
+                              .getChildFile ("Track_01.punchbase.wav").existsAsFile(),
+                        "the primary waited for a copy before installing its punch");
+                expect (stopped->wait (10000), "STOP waited on the stuck copy");
+                if (! stopped->wait (0)) return;
+
+                expect (rec->anyMirrorFailed());
+                expect (rec->getCopyProblems().joinIntoString ("|").contains ("left behind"));
+                expect (PunchRig::bytesOf (rig.dirs.backupTake()) != rig.backupBase,
+                        "the backup should have finished its punch");
+                const auto report = juce::JSON::parse (rig.dirs.session.getChildFile ("session.report.json"));
+                expect (report.isObject(), "no report");
+                expect (report.getProperty ("mirrorFailed", false), "the report missed the stuck mirror");
+                expect (rec->isStillLeftBehind (rig.dirs.mirror), "its drive would be used again");
+
+                released->signal();
+                const auto end = juce::Time::getMillisecondCounterHiRes() + 5000.0;
+                while (rec->isStillLeftBehind (rig.dirs.mirror) && juce::Time::getMillisecondCounterHiRes() < end)
+                    juce::Thread::sleep (5);
+                expect (! rec->isStillLeftBehind (rig.dirs.mirror), "the drive never came back");
+            }
+
+            beginTest ("A copy's hash on a dead drive holds no primary hash, this take's or the next");
+            {
+                PunchRig rig;
+                auto entered  = std::make_shared<juce::WaitableEvent>();
+                auto released = std::make_shared<juce::WaitableEvent> (true);
+                const juce::ScopeGuard letGo { [released] { released->signal(); } };
+                auto hooks = std::make_shared<MultitrackRecorder::ReportTestHooks>();
+                hooks->beforeCopyScan = [entered, released]
+                {
+                    entered->signal();
+                    released->wait (-1);
+                };
+                {
+                    MultitrackRecorder rec;
+                    rig.configure (rec);
+                    rec.reportTestHooks = hooks;
+                    expect (rec.startRecording (rig.dirs.session));
+                    Feeder feeder { rec, 1 };
+                    feeder.blocks (20, { 0, 1, 2 });
+                    rec.stopRecording();
+                }
+                expect (entered->wait (10000), "the copies were hashed first");
+                const auto report = juce::JSON::parse (rig.dirs.session.getChildFile ("session.report.json"));
+                expect ((bool) report.getProperty ("sha256Pending", false), "the copies' hashes are not in yet");
+                expect ((bool) report.getProperty ("sha256Failed", true) == false);
+                const auto* tracks = report.getProperty ("tracks", {}).getArray();
+                expect (tracks != nullptr && ! tracks->isEmpty());
+                if (tracks != nullptr && ! tracks->isEmpty())
+                    expect (tracks->getReference (0).getProperty ("sha256", {})[0].toString().length() == 64,
+                            "the primary's hash waited for a copy");
+
+                // Another session's primary still gets its hash.
+                Dirs next;
+                auto secondHooks = std::make_shared<MultitrackRecorder::ReportTestHooks>();
+                auto published = std::make_shared<juce::WaitableEvent> (true);
+                secondHooks->afterPublish = [published] { published->signal(); };
+                {
+                    MultitrackRecorder rec;
+                    rec.prepare (kRate, kBlock, 1);
+                    rec.getTrack (0).armed.store (true);
+                    rec.reportTestHooks = secondHooks;
+                    expect (rec.startRecording (next.session));
+                    Feeder feeder { rec, 1 };
+                    feeder.blocks (20, { 0 });
+                    rec.stopRecording();
+                }
+                expect (published->wait (10000), "a stuck copy held the next take's primary hash");
+                released->signal();
+            }
         }
 
         struct PunchRig

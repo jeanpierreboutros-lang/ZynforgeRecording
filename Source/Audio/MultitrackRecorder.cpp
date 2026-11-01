@@ -15,6 +15,7 @@
 #include <limits>
 #include <map>
 #include <optional>
+#include <set>
 #include <thread>
 #include <mutex>
 #include <atomic>
@@ -2212,6 +2213,8 @@ namespace zynforge
             bool complete { true };         // this copy holds every frame of the punch
         };
         struct PunchWriterFiles { PunchFiles primary, backup; std::vector<PunchFiles> mirrors; };
+        // What the primary did with a track. Every copy follows it.
+        enum class PunchVerdict { notPunched, nothingCaptured, committed, discarded };
 
         juce::Time  stoppedAt;
         juce::int64 totalSamples {}, totalMissed {};
@@ -2222,7 +2225,9 @@ namespace zynforge
         juce::int64 timelineStart {};   // where this pass sits on the timeline (punch origin aware)
         std::vector<WriterReport>     writers;
         std::vector<PunchWriterFiles> punchFiles;
-        std::vector<WriterChannel::StampedPart> stampedParts;
+        std::vector<PunchVerdict>     punchVerdicts;
+        juce::int64                   punchPosition {};
+        std::vector<WriterChannel::StampedPart> stampedParts;   // the primary's
         juce::int64       timeReference {};
         juce::StringArray stampFailures;
         juce::StringArray copyProblems;
@@ -2267,7 +2272,7 @@ namespace zynforge
 
         juce::String toJson (bool withHashes, bool hashingFailed,
                              const std::map<juce::String, juce::String>& shaByPath,
-                             const juce::var& twinBlock) const;
+                             const juce::var& twinBlock, bool copyHashesPending = false) const;
     };
 
     void MultitrackRecorder::finishFinalization()
@@ -2282,15 +2287,21 @@ namespace zynforge
         backupActive.store (false, std::memory_order_relaxed);
         reattachWriterShards();
 
+        // The primary's files come first and wait on nothing: what a punch did
+        // to the take is settled before any copy is touched. Each copy then
+        // finishes its own files on its own thread, so a drive that hangs here
+        // costs that copy and a bounded wait.
         if (stop.doPunch) splicePunchedTracks (stop);
         completeLeadIns (stop);
         stampTakeFiles (stop);
+        manifestSessionMedia (stop);
+        finishCopyFiles (stop);
+
         punchInActive     = false;
         continueAsPart    = false;   // consume the continue arm
         recordBaseSamples = 0;
         punchCaptureOrigin.store (-1, std::memory_order_relaxed);
 
-        manifestSessionMedia (stop);
         publishSessionReport (buildSessionReport (stop));
 
         // Clean stop -- remove the recovery marker.
@@ -2329,24 +2340,20 @@ namespace zynforge
     void MultitrackRecorder::completeLeadIns (const TakeStop& stop)
     {
         for (const auto& lead : pendingLeadIns)
-        {
-            // Its marker stays: the next open or record start finishes it.
-            if (isCopyAbandoned (lead.copyIndex)) continue;
-            if (writeLeadIn (lead, stop.timelineStart))
-            {
-                const auto marker = leadInMarkerFor (lead);
-                marker.deleteFile();
-                const auto folder = marker.getParentDirectory();
-                if (folder.getNumberOfChildFiles (juce::File::findFilesAndDirectories) == 0)
-                    folder.deleteFile();
-                continue;
-            }
-            // The marker stays, so the next session open retries the write.
-            if (lead.copyIndex == 0)      primaryFailed.store (true, std::memory_order_relaxed);
-            else if (lead.copyIndex == 1) backupFailed .store (true, std::memory_order_relaxed);
-            else                          mirrorFailed .store (true, std::memory_order_relaxed);
-        }
-        pendingLeadIns.clear();
+            if (lead.copyIndex == 0 && ! finishLeadIn (lead, stop.timelineStart))
+                primaryFailed.store (true, std::memory_order_relaxed);
+    }
+
+    // On failure the marker stays, so the next session open retries the write.
+    bool MultitrackRecorder::finishLeadIn (const PendingLeadIn& lead, juce::int64 timelineStart)
+    {
+        if (! writeLeadIn (lead, timelineStart)) return false;
+        const auto marker = leadInMarkerFor (lead);
+        marker.deleteFile();
+        const auto folder = marker.getParentDirectory();
+        if (folder.getNumberOfChildFiles (juce::File::findFilesAndDirectories) == 0)
+            folder.deleteFile();
+        return true;
     }
 
     void MultitrackRecorder::quiesceWritersForStop()
@@ -2369,11 +2376,18 @@ namespace zynforge
 
     // Every copy drains its ring and closes its files. The primary decides the
     // take, so STOP waits for it as long as it takes. A copy that stops making
-    // progress is left behind instead: its drive must not hold up the show, and
-    // nothing here touches that copy's folder again.
+    // progress, or has not drained within the total limit, is left behind
+    // instead: its drive must not hold up the show, and nothing here touches
+    // that copy's folder again.
     void MultitrackRecorder::finishCopies()
     {
         for (auto& copy : copies) copy->requestFinish();
+        waitForCopies (copyDrainLimitMs);
+    }
+
+    void MultitrackRecorder::waitForCopies (double totalLimitMs)
+    {
+        const auto startedMs = juce::Time::getMillisecondCounterHiRes();
         for (;;)
         {
             bool waiting = false;
@@ -2383,7 +2397,8 @@ namespace zynforge
                 if (copy->finished.load (std::memory_order_acquire)
                     || copy->abandoned.load (std::memory_order_acquire)) continue;
                 if (copy->copyIndex != 0
-                    && now - copy->lastProgressMs.load (std::memory_order_relaxed) >= copyStallLimitMs)
+                    && (now - copy->lastProgressMs.load (std::memory_order_relaxed) >= copyStallLimitMs
+                        || (totalLimitMs > 0.0 && now - startedMs >= totalLimitMs)))
                 {
                     copy->abandon();
                     leftBehind.push_back (copy);
@@ -2428,7 +2443,6 @@ namespace zynforge
         stop.writers.reserve (writers.size());
         stop.doPunch = punchInActive;
         stop.timelineStart = recordBaseSamples;
-        stop.copyProblems = describeCopyProblems();
         const auto* primaryCopy = copyAt (0);
         const auto* backupCopy  = isCopyAbandoned (1) ? nullptr : copyAt (1);
         if (isCopyAbandoned (1)) stop.backupWasRunning = false;
@@ -2479,10 +2493,7 @@ namespace zynforge
             stop.writers.push_back (std::move (wr));
             stop.punchFiles.push_back (std::move (pf));
         }
-        for (const auto& copy : copies)
-            if (! copy->abandoned.load (std::memory_order_acquire))
-                stop.stampedParts.insert (stop.stampedParts.end(),
-                                          copy->stampedParts.begin(), copy->stampedParts.end());
+        if (primaryCopy != nullptr) stop.stampedParts = primaryCopy->stampedParts;
         return stop;
     }
 
@@ -2507,303 +2518,432 @@ namespace zynforge
     // ── Punch-in splice ────────────────────────────────────────────────
     // Each punched track recorded a clean fresh file; its existing take was
     // stashed to a sidecar in startRecording. Splice base[0,punchIn) +
-    // freshTake + base[after] over each copy (temp + atomic swap). Runs
-    // synchronously here -- AFTER the writers close, BEFORE the async SHA
-    // thread below -- so the report hashes + lengths describe the spliced
-    // files. On the rare splice failure the take reverts to its pre-punch
-    // base (the original is never lost). Cleared so the next take is normal.
-    void MultitrackRecorder::splicePunchedTracks (TakeStop& stop)
+    // freshTake + base[after] over each copy (temp + atomic swap). Runs after
+    // the writers close and before the hash thread, so the report hashes and
+    // lengths describe the spliced files. On a splice failure the take reverts
+    // to its pre-punch base (the original is never lost).
+    //
+    // One copy's splice of one track. All of it runs on plain values, because
+    // on a backup or mirror it runs on that copy's own thread.
+    struct MultitrackRecorder::CopySplice
     {
-        const auto& punchFiles = stop.punchFiles;
-        auto& writerSnapshots = stop.writers;
+        juce::File              fresh;      // Track_NN.<ext>
+        std::vector<juce::File> freshParts; // every file the punch recorded
+        juce::File              tmp;        // first file of the spliced result
+        std::vector<juce::File> tmpParts;   // the whole spliced result, awaiting commit
+        std::vector<juce::File> baseParts;  // stashed .punchbase sidecars
+        bool                    attempted { false };  // this copy was stashed
+        bool                    spliced   { false };  // splice to tmp succeeded
+        bool                    complete  { true };   // holds every frame of the punch
 
-        juce::AudioFormatManager fm; fm.registerBasicFormats();
-        const auto origin   = punchCaptureOrigin.load (std::memory_order_acquire);
-        const auto punchPos = origin >= 0 ? origin : punchInPos;
-        // Map a stashed sidecar back to its real take file:
-        //   Track_NN.punchbase.ext      -> Track_NN.ext
-        //   Track_NN_part02.punchbase.ext -> Track_NN_part02.ext
-        auto sidecarToTake = [] (const juce::File& s) -> juce::File
-        {
-            const auto realStem = s.getFileNameWithoutExtension()
-                                   .upToLastOccurrenceOf (".punchbase", false, false);
-            return s.getParentDirectory().getChildFile (realStem + s.getFileExtension());
-        };
-        // One copy's (primary / backup / a mirror) splice, prepared into a
-        // temp file but NOT yet committed. The splice for a track must be
-        // ATOMIC ACROSS all its copies: if any copy fails, every copy rolls
-        // back to its pre-punch base, so primary and backup never disagree
-        // about whether the punch landed. So we split the work into a
-        // PREPARE phase (splice each copy to its temp), then a single
-        // commit-or-rollback decision for the whole track.
-        struct CopySplice
-        {
-            juce::File              fresh;      // Track_NN.<ext>
-            std::vector<juce::File> freshParts; // every file the punch recorded
-            juce::File              tmp;        // first file of the spliced result
-            std::vector<juce::File> tmpParts;   // the whole spliced result, awaiting commit
-            std::vector<juce::File> baseParts;  // stashed .punchbase sidecars
-            bool                    attempted { false };  // this copy was stashed
-            bool                    spliced   { false };  // splice to tmp succeeded
-            bool                    complete  { true };   // holds every frame of the punch
-        };
-        auto prepareCopy = [&] (const TakeStop::PunchFiles& files) -> CopySplice
+        // Every stashed base part for this copy, in order: Track_NN.punchbase +
+        // Track_NN_partXX.punchbase (continue takes are multi-part). The splice
+        // reads them as one seamless base.
+        static CopySplice gather (const TakeStop::PunchFiles& files)
         {
             CopySplice cs;
-            const auto& fresh = files.main;
-            cs.fresh = fresh;
+            const auto& take = files.main;
+            cs.fresh = take;
             cs.freshParts = files.fresh;
-            if (fresh.getFullPathName().isEmpty()) return cs;
-            // Gather every stashed base part for this copy, in order:
-            // Track_NN.punchbase + Track_NN_partXX.punchbase (continue takes
-            // are multi-part). The splice reads them as one seamless base.
-            const auto sidecar0 = punchSidecar (fresh);
+            if (take.getFullPathName().isEmpty()) return cs;
+            const auto sidecar0 = punchSidecar (take);
             if (! sidecar0.existsAsFile()) return cs;    // this copy wasn't stashed
             cs.attempted = true;
             cs.baseParts.push_back (sidecar0);
+            const auto dir  = take.getParentDirectory();
+            const auto stem = take.getFileNameWithoutExtension();   // "Track_07"
+            const auto ext  = take.getFileExtension();
+            for (int p = 2; ; ++p)
             {
-                const auto dir  = fresh.getParentDirectory();
-                const auto stem = fresh.getFileNameWithoutExtension();   // "Track_07"
-                const auto ext  = fresh.getFileExtension();
-                for (int p = 2; ; ++p)
-                {
-                    const auto part = dir.getChildFile (stem + "_part"
-                                        + juce::String::formatted ("%02d", p) + ext);
-                    const auto ps = punchSidecar (part);
-                    if (ps.existsAsFile()) cs.baseParts.push_back (ps); else break;
-                }
+                const auto ps = punchSidecar (dir.getChildFile (stem + "_part"
+                                              + juce::String::formatted ("%02d", p) + ext));
+                if (ps.existsAsFile()) cs.baseParts.push_back (ps); else break;
             }
-            // Splicing a capture with a hole would replace audio that is on
-            // disk and good with silence the engineer never played, and then
-            // delete the original. A FIFO gap sits before the copies split, so
-            // it is in every one of them.
-            cs.complete = files.complete && stop.totalMissed == 0;
-            if (! cs.complete) return cs;
-            cs.tmp = fresh.getSiblingFile (
-                fresh.getFileNameWithoutExtension() + ".punchtmp" + fresh.getFileExtension());
-            cs.spliced = splicePunchTake (fm, cs.baseParts, cs.freshParts, punchPos, cs.tmp,
-                                          files.maxBytesPerFile, cs.tmpParts);
             return cs;
-        };
-        auto readLen = [&fm] (const juce::File& f) -> juce::int64
+        }
+
+        // A spliced file keeps its base's stamp (bextFieldsOf) and a copy that
+        // rolled back IS its base, so neither takes this pass's time.
+        void removeFromStamps (std::vector<WriterChannel::StampedPart>& parts) const
         {
-            juce::int64 len = -1;
-            if (auto* r = fm.createReaderFor (f)) { len = r->lengthInSamples; delete r; }
-            return len;
-        };
+            std::erase_if (parts, [this] (const auto& part)
+                           { return std::find (freshParts.begin(), freshParts.end(), part.file) != freshParts.end(); });
+        }
+
+        // Spliced into a temp file, nothing committed. Splicing a capture with a
+        // hole would replace audio that is on disk and good with silence the
+        // engineer never played, and then delete the original. A FIFO gap sits
+        // before the copies split, so it is in every one of them.
+        void prepare (juce::AudioFormatManager& fm, const TakeStop::PunchFiles& files,
+                      juce::int64 punchPosition, juce::int64 fifoGap, const std::function<void()>& onProgress)
+        {
+            complete = files.complete && fifoGap == 0;
+            if (! complete) return;
+            tmp = fresh.getSiblingFile (fresh.getFileNameWithoutExtension() + ".punchtmp" + fresh.getFileExtension());
+            spliced = splicePunchTake (fm, baseParts, freshParts, punchPosition, tmp,
+                                       files.maxBytesPerFile, tmpParts, onProgress);
+        }
+
+        bool install()
+        {
+            for (const auto& part : freshParts)
+                if (part.existsAsFile() && ! part.deleteFile()) return false;
+            for (size_t p = 0; p < tmpParts.size(); ++p)
+            {
+                const auto target = p == 0 ? fresh
+                    : partFileFor (fresh.getParentDirectory(), fresh.getFileNameWithoutExtension(),
+                                   fresh.getFileExtension(), (int) p + 1);
+                if (! tmpParts[p].moveFileTo (target)) return false;
+            }
+            for (const auto& part : baseParts) part.deleteFile();
+            return true;
+        }
+
+        // Back to the pre-punch take. The fresh file (or, if the install got as
+        // far as removing it, the spliced temp) is archived. The punch's files
+        // must all be out of the way before a base part comes back: a part the
+        // punch rolled into has the same name as a base part.
+        void rollBack (bool archive, juce::Time stoppedAt)
+        {
+            bool freshKept = false;
+            for (const auto& part : freshParts)
+            {
+                if (! part.existsAsFile()) continue;
+                if (archive && archiveUnspliced (part, part.getFileName(), stoppedAt)) freshKept = true;
+                else part.deleteFile();
+            }
+            for (const auto& part : tmpParts)
+            {
+                if (archive && ! freshKept && part.existsAsFile())
+                    if (! archiveUnspliced (part, fresh.getFileName(), stoppedAt)) part.deleteFile();
+                part.deleteFile();
+            }
+            for (auto& part : baseParts)
+                part.moveFileTo (takeOf (part));
+        }
+
+    private:
+        // Track_NN.punchbase.ext -> Track_NN.ext, Track_NN_part02.punchbase.ext
+        // -> Track_NN_part02.ext.
+        static juce::File takeOf (const juce::File& sidecar)
+        {
+            const auto realStem = sidecar.getFileNameWithoutExtension()
+                                         .upToLastOccurrenceOf (".punchbase", false, false);
+            return sidecar.getParentDirectory().getChildFile (realStem + sidecar.getFileExtension());
+        }
 
         // Punch audio that could not be spliced is archived beside the copy it
         // belongs to, never deleted: it is a performance the engineer may still
         // want (recoverInterruptedPunches keeps interrupted punches the same way).
-        const auto archiveUnspliced = [&stop] (const juce::File& source, const juce::String& asName)
+        static bool archiveUnspliced (const juce::File& source, const juce::String& asName, juce::Time stoppedAt)
         {
             if (! source.existsAsFile()) return true;
             const auto audioDir = source.getParentDirectory();
             const auto copyRoot = audioDir.getFileName() == "Audio Files" ? audioDir.getParentDirectory() : audioDir;
             const auto dir = copyRoot.getChildFile ("Session File Backups")
-                .getChildFile ("Unspliced Punch " + stop.stoppedAt.formatted ("%Y-%m-%d %H-%M-%S"));
+                .getChildFile ("Unspliced Punch " + stoppedAt.formatted ("%Y-%m-%d %H-%M-%S"));
             if (! dir.isDirectory() && ! dir.createDirectory().wasOk()) return false;
             return source.moveFileTo (dir.getNonexistentChildFile (
                 juce::File::createFileWithoutCheckingPath (asName).getFileNameWithoutExtension(),
                 juce::File::createFileWithoutCheckingPath (asName).getFileExtension(), false));
-        };
-        // Put one copy back to its pre-punch take. The fresh file (or, if the
-        // install got as far as removing it, the spliced temp) is archived.
-        // The punch's files must all be out of the way before a base part comes
-        // back: a part the punch rolled into has the same name as a base part.
-        const auto rollBack = [&] (CopySplice& c, bool archive)
-        {
-            bool freshKept = false;
-            for (const auto& part : c.freshParts)
-            {
-                if (! part.existsAsFile()) continue;
-                if (archive && archiveUnspliced (part, part.getFileName())) freshKept = true;
-                else part.deleteFile();
-            }
-            for (const auto& part : c.tmpParts)
-            {
-                if (archive && ! freshKept && part.existsAsFile())
-                    if (! archiveUnspliced (part, c.fresh.getFileName())) part.deleteFile();
-                part.deleteFile();
-            }
-            for (auto& part : c.baseParts)
-                part.moveFileTo (sidecarToTake (part));
-        };
-        const auto install = [] (CopySplice& c)
-        {
-            for (const auto& part : c.freshParts)
-                if (part.existsAsFile() && ! part.deleteFile()) return false;
-            for (size_t p = 0; p < c.tmpParts.size(); ++p)
-            {
-                const auto target = p == 0 ? c.fresh
-                    : partFileFor (c.fresh.getParentDirectory(), c.fresh.getFileNameWithoutExtension(),
-                                   c.fresh.getFileExtension(), (int) p + 1);
-                if (! c.tmpParts[p].moveFileTo (target)) return false;
-            }
-            return true;
-        };
+        }
+    };
+
+    static juce::int64 readLength (juce::AudioFormatManager& fm, const juce::File& file)
+    {
+        const std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (file));
+        return reader != nullptr ? reader->lengthInSamples : -1;
+    }
+
+    // The primary decides whether the punch landed, and nothing it does here
+    // waits on a copy. A copy that cannot splice (its writer never opened, its
+    // drive filled, its capture has a hole) keeps its pre-punch take and is
+    // reported failed; it must not throw away a good primary punch. If the
+    // primary cannot splice, every copy goes back to its base so they agree,
+    // and the punch audio goes to the archive.
+    void MultitrackRecorder::splicePunchedTracks (TakeStop& stop)
+    {
+        juce::AudioFormatManager fm; fm.registerBasicFormats();
+        const auto origin = punchCaptureOrigin.load (std::memory_order_acquire);
+        stop.punchPosition = origin >= 0 ? origin : punchInPos;
+        stop.punchVerdicts.assign (stop.punchFiles.size(), TakeStop::PunchVerdict::notPunched);
 
         bool punchDiscarded = false;
-        juce::StringArray copiesKeptTheirTake;
-        for (size_t i = 0; i < punchFiles.size() && i < writerSnapshots.size(); ++i)
+        for (size_t i = 0; i < stop.punchFiles.size() && i < stop.writers.size(); ++i)
         {
-            // Prepare a splice for every copy of this track: [primary,
-            // backup, mirror0, mirror1, ...].
-            std::vector<CopySplice> copies;
-            copies.push_back (prepareCopy (punchFiles[i].primary));
-            copies.push_back (prepareCopy (punchFiles[i].backup));
-            for (auto& mf : punchFiles[i].mirrors)
-                copies.push_back (prepareCopy (mf));
-
-            if (! copies[0].attempted) continue;    // primary not stashed -> not a punched track
-
-            // A spliced file keeps its base's stamp (bextFieldsOf) and a copy
-            // that rolled back IS its base, so neither takes this pass's time.
-            for (const auto& c : copies)
-                if (c.attempted)
-                    std::erase_if (stop.stampedParts, [&c] (const auto& part)
-                                   { return std::find (c.freshParts.begin(), c.freshParts.end(), part.file) != c.freshParts.end(); });
+            auto primary = CopySplice::gather (stop.punchFiles[i].primary);
+            if (! primary.attempted) continue;    // primary not stashed -> not a punched track
+            primary.removeFromStamps (stop.stampedParts);
 
             // Nothing was captured (a selection punch stopped during its
             // pre-roll): there is no punch, so every copy simply keeps its take.
-            if (readLen (copies[0].fresh) == 0)
+            if (readLength (fm, primary.fresh) == 0)
             {
-                for (auto& c : copies)
-                    if (c.attempted) rollBack (c, false);
+                primary.rollBack (false, stop.stoppedAt);
+                stop.punchVerdicts[i] = TakeStop::PunchVerdict::nothingCaptured;
                 continue;
             }
 
-            // The primary decides whether the punch landed. A backup or mirror
-            // that cannot splice (its writer never opened, its drive filled, its
-            // capture has a hole) keeps its pre-punch take and is reported
-            // failed; it must not throw away a good primary punch. If the
-            // primary cannot splice, every copy goes back to its base so they
-            // agree, and the punch audio goes to the archive.
-            auto& primary = copies[0];
-            if (primary.spliced && install (primary))
+            primary.prepare (fm, stop.punchFiles[i].primary, stop.punchPosition, stop.totalMissed, {});
+            if (primary.spliced && primary.install())
             {
-                for (auto& part : primary.baseParts) part.deleteFile();
-                for (size_t ci = 1; ci < copies.size(); ++ci)
-                {
-                    auto& c = copies[ci];
-                    if (! c.attempted) { for (const auto& part : c.tmpParts) part.deleteFile(); continue; }
-                    if (c.spliced && install (c))
-                    {
-                        for (auto& part : c.baseParts) part.deleteFile();
-                        continue;
-                    }
-                    rollBack (c, true);
-                    if (! c.complete)
-                        copiesKeptTheirTake.addIfNotAlreadyThere (
-                            ci == 1 ? juce::String ("Backup")
-                                    : "Mirror " + activeMirrors[ci - 2].root.getFullPathName());
-                    if (ci == 1)
-                    {
-                        backupFailed.store (true, std::memory_order_relaxed);
-                        stop.backupHadFailure = true;
-                    }
-                    else
-                    {
-                        mirrorFailed.store (true, std::memory_order_relaxed);
-                        if (ci - 2 < writerSnapshots[i].mirrors.size())
-                            writerSnapshots[i].mirrors[ci - 2].failed = true;
-                    }
-                }
+                stop.punchVerdicts[i] = TakeStop::PunchVerdict::committed;
             }
             else
             {
                 punchSpliceFailed.store (true, std::memory_order_relaxed);
                 punchDiscarded = punchDiscarded || ! primary.complete;
-                for (auto& c : copies)
-                {
-                    if (! c.attempted) { for (const auto& part : c.tmpParts) part.deleteFile(); continue; }
-                    rollBack (c, true);
-                }
+                primary.rollBack (true, stop.stoppedAt);
+                stop.punchVerdicts[i] = TakeStop::PunchVerdict::discarded;
             }
 
-            // Report the resulting on-disk length of each copy (spliced
-            // length on commit, base length on rollback).
-            const auto primLen = readLen (copies[0].fresh);
-            if (primLen > 0) writerSnapshots[i].totalSamplesPrimary = primLen;
-            if (copies.size() > 1 && copies[1].attempted)
-            {
-                const auto bl = readLen (copies[1].fresh);
-                if (bl > 0) writerSnapshots[i].totalSamplesBackup = bl;
-            }
-            for (size_t mi = 0; mi < punchFiles[i].mirrors.size()
-                                && mi < writerSnapshots[i].mirrors.size(); ++mi)
-            {
-                const size_t ci = mi + 2;    // mirrors follow primary + backup
-                if (ci < copies.size() && copies[ci].attempted)
-                {
-                    const auto ml = readLen (copies[ci].fresh);
-                    if (ml > 0) writerSnapshots[i].mirrors[mi].totalSamples = ml;
-                }
-            }
+            // The resulting length on disk: spliced on commit, base on rollback.
+            const auto length = readLength (fm, primary.fresh);
+            if (length > 0) stop.writers[i].totalSamplesPrimary = length;
         }
 
-        juce::StringArray notes;
         if (punchDiscarded)
-            notes.add ("Punch discarded: its capture has a gap, so the original take stays. "
-                       "The punch audio is in Session File Backups");
-        for (const auto& copy : copiesKeptTheirTake)
-            notes.add (copy + " kept its pre-punch take: its punch capture has a gap");
-        if (! notes.isEmpty())
+            noteCopyProblem ("Punch discarded: its capture has a gap, so the original take stays. "
+                             "The punch audio is in Session File Backups");
+    }
+
+    void MultitrackRecorder::noteCopyProblem (const juce::String& problem)
+    {
+        const juce::ScopedLock sl (structureLock);
+        droppedCopies.add (problem);
+    }
+
+    // One track's files and length in one copy's Audio Files folder.
+    static void collectTrackMedia (juce::AudioFormatManager& fm, const juce::File& folder, int index,
+                                   juce::StringArray& names, juce::int64& samples,
+                                   const std::function<void()>& onProgress = {})
+    {
+        names.clear();
+        samples = 0;
+        const auto stem = juce::String::formatted ("Track_%02d", index + 1);
+        for (auto* ext : { ".wav", ".aif", ".aiff", ".flac" })
         {
-            stop.copyProblems.addArray (notes);
-            const juce::ScopedLock sl (structureLock);
-            droppedCopies.addArray (notes);
+            const auto base = folder.getChildFile (stem + ext);
+            if (! base.existsAsFile()) continue;
+            for (const auto& part : findTakeParts (base))
+            {
+                if (part == juce::File()) continue;
+                names.add (part.getFileName());
+                std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (part));
+                if (reader != nullptr) samples += reader->lengthInSamples;
+                if (onProgress) onProgress();
+            }
         }
+    }
+
+    // All that a copy's own files still need once its writers have closed:
+    // punch, lead-ins, stamps, manifest, in that order. Plain values only, so the
+    // copy's thread can run it with the recorder doing something else or gone.
+    // The results are read back only if the thread finishes in time.
+    struct MultitrackRecorder::CopyFinish
+    {
+        std::vector<TakeStop::PunchFiles>   punchFiles;   // by track; empty without a punch
+        std::vector<TakeStop::PunchVerdict> verdicts;
+        juce::int64 punchPosition {}, fifoGap {};
+        juce::Time  stoppedAt;
+
+        std::vector<PendingLeadIn> leadIns;
+        juce::int64 timelineStart {};
+
+        std::vector<WriterChannel::StampedPart> stampedParts;
+        bool        stampWanted {};
+        juce::int64 passStart {};
+        double      sampleRate {};
+
+        juce::File audioFolder;
+        int        trackCount {};
+        bool       manifestWanted {};
+
+        std::function<void (CaptureCopy&)> beforeStartForTests;
+
+        std::set<size_t>     punchFailedTracks;
+        bool                 punchHadGap {}, leadInFailed {};
+        juce::StringArray    stampFailures;
+        std::vector<juce::StringArray> partFiles;
+        std::vector<juce::int64>       samples;
+
+        void run (CaptureCopy& copy)
+        {
+            if (beforeStartForTests != nullptr) beforeStartForTests (copy);
+            const std::function<void()> tick = [&copy] { copy.noteProgress(); };
+            juce::AudioFormatManager fm; fm.registerBasicFormats();
+
+            for (size_t i = 0; i < punchFiles.size() && i < verdicts.size(); ++i)
+            {
+                using Verdict = TakeStop::PunchVerdict;
+                auto splice = CopySplice::gather (punchFiles[i]);
+                tick();
+                if (! splice.attempted || verdicts[i] == Verdict::notPunched) continue;
+                splice.removeFromStamps (stampedParts);
+                if (verdicts[i] == Verdict::committed)
+                    splice.prepare (fm, punchFiles[i], punchPosition, fifoGap, tick);
+                if (verdicts[i] == Verdict::nothingCaptured)
+                    splice.rollBack (false, stoppedAt);
+                else if (verdicts[i] == Verdict::discarded)
+                    splice.rollBack (true, stoppedAt);
+                else if (! splice.spliced || ! splice.install())
+                {
+                    splice.rollBack (true, stoppedAt);
+                    punchFailedTracks.insert (i);
+                    punchHadGap = punchHadGap || ! splice.complete;
+                }
+                tick();
+            }
+
+            for (const auto& lead : leadIns)
+            {
+                if (! finishLeadIn (lead, timelineStart)) leadInFailed = true;
+                tick();
+            }
+
+            if (stampWanted)
+                for (const auto& part : stampedParts)
+                {
+                    const auto result = bwf::stampTimeReference (
+                        part.file, part.stampedAtOpen,
+                        (juce::uint64) bwf::wrapToDay (passStart + part.framesBefore, sampleRate));
+                    if (result != bwf::StampResult::ok)
+                        stampFailures.add (part.file.getFullPathName() + ": " + bwf::toString (result));
+                    tick();
+                }
+
+            if (manifestWanted)
+            {
+                partFiles.resize ((size_t) trackCount);
+                samples.assign ((size_t) trackCount, 0);
+                for (int i = 0; i < trackCount; ++i)
+                    collectTrackMedia (fm, audioFolder, i, partFiles[(size_t) i], samples[(size_t) i], tick);
+            }
+        }
+    };
+
+    // No total limit here, unlike the drain: a healthy splice of a long take
+    // can run for minutes. What bounds this is the no-progress limit, and every
+    // step of the work ticks, so only a drive that has stopped answering trips
+    // it. The primary's files were finished before any of this began.
+    void MultitrackRecorder::finishCopyFiles (TakeStop& stop)
+    {
+        struct Running { std::shared_ptr<CaptureCopy> copy; std::shared_ptr<CopyFinish> job; };
+        std::vector<Running> running;
+
+        const auto liveFrom    = firstLiveTicks.load (std::memory_order_acquire);
+        const auto passStart   = passStartSamples();
+        for (const auto& copy : copies)
+        {
+            if (copy->copyIndex == 0 || copy->abandoned.load (std::memory_order_acquire)) continue;
+            const auto mi = (std::size_t) juce::jmax (0, copy->copyIndex - 2);
+
+            auto job = std::make_shared<CopyFinish>();
+            if (stop.doPunch)
+            {
+                for (const auto& track : stop.punchFiles)
+                    job->punchFiles.push_back (copy->copyIndex == 1 ? track.backup
+                                               : mi < track.mirrors.size() ? track.mirrors[mi]
+                                                                           : TakeStop::PunchFiles {});
+                job->verdicts = stop.punchVerdicts;
+            }
+            job->punchPosition = stop.punchPosition;
+            job->fifoGap       = stop.totalMissed;
+            job->stoppedAt     = stop.stoppedAt;
+            for (const auto& lead : pendingLeadIns)
+                if (lead.copyIndex == copy->copyIndex) job->leadIns.push_back (lead);
+            job->timelineStart  = stop.timelineStart;
+            job->stampedParts   = copy->stampedParts;
+            job->stampWanted    = liveFrom != 0;
+            job->passStart      = passStart;
+            job->sampleRate     = sampleRate;
+            job->audioFolder    = copy->root.getChildFile (activeSessionDir.getFileName())
+                                            .getChildFile ("Audio Files");
+            job->trackCount     = (int) stop.writers.size();
+            job->manifestWanted = copy->copyIndex == 1 ? stop.backupWasRunning : true;
+            job->beforeStartForTests = beforeCopyFinishForTests;
+
+            copy->startFinishing (copy, [job] (CaptureCopy& self) { job->run (self); });
+            running.push_back ({ copy, std::move (job) });
+        }
+        pendingLeadIns.clear();
+        waitForCopies (0.0);
+
+        for (const auto& [copy, job] : running)
+        {
+            const auto mi = (std::size_t) juce::jmax (0, copy->copyIndex - 2);
+            const bool isBackup = copy->copyIndex == 1;
+            const bool gone = copy->abandoned.load (std::memory_order_acquire);
+            if (gone && isBackup) stop.backupWasRunning = false;
+
+            for (size_t i = 0; i < stop.writers.size(); ++i)
+            {
+                auto& writer = stop.writers[i];
+                if (isBackup)
+                {
+                    if (gone)
+                    {
+                        writer.partFilesBackup.clear();
+                        writer.totalSamplesBackup = 0;
+                    }
+                    else if (job->manifestWanted)
+                    {
+                        writer.partFilesBackup    = job->partFiles[i];
+                        writer.totalSamplesBackup = job->samples[i];
+                    }
+                }
+                else if (mi < writer.mirrors.size())
+                {
+                    auto& mirror = writer.mirrors[mi];
+                    if (gone)
+                    {
+                        mirror.partFiles.clear();
+                        mirror.totalSamples = 0;
+                        mirror.abandoned = mirror.failed = true;
+                    }
+                    else
+                    {
+                        mirror.partFiles    = job->partFiles[i];
+                        mirror.totalSamples = job->samples[i];
+                        mirror.failed = mirror.failed || job->punchFailedTracks.count (i) > 0;
+                    }
+                }
+            }
+            if (gone) continue;
+
+            stop.stampFailures.addArray (job->stampFailures);
+            const bool punchFailed = ! job->punchFailedTracks.empty();
+            if (punchFailed || job->leadInFailed)
+            {
+                if (isBackup)
+                {
+                    backupFailed.store (true, std::memory_order_relaxed);
+                    stop.backupHadFailure = stop.backupHadFailure || punchFailed;
+                }
+                else
+                    mirrorFailed.store (true, std::memory_order_relaxed);
+            }
+            if (job->punchHadGap)
+                noteCopyProblem ((isBackup ? juce::String ("Backup") : copy->label)
+                                 + " kept its pre-punch take: its punch capture has a gap");
+        }
+
+        stop.copyProblems = getCopyProblems();
     }
 
     // The report describes the whole on-disk session, including parts
     // from earlier CONTINUE passes and tracks that were not armed today.
     // Listing only this pass made a valid continued take look like it had
-    // unreported audio, and left older parts outside the hash manifest.
+    // unreported audio, and left older parts outside the hash manifest. The
+    // primary's half: each copy lists its own in finishCopyFiles.
     void MultitrackRecorder::manifestSessionMedia (TakeStop& stop)
     {
-        const bool backupWasRunning = stop.backupWasRunning;
-        auto& writerSnapshots = stop.writers;
-
         juce::AudioFormatManager fm;
         fm.registerBasicFormats();
-        const auto collectCopy = [&fm] (const juce::File& folder, int index,
-                                        juce::StringArray& names,
-                                        juce::int64& samples)
-        {
-            names.clear();
-            samples = 0;
-            const auto stem = juce::String::formatted ("Track_%02d", index + 1);
-            for (auto* ext : { ".wav", ".aif", ".aiff", ".flac" })
-            {
-                const auto base = folder.getChildFile (stem + ext);
-                if (! base.existsAsFile()) continue;
-                for (const auto& part : findTakeParts (base))
-                {
-                    if (part == juce::File()) continue;
-                    names.add (part.getFileName());
-                    std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (part));
-                    if (reader != nullptr) samples += reader->lengthInSamples;
-                }
-            }
-        };
         const auto primaryFolder = activeSessionDir.getChildFile ("Audio Files");
-        const auto backupFolder = backupDir.getChildFile (activeSessionDir.getFileName())
-                                           .getChildFile ("Audio Files");
-        for (size_t i = 0; i < writerSnapshots.size(); ++i)
-        {
-            auto& snapshot = writerSnapshots[i];
-            collectCopy (primaryFolder, (int) i, snapshot.partFilesPrimary,
-                         snapshot.totalSamplesPrimary);
-            if (backupWasRunning)
-                collectCopy (backupFolder, (int) i, snapshot.partFilesBackup,
-                             snapshot.totalSamplesBackup);
-            for (auto& mirror : snapshot.mirrors)
-                if (! mirror.abandoned)
-                    collectCopy (mirror.root.getChildFile (activeSessionDir.getFileName())
-                                            .getChildFile ("Audio Files"),
-                                 (int) i, mirror.partFiles, mirror.totalSamples);
-        }
+        for (size_t i = 0; i < stop.writers.size(); ++i)
+            collectTrackMedia (fm, primaryFolder, (int) i, stop.writers[i].partFilesPrimary,
+                               stop.writers[i].totalSamplesPrimary);
     }
 
     // Post-show JSON report -- one file per session that captures every
@@ -2909,7 +3049,7 @@ namespace zynforge
     // a copy of it travels into the background thread.
     juce::String MultitrackRecorder::SessionReport::toJson (bool withHashes, bool hashingFailed,
                                                            const std::map<juce::String, juce::String>& shaByPath,
-                                                           const juce::var& twinBlock) const
+                                                           const juce::var& twinBlock, bool copyHashesPending) const
     {
         juce::DynamicObject::Ptr report (new juce::DynamicObject());
         report->setProperty ("stoppedAt",      stoppedAt.toISO8601 (true));
@@ -2939,7 +3079,7 @@ namespace zynforge
         report->setProperty ("clockSource", clock.name);
         report->setProperty ("clockSourceKind", clocksource::kindName (clock.kind));
         report->setProperty ("channelAlarms", juce::var (channelAlarms));
-        report->setProperty ("sha256Pending",  ! withHashes);
+        report->setProperty ("sha256Pending",  ! withHashes || copyHashesPending);
         report->setProperty ("sha256Failed", hashingFailed);
 
         // Hashes are computed off-thread BEFORE this builder runs (see the
@@ -3081,66 +3221,84 @@ namespace zynforge
 
                 // Collect every file the manifest will reference (primary +
                 // backup + mirrors), mirroring buildReportJson's path logic.
-                std::vector<juce::File> files;
+                std::vector<juce::File> primaryFiles, copyFiles;
                 const auto primDir = sessionDir.getChildFile ("Audio Files");
                 const auto bkDir   = bDir.getChildFile (sessionDir.getFileName())
                                          .getChildFile ("Audio Files");
                 for (const auto& ws : writerSnaps)
                 {
-                    for (const auto& fn : ws.partFilesPrimary) files.push_back (primDir.getChildFile (fn));
+                    for (const auto& fn : ws.partFilesPrimary) primaryFiles.push_back (primDir.getChildFile (fn));
                     if (report.backupWasRunning)
-                        for (const auto& fn : ws.partFilesBackup) files.push_back (bkDir.getChildFile (fn));
+                        for (const auto& fn : ws.partFilesBackup) copyFiles.push_back (bkDir.getChildFile (fn));
                     for (const auto& mr : ws.mirrors)
                     {
                         const auto mDir = mr.root.getChildFile (sessionDir.getFileName())
                                                  .getChildFile ("Audio Files");
-                        for (const auto& fn : mr.partFiles) files.push_back (mDir.getChildFile (fn));
+                        for (const auto& fn : mr.partFiles) copyFiles.push_back (mDir.getChildFile (fn));
                     }
                 }
 
-                // A process-wide gate also bounds overlapping stops in different
-                // sessions. It is acquired only on this background worker.
-                static std::mutex reportScanMutex;
-                const std::lock_guard<std::mutex> scanGuard (reportScanMutex);
-                if (testHooks && testHooks->beforeScan) testHooks->beforeScan();
                 const auto current = [=]
                 {
                     return reportState->generation.load (std::memory_order_acquire) == myGen;
                 };
                 hashing::ReadPolicy readPolicy { current, 50 };
                 std::map<juce::String, juce::String> shaByPath;
-                for (const auto& file : files)
-                {
-                    if (! current()) return;
-                    const auto sha = hashing::fileSha256 (file, nullptr, readPolicy);
-                    if (! current()) return; // cancellation is not a hash failure
-                    shaByPath[file.getFullPathName()] = sha;
-                }
-                if (! current()) return;
-
                 bool hashingFailed = false;
-                for (const auto& [path, sha] : shaByPath)
+                const auto hashAll = [&] (const std::vector<juce::File>& files)
                 {
-                    juce::ignoreUnused (path);
-                    if (sha.isEmpty()) { hashingFailed = true; break; }
+                    for (const auto& file : files)
+                    {
+                        if (! current()) return false;
+                        const auto sha = hashing::fileSha256 (file, nullptr, readPolicy);
+                        if (! current()) return false; // cancellation is not a hash failure
+                        shaByPath[file.getFullPathName()] = sha;
+                        hashingFailed = hashingFailed || sha.isEmpty();
+                    }
+                    return current();
+                };
+                const auto publishHashes = [&] (bool copiesStillPending)
+                {
+                    // The last validity check and rename share ownership with
+                    // new pending reports, media mutation, and session removal.
+                    const std::lock_guard<std::mutex> publish (reportState->publication);
+                    if (! current()) return false;
+                    const ReportFileLock otherProcess;
+                    // The twin link adds its block after STOP, and in daemon mode
+                    // from the other process, so the file is the only place to
+                    // find it. Hashing can outlast that by many minutes.
+                    const auto reportFile = sessionDir.getChildFile ("session.report.json");
+                    const bool wrote = atomicfile::writeText (reportFile,
+                        report.toJson (true, hashingFailed, shaByPath,
+                                       juce::JSON::parse (reportFile).getProperty ("twin", {}),
+                                       copiesStillPending));
+                    if (! copiesStillPending && testHooks && testHooks->afterPublish) testHooks->afterPublish();
+                    if ((! wrote || hashingFailed)
+                        && asyncState->generation.load (std::memory_order_acquire) == asyncGen)
+                        asyncState->failed.store (true, std::memory_order_release);
+                    return true;
+                };
+
+                // The primary's hashes are published on their own before any
+                // copy is read: a read on a dead drive can block for good. A
+                // process-wide gate also bounds overlapping stops in different
+                // sessions. It is acquired only on this background worker, and
+                // never held across a copy, or one dead drive would stop every
+                // later take's primary being hashed.
+                {
+                    static std::mutex reportScanMutex;
+                    const std::lock_guard<std::mutex> scanGuard (reportScanMutex);
+                    if (testHooks && testHooks->beforeScan) testHooks->beforeScan();
+                    if (! hashAll (primaryFiles)) return;
+                }
+                if (! copyFiles.empty())
+                {
+                    if (! publishHashes (true)) return;
+                    if (testHooks && testHooks->beforeCopyScan) testHooks->beforeCopyScan();
+                    if (! hashAll (copyFiles)) return;
                 }
                 if (testHooks && testHooks->beforePublish) testHooks->beforePublish();
-                // The last validity check and rename share ownership with
-                // new pending reports, media mutation, and session removal.
-                const std::lock_guard<std::mutex> publish (reportState->publication);
-                if (! current()) return;
-                const ReportFileLock otherProcess;
-                // The twin link adds its block after STOP, and in daemon mode
-                // from the other process, so the file is the only place to
-                // find it. Hashing can outlast that by many minutes.
-                const auto reportFile = sessionDir.getChildFile ("session.report.json");
-                const bool wrote = atomicfile::writeText (reportFile,
-                    report.toJson (true, hashingFailed, shaByPath,
-                                   juce::JSON::parse (reportFile).getProperty ("twin", {})));
-                if (testHooks && testHooks->afterPublish) testHooks->afterPublish();
-                if ((! wrote || hashingFailed)
-                    && asyncState->generation.load (std::memory_order_acquire) == asyncGen)
-                    asyncState->failed.store (true, std::memory_order_release);
+                publishHashes (false);
             });
     }
 

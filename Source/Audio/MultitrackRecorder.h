@@ -684,6 +684,11 @@ namespace zynforge
         // writers close. SessionReport: everything session.report.json says,
         // by value, so the background hashing thread can rebuild it.
         struct TakeStop;
+        struct CopySplice;
+        struct CopyFinish;
+        void waitForCopies (double totalLimitMs);
+        void finishCopyFiles (TakeStop&);
+        void noteCopyProblem (const juce::String&);
         void completeLeadIns (const TakeStop&);
         struct SessionReport;
         void quiesceWritersForStop();
@@ -788,14 +793,18 @@ namespace zynforge
         std::function<void()> beforeStampForTests;
         std::function<void (CaptureCopy&)> beforeCopyWriteForTests;
         int copyRingFramesForTests { 0 };
-        // How long STOP waits on a copy that has stopped making progress.
+        // How long STOP waits on a copy that has stopped making progress, and on
+        // a copy's drain altogether: a buffered write counts as progress, so a
+        // dying drive could otherwise feed the first limit for hours.
         double copyStallLimitMs { 30000.0 };
+        double copyDrainLimitMs { 60000.0 };
+        std::function<void (CaptureCopy&)> beforeCopyFinishForTests;
         VolumeProbe::Reader volumeReaderForTests;
         int    volumeProbePeriodMs { 2000 };
         double volumeStaleAfterMs { 15000.0 };
         struct ReportTestHooks
         {
-            std::function<void()> beforeScan, beforePublish, afterPublish, finished;
+            std::function<void()> beforeScan, beforeCopyScan, beforePublish, afterPublish, finished;
         };
         std::shared_ptr<ReportTestHooks> reportTestHooks;
         std::function<void()> beforeFinalizationForTests;
@@ -965,6 +974,7 @@ namespace zynforge
         // Fills the reserved slots with (timelineStart - priorLength) samples
         // of silence. Skips (true) when this pass wrote no audio to the copy.
         static bool writeLeadIn (const PendingLeadIn&, juce::int64 timelineStart);
+        static bool finishLeadIn (const PendingLeadIn&, juce::int64 timelineStart);
         // Completes every marker left in audioDir by an interrupted take.
         static bool recoverPendingLeadIns (const juce::File& audioDir);
 

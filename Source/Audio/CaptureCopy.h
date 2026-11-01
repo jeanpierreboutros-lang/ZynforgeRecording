@@ -423,6 +423,33 @@ namespace zynforge
             if (worker.joinable()) worker.join();
         }
 
+        // The copy's own work once its files have closed, on a thread of its
+        // own for the same reason the writing was: a drive that hangs strands
+        // that thread. `work` may hold only the copy and plain values.
+        void startFinishing (std::shared_ptr<CaptureCopy> self, std::function<void (CaptureCopy&)> work)
+        {
+            finished.store (false, std::memory_order_release);
+            noteProgress();
+            try
+            {
+                worker = std::thread ([self = std::move (self), work = std::move (work)]
+                {
+                    work (*self);
+                    self->finished.store (true, std::memory_order_release);
+                });
+            }
+            catch (const std::system_error&)
+            {
+                latchFailure();
+                finished.store (true, std::memory_order_release);
+            }
+        }
+
+        void noteProgress() noexcept
+        {
+            lastProgressMs.store (juce::Time::getMillisecondCounterHiRes());
+        }
+
         void flushAndWait (int timeoutMs)
         {
             flushWanted.store (true, std::memory_order_release);
