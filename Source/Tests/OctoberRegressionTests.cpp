@@ -164,7 +164,6 @@ public:
             f.track().deleteFile(); juce::AudioBuffer<float> out;
             expect (! e.renderTrackArrangement (0, out, 4800));
             expect (! e.consolidateRange (0, 0, 4800));
-            e.stripSilence (0, -50, 100, 100, 0);
             expectEquals ((int) e.clipsFor (0).size(), 1);
         }
         beginTest ("Legacy root media bounces and locked consolidation leaves one audible copy");

@@ -8,7 +8,7 @@
 namespace zynforge
 {
     // Clip + Playlist data model. Scaffolding for clip-level editing
-    // (split / trim / fade / move) and comp playlists per track. The
+    // (split / trim / fade / move) and takes per track. The
     // recorder still writes one big Track_NN.wav today; clips index
     // into that file via [fileStartSamples, fileEndSamples].
     //
@@ -27,7 +27,7 @@ namespace zynforge
         juce::int64  fadeInSamples        { 0 };
         juce::int64  fadeOutSamples       { 0 };
         // A fade's RAMP can be longer than the part of it this clip plays: a
-        // piece cut out of a fade (split, crop, comp) keeps the original ramp,
+        // piece cut out of a fade (split, crop) keeps the original ramp,
         // so the pieces sound exactly as the whole clip did. fadeIn/OutSamples
         // stay the part inside the clip (in + out <= length). 0 everywhere =
         // an ordinary fade whose ramp is the fade itself.
@@ -53,10 +53,8 @@ namespace zynforge
         juce::uint32 selectionId          { 0 };
     };
 
-    // A 'take' is a named clip list. A track can hold many takes
-    // (different attempts at the same song); only one is the active
-    // playback take at any time. Engineer swipes between takes for
-    // comping.
+    // A 'take' is a named clip list. A session saved by an earlier build
+    // can hold many on a track; only one is the active playback take.
     struct Take
     {
         juce::String name;
@@ -65,7 +63,7 @@ namespace zynforge
 
     // Playlist = container of takes belonging to one track. The active
     // take is what the SessionPlayer actually plays back. The non-
-    // active takes stay on disk and are reachable via the comp editor.
+    // active takes load, save and follow timeline cuts with it.
     struct Playlist
     {
         std::vector<Take> takes;

@@ -6,6 +6,7 @@
 
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MultiPartReader.h"
+#include "SavedTakes.h"
 
 #include <atomic>
 #if JUCE_MAC
@@ -106,17 +107,6 @@ public:
             expectWithinAbsoluteError (renderedAt (e, 0, 48000, 30000), 0.5f, 0.001f);
         }
 
-        beginTest ("Comp from a take replaces every overlapping clip in the range");
-        {
-            Folder f; expect (write (f.track()));
-            AudioEngine e; setup (e); e.loadSession (f.dir);
-            expectEquals (e.newTakeFromCurrent (0, "Take 2"), 1);
-            e.pasteClip (0, 12000, 0, 24000, 0, 0, 0.0f, "B", juce::File(), -1);
-            expect (e.compRangeFromTake (0, 0, 18000, 24000));
-            expectWithinAbsoluteError (renderedAt (e, 0, 48000, 20000), 0.25f, 0.001f,
-                                       "the comped range must hold Take 1's audio only");
-        }
-
         beginTest ("Undo of a paste onto a never-recorded strip removes the pasted clip");
         {
             Folder f; expect (write (f.track()));
@@ -124,11 +114,11 @@ public:
             const auto before = e.playlistsToJson();       // strip 4 has no Track_04 and no playlist
             expect (e.pasteClip (3, 0, 0, 4800, 0, 0, 0.0f, "copied", f.track(), 0) >= 0);
             const auto after = e.playlistsToJson();
-            expectEquals (e.getTakeCount (3), 1);
+            expectEquals (savedtakes::count (e, 3), 1);
 
             e.loadPlaylistsFromJson (before);                // ClipSnapshotAction::undo
             expect (e.tryClipsFor (3) == nullptr, "the pasted clip survived the undo");
-            expectEquals (e.getTakeCount (3), 0);
+            expectEquals (savedtakes::count (e, 3), 0);
             expectWithinAbsoluteError (renderedAt (e, 3, 4800, 1000), 0.0f, 0.00001f,
                                        "the undone paste still renders");
 
@@ -202,19 +192,6 @@ public:
             }
         }
 
-        beginTest ("Strip Silence leaves muted clips in place");
-        {
-            Folder f; expect (write (f.track(), 9600));
-            AudioEngine e; setup (e); e.loadSession (f.dir);
-            expect (e.splitTrackAtSample (0, 4800));
-            e.setClipMuted (0, 1, true);
-            e.stripSilence (0, -40.0f, 480, 480, 0);
-            int muted = 0;
-            for (const auto& c : e.clipsFor (0))
-                if (c.muted) { ++muted; expectEquals (c.timelineStartSamples, (juce::int64) 4800); }
-            expectEquals (muted, 1, "Strip Silence deleted the muted clip");
-        }
-
         beginTest ("Analysis scans ignore consolidate renders and punch sidecars");
         {
             Folder f; expect (write (f.track()));
@@ -226,32 +203,9 @@ public:
             expectEquals (mainTakeTrackNumber (f.audio ("Track_01.punchbase.wav")), 0,
                           "a punch sidecar became a phantom report row");
 
-            // Track 2 was never recorded; consolidating a clip pasted onto it
-            // leaves only Track_02_consolidated_1.wav, whose clicks must not
-            // become track 2's transients.
-            expect (writeClicks (f.audio ("Track_02_consolidated_1.wav")));
-            AudioEngine e; setup (e, 2); e.loadSession (f.dir);
-            expect (e.getTransientsForTrack (2).empty(),
-                    "a consolidate render's onsets were filed under track 2");
-        }
-
-        beginTest ("Tab lands on transients where the edited arrangement plays them");
-        {
-            Folder f; expect (writeClicks (f.track()));     // bursts at file 24000 / 48000 / 72000
-            AudioEngine e; setup (e); e.loadSession (f.dir);
-            expect (e.rippleDeleteRange (0, 0, 12000));     // the take slides 12000 earlier
-            for (const int restrict : { 1, -1 })
-            {
-                const auto next = e.nextTransientSample (0, restrict);
-                expect (std::abs (next - 12000) < 600,
-                        "Tab used the file position, not the timeline: " + juce::String (next));
-            }
-            expect (e.clearTrackRange (0, 30000, 40000));   // deletes the burst now at 36000
-            const auto afterGap = e.nextTransientSample (13000, 1);
-            expect (std::abs (afterGap - 60000) < 600,
-                    "Tab stopped on audio that was deleted: " + juce::String (afterGap));
-            const auto back = e.prevTransientSample (59000, 1);
-            expect (std::abs (back - 12000) < 600, "Shift+Tab: " + juce::String (back));
+            // Track 2 was never recorded: a render left under its number is not its take.
+            expectEquals (mainTakeTrackNumber (f.audio ("Track_02_consolidated_1.wav")), 0,
+                          "a consolidate render was taken for track 2's take");
         }
 
         // ── Split inside a fade keeps the original ramp on both halves ─────
@@ -323,7 +277,7 @@ public:
             expectLessThan (maxDiff (before, after, 12000), 1.0e-6f, "the extended half lost the ramp");
         }
 
-        beginTest ("Crop and comp keep the audio a fade played inside the range");
+        beginTest ("Crop keeps the audio a fade played inside the range");
         {
             Folder f; expect (writeSine (f.track()));
             AudioEngine e; setup (e); e.loadSession (f.dir);
@@ -335,17 +289,6 @@ public:
             for (int i = 0; i < 22000; ++i)
                 worst = juce::jmax (worst, std::abs (cropped.getSample (0, i) - before.getSample (0, 8000 + i)));
             expectLessThan (worst, 1.0e-6f, "the cropped piece got a fresh fade-in");
-
-            AudioEngine c; setup (c); c.loadSession (f.dir);
-            expect (c.setClipFades (0, 0, 20000, 0));               // Take 1: faded
-            expectEquals (c.newTakeFromCurrent (0, "Take 2"), 1);
-            expect (c.setClipFades (0, 0, 0, 0));                   // Take 2: plain
-            expect (c.compRangeFromTake (0, 0, 8000, 16000));
-            const auto comped = render (c, 0, 48000);
-            float worstComp = 0.0f;
-            for (int i = 8000; i < 16000; ++i)
-                worstComp = juce::jmax (worstComp, std::abs (comped.getSample (0, i) - before.getSample (0, i)));
-            expectLessThan (worstComp, 1.0e-6f, "the comped range does not play Take 1's audio");
         }
 
         beginTest ("Split fades survive a playlist JSON round trip; old JSON loads unchanged");
@@ -397,7 +340,7 @@ public:
             expectWithinAbsoluteError (clipFadeGain (right(), 0), 0.0f, 1.0e-6f);
         }
 
-        beginTest ("A background Strip Silence does not overwrite a fade-ramp edit made meanwhile");
+        beginTest ("A background Consolidate does not overwrite a fade-ramp edit made meanwhile");
         {
             Folder f; expect (writeSine (f.track()));
             AudioEngine e; setup (e); e.loadSession (f.dir);
@@ -405,9 +348,9 @@ public:
             expect (e.splitTrackAtSample (0, 8000));
             std::atomic<bool> done { false };
             int processed = -1;
-            e.stripSilenceAsync ({ 0 }, -60.0f, 4800, 4800, 0,
-                                 [&] (int p, int, bool) { processed = p; done = true; });
-            // The scan publishes on the message thread, so this edit lands first.
+            e.consolidateRangeAsync ({ 0 }, 0, 48000,
+                                    [&] (int p, bool) { processed = p; done = true; });
+            // The render publishes on the message thread, so this edit lands first.
             expect (e.setClipFadeRamps (0, 1, 20001, 8000, 0, 0));
             for (int i = 0; i < 2000 && ! done; ++i)
             {
@@ -417,7 +360,7 @@ public:
                 juce::Thread::sleep (5);
                #endif
             }
-            expect (done.load(), "Strip Silence never finished");
+            expect (done.load(), "Consolidate never finished");
             expectEquals (processed, 0, "the stale result was published over the edit");
             expectEquals (e.clipsFor (0)[1].fadeInRampSamples, (juce::int64) 20001);
         }
@@ -497,22 +440,6 @@ public:
             juce::Thread::sleep (5);
         }
         return 0.0f;
-    }
-
-    // Silence with three loud bursts, 48 kHz mono.
-    static bool writeClicks (const juce::File& file)
-    {
-        file.getParentDirectory().createDirectory();
-        juce::WavAudioFormat format;
-        std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
-            file.createOutputStream().release(), 48000.0, 1, 24, {}, 0));
-        if (! writer) return false;
-        juce::AudioBuffer<float> audio (1, 96000);
-        audio.clear();
-        for (const int at : { 24000, 48000, 72000 })
-            for (int i = 0; i < 2400; ++i)
-                audio.setSample (0, at + i, (i % 2 == 0) ? 0.6f : -0.6f);
-        return writer->writeFromAudioSampleBuffer (audio, 0, 96000);
     }
 };
 

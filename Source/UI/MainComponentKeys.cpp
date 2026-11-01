@@ -105,66 +105,12 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
         return true;
     }
 
-    // Tab / Shift+Tab -- jump to next / previous transient. Pro
-    // Tools-style. Uses the engine's lazy transient cache (built
-    // from every Track_NN.wav on first hit, reused thereafter).
-    // Skips when a text editor has focus so name dialogs still
-    // tab between fields.
+    // Tab stays here, or JUCE walks keyboard focus onto a routing combo or a
+    // transport button, where the next arrow or Return changes it mid-show.
+    // A text editor keeps Tab for its own fields.
     if (key == juce::KeyPress::tabKey
         && dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) == nullptr)
-    {
-        if (engine.isRecording())
-        {
-            showStatus ("Transient analysis is unavailable while recording");
-            return true;
-        }
-        const auto pos = engine.getPlayer().getPositionSamples();
-        // Active-row aware. If the engineer clicked a TrackRow
-        // recently, restrict Tab to that one track's onsets;
-        // otherwise fall back to the pooled cross-track list.
-        // Track index in the engine API is 1-based (Track_NN.wav),
-        // so we add 1 to the 0-based row index.
-        const int activeRow = editPage != nullptr
-                                 ? editPage->getActiveRowTrackIndex() : -1;
-        const int restrict  = (activeRow >= 0) ? activeRow + 1 : -1;
-        const bool backwards = key.getModifiers().isShiftDown();
-        auto jump = [this, pos, restrict, backwards]
-        {
-            const auto target = backwards ? engine.prevTransientSample (pos, restrict)
-                                          : engine.nextTransientSample (pos, restrict);
-            if (target < 0)
-            {
-                showStatus (backwards ? "No earlier transient"
-                                      : "No later transient (load a session first?)");
-                return;
-            }
-            engine.getPlayer().setPositionSamples (target);
-            const double tsr = engine.getPlayer().getSampleRate() > 0.0
-                                 ? engine.getPlayer().getSampleRate() : 48000.0;
-            showStatus ((backwards ? "Prev transient" : "Next transient")
-                        + juce::String (restrict > 0 ? " (track " + juce::String (restrict) + ")"
-                                                      : " (all)")
-                        + " -> "
-                        + juce::String ((double) target / tsr, 2) + "s");
-        };
-
-        if (engine.isTransientCacheReady())
-            jump();
-        else if (engine.isTransientCacheBuilding())
-            showStatus ("Analyzing transients in the background...");
-        else
-        {
-            showStatus ("Analyzing transients in the background...");
-            juce::Component::SafePointer<MainComponent> self (this);
-            engine.buildTransientCacheAsync ([self, jump = std::move (jump)] (bool ready) mutable
-            {
-                if (self == nullptr) return;
-                if (ready) jump();
-                else       self->showStatus ("Transient analysis cancelled because the session changed");
-            });
-        }
         return true;
-    }
 
     if (key == juce::KeyPress::spaceKey)
     {
@@ -468,8 +414,8 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
 
     // ── Single-letter edit-tool selection (EDIT view only). Picks the tool
     // on the Pro Tools-style EditToolsBar so the engineer never has to reach
-    // for the mouse:  S Smart · T Trim · R Range · G Grabber/Move · F Fade ·
-    // B Scrub. Gated on the EDIT view so MIX-view typing isn't hijacked, and
+    // for the mouse:  S Smart · T Trim · R Range · G Grabber/Move · F Fade.
+    // Gated on the EDIT view so MIX-view typing isn't hijacked, and
     // on 'no modifier' so it never shadows the Cmd+ shortcuts below; the
     // text-editor focus guard earlier in this method keeps renames safe.
     if (currentView == View::Edit && editPage != nullptr
@@ -485,7 +431,6 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
                 case 'r': tb->setTool (Tool::Selector); return true;
                 case 'g': tb->setTool (Tool::Grabber);  return true;
                 case 'f': tb->setTool (Tool::Fade);     return true;
-                case 'b': tb->setTool (Tool::Scrubber); return true;
                 default:  break;   // fall through to the editing commands
             }
         }
@@ -513,12 +458,16 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
     {
         const int kc = key.getKeyCode();
         if (kc == 'X' || kc == 'x') { editClipboardCut (true);  return true; }
-        if (kc == 'C' || kc == 'c') { editClipboardCut (false); return true; }
+        if (kc == 'C' || kc == 'c')
+        {
+            if (key.getModifiers().isCtrlDown()) editCropToLoopRange();
+            else                                 editClipboardCut (false);
+            return true;
+        }
         if (kc == 'V' || kc == 'v') { editClipboardPaste();     return true; }
         if (kc == 'H' || kc == 'h') { editHealSeparation();     return true; }   // Pro Tools Heal
         // Pro Tools 'Separate Clip' (Cmd+E): separate at the selected range
-        // if one is set, else split at the playhead. Relocated off the bare
-        // 's' / 'b' keys, which now pick the Selector / Scrubber tools.
+        // if one is set, else split at the playhead.
         if (kc == 'E' || kc == 'e')
         {
             if (engine.getPlayer().hasLoopRegion()) editSeparateAtSelection();

@@ -43,7 +43,7 @@ namespace zynforge
                 });
 
                 for (auto* expected : { "Smart", "Selector", "Trim",
-                                        "Grabber", "Fade", "Scrubber" })
+                                        "Grabber", "Fade" })
                     expect (titles.count (expected) > 0,
                             juce::String (expected) + " tool is missing an accessible title");
 

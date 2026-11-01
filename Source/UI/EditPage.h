@@ -43,7 +43,7 @@ namespace zynforge
         void setAutomationToolbar (AutomationToolbar* t);
 
         // Pro Tools-style edit-mode toolbar (Smart / Selector / Trim /
-        // Grabber / Fade / Scrubber). EditPage owns it and lays it out
+        // Grabber / Fade). EditPage owns it and lays it out
         // along the top edge; TrackRow consults it on every left-click
         // to bias the hit-test.
         EditToolsBar* getEditToolsBar() noexcept { return toolsBar.get(); }
@@ -130,9 +130,6 @@ namespace zynforge
         bool canEditTimeline() const
         { return (! canMutateTimeline || canMutateTimeline()) && ! readOnlyWhileRecording; }
 
-        // Normalize runs as a session job on the host, so it survives its row
-        // being rebuilt, owns its undo snapshot and reports a failure.
-        std::function<void (std::vector<std::pair<int, int>>)> normalizeClips;
 
         // Tempo-lane edits go through this so they join Cmd+Z and refresh a
         // generated click track, as a change on the TempoBar does.
@@ -156,11 +153,9 @@ namespace zynforge
         // Tools "Zoom to Selection"). No-op until a session is loaded.
         void  zoomToSamples (juce::int64 a, juce::int64 b);
 
-        // Active row tracking for Tab-to-Transient. TrackRow's mouse-
-        // down handler sets the row index that was last clicked; the
-        // host (MainComponent) reads it to restrict Tab navigation
-        // to that one row's onsets. -1 = no active row, fall back to
-        // pooled (cross-track) search.
+        // Active row tracking. TrackRow's mouse-down handler sets the
+        // row index that was last clicked; paste targets it and the
+        // automation keys edit its lane. -1 = no active row.
         int  getActiveRowTrackIndex() const noexcept { return activeRowTrackIndex; }
         void setActiveRowTrackIndex (int trackIdx) noexcept
         {

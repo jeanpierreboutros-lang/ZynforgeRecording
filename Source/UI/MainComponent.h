@@ -413,8 +413,6 @@ private:
     // Confirmation gate for destructive Delete-key edits in EDIT (removing a
     // recorded clip / range). Shows a warning; runs onConfirm only on "Delete".
     void confirmDeleteRecording (bool ripple, std::function<void()> onConfirm);
-    // Normalize clip(s) to the same peak, as a session job.
-    void normalizeClips (std::vector<zynforge::EditPage::ClipRef> targets);
     // One undo step around a tempo-map edit; a generated click follows it.
     void runTempoEdit (const juce::String& label, std::function<void()> mutate);
     // Test seam: receives what either delete prompt would run on "Delete".
@@ -458,7 +456,6 @@ private:
     void editSeparateAtSelection();   // B -- isolate the range as its own clip
     void editHealSeparation();        // Cmd+H -- rejoin a clean split
     void editZoomToSelection();       // E -- zoom the EDIT view to the range
-    void editStripSilence();          // separate clips around silence
     void editConsolidateSelection();  // flatten the range to one new file
     void editClearRange();            // Delete -- clear audio inside the range
     void editDeleteSelectedClip();    // Delete -- remove the clicked clip(s)

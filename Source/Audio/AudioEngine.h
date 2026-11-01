@@ -260,7 +260,7 @@ namespace zynforge
         // Load a session's audio into the player + seed clips. preserveEdits
         // is false for a genuine session OPEN (wipe stale clips; the caller's
         // .zfproj playlist restore repopulates) and true for a SAME-session
-        // reload (click-track regen) that must keep the engineer's comps.
+        // reload (click-track regen) that must keep the engineer's edits.
         int  loadSession (const juce::File& sessionDir, bool preserveEdits = false, bool appendRecordedAudio = false);
 
         // Per-SESSION strip mix state: name, colour, gain, pan, mute, solo,
@@ -561,34 +561,6 @@ namespace zynforge
         juce::int64   getEditCursorSample() const noexcept;
         void          clearEditCursor() noexcept { setEditCursorSample (-1); }
 
-        // Tab-to-transient (Pro Tools-style). Returns the nearest
-        // detected onset sample position after / before `fromSample`,
-        // or -1 if none. First call lazily scans every Track_NN.wav
-        // in the active session and caches the result; subsequent
-        // calls reuse the cache. invalidateTransientCache() forces
-        // a rescan on the next query (call after a fresh record).
-        //
-        // restrictToTrack >= 0 limits the search to onsets detected
-        // on that single Track_NN.wav (1-based file index, matching
-        // the recorder's numbering). Pass -1 to search the pooled
-        // list across every track (legacy behaviour).
-        juce::int64 nextTransientSample (juce::int64 fromSample, int restrictToTrack = -1);
-        juce::int64 prevTransientSample (juce::int64 fromSample, int restrictToTrack = -1);
-        void invalidateTransientCache();
-        bool isTransientCacheReady() const noexcept
-        { return transientCacheValid.load (std::memory_order_acquire); }
-        bool isTransientCacheBuilding() const noexcept
-        { return transientBuildInProgress.load (std::memory_order_acquire); }
-        // Build the cache without blocking the message thread. completion is
-        // delivered on the message thread and is false if the session changed
-        // (or the engine was invalidated) while analysis was running.
-        void buildTransientCacheAsync (std::function<void (bool)> completion);
-
-        // Returns the transient list for a single track index
-        // (1-based, matching Track_NN.wav). Empty if not detected
-        // yet OR if the track has no audio file.
-        const std::vector<juce::int64>& getTransientsForTrack (int trackIdx);
-
         // Session tempo. setSessionTempoBpm() is the canonical setter --
         // it updates currentTempoBpm + persists to appProps. The tempo
         // map is a sorted list of (samplePos, bpm) change points; the
@@ -846,10 +818,10 @@ namespace zynforge
         // tools have something to grab. Called after loadSession() or
         // when stopRecording() auto-loads the just-captured files.
         //   preserveEdits == false (session OPEN): wipe every track's clips
-        //     + comp takes and reseed defaults. The .zfproj playlist restore
+        //     + takes and reseed defaults. The .zfproj playlist restore
         //     that follows a real session open overwrites these anyway.
         //   preserveEdits == true  (SAME-session reload: stop-recording,
-        //     strip reorder): keep every edited track's splits/fades/comps
+        //     strip reorder): keep every edited track's splits/fades/takes
         //     verbatim and only (re)seed tracks that are still the plain
         //     full-range default -- never silently discard edits.
         void seedDefaultClips (bool preserveEdits = false, bool appendRecordedAudio = false);
@@ -936,31 +908,11 @@ namespace zynforge
         // it reads the clip lists, which only that thread edits.
         interchange::SessionInput captureInterchange();
 
-        // ── Comp playlists (Take swap) ─────────────────────────────
+        // ── Playlists ─────────────────────────────
         // Each track gets a Playlist (vector<Take>). The active Take's
-        // clips are what the player renders. Engineer captures the
-        // current clip list as a named take, switches between takes for
-        // comping, deletes takes they don't want.
-        int   getTakeCount     (int track) const;
+        // clips are what the player renders.
         int   getActiveTakeIdx (int track) const;
         juce::String getTakeName (int track, int takeIdx) const;
-        // Copy of a take's clip list -- used by the comp-lanes view to draw
-        // each take's arrangement. The active take mirrors the live clips.
-        std::vector<Clip> getTakeClips (int track, int takeIdx) const;
-        void  setActiveTake   (int track, int takeIdx);
-        int   newTakeFromCurrent (int track, const juce::String& name);
-        void  deleteTake      (int track, int takeIdx);
-        void  renameTake      (int track, int takeIdx, const juce::String& name);
-        // Comp: splice `sourceTakeIdx`'s audio for the timeline range
-        // [start, end) into the ACTIVE take, replacing whatever was there.
-        // This is the swipe-comp primitive -- build one keeper by pulling
-        // the best section from each take. Undoable / persisted via the
-        // active take. Returns true if the comp changed anything.
-        bool  compRangeFromTake (int track, int sourceTakeIdx,
-                                 juce::int64 start, juce::int64 end);
-        // A locked clip stays, so a comp over it would play both takes on top
-        // of each other. compRangeFromTake refuses this, as consolidate does.
-        bool  compRangeHitsLockedClip (int track, juce::int64 start, juce::int64 end) const;
         // Serialise / deserialise the full playlist (every track's
         // takes + their clip lists) for .zfproj persistence. Without
         // this, Takes are RAM-only and lost on app quit.
@@ -994,22 +946,6 @@ namespace zynforge
         // was healed. The range variant heals every such boundary in [a, b).
         bool healSeparationAt    (int track, juce::int64 timelineSample);
         int  healSeparationRange (int track, juce::int64 start, juce::int64 end);
-        // Strip Silence: scan the track's active-take audio and separate it
-        // into clips around stretches quieter than thresholdDb for at least
-        // minSilenceSamples, dropping those silent gaps. Clips shorter than
-        // minClipSamples are discarded too. Non-destructive (clip-level only).
-        // Returns the number of audible clips left, or -1 on failure.
-        int  stripSilence (int track, float thresholdDb,
-                           juce::int64 minSilenceSamples, juce::int64 minClipSamples,
-                           juce::int64 padSamples = 0);
-        // Multi-track background variant used by the UI. File analysis happens
-        // off the message thread; the resulting clip lists are committed back
-        // on it only if the same session is still active. completion receives
-        // (tracksProcessed, audibleClips, fullySuccessful).
-        void stripSilenceAsync (std::vector<int> tracks, float thresholdDb,
-                                juce::int64 minSilenceSamples, juce::int64 minClipSamples,
-                                juce::int64 padSamples,
-                                std::function<void (int, int, bool)> completion);
         // Consolidate [start, end) on one track into a single new flat file
         // (Audio Files/Track_NN_consolidated_K.wav) referenced by one clip,
         // baking in gains / fades / clip order. Returns true on success.
@@ -1114,24 +1050,6 @@ namespace zynforge
         bool setClipLocked   (int track, int clipIndex, bool locked);
         bool setClipName     (int track, int clipIndex, const juce::String& name);
         bool setClipGainDb   (int track, int clipIndex, float dB);
-        // Offline (read-only) normalize: scan the clip's audio for its peak and
-        // set the clip gain so that peak lands at targetDbFS. Non-destructive
-        // (the file is untouched); the clip-gain +12 dB ceiling caps the boost.
-        bool normalizeClip   (int track, int clipIndex, float targetDbFS = -0.3f);
-        // The gain (dB) normalizeClip WOULD apply, computed but not applied --
-        // so a caller can normalise a collapsed stereo pair with ONE shared
-        // gain (the min across both halves: the loudest channel lands exactly
-        // at target, the image is preserved) instead of two independent gains
-        // that would skew it. Returns NaN if the clip has no scannable audio.
-        float clipNormalizeGainDb (int track, int clipIndex, float targetDbFS = -0.3f);
-        // Peak-scan a mono/stereo edit group off the message thread, then apply
-        // one conservative gain to every unchanged peer clip. `targets` holds
-        // each peer's OWN (track, clipIndex): clip indices are per-track, so one
-        // index for every track scanned whichever clip sat there on a peer with
-        // a different arrangement.
-        void normalizeClipGroupAsync (std::vector<std::pair<int, int>> targets,
-                                      float targetDbFS,
-                                      std::function<void (bool)> completion);
         // Offline (read-only) nearest-zero-crossing search around a timeline
         // sample on a track, within ±windowSamples. Returns the adjusted
         // timeline sample (or the original if no crossing / no audio). Used to
@@ -1423,18 +1341,6 @@ namespace zynforge
         // splitTrackAtPlayhead path. Default Off.
         std::atomic<int> snapMode { 0 };
 
-        // Pooled list of detected onsets across every Track_NN.wav in
-        // the active session (sorted). Built lazily on first Tab-to-
-        // transient query. Invalidated on session load + new record.
-        std::vector<juce::int64> transientCache;
-        // Per-track onsets keyed by 1-based track index (matching
-        // Track_NN.wav). Populated alongside `transientCache` so
-        // track-restricted Tab can search the relevant lane only.
-        std::vector<std::vector<juce::int64>> transientPerTrack;
-        std::atomic<bool>        transientCacheValid { false };
-        std::atomic<bool>        transientBuildInProgress { false };
-        std::atomic<juce::uint64> transientCacheGeneration { 0 };
-
         // Per-track, per-parameter automation. UI-thread only for now
         // (audio thread doesn't yet consume these -- the engineer reads
         // them visually and they ride along in cue snapshots).
@@ -1529,9 +1435,7 @@ namespace zynforge
         void addRecordedSpan (int track, juce::int64 from, juce::int64 to);
         // Per-track Playlist storing every Take (named clip list). The
         // active take's clips mirror trackClips above so the player
-        // path doesn't need to know about takes. setActiveTake swaps
-        // the active take's contents into trackClips + republishes
-        // to the player.
+        // path doesn't need to know about takes.
         std::vector<Playlist> trackPlaylists;
         std::vector<AutomationPoint> emptyAutomation;   // returned by ref when none
 

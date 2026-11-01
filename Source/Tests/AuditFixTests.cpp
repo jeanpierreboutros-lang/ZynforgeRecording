@@ -296,57 +296,6 @@ namespace zynforge
                 chosen.deleteRecursively();
             }
 
-            beginTest ("Strip Silence analyzes the edited arrangement and commits all-silent emptiness");
-            {
-                auto dir = scratchDir ("strip_arrangement");
-                const auto audio = dir.getChildFile ("Audio Files");
-                audio.createDirectory();
-                const auto own = audio.getChildFile ("Track_01.wav");
-                const auto cross = audio.getChildFile ("cross.wav");
-                expect (writeWav (own, 48000.0, 4800, 0.5f));
-                expect (writeWav (cross, 48000.0, 4800, 0.7f));
-
-                AudioEngine eng;
-                eng.prepareForTests (48000.0, 256);
-                eng.setActiveSessionDir (dir);
-                expect (eng.loadSession (dir) > 0);
-                Clip first;
-                first.timelineStartSamples = 0;
-                first.fileLengthSamples = 4800;
-                first.gainDb = -3.0f;
-                Clip second;
-                second.audioFile = cross;
-                second.sourceChannel = 0;
-                second.timelineStartSamples = 9600;
-                second.fileLengthSamples = 4800;
-                second.gainDb = -6.0f;
-                eng.clipsFor (0) = { first, second };
-                eng.getPlayer().setTrackClips (0, eng.clipsFor (0));
-                eng.syncActiveTake (0);
-
-                expectEquals (eng.stripSilence (0, -40.0f, 1000, 100, 0), 2);
-                expectEquals ((int) eng.clipsFor (0).size(), 2);
-                expect (eng.clipsFor (0)[1].audioFile == cross,
-                        "cross-track source must survive Strip Silence");
-                expectEquals (eng.clipsFor (0)[1].sourceChannel, 0);
-                expectWithinAbsoluteError (eng.clipsFor (0)[1].gainDb, -6.0f, 0.001f);
-
-                auto silentDir = scratchDir ("strip_all_silent");
-                const auto silentAudio = silentDir.getChildFile ("Audio Files");
-                silentAudio.createDirectory();
-                expect (writeWav (silentAudio.getChildFile ("Track_01.wav"),
-                                  48000.0, 4800, 0.0f));
-                AudioEngine silent;
-                silent.prepareForTests (48000.0, 256);
-                silent.setActiveSessionDir (silentDir);
-                silent.loadSession (silentDir);
-                expectEquals (silent.stripSilence (0, -40.0f, 100, 100, 0), 0);
-                expect (silent.isTrackArrangementEmpty (0),
-                        "an all-silent result must be an explicit empty arrangement");
-                silentDir.deleteRecursively();
-                dir.deleteRecursively();
-            }
-
             beginTest ("External capture blocks local playback starts");
             {
                 auto dir = scratchDir ("external_record_playback_guard");
@@ -540,42 +489,6 @@ namespace zynforge
                         "the vacated slot must not keep the old flag");
                 expect (props->getValue ("strip_uid_3", {}).isEmpty(),
                         "the orphan tail slot must be cleared");
-            }
-
-            // ── Transient cache must see non-WAV takes ───────────────────────
-            beginTest ("Transient scan covers FLAC/AIFF sessions");
-            {
-                auto dir = scratchDir ("transient_flac");
-                const auto audio = dir.getChildFile ("Audio Files");
-                audio.createDirectory();
-
-                // A FLAC take with a hard transient partway through.
-                const auto flacFile = audio.getChildFile ("Track_01.flac");
-                {
-                    juce::FlacAudioFormat flac;
-                    std::unique_ptr<juce::FileOutputStream> os (flacFile.createOutputStream());
-                    expect (os != nullptr, "flac stream");
-                    std::unique_ptr<juce::AudioFormatWriter> w (
-                        flac.createWriterFor (os.get(), 48000.0, 1, 24, {}, 5));
-                    expect (w != nullptr, "flac writer");
-                    os.release();
-                    juce::AudioBuffer<float> buf (1, 48000);
-                    buf.clear();
-                    // Silence, then a loud sustained burst = one clear onset.
-                    for (int i = 24000; i < 48000; ++i)
-                        buf.setSample (0, i, 0.8f * std::sin (2.0f * 3.14159f * 220.0f
-                                                              * (float) i / 48000.0f));
-                    expect (w->writeFromAudioSampleBuffer (buf, 0, 48000), "flac write");
-                }
-
-                AudioEngine eng;
-                eng.prepareForTests (48000.0, 512);
-                eng.setActiveSessionDir (dir);
-                eng.invalidateTransientCache();
-                // Pre-fix the .wav-only glob found nothing here, so Tab was dead.
-                const auto next = eng.nextTransientSample (0, 1);
-                expect (next > 0, "a FLAC take must produce transients (was WAV-only)");
-                dir.deleteRecursively();
             }
         }
     };

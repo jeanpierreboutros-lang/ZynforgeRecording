@@ -4,6 +4,7 @@
 #include "../Audio/AtomicFile.h"
 #include "../Audio/MultiPartReader.h"
 #include "../UI/SessionProjPath.h"
+#include "SavedTakes.h"
 
 #include <algorithm>
 #include <thread>
@@ -149,9 +150,8 @@ public:
             expect (! e.forEachArrangementWindow (0, 0, 1000, [&] (const float* p, juce::int64, int n)
             { for (int i = 0; i < n; ++i) peak = juce::jmax (peak, std::abs (p[i])); return true; }));
             expectWithinAbsoluteError (peak, 0.0f, 0.0001f);
-            expect (! e.normalizeClip (0, 0, -1));
         }
-        beginTest ("Locked clips cannot split or ripple; deleting earlier take retains active identity");
+        beginTest ("Locked clips cannot split or ripple");
         {
             Directory dir; expect (write (dir.track (1), 0.3f));
             AudioEngine e; e.setActiveSessionDir (dir.file); e.claimMixerFor (dir.file); e.loadSession (dir.file); e.setStripCount (1);
@@ -159,8 +159,6 @@ public:
             expect (! splitClipAt (e.clipsFor (0), 0, 100));
             e.rippleDeleteRange (0, 100, 200);
             expectEquals ((int) e.clipsFor (0).size(), 1); expectEquals (e.clipsFor (0)[0].fileLengthSamples, (juce::int64) 4800);
-            e.newTakeFromCurrent (0, "second"); e.newTakeFromCurrent (0, "third"); e.setActiveTake (0, 1);
-            e.deleteTake (0, 0); expectEquals (e.getActiveTakeIdx (0), 0); expectEquals (e.getTakeName (0, 0), juce::String ("second"));
         }
         beginTest ("Empty automation snapshot removes new lanes");
         {
@@ -330,7 +328,7 @@ public:
                     return true;
                 }));
             expectWithinAbsoluteError (peak, 0.7f, 0.02f);
-            expectEquals ((int) e.getTakeClips (0, e.getActiveTakeIdx (0)).size(), 3);
+            expectEquals ((int) savedtakes::clips (e, 0, e.getActiveTakeIdx (0)).size(), 3);
         }
         beginTest ("Orphan continuation refuses capture before creating another part");
         {

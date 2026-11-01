@@ -178,6 +178,59 @@ namespace zynforge
                 row.refreshRoutingSelection();
                 expectEquals (row.getInputRoutingTextForTests(), juce::String ("(unrouted)"));
             }
+
+            // ── EDIT patches as the MIXER and PATCH do ───────────────────────
+            // One setTrackLinkedRouting per side. A combo that moved only its
+            // own side left this row saying what the other two views did not.
+            beginTest ("An EDIT row combo moves input and output together, on both halves of a pair");
+            {
+                Host h (4);
+                const auto patch = [&h] (int track)
+                {
+                    const auto& state = h.engine.getRecorder().getTrack (track);
+                    return juce::String (state.inputRouting.load()) + "/" + juce::String (state.outputRouting.load());
+                };
+
+                EditPage::TrackRow mono (2, false, h.engine, h.formats, h.cache);
+                auto combos = routingCombos (mono);
+                expect (combos.size() == 2, "setup: an input and an output combo");
+                if (combos.size() == 2)
+                {
+                    combos[0]->setSelectedId (7, juce::sendNotificationSync);    // In 6
+                    expectEquals (patch (2), juce::String ("5/5"), "the input combo left the output behind");
+                    combos[1]->setSelectedId (8, juce::sendNotificationSync);    // Out 7
+                    expectEquals (patch (2), juce::String ("6/6"), "the output combo left the input behind");
+                    combos[1]->setSelectedId (1, juce::sendNotificationSync);    // (unrouted)
+                    expectEquals (patch (2), juce::String ("-1/-1"));
+                }
+
+                h.engine.setTrackStereo (0, true);
+                EditPage::TrackRow pair (0, true, h.engine, h.formats, h.cache);
+                combos = routingCombos (pair);
+                expect (combos.size() == 2, "setup: a stereo row has the same two combos");
+                if (combos.size() == 2)
+                {
+                    combos[0]->setSelectedId (6, juce::sendNotificationSync);    // In 5-6
+                    expectEquals (patch (0), juce::String ("4/4"));
+                    expectEquals (patch (1), juce::String ("5/5"), "R missed the input combo");
+                    combos[1]->setSelectedId (8, juce::sendNotificationSync);    // Out 7-8
+                    expectEquals (patch (0), juce::String ("6/6"));
+                    expectEquals (patch (1), juce::String ("7/7"), "R missed the output combo");
+                    combos[0]->setSelectedId (1, juce::sendNotificationSync);    // (unrouted)
+                    expectEquals (patch (0), juce::String ("-1/-1"));
+                    expectEquals (patch (1), juce::String ("-1/-1"));
+                }
+            }
+        }
+
+        // The row's input and output combos, in that order.
+        static std::vector<juce::ComboBox*> routingCombos (juce::Component& row)
+        {
+            std::vector<juce::ComboBox*> combos;
+            for (auto* child : row.getChildren())
+                if (auto* combo = dynamic_cast<juce::ComboBox*> (child))
+                    combos.push_back (combo);
+            return combos;
         }
     };
 
@@ -480,7 +533,7 @@ namespace zynforge
             }
 
             // ── 4757: menu items resolve each group peer's OWN clip ──────────
-            beginTest ("Clip menu delete, lock and normalize act on each group peer's own clip");
+            beginTest ("Clip menu delete and lock act on each group peer's own clip");
             {
                 Session s (2, { 48000, 48000 });
                 s.engine.setTrackEditGroup (0, 0);
@@ -503,14 +556,6 @@ namespace zynforge
                     for (int i = 0; i < (int) s.clips (t).size(); ++i)
                         s.engine.setClipLocked (t, i, false);
 
-                // Normalize A's second clip [24k,48k): B's clip under it is #2.
-                row.applyClipMenuChoice (1, 414);
-                expect (pumpUntil ([&] { return row.isEnabled(); }, 5000), "normalize never completed");
-                expect (s.clips (0)[1].gainDb > 1.0f, "source clip normalized");
-                expectWithinAbsoluteError (s.clips (1)[1].gainDb, 0.0f, 0.001f,
-                                           "Normalize changed B's clip #1 by raw index");
-                expect (s.clips (1)[2].gainDb > 1.0f, "Normalize missed the peer clip under the source");
-
                 // Delete A's second clip [24k,48k): B must lose #2 [12k,48k), not #1.
                 row.applyClipMenuChoice (1, 411);
                 expectEquals ((int) s.clips (0).size(), 1);
@@ -521,47 +566,6 @@ namespace zynforge
                     expectEquals (s.clips (1)[1].timelineStartSamples, (juce::int64) 6000,
                                   "Delete removed B's clip #1 by raw index");
                 }
-            }
-
-            // ── #3: takes and comps on a stereo row move BOTH halves ─────────
-            beginTest ("Take and comp operations on a stereo row keep L and R on one arrangement");
-            {
-                Session s (2, { 48000, 48000 });
-                s.engine.setTrackStereo (0, true);
-                EditPage::TrackRow row (0, true, s.engine, s.formats, s.cache);
-                sizeRow (row);
-                const int takesBefore = s.engine.getTakeCount (0);
-                expectEquals (s.engine.getTakeCount (1), takesBefore, "setup");
-
-                row.applyTakeMenuChoice (850);   // New take from current
-                expectEquals (s.engine.getTakeCount (0), takesBefore + 1);
-                expectEquals (s.engine.getTakeCount (1), takesBefore + 1, "R missed the new take");
-
-                // Edit the new take on both halves (as a stereo clip edit does).
-                expect (s.engine.splitTrackAtSample (0, 24000));
-                expect (s.engine.splitTrackAtSample (1, 24000));
-                row.applyTakeMenuChoice (800);   // back to the first take
-                expectEquals ((int) s.clips (0).size(), 1);
-                expectEquals ((int) s.clips (1).size(), 1, "R kept the edited take");
-
-                // Comp a range of the edited take into the first take.
-                s.engine.getPlayer().setLoopRegion (30000, 40000);
-                row.applyTakeMenuChoice (870 + takesBefore);
-                expectEquals ((int) s.clips (0).size(), (int) s.clips (1).size(),
-                              "comp selection spliced only one half");
-                s.engine.getPlayer().clearLoopRegion();
-
-                // Comp-lane swipe pulls the swiped range into BOTH halves.
-                row.applyTakeMenuChoice (860);   // show take lanes
-                const int before0 = (int) s.clips (0).size();
-                drag (row, { laneX (row, 0.05), 70 }, { laneX (row, 0.3), 70 });   // the second take's lane
-                expect ((int) s.clips (0).size() != before0, "setup: the swipe comped L");
-                expectEquals ((int) s.clips (0).size(), (int) s.clips (1).size(),
-                              "the swipe comped only L");
-
-                row.applyTakeMenuChoice (852);   // delete the active take
-                expectEquals (s.engine.getTakeCount (0), s.engine.getTakeCount (1),
-                              "delete take left L and R with different take lists");
             }
 
             // ── #4: deep zoom draws only the visible columns ────────────────

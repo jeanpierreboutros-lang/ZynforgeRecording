@@ -562,20 +562,6 @@ namespace zynforge
                 expect (! s.page().isClipSelected (0, s.clips (0)[0]));
             }
 
-            beginTest ("A take switch drops a selection on the take that left");
-            {
-                Show s (1, { 48000 });
-                auto rows = rowsOf (s.page());
-                if (! rows.empty())
-                {
-                    rows[0]->applyTakeMenuChoice (850);
-                    s.engine.splitTrackAtSample (0, 24000);
-                    s.page().setSelectedClip (0, 1);
-                    rows[0]->applyTakeMenuChoice (800);
-                    expect (s.page().getSelectedClips().empty(), "the selection named a clip of the other take");
-                }
-            }
-
             beginTest ("A clip with its own file draws that file, not the strip's take");
             {
                 Show s (2, { 96000 }, 0.0f);    // the take itself is silent
@@ -719,40 +705,6 @@ namespace zynforge
                             "the row never picked up its waveform after the cache loaded");
             }
 
-            beginTest ("Take actions are undo steps in the order they happened");
-            {
-                Show s (2, { 48000, 48000 });
-                s.engine.setTrackStereo (0, true);
-                s.page().refresh();
-                auto rows = rowsOf (s.page());
-                expect (rows.size() == 1, "setup: one stereo row");
-                if (rows.size() == 1)
-                {
-                    auto& row = *rows[0];
-                    const int takes = s.engine.getTakeCount (0);
-                    s.main.undoManager.clearUndoHistory();
-
-                    row.applyTakeMenuChoice (850);   // new take
-                    expectEquals (s.engine.getTakeCount (0), takes + 1);
-                    s.splitBoth (0, 1, 24000);
-
-                    row.applyTakeMenuChoice (800);   // back to the first
-                    expectEquals (s.engine.getActiveTakeIdx (0), 0);
-                    s.main.editUndo();
-                    expectEquals (s.engine.getActiveTakeIdx (0), takes, "undo must undo the switch");
-                    expectEquals (s.engine.getActiveTakeIdx (1), takes, "R must switch back too");
-
-                    row.applyTakeMenuChoice (852);   // delete the active take, a whole comp
-                    expectEquals (s.engine.getTakeCount (0), takes);
-                    s.main.editUndo();
-                    expectEquals (s.engine.getTakeCount (0), takes + 1, "Cmd+Z must bring a deleted take back");
-                    expectEquals ((int) s.clips (0).size(), 2, "and the edits on it");
-
-                    s.main.editUndo();               // the new take itself
-                    expectEquals (s.engine.getTakeCount (0), takes, "a new take is a step of its own");
-                }
-            }
-
             beginTest ("Tempo lane edits are undoable and a generated click follows them");
             {
                 Show s (2, { 48000, 48000 });
@@ -786,7 +738,7 @@ namespace zynforge
                 s.engine.clearTempoMap();
             }
 
-            beginTest ("A clip or take action left open cannot change a rolling take's arrangement");
+            beginTest ("A clip action left open cannot change a rolling take's arrangement");
             {
                 Show s (3, { 48000, 48000 });     // strip 3 has no take yet, so it can record
                 s.engine.setTrackStereo (0, true);
@@ -797,15 +749,12 @@ namespace zynforge
                 if (rows.size() == 2)
                 {
                     auto& row = *rows[0];
-                    const int takes = s.engine.getTakeCount (0);
                     s.main.undoManager.clearUndoHistory();
 
                     s.engine.setTrackArmed (2, true);
                     expect (s.engine.startRecording (s.dir), "setup: the take rolls");
                     for (int choice : { 400, 401, 410, 411, 105, 505 })
                         row.applyClipMenuChoice (0, choice);
-                    row.applyTakeMenuChoice (850);
-                    row.applyTakeMenuChoice (852);
                     expect (! s.engine.setClipMuted (0, 0, true), "the engine setters must refuse too");
                     expect (! s.engine.deleteClip (0, 0));
                     expect (! s.engine.setClipGainDb (0, 0, -6.0f));
@@ -817,7 +766,6 @@ namespace zynforge
                     // The take grew the lists; the refused edits must not show.
                     expect (! s.clips (0).empty() && ! s.clips (0)[0].muted && ! s.clips (0)[0].locked,
                             "the open menu changed a clip during the take");
-                    expectEquals (s.engine.getTakeCount (0), takes, "the take menu changed the takes during the take");
                     expect (! s.main.undoManager.canUndo(), "a step was pushed during the take");
                 }
             }
@@ -861,54 +809,25 @@ namespace zynforge
                 }
             }
 
-            beginTest ("Normalize that finishes after a strip move applies to nothing");
+            beginTest ("Consolidate that finishes after a strip move applies to nothing");
             {
                 Show s (2, { 48000, 48000 });
                 auto rows = rowsOf (s.page());
                 expect (rows.size() == 2, "setup: two rows");
                 if (rows.size() == 2)
                 {
-                    rows[0]->applyClipMenuChoice (0, 414);
-                    expect (s.engine.reorderTracks ({ 1, 0 }));
-                    juce::Component::SafePointer<EditPage::TrackRow> row (rows[0]);
-                    expect (pumpUntil ([&] { return (row == nullptr || row->isEnabled()) && s.page().isEnabled()
-                                                 && ! s.main.sessionIoBusy.load(); }, 5000),
-                            "the scan never finished");
+                    // Alike in every field, so only the track generation can tell.
                     for (int t : { 0, 1 })
-                        expectWithinAbsoluteError (s.clips (t)[0].gainDb, 0.0f, 0.001f,
-                                                   "the gain landed on the strip now at that index");
+                        expect (s.engine.setClipName (t, 0, "Same"));
+                    s.main.undoManager.clearUndoHistory();
+                    rows[0]->applyClipMenuChoice (0, 413);
+                    expect (s.engine.reorderTracks ({ 1, 0 }));
+                    expect (pumpUntil ([&] { return ! s.main.sessionIoBusy.load(); }, 5000),
+                            "the render never finished");
+                    for (int t : { 0, 1 })
+                        expect (s.clips (t)[0].audioFile == juce::File(),
+                                "the render landed on the strip now at that index");
                     expect (! s.main.undoManager.canUndo(), "a snapshot from before the move reached undo");
-                }
-            }
-
-            beginTest ("Normalize says when it fails and pushes the step it took");
-            {
-                Show s (1, { 48000 }, 0.0f);
-                auto rows = rowsOf (s.page());
-                expect (rows.size() == 1, "setup: one row");
-                if (rows.size() == 1)
-                {
-                    s.main.undoManager.clearUndoHistory();
-                    rows[0]->applyClipMenuChoice (0, 414);
-                    expect (s.main.sessionIoBusy.load(), "the scan must own the session");
-                    expect (pumpUntil ([&] { return ! s.main.sessionIoBusy.load(); }, 5000), "the job never released");
-                    expect (s.main.statusLabel.getText().containsIgnoreCase ("Normalize failed"),
-                            "a silent clip failed with no word: " + s.main.statusLabel.getText());
-                    expect (! s.main.undoManager.canUndo());
-                }
-            }
-            {
-                Show s (1, { 48000 });
-                auto rows = rowsOf (s.page());
-                if (rows.size() == 1)
-                {
-                    s.main.undoManager.clearUndoHistory();
-                    rows[0]->applyClipMenuChoice (0, 414);
-                    expect (pumpUntil ([&] { return ! s.main.sessionIoBusy.load(); }, 5000));
-                    expect (s.clips (0)[0].gainDb > 1.0f, "setup: normalized");
-                    expect (s.main.undoManager.canUndo(), "Normalize pushed no step");
-                    s.main.editUndo();
-                    expectWithinAbsoluteError (s.clips (0)[0].gainDb, 0.0f, 0.001f);
                 }
             }
 
@@ -1034,6 +953,40 @@ namespace zynforge
                     s.page().setSelectedClip (1, 0);
                     s.main.editStartRange();
                     expect (s.page().getSelectedClips().empty(), "a range set from the keyboard must take over too");
+                }
+                s.engine.getPlayer().clearLoopRegion();
+            }
+
+            beginTest ("Tab walks keyboard focus onto no control");
+            {
+                Show s (1, { 48000 });
+                expect (s.main.keyPressed (juce::KeyPress (juce::KeyPress::tabKey), nullptr),
+                        "left to JUCE, Tab puts focus on a routing combo or transport button");
+            }
+
+            beginTest ("Ctrl+Cmd+C runs Crop and bare Cmd+C stays Copy");
+            {
+                Show s (1, { 48000 });
+                s.engine.getPlayer().selectRange (12000, 36000);
+                auto* modals = juce::ModalComponentManager::getInstance();
+                const int modalsBefore = modals->getNumModalComponents();
+                const juce::KeyPress copy ('c', juce::ModifierKeys::commandModifier, 0);
+                const juce::KeyPress crop ('c', juce::ModifierKeys (juce::ModifierKeys::commandModifier
+                                                                    | juce::ModifierKeys::ctrlModifier), 0);
+
+                expect (s.main.keyPressed (copy, nullptr));
+                expectEquals (modals->getNumModalComponents(), modalsBefore, "bare Cmd+C asked to crop");
+                expect (s.engine.getPlayer().hasLoopRegion(), "bare Cmd+C ate the range");
+
+                expect (s.main.keyPressed (crop, nullptr));
+                auto* dialog = dynamic_cast<juce::AlertWindow*> (modals->getModalComponent (0));
+                expect (dialog != nullptr && dialog->getName() == "Crop to loop range?",
+                        "Ctrl+Cmd+C did not run Crop");
+                if (dialog != nullptr)
+                {
+                    dialog->exitModalState (1);
+                    expect (pumpUntil ([&] { return s.clips (0)[0].fileLengthSamples == 24000; }, 2000),
+                            "the prompt's Crop did not crop");
                 }
                 s.engine.getPlayer().clearLoopRegion();
             }

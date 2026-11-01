@@ -156,7 +156,7 @@ namespace zynforge
         // Clip-edit drag tracking. When the engineer grabs a clip's
         // left edge, right edge, body, a fade handle or its gain line,
         // draggingClipIdx pins which clip is moving and draggingClipMode
-        // picks the edit (Scrub / SelectRange are tool drags on the lane).
+        // picks the edit (SelectRange is a tool drag on the lane).
         enum class ClipDrag
         {
             TrimLeft,     // slip-trim the left edge
@@ -164,7 +164,6 @@ namespace zynforge
             Move,         // slide on the timeline
             FadeIn,       // drag the fade-in apex
             FadeOut,      // drag the fade-out apex
-            Scrub,        // Scrubber tool
             SelectRange,  // Selector tool range
             ClipGain      // clip-gain line (relative ride)
         };
@@ -371,27 +370,18 @@ namespace zynforge
             styleCombo (inputCombo);
             styleCombo (outputCombo);
 
-            // Input + output route independently -- the previous build
-            // sent both combos through setTrackLinkedRouting which set
-            // both sides to the same device channel, so changing the
-            // output combo silently overwrote the input routing and
-            // vice versa. Each combo now writes only its own side.
-            inputCombo.onChange = [this]
+            // One patch in three views: either combo sets both sides, as the
+            // MIXER strip and PATCH do, and on both halves of a stereo row.
+            const auto patchFrom = [this] (const juce::ComboBox& combo)
             {
-                const int id = inputCombo.getSelectedId();
+                const int id = combo.getSelectedId();
                 const int dev = (id <= 1) ? -1 : id - 2;
-                engine.setTrackInputRouting (index, dev);
+                engine.setTrackLinkedRouting (index, dev);
                 if (stereo)
-                    engine.setTrackInputRouting (index + 1, (dev < 0) ? -1 : dev + 1);
+                    engine.setTrackLinkedRouting (index + 1, (dev < 0) ? -1 : dev + 1);
             };
-            outputCombo.onChange = [this]
-            {
-                const int id = outputCombo.getSelectedId();
-                const int dev = (id <= 1) ? -1 : id - 2;
-                engine.setTrackOutputRouting (index, dev);
-                if (stereo)
-                    engine.setTrackOutputRouting (index + 1, (dev < 0) ? -1 : dev + 1);
-            };
+            inputCombo.onChange  = [this, patchFrom] { patchFrom (inputCombo); };
+            outputCombo.onChange = [this, patchFrom] { patchFrom (outputCombo); };
             addAndMakeVisible (inputCombo);
             addAndMakeVisible (outputCombo);
 
@@ -876,8 +866,8 @@ namespace zynforge
             if (hovered) fillColour = brand::lift (fillColour, 0.06f);
 
             // Row bottom divider (full content width). The swatch column,
-            // header panel, vertical divider, selection highlight and TAKE
-            // chip are NOT drawn here -- paintHeader() draws them LAST (and
+            // header panel, vertical divider and selection highlight
+            // are NOT drawn here -- paintHeader() draws them LAST (and
             // offset by the horizontal scroll) so the header stays pinned to
             // the left edge and on top when the timeline is scrolled right.
             g.setColour (brand::edge);
@@ -894,8 +884,8 @@ namespace zynforge
             const auto inner = wavePane.reduced (brand::space::xs, brand::space::sm);
 
             // All lane-content drawing runs inside this lambda. The non-waveform
-            // lane modes (Click / Tempo / Markers / Volume·Pan·Mute automation /
-            // comp lanes) early-`return` once they've drawn their lane -- by
+            // lane modes (Click / Tempo / Markers / Volume·Pan·Mute automation)
+            // early-`return` once they've drawn their lane -- by
             // doing so from the lambda (not paint()), they no longer SKIP the
             // pinned header painted LAST below. Skipping it left the header
             // un-redrawn, so the automation line/curve bled over the channel name
@@ -1059,11 +1049,6 @@ namespace zynforge
                               stereo ? laneWaveFor ({}, true) : LaneWave {});
                 }
             }
-
-            // (The amber Tab-to-Transient onset ticks that used to draw on
-            // the active row's lane top were removed -- they read as visual
-            // clutter. Tab / Shift+Tab still jump between transients; the
-            // hint markers just aren't painted.)
 
             // Automation lane modes -- flat horizontal line representing
             // the current value (overlaid on top of the dimmed waveform
@@ -1528,68 +1513,6 @@ namespace zynforge
                                                       0, 2, getHeight()));
                 }
                 return;
-            }
-
-            // ─── Comp lanes (opt-in via the take menu) ─────────────
-            // One lane per take; the active comp on top. Swipe across a
-            // take lane (mouse handler) to pull that section into the comp.
-            const int takeCountNow = engine.getTakeCount (index);
-            if (showCompLanes && takeCountNow > 1)
-            {
-                const auto& player = engine.getPlayer();
-                const auto totalS = player.isLoaded() ? player.getTotalLengthSamples() : 0;
-                const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
-                if (totalS > 0)
-                {
-                    const int activeTk = engine.getActiveTakeIdx (index);
-                    const int laneH = juce::jmax (10, inner.getHeight() / takeCountNow);
-                    const auto mapper = TimelineMapper::forLane (inner, totalS);
-                    for (int tk = 0; tk < takeCountNow; ++tk)
-                    {
-                        auto laneR = juce::Rectangle<int> (inner.getX(), inner.getY() + tk * laneH,
-                                                           inner.getWidth(), laneH - 1);
-                        const bool isActive = (tk == activeTk);
-                        const bool isHot    = (compDragTake == tk);
-                        g.setColour (isActive ? brand::lift (brand::bgStrip, 0.05f) : brand::bgDeep);
-                        g.fillRect (laneR);
-
-                        const auto wc = isActive ? brand::lift (getStripColour(), 0.25f)
-                                                 : getStripColour().withAlpha (zynforge::brand::alpha::muted);
-                        g.setColour (wc);
-                        for (const auto& c : engine.getTakeClips (index, tk))
-                        {
-                            const int xL = mapper.toX (c.timelineStartSamples);
-                            const int xR = mapper.toX (c.timelineStartSamples + c.fileLengthSamples);
-                            juce::Rectangle<int> cr (xL, laneR.getY() + 1,
-                                                     juce::jmax (1, xR - xL), laneR.getHeight() - 2);
-                            if (const auto wave = laneWaveFor (c, false); wave.hasAudio())
-                                drawThumbnailVisible (g, *wave.thumb, cr,
-                                    (double) c.fileStartSamples / sr,
-                                    (double) (c.fileStartSamples + c.fileLengthSamples) / sr,
-                                    wave.wholeFile ? -1 : wave.channel, 1.0f);
-                        }
-                        if (isHot)
-                        {
-                            const int a = juce::jmin (compDragStartX, compDragCurX);
-                            const int b = juce::jmax (compDragStartX, compDragCurX);
-                            g.setColour (brand::toolActive().withAlpha (zynforge::brand::alpha::subtle));
-                            g.fillRect (juce::Rectangle<int> (a, laneR.getY(), b - a, laneR.getHeight()));
-                        }
-                        g.setColour (isActive ? brand::accentSolo : brand::textMuted);
-                        g.setFont (brand::type::micro());
-                        g.drawText ((isActive ? juce::String ("COMP  ") : juce::String())
-                                        + engine.getTakeName (index, tk),
-                                    laneR.reduced (3, 0), juce::Justification::topLeft, false);
-                        g.setColour (brand::edge.withAlpha (zynforge::brand::alpha::muted));
-                        g.drawHorizontalLine (laneR.getBottom(), (float) laneR.getX(), (float) laneR.getRight());
-                    }
-                    if (playheadX >= 0 && playheadX < wavePane.getWidth())
-                    {
-                        g.setColour ((liveRecording ? brand::meterHot : brand::accentPlay).withAlpha (zynforge::brand::alpha::prominent));
-                        g.fillRect (juce::Rectangle<int> (headerW + playheadX, 0, 2, getHeight()));
-                    }
-                    return;   // comp lanes replace the normal waveform view
-                }
             }
 
             // When the track has a clip list, the per-clip block renderer
@@ -2063,7 +1986,7 @@ namespace zynforge
                 }
             }
 
-            // (The TAKE chip + swatch/header panel are drawn by paintHeader()
+            // (The swatch/header panel are drawn by paintHeader()
             // at the end, pinned to the scrolled-left edge.)
 
             // ─── Edit cursor overlay (Pro Tools-style insertion point)
@@ -2150,8 +2073,8 @@ namespace zynforge
             return { body.getX() + 2, body.getBottom() - h - 2, w, h };
         }
 
-        // Draws the swatch column, header panel, divider, selection highlight
-        // and TAKE chip at x = hx (the horizontal scroll offset). Called at
+        // Draws the swatch column, header panel, divider and selection highlight
+        // at x = hx (the horizontal scroll offset). Called at
         // the very end of paint() so it sits on top of the waveform; the
         // header's child components (meter / combos / buttons) paint over this
         // because children are painted after their parent.
@@ -2197,23 +2120,6 @@ namespace zynforge
                     g.setColour (brand::brandOrange);
                     g.fillRect (juce::Rectangle<int> (hx + swatchW, 0, 3, getHeight()));
                 }
-
-            // TAKE N / M chip at the header's right edge.
-            const int takeCount  = engine.getTakeCount (index);
-            const int activeTake = engine.getActiveTakeIdx (index);
-            if (takeCount > 1)
-            {
-                const auto label = "TAKE " + juce::String (activeTake + 1)
-                                 + " / " + juce::String (takeCount);
-                auto chip = juce::Rectangle<int> (hx + headerW - 78, 4, 70, 13);
-                g.setColour (brand::sink (brand::featureEngaged, 0.30f));
-                g.fillRoundedRectangle (chip.toFloat(), brand::radius::sm);
-                g.setColour (brand::lift (brand::featureEngaged, 0.40f));
-                g.drawRoundedRectangle (chip.toFloat(), brand::radius::sm, 0.75f);
-                g.setColour (brand::onSignal (brand::sink (brand::featureEngaged, 0.30f)));
-                g.setFont (brand::type::caption());
-                g.drawText (label, chip, juce::Justification::centred, false);
-            }
         }
 
         void resized() override
@@ -2388,31 +2294,7 @@ namespace zynforge
 
         void mouseDown (const juce::MouseEvent& e) override
         {
-            // Comp-lanes swipe: a drag on a take lane pulls that section
-            // into the active comp on mouseUp. Intercepts before the normal
-            // clip-edit hit-test, but only in comp mode.
-            if (showCompLanes && ! e.mods.isPopupMenu() && inWavePane (e.x)
-                && engine.getTakeCount (index) > 1)
-            {
-                auto innerC = getLocalBounds().withTrimmedLeft (headerW)
-                                              .reduced (brand::space::xs, brand::space::sm);
-                if (innerC.contains (e.getPosition()))
-                {
-                    const int takeCountNow = engine.getTakeCount (index);
-                    const int laneH = juce::jmax (10, innerC.getHeight() / takeCountNow);
-                    compDragTake   = juce::jlimit (0, takeCountNow - 1, (e.y - innerC.getY()) / laneH);
-                    compDragStartX = compDragCurX = e.x;
-                    if (auto* page = findParentComponentOfClass<EditPage>())
-                        page->setActiveRowTrackIndex (index);
-                    repaint();
-                    return;
-                }
-            }
-
-            // Mark this row as the active row for Tab-to-Transient.
-            // Any subsequent Tab press will restrict the onset
-            // search to this track's onsets only (instead of the
-            // pooled cross-track list). Reset by clicking on a
+            // Mark this row as the active row. Reset by clicking on a
             // different row.
             if (auto* page = findParentComponentOfClass<EditPage>())
             {
@@ -2563,7 +2445,7 @@ namespace zynforge
                 return;
             }
 
-            // Pro Tools-style edit tool -- Scrubber, Selector, and Fade
+            // Pro Tools-style edit tool -- Selector and Fade
             // intercept the left-click before the normal clip-drag
             // hit-test. Trim / Grabber bias the clip-body branch below.
             // None (nothing selected) behaves identically to Smart.
@@ -2572,8 +2454,7 @@ namespace zynforge
                                       : EditToolsBar::Tool::None;
 
             if (laneMode == LaneMode::Waveform && inWavePane (e.x)
-                && (activeTool == EditToolsBar::Tool::Scrubber
-                 || activeTool == EditToolsBar::Tool::Selector
+                && (activeTool == EditToolsBar::Tool::Selector
                  || activeTool == EditToolsBar::Tool::Fade))
             {
                 auto& player = engine.getPlayer();
@@ -2604,40 +2485,32 @@ namespace zynforge
                         return;
                     }
 
-                    // Scrubber + Selector: park the playhead at the
-                    // click sample. Selector additionally seeds a loop
-                    // region whose end follows mouseDrag.
+                    // Selector: park the playhead at the click sample and
+                    // seed a loop region whose end follows mouseDrag.
                     const auto sx = xToSample (e.x);
                     player.setPositionSamples (sx);
-                    if (activeTool == EditToolsBar::Tool::Selector)
+                    player.clearLoopRegion();
+                    // Tie the range to THIS track: select it (Shift to add
+                    // more tracks). Option/Alt-drag selects the range across
+                    // ALL tracks. The range shading then highlights the
+                    // selected track(s) -- or all of them -- and range edits
+                    // (Delete / Crop) apply to the same set.
+                    if (auto* pg = findParentComponentOfClass<EditPage>())
                     {
-                        player.clearLoopRegion();
-                        // Tie the range to THIS track: select it (Shift to add
-                        // more tracks). Option/Alt-drag selects the range across
-                        // ALL tracks. The range shading then highlights the
-                        // selected track(s) -- or all of them -- and range edits
-                        // (Delete / Crop) apply to the same set.
-                        if (auto* pg = findParentComponentOfClass<EditPage>())
+                        // The range is the target now. Delete and Cmd+X take a
+                        // selected clip first, so an old one would answer for it.
+                        pg->clearSelectedClip();
+                        if (e.mods.isAltDown())
                         {
-                            // The range is the target now. Delete and Cmd+X take a
-                            // selected clip first, so an old one would answer for it.
-                            pg->clearSelectedClip();
-                            if (e.mods.isAltDown())
-                            {
-                                if (pg->onRangeSelectAllTracks) pg->onRangeSelectAllTracks();
-                            }
-                            else if (pg->onRowSelect)
-                                pg->onRowSelect (index, e.mods.isShiftDown());
+                            if (pg->onRangeSelectAllTracks) pg->onRangeSelectAllTracks();
                         }
-                        dragStartX          = e.x;
-                        lastDragSamples     = sx;     // store anchor sample
-                        draggingClipIdx     = -1;
-                        draggingClipMode = ClipDrag::SelectRange;
+                        else if (pg->onRowSelect)
+                            pg->onRowSelect (index, e.mods.isShiftDown());
                     }
-                    else
-                    {
-                        draggingClipMode = ClipDrag::Scrub;
-                    }
+                    dragStartX          = e.x;
+                    lastDragSamples     = sx;     // store anchor sample
+                    draggingClipIdx     = -1;
+                    draggingClipMode = ClipDrag::SelectRange;
                     repaint();
                     return;
                 }
@@ -2989,8 +2862,6 @@ namespace zynforge
                 page != nullptr && page->isTimelineReadOnly())
                 return;
 
-            if (compDragTake >= 0) { compDragCurX = e.x; repaint(); return; }   // comp swipe
-
             // Crossfade midpoint drag. Convert the mouse x to a
             // sample position, then set both adjacent clips' fades
             // so the equal-power crossfade point lands there.
@@ -3102,10 +2973,9 @@ namespace zynforge
                 return;
             }
 
-            // Scrubber / Selector drag -- playhead chases the mouse;
-            // Selector additionally seeds a loop region anchored at the
-            // mouseDown position.
-            if (draggingClipMode == ClipDrag::Scrub || draggingClipMode == ClipDrag::SelectRange)
+            // Selector drag -- a loop region anchored at the mouseDown
+            // position follows the mouse.
+            if (draggingClipMode == ClipDrag::SelectRange)
             {
                 auto& player = engine.getPlayer();
                 const juce::int64 totalSamples = player.isLoaded()
@@ -3116,16 +2986,9 @@ namespace zynforge
                     const double prop = juce::jlimit (0.0, 1.0,
                         (double) (e.x - inner.getX()) / (double) juce::jmax (1, inner.getWidth()));
                     const juce::int64 sx = (juce::int64) (prop * (double) totalSamples);
-                    if (draggingClipMode == ClipDrag::Scrub)
-                    {
-                        player.setPositionSamples (sx);
-                    }
-                    else
-                    {
-                        const juce::int64 a = juce::jmin (lastDragSamples, sx);
-                        const juce::int64 b = juce::jmax (lastDragSamples, sx);
-                        if (b > a) player.selectRange (a, b);
-                    }
+                    const juce::int64 a = juce::jmin (lastDragSamples, sx);
+                    const juce::int64 b = juce::jmax (lastDragSamples, sx);
+                    if (b > a) player.selectRange (a, b);
                     repaint();
                 }
                 return;
@@ -3321,33 +3184,6 @@ namespace zynforge
             const auto* lockPage = findParentComponentOfClass<EditPage>();
             const bool timelineLocked = lockPage != nullptr && lockPage->isTimelineReadOnly();
 
-            // Comp-lanes swipe finished: pull the swiped range from that
-            // take into the active comp.
-            if (compDragTake >= 0)
-            {
-                const int tk = compDragTake;
-                compDragTake = -1;
-                const auto& player = engine.getPlayer();
-                const auto totalS = player.isLoaded() ? player.getTotalLengthSamples() : 0;
-                if (totalS > 0 && ! timelineLocked && tk != engine.getActiveTakeIdx (index))
-                {
-                    auto innerC = getLocalBounds().withTrimmedLeft (headerW)
-                                                  .reduced (brand::space::xs, brand::space::sm);
-                    const auto mapper = TimelineMapper::forLane (innerC, totalS);
-                    const auto a = mapper.toSample (juce::jmin (compDragStartX, compDragCurX));
-                    const auto b = mapper.toSample (juce::jmax (compDragStartX, compDragCurX));
-                    if (b - a > 64)
-                    {
-                        auto* page = findParentComponentOfClass<EditPage>();
-                        if (page != nullptr) page->beginClipEdit();
-                        compFromTake (tk, a, b);
-                        if (page != nullptr) page->commitClipEdit ("Comp swipe");
-                    }
-                }
-                repaint();
-                return;
-            }
-
             // Close the automation drag transaction (if one is open).
             // mouseDown on the Select tool opened it when a point was
             // grabbed; this closes it on mouseUp regardless of whether
@@ -3391,7 +3227,7 @@ namespace zynforge
             else if (reorderActive)
             {
                 // ONE reorderTracks() for the whole drag. It renames the take
-                // files and reloads the player while PRESERVING clip/comp
+                // files and reloads the player while PRESERVING clip
                 // edits -- never follow it with the wiping loadSession(). The
                 // page keeps the playhead, reports failure, and the host
                 // rebuilds rows and rescans peaks asynchronously.
@@ -3497,31 +3333,6 @@ namespace zynforge
         std::vector<std::pair<int, int>> peerClipTargets (int srcIdx) const
         { return clipedit::peerClips (engine, index, srcIdx); }
 
-        // The physical tracks this row's take / comp operations apply to. A
-        // stereo row is ONE logical strip, so L and R must keep one
-        // arrangement: switching, creating or comping a take on L alone left
-        // the R half playing another one.
-        std::vector<int> stripTracks() const
-        {
-            if (stereo && index + 1 < engine.getRecorder().getNumTracks())
-                return { index, index + 1 };
-            return { index };
-        }
-
-        // Both halves or neither: refusing one half would pull a pair apart.
-        void compFromTake (int take, juce::int64 start, juce::int64 end)
-        {
-            const auto tracks = stripTracks();
-            for (int t : tracks)
-                if (engine.compRangeHitsLockedClip (t, start, end))
-                {
-                    if (auto* page = findParentComponentOfClass<EditPage>())
-                        if (page->onStatus) page->onStatus ("A locked clip is in that range -- unlock it to comp");
-                    return;
-                }
-            for (int t : tracks) engine.compRangeFromTake (t, take, start, end);
-        }
-
         // True once the background thumbnail scan has finished for this row's
         // file(s) (an empty/no-source thumbnail counts as loaded). Lets the
         // page persist WaveCache.wfm the moment the whole session is scanned.
@@ -3593,22 +3404,6 @@ namespace zynforge
                     // leaves the others' lists alone.
                     if (chosen == 410) withUndo ("Duplicate clip", [&]{ for (auto [p, pi] : targets) self->engine.duplicateClip (p, pi); });
                     else               withUndo ("Delete clip",    [&]{ for (auto [p, pi] : targets) self->engine.deleteClip    (p, pi); });
-                    return;
-                }
-                case 414:
-                {
-                    if (auto* page = self->findParentComponentOfClass<EditPage>(); page != nullptr && page->normalizeClips)
-                    {
-                        page->normalizeClips (targets);
-                        return;
-                    }
-                    self->setEnabled (false);
-                    self->engine.normalizeClipGroupAsync (targets, -0.3f, [self] (bool)
-                    {
-                        if (self == nullptr) return;
-                        self->setEnabled (true);
-                        self->repaint();
-                    });
                     return;
                 }
                 case 413:
@@ -3788,7 +3583,6 @@ namespace zynforge
             menu.addItem (410, "Duplicate clip",    ! locked);
             menu.addItem (411, "Delete clip",       ! locked);
             menu.addItem (413, "Consolidate clip",  ! locked);
-            menu.addItem (414, "Normalize clip",    ! locked);
             menu.addSeparator();
             menu.addSubMenu ("Clip gain",  gain);
             menu.addSubMenu ("Fade in",    fadeIn,  ! locked);
@@ -4201,37 +3995,6 @@ namespace zynforge
             allMenu.addItem (28, "fit to window");
             menu.addSubMenu ("Set all tracks to", allMenu);
 
-            // Takes (comp playlists) -- engineer captures the current
-            // clip list as a named take, switches between takes for
-            // comping. IDs 800..830 = pick a take; 850 = new take from
-            // current; 851 = rename active take; 852 = delete active.
-            menu.addSeparator();
-            const int takes  = engine.getTakeCount (index);
-            const int active = engine.getActiveTakeIdx (index);
-            juce::PopupMenu takesMenu;
-            for (int i = 0; i < takes && i < 30; ++i)
-                takesMenu.addItem (800 + i, engine.getTakeName (index, i),
-                                   true, i == active);
-            takesMenu.addSeparator();
-            takesMenu.addItem (850, "New take from current");
-            takesMenu.addItem (851, "Rename active take...", takes > 0);
-            takesMenu.addItem (852, "Delete active take",  takes > 1);
-            takesMenu.addItem (860, "Show take lanes (comp)", takes > 1, showCompLanes);
-            // Comp: pull the selected range from another take into the
-            // active comp (swipe-comp via the Range selection). IDs 870+i.
-            const bool haveRange = engine.getPlayer().hasLoopRegion();
-            if (takes > 1)
-            {
-                takesMenu.addSeparator();
-                juce::PopupMenu compMenu;
-                for (int i = 0; i < takes && i < 30; ++i)
-                    compMenu.addItem (870 + i, engine.getTakeName (index, i), haveRange && i != active);
-                takesMenu.addSubMenu (haveRange ? "Comp selection from"
-                                                : "Comp selection from (select a range first)",
-                                      compMenu, haveRange);
-            }
-            menu.addSubMenu ("Take", takesMenu);
-
             // Use a screen-area target (1x1 at the click point) so the menu's
             // anchor doesn't depend on the row component still being alive
             // when the callback fires. SafePointer wraps the row body so a
@@ -4263,27 +4026,7 @@ namespace zynforge
                     if (row->onApplyToAllRows) row->onApplyToAllRows (next, 0);
                     return;
                 }
-
-                if (chosen == 852) row->confirmDeleteActiveTake();
-                else               row->applyTakeMenuChoice (chosen);
             });
-        }
-
-        // A take can hold a whole comp, so losing one takes a second press.
-        void confirmDeleteActiveTake()
-        {
-            juce::Component::SafePointer<TrackRow> self (this);
-            juce::AlertWindow::showAsync (
-                juce::MessageBoxOptions()
-                    .withIconType (juce::MessageBoxIconType::WarningIcon)
-                    .withTitle ("Delete take?")
-                    .withMessage ("Delete \"" + engine.getTakeName (index, engine.getActiveTakeIdx (index))
-                                  + "\" and its edits?\n\nThe recorded files stay on disk, and Cmd+Z restores it.")
-                    .withButton ("Delete")
-                    .withButton ("Cancel"),
-                // The first of two buttons returns 1.
-                [self] (int result)
-                { if (result == 1 && self != nullptr) self->applyTakeMenuChoice (852); });
         }
 
         // One Cmd+Z step around an arrangement edit (no-op edits record none).
@@ -4304,88 +4047,6 @@ namespace zynforge
             if (auto* page = findParentComponentOfClass<EditPage>())
                 return page->canEditTimeline();
             return ! engine.isArrangementFrozen();
-        }
-
-    public:
-        // Apply one item of the row menu's Take submenu (800.. pick, 850 new
-        // take, 851 rename, 852 delete, 860 comp lanes, 870.. comp selection).
-        // Split out of showSizeMenu's async callback so the suite can drive
-        // the take actions without a popup (test seam). Every item applies to
-        // both halves of a stereo row (stripTracks) so L and R keep one
-        // arrangement.
-        void applyTakeMenuChoice (int chosen)
-        {
-            if (chosen == 860)   // toggle comp lanes (a view, not an edit)
-            {
-                showCompLanes = ! showCompLanes;
-                repaint();
-                return;
-            }
-            if (! timelineEditAllowed()) return;
-
-            // Take pick -- 800..829.
-            if (chosen >= 800 && chosen < 830)
-            {
-                clipUndoStep ("Switch take", [&]
-                {
-                    for (int t : stripTracks())
-                        engine.setActiveTake (t, chosen - 800);
-                });
-                return;
-            }
-            // Comp selection from take -- 870..899.
-            if (chosen >= 870 && chosen < 900)
-            {
-                auto& player = engine.getPlayer();
-                if (! player.hasLoopRegion()) return;
-                clipUndoStep ("Comp selection from take", [&]
-                { compFromTake (chosen - 870, player.getLoopStart(), player.getLoopEnd()); });
-                return;
-            }
-            if (chosen == 850)   // new take from current
-            {
-                clipUndoStep ("New take", [&]
-                {
-                    for (int t : stripTracks())
-                        engine.newTakeFromCurrent (t, {});
-                });
-                return;
-            }
-            if (chosen == 851)   // rename active take
-            {
-                const int active = engine.getActiveTakeIdx (index);
-                const auto cur   = engine.getTakeName (index, active);
-                auto* aw = new juce::AlertWindow ("Rename take",
-                    "Take name:", juce::MessageBoxIconType::NoIcon);
-                aw->setLookAndFeel (&getLookAndFeel());   // grey ZynForge chrome
-                aw->addTextEditor ("n", cur, {});
-                dialog::primeNameEditor (*aw, "n");
-                aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
-                aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-                juce::Component::SafePointer<TrackRow> rs (this);
-                aw->enterModalState (true, juce::ModalCallbackFunction::create (
-                    [aw, rs, active] (int r)
-                {
-                    std::unique_ptr<juce::AlertWindow> own (aw);
-                    if (r != 1 || rs == nullptr || ! rs->timelineEditAllowed()) return;
-                    const auto name = own->getTextEditorContents ("n").trim();
-                    rs->clipUndoStep ("Rename take", [&]
-                    {
-                        for (int t : rs->stripTracks())
-                            rs->engine.renameTake (t, active, name);
-                    });
-                }));
-                return;
-            }
-            if (chosen == 852)   // delete active take
-            {
-                clipUndoStep ("Delete take", [&]
-                {
-                    for (int t : stripTracks())
-                        engine.deleteTake (t, engine.getActiveTakeIdx (t));
-                });
-                return;
-            }
         }
 
     public:
@@ -4524,12 +4185,5 @@ namespace zynforge
         bool                      resizeAllDrag         { false };   // Option-drag = resize every row
         bool                      menuOpen              { false };
         bool                      cursorIsResize        { false };
-        // Comp-lanes view: when on (per row, opt-in via the take menu) the
-        // lane splits into the active comp on top + one swipeable lane per
-        // take below. Off by default -> zero change to normal editing.
-        bool                      showCompLanes         { false };
-        int                       compDragTake          { -1 };   // take lane being swiped
-        int                       compDragStartX        { 0 };
-        int                       compDragCurX          { 0 };
     };
 }

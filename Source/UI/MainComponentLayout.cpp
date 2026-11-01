@@ -312,7 +312,7 @@ void MainComponent::resized()
         auto topRow = viewportArea.removeFromTop (44).reduced (2, 0);
         if (editToolsBar != nullptr && editToolsBar->isVisible())
         {
-            const int toolsW = 458;
+            const int toolsW = 394;
             editToolsBar->setBounds (topRow.removeFromRight (toolsW));
             topRow.removeFromRight (brand::space::sm);
         }

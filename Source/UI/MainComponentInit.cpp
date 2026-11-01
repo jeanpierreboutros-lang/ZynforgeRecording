@@ -601,10 +601,6 @@ MainComponent::MainComponent()
             runAutomationEdit (label, std::move (fn));
         });
     editPage->canMutateTimeline = [this] { return canMutateTimeline(); };
-    editPage->normalizeClips = [this] (std::vector<zynforge::EditPage::ClipRef> targets)
-    {
-        normalizeClips (std::move (targets));
-    };
     editPage->tempoEditWrapper = [this] (const juce::String& label, std::function<void()> fn)
     {
         runTempoEdit (label, std::move (fn));

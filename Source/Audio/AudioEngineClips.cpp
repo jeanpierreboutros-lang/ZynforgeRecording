@@ -5,10 +5,8 @@
 // setClipFades, setClipMuted, setClipLocked, setClipGainDb,
 // deleteClip, duplicateClip.
 //
-// Takes / playlist surface: getTakeCount, getActiveTakeIdx,
-// getTakeName, setActiveTake, newTakeFromCurrent, deleteTake,
-// renameTake, playlistsToJson, loadPlaylistsFromJson,
-// seedDefaultClips.
+// Takes / playlist surface: getActiveTakeIdx, getTakeName,
+// playlistsToJson, loadPlaylistsFromJson, seedDefaultClips.
 
 #include "AudioEngine.h"
 #include "CheckedFileStream.h"
@@ -66,11 +64,11 @@ namespace zynforge
     void AudioEngine::seedDefaultClips (bool preserveEdits, bool appendRecordedAudio)
     {
         // Give every track a single full-range clip so the EDIT tools
-        // (Trim / Grabber / Fade / Selector / Scrubber) have something
+        // (Trim / Grabber / Fade / Selector) have something
         // to grab. Without an active clip list, TrackRow's clip-edit
         // hit-test short-circuits and the tools feel dead.
         //
-        // preserveEdits guards against silently wiping comp takes / splits /
+        // preserveEdits guards against silently wiping takes / splits /
         // fades on a SAME-session reload (stop-recording, strip reorder). Only
         // the true session-OPEN path passes false, and its .zfproj restore
         // overwrites these seeds anyway. See the seedDefaultClips ADR.
@@ -81,8 +79,8 @@ namespace zynforge
             return;
         }
 
-        // A track is "edited" (must be preserved) when it has been comped
-        // (>1 take) or its single clip has been shaped away from the plain
+        // A track is "edited" (must be preserved) when it holds several
+        // takes or its single clip has been shaped away from the plain
         // full-range default (split, front-trimmed, faded, gained, muted,
         // moved, or repointed at a cross-track file).
         //
@@ -126,7 +124,7 @@ namespace zynforge
             if (preserveEdits && trackIsEdited (i))
             {
                 // A continuation adds source media after the prior end. Keep
-                // every existing split/trim/comp verbatim and expose only the
+                // every existing split/trim verbatim and expose only the
                 // newly recorded span as a new clip on the active take. A
                 // strip with no media before (oldLength 0) whose arrangement
                 // holds pasted clips gets its whole new take the same way --
@@ -155,8 +153,7 @@ namespace zynforge
             trackClips[(size_t) i].push_back (c);
             player.setTrackClips (i, trackClips[(size_t) i]);
 
-            // Seed Take 1 = current single-clip layout so the engineer
-            // can immediately stamp "Take 2 from current" mid-comp.
+            // Seed Take 1 = current single-clip layout.
             Take t1;
             t1.name  = "Take 1";
             t1.clips = trackClips[(size_t) i];
@@ -262,7 +259,7 @@ namespace zynforge
             syncActiveTake (t);   // keep the active take == trackClips
 
             // A take not playing now still has to line up with the one that
-            // is, or a later comp from it lands on the wrong audio.
+            // is, on the session's one timeline.
             auto& playlist = trackPlaylists[(size_t) t];
             for (int k = 0; k < (int) playlist.takes.size(); ++k)
                 if (k != playlist.activeTake)
@@ -345,12 +342,6 @@ namespace zynforge
         setTempoMap (state.tempoMap);
     }
 
-    int AudioEngine::getTakeCount (int track) const
-    {
-        if (track < 0 || track >= (int) trackPlaylists.size()) return 0;
-        return (int) trackPlaylists[(size_t) track].takes.size();
-    }
-
     int AudioEngine::getActiveTakeIdx (int track) const
     {
         if (track < 0 || track >= (int) trackPlaylists.size()) return -1;
@@ -365,74 +356,8 @@ namespace zynforge
         return p.takes[(size_t) takeIdx].name;
     }
 
-    std::vector<Clip> AudioEngine::getTakeClips (int track, int takeIdx) const
-    {
-        if (track < 0 || track >= (int) trackPlaylists.size()) return {};
-        const auto& p = trackPlaylists[(size_t) track];
-        if (takeIdx < 0 || takeIdx >= (int) p.takes.size()) return {};
-        // The active take's authoritative clips are the live trackClips.
-        if (takeIdx == p.activeTake && track < (int) trackClips.size())
-            return trackClips[(size_t) track];
-        return p.takes[(size_t) takeIdx].clips;
-    }
-
-    void AudioEngine::setActiveTake (int track, int takeIdx)
-    {
-        if (isArrangementFrozen()) return;
-        if (track < 0 || track >= (int) trackPlaylists.size()) return;
-        auto& p = trackPlaylists[(size_t) track];
-        if (takeIdx < 0 || takeIdx >= (int) p.takes.size()) return;
-
-        // Save the current trackClips into the OUTGOING take so a
-        // mid-edit switch doesn't lose work, THEN load the incoming
-        // take into trackClips + republish to the player.
-        if (p.activeTake >= 0 && p.activeTake < (int) p.takes.size())
-            p.takes[(size_t) p.activeTake].clips = trackClips[(size_t) track];
-
-        p.activeTake = takeIdx;
-        trackClips[(size_t) track] = p.takes[(size_t) takeIdx].clips;
-        player.setTrackClips (track, trackClips[(size_t) track]);
-    }
-
-    int AudioEngine::newTakeFromCurrent (int track, const juce::String& name)
-    {
-        if (isArrangementFrozen()) return -1;
-        if (track < 0 || track >= (int) trackPlaylists.size()) return -1;
-        auto& p = trackPlaylists[(size_t) track];
-        Take t;
-        t.name  = name.isNotEmpty() ? name : ("Take " + juce::String ((int) p.takes.size() + 1));
-        t.clips = trackClips[(size_t) track];
-        p.takes.push_back (std::move (t));
-        p.activeTake = (int) p.takes.size() - 1;
-        return p.activeTake;
-    }
-
-    void AudioEngine::deleteTake (int track, int takeIdx)
-    {
-        if (isArrangementFrozen()) return;
-        if (track < 0 || track >= (int) trackPlaylists.size()) return;
-        auto& p = trackPlaylists[(size_t) track];
-        if (takeIdx < 0 || takeIdx >= (int) p.takes.size()) return;
-        if (p.takes.size() <= 1) return;   // never delete the last take
-
-        p.takes.erase (p.takes.begin() + takeIdx);
-        if (takeIdx < p.activeTake) --p.activeTake;
-        if (p.activeTake >= (int) p.takes.size()) p.activeTake = (int) p.takes.size() - 1;
-        trackClips[(size_t) track] = p.takes[(size_t) p.activeTake].clips;
-        player.setTrackClips (track, trackClips[(size_t) track]);
-    }
-
-    void AudioEngine::renameTake (int track, int takeIdx, const juce::String& name)
-    {
-        if (isArrangementFrozen()) return;
-        if (track < 0 || track >= (int) trackPlaylists.size()) return;
-        auto& p = trackPlaylists[(size_t) track];
-        if (takeIdx < 0 || takeIdx >= (int) p.takes.size()) return;
-        p.takes[(size_t) takeIdx].name = name.isNotEmpty() ? name : ("Take " + juce::String (takeIdx + 1));
-    }
-
     // Serialise the full per-track playlist (every Take + every Clip
-    // inside it) so .zfproj round-trips the engineer's comping work.
+    // inside it) so .zfproj round-trips the engineer's work.
     // Without this Takes are RAM-only and lost on app quit -- real
     // data-loss bug fixed here.
     juce::var AudioEngine::playlistsToJson() const
@@ -732,7 +657,7 @@ namespace zynforge
         // Returns true if at least one cut landed (sample strictly inside a
         // clip). Clips may overlap (a paste or move over a neighbour), so
         // stopping at the first one left the others crossing a range edge:
-        // Clear / Ripple / Comp kept them playing inside the range, and
+        // Clear / Ripple kept them playing inside the range, and
         // Consolidate played them again on top of its own render.
         bool splitListAtTimeline (std::vector<Clip>& list, juce::int64 timelineSample)
         {
@@ -928,165 +853,6 @@ namespace zynforge
                 return true;
             }
         };
-
-        // One strip's input to, and result of, a Strip Silence pass.
-        struct SilenceJob
-        {
-            int track { -1 };
-            std::vector<Clip> original;
-            std::vector<Clip> result;
-            bool succeeded { false };
-        };
-
-        // ORs this strip's loud windows into `loud`, sized by the caller.
-        bool markLoudWindows (const juce::File& audioDir, const SilenceJob& job, juce::int64 total,
-                              int win, float thresh, std::vector<char>& loud)
-        {
-            ArrangementSource src;
-            if (! src.open (audioDir, job.track, &job.original)) return false;
-
-            float peak = 0.0f;
-            int inWindow = 0;
-            size_t index = 0;
-            const auto closeWindow = [&]
-            {
-                if (peak >= thresh) loud[index] = 1;
-                ++index;
-                peak = 0.0f;
-                inWindow = 0;
-            };
-            juce::AudioBuffer<float> window (1, kRenderWindowSamples), tmp (1, 0);
-            for (juce::int64 winStart = 0; winStart < total; winStart += kRenderWindowSamples)
-            {
-                const int winLen = (int) juce::jmin<juce::int64> (
-                    kRenderWindowSamples, total - winStart);
-                window.clear (0, 0, winLen);
-                if (! src.mixWindow (window.getWritePointer (0), winStart, winLen, tmp)) return false;
-                const auto* data = window.getReadPointer (0);
-                for (int n = 0; n < winLen; ++n)
-                {
-                    peak = juce::jmax (peak, std::abs (data[n]));
-                    if (++inWindow == win) closeWindow();
-                }
-            }
-            if (inWindow > 0) closeWindow();
-            return true;
-        }
-
-        // Caller holds the structure lock.
-        int silenceGroupKey (AudioEngine& engine, int track)
-        {
-            const int editGroup = engine.getTrackEditGroup (track);
-            if (editGroup >= 0) return -1 - editGroup;
-            auto& recorder = engine.getRecorder();
-            const bool rightHalf = track > 0 && track < recorder.getNumTracks()
-                && recorder.getTrack (track - 1).isStereo.load (std::memory_order_relaxed);
-            return mix::automationChannel (track, rightHalf);   // the pair's L
-        }
-
-        // Strips that must stay in step take ONE decision: a window is silent
-        // only when it is silent on all of them, so a stereo image or an edit
-        // group never loses a slice on one side alone.
-        bool computeStripSilence (const juce::File& audioDir, std::vector<SilenceJob>& jobs,
-                                  const std::vector<int>& group, double sr,
-                                  float thresholdDb, juce::int64 minSilenceSamples,
-                                  juce::int64 minClipSamples, juce::int64 padSamples)
-        {
-            juce::int64 total = 0;
-            for (const int member : group)
-                for (const auto& c : jobs[(size_t) member].original)
-                    total = juce::jmax (total, c.timelineStartSamples + c.fileLengthSamples);
-            if (total <= 0)
-            {
-                for (const int member : group)
-                {
-                    jobs[(size_t) member].result.clear();
-                    jobs[(size_t) member].succeeded = true;
-                }
-                return true;
-            }
-
-            const float thresh = juce::Decibels::decibelsToGain (thresholdDb, -120.0f);
-            const int win = juce::jmax (64, (int) (sr * 0.010));
-            std::vector<char> loud ((size_t) ((total + win - 1) / win), 0);
-            for (const int member : group)
-                if (! markLoudWindows (audioDir, jobs[(size_t) member], total, win, thresh, loud))
-                    return false;
-
-            const juce::int64 minSilWin = juce::jmax<juce::int64> (
-                1, (minSilenceSamples + win - 1) / win);
-            std::vector<std::pair<juce::int64, juce::int64>> runs;
-            int i = 0;
-            const int nw = (int) loud.size();
-            while (i < nw)
-            {
-                while (i < nw && ! loud[(size_t) i]) ++i;
-                if (i >= nw) break;
-                const int runStart = i;
-                while (i < nw)
-                {
-                    if (loud[(size_t) i]) { ++i; continue; }
-                    int sil = i;
-                    while (sil < nw && ! loud[(size_t) sil]) ++sil;
-                    if ((juce::int64) (sil - i) >= minSilWin) break;
-                    i = sil;
-                }
-                runs.emplace_back ((juce::int64) runStart, (juce::int64) i);
-            }
-
-            std::vector<std::pair<juce::int64, juce::int64>> ranges;
-            for (const auto& r : runs)
-            {
-                const auto a = juce::jmax<juce::int64> (0, r.first * win - padSamples);
-                const auto b = juce::jmin<juce::int64> (total, r.second * win + padSamples);
-                if (! ranges.empty() && a <= ranges.back().second)
-                    ranges.back().second = juce::jmax (ranges.back().second, b);
-                else
-                    ranges.emplace_back (a, b);
-            }
-
-            const juce::int64 fade = juce::jmin<juce::int64> (
-                (juce::int64) (sr * 0.005), (juce::int64) win);
-            for (const int member : group)
-            {
-            auto& job = jobs[(size_t) member];
-            auto& out = job.result;
-            out.clear();
-            for (const auto& c : job.original)
-            {
-                // A muted clip renders silence above, so it would get no
-                // slice and vanish. Keep it, like a locked clip.
-                if (c.locked || c.muted) { out.push_back (c); continue; }
-                const auto clipA = c.timelineStartSamples;
-                const auto clipB = clipA + c.fileLengthSamples;
-                for (const auto& r : ranges)
-                {
-                    if (r.second - r.first < juce::jmax<juce::int64> (1, minClipSamples)) continue;
-                    const auto a = juce::jmax (clipA, r.first);
-                    const auto b = juce::jmin (clipB, r.second);
-                    if (b <= a) continue;
-                    // A piece plays what the clip played, so a fade of the
-                    // clip's that runs through it stays on its ramp. Only an
-                    // edge Strip Silence made, with no such fade, gets a short
-                    // anti-click fade, in what room the other fade leaves.
-                    Clip slice = clipSlice (c, a - clipA, b - a);
-                    if (a != clipA && slice.fadeInSamples == 0)
-                        slice.fadeInSamples = juce::jmin (fade, slice.fileLengthSamples / 2,
-                                                          slice.fileLengthSamples - slice.fadeOutSamples);
-                    if (b != clipB && slice.fadeOutSamples == 0)
-                        slice.fadeOutSamples = juce::jmin (fade, slice.fileLengthSamples / 2,
-                                                           slice.fileLengthSamples - slice.fadeInSamples);
-                    out.push_back (std::move (slice));
-                }
-            }
-            std::stable_sort (out.begin(), out.end(), [] (const Clip& a, const Clip& b)
-            {
-                return a.timelineStartSamples < b.timelineStartSamples;
-            });
-            job.succeeded = true;
-            }
-            return true;
-        }
 
         bool sameClipList (const std::vector<Clip>& a, const std::vector<Clip>& b)
         {
@@ -1719,130 +1485,6 @@ namespace zynforge
         return healed;
     }
 
-    int AudioEngine::stripSilence (int track, float thresholdDb,
-                                   juce::int64 minSilenceSamples, juce::int64 minClipSamples,
-                                   juce::int64 padSamples)
-    {
-        const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
-        if (track < 0 || track >= maxTracks) return -1;
-        const auto sessionDir = getActiveSessionDir();
-        if (! sessionDir.isDirectory() || ! ensureClipList (track)) return -1;
-
-        const auto original = clipsFor (track);
-        auto audioDir = sessionDir.getChildFile ("Audio Files");
-        if (! audioDir.isDirectory()) audioDir = sessionDir;
-        const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
-
-        std::vector<SilenceJob> job { { track, original, {}, false } };
-        if (! computeStripSilence (audioDir, job, { 0 }, sr, thresholdDb,
-                                   minSilenceSamples, minClipSamples, padSamples))
-            return -1;
-
-        // An all-silent result is an authoritative EMPTY arrangement.
-        const auto& out = job[0].result;
-        clipsFor (track) = out;
-        player.setTrackClips (track, out);
-        syncActiveTake (track);
-        return (int) out.size();
-    }
-
-    void AudioEngine::stripSilenceAsync (std::vector<int> tracks, float thresholdDb,
-                                         juce::int64 minSilenceSamples,
-                                         juce::int64 minClipSamples,
-                                         juce::int64 padSamples,
-                                         std::function<void (int, int, bool)> completion)
-    {
-        if (isRecording())
-        {
-            if (completion) completion (0, 0, false);
-            return;
-        }
-
-        std::sort (tracks.begin(), tracks.end());
-        tracks.erase (std::unique (tracks.begin(), tracks.end()), tracks.end());
-
-        const auto sessionDir = getActiveSessionDir();
-        if (! sessionDir.isDirectory())
-        {
-            if (completion) completion (0, 0, false);
-            return;
-        }
-        auto audioDir = sessionDir.getChildFile ("Audio Files");
-        if (! audioDir.isDirectory()) audioDir = sessionDir;
-        const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
-
-        std::vector<SilenceJob> jobs;
-        const int maxTracks = juce::jmax (recorder.getNumTracks(), player.getNumTracks());
-        for (const int track : tracks)
-        {
-            if (track < 0 || track >= maxTracks || ! ensureClipList (track)) continue;
-            jobs.push_back ({ track, clipsFor (track), {}, false });
-        }
-
-        // A stereo pair is one strip, and an edit group edits as one.
-        std::map<int, std::vector<int>> groupsByKey;
-        {
-            const juce::ScopedLock structure (recorder.getStructureLock());
-            for (int j = 0; j < (int) jobs.size(); ++j)
-                groupsByKey[silenceGroupKey (*this, jobs[(size_t) j].track)].push_back (j);
-        }
-        std::vector<std::vector<int>> groups;
-        for (auto& entry : groupsByKey) groups.push_back (std::move (entry.second));
-        if (jobs.empty())
-        {
-            if (completion) completion (0, 0, false);
-            return;
-        }
-
-        const auto handle = asyncHandle;
-        const auto layout = recorder.getTrackGeneration();
-        juce::Thread::launch (
-            [handle, sessionDir, audioDir, sr, thresholdDb, minSilenceSamples,
-             minClipSamples, padSamples, layout, jobs = std::move (jobs), groups = std::move (groups),
-             completion = std::move (completion)] () mutable
-        {
-            bool allSucceeded = true;
-            for (const auto& group : groups)
-                allSucceeded = computeStripSilence (audioDir, jobs, group, sr, thresholdDb,
-                                                    minSilenceSamples, minClipSamples, padSamples)
-                            && allSucceeded;
-
-            juce::MessageManager::callAsync (
-                [handle, sessionDir, layout, jobs = std::move (jobs), allSucceeded,
-                 completion = std::move (completion)] () mutable
-            {
-                auto* engine = handle->load (std::memory_order_acquire);
-                if (engine == nullptr) return;
-
-                const bool current = engine->getActiveSessionDir() == sessionDir
-                                  && ! engine->isArrangementFrozen()
-                                  && engine->recorder.getTrackGeneration() == layout;
-                int processed = 0;
-                int clips = 0;
-                if (current)
-                {
-                    for (auto& job : jobs)
-                    {
-                        if (! job.succeeded) continue;
-                        if (job.track < 0 || job.track >= (int) engine->trackClips.size()
-                            || ! sameClipList (engine->trackClips[(size_t) job.track],
-                                              job.original))
-                        {
-                            allSucceeded = false;
-                            continue;
-                        }
-                        engine->clipsFor (job.track) = job.result;
-                        engine->player.setTrackClips (job.track, job.result);
-                        engine->syncActiveTake (job.track);
-                        ++processed;
-                        clips += (int) job.result.size();
-                    }
-                }
-                if (completion)
-                    completion (processed, clips, current && allSucceeded);
-            });
-        });
-    }
     bool AudioEngine::consolidateRange (int track, juce::int64 start, juce::int64 end)
     {
         if (end <= start) return false;
@@ -2202,62 +1844,6 @@ namespace zynforge
         return changed;
     }
 
-    bool AudioEngine::compRangeHitsLockedClip (int track, juce::int64 start, juce::int64 end) const
-    {
-        if (const auto* clips = tryClipsFor (track))
-            for (const auto& clip : *clips)
-                if (clip.locked && clip.timelineStartSamples < end
-                    && clip.timelineStartSamples + clip.fileLengthSamples > start) return true;
-        return false;
-    }
-
-    bool AudioEngine::compRangeFromTake (int track, int sourceTakeIdx,
-                                         juce::int64 start, juce::int64 end)
-    {
-        if (isArrangementFrozen()) return false;
-        if (end <= start) return false;
-        if (track < 0 || track >= (int) trackPlaylists.size()) return false;
-        auto& p = trackPlaylists[(size_t) track];
-        if (sourceTakeIdx < 0 || sourceTakeIdx >= (int) p.takes.size()) return false;
-        // Keep the active take == trackClips before we splice.
-        syncActiveTake (track);
-        if (track >= (int) trackClips.size()) return false;
-        auto& dst = trackClips[(size_t) track];
-
-        if (compRangeHitsLockedClip (track, start, end)) return false;
-
-        // 1. Clear [start, end) in the active comp.
-        splitListAtTimeline (dst, start);
-        splitListAtTimeline (dst, end);
-        for (int i = (int) dst.size() - 1; i >= 0; --i)
-        {
-            const auto cs = dst[(size_t) i].timelineStartSamples;
-            const auto ce = cs + dst[(size_t) i].fileLengthSamples;
-            if (cs >= start && ce <= end && ! dst[(size_t) i].locked)
-                dst.erase (dst.begin() + i);
-        }
-
-        // 2. Splice in the source take's clips intersected with [start, end).
-        const auto srcClips = p.takes[(size_t) sourceTakeIdx].clips;
-        for (const auto& c : srcClips)
-        {
-            const auto cs = c.timelineStartSamples;
-            const auto ce = cs + c.fileLengthSamples;
-            const auto is = juce::jmax (cs, start);
-            const auto ie = juce::jmin (ce, end);
-            if (ie <= is) continue;
-            // The source take's audio exactly as that take played it.
-            dst.push_back (clipSlice (c, is - cs, ie - is));
-        }
-
-        std::sort (dst.begin(), dst.end(),
-                   [] (const Clip& a, const Clip& b)
-                   { return a.timelineStartSamples < b.timelineStartSamples; });
-        player.setTrackClips (track, dst);
-        syncActiveTake (track);
-        return true;
-    }
-
     int AudioEngine::pasteClip (int track, juce::int64 timelineStart,
                                 juce::int64 fileStart, juce::int64 fileLength,
                                 juce::int64 fadeIn, juce::int64 fadeOut, float gainDb,
@@ -2509,202 +2095,6 @@ namespace zynforge
         player.setTrackClips (track, *list);
         syncActiveTake (track);
         return true;
-    }
-
-    float AudioEngine::clipNormalizeGainDb (int track, int clipIndex, float targetDbFS)
-    {
-        const float kFail = std::numeric_limits<float>::quiet_NaN();
-
-        auto* list = validClipList (trackClips, track, clipIndex);
-        if (list == nullptr) return kFail;
-        const auto& c = (*list)[(size_t) clipIndex];
-        if (c.locked) return kFail;
-
-        // The clip's source audio. Fall back to the track's Track_NN.wav when
-        // the clip doesn't carry an explicit file (seeded full-range clip).
-        // For a native-stereo L slot this resolves to the 2-channel file, so
-        // the peak below spans BOTH channels -> one gain covers the pair.
-        auto file = c.audioFile;
-        if (file == juce::File())
-        {
-            int channel = 0;
-            file = getTrackAudioFile (track, &channel);
-            // Native stereo is normalized once, on L, against both channels.
-            // R must not receive a second independently calculated gain.
-            if (channel == 1) return kFail;
-        }
-        if (! file.existsAsFile()) return kFail;
-
-        juce::AudioFormatManager fm; fm.registerBasicFormats();
-        auto reader = ConcatReader::create (fm, findTakeParts (file));
-        if (reader == nullptr || reader->numChannels == 0) return kFail;
-
-        const juce::int64 start = juce::jmax ((juce::int64) 0, c.fileStartSamples);
-        const juce::int64 len   = juce::jmin (c.fileLengthSamples,
-                                              (juce::int64) reader->lengthInSamples - start);
-        if (len <= 0) return kFail;
-
-        // Read-only offline scan for the peak magnitude over the clip's region.
-        float peak = 0.0f;
-        const int block = 1 << 16;
-        juce::AudioBuffer<float> buf ((int) reader->numChannels, block);
-        for (juce::int64 p = 0; p < len; p += block)
-        {
-            const int n = (int) juce::jmin ((juce::int64) block, len - p);
-            if (! reader->read (&buf, 0, n, start + p, true, true)) break;
-            const int firstChannel = c.audioFile != juce::File() && c.sourceChannel >= 0
-                                       ? juce::jlimit (0, buf.getNumChannels() - 1, c.sourceChannel) : 0;
-            const int lastChannel = c.audioFile != juce::File() && c.sourceChannel >= 0
-                                      ? firstChannel + 1 : buf.getNumChannels();
-            for (int ch = firstChannel; ch < lastChannel; ++ch)
-                peak = juce::jmax (peak, buf.getMagnitude (ch, 0, n));
-        }
-        if (peak <= 0.0f) return kFail;   // silent -> nothing to normalize
-
-        return targetDbFS - juce::Decibels::gainToDecibels (peak);
-    }
-
-    void AudioEngine::normalizeClipGroupAsync (std::vector<std::pair<int, int>> targets,
-                                               float targetDbFS,
-                                               std::function<void (bool)> completion)
-    {
-        if (isRecording())
-        {
-            if (completion) completion (false);
-            return;
-        }
-
-        struct Job
-        {
-            int track { -1 };
-            int clipIndex { -1 };
-            Clip clip;
-            juce::File file;
-            int firstChannel { 0 };
-            int channelCount { 1 };
-            bool analyze { true };
-            float gainDb { std::numeric_limits<float>::quiet_NaN() };
-        };
-
-        std::sort (targets.begin(), targets.end());
-        targets.erase (std::unique (targets.begin(), targets.end()), targets.end());
-        std::vector<Job> jobs;
-        for (const auto [track, clipIndex] : targets)
-        {
-            auto* list = validClipList (trackClips, track, clipIndex);
-            if (list == nullptr || (*list)[(size_t) clipIndex].locked) continue;
-            Job job;
-            job.track = track;
-            job.clipIndex = clipIndex;
-            job.clip = (*list)[(size_t) clipIndex];
-            job.file = job.clip.audioFile;
-            if (job.file == juce::File())
-            {
-                int nativeChannel = 0;
-                job.file = getTrackAudioFile (track, &nativeChannel);
-                if (nativeChannel == 1) job.analyze = false; // L scans both native-stereo channels.
-                else                    job.channelCount = 2;
-            }
-            else if (job.clip.sourceChannel >= 0)
-            {
-                job.firstChannel = job.clip.sourceChannel;
-                job.channelCount = 1;
-            }
-            if (! job.file.existsAsFile() && job.analyze) continue;
-            jobs.push_back (std::move (job));
-        }
-        if (jobs.empty())
-        {
-            if (completion) completion (false);
-            return;
-        }
-
-        const auto sessionDir = getActiveSessionDir();
-        const auto handle = asyncHandle;
-        const auto layout = recorder.getTrackGeneration();
-        juce::Thread::launch ([handle, sessionDir, targetDbFS, layout,
-                               jobs = std::move (jobs),
-                               completion = std::move (completion)] () mutable
-        {
-            float sharedGain = 0.0f;
-            bool found = false;
-            for (auto& job : jobs)
-            {
-                if (! job.analyze) continue;
-                juce::AudioFormatManager fm;
-                fm.registerBasicFormats();
-                auto reader = ConcatReader::create (fm, findTakeParts (job.file));
-                if (reader == nullptr || reader->numChannels == 0) continue;
-
-                const auto start = juce::jmax ((juce::int64) 0, job.clip.fileStartSamples);
-                const auto len = juce::jmin (job.clip.fileLengthSamples,
-                                             (juce::int64) reader->lengthInSamples - start);
-                if (len <= 0) continue;
-
-                float peak = 0.0f;
-                constexpr int block = 1 << 16;
-                juce::AudioBuffer<float> buffer ((int) reader->numChannels, block);
-                for (juce::int64 pos = 0; pos < len; pos += block)
-                {
-                    const int count = (int) juce::jmin ((juce::int64) block, len - pos);
-                    if (! reader->read (&buffer, 0, count, start + pos, true, true)) break;
-                    const int first = juce::jlimit (0, buffer.getNumChannels() - 1,
-                                                    job.firstChannel);
-                    const int last = juce::jmin (buffer.getNumChannels(),
-                                                 first + job.channelCount);
-                    for (int channel = first; channel < last; ++channel)
-                        peak = juce::jmax (peak, buffer.getMagnitude (channel, 0, count));
-                }
-                if (peak <= 0.0f) continue;
-                job.gainDb = targetDbFS - juce::Decibels::gainToDecibels (peak);
-                sharedGain = found ? juce::jmin (sharedGain, job.gainDb) : job.gainDb;
-                found = true;
-            }
-
-            juce::MessageManager::callAsync (
-                [handle, sessionDir, layout, jobs = std::move (jobs), sharedGain, found,
-                 completion = std::move (completion)] () mutable
-            {
-                auto* engine = handle->load (std::memory_order_acquire);
-                if (engine == nullptr) return;
-                // Jobs name tracks by index. A strip move puts another channel
-                // at that index, often with a clip of the same position and
-                // length, so the file and span below cannot tell.
-                bool applied = found && engine->getActiveSessionDir() == sessionDir
-                                    && ! engine->isArrangementFrozen()
-                                    && engine->recorder.getTrackGeneration() == layout;
-                if (applied)
-                {
-                    // Do not apply a stale scan to a clip that was moved,
-                    // trimmed, or replaced while the worker was running.
-                    for (const auto& job : jobs)
-                    {
-                        auto* list = validClipList (engine->trackClips, job.track, job.clipIndex);
-                        if (list == nullptr) { applied = false; break; }
-                        const auto& current = (*list)[(size_t) job.clipIndex];
-                        if (current.audioFile != job.clip.audioFile
-                            || current.timelineStartSamples != job.clip.timelineStartSamples
-                            || current.fileStartSamples != job.clip.fileStartSamples
-                            || current.fileLengthSamples != job.clip.fileLengthSamples)
-                        { applied = false; break; }
-                    }
-                }
-                if (applied)
-                    for (const auto& job : jobs)
-                        engine->setClipGainDb (job.track, job.clipIndex, sharedGain);
-                if (completion) completion (applied);
-            });
-        });
-    }
-
-    bool AudioEngine::normalizeClip (int track, int clipIndex, float targetDbFS)
-    {
-        const float gainDb = clipNormalizeGainDb (track, clipIndex, targetDbFS);
-        if (! std::isfinite (gainDb)) return false;
-        // Non-destructive: set the clip gain so the peak hits the target.
-        // setClipGainDb clamps to +12 dB, so a very quiet clip boosts as far
-        // as the clip-gain range allows (the audio file is never altered).
-        return setClipGainDb (track, clipIndex, gainDb);
     }
 
     juce::int64 AudioEngine::nearestZeroCrossing (int track, juce::int64 timelineSample,

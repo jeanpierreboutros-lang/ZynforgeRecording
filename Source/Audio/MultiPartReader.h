@@ -12,7 +12,7 @@ namespace zynforge
     // sidecars (Track_NN.punchbase.<ext>) and consolidate renders
     // (Track_NN_consolidated_K). Parsing "Track_" + getIntValue() read
     // "02_consolidated_1" as track 2, so the analyzers (QC, song
-    // detection, the transient cache) treated a consolidate render as that
+    // detection) treated a consolidate render as that
     // track's take. Only main files count, as in SessionPlayer.
     inline int mainTakeTrackNumber (const juce::File& f)
     {
