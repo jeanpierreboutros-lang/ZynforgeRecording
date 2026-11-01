@@ -93,6 +93,8 @@ namespace zynforge
         // send slot 0.
         std::function<std::vector<std::pair<int, juce::String>>()> getBusList;
         std::function<void (int /*targetBus*/)> onSendTargetChanged;
+        // The engine applies both, so a stereo strip's two halves move as one.
+        std::function<void (bool)> onStreamSendChanged;
 
         // Automation state surfaced to the strip header. Host polls
         // engine state on a slow timer and pushes any changes here

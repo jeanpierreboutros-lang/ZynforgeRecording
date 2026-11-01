@@ -32,10 +32,12 @@ namespace zynforge
                           { return a.sampleOffset < b.sampleOffset; });
     }
 
-    void MarkersManager::drop (juce::int64 sampleOffset, const juce::String& name)
+    void MarkersManager::drop (juce::int64 sampleOffset, const juce::String& name,
+                               const juce::String& type)
     {
         Marker m;
         m.sampleOffset = sampleOffset;
+        m.type = type;
 
         if (name.isNotEmpty())
         {
@@ -81,6 +83,13 @@ namespace zynforge
         return markers[(std::size_t) i];
     }
 
+    int MarkersManager::indexOfId (const juce::String& runtimeId) const
+    {
+        for (int i = 0; i < (int) markers.size(); ++i)
+            if (markers[(std::size_t) i].runtimeId == runtimeId) return i;
+        return -1;
+    }
+
     void MarkersManager::removeMarker (int i)
     {
         if (i < 0 || i >= (int) markers.size()) return;
@@ -100,6 +109,28 @@ namespace zynforge
         if (i < 0 || i >= (int) markers.size()) return;
         markers[(std::size_t) i].sampleOffset = sample;
         sortByPosition();
+        save();
+    }
+
+    void MarkersManager::replaceAll (std::vector<Marker> newMarkers)
+    {
+        markers = std::move (newMarkers);
+        sortByPosition();
+        save();
+    }
+
+    void MarkersManager::insert (Marker marker)
+    {
+        markers.push_back (std::move (marker));
+        sortByPosition();
+        save();
+    }
+
+    void MarkersManager::removeById (const juce::String& runtimeId)
+    {
+        markers.erase (std::remove_if (markers.begin(), markers.end(),
+                                       [&runtimeId] (const Marker& m) { return m.runtimeId == runtimeId; }),
+                       markers.end());
         save();
     }
 

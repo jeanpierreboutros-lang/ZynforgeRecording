@@ -48,7 +48,7 @@ namespace zynforge
                 expectEquals (mix::automationChannel (0, true),  0);   // no track -1
             }
 
-            beginTest ("resolveLanes: static values, lanes, and the monitor mute rule");
+            beginTest ("resolveLanes: static values and lanes");
             {
                 // Fake lanes: channel -> (lane -> value). Missing = fallback.
                 std::map<std::pair<int, int>, float> lanes;
@@ -58,30 +58,75 @@ namespace zynforge
                     return it == lanes.end() ? fallback : it->second;
                 };
 
-                // Stopped, or the lock lost: static values; the monitor mute
-                // applies only while rolling.
-                auto m = mix::resolveLanes (1, 0, -6.0f, 0.25f, true, false, false, read);
+                // Stopped, or the lock lost: static values.
+                auto m = mix::resolveLanes (1, 0, -6.0f, 0.25f, false, read);
                 expectEquals (m.volDb, -6.0f);
                 expectEquals (m.pan, 0.25f);
-                expect (! m.muteLane && ! m.monitorMuted);
-                m = mix::resolveLanes (1, 0, -6.0f, 0.25f, true, true, false, read);
-                expect (! m.muteLane && m.monitorMuted);
+                expect (! m.muteLane);
 
                 // Rolling with lanes: Volume + Mute come from autoCh, Pan
-                // from the strip itself; a Mute lane overrides the static mute
-                // for the monitor.
+                // from the strip itself.
                 lanes[{ 0, (int) mix::Lane::Volume }] = -20.0f;
                 lanes[{ 1, (int) mix::Lane::Volume }] = +6.0f;    // ignored: pair reads ch 0
                 lanes[{ 1, (int) mix::Lane::Pan }]    = -1.0f;
                 lanes[{ 0, (int) mix::Lane::Mute }]   = 0.0f;
-                m = mix::resolveLanes (1, 0, -6.0f, 0.25f, true, true, true, read);
+                m = mix::resolveLanes (1, 0, -6.0f, 0.25f, true, read);
                 expectEquals (m.volDb, -20.0f);
                 expectEquals (m.pan, -1.0f);
-                expect (! m.muteLane && ! m.monitorMuted, "a Mute lane at 0 unmutes the monitor");
+                expect (! m.muteLane);
 
                 lanes[{ 0, (int) mix::Lane::Mute }] = 1.0f;
-                m = mix::resolveLanes (1, 0, -6.0f, 0.25f, false, true, true, read);
-                expect (m.muteLane && m.monitorMuted);
+                m = mix::resolveLanes (1, 0, -6.0f, 0.25f, true, read);
+                expect (m.muteLane);
+            }
+
+            beginTest ("Solo gets a muted strip heard; every other strip stays out");
+            {
+                expect (mix::audible (true, true, {}, true, false), "solo beats the strip's own mute");
+                expect (! mix::audible (true, false, {}, false, false));
+                expect (! mix::audible (false, false, {}, true, false));
+            }
+
+            beginTest ("The stream bus takes mutes and ignores solo");
+            {
+                expect (mix::streamAudible (false, {}, false));
+                expect (! mix::streamAudible (true, {}, false));
+                expect (! mix::streamAudible (false, {}, true));
+                mix::VcaGate soloedVca  { true, false, true };
+                mix::VcaGate mutedVca   { true, true,  false };
+                expect (mix::streamAudible (false, soloedVca, false));
+                expect (! mix::streamAudible (false, mutedVca, false));
+            }
+
+            beginTest ("Trim-Follow offset: a real move, limited; no reference, none");
+            {
+                expectEquals (mix::trimFollowDb (false, 36.0f, 0.0f), 0.0f);
+                expectEquals (mix::trimFollowDb (true, 31.0f, 30.0f), 1.0f);
+                expectEquals (mix::trimFollowDb (true, 72.0f, 0.0f), mix::kTrimFollowMaxUpDb);
+                expectEquals (mix::trimFollowDb (true, -96.0f, 0.0f), mix::kTrimFollowMaxDownDb);
+            }
+
+            beginTest ("The master pair stays a pair on a smaller device, and off stays off");
+            {
+                const auto same = [this] (mix::OutputPair p, int l, int r)
+                {
+                    expectEquals (p.left, l);
+                    expectEquals (p.right, r);
+                };
+                same (mix::masterOutputs (4, 5, 8), 4, 5);
+                same (mix::masterOutputs (8, 9, 2), 0, 1);
+                same (mix::masterOutputs (8, 9, 6), 4, 5);
+                same (mix::masterOutputs (8, 9, 1), 0, 0);
+                same (mix::masterOutputs (0, 1, 0), -1, -1);
+                same (mix::masterOutputs (-1, -1, 8), -1, -1);
+            }
+
+            beginTest ("A mix bus stays off a patched output unless it has nowhere else");
+            {
+                expect (mix::busHeldOffOutputs (true, 8, false));
+                expect (! mix::busHeldOffOutputs (false, 8, false));
+                expect (! mix::busHeldOffOutputs (true, 2, false), "a two-output device is the monitor");
+                expect (! mix::busHeldOffOutputs (true, 8, true), "the engineer said this rig may share");
             }
 
             beginTest ("Post-fader sends follow every mute; pre-fader sends do not");

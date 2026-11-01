@@ -63,6 +63,15 @@ namespace zynforge
 
         void setEnabled (bool e)
         {
+            if (e)
+            {
+                // Pulses are owed from now. Time that passed with the clock
+                // off must not come out as a burst, and a transport already
+                // rolling has to tell the slave where it is.
+                msAtLastPulse.store ((double) juce::Time::getMillisecondCounterHiRes(),
+                                     std::memory_order_relaxed);
+                positionOwed.store (running.load (std::memory_order_acquire), std::memory_order_relaxed);
+            }
             enabled.store (e, std::memory_order_release);
             if (e)
             {
@@ -94,6 +103,7 @@ namespace zynforge
         void sendStart()
         {
             const juce::ScopedLock sl (lock);
+            positionOwed.store (false, std::memory_order_relaxed);
             send (juce::MidiMessage::midiStart());
             // Finding #6: publish the fresh timestamp BEFORE flipping running
             // true (release). The timer reads running with acquire, so once it
@@ -117,6 +127,7 @@ namespace zynforge
         void sendContinueFrom (int midiBeats)
         {
             const juce::ScopedLock sl (lock);
+            positionOwed.store (false, std::memory_order_relaxed);
             send (juce::MidiMessage::songPositionPointer (juce::jlimit (0, 16383, midiBeats)));
             send (juce::MidiMessage::midiContinue());
             msAtLastPulse.store ((double) juce::Time::getMillisecondCounterHiRes(),
@@ -131,9 +142,20 @@ namespace zynforge
         // Stop when it sees the transport has stopped under it.
         void setTransportProbe (std::function<bool()> rolling) { transportRolling = std::move (rolling); }
 
+        // Engine wiring, likewise: how many jumps the transport has made while
+        // rolling, and where it is in MIDI beats. Song Position only reaches
+        // a slave from these, on the clock thread: the jump itself happens in
+        // the audio callback for a loop wrap, which must not send MIDI.
+        void setPositionProbes (std::function<juce::uint32()> jumps, std::function<int()> midiBeats)
+        {
+            transportJumps = std::move (jumps);
+            transportBeats = std::move (midiBeats);
+        }
+
         void sendStop()
         {
             const juce::ScopedLock sl (lock);
+            positionOwed.store (false, std::memory_order_relaxed);
             send (juce::MidiMessage::midiStop());
             running.store (false, std::memory_order_release);
         }
@@ -141,6 +163,12 @@ namespace zynforge
     private:
         void hiResTimerCallback() override
         {
+            // Tracked while stopped too, so a jump made before PLAY is not
+            // taken for one made while rolling.
+            const auto jumps = transportJumps ? transportJumps() : (juce::uint32) 0;
+            const bool jumped = jumps != lastJumps;
+            lastJumps = jumps;
+
             // Acquire on running pairs with the release store in sendStart/
             // sendContinue: if we observe running, we also observe the fresh
             // msAtLastPulse published just before it (finding #6).
@@ -150,6 +178,12 @@ namespace zynforge
             if (transportRolling && ! transportRolling())
             {
                 sendStop();   // slaves would otherwise keep running on their own
+                return;
+            }
+
+            if (positionOwed.exchange (false, std::memory_order_relaxed) || jumped)
+            {
+                sendPosition();
                 return;
             }
 
@@ -171,6 +205,19 @@ namespace zynforge
             msAtLastPulse.store (last, std::memory_order_relaxed);
         }
 
+        // Stop, new Song Position, Continue: a slave ignores Song Position
+        // while it is running.
+        void sendPosition()
+        {
+            const int beats = transportBeats ? transportBeats() : 0;
+            const juce::ScopedLock sl (lock);
+            send (juce::MidiMessage::midiStop());
+            send (juce::MidiMessage::songPositionPointer (juce::jlimit (0, 16383, beats)));
+            send (juce::MidiMessage::midiContinue());
+            msAtLastPulse.store ((double) juce::Time::getMillisecondCounterHiRes(),
+                                 std::memory_order_relaxed);
+        }
+
         void send (const juce::MidiMessage& m)   // caller holds `lock`
         {
             if (output != nullptr) output->sendMessageNow (m);
@@ -188,6 +235,10 @@ namespace zynforge
         std::unique_ptr<juce::MidiOutput>   output;
         std::function<void (const juce::MidiMessage&)> testSink;
         std::function<bool()>               transportRolling;
+        std::function<juce::uint32()>       transportJumps;
+        std::function<int()>                transportBeats;
+        juce::uint32                        lastJumps { 0 };   // clock thread only
+        std::atomic<bool>   positionOwed { false };
         std::atomic<float>  tempoBpm { 120.0f };
         std::atomic<bool>   enabled  { false };
         std::atomic<bool>   running        { false };

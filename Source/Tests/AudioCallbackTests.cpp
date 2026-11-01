@@ -2370,12 +2370,15 @@ namespace zynforge
 
             beginTest ("Trim-follow shifts soundcheck playback by the console gain delta");
             {
-                // Captured at console gain 0 dB (recordTestSession arms the
-                // track, so startRecording snapshots captureInputGainDb=0).
                 const auto dir = recordTestSession (1, 0.5f);
                 {
                     CallbackFixture f (1, 1, 2);
                     f.engine.getPlayer().loadSession (dir);
+                    // The desk read 0 dB when this track was captured.
+                    f.engine.getRecorder().getTrack (0).armed.store (true);
+                    f.engine.setTrackLiveInputGain (0, 0.0f);
+                    f.engine.snapshotCaptureInputGains();
+                    f.engine.getRecorder().getTrack (0).armed.store (false);
                     f.engine.startPlayback();
                     const float baseline = fillPlaybackBuffer (f);
                     expect (baseline > 0.20f);
@@ -2495,6 +2498,43 @@ namespace zynforge
                     f.engine.getPlayer().setPositionSamples (0);
                     f.process (256);
                     expect (f.peakOut (3, 256) < 0.02f);
+                }
+                dir.deleteRecursively();
+            }
+
+            beginTest ("A stereo strip's send keeps a mono bus at the level the send shows");
+            {
+                const auto dir = recordTestSession (2, 0.5f);
+                {
+                    CallbackFixture f (3, 2, 4);
+                    for (int i = 0; i < 3; ++i)
+                        for (int s = 0; s < TrackState::kNumSends; ++s)
+                            f.engine.setTrackSend (i, s, -1, 0.0f, false);
+
+                    f.engine.getPlayer().loadSession (dir);
+                    f.engine.setTrackIsBus (2, true);
+                    f.engine.setTrackOutputRouting (2, 3);
+                    f.engine.setTrackOutputRouting (0, -1);
+                    f.engine.setTrackOutputRouting (1, -1);
+                    f.engine.setTrackSend (0, 0, 2, 0.0f, false);
+                    f.engine.startPlayback();
+                    expect (fillPlaybackBuffer (f) > 0.20f);
+
+                    const auto busPeak = [&]
+                    {
+                        f.engine.getPlayer().setPositionSamples (0);
+                        f.process (256);
+                        return f.peakOut (3, 256);
+                    };
+                    const float oneChannel = busPeak();
+                    expect (oneChannel > 0.20f);
+
+                    f.engine.setTrackStereo (0, true);
+                    f.engine.setTrackSend (0, 0, 2, 0.0f, false);
+                    expectWithinAbsoluteError (busPeak(), oneChannel, 0.01f);
+
+                    f.engine.stopPlayback();
+                    f.engine.setTrackStereo (0, false);
                 }
                 dir.deleteRecursively();
             }
@@ -2685,28 +2725,21 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
-            beginTest ("Punch mode records only the punch-armed tracks");
+            beginTest ("Punch mode records only the armed tracks");
             {
                 // The position-windowed entry / exit is driven by
-                // MainComponent::servicePunch on the UI timer (out of scope
-                // for the headless engine harness). What the engine owns --
-                // and what this asserts -- is the contract servicePunch
-                // relies on: applying the punch-arm map record-arms exactly
-                // the punch-armed tracks, so only those land on disk.
+                // MainComponent::servicePunch on the UI timer (see Main window
+                // guards). What the engine owns -- and what this asserts -- is
+                // that with PUNCH mode on the armed tracks land on disk and
+                // no others.
                 auto sessionDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
                                       .getChildFile ("zynforge-punch-" + juce::Uuid().toString());
                 sessionDir.createDirectory();
                 {
                     CallbackFixture f (2, 2, 2);
                     f.engine.setPunchModeOn (true);
-                    f.engine.setTrackPunchArmed (0, true);
-                    f.engine.setTrackPunchArmed (1, false);
-                    // servicePunch's arm map: armed <- isTrackPunchArmed.
-                    for (int i = 0; i < 2; ++i)
-                        f.engine.getRecorder().getTrack (i).armed.store (
-                            f.engine.isTrackPunchArmed (i), std::memory_order_relaxed);
-                    expect (f.engine.getRecorder().getTrack (0).armed.load());
-                    expect (! f.engine.getRecorder().getTrack (1).armed.load());
+                    f.engine.getRecorder().getTrack (0).armed.store (true, std::memory_order_relaxed);
+                    f.engine.getRecorder().getTrack (1).armed.store (false, std::memory_order_relaxed);
 
                     expect (f.engine.startRecording (sessionDir));
                     f.writeInput (0, 0.30f, 256);

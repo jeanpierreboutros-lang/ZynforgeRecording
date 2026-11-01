@@ -103,12 +103,8 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
             recorder.getTrack (clickTrackIndex).referenceMedia.store (true);
     }
 
-    const double sr = juce::jmax (8000.0, [this]
-    {
-        if (auto* d = engine.getDeviceManager().getCurrentAudioDevice())
-            return d->getCurrentSampleRate();
-        return 48000.0;
-    }());
+    const double sr = juce::jmax (8000.0, engine.getSessionAudioRate() > 0.0
+                                              ? engine.getSessionAudioRate() : 48000.0);
     // Match the session's playback length. An empty new session has no media
     // length yet, so provide three hours: enough for the stated two-hour show
     // plus setup/overtime headroom.
@@ -210,26 +206,29 @@ void MainComponent::generateOrRefreshClickTrack (std::function<void (bool)> comp
 void MainComponent::togglePunchMode()
 {
     const bool on = ! engine.isPunchModeOn();
+    if (on && daemonModeActive())
+    {
+        showStatus ("PUNCH mode needs in-process capture -- the capture daemon cannot punch");
+        return;
+    }
     engine.setPunchModeOn (on);
     if (on)
     {
-        suspendLoopForPunch();
-        // Default: punch-arm every currently-armed track. Engineer can
-        // narrow by un-arming individuals via the track's right-click
-        // menu later.
-        auto& rec = engine.getRecorder();
-        for (int i = 0; i < rec.getNumTracks(); ++i)
-            engine.setTrackPunchArmed (i,
-                rec.getTrack (i).armed.load (std::memory_order_relaxed));
-        showStatus ("Punch mode ON -- set the loop region, then press PLAY");
+        auto& player = engine.getPlayer();
+        const auto pos = player.getPositionSamples();
+        // Only crossing into the range punches, never turning the mode on
+        // inside it.
+        wasInsidePunch = player.isRangeArmed() && pos >= player.getLoopStart() && pos < player.getLoopEnd();
+        showStatus (player.isRangeArmed()
+                        ? "Punch mode ON -- press PLAY; the armed tracks punch through the selected range"
+                        : "Punch mode ON -- select a range in EDIT, then press PLAY");
     }
     else
     {
-        const bool hadCapture = engine.isRecording();
-        if (hadCapture) stopActiveCaptureAsync (false);
-        restoreArmStateAfterPunch();   // leaving punch mode must not keep the forced arms
-        restoreLoopAfterPunch();
-        if (! hadCapture && ! captureMetadataPending) showStatus ("Punch mode OFF");
+        // Only a punch ends here. A live take keeps its two-tap STOP.
+        const bool punchRolling = (punchWindowTakeActive || punchSessionActive) && engine.isRecording();
+        if (punchRolling) stopActiveCaptureAsync (false);
+        if (! punchRolling && ! captureMetadataPending) showStatus ("Punch mode OFF");
     }
 }
 
@@ -240,49 +239,6 @@ bool MainComponent::playheadLockedForPunch()
     if (! engine.getPlayer().isSeekLocked()) return false;
     showStatus ("Punch recording -- the playhead stays put until STOP");
     return true;
-}
-
-void MainComponent::suspendLoopForPunch()
-{
-    if (punchLoopNeedsRestore) return;
-    auto& player = engine.getPlayer();
-    punchLoopWasEnabled = player.isLoopEnabled();
-    punchLoopNeedsRestore = true;
-    player.setLoopEnabled (false); // a loop must not wrap before punch-out
-}
-
-void MainComponent::restoreLoopAfterPunch()
-{
-    if (! punchLoopNeedsRestore) return;
-    engine.getPlayer().setLoopEnabled (punchLoopWasEnabled);
-    punchLoopNeedsRestore = false;
-}
-
-// Capture / restore the engineer's arm layout around a punch. servicePunch has
-// to force `armed = punchArmed` so only the punch-armed tracks hit disk, but
-// that write is destructive: without restoring it, narrowing the punch set (or
-// arming more tracks after enabling PUNCH) silently left those channels
-// disarmed for the NEXT take -- a missed-recording bug on a live rig.
-void MainComponent::snapshotArmStateForPunch()
-{
-    if (! armStateBeforePunch.empty()) return;   // already holding a snapshot
-    auto& rec = engine.getRecorder();
-    const int n = rec.getNumTracks();
-    armStateBeforePunch.resize ((size_t) n);
-    for (int i = 0; i < n; ++i)
-        armStateBeforePunch[(size_t) i] =
-            rec.getTrack (i).armed.load (std::memory_order_relaxed) ? 1 : 0;
-}
-
-void MainComponent::restoreArmStateAfterPunch()
-{
-    if (armStateBeforePunch.empty()) return;
-    auto& rec = engine.getRecorder();
-    const int n = juce::jmin ((int) armStateBeforePunch.size(), rec.getNumTracks());
-    for (int i = 0; i < n; ++i)
-        rec.getTrack (i).armed.store (armStateBeforePunch[(size_t) i] != 0,
-                                      std::memory_order_relaxed);
-    armStateBeforePunch.clear();
 }
 
 void MainComponent::servicePunch()
@@ -306,7 +262,6 @@ void MainComponent::servicePunch()
                 {
                     self->engine.stopPlayback();
                     self->engine.setPunchModeOn (false);
-                    self->restoreLoopAfterPunch();
                     self->punchSessionActive = false;
                     return;
                 }
@@ -314,18 +269,20 @@ void MainComponent::servicePunch()
                 playback.setPositionSamples (self->punchOutSample);
                 self->engine.startPlayback();
             });
-            restoreArmStateAfterPunch();
         }
         return;
     }
-    const auto inside = (pos >= player.getLoopStart() && pos < player.getLoopEnd());
+    // A range nobody selected this run never punches, even in PUNCH mode.
+    const auto inside = player.isRangeArmed() && pos >= player.getLoopStart() && pos < player.getLoopEnd();
 
     if (inside && ! wasInsidePunch && player.isPlaying())
     {
-        // Crossed into the punch window -- punch-in on every punch-armed track:
-        // record fresh audio into the CURRENT session and splice it into the
-        // existing take at the punch-in point (audio before the punch-in and
-        // after the punch-out is preserved). The rest keep playing back.
+        // Crossed into the punch window -- punch-in on every track armed right
+        // now, as the R buttons show: startRecording freezes those arms as in
+        // any take. Fresh audio goes into the CURRENT session and is spliced
+        // into the existing take at the punch-in point (audio before the
+        // punch-in and after the punch-out is preserved). The rest keep
+        // playing back.
         if (! engine.isRecording())
         {
             const auto sessionDir = engine.getActiveSessionDir();
@@ -337,18 +294,16 @@ void MainComponent::servicePunch()
                 wasInsidePunch = inside;
                 return;
             }
+            if (sessionLocked || daemonModeActive())
+            {
+                showStatus (sessionLocked ? "Punch-in refused -- session is LOCKed"
+                                          : "Punch-in refused -- the capture daemon cannot punch");
+                wasInsidePunch = inside;
+                return;
+            }
             // Multi-part takes (auto-split, or built up by continue-recording)
             // are fine now: the splice reads the whole take via ConcatReader and
             // flattens it on stop, so no refusal here.
-            auto& rec = engine.getRecorder();
-
-            // Force-arm only the punch-armed tracks for the punch -- but keep
-            // the engineer's real arm layout so it can be put back on punch-out
-            // (see snapshotArmStateForPunch).
-            snapshotArmStateForPunch();
-            for (int i = 0; i < rec.getNumTracks(); ++i)
-                rec.getTrack (i).armed.store (engine.isTrackPunchArmed (i),
-                                              std::memory_order_relaxed);
             // Splice at the ACTUAL playhead where recording begins (one timer
             // tick past loopStart), so the captured audio lands at the right
             // timeline position instead of being nudged earlier to loopStart.
@@ -356,29 +311,30 @@ void MainComponent::servicePunch()
             if (! engine.startRecording (sessionDir))
             {
                 engine.getRecorder().cancelPunchIn();
-                restoreArmStateAfterPunch();
-                showStatus ("Punch-in failed -- existing take was restored");
+                const auto why = engine.getRecorder().getStartError();
+                showStatus ("Punch-in failed -- existing take is untouched"
+                            + (why.isNotEmpty() ? " (" + why + ")" : juce::String()));
                 wasInsidePunch = inside;
                 return;
             }
+            punchWindowTakeActive = true;
             lastCaptureFinalizationError.clear();
         }
     }
-    else if (! inside && wasInsidePunch && engine.isRecording())
+    else if ((! inside || ! player.isPlaying()) && punchWindowTakeActive && engine.isRecording())
     {
-        // Crossed out -- stop recording cleanly (the splice replaces the
-        // punched region; audio after the punch-out is preserved), then put the
-        // engineer's arm layout back exactly as it was before the punch.
+        // Crossed out, or the transport stopped short of the punch-out -- stop
+        // recording cleanly (the splice replaces the punched region; audio
+        // after the punch-out is preserved). A take this window did not open
+        // is not its to end.
         juce::Component::SafePointer<MainComponent> self (this);
         stopActiveCaptureAsync (false, [self] (bool saved)
         {
             if (self == nullptr || saved) return;
             self->engine.stopPlayback();
             self->engine.setPunchModeOn (false);
-            self->restoreLoopAfterPunch();
             self->punchSessionActive = false;
         });
-        restoreArmStateAfterPunch();
     }
     wasInsidePunch = inside;
 }
@@ -401,10 +357,8 @@ void MainComponent::servicePunchSession()
 
     const bool hadCapture = engine.isRecording();
     if (hadCapture) stopActiveCaptureAsync (false); // safety net
-    restoreArmStateAfterPunch();   // no-op if servicePunch already restored it
     engine.stopPlayback();
     engine.setPunchModeOn (false);
-    restoreLoopAfterPunch();
     punchSessionActive = false;
     recordButton.setButtonText ("RECORD");
     if (! hadCapture && lastCaptureFinalizationError.isEmpty()) showStatus ("Punch complete");
@@ -438,7 +392,34 @@ bool MainComponent::refuseAnalysisNow()
     { showStatus ("Analysis runs after recording stops -- it reads every take file"); return true; }
     if (sessionIoBusy.load())
     { showStatus ("Wait for the session operation to finish"); return true; }
+    if (analysisBusy.load())
+    { showStatus ("An analysis is already running"); return true; }
     return false;
+}
+
+// RECORD must never wait for a report, so a scan holds its own reservation
+// rather than the session's, and the take cancels the scan. Polled from the
+// timer because a take can start from the button, a remote or a punch window.
+void MainComponent::cancelAnalysisForTake()
+{
+    if (analysisBusy.load() && engine.isRecording()) analysisJobs.cancel();
+}
+
+// A report dialog is modal: over a live take it would stand between the
+// engineer and STOP.
+bool MainComponent::analysisResultWanted (const juce::File& scannedSession)
+{
+    if (engine.isRecording() || captureMetadataPending)
+    {
+        showStatus ("Analysis stopped for the take -- run it again after recording");
+        return false;
+    }
+    if (engine.getActiveSessionDir() != scannedSession)
+    {
+        showStatus ("Analysis finished for the previous session; nothing was changed");
+        return false;
+    }
+    return true;
 }
 
 void MainComponent::runNoiseAnalysis()
@@ -480,7 +461,8 @@ void MainComponent::runNoiseAnalysis()
         names.add (engine.getRecorder().getTrack (i).name);
 
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::Thread::launch ([self, sessionDir, names]
+    analysisJobs.start ([self, sessionDir, names] (const std::atomic<bool>& cancel)
+                        -> zynforge::SessionJobRunner::Completion
     {
         const auto findings = zynforge::NoiseAnalyzer::analyseSession (
             sessionDir,
@@ -489,19 +471,21 @@ void MainComponent::runNoiseAnalysis()
                 return (idx >= 0 && idx < names.size())
                     ? names[idx]
                     : juce::String ("Track ") + juce::String (idx + 1);
-            });
+            }, &cancel);
+        if (cancel.load (std::memory_order_relaxed))
+            return [self] { if (self != nullptr) self->showStatus ("Noise analysis stopped: a take started"); };
 
         const auto summary = noiseAnalysisSummary (findings);
 
-        juce::MessageManager::callAsync ([self, summary, findings]
+        return [self, summary, findings, sessionDir]
         {
-            if (self == nullptr) return;
+            if (self == nullptr || ! self->analysisResultWanted (sessionDir)) return;
             self->showStatus (summary);
             // Sortable table replaces the text dump -- engineer clicks
             // column headers to sort by worst hum / most bumps /
             // highest noise floor.
             zynforge::NoiseReportDialog::launch (findings);
-        });
+        };
     });
 }
 
@@ -534,8 +518,12 @@ void MainComponent::runQcAnalysis()
         names.add (engine.getRecorder().getTrack (i).name);
 
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::Thread::launch ([self, sessionDir, audioDir, files, names]
+    analysisJobs.start ([self, sessionDir, audioDir, files, names] (const std::atomic<bool>& cancel)
+                        -> zynforge::SessionJobRunner::Completion
     {
+        const auto stopped = [self]
+        { if (self != nullptr) self->showStatus ("QC stopped: a take started. No report was written."); };
+
         std::vector<zynforge::qc::TrackQc> results;
         for (const auto& f : files)
         {
@@ -548,7 +536,8 @@ void MainComponent::runQcAnalysis()
             // Also skips punch sidecars and Track_NN_consolidated_K renders.
             const int idx = zynforge::mainTakeTrackNumber (f) - 1;
             if (idx < 0) continue;
-            auto q = zynforge::qc::analyzeFile (f);
+            auto q = zynforge::qc::analyzeFile (f, &cancel);
+            if (cancel.load (std::memory_order_relaxed)) return stopped;
             q.trackIndex = idx;
             q.name = (idx < names.size() && names[idx].isNotEmpty()) ? names[idx] : stem;
             results.push_back (std::move (q));
@@ -564,6 +553,8 @@ void MainComponent::runQcAnalysis()
                 missed = (juce::int64) v.getProperty ("missedSamples", -1);
         }
 
+        if (cancel.load (std::memory_order_relaxed)) return stopped;
+
         // Write the morning-after text report next to the exports.
         const auto exportDir = sessionDir.getChildFile ("Export Files");
         exportDir.createDirectory();
@@ -572,25 +563,16 @@ void MainComponent::runQcAnalysis()
         const bool reportSaved = zynforge::atomicfile::writeText (
             reportTxt, zynforge::qc::reportText (sessionDir.getFileName(), results, missed));
 
-        int clipped = 0, totalEvents = 0;
-        for (const auto& q : results)
-            if (q.clipEventCount > 0) { ++clipped; totalEvents += q.clipEventCount; }
-        juce::String summary = juce::String ((int) results.size()) + " track"
-            + (results.size() == 1 ? juce::String() : juce::String ("s")) + " QC'd -- "
-            + (clipped == 0 ? juce::String ("no clipping")
-                            : juce::String (clipped) + " with clipping ("
-                              + juce::String (totalEvents) + " events)")
-            + (missed > 0 ? juce::String (", DROPOUTS: ") + juce::String (missed) + " samples"
-                          : juce::String())
+        juce::String summary = zynforge::qc::statusSummary (results, missed)
             + (reportSaved ? ". Saved " + reportTxt.getFileName() + "."
                            : ". WARNING: report file could not be saved.");
 
-        juce::MessageManager::callAsync ([self, summary, results]() mutable
+        return [self, summary, results, sessionDir] () mutable
         {
-            if (self == nullptr) return;
+            if (self == nullptr || ! self->analysisResultWanted (sessionDir)) return;
             self->showStatus (summary);
             zynforge::QcReportDialog::launch (std::move (results));
-        });
+        };
     });
 }
 
@@ -646,7 +628,9 @@ void MainComponent::promptConsoleConnect()
 
             if (! self->consoleLink.connect (host))
             {
-                self->showStatus ("Console link failed -- check the IP and the network");
+                self->showStatus (zynforge::oscwire::normaliseSourceIp (host).isEmpty()
+                    ? "Enter the console's IP address as numbers, like 192.168.1.50"
+                    : "Console link failed -- check the IP and the network");
                 return;
             }
             zynforge::updateSettings (self->engine.getAppProps(), [&] (juce::PropertiesFile& p)
@@ -671,6 +655,7 @@ void MainComponent::promptConsoleConnect()
             // Show-night state saved with the session (stage patch +
             // gains) comes back automatically on VSC day.
             const auto sess = self->engine.getActiveSessionDir();
+            self->consoleLink.setSessionDir (sess);
             if (sess.isDirectory() && self->consoleLink.loadFrom (sess))
                 self->showStatus ("Console link up: " + host
                             + " -- loaded saved patch + gains from session");
@@ -706,12 +691,26 @@ void MainComponent::wireConsoleLink()
     { if (self != nullptr) self->engine.getRemotes().logOsc (line); };
 }
 
+// A repatch or a head-amp write changes what the take records, so neither goes
+// to the desk while one rolls, whoever asks.
+bool MainComponent::refuseConsoleWriteDuringTake()
+{
+    if (! engine.isRecording() && ! captureMetadataPending) return false;
+    showStatus ("Console changes wait until the take has stopped");
+    return true;
+}
+
 void MainComponent::consoleToggleSoundcheck()
 {
+    if (refuseConsoleWriteDuringTake()) return;
     if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
+    const auto sess = engine.getActiveSessionDir();
+    consoleLink.setSessionDir (sess);
     if (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck
         || (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Unknown && consoleLink.hasStagePatch()))
         consoleLink.exitSoundcheck();
+    else if (! sess.isDirectory())
+        showStatus ("Open a session first -- the show patch is saved with it before the console moves");
     else
         consoleLink.enterSoundcheck();
 }
@@ -719,6 +718,7 @@ void MainComponent::consoleToggleSoundcheck()
 void MainComponent::consoleCaptureGains()
 {
     if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
+    consoleLink.setSessionDir (engine.getActiveSessionDir());
     // jlimit(1, ...) turned an empty session into a 1-channel poll, which then
     // "captured" a single head-amp and saved it as the show's gains.
     const int tracks = engine.getRecorder().getNumTracks();
@@ -763,15 +763,13 @@ void MainComponent::consoleCaptureGains()
 
 void MainComponent::consoleRestoreGains()
 {
+    if (refuseConsoleWriteDuringTake()) return;
     if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
+    consoleLink.setSessionDir (engine.getActiveSessionDir());
     if (consoleLink.getCapturedGains().empty())
     {
-        const auto sess = engine.getActiveSessionDir();
-        if (! (sess.isDirectory() && consoleLink.loadFrom (sess)))
-        {
-            showStatus ("No captured gains -- capture them on show night first");
-            return;
-        }
+        showStatus ("No captured gains in this session -- capture them on show night first");
+        return;
     }
     consoleLink.restoreGains();
 }
@@ -933,50 +931,30 @@ void MainComponent::detectSongsToMarkers()
         return;
     }
 
-    const auto audioDir = sessionDir.getChildFile ("Audio Files").isDirectory()
-                            ? sessionDir.getChildFile ("Audio Files") : sessionDir;
-    auto files = audioDir.findChildFiles (juce::File::findFiles, false,
-                                          "Track_*.wav;Track_*.aif;Track_*.aiff;Track_*.flac");
-    if (files.isEmpty())
+    const auto voices = engine.songScanVoices();
+    if (voices.empty())
     {
         showStatus ("No recorded audio to scan -- record a take first.");
         return;
     }
-    files.sort();
+    const auto arrangement = juce::JSON::toString (engine.playlistsToJson());
 
     showStatus ("Detecting songs (multi-track quorum scan)...");
 
     juce::Component::SafePointer<MainComponent> self (this);
-    juce::Thread::launch ([self, files, sessionDir]
+    analysisJobs.start ([self, voices, sessionDir, arrangement] (const std::atomic<bool>& cancel)
+                        -> zynforge::SessionJobRunner::Completion
     {
         const zynforge::songs::Params params;        // -40 dB / 4 s gap / 60 s min / quorum 2
-        std::vector<std::vector<char>> flags;
         double sr = 48000.0;
-        for (const auto& f : files)
-        {
-            // Skip continuation parts: envelopeFlags treats every file as
-            // starting at t=0, so a Track_NN_partXX would fold set-2 audio onto
-            // the timeline START and add a phantom voice to the quorum, landing
-            // song markers all over the session. Scan main files only (a
-            // consolidate render or punch sidecar is the same phantom voice).
-            if (zynforge::mainTakeTrackNumber (f) <= 0)
-                continue;
-            double fileSr = 0.0;
-            auto fl = zynforge::songs::envelopeFlags (f, params.thresholdDb,
-                                                      params.windowSec, fileSr);
-            if (fileSr > 0.0) sr = fileSr;
-            if (! fl.empty()) flags.push_back (std::move (fl));
-        }
+        const auto flags = zynforge::songs::scanVoices (voices, params, sr, &cancel);
+        if (cancel.load (std::memory_order_relaxed))
+            return [self] { if (self != nullptr) self->showStatus ("Song detection stopped: a take started"); };
         const auto found = zynforge::songs::detect (flags, sr, params);
 
-        juce::MessageManager::callAsync ([self, found, sessionDir]
+        return [self, found, sessionDir, arrangement]
         {
-            if (self == nullptr) return;
-            if (self->engine.getActiveSessionDir() != sessionDir)
-            {
-                self->showStatus ("Song detection finished for the previous session; no markers were changed");
-                return;
-            }
+            if (self == nullptr || ! self->analysisResultWanted (sessionDir)) return;
             if (found.empty())
             {
                 self->showStatus ("No songs detected -- try Marker List to add them by hand.");
@@ -984,18 +962,26 @@ void MainComponent::detectSongsToMarkers()
             }
             // Markers are a timeline edit: a take may have started during the scan.
             if (! self->canMutateTimeline ("adding song markers")) return;
+            if (juce::JSON::toString (self->engine.playlistsToJson()) != arrangement)
+            {
+                self->showStatus ("The arrangement changed during the scan; no markers were added");
+                return;
+            }
             auto& markers = self->engine.getMarkers();
             int n = 0;
             for (const auto& s : found)
-                markers.drop (s.startSample, "Song " + juce::String (++n));
+                markers.drop (s.startSample, "Song " + juce::String (++n), "song");
             self->showStatus (juce::String (n) + " song marker" + (n == 1 ? "" : "s")
                               + " dropped -- rename them in the Marker List.");
-        });
+        };
     });
 }
 
 void MainComponent::writeSoundcheckReport()
 {
+    // Nothing writes to the session volume while a take is rolling.
+    if (engine.isRecording() || captureMetadataPending)
+    { showStatus ("The soundcheck report waits until the take has stopped"); return; }
     const auto sessionDir = engine.getActiveSessionDir();
     if (! sessionDir.isDirectory())
     {
@@ -1104,7 +1090,9 @@ void MainComponent::showSessionProperties()
             : juce::String ("--");
     }
     {
-        const int fmt = obj ? (int) obj->getProperty ("captureFormat") : (int) CaptureFormat::Wav24;
+        // The project file holds the format the session was created with.
+        // The recorder holds the one in use, and only this session is open.
+        const int fmt = (int) engine.getRecorder().getCaptureFormat();
         fields.captureFormat = formatLabel (fmt);
         fields.bitDepth = (fmt == (int) CaptureFormat::Wav16 || fmt == (int) CaptureFormat::Aiff16 || fmt == (int) CaptureFormat::Flac16) ? "16-bit"
                         : (fmt == (int) CaptureFormat::Wav32Float || fmt == (int) CaptureFormat::Aiff32Float)              ? "32-bit float"
@@ -1139,4 +1127,36 @@ void MainComponent::showSessionProperties()
                         self->showStatus ("Saved session properties -- " + sessionDir.getFileName());
                 });
         });
+}
+
+void MainComponent::promptStreamOutputs()
+{
+    auto* aw = new juce::AlertWindow ("Stream Bus Output",
+                                      "The stream bus sums every strip with a STREAM send. Pick the "
+                                      "output pair it feeds. Off leaves it for StereoMix.wav alone.",
+                                      juce::MessageBoxIconType::NoIcon);
+    aw->setLookAndFeel (&laf);
+
+    juce::StringArray pairs ("Off");
+    const int outputs = engine.getCurrentDeviceOutputCount();
+    for (int left = 0; left + 1 < outputs; left += 2)
+        pairs.add ("Out " + juce::String (left + 1) + "-" + juce::String (left + 2));
+    aw->addComboBox ("pair", pairs, "Output:");
+    if (auto* box = aw->getComboBoxComponent ("pair"))
+        box->setSelectedItemIndex (juce::jlimit (0, pairs.size() - 1, (engine.getStreamOutputL() + 2) / 2),
+                                   juce::dontSendNotification);
+    aw->addButton ("Apply",  1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    juce::Component::SafePointer<MainComponent> self (this);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create ([self, aw] (int result)
+    {
+        std::unique_ptr<juce::AlertWindow> dispose (aw);
+        if (self == nullptr || result != 1) return;
+        const int index = aw->getComboBoxComponent ("pair")->getSelectedItemIndex();
+        const int left  = index > 0 ? (index - 1) * 2 : -1;
+        self->engine.setStreamOutputs (left, left >= 0 ? left + 1 : -1);
+        self->showStatus (left >= 0 ? "Stream bus -> Out " + juce::String (left + 1) + "-" + juce::String (left + 2)
+                                    : juce::String ("Stream bus has no output"));
+    }));
 }

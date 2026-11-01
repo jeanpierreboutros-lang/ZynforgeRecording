@@ -3,7 +3,6 @@
 #include "../Theme/BrandTokens.h"
 #include "LedMeter.h"
 #include "FloatingLaunch.h"
-#include "DismissOnOutsideClick.h"
 
 #include <algorithm>
 #include <vector>
@@ -51,16 +50,32 @@ namespace zynforge
             void condemn()
             {
                 for (auto& m : meters) if (m != nullptr) m->detach();
+                condemned = true;
             }
 
             void timerCallback() override
             {
                 const int gen = engine.getRecorder().getTrackGeneration();
-                if (gen != lastGen)
+                // A swap to a session with the same track count changes no
+                // generation, but it still detached these meters.
+                if (gen != lastGen || condemned)
                 {
                     lastGen = gen;
+                    condemned = false;
                     rebuild();      // drop stale meters, rebind to live TrackStates
                     repaint();
+                }
+                refreshNames();
+            }
+
+            void refreshNames()
+            {
+                auto& recorder = engine.getRecorder();
+                for (size_t i = 0; i < names.size() && i < nameTracks.size(); ++i)
+                {
+                    if (nameTracks[i] >= recorder.getNumTracks()) continue;
+                    const auto name = recorder.getTrack (nameTracks[i]).getNameThreadSafe();
+                    if (names[i]->getText() != name) names[i]->setText (name, juce::dontSendNotification);
                 }
             }
 
@@ -68,6 +83,7 @@ namespace zynforge
             {
                 meters.clear();
                 names .clear();
+                nameTracks.clear();
                 const int n = engine.getRecorder().getNumTracks();
                 for (int i = 0; i < n; ++i)
                 {
@@ -85,12 +101,13 @@ namespace zynforge
                     addAndMakeVisible (*m);
                     meters.push_back (std::move (m));
 
-                    auto label = std::make_unique<juce::Label> (juce::String(), t.name);
+                    auto label = std::make_unique<juce::Label> (juce::String(), t.getNameThreadSafe());
                     label->setColour (juce::Label::textColourId, brand::textPrimary);
                     label->setJustificationType (juce::Justification::centred);
                     label->setFont (brand::type::uiLabel());
                     addAndMakeVisible (*label);
                     names.push_back (std::move (label));
+                    nameTracks.push_back (i);
                 }
                 resized();
             }
@@ -143,10 +160,10 @@ namespace zynforge
         private:
             AudioEngine& engine;
             int          lastGen { 0 };
+            bool         condemned { false };
             std::vector<std::unique_ptr<LedMeter>>    meters;
             std::vector<std::unique_ptr<juce::Label>> names;
-            // Click anywhere outside the meterbridge → it closes itself.
-            DismissOnOutsideClick dismisser { *this };
+            std::vector<int>                          nameTracks;
         };
     }
 

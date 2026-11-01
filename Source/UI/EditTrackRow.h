@@ -7,9 +7,11 @@
 
 #include "EditPage.h"
 #include "AutomationToolbar.h"
+#include "ClipEditTargets.h"
 #include "EditToolsBar.h"
 #include "EditTimeRuler.h"
 #include "LivePeakHistory.h"
+#include "WaveCacheFile.h"
 #include "WaveformOverview.h"
 #include "../Audio/MultiPartReader.h"
 #include "../Theme/BrandColors.h"
@@ -22,27 +24,11 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <vector>
 
 namespace zynforge
 {
-    // Waveform thumbnail resolution: samples averaged per drawn min/max
-    // point. Lower = finer detail (and a bigger cache). 128 stays crisp
-    // when a finalized take is zoomed in well past its overview scale. The
-    // WaveCache.wfm on disk bakes thumbnails AT this resolution, so any
-    // change here must invalidate older caches -- hence kWaveCacheVersion,
-    // which is written as a header and re-checked on load. Bump the version
-    // whenever the resolution (or anything else affecting the baked data)
-    // changes, so stale coarse caches are discarded and re-scanned.
-    static constexpr int kThumbResolution = 128;
-    static constexpr int kWaveCacheMagic   = 0x5A574332; // 'ZWC2'
-    // Low byte is a revision: bump it to discard previously-saved caches even
-    // when the resolution is unchanged. rev 2 dropped caches written by the
-    // build that froze thumbnails at a fraction of a second. rev 3 (2026-06-14)
-    // changes the on-disk layout to N length-prefixed shard sections (parallel
-    // scan caches), so pre-rev-3 single-blob caches are dropped + re-scanned.
-    static constexpr int kWaveCacheVersion = (kThumbResolution << 8) | 3;
-
     // Single home for the timeline<->pixel mapping that the EDIT lanes do
     // ~a dozen times. Build one per paint/event from the lane's inner
     // rect + the session length, then map. toX rounds (the form most
@@ -184,6 +170,10 @@ namespace zynforge
         };
         int      draggingClipIdx  { -1 };
         ClipDrag draggingClipMode { ClipDrag::TrimLeft };
+        // The clips a drag edits, resolved once at the first step and held for
+        // the whole gesture: resolving again as the clip travels could land on
+        // the neighbour it was dragged over.
+        std::vector<std::pair<int, int>> dragPeers;
         // Crossfade-midpoint drag. When >= 0, the engineer grabbed
         // the 6 px dot that paints at the midpoint of an overlap
         // between timeline-adjacent clips. draggingXfadeAIdx is the
@@ -218,8 +208,8 @@ namespace zynforge
             : index (trackIdx), stereo (isStereoPair), engine (eng),
               formats (formats),
               thumbCache (cache),
-              thumbnailL (kThumbResolution, formats, cache),
-              thumbnailR (kThumbResolution, formats, cache),
+              thumbnailL (wavecache::kThumbResolution, formats, cache),
+              thumbnailR (wavecache::kThumbResolution, formats, cache),
               meter (engine.getRecorder().getTrack (index))
         {
             if (stereo)
@@ -276,25 +266,29 @@ namespace zynforge
             monButton .setTooltip ("I -- input monitor (green when on); meter reflects live input even when not recording");
             muteButton.setTooltip ("M -- mute the track's playback output (orange when on)");
             soloButton.setTooltip ("S -- solo the track; other unmuted tracks drop out (yellow when on)");
+            // Each toggle reaches the stereo partner and the edit group, as the
+            // same button does on the MIXER strip.
             armButton .onClick = [this]
             {
-                engine.setTrackArmed (index, armButton.getToggleState());
+                for (int t : editGroupPeers())
+                    engine.setTrackArmed (t, armButton.getToggleState());
                 armButton.setToggleState (engine.getRecorder().getTrack (index).armed.load(), juce::dontSendNotification);
             };
             monButton.onClick = [this]
             {
-                engine.getRecorder().getTrack (index).monitor.store (monButton.getToggleState());
-                if (stereo) engine.getRecorder().getTrack (index + 1).monitor.store (monButton.getToggleState());
+                for (int t : editGroupPeers())
+                    if (t < engine.getRecorder().getNumTracks())
+                        engine.getRecorder().getTrack (t).monitor.store (monButton.getToggleState());
             };
             muteButton.onClick = [this]
             {
-                engine.getRecorder().getTrack (index).muted.store (muteButton.getToggleState());
-                if (stereo) engine.getRecorder().getTrack (index + 1).muted.store (muteButton.getToggleState());
+                for (int t : editGroupPeers())
+                    engine.setTrackMuted (t, muteButton.getToggleState());
             };
             soloButton.onClick = [this]
             {
-                engine.getRecorder().getTrack (index).soloed.store (soloButton.getToggleState());
-                if (stereo) engine.getRecorder().getTrack (index + 1).soloed.store (soloButton.getToggleState());
+                for (int t : editGroupPeers())
+                    engine.setTrackSoloed (t, soloButton.getToggleState());
             };
             addAndMakeVisible (armButton);
             addAndMakeVisible (monButton);
@@ -339,6 +333,10 @@ namespace zynforge
                         case 34: self->laneMode = LaneMode::Click;      break;
                         default: return;
                     }
+                    // A focused point belongs to the lane that just left.
+                    if (auto* page = self->findParentComponentOfClass<EditPage>())
+                        if (page->getActiveRowTrackIndex() == self->index)
+                            page->setFocusedPointIdx (-1);
                     // Keep the AUTOMATION toolbar's Lane combo in
                     // lockstep with the per-row VIEW pick, so the
                     // toolbar param the engineer adds/deletes points
@@ -522,8 +520,9 @@ namespace zynforge
             box.addItem (label, id);
         }
 
-        void setWaveformFiles (const juce::File& fL, const juce::File& fRin)
+        void setWaveformFiles (const juce::File& fL, const juce::File& fRin, int monoChannel = 0)
         {
+            monoFileChannel = monoChannel;
             // Native interleaved stereo: the pair is ONE 2-channel file with
             // no separate R file. Point BOTH lanes at it (each draws its own
             // channel) so the stereo image still shows two lanes. Legacy
@@ -532,7 +531,10 @@ namespace zynforge
             const juce::File fR = stereoOneFile ? fL : fRin;
 
             if (fL != currentFileL || fR != currentFileR)
+            {
                 overviewCache.clear();
+                ownThumbs.clear();
+            }
 
             if (fL != currentFileL)
             {
@@ -573,6 +575,49 @@ namespace zynforge
                 thumb.setSource (new juce::FileInputSource (main));
         }
 
+        // What one lane of one clip draws. Row thumbnails hold the strip's own
+        // take, so a clip that plays another file (a consolidate render, a clip
+        // pasted from another strip) needs that file's thumbnail: applying its
+        // offsets to the take drew audio it does not play.
+        struct LaneWave
+        {
+            juce::AudioThumbnail* thumb { nullptr };
+            bool wholeFile { false };   // draw every channel of a one-channel-per-lane file
+            int  channel   { 0 };
+            bool hasAudio() const { return thumb != nullptr && thumb->getTotalLength() > 0.0; }
+        };
+
+        juce::AudioThumbnail* thumbnailForFile (const juce::File& file)
+        {
+            for (auto& own : ownThumbs)
+                if (own.file == file) return own.thumb.get();
+            auto thumb = std::make_unique<juce::AudioThumbnail> (wavecache::kThumbResolution, formats, thumbCache);
+            applyThumbSource (*thumb, file, false);
+            ownThumbs.push_back ({ file, std::move (thumb) });
+            return ownThumbs.back().thumb.get();
+        }
+
+        LaneWave laneWaveFor (const Clip& c, bool rightLane)
+        {
+            const auto& take = rightLane ? currentFileR : currentFileL;
+            if (c.audioFile != juce::File() && c.audioFile != take)
+                return { thumbnailForFile (c.audioFile), false,
+                         c.sourceChannel >= 0 ? juce::jlimit (0, 1, c.sourceChannel) : 0 };
+            if (rightLane) return { &thumbnailR, ! stereoOneFile, stereoOneFile ? 1 : 0 };
+            if (stereo)    return { &thumbnailL, ! stereoOneFile, 0 };
+            return { &thumbnailL, false, monoFileChannel };
+        }
+
+        // The R lane of L's clip clipIdx: R's own clip, which can play its own file.
+        LaneWave rightLaneWaveFor (int clipIdx)
+        {
+            if (! stereo) return {};
+            const auto* list = engine.tryClipsFor (index + 1);
+            const int i = clipedit::peerClipIndex (engine, index, clipIdx, index + 1);
+            if (list == nullptr || i < 0 || i >= (int) list->size()) return {};
+            return laneWaveFor ((*list)[(size_t) i], true);
+        }
+
         // Every waveform the row draws through JUCE's AudioThumbnail goes
         // through here. channel < 0 draws all channels (a whole mono file).
         // JUCE refills its per-pixel cache across the WHOLE area it is given,
@@ -599,20 +644,6 @@ namespace zynforge
             }
             if (channel < 0) thumb.drawChannels (g, area, t0, t1, zoom);
             else             thumb.drawChannel  (g, area, t0, t1, channel, zoom);
-        }
-
-        // Draw one stereo lane. When the pair is a single interleaved file
-        // (stereoOneFile) the L lane is file channel 0 and the R lane channel
-        // 1; otherwise each thumbnail is a whole mono file -> drawChannels.
-        void drawLaneL (juce::Graphics& g, juce::Rectangle<int> area,
-                        double t0, double t1, float zoom)
-        {
-            drawThumbnailVisible (g, thumbnailL, area, t0, t1, stereoOneFile ? 0 : -1, zoom);
-        }
-        void drawLaneR (juce::Graphics& g, juce::Rectangle<int> area,
-                        double t0, double t1, float zoom)
-        {
-            drawThumbnailVisible (g, thumbnailR, area, t0, t1, stereoOneFile ? 1 : -1, zoom);
         }
 
         // Use a short-window median for the body of a zoomed-out take while
@@ -647,8 +678,7 @@ namespace zynforge
             auto it = std::find_if (overviewCache.begin(), overviewCache.end(), matches);
             if (it == overviewCache.end())
             {
-                if (overviewCache.size() >= 4)
-                    overviewCache.erase (overviewCache.begin());
+                ++overviewBuilds;
                 CachedOverview entry;
                 entry.thumbnail = &thumb;
                 entry.channel = channel;
@@ -665,6 +695,7 @@ namespace zynforge
                 overviewCache.push_back (std::move (entry));
                 it = std::prev (overviewCache.end());
             }
+            it->lastPaint = overviewPaint;
 
             const float mid = (float) area.getCentreY();
             const float half = area.getHeight() * 0.5f;
@@ -693,6 +724,7 @@ namespace zynforge
         // gets re-scanned and the waveform grows on screen.
         void reloadCurrentWaveformFiles()
         {
+            ++waveformReloads;
             overviewCache.clear();
             // setSource consults the AudioThumbnailCache by file hash and, if
             // it finds an entry that claims to be fully loaded, returns it
@@ -702,6 +734,7 @@ namespace zynforge
             // thumb first so the now-complete file is re-scanned at full length.
             if (currentFileL.existsAsFile()) applyThumbSource (thumbnailL, currentFileL, true);
             if (currentFileR.existsAsFile()) applyThumbSource (thumbnailR, currentFileR, true);
+            for (auto& own : ownThumbs) applyThumbSource (*own.thumb, own.file, true);
             repaint();
         }
 
@@ -762,12 +795,15 @@ namespace zynforge
         // audio on un-armed rows keeps showing its real thumbnail.
         void holdLiveEnvelopeUntilScanned()
         {
+            // Only a row that captured holds: another keeps its waveform, not
+            // the envelope left over from an earlier take.
+            const bool captured = liveRecording;
             liveRecording = false;
             // Set unconditionally on captured rows: the post-stop re-scan
-            // (forceRefreshWaveforms) re-issues the source right after this, so
+            // (refreshWaveformsOf) re-issues the source right after this, so
             // waveformsLoaded() goes false and paint() only releases the hold
             // once the FRESH scan completes. Checking it here would race that.
-            liveHold = ! recPeakL.empty();
+            liveHold = captured && ! recPeakL.empty();
         }
 
         // Append one column to the live envelope. Called once per UI tick
@@ -978,7 +1014,8 @@ namespace zynforge
                 const double srB = engine.getPlayer().getSampleRate() > 0.0
                                      ? engine.getPlayer().getSampleRate() : 48000.0;
                 const auto backdrop = TimelineMapper::forLane (inner, laneTimelineSamples());
-                auto drawSpan = [&] (juce::int64 timelineStart, juce::int64 fileStart, juce::int64 length)
+                auto drawSpan = [&] (juce::int64 timelineStart, juce::int64 fileStart, juce::int64 length,
+                                     const LaneWave& left, const LaneWave& right)
                 {
                     const int xL = backdrop.toX (timelineStart);
                     const int xR = backdrop.toX (timelineStart + length);
@@ -987,30 +1024,39 @@ namespace zynforge
                     const double t0 = (double) fileStart / srB;
                     const double t1 = (double) (fileStart + length) / srB;
                     g.setColour (waveColour.withAlpha (zynforge::brand::alpha::muted));
+                    auto draw = [&] (const LaneWave& w, juce::Rectangle<int> area)
+                    {
+                        if (w.hasAudio())
+                            drawThumbnailVisible (g, *w.thumb, area, t0, t1,
+                                                  w.wholeFile ? -1 : w.channel, waveZoom (*w.thumb));
+                    };
                     if (stereo)
                     {
                         const int laneH = span.getHeight() / 2;
-                        if (thumbnailL.getTotalLength() > 0.0)
-                            drawLaneL (g, span.withHeight (laneH), t0, t1, waveZoom (thumbnailL));
-                        if (thumbnailR.getTotalLength() > 0.0)
-                            drawLaneR (g, span.withTrimmedTop (laneH), t0, t1, waveZoom (thumbnailR));
+                        draw (left,  span.withHeight (laneH));
+                        draw (right, span.withTrimmedTop (laneH));
                     }
-                    else if (thumbnailL.getTotalLength() > 0.0)
+                    else
                     {
-                        drawThumbnailVisible (g, thumbnailL, span, t0, t1, -1, waveZoom (thumbnailL));
+                        draw (left, span);
                     }
                 };
                 if (const auto* backdropClips = engine.tryClipsFor (index);
                     backdropClips != nullptr && ! backdropClips->empty())
                 {
-                    for (const auto& c : *backdropClips)
-                        drawSpan (c.timelineStartSamples, c.fileStartSamples, c.fileLengthSamples);
+                    for (int i = 0; i < (int) backdropClips->size(); ++i)
+                    {
+                        const auto& c = (*backdropClips)[(size_t) i];
+                        drawSpan (c.timelineStartSamples, c.fileStartSamples, c.fileLengthSamples,
+                                  laneWaveFor (c, false), rightLaneWaveFor (i));
+                    }
                 }
                 else
                 {
                     const double fileSec = juce::jmax (thumbnailL.getTotalLength(),
                                                        stereo ? thumbnailR.getTotalLength() : 0.0);
-                    drawSpan (0, 0, (juce::int64) (fileSec * srB));
+                    drawSpan (0, 0, (juce::int64) (fileSec * srB), laneWaveFor ({}, false),
+                              stereo ? laneWaveFor ({}, true) : LaneWave {});
                 }
             }
 
@@ -1493,7 +1539,7 @@ namespace zynforge
                 const auto& player = engine.getPlayer();
                 const auto totalS = player.isLoaded() ? player.getTotalLengthSamples() : 0;
                 const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
-                if (totalS > 0 && thumbnailL.getTotalLength() > 0.0)
+                if (totalS > 0)
                 {
                     const int activeTk = engine.getActiveTakeIdx (index);
                     const int laneH = juce::jmax (10, inner.getHeight() / takeCountNow);
@@ -1516,9 +1562,11 @@ namespace zynforge
                             const int xR = mapper.toX (c.timelineStartSamples + c.fileLengthSamples);
                             juce::Rectangle<int> cr (xL, laneR.getY() + 1,
                                                      juce::jmax (1, xR - xL), laneR.getHeight() - 2);
-                            drawThumbnailVisible (g, thumbnailL, cr,
-                                (double) c.fileStartSamples / sr,
-                                (double) (c.fileStartSamples + c.fileLengthSamples) / sr, -1, 1.0f);
+                            if (const auto wave = laneWaveFor (c, false); wave.hasAudio())
+                                drawThumbnailVisible (g, *wave.thumb, cr,
+                                    (double) c.fileStartSamples / sr,
+                                    (double) (c.fileStartSamples + c.fileLengthSamples) / sr,
+                                    wave.wholeFile ? -1 : wave.channel, 1.0f);
                         }
                         if (isHot)
                         {
@@ -1642,7 +1690,7 @@ namespace zynforge
                 // thumbnail, or the lane shows blocky garbage instead of the
                 // growing capture. After stop it dims to ember and holds until
                 // the real thumbnail finishes scanning (no blank gap).
-                drawContinueExisting (g, inner, thumbnailL, true, 0, waveZoom (thumbnailL), existingFrac);
+                drawContinueExisting (g, inner, thumbnailL, false, monoFileChannel, waveZoom (thumbnailL), existingFrac);
                 // Live capture glows hot (recording NOW); the post-stop hold dims
                 // to the channel colour so it matches the clean thumbnail that
                 // replaces it (no flash of orange barcode on stop).
@@ -1650,7 +1698,7 @@ namespace zynforge
                 drawRecEnvelope (g, confineLive (inner), recPeakL, vz);
             }
             else if (thumbnailL.getTotalLength() > 0.0 && ! arrangementEmptied)
-                drawWaveOutlined (thumbnailL, inner, true, 0,
+                drawWaveOutlined (thumbnailL, inner, false, monoFileChannel,
                                   0.0, thumbnailL.getTotalLength(), waveZoom (thumbnailL));
             }   // end "! haveClipBlocks" continuous-waveform fallback
 
@@ -1665,8 +1713,10 @@ namespace zynforge
             if (auto* clips = showLive ? nullptr : engine.tryClipsFor (index))
             {
                 const auto& player = engine.getPlayer();
-                const juce::int64 totalSamples = player.isLoaded()
-                    ? player.getTotalLengthSamples() : 0;
+                // The lanes' own span: during a take it is the recording's, and
+                // a block on the file's length stretches against the ruler.
+                const juce::int64 totalSamples = player.isLoaded() && player.getTotalLengthSamples() > 0
+                    ? laneTimelineSamples() : 0;
                 if (totalSamples > 0)
                 {
                     const auto inner2 = wavePane.reduced (brand::space::xs, brand::space::sm);
@@ -1711,7 +1761,9 @@ namespace zynforge
                         // not whatever a continuous full-lane thumbnail would.
                         {
                             auto waveArea = block.withTrimmedTop (headH).reduced (1, 1);
-                            if (waveArea.getHeight() > 2 && thumbnailL.getTotalLength() > 0.0)
+                            const auto waveL = laneWaveFor (c, false);
+                            const auto waveR = rightLaneWaveFor (clipIdx_);
+                            if (waveArea.getHeight() > 2 && waveL.hasAudio())
                             {
                                 juce::Graphics::ScopedSaveState ss (g);
                                 g.reduceClipRegion (waveArea);
@@ -1721,49 +1773,35 @@ namespace zynforge
                                 // the shape visibly grows when boosted and
                                 // shrinks when cut -- matching what you'll hear.
                                 const float gz = juce::Decibels::decibelsToGain (c.gainDb, -60.0f);
-                                // Non-muted clips glow with the forge-heat fill
-                                // (loud = hot); a muted clip stays a dim, cool
-                                // tint so it visibly drops below the rest.
                                 // A muted clip draws a single dim, cool tint so it
                                 // drops below the rest; a live clip gets the same
                                 // solid-body + lighter-outline look as the main
                                 // waveform (drawWaveOutlined) so it reads cleanly.
                                 const auto mutedCol = brand::lift (clipTint, 0.20f).withAlpha (zynforge::brand::alpha::muted);
-                                if (stereo && thumbnailR.getTotalLength() > 0.0)
+                                auto drawClipLane = [&] (const LaneWave& w, juce::Rectangle<int> area)
+                                {
+                                    const float z = waveZoom (*w.thumb) * gz;
+                                    if (! c.muted)
+                                    {
+                                        drawWaveOutlined (*w.thumb, area, w.wholeFile, w.channel, t0, t1, z);
+                                        return;
+                                    }
+                                    g.setColour (mutedCol);
+                                    if (! ((! w.wholeFile || w.thumb->getNumChannels() == 1)
+                                           && drawOverviewWave (g, *w.thumb, area, w.channel, t0, t1, z, mutedCol,
+                                                                mutedCol.withAlpha (brand::alpha::subtle))))
+                                        drawThumbnailVisible (g, *w.thumb, area, t0, t1,
+                                                              w.wholeFile ? -1 : w.channel, z);
+                                };
+                                if (waveR.hasAudio())
                                 {
                                     const int half = waveArea.getHeight() / 2;
-                                    auto la = waveArea.withHeight (half);
-                                    auto ra = waveArea.withTrimmedTop (half);
-                                    if (c.muted)
-                                    {
-                                        g.setColour (mutedCol);
-                                        if (! drawOverviewWave (g, thumbnailL, la, 0, t0, t1,
-                                                                waveZoom (thumbnailL) * gz, mutedCol,
-                                                                mutedCol.withAlpha (brand::alpha::subtle)))
-                                            drawLaneL (g, la, t0, t1, waveZoom (thumbnailL) * gz);
-                                        if (! drawOverviewWave (g, thumbnailR, ra, stereoOneFile ? 1 : 0,
-                                                                t0, t1, waveZoom (thumbnailR) * gz, mutedCol,
-                                                                mutedCol.withAlpha (brand::alpha::subtle)))
-                                            drawLaneR (g, ra, t0, t1, waveZoom (thumbnailR) * gz);
-                                    }
-                                    else
-                                    {
-                                        drawWaveOutlined (thumbnailL, la, ! stereoOneFile, 0, t0, t1, waveZoom (thumbnailL) * gz);
-                                        drawWaveOutlined (thumbnailR, ra, ! stereoOneFile, 1, t0, t1, waveZoom (thumbnailR) * gz);
-                                    }
-                                }
-                                else if (c.muted)
-                                {
-                                    g.setColour (mutedCol);
-                                    if (! (thumbnailL.getNumChannels() == 1
-                                           && drawOverviewWave (g, thumbnailL, waveArea, 0, t0, t1,
-                                                            waveZoom (thumbnailL) * gz, mutedCol,
-                                                            mutedCol.withAlpha (brand::alpha::subtle))))
-                                        drawThumbnailVisible (g, thumbnailL, waveArea, t0, t1, -1, waveZoom (thumbnailL) * gz);
+                                    drawClipLane (waveL, waveArea.withHeight (half));
+                                    drawClipLane (waveR, waveArea.withTrimmedTop (half));
                                 }
                                 else
                                 {
-                                    drawWaveOutlined (thumbnailL, waveArea, true, 0, t0, t1, waveZoom (thumbnailL) * gz);
+                                    drawClipLane (waveL, waveArea);
                                 }
                             }
                         }
@@ -1859,7 +1897,7 @@ namespace zynforge
                         // "runs hot": a warm ember wash + a forge-orange rim, so
                         // the target of Delete / Duplicate / Nudge is
                         // unmistakable and on-brand.
-                        if (selPage != nullptr && selPage->isClipSelected (index, clipIdx_))
+                        if (selPage != nullptr && selPage->isClipSelected (index, c))
                         {
                             const juce::Rectangle<int> sel (xL_, inner2.getY(),
                                                             juce::jmax (1, xR_ - xL_),
@@ -2067,6 +2105,7 @@ namespace zynforge
 
             };   // end drawLane
             drawLane();
+            ageOverviewCache();
 
             // ─── Pinned header, drawn LAST so it floats over the waveform at
             // the scrolled-left edge instead of scrolling off with the row.
@@ -2220,7 +2259,7 @@ namespace zynforge
             header.removeFromLeft (4);
 
             const bool isClickRow =
-                engine.getRecorder().getTrack (index).name == "Click";
+                engine.getRecorder().getTrack (index).referenceMedia.load (std::memory_order_relaxed);
 
             // -------------- LEFT (name + buttons) --------------
             constexpr int leftBlockW = 140;
@@ -2500,8 +2539,7 @@ namespace zynforge
                 //   1. directly on a point handle  -> curve-type picker
                 //   2. with a loop region set      -> range copy / paste / clear
                 //   3. otherwise                   -> row-size menu
-                if (laneMode != LaneMode::Waveform && laneMode != LaneMode::Markers
-                    && inWavePane (e.x))
+                if (shownAutomationParam().has_value() && inWavePane (e.x))
                 {
                     const int hitPoint = hitTestAutomationPoint (e.getPosition());
                     if (hitPoint >= 0)
@@ -2597,6 +2635,9 @@ namespace zynforge
                         // (Delete / Crop) apply to the same set.
                         if (auto* pg = findParentComponentOfClass<EditPage>())
                         {
+                            // The range is the target now. Delete and Cmd+X take a
+                            // selected clip first, so an old one would answer for it.
+                            pg->clearSelectedClip();
                             if (e.mods.isAltDown())
                             {
                                 if (pg->onRangeSelectAllTracks) pg->onRangeSelectAllTracks();
@@ -2856,13 +2897,25 @@ namespace zynforge
                     const float bpm = juce::jlimit (40.0f, 240.0f,
                                                     40.0f + (1.0f - yProp) * 200.0f);
 
+                    // Through the host when there is one: undo, and a click
+                    // track rendered from this map follows it.
+                    auto tempoEdit = [this] (const char* label, std::function<void()> fn)
+                    {
+                        auto* page = findParentComponentOfClass<EditPage>();
+                        if (page != nullptr && page->tempoEditWrapper)
+                            page->tempoEditWrapper (label, std::move (fn));
+                        else
+                            fn();
+                    };
                     switch (toolbar->getTool())
                     {
                         case AutomationToolbar::Tool::AddPoint:
-                            engine.addTempoChange (coord.samplePos, bpm);
+                            tempoEdit ("Add tempo point",
+                                       [this, coord, bpm] { engine.addTempoChange (coord.samplePos, bpm); });
                             break;
                         case AutomationToolbar::Tool::DeletePoint:
-                            engine.removeTempoChangeNear (coord.samplePos, tol);
+                            tempoEdit ("Delete tempo point",
+                                       [this, coord, tol] { engine.removeTempoChangeNear (coord.samplePos, tol); });
                             break;
                         case AutomationToolbar::Tool::Select:
                             // Tempo drag isn't wired yet -- Select on
@@ -2937,6 +2990,12 @@ namespace zynforge
             }
         }
 
+        const Clip* clipOn (int track, int clip) const
+        {
+            const auto* list = engine.tryClipsFor (track);
+            return list != nullptr && clip >= 0 && clip < (int) list->size() ? &(*list)[(size_t) clip] : nullptr;
+        }
+
         void mouseDrag (const juce::MouseEvent& e) override
         {
             // Capture (or its finalization) locked the timeline mid-gesture --
@@ -2995,8 +3054,10 @@ namespace zynforge
                             const int pa = peerClipIndex (peer, draggingXfadeAIdx);
                             const int pb = peerClipIndex (peer, draggingXfadeBIdx);
                             if (pa < 0 || pb < 0) continue;
-                            engine.setClipFades (peer, pa, a.fadeInSamples, aFadeOut);
-                            engine.setClipFades (peer, pb, bFadeIn, b.fadeOutSamples);
+                            if (const auto* out = clipOn (peer, pa))
+                                engine.setClipFades (peer, pa, out->fadeInSamples, aFadeOut);
+                            if (const auto* in = clipOn (peer, pb))
+                                engine.setClipFades (peer, pb, bFadeIn, in->fadeOutSamples);
                         }
                         repaint();
                     }
@@ -3079,7 +3140,7 @@ namespace zynforge
                     {
                         const juce::int64 a = juce::jmin (lastDragSamples, sx);
                         const juce::int64 b = juce::jmax (lastDragSamples, sx);
-                        if (b > a) player.setLoopRegion (a, b);
+                        if (b > a) player.selectRange (a, b);
                     }
                     repaint();
                 }
@@ -3093,6 +3154,7 @@ namespace zynforge
             // accumulating per-frame).
             if (draggingClipIdx >= 0)
             {
+                if (dragPeers.empty()) dragPeers = peerClipTargets (draggingClipIdx);
                 const auto& player = engine.getPlayer();
                 // Map pixels at the scale the clip was GRABBED at. Dragging the
                 // last clip right grows the session on every step, and re-reading
@@ -3111,9 +3173,8 @@ namespace zynforge
                     {
                         const float dB = juce::jlimit (-60.0f, 12.0f,
                             dragStartGainDb + (float) (dragStartGainY - e.y) * 0.15f);
-                        for (int peer : editGroupPeers())
-                            if (const int pi = peerClipIndex (peer, draggingClipIdx); pi >= 0)
-                                engine.setClipGainDb (peer, pi, dB);
+                        for (auto [peer, pi] : dragPeers)
+                            engine.setClipGainDb (peer, pi, dB);
                         repaint();
                     }
                     return;
@@ -3139,9 +3200,12 @@ namespace zynforge
                             const juce::int64 newIn = juce::jlimit<juce::int64> (
                                 0, c.fileLengthSamples - dragStartFadeOut,
                                 dragStartFadeIn + wantSamples);
-                            for (int peer : editGroupPeers())
-                                if (const int pi = peerClipIndex (peer, draggingClipIdx); pi >= 0)
-                                    engine.setClipFades (peer, pi, newIn, dragStartFadeOut);
+                            // Each peer keeps its own fade on the other edge.
+                            for (auto [peer, pi] : dragPeers)
+                                if (const auto* pc = clipOn (peer, pi))
+                                    engine.setClipFades (peer, pi,
+                                                         juce::jmin (newIn, pc->fileLengthSamples - pc->fadeOutSamples),
+                                                         pc->fadeOutSamples);
                         }
                         else
                         {
@@ -3149,9 +3213,10 @@ namespace zynforge
                             const juce::int64 newOut = juce::jlimit<juce::int64> (
                                 0, c.fileLengthSamples - dragStartFadeIn,
                                 dragStartFadeOut - wantSamples);
-                            for (int peer : editGroupPeers())
-                                if (const int pi = peerClipIndex (peer, draggingClipIdx); pi >= 0)
-                                    engine.setClipFades (peer, pi, dragStartFadeIn, newOut);
+                            for (auto [peer, pi] : dragPeers)
+                                if (const auto* pc = clipOn (peer, pi))
+                                    engine.setClipFades (peer, pi, pc->fadeInSamples,
+                                                         juce::jmin (newOut, pc->fileLengthSamples - pc->fadeInSamples));
                         }
                         repaint();
                         return;
@@ -3182,17 +3247,11 @@ namespace zynforge
                             }
                         if (stepSamples != 0)
                         {
-                            // Resolve peers before moving the source clip: peer
-                            // matching uses the original timeline intersection.
-                            std::vector<std::pair<int, int>> peers;
-                            for (int peer : editGroupPeers())
-                                if (const int pi = peerClipIndex (peer, draggingClipIdx); pi >= 0)
-                                    peers.emplace_back (peer, pi);
                             // One bounded delta preserves alignment when any peer
                             // reaches zero, a source edge, or a locked clip.
-                            for (auto [peer, pi] : peers)
+                            for (auto [peer, pi] : dragPeers)
                                 stepSamples = engine.constrainClipEditDelta (peer, pi, mode, stepSamples);
-                            for (auto [peer, pi] : peers) engine.editClip (peer, pi, mode, stepSamples);
+                            for (auto [peer, pi] : dragPeers) engine.editClip (peer, pi, mode, stepSamples);
                             lastDragSamples += stepSamples;
                         }
                         repaint();
@@ -3222,7 +3281,7 @@ namespace zynforge
                     // between adjacent segments are easy to dial in.
                     if (e.mods.isShiftDown())
                         t = std::round (t * 4.0f) / 4.0f;
-                    engine.setAutomationTensionAt (index, p, pointSample, 4096, t);
+                    engine.setAutomationTensionAt (index, p, pointSample, 0, t);
                     repaint();
                 }
                 return;
@@ -3297,8 +3356,7 @@ namespace zynforge
                     {
                         auto* page = findParentComponentOfClass<EditPage>();
                         if (page != nullptr) page->beginClipEdit();
-                        for (int t : stripTracks())
-                            engine.compRangeFromTake (t, tk, a, b);
+                        compFromTake (tk, a, b);
                         if (page != nullptr) page->commitClipEdit ("Comp swipe");
                     }
                 }
@@ -3324,6 +3382,7 @@ namespace zynforge
             draggingPointIdx = -1;
             draggingTensionSegIdx = -1;
             draggingClipIdx  = -1;
+            dragPeers.clear();
             draggingClipMode = ClipDrag::TrimLeft;
             draggingXfadeAIdx = -1;
             draggingXfadeBIdx = -1;
@@ -3373,18 +3432,13 @@ namespace zynforge
                 {
                     if (clickedClipIdx >= 0)
                     {
+                        // Either way it is this clip + the matching clip on the
+                        // R half and every EDIT-group peer.
+                        const auto refs = peerClipTargets (clickedClipIdx);
                         if (e.mods.isShiftDown())
-                            page->toggleSelectedClip (index, clickedClipIdx);
+                            page->toggleSelectedClips (refs, { index, clickedClipIdx });
                         else
-                        {
-                            // Plain click selects this clip + the matching
-                            // clip on every EDIT-group peer.
-                            std::vector<EditPage::ClipRef> refs;
-                            for (int peer : editGroupPeers())
-                                if (const int pi = peerClipIndex (peer, clickedClipIdx); pi >= 0)
-                                    refs.push_back ({ peer, pi });
                             page->setSelectedClips (refs, { index, clickedClipIdx });
-                        }
                     }
                     else if (! e.mods.isShiftDown())
                         page->clearSelectedClip();
@@ -3436,73 +3490,28 @@ namespace zynforge
         juce::String getOutputRoutingTextForTests() const { return outputCombo.getText(); }
         bool         isCondemnedForTests()   const noexcept { return ! rowValid; }
         double       getWaveformSecondsForTests() const { return thumbnailL.getTotalLength(); }
+        int          getOverviewBuildsForTests() const noexcept { return overviewBuilds; }
+        int          getWaveformReloadsForTests() const noexcept { return waveformReloads; }
 
-        // Physical tracks this row's clip edits propagate to: itself plus
-        // every member of its EDIT group (so split / trim / move / fade /
-        // selection stay phase-coherent across grouped tracks). Ungrouped
-        // tracks return just themselves.
-        std::vector<int> editGroupPeers() const
-        {
-            const int g = engine.getTrackEditGroup (index);
-            std::vector<int> v = g < 0 ? std::vector<int> { index }
-                                       : engine.getStripsInEditGroup (g);
-            if (v.empty()) v.push_back (index);
+        // Physical tracks this row's clip edits propagate to: both halves of a
+        // stereo strip plus every member of its EDIT group, so split / trim /
+        // move / fade / selection stay phase-coherent. An ungrouped mono track
+        // returns just itself.
+        std::vector<int> editGroupPeers() const { return clipedit::peerTracks (engine, index); }
 
-            // A collapsed stereo row edits BOTH halves: every peer that is a
-            // stereo L gets its R partner appended (dedup-safe -- a grouped
-            // pair may already carry both). Without this, clip ops on an
-            // ungrouped stereo track hit only the LEFT channel -- the gain
-            // ride the engineer hears splits the stereo image.
-            std::vector<int> out;
-            auto add = [&out] (int t)
-            {
-                if (std::find (out.begin(), out.end(), t) == out.end())
-                    out.push_back (t);
-            };
-            const int n = engine.getRecorder().getNumTracks();
-            for (int t : v)
-            {
-                add (t);
-                if (t + 1 < n
-                    && engine.getRecorder().getTrack (t).isStereo.load (std::memory_order_relaxed))
-                    add (t + 1);
-            }
-            return out;
-        }
-
-        // Resolve the clip on `peer` that corresponds to THIS row's clip
-        // `srcIdx`. A clip index is only meaningful inside one track's list:
-        // two tracks in an edit group can hold different arrangements (one
-        // split, one not), and broadcasting a raw index edited whichever clip
-        // happened to sit at that position on the peer -- bounds-checked in the
-        // engine, so no crash, just a silently wrong edit on the wrong region.
-        // Match by TIMELINE OVERLAP instead: the peer clip containing the
-        // source clip's midpoint. Returns -1 when the peer has nothing there,
-        // in which case the caller skips that peer rather than guessing.
+        // The clip on `peer` that corresponds to THIS row's clip `srcIdx`. A
+        // clip index is only meaningful inside one track's list; see
+        // matchingClipIndex. Returns -1 when the peer has nothing there, in
+        // which case the caller skips that peer rather than guessing.
         int peerClipIndex (int peer, int srcIdx) const
-        {
-            if (peer == index) return srcIdx;
-            const auto* src = engine.tryClipsFor (index);
-            if (src == nullptr || srcIdx < 0 || srcIdx >= (int) src->size()) return -1;
-            const auto& sc = (*src)[(size_t) srcIdx];
-
-            const auto* dst = engine.tryClipsFor (peer);
-            if (dst == nullptr) return -1;
-            return clipIndexAtMidpoint (*dst, sc.timelineStartSamples, sc.fileLengthSamples);
-        }
+        { return clipedit::peerClipIndex (engine, index, srcIdx, peer); }
 
         // Every edit peer's OWN clip for this row's clip `srcIdx` -- the stereo
         // R half and each EDIT-group member -- as (track, clipIndex). Resolve
         // BEFORE mutating anything: a delete / duplicate on one track shifts
         // the source clip a later peerClipIndex() lookup would read.
         std::vector<std::pair<int, int>> peerClipTargets (int srcIdx) const
-        {
-            std::vector<std::pair<int, int>> targets;
-            for (int peer : editGroupPeers())
-                if (const int pi = peerClipIndex (peer, srcIdx); pi >= 0)
-                    targets.emplace_back (peer, pi);
-            return targets;
-        }
+        { return clipedit::peerClips (engine, index, srcIdx); }
 
         // The physical tracks this row's take / comp operations apply to. A
         // stereo row is ONE logical strip, so L and R must keep one
@@ -3515,12 +3524,28 @@ namespace zynforge
             return { index };
         }
 
+        // Both halves or neither: refusing one half would pull a pair apart.
+        void compFromTake (int take, juce::int64 start, juce::int64 end)
+        {
+            const auto tracks = stripTracks();
+            for (int t : tracks)
+                if (engine.compRangeHitsLockedClip (t, start, end))
+                {
+                    if (auto* page = findParentComponentOfClass<EditPage>())
+                        if (page->onStatus) page->onStatus ("A locked clip is in that range -- unlock it to comp");
+                    return;
+                }
+            for (int t : tracks) engine.compRangeFromTake (t, take, start, end);
+        }
+
         // True once the background thumbnail scan has finished for this row's
         // file(s) (an empty/no-source thumbnail counts as loaded). Lets the
         // page persist WaveCache.wfm the moment the whole session is scanned.
         bool waveformsLoaded() const noexcept
         {
-            return thumbnailL.isFullyLoaded() && (! stereo || thumbnailR.isFullyLoaded());
+            return thumbnailL.isFullyLoaded() && (! stereo || thumbnailR.isFullyLoaded())
+                && std::all_of (ownThumbs.begin(), ownThumbs.end(),
+                                [] (const OwnThumb& own) { return own.thumb->isFullyLoaded(); });
         }
 
         Size getRowSize() const noexcept { return rowSize; }
@@ -3537,6 +3562,7 @@ namespace zynforge
         // the menu actions without a popup (test seam).
         void applyClipMenuChoice (int clipIdx, int chosen)
         {
+            if (! timelineEditAllowed()) return;
             const auto* rowClips = engine.tryClipsFor (index);
             if (rowClips == nullptr || clipIdx < 0 || clipIdx >= (int) rowClips->size()) return;
             const auto& clip = (*rowClips)[(size_t) clipIdx];
@@ -3559,13 +3585,7 @@ namespace zynforge
             // guard in pushClipUndo drops no-ops (e.g. selecting the
             // gain the clip already has).
             auto withUndo = [self] (const juce::String& label, auto&& op)
-            {
-                auto* page = self->findParentComponentOfClass<EditPage>();
-                if (page != nullptr) page->beginClipEdit();
-                op();
-                if (page != nullptr) page->commitClipEdit (label);
-                self->repaint();
-            };
+            { self->clipUndoStep (label, op); };
 
             switch (chosen)
             {
@@ -3576,21 +3596,33 @@ namespace zynforge
                 // edited only the LEFT half (the parallel clip lists drift).
                 case 400: withUndo (muted  ? "Unmute clip" : "Mute clip",   [&]{ for (auto [p, pi] : targets) self->engine.setClipMuted  (p, pi, ! muted); });  return;
                 case 401: withUndo (locked ? "Unlock clip" : "Lock clip",   [&]{ for (auto [p, pi] : targets) self->engine.setClipLocked (p, pi, ! locked); }); return;
-                case 410: withUndo ("Duplicate clip", [&]{ for (auto [p, pi] : targets) self->engine.duplicateClip (p, pi); });           return;
-                case 411: withUndo ("Delete clip",    [&]{ for (auto [p, pi] : targets) self->engine.deleteClip    (p, pi); });           return;
+                case 410:
+                case 411:
+                {
+                    if (clipedit::anyLocked (self->engine, targets))
+                    {
+                        if (auto* page = self->findParentComponentOfClass<EditPage>(); page != nullptr && page->onStatus)
+                            page->onStatus ("A peer of this clip is locked -- unlock it first");
+                        return;
+                    }
+                    // Each peer's own index: a duplicate or delete on one track
+                    // leaves the others' lists alone.
+                    if (chosen == 410) withUndo ("Duplicate clip", [&]{ for (auto [p, pi] : targets) self->engine.duplicateClip (p, pi); });
+                    else               withUndo ("Delete clip",    [&]{ for (auto [p, pi] : targets) self->engine.deleteClip    (p, pi); });
+                    return;
+                }
                 case 414:
                 {
-                    auto* page = self->findParentComponentOfClass<EditPage>();
-                    if (page != nullptr) page->beginClipEdit();
+                    if (auto* page = self->findParentComponentOfClass<EditPage>(); page != nullptr && page->normalizeClips)
+                    {
+                        page->normalizeClips (targets);
+                        return;
+                    }
                     self->setEnabled (false);
-                    self->engine.normalizeClipGroupAsync (
-                        targets, -0.3f,
-                        [self] (bool)
+                    self->engine.normalizeClipGroupAsync (targets, -0.3f, [self] (bool)
                     {
                         if (self == nullptr) return;
                         self->setEnabled (true);
-                        if (auto* pageNow = self->findParentComponentOfClass<EditPage>())
-                            pageNow->commitClipEdit ("Normalize clip");
                         self->repaint();
                     });
                     return;
@@ -3602,18 +3634,8 @@ namespace zynforge
                     const auto start = (*clips)[(size_t) clipIdx].timelineStartSamples;
                     const auto end = start + (*clips)[(size_t) clipIdx].fileLengthSamples;
                     if (auto* page = self->findParentComponentOfClass<EditPage>())
-                        page->beginClipEdit();
-                    self->setEnabled (false);
-                    self->engine.consolidateRangeAsync (
-                        self->editGroupPeers(), start, end,
-                        [self] (int, bool)
-                    {
-                        if (self == nullptr) return;
-                        self->setEnabled (true);
-                        if (auto* pageNow = self->findParentComponentOfClass<EditPage>())
-                            pageNow->commitClipEdit ("Consolidate clip");
-                        self->repaint();
-                    });
+                        if (page->consolidateRange)
+                            page->consolidateRange (self->editGroupPeers(), start, end);
                     return;
                 }
                 case 412:
@@ -3633,7 +3655,7 @@ namespace zynforge
                         [aw, rowSafe, clipIdx] (int r)
                     {
                         std::unique_ptr<juce::AlertWindow> own (aw);
-                        if (r != 1 || rowSafe == nullptr) return;
+                        if (r != 1 || rowSafe == nullptr || ! rowSafe->timelineEditAllowed()) return;
                         const auto nm = own->getTextEditorContents ("name").trim();
                         if (nm.isEmpty()) return;
                         auto* page = rowSafe->findParentComponentOfClass<EditPage>();
@@ -3669,7 +3691,7 @@ namespace zynforge
                         [aw, rowSafe, clipIdx] (int r)
                     {
                         std::unique_ptr<juce::AlertWindow> own (aw);
-                        if (r != 1 || rowSafe == nullptr) return;
+                        if (r != 1 || rowSafe == nullptr || ! rowSafe->timelineEditAllowed()) return;
                         const auto txt = own->getTextEditorContents ("dB");
                         const float dB = juce::jlimit (-60.0f, 12.0f, txt.getFloatValue());
                         auto* page = rowSafe->findParentComponentOfClass<EditPage>();
@@ -3810,6 +3832,13 @@ namespace zynforge
             static std::vector<AudioEngine::AutomationPoint> clip;
             return clip;
         }
+        // What those points mean: a dB value pasted into a Pan lane pins it hard
+        // left or right, so they paste only into the kind of lane they left.
+        static AudioEngine::AutomationParam& sharedClipboardParam()
+        {
+            static AudioEngine::AutomationParam param { AudioEngine::AutomationParam::Volume };
+            return param;
+        }
 
         // Returns the index of the automation point under the given
         // (row-local) position, or -1 if none. Hit tolerance is 7 px
@@ -3849,8 +3878,7 @@ namespace zynforge
 
         int hitTestAutomationPoint (juce::Point<int> pos) const
         {
-            if (laneMode == LaneMode::Waveform || laneMode == LaneMode::Markers)
-                return -1;
+            if (! shownAutomationParam().has_value()) return -1;
             const auto& lane = engine.getAutomation (index, currentLaneParam());
             if (lane.empty()) return -1;
 
@@ -3889,14 +3917,27 @@ namespace zynforge
             }
         }
 
+    public:
+        // The automation lane this row draws points for, if it draws any.
+        // currentLaneParam() falls through to Volume for every other lane, so
+        // anything that edits points must ask here first: a Click or Tempo
+        // lane, a Waveform lane and the click strip show none.
+        std::optional<AudioEngine::AutomationParam> shownAutomationParam() const
+        {
+            const bool showsPoints = laneMode == LaneMode::Volume || laneMode == LaneMode::Pan
+                                  || laneMode == LaneMode::Mute;
+            if (! showsPoints || index == clickRowIdx) return {};
+            return currentLaneParam();
+        }
+
+    private:
         // Returns the index of the SEGMENT (i.e. the prev point in
         // the lane) whose tension handle is under the cursor, or -1.
         // Mirrors the paint code: skip Hold + flat segments + ones
         // narrower than 18 px. Tolerance is 6 px around the handle.
         int hitTestTensionHandle (juce::Point<int> pos) const
         {
-            if (laneMode == LaneMode::Waveform || laneMode == LaneMode::Markers)
-                return -1;
+            if (! shownAutomationParam().has_value()) return -1;
             const auto engineParam = currentLaneParam();
             if (engineParam == AudioEngine::AutomationParam::Mute) return -1;
             const auto& lane = engine.getAutomation (index, engineParam);
@@ -4040,7 +4081,7 @@ namespace zynforge
                         auto editFn = [eng = &safe->engine, idx = safe->index,
                                        engineParam, pointSample]
                                       { eng->setAutomationTensionAt (idx, engineParam,
-                                                                      pointSample, 4096, 0.0f); };
+                                                                      pointSample, 0, 0.0f); };
                         if (safe->automationEditWrapper)
                             safe->automationEditWrapper ("Reset automation bend",
                                                           std::move (editFn));
@@ -4062,7 +4103,7 @@ namespace zynforge
                     auto editFn = [eng = &safe->engine, idx = safe->index,
                                    engineParam, pointSample, newCurve]
                                   { eng->setAutomationCurveAt (idx, engineParam,
-                                                                pointSample, 4096, newCurve); };
+                                                                pointSample, 0, newCurve); };
                     if (safe->automationEditWrapper)
                         safe->automationEditWrapper ("Change automation curve",
                                                       std::move (editFn));
@@ -4087,8 +4128,10 @@ namespace zynforge
             m.addItem (601, "Copy automation in range ("
                             + juce::String ((int) rangePoints.size()) + " points)",
                        ! rangePoints.empty());
-            m.addItem (602, "Paste automation at cursor",
-                       ! sharedClipboard().empty());
+            m.addItem (602, canPasteAutomation (engineParam) || sharedClipboard().empty()
+                                ? juce::String ("Paste automation at cursor")
+                                : "Paste automation (copied from a different lane)",
+                       canPasteAutomation (engineParam));
             m.addSeparator();
             m.addItem (603, "Clear automation in range",
                        ! rangePoints.empty());
@@ -4098,43 +4141,49 @@ namespace zynforge
                                  .withTargetScreenArea ({ screenPos.x, screenPos.y, 1, 1 }),
                 [safe, engineParam, inSample, outSample] (int chosen)
                 {
-                    if (safe == nullptr || chosen == 0) return;
-                    auto& eng = safe->engine;
-                    if (chosen == 601)
-                    {
-                        sharedClipboard() = eng.copyAutomationRange (safe->index,
-                                                                      engineParam,
-                                                                      inSample, outSample);
-                    }
-                    else if (chosen == 602)
-                    {
-                        const auto anchor = eng.getEditCursorSample();
-                        if (anchor < 0) return;
-                        auto editFn = [&eng, idx = safe->index, engineParam, anchor]
-                                      { eng.pasteAutomationRange (idx, engineParam, anchor,
-                                                                  sharedClipboard()); };
-                        if (safe->automationEditWrapper)
-                            safe->automationEditWrapper ("Paste automation",
-                                                          std::move (editFn));
-                        else
-                            editFn();
-                        safe->repaint();
-                    }
-                    else if (chosen == 603)
-                    {
-                        auto editFn = [&eng, idx = safe->index, engineParam, inSample, outSample]
-                                      { eng.clearAutomationRange (idx, engineParam,
-                                                                  inSample, outSample); };
-                        if (safe->automationEditWrapper)
-                            safe->automationEditWrapper ("Clear automation range",
-                                                          std::move (editFn));
-                        else
-                            editFn();
-                        safe->repaint();
-                    }
+                    if (safe != nullptr)
+                        safe->applyAutomationRangeChoice (chosen, engineParam, inSample, outSample);
                 });
         }
 
+        bool canPasteAutomation (AudioEngine::AutomationParam lane) const
+        {
+            return ! sharedClipboard().empty() && sharedClipboardParam() == lane;
+        }
+
+    public:
+        // Apply one item of the automation range menu (601 copy, 602 paste,
+        // 603 clear). Split out of the menu callback as a test seam.
+        void applyAutomationRangeChoice (int chosen, AudioEngine::AutomationParam engineParam,
+                                         juce::int64 inSample, juce::int64 outSample)
+        {
+            auto& eng = engine;
+            auto edit = [this] (const char* label, std::function<void()> fn)
+            {
+                if (automationEditWrapper) automationEditWrapper (label, std::move (fn));
+                else                       fn();
+                repaint();
+            };
+            if (chosen == 601)
+            {
+                sharedClipboard() = eng.copyAutomationRange (index, engineParam, inSample, outSample);
+                sharedClipboardParam() = engineParam;
+            }
+            else if (chosen == 602)
+            {
+                const auto anchor = eng.getEditCursorSample();
+                if (anchor < 0 || ! canPasteAutomation (engineParam)) return;
+                edit ("Paste automation", [&eng, idx = index, engineParam, anchor]
+                      { eng.pasteAutomationRange (idx, engineParam, anchor, sharedClipboard()); });
+            }
+            else if (chosen == 603)
+            {
+                edit ("Clear automation range", [&eng, idx = index, engineParam, inSample, outSample]
+                      { eng.clearAutomationRange (idx, engineParam, inSample, outSample); });
+            }
+        }
+
+    private:
         void showSizeMenu (juce::Point<int> screenPos)
         {
             if (menuOpen) return;   // re-entrancy guard
@@ -4231,8 +4280,46 @@ namespace zynforge
                     return;
                 }
 
-                row->applyTakeMenuChoice (chosen);
+                if (chosen == 852) row->confirmDeleteActiveTake();
+                else               row->applyTakeMenuChoice (chosen);
             });
+        }
+
+        // A take can hold a whole comp, so losing one takes a second press.
+        void confirmDeleteActiveTake()
+        {
+            juce::Component::SafePointer<TrackRow> self (this);
+            juce::AlertWindow::showAsync (
+                juce::MessageBoxOptions()
+                    .withIconType (juce::MessageBoxIconType::WarningIcon)
+                    .withTitle ("Delete take?")
+                    .withMessage ("Delete \"" + engine.getTakeName (index, engine.getActiveTakeIdx (index))
+                                  + "\" and its edits?\n\nThe recorded files stay on disk, and Cmd+Z restores it.")
+                    .withButton ("Delete")
+                    .withButton ("Cancel"),
+                // The first of two buttons returns 1.
+                [self] (int result)
+                { if (result == 1 && self != nullptr) self->applyTakeMenuChoice (852); });
+        }
+
+        // One Cmd+Z step around an arrangement edit (no-op edits record none).
+        template <typename Op>
+        void clipUndoStep (const juce::String& label, Op&& op)
+        {
+            auto* page = findParentComponentOfClass<EditPage>();
+            if (page != nullptr) page->beginClipEdit();
+            op();
+            if (page != nullptr) page->commitClipEdit (label);
+            repaint();
+        }
+
+        // Asked again when a menu or dialog that was already open finally
+        // acts: the lock stops new gestures, not one a take caught open.
+        bool timelineEditAllowed() const
+        {
+            if (auto* page = findParentComponentOfClass<EditPage>())
+                return page->canEditTimeline();
+            return ! engine.isArrangementFrozen();
         }
 
     public:
@@ -4244,70 +4331,75 @@ namespace zynforge
         // arrangement.
         void applyTakeMenuChoice (int chosen)
         {
-            auto* row = this;
+            if (chosen == 860)   // toggle comp lanes (a view, not an edit)
+            {
+                showCompLanes = ! showCompLanes;
+                repaint();
+                return;
+            }
+            if (! timelineEditAllowed()) return;
+
             // Take pick -- 800..829.
             if (chosen >= 800 && chosen < 830)
             {
-                for (int t : row->stripTracks())
-                    row->engine.setActiveTake (t, chosen - 800);
-                row->repaint();
+                clipUndoStep ("Switch take", [&]
+                {
+                    for (int t : stripTracks())
+                        engine.setActiveTake (t, chosen - 800);
+                });
                 return;
             }
             // Comp selection from take -- 870..899.
             if (chosen >= 870 && chosen < 900)
             {
-                auto& player = row->engine.getPlayer();
+                auto& player = engine.getPlayer();
                 if (! player.hasLoopRegion()) return;
-                auto* page = row->findParentComponentOfClass<EditPage>();
-                if (page != nullptr) page->beginClipEdit();
-                for (int t : row->stripTracks())
-                    row->engine.compRangeFromTake (t, chosen - 870,
-                                                   player.getLoopStart(), player.getLoopEnd());
-                if (page != nullptr) page->commitClipEdit ("Comp selection from take");
-                row->repaint();
+                clipUndoStep ("Comp selection from take", [&]
+                { compFromTake (chosen - 870, player.getLoopStart(), player.getLoopEnd()); });
                 return;
             }
             if (chosen == 850)   // new take from current
             {
-                for (int t : row->stripTracks())
-                    row->engine.newTakeFromCurrent (t, {});
-                row->repaint();
-                return;
-            }
-            if (chosen == 860)   // toggle comp lanes
-            {
-                row->showCompLanes = ! row->showCompLanes;
-                row->repaint();
+                clipUndoStep ("New take", [&]
+                {
+                    for (int t : stripTracks())
+                        engine.newTakeFromCurrent (t, {});
+                });
                 return;
             }
             if (chosen == 851)   // rename active take
             {
-                const int active = row->engine.getActiveTakeIdx (row->index);
-                const auto cur   = row->engine.getTakeName (row->index, active);
+                const int active = engine.getActiveTakeIdx (index);
+                const auto cur   = engine.getTakeName (index, active);
                 auto* aw = new juce::AlertWindow ("Rename take",
                     "Take name:", juce::MessageBoxIconType::NoIcon);
-                aw->setLookAndFeel (&row->getLookAndFeel());   // grey ZynForge chrome
+                aw->setLookAndFeel (&getLookAndFeel());   // grey ZynForge chrome
                 aw->addTextEditor ("n", cur, {});
                 dialog::primeNameEditor (*aw, "n");
                 aw->addButton ("OK",     1, juce::KeyPress (juce::KeyPress::returnKey));
                 aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-                juce::Component::SafePointer<TrackRow> rs (row);
+                juce::Component::SafePointer<TrackRow> rs (this);
                 aw->enterModalState (true, juce::ModalCallbackFunction::create (
                     [aw, rs, active] (int r)
                 {
                     std::unique_ptr<juce::AlertWindow> own (aw);
-                    if (r != 1 || rs == nullptr) return;
-                    for (int t : rs->stripTracks())
-                        rs->engine.renameTake (t, active, own->getTextEditorContents ("n").trim());
-                    rs->repaint();
+                    if (r != 1 || rs == nullptr || ! rs->timelineEditAllowed()) return;
+                    const auto name = own->getTextEditorContents ("n").trim();
+                    rs->clipUndoStep ("Rename take", [&]
+                    {
+                        for (int t : rs->stripTracks())
+                            rs->engine.renameTake (t, active, name);
+                    });
                 }));
                 return;
             }
             if (chosen == 852)   // delete active take
             {
-                for (int t : row->stripTracks())
-                    row->engine.deleteTake (t, row->engine.getActiveTakeIdx (t));
-                row->repaint();
+                clipUndoStep ("Delete take", [&]
+                {
+                    for (int t : stripTracks())
+                        engine.deleteTake (t, engine.getActiveTakeIdx (t));
+                });
                 return;
             }
         }
@@ -4381,8 +4473,28 @@ namespace zynforge
             int channel { 0 }, width { 0 };
             double start { 0.0 }, end { 0.0 };
             WaveformOverview levels;
+            juce::uint32 lastPaint { 0 };
         };
+        // Every lane of every clip on screen has an entry, so the cache holds
+        // what the last two paints drew: a fixed size evicts its own entries on
+        // each repaint once a row shows more clips than it has slots. Scrolling
+        // and zooming age the rest out, so it stays bounded by the screen.
+        juce::uint32 overviewPaint  { 0 };
+        int          overviewBuilds { 0 };
+        void ageOverviewCache()
+        {
+            const auto current = overviewPaint++;
+            overviewCache.erase (std::remove_if (overviewCache.begin(), overviewCache.end(),
+                                                 [current] (const CachedOverview& entry)
+                                                 { return entry.lastPaint + 1 < current; }),
+                                 overviewCache.end());
+        }
         std::vector<CachedOverview> overviewCache;
+        struct OwnThumb { juce::File file; std::unique_ptr<juce::AudioThumbnail> thumb; };
+        std::vector<OwnThumb>     ownThumbs;      // files clips play instead of this strip's take
+        // A mono row draws one channel of its file: the left of a stereo file
+        // it kept, or the right of the file it shared before an unlink.
+        int                       monoFileChannel { 0 };
         juce::File                currentFileL;
         juce::File                currentFileR;
         bool                      stereo;
@@ -4404,6 +4516,7 @@ namespace zynforge
         LedMeter                  meter;
 
         int                       playheadX             { -1 };
+        int                       waveformReloads       { 0 };
         // Live capture envelope fed by recorder peak bins on the UI thread.
         // It keeps a whole-take overview plus a fine recent window without
         // reading growing audio files. recPeakR carries a stereo partner.

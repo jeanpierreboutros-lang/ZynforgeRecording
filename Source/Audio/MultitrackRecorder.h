@@ -326,7 +326,7 @@ namespace zynforge
 
         // Optional second copy of every track to a backup folder.
         // Pass an empty File to disable. Only effective for the next session.
-        void setBackupDirectory (const juce::File& dir);
+        bool setBackupDirectory (const juce::File& dir);   // false, unchanged, while a take owns it
         juce::File getBackupDirectory() const               { return backupDir; }
         bool       isBackupActive() const noexcept          { return backupActive.load (std::memory_order_relaxed); }
 
@@ -803,6 +803,8 @@ namespace zynforge
         // other than `twin` are replaced by the next report this session writes.
         static bool editSessionReport (const juce::File& sessionDir,
                                        const std::function<void (juce::DynamicObject&)>& edit);
+        // The lock file shared with the other process that writes this report.
+        static constexpr const char* kReportLockName = "session-report.lock";
 
     private:
 

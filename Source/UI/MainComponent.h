@@ -12,6 +12,7 @@
 #include "../Network/SessionMirror.h"
 #include "../Network/TwinLink.h"
 #include "../Theme/ZynForgeLookAndFeel.h"
+#include "AlarmBanner.h"
 #include "AutomationToolbar.h"
 #include "BigClockPanel.h"
 #include "IconButton.h"
@@ -36,12 +37,13 @@
 #include "PlaceholderView.h"
 #include "VcaPanel.h"
 #include "TransportBar.h"
+#include "ClipEditTargets.h"
 
 #include <memory>
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class SessionSafetyTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
+namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; class SessionSafetyTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -98,6 +100,7 @@ private:
     };
     bool handleRecordPressDuringTake();
     bool prepareRecordStart (RecordStartPlan&);
+    void planRecordPosition (RecordStartPlan&);
     bool recordPlanHasSelection (const RecordStartPlan&);
     bool recordPlanPunches (const RecordStartPlan&);
     void runRecordPlan (RecordStartPlan&);
@@ -146,11 +149,17 @@ private:
     void startSongExport (zynforge::songexport::Choice);
     juce::String buildTimelineCsv();
     void closeSession();               // unload to the empty/Welcome state without quitting
+    // Everything the window holds about a session that clearSessionState cannot
+    // reach. Called beside it, on every way out of a session.
+    void forgetSessionUiState();
     void confirmSessionReplacement (std::function<void()> continuation);
     void onImportAudioFiles();
     void onLockToggled();
     void onBackupClicked();
+    void applyBackupFolder (const juce::File&);
     void onVscClicked();
+    void openPatchWindow();
+    void openMetersWindow();
     void applyLockState();
     // Returns true if the recovery dialog was shown (and onClosed is deferred
     // to its close). Returns false if there was nothing to recover, in which
@@ -158,9 +167,11 @@ private:
     // lets the launch flow avoid auto-reopening a session under the dialog.
     bool offerSessionRecovery (std::function<void()> onClosed = {});
     void showStartupWelcome();
+    void createSessionFromWelcome (const zynforge::WelcomeDialog::NewResult&);
+    void openSessionFromWelcome (const juce::File&);
     void showKeyboardShortcuts();
     void showAboutDialog();
-    void showFirstRunTutorial();
+    void showFirstRunTutorial (std::function<void()> onFinished = {});
     void showUserGuide();
     void launchNewSessionDialog (juce::File templateFile = {});
     juce::File createSessionFolderStructure (const zynforge::NewSessionDialog::Result&);
@@ -232,6 +243,11 @@ private:
                               const zynforge::ExportOptions&);
     void showStatus (const juce::String& msg);
 public:
+    // The cue list after a Crop or Ripple Delete on `tracks`. With a whole
+    // timeline the cues themselves move; a cue in the removed audio goes.
+    static std::vector<zynforge::SetlistBar::Cue> cuesAfterCut (
+        const std::vector<zynforge::SetlistBar::Cue>& cues, const zynforge::timelinecut::Cut&,
+        const std::vector<int>& tracks, bool wholeTimeline);
     // Called from Main.cpp's systemRequestedQuit so an unsaved
     // session / running recording prompts BEFORE the app shuts down.
     void confirmAndQuit();
@@ -285,6 +301,10 @@ private:
     // Multi-select: indices are LOGICAL strip indices (stereo pairs
     // counted as one). Engineer toggles via shift/cmd-click on a strip.
     std::set<int> selectedLogical;
+    // The layout and session those positions mean; see syncStripSelectionScope.
+    int        selectionLayoutGen { -1 };
+    juce::File selectionSession;
+    void syncStripSelectionScope();
     void showSessionProperties();
     // Move the active session folder (its recorded audio included) to a new
     // location, then re-pin everything from there. Stopped-only; the copy
@@ -302,6 +322,8 @@ private:
     void runSpectralAutoName();
     void writeSoundcheckReport();
     bool refuseAnalysisNow();
+    void cancelAnalysisForTake();
+    bool analysisResultWanted (const juce::File& scannedSession);
     void runNoiseAnalysis();
     void runQcAnalysis();
     void detectSongsToMarkers();
@@ -318,12 +340,14 @@ private:
     void saveConsoleLog();
     void writeConsoleLog (const juce::File&);
     juce::String consoleLinkSummary() const;
+    bool refuseConsoleWriteDuringTake();
     void consoleToggleSoundcheck();
     void consoleCaptureGains();
     void consoleRestoreGains();
     void togglePunchMode();
     void servicePunch();        // called each timerCallback tick
     bool wasInsidePunch { false };
+    bool punchWindowTakeActive { false };   // this take was opened by the PUNCH window
     // Pro Tools-style selection punch driven by the RECORD button: play from a
     // pre-roll lead-in, auto punch-in at the selection start and punch-out at
     // its end, then play a post-roll tail before stopping. servicePunch does
@@ -332,11 +356,7 @@ private:
     bool        punchSessionActive { false };
     juce::int64 punchOutSample     { 0 };
     juce::int64 punchPostRollEnd   { 0 };
-    bool        punchLoopWasEnabled { false };
-    bool        punchLoopNeedsRestore { false };
     bool playheadLockedForPunch();
-    void suspendLoopForPunch();
-    void restoreLoopAfterPunch();
 
     // Snap modes -- cycled by the '4' key (also surfaced in the
     // Edit menu). Off / Markers / Bars; Bars uses the engine's
@@ -360,17 +380,41 @@ private:
     juce::String lastMetadataSaveError;     // why the last save failed, for the STOP message
     juce::String lastMetadataSaveNotice;    // what the last good save had to set aside
     juce::var         clipClipboard;    // JSON of cut/copied audio clip(s)
+    juce::File        clipClipboardSession;   // the session those clips belong to
     int               nudgeMs { 100 };  // clip-nudge step; cycled with N, persisted
-    void recordUndoSnapshot (const juce::String& label);
+    void flushMixerUndo();
+    // A bulk mixer action: take `before`, make the change, then commit it.
+    juce::var beginMixerUndo();
+    void commitMixerUndo (const juce::String& label, const juce::var& before);
     // Clip/playlist undo: capture engine.playlistsToJson() before the edit,
     // pass it here after; records an undoable step only if clips changed.
     void pushClipUndo (const juce::String& label, const juce::var& before);
+    // Crop and Ripple Delete: everything they move, as one undo step.
+    struct TimelineSnapshot
+    {
+        zynforge::AudioEngine::TimelineState engineState;
+        std::vector<zynforge::SetlistBar::Cue> cues;
+    };
+    TimelineSnapshot captureTimeline() const;
+    void restoreTimeline (TimelineSnapshot target, const TimelineSnapshot& replaced);
+    void commitTimelineCut (const juce::String& label, const TimelineSnapshot& before,
+                            const zynforge::timelinecut::Cut&, const std::vector<int>& tracks);
+    void finishTimelineEdit (const juce::String& label, const TimelineSnapshot& before);
+    int  rippleTimeline (const juce::String& label, const std::vector<int>& tracks,
+                         juce::int64 start, juce::int64 end);
+    int  rippleSpans (const juce::String& label, const std::vector<zynforge::clipedit::RippleSpan>&);
     void restoreUndoSnapshot (const juce::var& snapshot);
     void editUndo();
     void editRedo();
     // Confirmation gate for destructive Delete-key edits in EDIT (removing a
     // recorded clip / range). Shows a warning; runs onConfirm only on "Delete".
     void confirmDeleteRecording (bool ripple, std::function<void()> onConfirm);
+    // Normalize clip(s) to the same peak, as a session job.
+    void normalizeClips (std::vector<zynforge::EditPage::ClipRef> targets);
+    // One undo step around a tempo-map edit; a generated click follows it.
+    void runTempoEdit (const juce::String& label, std::function<void()> mutate);
+    // Test seam: receives what either delete prompt would run on "Delete".
+    std::function<void (std::function<void()>)> confirmForTests;
 
     // Confirmation gate for deleting the selected channel(s) from the EDIT
     // view (right-click ▸ Delete Channel, or Delete on a selected channel).
@@ -403,6 +447,7 @@ private:
     // Option+R bulk record-arm toggle over the current strip selection.
     void armSelection();
     void editCropToLoopRange();
+    void consolidateTracks (const std::vector<int>& targets, juce::int64 start, juce::int64 end);
     void editSetRangeToLoopRange();
     void editToggleSnap();
     void editSplitAtPlayhead();
@@ -417,6 +462,8 @@ private:
     void editNudgeSelectedClip (int dir);   // Alt+Left/Right / numpad -- slide
     void editRippleDelete();          // Shift+Delete -- delete + close the gap
     void editCycleNudgeValue();       // N -- cycle the nudge step, persisted
+    // The selected clips grown to their stereo halves and edit-group peers.
+    std::vector<zynforge::EditPage::ClipRef> selectedClipTargets();
     void editClipboardCut (bool cut); // Cmd+X / Cmd+C -- clip or strip settings
     void editClipboardPaste();        // Cmd+V -- clip at playhead or strip settings
     std::vector<int> tracksToEditPhysical();   // selected strips, else all
@@ -464,6 +511,12 @@ private:
     void   checkDeviceSampleRate (double deviceSampleRate);
     bool   chaseWasLive      { false };   // external-timecode chase: did we start playback?
     void   serviceTimecodeChase();
+    void   serviceTrimFollowNotice();
+    void   serviceBusRoutingNotice();
+    void   promptStreamOutputs();
+    bool   chaseParked { false };   // timecode is outside the session; chase is not following
+    juce::String lastTrimFollowNotice;
+    juce::String lastBusRoutingNotice;
     void onFormatClicked();
     void onPreRollClicked();
     void refreshFormatButton();
@@ -477,12 +530,16 @@ private:
     void syncFloatingPanelButtons();
     void rebuildStripsIfLayoutChanged();
     void updateStatusPills();
+    void updatePunchPill();
     void updateNextCueCountdown();
     void syncStripsWithEngine();
     void surfaceAsyncReportFailure();
     void updateClockAndDiskCadence (double deviceSR);
     void updateHeaderFromStatus (const zynforge::EngineStatus& status, bool playing);
     void updateCaptureWarnings (const zynforge::EngineStatus& status);
+    // The loud row: a standing alarm, or a refused RECORD until it times out.
+    void refreshAlarmBanner();
+    void showRecordRefusal (const juce::String& reason);
     // Open a modal warning if the loaded session's SR doesn't match the device.
     void warnIfSampleRateMismatch();
 
@@ -538,6 +595,8 @@ private:
     // before everything above, so its threads never outlive what the host uses.
     zynforge::twin::TwinLink twinLink { *this };
     bool twinStartInFlight { false };   // this RECORD arrived over the twin link
+    bool remoteStartInFlight { false }; // this RECORD arrived from any remote surface
+    bool remotePunchRefused { false };  // and it was refused because it would punch
 
     friend class zynforge::MainTransportRegressionTests;
     friend class zynforge::TwinLinkHostTests;
@@ -549,6 +608,8 @@ private:
     friend class zynforge::SongExportTests;
     friend class zynforge::SessionInterchangeTests;
     friend class zynforge::SessionSafetyTests;
+    friend class zynforge::MainWindowGuardTests;
+    friend class zynforge::EditIntegrityTests;
     friend struct zynforge::ConcurrencyAuditAccess;
 
     // Live SafePointers to dialog windows opened by the header buttons.
@@ -562,11 +623,15 @@ private:
     juce::Label  titleLabel        { {}, "ZYNFORGE  RECORDING" };
     juce::Label  statusLabel       { {}, "Idle" };
     juce::String activeCaptureWarning;
+    zynforge::AlarmBanner alarmBanner;
+    juce::String recordRefusal;              // shown in the banner, then clears itself
+    juce::uint32 recordRefusalShownMs { 0 };
     juce::Label  midiStatusLabel   { {}, "" };
     juce::Label  nextCueLabel      { {}, "" };
     juce::Label  danteLabel        { {}, "" };
     juce::Label  srWarnLabel       { {}, "" };   // persistent sample-rate mismatch banner
     juce::Label  twinStatusLabel   { {}, "" };   // link state; empty while the link is off
+    juce::Label  punchPill         { {}, "" };   // PUNCH mode, or what the next RECORD will replace
     juce::Label  sessionLabel      { {}, "No session loaded" };
     juce::Label  transportLabel    { {}, "00:00 / 00:00" };
     // Header chrome -- IconButton paints a glyph next to each label so
@@ -681,13 +746,6 @@ private:
     int  clickTrackIndex { -1 };   // -1 = not yet created in this session
     bool clickRefreshPending { false };   // tempo changed while the render was refused
 
-    // Arm state captured the moment a punch-in fires. servicePunch force-writes
-    // `armed = punchArmed` on every track so only the punch-armed ones capture;
-    // without restoring afterwards that rewrite was PERMANENT, silently
-    // disarming channels for the next take. Empty => no punch snapshot held.
-    std::vector<char> armStateBeforePunch;
-    void snapshotArmStateForPunch();
-    void restoreArmStateAfterPunch();
     int  lastExportFailures { 0 }; // tracks failed in the last exportTracksTo (partial-failure warning)
     bool songExportRunning { false };   // message thread; turns menu item 967 into its cancel
 
@@ -705,6 +763,11 @@ private:
     // (declared above) is still alive. Declared after sessionIoBusy, which it
     // references.
     zynforge::SessionJobRunner sessionJobs { sessionIoBusy };
+    // QC, noise analysis and song detection: owned and joined like a session
+    // job, but they only read, so they hold no session reservation. RECORD must
+    // never wait for one; the 10 Hz timer stops it when a take starts.
+    std::atomic<bool> analysisBusy { false };
+    zynforge::SessionJobRunner analysisJobs { analysisBusy };
     void promptCueName (const juce::String& title,
                         const juce::String& initial,
                         std::function<void (const juce::String&)> onAccept);

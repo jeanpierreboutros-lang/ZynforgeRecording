@@ -5,6 +5,7 @@
 #include <juce_core/juce_core.h>
 
 #include "ClipModel.h"
+#include "PlaybackReader.h"
 
 #include <array>
 #include <atomic>
@@ -18,9 +19,15 @@ namespace zynforge
     //
     // Loads Track_NN.wav files from a session directory and routes each
     // track to the matching output channel (Track 1 → out 1, etc.).
-    // Disk I/O happens on a background TimeSliceThread via
-    // juce::BufferingAudioReader; the audio thread only copies samples
-    // from already-buffered RAM.
+    // Disk I/O happens on a background TimeSliceThread via PlaybackReader;
+    // the audio thread only copies samples from already-buffered RAM.
+    //
+    // Every track enters a new position together. A loop start or a clip
+    // coming up is cued ahead of the jump, so it is in RAM when the playhead
+    // gets there. A jump nobody could see coming (a locate, PLAY from a marker)
+    // holds the playhead on the target, silent, until every track has it. It
+    // never rolls on with some tracks missing: that is what used to drop the
+    // start of each pass, track by track.
     //
     // Stereo files: a natively-recorded stereo pair is ONE interleaved
     // 2-channel Track_NN.wav. loadSession expands it into TWO logical
@@ -62,6 +69,9 @@ namespace zynforge
             return tracks[(size_t) trackIdx].length;
         }
         juce::int64 getPositionSamples()    const noexcept { return position   .load(); }
+        // Counts jumps made while rolling: a locate or a loop wrap. PLAY from
+        // a stop is not one.
+        juce::uint32 getJumpCount()         const noexcept { return jumpCount.load (std::memory_order_acquire); }
         double      getSampleRate()         const noexcept { return fileSampleRate; }
         juce::String getSessionName()       const          { return sessionName; }
         juce::File   getSessionDir()        const          { return sessionDir; }
@@ -77,16 +87,28 @@ namespace zynforge
 
         // Loop region. When both ends are valid (start < end), playback
         // wraps from end → start each pass. clearLoopRegion() disables.
+        // The region is also the EDIT selection and RECORD's punch range, and
+        // only the punch can destroy a take, so a region arms a punch only
+        // when it came from the engineer's hand this run (selectRange). One
+        // that merely exists, such as a range restored from a saved session,
+        // goes through setLoopRegion: it loops and edits, and RECORD ignores it.
         void setLoopRegion   (juce::int64 startSample, juce::int64 endSample) noexcept;
+        void selectRange     (juce::int64 startSample, juce::int64 endSample) noexcept;
         void clearLoopRegion()                                                noexcept;
         bool hasLoopRegion() const noexcept;
+        bool isRangeArmed() const noexcept;
+        // One selection, one punch: the range stays for Loop and edits, and a
+        // later RECORD appends until the engineer selects again.
+        void disarmRange() noexcept { rangeArmed.store (false, std::memory_order_release); }
         juce::int64 getLoopStart() const noexcept { return loopStart.load(std::memory_order_relaxed); }
         juce::int64 getLoopEnd()   const noexcept { return loopEnd  .load(std::memory_order_relaxed); }
 
         // Loop-PLAY toggle, independent of the loop REGION. The region (set by
         // the Selector / , / .) is also the edit selection, so merely having a
-        // region shouldn't force playback to loop. Playback wraps within the
-        // region only when loop-play is enabled (the transport ⟲ button).
+        // region shouldn't force playback to loop. With loop-play on (the
+        // transport ⟲ button) playback wraps within the region, or within the
+        // whole session when there is none. That case makes no region: an
+        // implicit one would read as a selection to everything else.
         void setLoopEnabled (bool on) noexcept
         {
             if (on && isSeekLocked()) return;
@@ -118,6 +140,16 @@ namespace zynforge
         void clearAllClips();
 
     private:
+        // Where playback wraps right now. A punch take is never looped: its
+        // timeline is the punch clock, so an already-enabled loop stays inert
+        // until the seek lock lifts.
+        struct LoopSpan
+        {
+            juce::int64 begin { 0 }, end { 0 };
+            bool active() const noexcept { return end > begin; }
+        };
+        LoopSpan activeLoopSpan (juce::int64 total) const noexcept;
+
         void renderBlock (float* const*, int, int) noexcept;
         // Bounded handshake used by loadSession/unload after clearing
         // `playing`: waits until two full audio callbacks have completed
@@ -129,7 +161,7 @@ namespace zynforge
         {
             // shared_ptr because the two halves of an interleaved stereo
             // file share ONE reader (L reads channel 0, R reads channel 1).
-            std::shared_ptr<juce::BufferingAudioReader> reader;
+            std::shared_ptr<PlaybackReader> reader;
             juce::int64 length { 0 };
             // Which file channel this logical track reads. For a mono file
             // both are true (the single channel). For a stereo file the L
@@ -169,13 +201,19 @@ namespace zynforge
         static constexpr int kMaxAuthoritativeTracks = 512;
         std::array<std::atomic<char>, kMaxAuthoritativeTracks> authoritativeFlags {};
 
+        PlaybackReader* readerForClip (const Clip&, const Track&) const noexcept;
+        // Ask for [position, position + span) on every track. True once all of
+        // it is in RAM. Both of these are called with clipsLock held.
+        bool prepareJump (juce::int64 position, juce::int64 span, int numTracks) noexcept;
+        void cueUpcoming (juce::int64 blockEnd, juce::int64 horizon, juce::int64 wrapTarget, int numTracks) noexcept;
+
         // Per-clip readers for clips that reference a file OTHER than their
         // track's own Track_NN.wav (cross-track paste). Keyed by absolute
         // path. Built on the message thread in setTrackClips (file open is
         // slow); the audio thread only looks them up, under clipsLock. A
         // clip with an empty audioFile uses its track's default reader, so
         // existing sessions are completely unaffected.
-        std::map<juce::String, std::unique_ptr<juce::BufferingAudioReader>> extraReaders;
+        std::map<juce::String, std::unique_ptr<PlaybackReader>> extraReaders;
 
         std::atomic<bool>        loaded      { false };
         std::atomic<bool>        playing     { false };
@@ -191,7 +229,9 @@ namespace zynforge
         std::atomic<juce::int64> loopStart   { -1 };
         std::atomic<juce::int64> loopEnd     { -1 };
         std::atomic<bool>        loopEnabled { false };
+        std::atomic<bool>        rangeArmed  { false };
         std::atomic<bool>        seekLocked  { false };
+        std::atomic<juce::uint32> jumpCount  { 0 };
 
         double deviceSampleRate { 48000.0 };
         double fileSampleRate   { 48000.0 };
@@ -200,6 +240,14 @@ namespace zynforge
         juce::File   sessionDir;
 
         juce::AudioBuffer<float> scratch;
+
+        // Audio thread only. Where the next block continues from (-1: the
+        // last block did not render), the jump being held and for how long,
+        // and a block counter that thins out the cue pass.
+        juce::int64 nextRenderPosition { -1 };
+        juce::int64 heldJump           { -1 };
+        juce::int64 heldJumpSamples    { 0 };
+        juce::uint32 cuePassCounter    { 0 };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SessionPlayer)
     };

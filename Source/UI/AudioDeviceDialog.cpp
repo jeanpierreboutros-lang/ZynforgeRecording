@@ -118,6 +118,7 @@ namespace zynforge
             // Modal launchAsync (selfOwned) vs tracked launchFloating: governs
             // how closeWindow() dismisses the window (exitModalState vs hide).
             void setSelfOwned (bool b) noexcept { selfOwned = b; }
+            bool isSelfOwned() const noexcept { return selfOwned; }
 
             explicit DialogContent (AudioEngine& eng)
                 : engine (eng),
@@ -472,8 +473,10 @@ namespace zynforge
                                          + (live ? juce::String() : juce::String (" (off)"));
                         monitorOutLBox.addItem (label, i + 1);   // id = left ch (1-based)
                     }
+                    monitorOutLBox.addItem ("Off (no output)", kMonitorOffId);
                     const int pairLeft = (engine.getMasterOutputL() / 2) * 2;   // even left of the pair
-                    monitorOutLBox.setSelectedId (juce::jmax (1, pairLeft + 1),
+                    monitorOutLBox.setSelectedId (engine.getMasterOutputL() < 0 ? kMonitorOffId
+                                                                                : juce::jmax (1, pairLeft + 1),
                                                   juce::dontSendNotification);
                 }
                 else
@@ -488,6 +491,12 @@ namespace zynforge
             void onMonitorOutChanged()
             {
                 if (refreshing) return;
+                if (monitorOutLBox.getSelectedId() == kMonitorOffId)
+                {
+                    engine.setMasterOutputs (-1, -1);
+                    statusLabel.setText ("Monitor bus -> no output", juce::dontSendNotification);
+                    return;
+                }
                 const int l = juce::jmax (0, monitorOutLBox.getSelectedId() - 1);
                 const int r = l + 1;   // stereo pair: right is always left + 1
                 engine.setMasterOutputs (l, r);
@@ -622,6 +631,7 @@ namespace zynforge
 
             Card outputCard, inputCard, rateCard, bufferCard, monitorCard;
             juce::ComboBox outputBox, inputBox, rateBox, bufferBox;
+            static constexpr int kMonitorOffId = 100000;   // past any device's channel count
             juce::ComboBox monitorOutLBox, monitorOutRBox;
             juce::Label    outChanLabel, outChanValue, inChanLabel, inChanValue;
             juce::Label    monitorLLabel, monitorRLabel;
@@ -654,6 +664,13 @@ namespace zynforge
     // fight over initialise(256,64,...)), so we allow only ONE. Auto-nulls when
     // the dialog is destroyed (SafePointer), covering both close paths.
     static juce::Component::SafePointer<DialogContent> s_liveDeviceDialog;
+
+    void AudioDeviceDialog::closeSelfOwned()
+    {
+        if (auto* live = s_liveDeviceDialog.getComponent())
+            if (live->isSelfOwned())
+                delete live->findParentComponentOfClass<juce::DialogWindow>();
+    }
 
     juce::DialogWindow* AudioDeviceDialog::launch (AudioEngine& engine, bool selfOwned)
     {

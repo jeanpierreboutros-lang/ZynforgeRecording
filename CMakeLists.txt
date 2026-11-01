@@ -241,12 +241,14 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/ConsoleVscTests.cpp
     Source/Tests/CrashScanTests.cpp
     Source/Tests/DialogAuditTests.cpp
+    Source/Tests/EditIntegrityTests.cpp
     Source/Tests/EditPageAccessibilityTests.cpp
     Source/Tests/EditRulerScrollTests.cpp
     Source/Tests/EditToolsBarAccessibilityTests.cpp
     Source/Tests/EditTrackRowTests.cpp
     Source/Tests/EditViewFixTests.cpp
     Source/Tests/EditingFixTests.cpp
+    Source/Tests/EngineMixSafetyTests.cpp
     Source/Tests/EngineReviewRepairTests.cpp
     Source/Tests/EngineStateTests.cpp
     Source/Tests/EngineStatusTests.cpp
@@ -261,6 +263,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/MenuDispatchTests.cpp
     Source/Tests/MultiPartPlaybackTests.cpp
     Source/Tests/NetworkAuditTests.cpp
+    Source/Tests/NetworkFixTests.cpp
     Source/Tests/OctoberRegressionTests.cpp
     Source/Tests/OscRemoteTests.cpp
     Source/Tests/PlaceholderViewTests.cpp
@@ -268,6 +271,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/PreflightTests.cpp
     Source/Tests/PunchRecordTests.cpp
     Source/Tests/PunchSessionGuardTests.cpp
+    Source/Tests/MainWindowGuardTests.cpp
     Source/Tests/PunchSpliceTests.cpp
     Source/Tests/QcAnalyzerTests.cpp
     Source/Tests/RecorderPlayerTests.cpp
@@ -289,6 +293,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/StereoExportTests.cpp
     Source/Tests/StripLifetimeTests.cpp
     Source/Tests/TimecodeTests.cpp
+    Source/Tests/TimelineEditTests.cpp
     Source/Tests/SessionInterchangeTests.cpp
     Source/Tests/SongExportTests.cpp
     Source/Tests/TimelineExportTests.cpp

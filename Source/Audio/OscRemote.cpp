@@ -98,7 +98,7 @@ namespace zynforge
         // Pass the name INTO the drop so it names the just-dropped marker
         // atomically. The old drop-then-rename(count-1) hit the timeline-LAST
         // marker instead, because MarkersManager::drop re-sorts by position.
-        engine.dropMarkerAtCurrentPosition (name);
+        engine.getRemotes().dropRemoteMarker (name);
     }
 
     void OscRemote::sceneRecalled (int scene, const juce::String& sceneName)

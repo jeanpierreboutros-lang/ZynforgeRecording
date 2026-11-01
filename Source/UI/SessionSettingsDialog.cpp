@@ -14,7 +14,7 @@ namespace
     struct SessionFormatContent final : public juce::Component
     {
         SessionFormatContent (AudioEngine& e, std::function<void()> relocate, std::function<void (double)> applyRate)
-            : eng (e), onRelocate (std::move (relocate)), onApplySampleRate (std::move (applyRate)) { rebuild(); setSize (440, 360); }
+            : eng (e), onRelocate (std::move (relocate)), onApplySampleRate (std::move (applyRate)) { rebuild(); setSize (440, 398); }
 
         void rebuild()
         {
@@ -30,7 +30,8 @@ namespace
             fmtL.setText ("Audio Format", juce::dontSendNotification);
             rateL.setText ("Sample Rate", juce::dontSendNotification);
             bitsL.setText ("Bit Depth", juce::dontSendNotification);
-            for (auto* l : { &fmtL, &rateL, &bitsL })
+            preRollL.setText ("Pre-roll", juce::dontSendNotification);
+            for (auto* l : { &fmtL, &rateL, &bitsL, &preRollL })
                 { l->setColour (juce::Label::textColourId, brand::textPrimary); addAndMakeVisible (*l); }
 
             fmtBox.addItem ("WAV",  1);
@@ -50,6 +51,13 @@ namespace
             rateBox.addItem ("192 kHz",   6);
             rateBox.setSelectedId (rateIdFromHz (sr), juce::dontSendNotification);
             addAndMakeVisible (rateBox);
+
+            preRollBox.setTitle ("Pre-roll");
+            preRollBox.setTooltip ("Audio held before RECORD and written to the start of a fresh take");
+            for (int seconds : { 0, 5, 10, 30 })
+                preRollBox.addItem (seconds == 0 ? juce::String ("Off") : juce::String (seconds) + " s", seconds + 1);
+            preRollBox.setSelectedId (eng.getRecorder().getPreRollSeconds() + 1, juce::dontSendNotification);
+            addAndMakeVisible (preRollBox);
 
             addAndMakeVisible (bitsBox);
             refreshBits();
@@ -134,6 +142,8 @@ namespace
             else if (c == 2) f = b == 1 ? F::Aiff16 : b == 2 ? F::Aiff24 : F::Aiff32Float;
             else             f = b == 1 ? F::Flac16 : F::Flac24;
             eng.getRecorder().setCaptureFormat (f);
+            if (preRollBox.getSelectedId() > 0)
+                eng.getRecorder().setPreRollSeconds (preRollBox.getSelectedId() - 1);
             eng.setRecordStereoMix (stereoMixB.getToggleState());
 
             // Change the SESSION rate (updates pendingSampleRate + the
@@ -160,7 +170,7 @@ namespace
                 b.setBounds (rr);
                 r.removeFromTop (brand::space::sm);
             };
-            row (fmtL, fmtBox); row (rateL, rateBox); row (bitsL, bitsBox);
+            row (fmtL, fmtBox); row (rateL, rateBox); row (bitsL, bitsBox); row (preRollL, preRollBox);
 
             // Recording-path row: label on top, path + Change... below.
             r.removeFromTop (brand::space::sm);
@@ -190,8 +200,8 @@ namespace
         AudioEngine& eng;
         std::function<void()>         onRelocate;
         std::function<void (double)>  onApplySampleRate;
-        juce::Label fmtL, rateL, bitsL, pathL, pathVal;
-        juce::ComboBox fmtBox, rateBox, bitsBox;
+        juce::Label fmtL, rateL, bitsL, preRollL, pathL, pathVal;
+        juce::ComboBox fmtBox, rateBox, bitsBox, preRollBox;
         juce::TextButton applyB, cancelB, changePathB;
         juce::ToggleButton stereoMixB;
     };

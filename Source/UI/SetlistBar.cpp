@@ -83,7 +83,8 @@ namespace zynforge
 
     void SetlistBar::mouseDown (const juce::MouseEvent& e)
     {
-        if (! (e.mods.isPopupMenu() || e.mods.isRightButtonDown()))
+        // A disabled bar still gets mouseDown, so LOCK is checked here.
+        if (! isEnabled() || ! (e.mods.isPopupMenu() || e.mods.isRightButtonDown()))
             return;
 
         // Don't fight the combo's own dropdown -- it owns the left-click
@@ -100,7 +101,7 @@ namespace zynforge
                                 juce::Rectangle<int> (e.getScreenPosition(), e.getScreenPosition())),
                             [self] (int chosen)
         {
-            if (self == nullptr) return;
+            if (self == nullptr || ! self->isEnabled()) return;
             if      (chosen == 1 && self->onRenameCue) self->onRenameCue();
             else if (chosen == 2 && self->onDeleteCue) self->onDeleteCue();
             else if (chosen == 3 && self->onMoveCue)   self->onMoveCue (-1);

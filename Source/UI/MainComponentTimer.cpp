@@ -4,6 +4,7 @@
 // scrolling past 5000 lines of menu / layout / setup code.
 
 #include "MainComponent.h"
+#include "RecordPosition.h"
 
 using namespace zynforge;
 
@@ -23,6 +24,8 @@ void MainComponent::timerCallback()
     serviceCaptureDaemonLink();
     twinLink.tick();
     updateTwinStatusLabel();
+    // Every way a session can change passes here within a tick.
+    consoleLink.setSessionDir (engine.getActiveSessionDir());
     // Keep the macOS menu's greyed/enabled states in sync with reality
     // (Undo/Redo, Edit, Track, Export) -- they're cached until we ask for a
     // refresh, so without this they freeze in the empty launch state.
@@ -34,6 +37,7 @@ void MainComponent::timerCallback()
     syncFloatingPanelButtons();
     rebuildStripsIfLayoutChanged();
     updateStatusPills();
+    updatePunchPill();
     updateNextCueCountdown();
 
     if (clickRefreshPending && clickTrackIndex >= 0 && ! engine.isRecording()
@@ -46,7 +50,9 @@ void MainComponent::timerCallback()
     if (uiLayoutSavePending && ! sessionIoBusy.load()) requestUILayoutSave();
 
     if (cueRamp.active) updateCueRamp();
-    if (engine.isPunchModeOn() && engine.getPlayer().hasLoopRegion())
+    cancelAnalysisForTake();
+    if (! engine.isRecording()) punchWindowTakeActive = false;
+    if (engine.isPunchModeOn())
         servicePunch();
     if (punchSessionActive)
         servicePunchSession();
@@ -72,6 +78,8 @@ void MainComponent::timerCallback()
     checkDeviceSampleRate (deviceSR);
     // External timecode chase: drive the transport from incoming LTC / MTC.
     serviceTimecodeChase();
+    serviceTrimFollowNotice();
+    serviceBusRoutingNotice();
 
     // Auto-arm on input detect -- only meaningful while NOT recording. Arms a
     // strip after 12 ticks (1.2 s at 10 Hz) of input above -40 dBFS. Cheap;
@@ -172,6 +180,37 @@ void MainComponent::updateStatusPills()
         { danteLabel.setText (txt, juce::dontSendNotification); resized(); }
         danteLabel.setTooltip (txt);
     }
+}
+
+// PUNCH mode must read from across the room, and a menu tick does not. The
+// quieter state is the same warning about the next RECORD: it will replace
+// audio, not add to it. The answer comes from the rules RECORD itself uses.
+void MainComponent::updatePunchPill()
+{
+    auto& player = engine.getPlayer();
+    juce::String text;
+    if (engine.isPunchModeOn() && ! punchSessionActive)
+        text = "PUNCH MODE";
+    else if (! engine.isRecording() && player.isLoaded() && ! daemonModeActive())
+    {
+        const bool rolling = player.isPlaying();
+        const auto cursor  = engine.getEditCursorSample();
+        const auto pos     = manualRecordPosition (rolling, player.getPositionSamples(), cursor);
+        if (player.isRangeArmed())
+            text = "RECORD PUNCHES RANGE";
+        else if (manualRecordPunches (rolling, cursor, pos, engine.getCaptureLengthSamples(),
+                                      player.getTotalLengthSamples()))
+            text = rolling ? "RECORD PUNCHES HERE" : "RECORD PUNCHES AT CURSOR";
+    }
+    if (punchPill.getText() == text) return;
+    punchPill.setText (text, juce::dontSendNotification);
+    punchPill.setVisible (text.isNotEmpty());
+    const bool mode = text == "PUNCH MODE";
+    punchPill.setColour (juce::Label::backgroundColourId,
+                         mode ? brand::alertAmber : juce::Colours::transparentBlack);
+    punchPill.setColour (juce::Label::textColourId,
+                         mode ? brand::onSignal (brand::alertAmber) : brand::alertAmber);
+    resized();
 }
 
 void MainComponent::updateNextCueCountdown()
@@ -311,7 +350,8 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     // own the entire editor; metadata persistence only locks its mutations.
     if (editPage != nullptr)
     {
-        editPage->setReadOnlyWhileRecording (rec || engine.isRecording() || pendingMetadataSaves != 0 || captureMetadataPending);
+        editPage->setReadOnlyWhileRecording (rec || engine.isRecording() || pendingMetadataSaves != 0
+                                             || captureMetadataPending || sessionLocked);
         const bool enableEditor = (! sessionIoBusy.load() || pendingMetadataSaves != 0 || captureMetadataPending) && ! sessionLocked;
         if (editPage->isEnabled() != enableEditor)
             editPage->setEnabled (enableEditor);
@@ -434,6 +474,36 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
             statusLabel.setText ("Idle", juce::dontSendNotification);
         activeCaptureWarning.clear();
     }
+    refreshAlarmBanner();
+}
+
+void MainComponent::refreshAlarmBanner()
+{
+    constexpr juce::uint32 kRefusalShownMs = 8000;
+    if (recordRefusal.isNotEmpty()
+        && (engine.isRecording()
+            || juce::Time::getMillisecondCounter() - recordRefusalShownMs > kRefusalShownMs))
+        recordRefusal.clear();
+
+    // What threatens the take outranks a refused press. A failed finalization
+    // stays up after STOP, until the next take or another session.
+    auto text = activeCaptureWarning;
+    if (text.isEmpty()) text = lastCaptureFinalizationError;
+    if (text.isEmpty() && engine.isRecording()) text = srWarnLabel.getText();
+    if (text.isEmpty()) text = recordRefusal;
+
+    // Everything is danger but the quiet "no signal yet" notice, which has no '!'.
+    const auto level = activeCaptureWarning.isNotEmpty() && ! activeCaptureWarning.containsChar ('!')
+                           ? AlarmBanner::Level::Notice : AlarmBanner::Level::Danger;
+    if (alarmBanner.show (text, level)) resized();
+}
+
+void MainComponent::showRecordRefusal (const juce::String& reason)
+{
+    recordRefusal = reason;
+    recordRefusalShownMs = juce::Time::getMillisecondCounter();
+    showStatus (reason);
+    refreshAlarmBanner();
 }
 
 // Query SMART health for the session + backup volumes on a BACKGROUND thread.
@@ -515,6 +585,18 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
     };
     if (deviceSampleRate <= 0.0) { setWarning ({}); return; }
 
+    // With no session there is no rate to disagree with: 48 kHz here is only a
+    // launch default, so the next session starts from what the device runs at.
+    if (! engine.getActiveSessionDir().isDirectory() && ! engine.getPlayer().isLoaded()
+        && ! engine.isRecording())
+    {
+        pendingSampleRate = deviceSampleRate;
+        engine.setSessionSampleRate (deviceSampleRate);
+        srMismatchWarned = 0.0;
+        setWarning ({});
+        return;
+    }
+
     // The session's authoritative rate: once a take is loaded that's the
     // recorded files' rate; otherwise it's the rate the session was created
     // at. Either way the comparison catches ANY divergence -- 44.1 / 48 /
@@ -567,6 +649,27 @@ void MainComponent::checkDeviceSampleRate (double deviceSampleRate)
         [aw] (int) { std::unique_ptr<juce::AlertWindow> dispose (aw); }), false);
 }
 
+// Say so when Trim-Follow is holding a channel back. Shown when the set
+// changes, so a desk reading on a channel with no reference is reported as it
+// arrives; the Session menu item keeps the count on show.
+void MainComponent::serviceTrimFollowNotice()
+{
+    const auto notice = engine.isTrimFollowEnabled() ? engine.getTrimFollowNotice() : juce::String();
+    if (notice == lastTrimFollowNotice) return;
+    lastTrimFollowNotice = notice;
+    if (notice.isNotEmpty()) showStatus (notice);
+}
+
+// A bus held off its outputs is a routing change the engineer did not ask for,
+// so say so as it happens. The master strip keeps showing it.
+void MainComponent::serviceBusRoutingNotice()
+{
+    const auto notice = engine.getBusRoutingNotice();
+    if (notice == lastBusRoutingNotice) return;
+    lastBusRoutingNotice = notice;
+    if (notice.isNotEmpty()) showStatus (notice);
+}
+
 // Drive the transport from an external timecode master (LTC decoded off an
 // audio input, or MTC over MIDI). When the chase source is live we follow it:
 // start playback, and resync the playhead whenever it drifts more than ~80 ms
@@ -582,18 +685,34 @@ void MainComponent::serviceTimecodeChase()
     if (engine.isRecording())
     {
         chaseWasLive = false;
+        chaseParked  = false;
         return;
     }
 
     if (engine.getChaseMode() == zynforge::AudioEngine::ChaseMode::Off)
     {
         chaseWasLive = false;
+        chaseParked  = false;
         return;
     }
 
     const bool live = engine.isChaseLive();
-    if (live)
+    const auto parkReason = live ? engine.getChaseParkReason() : juce::String();
+    if (parkReason.isNotEmpty())
     {
+        // Leave the playhead alone: a locate would clamp to the session end,
+        // PLAY would refuse, and every manual locate would be undone a tenth
+        // of a second later. Stop what chase started, once, and say why.
+        if (! chaseParked)
+        {
+            chaseParked = true;
+            if (chaseWasLive && engine.isPlaying()) engine.stopPlayback();
+            showStatus (parkReason);
+        }
+    }
+    else if (live)
+    {
+        chaseParked = false;
         const double sr = engine.getPlayer().getSampleRate() > 0.0
                             ? engine.getPlayer().getSampleRate() : pendingSampleRate;
         const juce::int64 target = engine.getChaseTargetSamples();

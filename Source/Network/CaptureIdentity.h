@@ -98,6 +98,22 @@ namespace zynforge::capture::identity
             key.clear();
         }
 
+        // A descriptor on a file in the same private folder, for a lock the
+        // GUI and the daemon share. -1 if it can't be opened.
+        static int openSharedFile (const char* name)
+        {
+           #if JUCE_MAC || JUCE_LINUX
+            const int folder = openDirectory (true);
+            if (folder < 0) return -1;
+            const int file = ::openat (folder, name, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+            ::close (folder);
+            return file;
+           #else
+            juce::ignoreUnused (name);
+            return -1;
+           #endif
+        }
+
         static juce::String load (int port)
         {
            #if JUCE_MAC || JUCE_LINUX

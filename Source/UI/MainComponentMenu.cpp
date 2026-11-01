@@ -96,7 +96,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // Session templates -- save the current strip config (count,
         // names, colours, routings, stereo flags) to a reusable
         // template, or start a new session pre-populated from one.
-        menu.addItem (71, "Print setlist...", ! cues.empty());
+        menu.addItem (71, "Print setlist...", ! cues.empty() && ! engine.isRecording());
         menu.addSeparator();
         menu.addItem (70, "Save Current as Template...",
                       engine.getRecorder().getNumTracks() > 0
@@ -229,8 +229,18 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                        engine.isAutoArmOnInputDetect());
             m.addSeparator();
             m.addItem (255, "Session Format & Recording...", ! engine.isRecording());
-            m.addItem (256, "Trim-Follow (console input gain -> soundcheck)",
+            const int noTrimReference = engine.isTrimFollowEnabled()
+                                          ? engine.getTrimFollowUnreferencedCount() : 0;
+            m.addItem (256, noTrimReference > 0
+                               ? "Trim-Follow (" + juce::String (noTrimReference) + " with no capture reference, held at 0 dB)"
+                               : juce::String ("Trim-Follow (console input gain -> soundcheck)"),
                        true, engine.isTrimFollowEnabled());
+            m.addItem (991, "Let the Mix Share Outputs With Patched Strips", true,
+                       engine.getMixMayShareStripOutputs());
+            m.addItem (990, engine.getStreamOutputL() >= 0
+                               ? "Stream Bus Output (Out " + juce::String (engine.getStreamOutputL() + 1) + "-"
+                                     + juce::String (engine.getStreamOutputR() + 1) + ")..."
+                               : juce::String ("Stream Bus Output (off)..."));
             // Transport Sync -- chase MTC / LTC with live status.
             m.addItem (600, engine.getChaseMode() != zynforge::AudioEngine::ChaseMode::Off
                                ? juce::String ("Transport Sync (chasing)...")
@@ -289,7 +299,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             // read-only, so grey the write items rather than offering an action
             // that would be refused.
             const bool consoleWritable = consoleLink.isConnected() && consoleLink.canWrite();
-            const bool consoleRepatch = consoleWritable && consoleLink.getProfile().canRepatch;
+            const bool consoleRepatch = consoleWritable && consoleLink.getProfile().canRepatch
+                                     && ! engine.isRecording() && ! captureMetadataPending;
             const bool consoleGains   = consoleWritable && consoleLink.getProfile().canCaptureGains;
             m.addItem (955, (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck
                             || (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Unknown && consoleLink.hasStagePatch()))
@@ -297,7 +308,8 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
                                : "Console: SOUNDCHECK patch (card returns)",
                        consoleRepatch);
             m.addItem (956, "Console: capture head-amp gains", consoleGains);
-            m.addItem (957, "Console: restore head-amp gains", consoleGains);
+            m.addItem (957, "Console: restore head-amp gains",
+                       consoleGains && ! engine.isRecording() && ! captureMetadataPending);
             m.addSeparator();
             m.addItem (963, "Console: follow scenes to markers (virtual soundcheck)",
                        true, engine.isSceneFollowEnabled());
@@ -328,7 +340,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             m.addItem (280, "Spectral auto-name strips",
                        engine.getRecorder().getNumTracks() > 0);
             m.addItem (281, "Write soundcheck report",
-                       engine.getActiveSessionDir().isDirectory());
+                       engine.getActiveSessionDir().isDirectory() && ! engine.isRecording());
             // Each reads every take file in full: never during a take.
             const bool canAnalyse = engine.getActiveSessionDir().isDirectory() && ! engine.isRecording();
             m.addItem (282, "Analyse for noise / hum / bumps...", canAnalyse);
@@ -376,6 +388,9 @@ void MainComponent::refreshMenuStateIfChanged()
         << '|' << (int) cues.empty()
         << '|' << (int) stripClipboard.isObject()
         << '|' << (int) engine.isTrimFollowEnabled()
+        << '|' << engine.getStreamOutputL()
+        << '|' << (int) engine.getMixMayShareStripOutputs()
+        << '|' << (engine.isTrimFollowEnabled() ? engine.getTrimFollowUnreferencedCount() : 0)
         << '|' << (int) engine.getChaseMode()
         << '|' << engine.getLtcSourceStrip()
         << '|' << (int) twinLink.isEnabled()
@@ -479,8 +494,8 @@ void MainComponent::registerMenuCommands()
     m.add (99,  [this] { confirmAndQuit(); });
 
     // Session
-    m.add (50,  [this] { zynforge::PatchPage::launch (engine); });
-    m.add (51,  [this] { zynforge::Meterbridge::launch (engine); });
+    m.add (50,  [this] { openPatchWindow(); });
+    m.add (51,  [this] { openMetersWindow(); });
     m.add (52,  [this] { onVscClicked(); });
     m.add (53,  [this] { zynforge::MarkerListDialog::launch (engine); });
     m.add (54,  [this] { showPreflightChecklist(); });
@@ -503,9 +518,19 @@ void MainComponent::registerMenuCommands()
     {
         const bool on = ! engine.isTrimFollowEnabled();
         engine.setTrimFollowEnabled (on);
-        showStatus (on ? "Trim-Follow ON -- console input-gain moves now track the recorded soundcheck"
-                       : "Trim-Follow OFF -- recorded tracks play at their printed level");
+        const auto notice = on ? engine.getTrimFollowNotice() : juce::String();
+        showStatus (notice.isNotEmpty() ? notice
+                    : on ? "Trim-Follow ON -- console input-gain moves now track the recorded soundcheck"
+                         : "Trim-Follow OFF -- recorded tracks play at their printed level");
     });
+    m.add (991, [this]
+    {
+        const bool allowed = ! engine.getMixMayShareStripOutputs();
+        engine.setMixMayShareStripOutputs (allowed);
+        showStatus (allowed ? "The mix now sums onto outputs that strips are patched to. Do not use this with console returns"
+                            : "The mix stays off outputs that strips are patched to");
+    });
+    m.add (990, [this] { promptStreamOutputs(); });
     m.add (280, [this] { runSpectralAutoName(); });
     m.add (281, [this] { writeSoundcheckReport(); });
     m.add (282, [this] { runNoiseAnalysis(); });

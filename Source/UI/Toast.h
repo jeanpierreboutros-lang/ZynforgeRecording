@@ -42,6 +42,16 @@ namespace zynforge
                 advance();
         }
 
+        // For a prompt that is out of date by the time the queue reaches it:
+        // it replaces what is showing and goes ahead of everything waiting.
+        void showNow (const juce::String& message, Kind kind = Kind::Info)
+        {
+            queue.push_front ({ message, kind });
+            advance();
+        }
+
+        const juce::String& getCurrentMessage() const noexcept { return current.message; }
+
         void paint (juce::Graphics& g) override
         {
             if (current.message.isEmpty()) return;

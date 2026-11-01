@@ -88,10 +88,13 @@ namespace zynforge
 
     bool RemoteControl::requestConsoleChannelNames (const juce::String& consoleHost, int port, int dialect)
     {
-        if (consoleHost.trim().isEmpty() || port <= 0 || port > 65535) return false;
+        // Numeric only: every send below would otherwise be a blocking name
+        // lookup on the message thread.
+        const auto address = oscwire::normaliseSourceIp (consoleHost);
+        if (address.isEmpty() || port <= 0 || port > 65535) return false;
         juce::OSCSender sender;
-        if (! sender.connect (consoleHost.trim(), port)) return false;
-        const auto target = consoleHost.trim() + ":" + juce::String (port);
+        if (! sender.connect (address, port)) return false;
+        const auto target = address + ":" + juce::String (port);
         const auto send = [&] (const juce::OSCMessage& m)
         {
             sender.send (m);
@@ -280,6 +283,24 @@ namespace zynforge
         if (host.revealPosition) host.revealPosition (samplePosition);
     }
 
+    int RemoteControl::dropRemoteMarker (const juce::String& name, const juce::String& type)
+    {
+        const auto now = juce::Time::getMillisecondCounter();
+        if (markerBudget.take (now))
+            return engine.dropMarkerAtCurrentPosition (name, type);
+
+        ++markersRefused;
+        if (now - lastMarkerNoticeMs >= 1000)
+        {
+            lastMarkerNoticeMs = now;
+            const auto notice = "Remote markers are arriving too fast -- "
+                              + juce::String (markersRefused) + " ignored so far";
+            logOsc (notice);
+            showHostStatus (notice);
+        }
+        return -1;
+    }
+
     scenefollow::Action RemoteControl::onConsoleScene (int sceneNumber, const juce::String& sceneName,
                                                        scenefollow::Path path)
     {
@@ -299,7 +320,7 @@ namespace zynforge
         switch (decision.action)
         {
             case Action::DropMarker:
-                if (engine.dropMarkerAtCurrentPosition (label) >= 0)
+                if (dropRemoteMarker (label, "scene") >= 0)
                     tell ("marker dropped");
                 break;
 

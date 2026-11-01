@@ -196,7 +196,7 @@ namespace zynforge
             g.drawRoundedRectangle (r, brand::radius::sm, 1.0f);
         }
 
-        void mouseDown (const juce::MouseEvent&) override { if (onClick) onClick(); }
+        void mouseDown (const juce::MouseEvent&) override { if (onClick && isEnabled()) onClick(); }
     };
 
     class ChannelStrip::StripTimer final : public juce::Timer
@@ -445,6 +445,10 @@ namespace zynforge
 
     void ChannelStrip::mouseDown (const juce::MouseEvent& e)
     {
+        // JUCE delivers mouseDown to a disabled component, so LOCK has to be
+        // checked here: only stock widgets refuse by themselves.
+        if (! isEnabled()) return;
+
         // Right-click → context menu, from ANYWHERE on the strip including
         // over its child controls (name, combos, knobs, meter, buttons).
         // Checked BEFORE the child-origin guard below: the children cover
@@ -578,6 +582,7 @@ namespace zynforge
                             [this, safe = juce::Component::SafePointer<ChannelStrip> (this)] (int chosen)
         {
             if (safe == nullptr) return;   // strip rebuilt (cue recall / console session / device restart) while the menu was open
+            if (! isEnabled()) return;     // LOCK engaged while the menu was open
             switch (chosen)
             {
                 case 1: openRenameDialog();           break;
@@ -594,8 +599,8 @@ namespace zynforge
                             nameLabel.setText (reset, juce::dontSendNotification);
                         }
                         break;
-                case 5: state.streamSend.store (! state.streamSend.load (std::memory_order_relaxed),
-                                                std::memory_order_relaxed);
+                case 5: if (onStreamSendChanged)
+                            onStreamSendChanged (! state.streamSend.load (std::memory_order_relaxed));
                         break;
                 case 6: state.outputMuted.store (! state.outputMuted.load (std::memory_order_relaxed),
                                                  std::memory_order_relaxed);
@@ -656,7 +661,6 @@ namespace zynforge
                             const int idx = chosen - 801;
                             if (idx < (int) list.size()) target = list[(size_t) idx].first;
                         }
-                        state.sends[0].targetBus.store (target, std::memory_order_relaxed);
                         if (onSendTargetChanged) onSendTargetChanged (target);
                     }
                     break;
@@ -1311,11 +1315,12 @@ namespace zynforge
         r.removeFromTop (brand::space::sm);
 
         // ── 3. Two rows of two buttons each: [ I | R ] / [ S | M ] ──
-        //   ...except on the metronome strip ("Click"), which is
-        //   playback-only -- record-arm and input-monitor make no sense
-        //   so those two pills are hidden, and the SOLO + MUTE row sits
-        //   alone with no gap above it.
-        const bool isClickStrip = (state.name == "Click");
+        //   ...except on the generated metronome strip, which is playback-
+        //   only -- record-arm and input-monitor make no sense so those two
+        //   pills are hidden, and the SOLO + MUTE row sits alone with no gap
+        //   above it. Known by its flag: a recorded click return may well be
+        //   named "Click", and it needs its R button.
+        const bool isClickStrip = state.referenceMedia.load (std::memory_order_relaxed);
         const bool isBusStrip   = state.isBus.load (std::memory_order_relaxed);
         const int btnH = 24;
         const int btnGap = 3;

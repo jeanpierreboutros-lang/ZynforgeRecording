@@ -23,5 +23,8 @@ namespace zynforge
         // PatchPage empty-state button, which otherwise LEAKED the dialog (its
         // Cancel/dtor restore never fired and a second dialog could stack).
         static juce::DialogWindow* launch (AudioEngine& engine, bool selfOwned = false);
+        // Deletes a self-owned dialog still open. JUCE would otherwise delete
+        // it at shutdown, after the engine its destructor uses has gone.
+        static void closeSelfOwned();
     };
 }
