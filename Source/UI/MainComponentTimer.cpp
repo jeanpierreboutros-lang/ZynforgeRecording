@@ -402,6 +402,7 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
         const bool recoveryFail = status.recoveryMarkerFailed;
         const bool mixFail = ! useCaptureDaemon && engine.hasStereoMixWriteFailed();
         const bool diskTrouble = status.diskStruggling;
+        const bool samplesMissed = status.missedSamples > 0;
         const bool daemonUnavailable = status.source == "daemon-unavailable";
         const bool smartBad = (smartPrimaryStatus == (int) MultitrackRecorder::SmartStatus::Failing)
                            || (smartBackupStatus  == (int) MultitrackRecorder::SmartStatus::Failing);
@@ -412,7 +413,7 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
         const int mirrorsSkipped = status.mirrorsSkipped;
         const auto inputAlarms = channelalarm::bannerText (status.channelAlarms);
         if (daemonUnavailable || status.captureDeviceLost || primFail || backupFail || mirrorFail || recoveryFail || mixFail
-            || diskTrouble || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty()
+            || diskTrouble || samplesMissed || smartBad || mirrorsSkipped > 0 || inputAlarms.isNotEmpty()
             || ! status.copyProblems.isEmpty())
         {
             juce::String warn;
@@ -429,6 +430,7 @@ void MainComponent::updateCaptureWarnings (const zynforge::EngineStatus& status)
                 warn << "! " << mirrorsSkipped << " MIRROR"
                      << (mirrorsSkipped == 1 ? "" : "S") << " NOT WRITING -- drive missing "
                                                             "or folder unusable  ";
+            if (samplesMissed) warn << "! " << status.missedSamples << " SAMPLES MISSED -- the take has gaps  ";
             for (const auto& problem : status.copyProblems) warn << "! " << problem << "  ";
             if (diskTrouble) warn << "! DISK STRUGGLING -- missed samples imminent";
             activeCaptureWarning = warn.trim();

@@ -166,7 +166,6 @@ namespace zynforge
         // Every refusal here also drops a punch/continue arm the caller set
         // for this start; discardTakeArms is a no-op while a take is live.
         if (isCaptureFinalizing()) { recorder.discardTakeArms(); return false; }
-        if (captureFinalizationPending.load()) stopRecording();
         stereoMixWriteFailed.store (false, std::memory_order_relaxed);
         if (isRecording() || sessionTransitionActive.load (std::memory_order_acquire))
         {
@@ -287,8 +286,7 @@ namespace zynforge
         // session, reseed clips, yank the playhead -- destroying clip/comp
         // edits on a session that is merely idle or playing back. The UI STOP
         // button is already gated, but the engine entry point was not.
-        const bool interrupted = captureFinalizationPending.exchange (false);
-        if (! recorder.isRecording() && ! interrupted) return;
+        if (! recorder.isRecording()) return;
 
         const auto sessionDir = recorder.getActiveSessionDir();
         // Where the take actually ends, captured BEFORE stopRecording()
@@ -297,7 +295,7 @@ namespace zynforge
         // pass began) leave the transport parked at the END of what was just
         // captured, so the next RECORD continues the take from here instead
         // of looking like it starts over from the beginning.
-        const auto recordEnd = interrupted ? interruptedCaptureEnd.load() : recorder.getRecordTimelineSamples();
+        const auto recordEnd = recorder.getRecordTimelineSamples();
         recorder.stopRecording();
         clearCaptureWindow();
         player.setSeekLocked (false);
@@ -338,8 +336,14 @@ namespace zynforge
     {
         const std::lock_guard<std::mutex> lifecycle (deviceLifecycleLock);
         if (isCaptureFinalizing() || ! recorder.beginFinalization()) return false;
+        launchCaptureStopJob (std::move (completion));
+        return true;
+    }
+
+    // The caller holds deviceLifecycleLock and the recorder's finalization lease.
+    void AudioEngine::launchCaptureStopJob (std::function<void (bool)> completion)
+    {
         asyncCaptureFinalizing.store (true, std::memory_order_release);
-        captureFinalizationPending.store (false);
         auto job = std::make_unique<CaptureStopJob>();
         job->directory = recorder.getActiveSessionDir();
         job->recordEnd = recorder.getRecordTimelineSamples();
@@ -375,7 +379,6 @@ namespace zynforge
                 if (auto* engine = handle->load (std::memory_order_acquire)) engine->installFinalizedCapture (id);
             });
         });
-        return true;
     }
 
     void AudioEngine::installFinalizedCapture (juce::uint64 id)
@@ -723,7 +726,6 @@ namespace zynforge
     int AudioEngine::loadSession (const juce::File& sessionDir, bool preserveEdits, bool appendRecordedAudio)
     {
         if (isCaptureFinalizing()) return 0;
-        if (captureFinalizationPending.load()) stopRecording();
         if (! TrackFileTransaction::recover (sessionDir)) return -1;
         const auto audioDir = sessionDir.getChildFile ("Audio Files");
         if (! MultitrackRecorder::recoverInterruptedPunches (
@@ -2228,7 +2230,6 @@ namespace zynforge
     void AudioEngine::clearSessionState()
     {
         if (isCaptureFinalizing()) return;
-        if (captureFinalizationPending.load()) stopRecording();
         // Never under a live take: resetAllStripState re-patches its inputs.
         if (isRecording()) return;
         stopPlayback();
@@ -2736,27 +2737,27 @@ namespace zynforge
             player.stop();
             return;
         }
-        const bool interrupted = recorder.isRecording();
-        if (interrupted)
+        if (recorder.isRecording())
         {
-            interruptedCaptureEnd.store (recorder.getRecordTimelineSamples());
             recorder.markCaptureDeviceLost();
+            // Closing a take can take minutes (a punch rewrites whole files, a
+            // lead-in writes silence), and JUCE calls this on the message
+            // thread holding its audio lock. It goes to the STOP worker, and
+            // what the device does next waits for it like any other STOP.
+            if (recorder.beginFinalization())
+            {
+                launchCaptureStopJob ([this] (bool ok) { if (onTakeInterrupted) onTakeInterrupted (ok); });
+                deferredDeviceAudio.store (true, std::memory_order_release);
+                deferredDeviceRelease = true;
+                deferredDeviceConfiguration.reset();
+                return;
+            }
         }
         recorder.release();
         player.release();
         {
             const juce::ScopedLock sl (stereoMixLock);
             stereoMixWriter.reset();
-        }
-        if (interrupted)
-        {
-            captureFinalizationPending.store (true);
-            const auto handle = asyncHandle;
-            juce::MessageManager::callAsync ([handle]
-            {
-                if (auto* engine = handle->load())
-                    if (engine->captureFinalizationPending.load()) engine->stopRecording();
-            });
         }
     }
 

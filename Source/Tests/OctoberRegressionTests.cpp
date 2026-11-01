@@ -1,3 +1,4 @@
+#include <CoreFoundation/CoreFoundation.h>
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MultiPartReader.h"
 #include "../Audio/SettingsFile.h"
@@ -424,8 +425,15 @@ public:
             juce::AudioBuffer<float> out (2, 256);
             auto process = [&] { e.audioDeviceIOCallbackWithContext (in, 2, out.getArrayOfWritePointers(), 2, 256, {}); };
             for (int i = 0; i < 20; ++i) process();
-            e.audioDeviceStopped(); e.stopRecording();
-            expect (! e.isRecording()); expect (e.getPlayer().isLoaded());
+            bool ended = false;
+            e.onTakeInterrupted = [&] (bool) { ended = true; };
+            e.audioDeviceStopped();
+            expect (! e.isRecording());
+            const auto deadline = juce::Time::getMillisecondCounterHiRes() + 20000.0;
+            while (! ended && juce::Time::getMillisecondCounterHiRes() < deadline)
+                CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.005, true);
+            expect (ended, "the interrupted take never finished finalizing");
+            expect (e.getPlayer().isLoaded());
             expect (e.captureStatus().captureDeviceLost);
             for (int i = 0; i < 30; ++i) process();
             auto mic = read (f.track()), mix = read (f.dir.getChildFile ("Export Files/StereoMix.wav"));

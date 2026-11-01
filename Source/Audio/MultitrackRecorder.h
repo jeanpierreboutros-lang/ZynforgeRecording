@@ -728,6 +728,7 @@ namespace zynforge
         friend class AsyncStopAuditTests;
         friend class ReviewCaptureRepairTests;
         friend class CaptureCopyTests;
+        friend class CaptureDaemonLinkTests;
         friend class PunchSessionGuardTests;   // splice-failure fixtures
         friend class TwinLinkTests;            // report publication ordering
         friend class CaptureMetaTests;

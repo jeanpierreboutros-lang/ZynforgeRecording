@@ -71,6 +71,10 @@ namespace zynforge
 
         // Told the final name of every marker dropped at the transport, from
         // whichever surface dropped it. Fires on the caller's thread.
+        // The audio device ended a take: it has finished finalizing and the
+        // session is loaded. Message thread. A take that ends this way has no
+        // STOP press behind it, so nothing else would reset the transport.
+        std::function<void (bool ok)> onTakeInterrupted;
         std::function<void (const juce::String&)> onMarkerDropped;
 
         // Queued callbacks must not capture a raw AudioEngine*.  The handle is
@@ -1165,6 +1169,7 @@ namespace zynforge
             juce::uint64 id = 0;
             std::function<void (bool)> completion;
         };
+        void launchCaptureStopJob (std::function<void (bool)> completion);
         void installFinalizedCapture (juce::uint64 id);
         void completeFinalizedCapture (juce::uint64 id);
         void applyDeviceConfiguration (double, int, juce::AudioWorkgroup);
@@ -1177,8 +1182,6 @@ namespace zynforge
         std::unique_ptr<CaptureStopJob> captureStopJob;
         juce::uint64 captureStopSequence = 0;
         AsyncHandle asyncHandle;
-        std::atomic<bool> captureFinalizationPending { false };
-        std::atomic<juce::int64> interruptedCaptureEnd { 0 };
         juce::AudioDeviceManager deviceManager;
         MultitrackRecorder       recorder;
         SessionPlayer            player;

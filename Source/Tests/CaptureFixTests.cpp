@@ -503,6 +503,7 @@ namespace zynforge
                 Rig rig;
                 if (! bringUp (rig) || ! startTake (rig, rig.session)) return;
                 auto& main = *rig.main;
+                main.statusLabel.setText ({}, juce::dontSendNotification);
                 rig.daemon.dropLinkForTests();
                 expect (pumpUntil ([&]
                 {
@@ -609,6 +610,7 @@ namespace zynforge
                 Rig rig;
                 if (! bringUp (rig) || ! startTake (rig, rig.session)) return;
                 auto& main = *rig.main;
+                main.statusLabel.setText ({}, juce::dontSendNotification);
                 rig.daemon.dropLinkForTests();
                 expect (pumpUntil ([&]
                 {
@@ -618,6 +620,49 @@ namespace zynforge
                 }, 8000));
                 expect (main.engine.dropMarkerAtCurrentPosition ("After the crash") > 0, "the marker was refused");
                 expect (rig.session.getChildFile ("markers.json").loadFileAsString().contains ("After the crash"));
+            }
+
+            beginTest ("Missed samples and copy problems reach the status line");
+            {
+                Rig rig;
+                if (! bringUp (rig)) return;
+                auto& main = *rig.main;
+                EngineStatus status;
+                status.recording = true;
+                status.missedSamples = 480;
+                status.copyProblems.add ("Mirror /Volumes/NAS lost 2.0 s of audio; the other copies have it");
+                main.updateCaptureWarnings (status);
+                expect (main.statusLabel.getText().contains ("480 SAMPLES MISSED"), main.statusLabel.getText());
+                expect (main.statusLabel.getText().contains ("/Volumes/NAS"), main.statusLabel.getText());
+            }
+
+            beginTest ("A take the device ended resets the transport and saves the session");
+            {
+                Rig rig;
+                if (! bringUp (rig)) return;
+                auto& main = *rig.main;
+                main.useCaptureDaemon = false;
+                main.captureSupervisor.disconnect();
+                auto& rec = main.engine.getRecorder();
+                rec.getTrack (0).armed.store (true);
+                expect (main.engine.startRecording (rig.session));
+                main.recordButton.setButtonText ("STOP");
+                std::vector<float> samples ((size_t) kBlock, 0.25f);
+                const float* inputs[] { samples.data() };
+                for (int b = 0; b < 20; ++b) rec.processBlock (inputs, 1, kBlock);
+
+                rec.beforeFinalizationForTests = [] { juce::Thread::sleep (300); };
+                main.engine.audioDeviceStopped();
+                expect (main.engine.isCaptureFinalizing(), "finalization ran on the caller's thread");
+                main.onRecordClicked();
+                expect (! main.engine.isRecording(), "a press during finalization started a take");
+
+                expect (pumpUntil ([&] { return ! main.engine.isCaptureFinalizing() && ! main.captureMetadataPending; }, 15000),
+                        "the interrupted take never finished");
+                expectEquals (main.recordButton.getButtonText(), juce::String ("RECORD"));
+                expect (main.engine.getPlayer().isLoaded(), "the take was not loaded");
+                expect (rig.session.getChildFile ("session_mix.json").existsAsFile(), "the session was not saved");
+                expect (main.lastCaptureFinalizationError.contains ("device"), main.lastCaptureFinalizationError);
             }
 
             beginTest ("A take the daemon ended by itself comes back to the window");
@@ -758,6 +803,7 @@ namespace zynforge
             leftBehindAtStop();
             everyCopyMatches();
             ringMemory();
+            stuckDriveReadings();
         }
 
         void stalledCopies()
@@ -983,6 +1029,38 @@ namespace zynforge
                 expectIntact (dirs.primaryTake(), feeder.frame, "the primary");
                 expectIntact (dirs.mirrorTake(), feeder.frame, "the mirror");
             }
+        }
+
+        void stuckDriveReadings()
+        {
+            beginTest ("A stuck drive shows in the readings while it is stuck");
+            Dirs dirs;
+            MultitrackRecorder rec;
+            rec.prepare (kRate, kBlock, 1);
+            rec.getTrack (0).armed.store (true);
+            rec.copyRingFramesForTests = 4096;
+            auto stall = std::make_shared<Stall> (0);
+            hold (rec, stall);
+            expect (rec.startRecording (dirs.session));
+            Feeder feeder { rec, 1 };
+            feeder.block();
+            rec.drainOnce();
+            expect (stall->entered.wait (5000));
+
+            const auto expected = rec.estimateBytesPerSecondForArmedTracks();
+            const auto end = juce::Time::getMillisecondCounterHiRes() + 20000.0;
+            while (! rec.isDiskStruggling() && juce::Time::getMillisecondCounterHiRes() < end)
+            {
+                feeder.block();
+                rec.drainOnce();
+                rec.updateDiskHealth (expected);
+                juce::Thread::sleep (20);
+            }
+            expect (rec.isDiskStruggling(), "the warning never fired during the stall");
+            expectEquals (rec.getDiskBytesPerSec(), 0.0f, "throughput held its last healthy value");
+            expectGreaterThan (rec.getRingFillPct(), 0.0f, "the ring reading did not move");
+            stall->released.signal();
+            rec.stopRecording();
         }
 
         void ringMemory()

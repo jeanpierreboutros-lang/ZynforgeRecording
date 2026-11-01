@@ -32,6 +32,7 @@ MainComponent::MainComponent()
                                    [this] (juce::int64 sample)
                                    { if (editPage != nullptr) editPage->scrollToSample (sample); } });
     wireConsoleLink();
+    engine.onTakeInterrupted = [this] (bool) { localTakeInterrupted(); };
     engine.onMarkerDropped = [this] (const juce::String& name) { twinLink.noteLocalMarker (name); };
 
     engine.onTracksReordered = [this] (const std::vector<int>& destination)
@@ -862,6 +863,7 @@ MainComponent::~MainComponent()
     engine.setRemoteTransportHandler ({});
     engine.getRemotes().setHost ({});
     engine.onMarkerDropped = nullptr;
+    engine.onTakeInterrupted = nullptr;
     delete twinDialog.getComponent();
     twinLink.stop();
     sessionMirror.stop();

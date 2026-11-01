@@ -295,6 +295,7 @@ private:
     void disableCaptureDaemon();
     void stopDaemonCapture (bool rewind, std::function<void (bool)> completion);
     void endDaemonTake (juce::String error, bool rewind, std::function<void (bool)> completion);
+    void localTakeInterrupted();
     void saveFinalizedCaptureMetadata (bool mediaOk, juce::String mediaError,
                                        std::function<void (bool)> completion);
     void promptConsoleConnect();

@@ -63,7 +63,8 @@ void MainComponent::updateMixerPlaceholder()
 
 void MainComponent::onRecordClicked()
 {
-    if (captureMetadataPending || (sessionIoBusy.load() && ! engine.isRecording()))
+    if (captureMetadataPending || engine.isCaptureFinalizing()
+        || (sessionIoBusy.load() && ! engine.isRecording()))
     { showStatus ("Wait for recording finalization / session saving to finish"); return; }
     // RECORD is a sequence: a press during a take (or a refused daemon state)
     // is consumed first; otherwise every pre-flight refusal runs before
@@ -743,6 +744,23 @@ void MainComponent::endDaemonTake (juce::String error, bool rewind, std::functio
     }
     recordButton.setButtonText ("RECORD");
     saveFinalizedCaptureMetadata (error.isEmpty(), error, std::move (completion));
+}
+
+// No STOP press ran, so nothing else resets the transport, and the session
+// has never been saved if this was its first take.
+void MainComponent::localTakeInterrupted()
+{
+    stopArmedAtMs = 0;
+    manualPunchActive = false;
+    if (punchSessionActive)
+    {
+        restoreArmStateAfterPunch();
+        engine.setPunchModeOn (false);
+        restoreLoopAfterPunch();
+        punchSessionActive = false;
+    }
+    recordButton.setButtonText ("RECORD");
+    saveFinalizedCaptureMetadata (false, "Capture device stopped during the take; check the audio and the device", {});
 }
 
 void MainComponent::stopActiveCaptureAsync (bool rewind, std::function<void (bool)> completion)
