@@ -2628,6 +2628,9 @@ namespace zynforge
                         // (Delete / Crop) apply to the same set.
                         if (auto* pg = findParentComponentOfClass<EditPage>())
                         {
+                            // The range is the target now. Delete and Cmd+X take a
+                            // selected clip first, so an old one would answer for it.
+                            pg->clearSelectedClip();
                             if (e.mods.isAltDown())
                             {
                                 if (pg->onRangeSelectAllTracks) pg->onRangeSelectAllTracks();

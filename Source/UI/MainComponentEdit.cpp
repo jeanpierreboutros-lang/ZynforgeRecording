@@ -1319,6 +1319,7 @@ void MainComponent::editRippleDelete()
 void MainComponent::editStartRange()
 {
     if (! canMutateTimeline()) return;
+    if (editPage != nullptr) editPage->clearSelectedClip();   // the range is the target now
     const auto pos = currentPlayheadSamples (engine);
     auto& player = engine.getPlayer();
     const auto end = player.hasLoopRegion() ? player.getLoopEnd()
@@ -1334,6 +1335,7 @@ void MainComponent::editStartRange()
 void MainComponent::editFinishRange()
 {
     if (! canMutateTimeline()) return;
+    if (editPage != nullptr) editPage->clearSelectedClip();   // the range is the target now
     const auto pos = currentPlayheadSamples (engine);
     auto& player = engine.getPlayer();
     const auto start = player.hasLoopRegion() ? player.getLoopStart() : juce::int64 (0);

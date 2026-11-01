@@ -979,6 +979,31 @@ namespace zynforge
                 s.engine.clearAutomation (AP::Volume);
             }
 
+            beginTest ("A Range drag or range key takes over from an older clip selection");
+            {
+                Show s (2, { 48000, 48000 });
+                s.page().refresh();
+                auto rows = rowsOf (s.page());
+                auto* tools = s.page().getEditToolsBar();
+                expect (rows.size() == 2 && tools != nullptr, "setup");
+                if (rows.size() == 2 && tools != nullptr)
+                {
+                    auto& row = *rows[0];
+                    s.page().setSelectedClip (1, 0);
+                    tools->setTool (EditToolsBar::Tool::Selector);
+                    const int laneLeft = row.getHeaderWidth() + 4;
+                    drag (row, { laneLeft + 100, 40 }, { laneLeft + 400, 40 });
+                    tools->setTool (EditToolsBar::Tool::Smart);
+                    expect (s.engine.getPlayer().hasLoopRegion(), "setup: the drag made a range");
+                    expect (s.page().getSelectedClips().empty(), "Delete would take the old clip, not the range");
+
+                    s.page().setSelectedClip (1, 0);
+                    s.main.editStartRange();
+                    expect (s.page().getSelectedClips().empty(), "a range set from the keyboard must take over too");
+                }
+                s.engine.getPlayer().clearLoopRegion();
+            }
+
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);
         }
