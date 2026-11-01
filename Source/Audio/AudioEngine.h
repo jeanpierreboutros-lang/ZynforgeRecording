@@ -1493,6 +1493,16 @@ namespace zynforge
         // wrong-speed capture. 0 = unset (no guard).
         void   setSessionSampleRate (double sr) noexcept { sessionSampleRate.store (sr, std::memory_order_relaxed); }
         double getSessionSampleRate () const noexcept    { return sessionSampleRate.load (std::memory_order_relaxed); }
+        // The rate the session's audio is at, which a device held at another
+        // rate does not change. Anything written into a session uses this: the
+        // player has no converter and takes the last loaded file's rate as the
+        // whole session's.
+        double getSessionAudioRate() const noexcept
+        {
+            if (player.isLoaded() && player.getSampleRate() > 0.0) return player.getSampleRate();
+            if (const double session = getSessionSampleRate(); session > 0.0) return session;
+            return getDeviceSampleRate();
+        }
         // True when a device is open and its rate diverges from the session rate.
         bool   isSampleRateMismatched() const noexcept;
 

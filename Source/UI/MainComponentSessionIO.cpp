@@ -1317,9 +1317,7 @@ void MainComponent::onSaveSessionAs()
 // player (it read the files), fall back to the session setting, then the device.
 static double sessionAudioRateFor (zynforge::AudioEngine& engine)
 {
-    if (const double pr = engine.getPlayer().getSampleRate(); pr > 0.0) return pr;
-    if (const double ss = engine.getSessionSampleRate();      ss > 0.0) return ss;
-    return engine.getDeviceSampleRate();
+    return engine.getSessionAudioRate();
 }
 
 void MainComponent::onExportAllTracks()
