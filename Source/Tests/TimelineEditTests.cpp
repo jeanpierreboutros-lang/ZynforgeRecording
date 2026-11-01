@@ -5,8 +5,21 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include "../Audio/AudioEngine.h"
+#include "../Audio/CheckedReaderSource.h"
+#include "../Audio/FloatAiffWriter.h"
 #include "../Audio/MultiPartReader.h"
+#include "../Audio/NoiseAnalyzer.h"
+#include "../Audio/ProjectExport.h"
+#include "../Audio/QcAnalyzer.h"
+#include "../Audio/ShowHandoff.h"
+#include "../Audio/SincResampler.h"
+#include "../Audio/SongExport.h"
+#include "../Audio/TrackExporter.h"
 #include "../UI/MainComponent.h"
+
+#include <CoreFoundation/CoreFoundation.h>
+#include <sys/resource.h>
+#include <csignal>
 
 namespace zynforge
 {
@@ -356,12 +369,497 @@ public:
         }
     }
 
+    void rendersTellTheTruth()
+    {
+        beginTest ("Master MUTE is monitoring: a mix render ignores it");
+        {
+            Folder f; expect (write (f.track()));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            e.setMasterMuted (true);
+            juce::AudioBuffer<float> mix;
+            expect (e.renderStereoMix (mix, 48000));
+            expect (mix.getMagnitude (0, 48000) > 0.1f, "master MUTE silenced the render");
+            e.setMasterMuted (false);
+        }
+
+        beginTest ("A silent mix render says so, and a solo left on is named");
+        {
+            Folder f; expect (write (f.track()));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            e.setTrackMuted (0, true);
+            float peak = 1.0f;
+            expect (e.bounceStereoMixToWav (f.dir.getChildFile ("mix.wav"), 48000, 48000.0, nullptr, &peak));
+            expectEquals (peak, 0.0f);
+            expect (songexport::mixRenderWarning (true, false).contains ("SILENT"));
+            e.setTrackMuted (0, false);
+            expect (songexport::mixRenderWarning (false, false).isEmpty());
+
+            expect (! e.isAnySoloActive());
+            e.setVcaSoloed (0, true);
+            expect (e.isAnySoloActive(), "a soloed VCA shapes the mix like a soloed strip");
+            expect (e.captureInterchange().anySolo, "a DAW export must note a VCA solo");
+            e.setVcaSoloed (0, false);
+
+            songexport::Outcome outcome;
+            outcome.attempted = outcome.written = 2;
+            expect (! songexport::statusLine (outcome, "Songs").contains ("WARNING"));
+            outcome.silentMixes = 1;
+            expect (songexport::statusLine (outcome, "Songs").contains ("WARNING"));
+        }
+
+        beginTest ("A render that loses its last bytes to a full disk is a failure");
+        {
+            Folder f; expect (write (f.track(), 48000));
+            ExportOptions options;
+            options.format = ExportFormat::Wav24;
+            options.bitsPerSample = 24;
+            options.sampleRate = 48000.0;
+            TrackExporter exporter;
+            juce::String error;
+            const auto full = f.dir.getChildFile ("full");
+            expect (exporter.exportTrack (f.track(), full, options, error), error);
+            const auto size = full.withFileExtension (".wav").getSize();
+            expect (full.withFileExtension (".wav").deleteFile());
+
+            // Only the final flush can hit this limit: the buffer holds 16 KB.
+            struct rlimit before {}; getrlimit (RLIMIT_FSIZE, &before);
+            auto limited = before;
+            limited.rlim_cur = (rlim_t) (size - 1000);
+            const auto previousHandler = std::signal (SIGXFSZ, SIG_IGN);
+            setrlimit (RLIMIT_FSIZE, &limited);
+            const auto dest = f.dir.getChildFile ("short");
+            const bool ok = exporter.exportTrack (f.track(), dest, options, error);
+            setrlimit (RLIMIT_FSIZE, &before);
+            std::signal (SIGXFSZ, previousHandler);
+            expect (! ok, "a truncated file was installed as finished");
+            expect (! dest.withFileExtension (".wav").exists());
+            expect (error.contains ("Final write"), error);
+        }
+
+        beginTest ("A format's size limit refuses first, with the reason");
+        {
+            ExportOptions options;
+            options.format = ExportFormat::Aiff24;
+            options.bitsPerSample = 32;
+            const juce::int64 threeHours = 48000LL * 3 * 3600;
+            expect (TrackExporter::sizeRefusal (options, 2, threeHours).contains ("AIFF"));
+            expect (TrackExporter::sizeRefusal (options, 1, 48000LL * 3600).isEmpty());
+            options.bitsPerSample = 24;
+            expect (TrackExporter::sizeRefusal (options, 2, threeHours).isEmpty());
+            options.format = ExportFormat::Wav24;
+            options.bitsPerSample = 32;
+            expect (TrackExporter::sizeRefusal (options, 2, threeHours * 10).isEmpty());
+        }
+
+        beginTest ("Sample-rate conversion rejects aliases and keeps the passband");
+        {
+            const auto convert = [] (double hz, double fromRate, double toRate, int frames, int skip)
+            {
+                juce::MemoryBlock mem;
+                {
+                    auto* out = new juce::MemoryOutputStream (mem, false);
+                    juce::WavAudioFormat format;
+                    std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (out, fromRate, 1, 32, {}, 0));
+                    juce::AudioBuffer<float> b (1, frames);
+                    for (int i = 0; i < frames; ++i)
+                        b.setSample (0, i, 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * hz * i / fromRate));
+                    writer->writeFromAudioSampleBuffer (b, 0, frames);
+                }
+                juce::WavAudioFormat format;
+                std::unique_ptr<juce::AudioFormatReader> reader (format.createReaderFor (
+                    new juce::MemoryInputStream (mem, false), true));
+                CheckedReaderSource source (*reader);
+                SincResampler resampler (&source, 1);
+                resampler.setResamplingRatio (fromRate / toRate);
+                resampler.prepareToPlay (4096, toRate);
+                const int count = (int) (frames * toRate / fromRate) - skip;
+                juce::AudioBuffer<float> out (1, count + skip);
+                juce::AudioSourceChannelInfo info (&out, 0, count + skip);
+                resampler.getNextAudioBlock (info);
+                resampler.releaseResources();
+                juce::AudioBuffer<float> middle (1, count - skip);
+                middle.copyFrom (0, 0, out, 0, skip, count - skip);
+                return (double) juce::Decibels::gainToDecibels (middle.getMagnitude (0, middle.getNumSamples()) / 0.5f);
+            };
+            // 23.5 kHz is above the new Nyquist: anything left of it is an alias.
+            const double alias = convert (23500.0, 48000.0, 44100.0, 48000, 2000);
+            logMessage ("Alias of 23.5 kHz at 48 -> 44.1 kHz: " + juce::String (alias, 1) + " dB");
+            expect (alias < -90.0, "alias only " + juce::String (alias, 1) + " dB down");
+            expect (std::abs (convert (1000.0, 48000.0, 44100.0, 48000, 2000)) < 0.01, "1 kHz level moved");
+            expect (std::abs (convert (15000.0, 48000.0, 44100.0, 48000, 2000)) < 0.05, "15 kHz level moved");
+            expect (std::abs (convert (15000.0, 44100.0, 96000.0, 44100, 4000)) < 0.05, "upsampled 15 kHz moved");
+        }
+
+        beginTest ("A converted export keeps the source's first sample and its length");
+        {
+            Folder f;
+            const auto src = f.dir.getChildFile ("impulse.wav");
+            {
+                juce::WavAudioFormat format;
+                std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
+                    src.createOutputStream().release(), 96000.0, 1, 24, {}, 0));
+                juce::AudioBuffer<float> b (1, 9600);
+                b.clear(); b.setSample (0, 4800, 0.9f);
+                writer->writeFromAudioSampleBuffer (b, 0, 9600);
+            }
+            ExportOptions options;
+            options.format = ExportFormat::Wav24;
+            options.bitsPerSample = 24;
+            options.sampleRate = 48000.0;
+            TrackExporter exporter;
+            juce::String error;
+            const auto dest = f.dir.getChildFile ("half");
+            expect (exporter.exportTrack (src, dest, options, error), error);
+            juce::AudioFormatManager fm; fm.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (dest.withFileExtension (".wav")));
+            expectEquals ((juce::int64) reader->lengthInSamples, (juce::int64) 4800);
+            juce::AudioBuffer<float> b (1, 4800);
+            reader->read (&b, 0, 4800, 0, true, false);
+            int peakAt = 0;
+            for (int i = 0; i < 4800; ++i)
+                if (std::abs (b.getSample (0, i)) > std::abs (b.getSample (0, peakAt))) peakAt = i;
+            expectEquals (peakAt, 2400, "the conversion moved the audio in time");
+        }
+    }
+
+    void clipboardAndHandoff()
+    {
+        beginTest ("A clip reading a file outside the session cannot be pasted");
+        {
+            Folder a, b; expect (write (a.track())); expect (write (b.track()));
+            AudioEngine e; setup (e); e.loadSession (a.dir);
+            expectEquals (e.pasteClip (0, 0, 0, 4800, 0, 0, 0.0f, "other", b.track(), 0), -1);
+            expect (e.pasteClip (0, 0, 0, 4800, 0, 0, 0.0f, "own", a.track(), 0) >= 0);
+        }
+
+        beginTest ("A handoff knows when a clip reads outside the session");
+        {
+            Folder a, b; expect (write (a.track())); expect (write (b.track()));
+            AudioEngine e; setup (e); e.loadSession (a.dir);
+            auto input = e.captureInterchange();
+            expect (projectexport::firstMediaOutsideSession (input) == juce::File());
+            Clip stray;
+            stray.audioFile = b.track();
+            stray.fileLengthSamples = 4800;
+            if (! input.strips[0].clips.has_value()) input.strips[0].clips = std::vector<Clip>();
+            input.strips[0].clips->push_back (stray);
+            expect (projectexport::firstMediaOutsideSession (input) == b.track());
+        }
+
+        beginTest ("Finder files are no part of what a handoff compares");
+        {
+            Folder f; expect (write (f.track()));
+            const std::atomic<bool> cancel { false };
+            f.dir.getChildFile (".DS_Store").replaceWithText ("x");
+            f.dir.getChildFile ("._Track_01.wav").replaceWithText ("x");
+            std::map<juce::String, juce::File> files;
+            expect (showhandoff::collectFiles (f.dir, f.dir, files, cancel));
+            expectEquals ((int) files.size(), 1);
+        }
+    }
+
+    void clickAtSessionRate()
+    {
+        beginTest ("The session's audio rate does not follow the device");
+        {
+            Folder f; expect (write (f.track(), 44100, 0.25f, 44100.0));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            expectWithinAbsoluteError (e.getDeviceSampleRate(), 48000.0, 0.1);
+            expectWithinAbsoluteError (e.getSessionAudioRate(), 44100.0, 0.1);
+        }
+    }
+
+    // One song of 90 s at 100 ms windows, on two voices: on, off, on.
+    void songsOnTheTimeline()
+    {
+        beginTest ("Detect Songs marks where the arrangement plays, not where the file holds it");
+        {
+            Folder f;
+            const int rate = 8000;
+            const auto writeShow = [&] (const juce::File& file)
+            {
+                file.getParentDirectory().createDirectory();
+                juce::WavAudioFormat format;
+                std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
+                    file.createOutputStream().release(), rate, 1, 16, {}, 0));
+                juce::AudioBuffer<float> b (1, rate);
+                for (int second = 0; second < 200; ++second)
+                {
+                    const bool loud = (second >= 10 && second < 80) || (second >= 110 && second < 190);
+                    juce::FloatVectorOperations::fill (b.getWritePointer (0), loud ? 0.5f : 0.0f, rate);
+                    expect (writer->writeFromAudioSampleBuffer (b, 0, rate));
+                }
+            };
+            writeShow (f.track (1));
+            writeShow (f.track (2));
+            AudioEngine e; setup (e, 2); e.loadSession (f.dir);
+            const auto run = [&]
+            {
+                double sr = 48000.0;
+                const songs::Params params;
+                return songs::detect (songs::scanVoices (e.songScanVoices(), params, sr), sr, params);
+            };
+            auto found = run();
+            expectEquals ((int) found.size(), 2);
+            expectEquals (found[1].startSample, (juce::int64) 110 * rate);
+
+            // Remove the first 100 s: file positions no longer are timeline positions.
+            expectEquals (e.rippleDeleteTracks ({ 0, 1 }, 0, 100 * rate), 2);
+            found = run();
+            expectEquals ((int) found.size(), 1, "audio cut from the arrangement still made a song");
+            expectEquals (found[0].startSample, (juce::int64) 10 * rate, "the marker went to the file position");
+        }
+
+        beginTest ("A generated click does not hold the song quorum open");
+        {
+            Folder f; expect (write (f.track()));  expect (write (f.track (2)));
+            AudioEngine e; setup (e, 2); e.loadSession (f.dir);
+            expectEquals ((int) e.songScanVoices().size(), 2);
+            e.getRecorder().getTrack (1).referenceMedia.store (true);
+            expectEquals ((int) e.songScanVoices().size(), 1);
+        }
+
+        beginTest ("A stereo pair is one voice of the quorum");
+        {
+            Folder f; expect (write (f.track()));  expect (write (f.track (2)));
+            AudioEngine e; setup (e, 2); e.loadSession (f.dir);
+            e.getRecorder().getTrack (0).isStereo.store (true);
+            expectEquals ((int) e.songScanVoices().size(), 1);
+        }
+    }
+
+    void markersThatCutSongs()
+    {
+        const auto marker = [] (juce::int64 at, const juce::String& name, const juce::String& type)
+        {
+            Marker m; m.sampleOffset = at; m.name = name; m.type = type;
+            return m;
+        };
+
+        beginTest ("Export Songs cuts at song markers, not at splits, ranges or scenes");
+        {
+            const auto ranges = songexport::rangesFromMarkers (
+                { marker (0, "One", "user"), marker (100, "Split", "split"),
+                  marker (200, "Range In", "range"), marker (300, "Chorus", "scene"),
+                  marker (400, "Two", "song"), marker (500, "Split", "user") }, 1000);
+            expectEquals ((int) ranges.size(), 2);
+            expectEquals (ranges[0].end, (juce::int64) 400);
+            expectEquals (ranges[1].name, juce::String ("Two"));
+        }
+
+        beginTest ("A show with only scene markers still divides at them");
+        {
+            const auto ranges = songexport::rangesFromMarkers (
+                { marker (100, "Split", "split"), marker (200, "Song A", "scene"),
+                  marker (400, "Song B", "scene") }, 1000);
+            expectEquals ((int) ranges.size(), 2);
+            expectEquals (ranges[0].start, (juce::int64) 200);
+        }
+
+        beginTest ("A marker removed by id leaves the others alone");
+        {
+            Folder f; expect (write (f.track()));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            e.getMarkers().drop (100, "keep");
+            e.getMarkers().drop (200, "Split", "split");
+            const auto id = e.getMarkers().lastDroppedId;
+            const auto dropped = e.getMarkers().getAll()[1];
+            e.getMarkers().removeById (id);
+            expectEquals (e.getMarkers().getCount(), 1);
+            e.getMarkers().insert (dropped);
+            expectEquals (e.getMarkers().getAll()[1].type, juce::String ("split"));
+        }
+    }
+
+    void compAndStrip()
+    {
+        beginTest ("Comp refuses to play two takes over a locked clip");
+        {
+            Folder f; expect (write (f.track()));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            expectEquals (e.newTakeFromCurrent (0, "Take 2"), 1);
+            e.setClipLocked (0, 0, true);
+            const auto before = e.playlistsToJson();
+            expect (! e.compRangeFromTake (0, 0, 12000, 24000));
+            expect (juce::JSON::toString (before) == juce::JSON::toString (e.playlistsToJson()));
+            expectWithinAbsoluteError (renderedAt (e, 0, 48000, 15000), 0.25f, 0.001f, "the range plays both takes");
+        }
+
+        beginTest ("Strip Silence keeps the rest of a long fade at an edge it makes");
+        {
+            Folder f; expect (write (f.track(), 480000, 0.5f));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            e.setClipFades (0, 0, 240000, 0);         // 5 s fade-in, quiet start under -42 dB
+            juce::AudioBuffer<float> before;
+            expect (e.renderTrackArrangement (0, before, 480000));
+            expect (e.stripSilence (0, -42.0f, 14400, 7200, 0) > 0);
+            juce::AudioBuffer<float> after;
+            expect (e.renderTrackArrangement (0, after, 480000));
+            for (const int at : { 40000, 120000, 200000, 300000 })
+                expectWithinAbsoluteError (after.getSample (0, at), before.getSample (0, at), 0.002f,
+                                           "the piece no longer plays the clip's fade");
+        }
+
+        beginTest ("Strip Silence takes one decision for a stereo pair");
+        {
+            Folder f;
+            const auto stereo = f.track();
+            stereo.getParentDirectory().createDirectory();
+            {
+                juce::WavAudioFormat format;
+                std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
+                    stereo.createOutputStream().release(), 48000.0, 2, 24, {}, 0));
+                juce::AudioBuffer<float> b (2, 96000);
+                b.clear();
+                juce::FloatVectorOperations::fill (b.getWritePointer (0), 0.5f, 24000);        // L only
+                juce::FloatVectorOperations::fill (b.getWritePointer (1) + 48000, 0.5f, 24000); // R only
+                expect (writer->writeFromAudioSampleBuffer (b, 0, 96000));
+            }
+            AudioEngine e; setup (e, 2); e.loadSession (f.dir);
+            e.getRecorder().getTrack (0).isStereo.store (true);
+            std::atomic<bool> finished { false };
+            e.stripSilenceAsync ({ 0, 1 }, -42.0f, 4800, 480, 0, [&finished] (int, int, bool) { finished = true; });
+            for (int i = 0; i < 2000 && ! finished.load(); ++i)
+                CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.005, true);
+            expect (finished.load());
+            const auto spans = [] (const std::vector<Clip>& clips)
+            {
+                juce::String text;
+                for (const auto& c : clips)
+                    text << c.timelineStartSamples << "+" << c.fileLengthSamples << " ";
+                return text;
+            };
+            expectEquals (spans (e.clipsFor (0)), spans (e.clipsFor (1)), "the two sides got different gaps");
+            expectEquals ((int) e.clipsFor (0).size(), 2);
+        }
+
+        beginTest ("Heal Separation reaches only the split near the playhead");
+        {
+            Folder f; expect (write (f.track()));
+            AudioEngine e; setup (e); e.loadSession (f.dir);
+            expect (e.splitTrackAtSample (0, 24000));
+            expect (! e.healSeparationAt (0, 0), "a split half a second away was healed");
+            expectEquals ((int) e.clipsFor (0).size(), 2);
+            expect (e.healSeparationAt (0, 20000));
+            expectEquals ((int) e.clipsFor (0).size(), 1);
+        }
+    }
+
+    void analysisReports()
+    {
+        beginTest ("QC names a take it could not read; a read failure is not a complete scan");
+        {
+            Folder f;
+            const auto missing = zynforge::qc::analyzeFile (f.track());
+            expect (missing.error.isNotEmpty());
+
+            const auto corrupt = f.audio ("Track_01.wav");
+            corrupt.getParentDirectory().createDirectory();
+            corrupt.replaceWithText ("this is no audio file at all");
+            auto unreadable = zynforge::qc::analyzeFile (corrupt);
+            expect (unreadable.error.isNotEmpty());
+            unreadable.name = "Vox";
+
+            expect (write (f.track (2)));
+            auto good = zynforge::qc::analyzeFile (f.track (2));
+            expect (good.error.isEmpty());
+            good.name = "Gtr";
+
+            const auto summary = zynforge::qc::statusSummary ({ unreadable, good }, -1);
+            expect (summary.contains ("1 COULD NOT BE READ"), summary);
+            expect (summary.startsWith ("1 track QC'd"), summary);
+            const auto report = zynforge::qc::reportText ("Show", { unreadable, good });
+            expect (report.contains ("QC INCOMPLETE"), report);
+        }
+
+        beginTest ("A cancelled QC or noise scan stops");
+        {
+            Folder f; expect (write (f.track(), 480000));
+            std::atomic<bool> cancel { true };
+            expect (zynforge::qc::analyzeFile (f.track(), &cancel).peakDb <= -119.0f);
+            const auto findings = NoiseAnalyzer::analyseSession (f.dir, {}, &cancel);
+            expect (! f.dir.getChildFile ("noise_report.json").exists(), "a stopped scan wrote its report");
+            expectEquals ((int) findings.size(), 1);
+        }
+
+        beginTest ("The noise report reads the quiet parts as the floor and hum in dBFS");
+        {
+            Folder f;
+            const auto file = f.track();
+            file.getParentDirectory().createDirectory();
+            const double rate = 48000.0;
+            {
+                juce::WavAudioFormat format;
+                std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
+                    file.createOutputStream().release(), rate, 1, 32, {}, 0));
+                juce::AudioBuffer<float> b (1, 48000 * 20);
+                juce::Random random (1);
+                for (int i = 0; i < b.getNumSamples(); ++i)
+                {
+                    const double t = i / rate;
+                    const bool music = i >= 48000 * 4;   // loud after a quiet head of 4 s of 20
+                    const float noise = (random.nextFloat() - 0.5f) * 0.0002f;   // about -80 dBFS
+                    b.setSample (0, i, music ? 0.2f * (float) std::sin (juce::MathConstants<double>::twoPi * 440.0 * t)
+                                             : noise);
+                }
+                expect (writer->writeFromAudioSampleBuffer (b, 0, b.getNumSamples()));
+            }
+            const auto nf = NoiseAnalyzer::analyseFile (file, 0, "Vox");
+            expect (nf.error.isEmpty(), nf.error);
+            expect (nf.noiseFloorDbFS < -70.0f,
+                    "the floor read " + juce::String (nf.noiseFloorDbFS, 1) + " dBFS on a track with a quiet head");
+
+            const auto humFile = f.track (2);
+            {
+                juce::WavAudioFormat format;
+                std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
+                    humFile.createOutputStream().release(), rate, 1, 32, {}, 0));
+                juce::AudioBuffer<float> b (1, 48000 * 4);
+                const auto level = [] (double dB) { return (float) std::pow (10.0, dB / 20.0); };
+                for (int i = 0; i < b.getNumSamples(); ++i)
+                {
+                    const double w = juce::MathConstants<double>::twoPi * 60.0 * i / rate;
+                    b.setSample (0, i, level (-30.0) * (float) std::sin (w)
+                                     + level (-40.0) * (float) std::sin (2.0 * w)
+                                     + level (-40.0) * (float) std::sin (3.0 * w));
+                }
+                expect (writer->writeFromAudioSampleBuffer (b, 0, b.getNumSamples()));
+            }
+            const auto hum = NoiseAnalyzer::analyseFile (humFile, 1, "Bass");
+            expectEquals (hum.humFundamentalHz, 60);
+            expectWithinAbsoluteError (hum.humDb, -30.0f, 3.0f, "hum levels must read in dBFS");
+
+            const auto quietHum = f.track (3);
+            {
+                juce::WavAudioFormat format;
+                std::unique_ptr<juce::AudioFormatWriter> writer (format.createWriterFor (
+                    quietHum.createOutputStream().release(), rate, 1, 32, {}, 0));
+                juce::AudioBuffer<float> b (1, 48000 * 4);
+                for (int i = 0; i < b.getNumSamples(); ++i)
+                {
+                    const double w = juce::MathConstants<double>::twoPi * 60.0 * i / rate;
+                    b.setSample (0, i, 0.00003f * (float) (std::sin (w) + std::sin (2.0 * w) + std::sin (3.0 * w)));
+                }
+                expect (writer->writeFromAudioSampleBuffer (b, 0, b.getNumSamples()));
+            }
+            expectEquals (NoiseAnalyzer::analyseFile (quietHum, 2, "Quiet").humFundamentalHz, 0,
+                          "hum near -90 dBFS is inaudible and must not be reported");
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
         undoKeepsRecordedAudio();
         malformedActiveTake();
         cropAndRipple();
+        rendersTellTheTruth();
+        clipboardAndHandoff();
+        clickAtSessionRate();
+        songsOnTheTimeline();
+        markersThatCutSongs();
+        compAndStrip();
+        analysisReports();
     }
 };
 
