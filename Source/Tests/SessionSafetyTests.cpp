@@ -1052,6 +1052,32 @@ public:
             host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
         }
 
+        beginTest ("Settings keys left by removed features are ignored");
+        {
+            {
+                MainComponent writer; writer.stopTimer();
+                auto* props = writer.engine.getAppProps();
+                expect (props != nullptr);
+                if (props != nullptr)
+                {
+                    props->setValue ("interleavedFlag", true);
+                    props->setValue ("ioPreset", "Last Used");
+                    props->setValue ("sessionName", "Old");
+                    props->setValue ("cloudUploadCommand", "/usr/bin/false");
+                    props->setValue ("cs_mackie_type", 2);
+                    props->saveIfNeeded();
+                }
+            }
+            Folder f; writeSavedShow (f);
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expect (host.openSessionFolder (f.dir) == 0);
+            expectEquals (host.engine.getRecorder().getNumTracks(), 3);
+            if (auto* props = host.engine.getAppProps())
+                for (const auto* key : { "interleavedFlag", "ioPreset", "sessionName", "cloudUploadCommand", "cs_mackie_type" })
+                    props->removeValue (key);
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+
         beginTest ("A new session's document holds no I/O preset or interleaved flag");
         {
             Folder f;
