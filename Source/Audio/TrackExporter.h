@@ -48,6 +48,11 @@ namespace zynforge
         // Maps a format to the file extension that exportTrack will produce.
         static juce::String extensionFor (ExportFormat);
 
+        // Why a file of this size cannot be written in this format, or empty.
+        // Checked first, so a format limit never surfaces hours in as a write
+        // failure on a disk with space.
+        static juce::String sizeRefusal (const ExportOptions&, int numChannels, juce::int64 frames);
+
         // Resolves a path to the `lame` binary if installed (Homebrew /opt
         // or /usr/local, or a directory on PATH). Returns
         // an invalid File if unavailable.
@@ -92,6 +97,7 @@ namespace zynforge
         juce::File destWithoutExt, temporary;
         ExportOptions options;
         bool convertOnCommit { false };
+        std::shared_ptr<std::atomic<bool>> closeFailed;
         std::unique_ptr<juce::AudioFormatWriter> writer;
 
         JUCE_DECLARE_NON_COPYABLE (ExportFileStream)

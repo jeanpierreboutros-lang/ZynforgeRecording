@@ -3,7 +3,11 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 
 #include <algorithm>
+#include <atomic>
+#include <functional>
+#include <map>
 #include <vector>
+#include "ClipModel.h"
 #include "MultiPartReader.h"
 
 namespace zynforge::songs
@@ -34,10 +38,19 @@ namespace zynforge::songs
         juce::int64 endSample   { 0 };
     };
 
+    // One voice of the quorum: a strip's own take file and what plays of it.
+    // A clip with a file of its own reads that file instead.
+    struct Voice
+    {
+        juce::File ownFile;
+        std::vector<Clip> clips;
+    };
+
     // Per-file peak-envelope flags: flags[w] = 1 when window w's peak is
     // above threshold. Streams the file; never holds more than one block.
     inline std::vector<char> envelopeFlags (const juce::File& f, float thresholdDb,
-                                            double windowSec, double& srOut)
+                                            double windowSec, double& srOut,
+                                            const std::atomic<bool>* cancel = nullptr)
     {
         std::vector<char> flags;
         juce::AudioFormatManager fm;
@@ -53,12 +66,72 @@ namespace zynforge::songs
         flags.reserve ((size_t) (reader->lengthInSamples / win + 1));
         for (juce::int64 p = 0; p < reader->lengthInSamples; p += win)
         {
+            if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return {};
             const int n = (int) juce::jmin ((juce::int64) win, reader->lengthInSamples - p);
             buf.clear();
             if (! reader->read (&buf, 0, n, p, true, false)) break;
             flags.push_back (buf.getMagnitude (0, 0, n) >= thresh ? 1 : 0);
         }
         return flags;
+    }
+
+    // Moves a file's envelope to where its clips play it: the timeline the
+    // markers land on. Audio cut from the arrangement or muted makes no sound
+    // and counts as nothing here.
+    inline std::vector<char> timelineFlags (const std::vector<Clip>& clips, int win,
+                                            const std::function<const std::vector<char>* (const Clip&)>& flagsFor)
+    {
+        std::vector<char> timeline;
+        for (const auto& clip : clips)
+        {
+            if (clip.muted || clip.fileLengthSamples <= 0) continue;
+            const auto* flags = flagsFor (clip);
+            if (flags == nullptr) continue;
+            const auto firstWindow = clip.fileStartSamples / win;
+            const auto lastWindow  = (clip.fileStartSamples + clip.fileLengthSamples - 1) / win;
+            for (auto w = firstWindow; w <= lastWindow && w < (juce::int64) flags->size(); ++w)
+            {
+                if (! (*flags)[(size_t) w]) continue;
+                const auto at = (size_t) ((clip.timelineStartSamples + w * win - clip.fileStartSamples
+                                           + (juce::int64) win / 2) / win);
+                if (at >= timeline.size()) timeline.resize (at + 1, 0);
+                timeline[at] = 1;
+            }
+        }
+        return timeline;
+    }
+
+    // Every voice's envelope on the timeline. Each file is read once however
+    // many clips use it. Empty when cancelled.
+    inline std::vector<std::vector<char>> scanVoices (const std::vector<Voice>& voices, const Params& params,
+                                                      double& srOut, const std::atomic<bool>* cancel = nullptr)
+    {
+        std::vector<std::vector<char>> tracks;
+        std::map<juce::String, std::vector<char>> perFile;
+        for (const auto& voice : voices)
+        {
+            const auto flagsFor = [&] (const Clip& clip) -> const std::vector<char>*
+            {
+                const auto file = clip.audioFile != juce::File() ? clip.audioFile : voice.ownFile;
+                const auto key  = file.getFullPathName();
+                auto known = perFile.find (key);
+                if (known == perFile.end())
+                {
+                    double fileRate = 0.0;
+                    known = perFile.emplace (key, envelopeFlags (file, params.thresholdDb,
+                                                                 params.windowSec, fileRate, cancel)).first;
+                    if (fileRate > 0.0) srOut = fileRate;
+                }
+                return &known->second;
+            };
+            // A first read may set the rate the windows are counted in.
+            for (const auto& clip : voice.clips) flagsFor (clip);
+            if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return {};
+            const int win = juce::jmax (64, (int) (srOut * params.windowSec));
+            auto flags = timelineFlags (voice.clips, win, flagsFor);
+            if (! flags.empty()) tracks.push_back (std::move (flags));
+        }
+        return tracks;
     }
 
     // Combine per-track envelopes -> song spans. `sr` is the session

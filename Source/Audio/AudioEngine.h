@@ -24,7 +24,9 @@
 #include "StripGains.h"
 #include "StripNames.h"
 #include "StripRouting.h"
+#include "SongDetector.h"
 #include "TimecodeChase.h"
+#include "TimelineCut.h"
 
 #include <memory>
 #include <mutex>
@@ -737,6 +739,9 @@ namespace zynforge
         // var so the engine can round-trip through .zfproj.
         juce::var      automationToJson() const;
         void           loadAutomationFromJson (const juce::var&);
+        // The same lanes after a Crop or Ripple Delete on `tracks`.
+        static juce::var cutAutomationSnapshot (const juce::var& snapshot, const timelinecut::Cut&,
+                                                const std::vector<int>& tracks);
 
         // ── Range operations on one lane ────────────────────────
         // copyAutomationRange returns every point whose samplePos
@@ -877,9 +882,11 @@ namespace zynforge
         bool bounceTrackArrangementToWav (int track, const juce::File& dest,
                                           juce::int64 totalSamples, double sampleRate,
                                           const std::atomic<bool>* cancel = nullptr);
+        // `peak`, when given, receives the render's sample peak.
         bool bounceStereoMixToWav (const juce::File& dest,
                                    juce::int64 totalSamples, double sampleRate,
-                                   const std::atomic<bool>* cancel = nullptr);
+                                   const std::atomic<bool>* cancel = nullptr,
+                                   float* peak = nullptr);
 
         // Bounce a stereo-pair track (L = trackL, R = trackL+1) to ONE
         // interleaved 24-bit stereo WAV -- each side's edited clip
@@ -895,6 +902,13 @@ namespace zynforge
         // takes, daemon takes and a finalizing STOP all refuse: their files
         // are not finished. Asked before a job starts and by the job itself.
         juce::String exportRefusal() const;
+        // What Detect Songs listens to: one voice per logical strip, as the
+        // arrangement plays it. A generated click is on all the time, so it
+        // would hold the quorum open across every gap between songs.
+        std::vector<songs::Voice> songScanVoices();
+        // Any strip or VCA soloed. A mix render follows solo, so its file
+        // holds only what is soloed, and the engineer must be told.
+        bool isAnySoloActive();
         // Plain copies of everything a DAW project carries. Message thread:
         // it reads the clip lists, which only that thread edits.
         interchange::SessionInput captureInterchange();
@@ -921,11 +935,17 @@ namespace zynforge
         // active take. Returns true if the comp changed anything.
         bool  compRangeFromTake (int track, int sourceTakeIdx,
                                  juce::int64 start, juce::int64 end);
+        // A locked clip stays, so a comp over it would play both takes on top
+        // of each other. compRangeFromTake refuses this, as consolidate does.
+        bool  compRangeHitsLockedClip (int track, juce::int64 start, juce::int64 end) const;
         // Serialise / deserialise the full playlist (every track's
         // takes + their clip lists) for .zfproj persistence. Without
         // this, Takes are RAM-only and lost on app quit.
         juce::var playlistsToJson() const;
         void      loadPlaylistsFromJson (const juce::var& v);
+        // Undo / redo of a clip edit. Replaces the playlists with the
+        // snapshot, keeping any media recorded since it was taken.
+        void      restorePlaylistSnapshot (const juce::var& snapshot);
         // Split the named track at the current playhead -- creates two
         // clips that reference the same audio file with adjacent regions.
         bool splitTrackAtPlayhead (int track);
@@ -935,7 +955,8 @@ namespace zynforge
         // snap+playhead wrapper around this.
         bool splitTrackAtSample (int track, juce::int64 timelineSample);
         // Heal Separation (Pro Tools Cmd+H): merge the two adjacent clips
-        // whose shared boundary is nearest `timelineSample`, but ONLY when
+        // whose shared boundary is nearest `timelineSample` and within a
+        // quarter of a second of it, but ONLY when
         // they're genuinely contiguous in the same file (i.e. they were split
         // from one clip and not moved/trimmed apart). Returns true if a join
         // was healed. The range variant heals every such boundary in [a, b).
@@ -977,6 +998,27 @@ namespace zynforge
         // [start, end), every later clip slides left by (end - start) so
         // the gap closes. Returns true if anything changed.
         bool rippleDeleteRange (int track, juce::int64 start, juce::int64 end);
+        // Ripple Delete across `tracks`, moving what plays with their audio:
+        // every take and their automation. Naming every strip moves the
+        // session's timeline too (markers, tempo map). Returns the tracks
+        // changed, or -1 when timelineCutRefusal refuses.
+        int  rippleDeleteTracks (const std::vector<int>& tracks, juce::int64 start, juce::int64 end);
+        // Why a Crop or Ripple Delete cannot run, or empty when it can. A
+        // locked clip would have to move or go, and Automation Safe protects
+        // lanes the edit would have to move.
+        juce::String timelineCutRefusal (const timelinecut::Cut&, const std::vector<int>& tracks) const;
+        // Every strip index a whole-session edit has to touch.
+        std::vector<int> allTimelineTracks() const;
+        bool namesEveryStrip (const std::vector<int>& tracks) const;
+        // Everything a Crop or Ripple Delete changes, for its one undo step.
+        struct TimelineState
+        {
+            juce::var playlists, automation;
+            std::vector<Marker> markers;
+            std::vector<TempoChange> tempoMap;
+        };
+        TimelineState captureTimelineState() const;
+        void restoreTimelineState (const TimelineState&);
         // Insert a clip referencing this track's file region into `track`
         // at `timelineStart` (used by clip paste). Returns the inserted
         // clip index, or -1. Same-track only -- clips index into the
@@ -1011,11 +1053,11 @@ namespace zynforge
 
         // Non-destructive crop: on EVERY track, replace its clip list with
         // the parts that fall inside the timeline range [start, end),
-        // shifted so the range start becomes timeline 0. The underlying
-        // Track_NN.wav files are never touched -- only the clip references
-        // change -- so it round-trips through the .zfproj playlists and is
-        // fully reversible (re-crop to the full range, or reload). Returns
-        // the number of tracks left with at least one clip.
+        // shifted so the range start becomes timeline 0. Every take, the
+        // automation, the markers and the tempo map move with them. The
+        // underlying Track_NN.wav files are never touched. Returns the number
+        // of tracks left with at least one clip, or -1 when timelineCutRefusal
+        // refuses.
         int cropToRange (juce::int64 startSample, juce::int64 endSample);
 
         // Set linear fade-in / fade-out lengths on a clip. Either side
@@ -1152,7 +1194,8 @@ namespace zynforge
         // name to set it atomically (drop re-sorts by position, so a separate
         // rename-by-index afterwards can hit the wrong marker). Returns the new
         // marker count, or -1 if no session active.
-        int dropMarkerAtCurrentPosition (const juce::String& name = {});
+        int dropMarkerAtCurrentPosition (const juce::String& name = {},
+                                         const juce::String& type = "user");
 
         // AudioIODeviceCallback
         void audioDeviceAboutToStart (juce::AudioIODevice*) override;
@@ -1442,6 +1485,9 @@ namespace zynforge
         std::vector<std::vector<Clip>> trackClips;
         // Source lengths at the last seed, before a continuation grows files.
         std::vector<juce::int64> sourceTrackLengths;
+        // Adds file span [from, to) of a track's own take to its active take,
+        // at the same position on the timeline.
+        void addRecordedSpan (int track, juce::int64 from, juce::int64 to);
         // Per-track Playlist storing every Take (named clip list). The
         // active take's clips mirror trackClips above so the player
         // path doesn't need to know about takes. setActiveTake swaps
@@ -1450,6 +1496,9 @@ namespace zynforge
         std::vector<Playlist> trackPlaylists;
         std::vector<AutomationPoint> emptyAutomation;   // returned by ref when none
 
+        void cutSessionTimeline (const timelinecut::Cut&);
+        void cutAutomationLanes (const timelinecut::Cut&, const std::vector<int>& tracks);
+        bool automationBlocksCut (const std::vector<int>& tracks) const;
         std::vector<AutomationPoint>* findLane (int track, AutomationParam);
         const std::vector<AutomationPoint>* findLane (int track, AutomationParam) const;
         std::atomic<float>  diskMBPerSec     { 0.0f };
@@ -1481,6 +1530,16 @@ namespace zynforge
         // wrong-speed capture. 0 = unset (no guard).
         void   setSessionSampleRate (double sr) noexcept { sessionSampleRate.store (sr, std::memory_order_relaxed); }
         double getSessionSampleRate () const noexcept    { return sessionSampleRate.load (std::memory_order_relaxed); }
+        // The rate the session's audio is at, which a device held at another
+        // rate does not change. Anything written into a session uses this: the
+        // player has no converter and takes the last loaded file's rate as the
+        // whole session's.
+        double getSessionAudioRate() const noexcept
+        {
+            if (player.isLoaded() && player.getSampleRate() > 0.0) return player.getSampleRate();
+            if (const double session = getSessionSampleRate(); session > 0.0) return session;
+            return getDeviceSampleRate();
+        }
         // True when a device is open and its rate diverges from the session rate.
         bool   isSampleRateMismatched() const noexcept;
 

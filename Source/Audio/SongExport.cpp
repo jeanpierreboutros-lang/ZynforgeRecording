@@ -6,8 +6,26 @@
 
 namespace zynforge::songexport
 {
+    namespace
+    {
+        // Sessions saved before markers carried these types hold them as "user".
+        bool marksAPlaceOnly (const Marker& marker)
+        {
+            return marker.type == "split" || marker.type == "range" || marker.type == "scene"
+                || (marker.type == "user"
+                    && (marker.name == "Split" || marker.name == "Range In" || marker.name == "Range Out"));
+        }
+    }
+
     std::vector<Range> rangesFromMarkers (std::vector<Marker> markers, juce::int64 sessionEnd)
     {
+        const bool hasSongMarkers = std::any_of (markers.begin(), markers.end(),
+            [] (const Marker& marker) { return ! marksAPlaceOnly (marker); });
+        markers.erase (std::remove_if (markers.begin(), markers.end(), [hasSongMarkers] (const Marker& marker)
+                       {
+                           return hasSongMarkers ? marksAPlaceOnly (marker) : marker.type != "scene";
+                       }), markers.end());
+
         std::stable_sort (markers.begin(), markers.end(), [] (const Marker& a, const Marker& b)
                           { return a.sampleOffset < b.sampleOffset; });
 
@@ -40,6 +58,7 @@ namespace zynforge::songexport
     {
         Plan plan;
         plan.format = choice.format;
+        plan.soloActive = engine.isAnySoloActive();
         const double rate = engine.getPlayer().getSampleRate();
         plan.renderRate = rate > 0.0 ? rate
                         : (engine.getSessionSampleRate() > 0.0 ? engine.getSessionSampleRate()
@@ -107,7 +126,7 @@ namespace zynforge::songexport
     namespace
     {
         bool renderTarget (AudioEngine& engine, const Target& target, const SongPlan& song,
-                           ExportFileStream& out, const std::atomic<bool>& cancel)
+                           ExportFileStream& out, const std::atomic<bool>& cancel, float& peak)
         {
             const auto sink = [&] (const juce::AudioBuffer<float>& block, int numSamples)
             {
@@ -117,7 +136,11 @@ namespace zynforge::songexport
             {
                 case Target::Kind::Mix:
                     return engine.forEachStereoMixWindow (song.start, song.end,
-                        [&] (const juce::AudioBuffer<float>& w, juce::int64, int n) { return sink (w, n); });
+                        [&] (const juce::AudioBuffer<float>& w, juce::int64, int n)
+                        {
+                            peak = juce::jmax (peak, w.getMagnitude (0, n));
+                            return sink (w, n);
+                        });
                 case Target::Kind::StereoStem:
                     return engine.forEachStereoPairWindow (target.track, song.start, song.end,
                         [&] (const juce::AudioBuffer<float>& w, juce::int64, int n) { return sink (w, n); });
@@ -160,19 +183,27 @@ namespace zynforge::songexport
                 if (progress != nullptr)
                     progress (outcome.attempted, total, song.folder.getFileName());
 
-                juce::String error;
+                const int channels = target.kind == Target::Kind::MonoStem ? 1 : 2;
+                const auto frames = (juce::int64) ((double) (song.end - song.start) * plan.format.sampleRate
+                                                   / juce::jmax (1.0, plan.renderRate));
+                juce::String error = TrackExporter::sizeRefusal (plan.format, channels, frames);
                 bool ok = false;
+                float peak = 0.0f;
+                if (error.isEmpty())
                 {
-                    const int channels = target.kind == Target::Kind::MonoStem ? 1 : 2;
                     ExportFileStream out (exporter, target.destStem, plan.format, plan.renderRate, channels);
-                    ok = out.isOpen() && renderTarget (engine, target, song, out, cancel);
+                    ok = out.isOpen() && renderTarget (engine, target, song, out, cancel, peak);
                     if (cancel.load (std::memory_order_relaxed)) break;
                     ok = ok ? out.commit (error) : false;
                     if (! ok && error.isEmpty())
                         error = "Could not render " + target.destStem.getFileName();
                 }
                 ++outcome.attempted;
-                if (ok) ++outcome.written;
+                if (ok)
+                {
+                    ++outcome.written;
+                    if (target.kind == Target::Kind::Mix && peak <= 0.0f) ++outcome.silentMixes;
+                }
                 else if (outcome.firstError.isEmpty()) outcome.firstError = error;
             }
             if (song.folder.isDirectory()
@@ -181,7 +212,20 @@ namespace zynforge::songexport
             if (cancel.load (std::memory_order_relaxed)) break;
         }
         outcome.cancelled = cancel.load (std::memory_order_relaxed);
+        outcome.soloActive = plan.soloActive && std::any_of (plan.songs.begin(), plan.songs.end(),
+            [] (const SongPlan& song)
+            {
+                return std::any_of (song.targets.begin(), song.targets.end(),
+                                    [] (const Target& t) { return t.kind == Target::Kind::Mix; });
+            });
         return outcome;
+    }
+
+    juce::String mixRenderWarning (bool silent, bool soloActive)
+    {
+        if (silent)     return "the mix is SILENT -- check solo, strip mutes and VCAs";
+        if (soloActive) return "solo was on, so it holds only the soloed strips";
+        return {};
     }
 
     juce::String statusLine (const Outcome& outcome, const juce::String& destName)
@@ -196,6 +240,12 @@ namespace zynforge::songexport
         if (outcome.written < outcome.attempted)
             return "Export INCOMPLETE: " + juce::String (outcome.attempted - outcome.written)
                  + " of " + juce::String (outcome.attempted) + " failed or missing" + why;
-        return "Exported " + juce::String (outcome.written) + " file(s) -> " + destName;
+        const auto done = "Exported " + juce::String (outcome.written) + " file(s) -> " + destName;
+        if (outcome.silentMixes > 0)
+            return done + " -- WARNING: " + juce::String (outcome.silentMixes) + " of them: "
+                 + mixRenderWarning (true, outcome.soloActive);
+        if (outcome.soloActive)
+            return done + " -- " + mixRenderWarning (false, true);
+        return done;
     }
 }
