@@ -724,6 +724,7 @@ namespace zynforge
         // gets re-scanned and the waveform grows on screen.
         void reloadCurrentWaveformFiles()
         {
+            ++waveformReloads;
             overviewCache.clear();
             // setSource consults the AudioThumbnailCache by file hash and, if
             // it finds an entry that claims to be fully loaded, returns it
@@ -794,12 +795,15 @@ namespace zynforge
         // audio on un-armed rows keeps showing its real thumbnail.
         void holdLiveEnvelopeUntilScanned()
         {
+            // Only a row that captured holds: another keeps its waveform, not
+            // the envelope left over from an earlier take.
+            const bool captured = liveRecording;
             liveRecording = false;
             // Set unconditionally on captured rows: the post-stop re-scan
-            // (forceRefreshWaveforms) re-issues the source right after this, so
+            // (refreshWaveformsOf) re-issues the source right after this, so
             // waveformsLoaded() goes false and paint() only releases the hold
             // once the FRESH scan completes. Checking it here would race that.
-            liveHold = ! recPeakL.empty();
+            liveHold = captured && ! recPeakL.empty();
         }
 
         // Append one column to the live envelope. Called once per UI tick
@@ -3470,6 +3474,7 @@ namespace zynforge
         juce::String getOutputRoutingTextForTests() const { return outputCombo.getText(); }
         bool         isCondemnedForTests()   const noexcept { return ! rowValid; }
         double       getWaveformSecondsForTests() const { return thumbnailL.getTotalLength(); }
+        int          getWaveformReloadsForTests() const noexcept { return waveformReloads; }
 
         // Physical tracks this row's clip edits propagate to: both halves of a
         // stereo strip plus every member of its EDIT group, so split / trim /
@@ -4479,6 +4484,7 @@ namespace zynforge
         LedMeter                  meter;
 
         int                       playheadX             { -1 };
+        int                       waveformReloads       { 0 };
         // Live capture envelope fed by recorder peak bins on the UI thread.
         // It keeps a whole-take overview plus a fine recent window without
         // reading growing audio files. recPeakR carries a stereo partner.

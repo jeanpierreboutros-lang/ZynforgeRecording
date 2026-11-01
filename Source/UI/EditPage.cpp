@@ -276,6 +276,24 @@ namespace zynforge
             for (auto& r : rows) r->reloadCurrentWaveformFiles();
         }
 
+        // The rows a take is writing, by physical track.
+        std::set<int> armedRows() const
+        {
+            std::set<int> armed;
+            for (auto& r : rows)
+                if (rowIsArmed (*r)) armed.insert (r->getTrackIndex());
+            return armed;
+        }
+
+        // After a take only the rows it wrote change on disk. The others keep
+        // their peaks: rescanning them blanks lanes that are already right,
+        // for longer the bigger the session.
+        void refreshWaveformsOf (const std::set<int>& tracks)
+        {
+            for (auto& r : rows)
+                if (tracks.count (r->getTrackIndex()) > 0) r->reloadCurrentWaveformFiles();
+        }
+
         // Live capture envelope: arm / disarm every row's live draw, and
         // (each tick) feed every armed row its current input peak so the
         // lane grows a red waveform during the take. Reads only the live
@@ -1081,6 +1099,7 @@ namespace zynforge
         {
             recordingBaseSpanSamples = recordingTimelineSpanSamples (
                 0, player.getTotalLengthSamples(), liveRate);
+            capturedRows = list != nullptr ? list->armedRows() : std::set<int> {};   // arms freeze with the take
             waveCacheSaved = false; // this take will change the cached media
             cancelWaveCacheWork();  // and nothing writes to the take volume now
             // A deep post-STOP zoom would be multiplied by the growing live
@@ -1143,7 +1162,7 @@ namespace zynforge
         // files an async finalization still had open (the last ~5 s missing,
         // a punch not yet spliced) and nothing rescanned once it completed.
         if (captureJustSettled && list != nullptr)
-            list->forceRefreshWaveforms();
+            list->refreshWaveformsOf (capturedRows);
 
         // Persist WaveCache.wfm as soon as the background scan finishes for the
         // whole session -- even while EDIT is hidden -- so reopening the show

@@ -342,6 +342,7 @@ namespace zynforge
         bool       lastFinalizing  { false };   // async STOP still finalizing on the last tick
         juce::int64 recordingBaseSpanSamples { 0 };
         bool       waveCacheSaved  { false };   // WaveCache.wfm written for this session yet?
+        std::set<int> capturedRows;             // tracks the current take writes
         juce::File lastSessionDir;
         // Session whose WaveCache.wfm has already been pulled into the
         // thumbnail caches. Separate from lastSessionDir so the load can't be

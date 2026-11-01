@@ -1093,6 +1093,27 @@ namespace zynforge
                 s.engine.stopPlayback();
             }
 
+            beginTest ("Only the rows a take wrote rescan after STOP");
+            {
+                Show s (2, { 0, 48000 });
+                s.engine.setTrackArmed (0, true);
+                expect (s.engine.startRecording (s.dir), "setup: the take rolls");
+                pumpUntil ([] { return false; }, 150);    // the page sees the take roll
+                auto& recorder = s.engine.getRecorder();
+                std::vector<float> audio (256, 0.5f);
+                const float* input[] { audio.data(), audio.data() };
+                for (int b = 0; b < 20; ++b) recorder.processBlock (input, 2, 256);
+                s.engine.stopRecording();
+                pumpUntil ([] { return false; }, 150);
+                auto rows = rowsOf (s.page());
+                expect (rows.size() == 2, "setup: two rows");
+                if (rows.size() == 2)
+                {
+                    expect (rows[0]->getWaveformReloadsForTests() > 0, "the captured row must rescan");
+                    expectEquals (rows[1]->getWaveformReloadsForTests(), 0, "an un-armed row blanked and rescanned");
+                }
+            }
+
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);
         }
