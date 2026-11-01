@@ -5,6 +5,7 @@
 #include <juce_core/juce_core.h>
 
 #include "ClipModel.h"
+#include "PlaybackReader.h"
 
 #include <array>
 #include <atomic>
@@ -18,9 +19,15 @@ namespace zynforge
     //
     // Loads Track_NN.wav files from a session directory and routes each
     // track to the matching output channel (Track 1 → out 1, etc.).
-    // Disk I/O happens on a background TimeSliceThread via
-    // juce::BufferingAudioReader; the audio thread only copies samples
-    // from already-buffered RAM.
+    // Disk I/O happens on a background TimeSliceThread via PlaybackReader;
+    // the audio thread only copies samples from already-buffered RAM.
+    //
+    // Every track enters a new position together. A loop start or a clip
+    // coming up is cued ahead of the jump, so it is in RAM when the playhead
+    // gets there. A jump nobody could see coming (a locate, PLAY from a marker)
+    // holds the playhead on the target, silent, until every track has it. It
+    // never rolls on with some tracks missing: that is what used to drop the
+    // start of each pass, track by track.
     //
     // Stereo files: a natively-recorded stereo pair is ONE interleaved
     // 2-channel Track_NN.wav. loadSession expands it into TWO logical
@@ -129,7 +136,7 @@ namespace zynforge
         {
             // shared_ptr because the two halves of an interleaved stereo
             // file share ONE reader (L reads channel 0, R reads channel 1).
-            std::shared_ptr<juce::BufferingAudioReader> reader;
+            std::shared_ptr<PlaybackReader> reader;
             juce::int64 length { 0 };
             // Which file channel this logical track reads. For a mono file
             // both are true (the single channel). For a stereo file the L
@@ -169,13 +176,19 @@ namespace zynforge
         static constexpr int kMaxAuthoritativeTracks = 512;
         std::array<std::atomic<char>, kMaxAuthoritativeTracks> authoritativeFlags {};
 
+        PlaybackReader* readerForClip (const Clip&, const Track&) const noexcept;
+        // Ask for [position, position + span) on every track. True once all of
+        // it is in RAM. Both of these are called with clipsLock held.
+        bool prepareJump (juce::int64 position, juce::int64 span, int numTracks) noexcept;
+        void cueUpcoming (juce::int64 blockEnd, juce::int64 horizon, juce::int64 wrapTarget, int numTracks) noexcept;
+
         // Per-clip readers for clips that reference a file OTHER than their
         // track's own Track_NN.wav (cross-track paste). Keyed by absolute
         // path. Built on the message thread in setTrackClips (file open is
         // slow); the audio thread only looks them up, under clipsLock. A
         // clip with an empty audioFile uses its track's default reader, so
         // existing sessions are completely unaffected.
-        std::map<juce::String, std::unique_ptr<juce::BufferingAudioReader>> extraReaders;
+        std::map<juce::String, std::unique_ptr<PlaybackReader>> extraReaders;
 
         std::atomic<bool>        loaded      { false };
         std::atomic<bool>        playing     { false };
@@ -200,6 +213,14 @@ namespace zynforge
         juce::File   sessionDir;
 
         juce::AudioBuffer<float> scratch;
+
+        // Audio thread only. Where the next block continues from (-1: the
+        // last block did not render), the jump being held and for how long,
+        // and a block counter that thins out the cue pass.
+        juce::int64 nextRenderPosition { -1 };
+        juce::int64 heldJump           { -1 };
+        juce::int64 heldJumpSamples    { 0 };
+        juce::uint32 cuePassCounter    { 0 };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SessionPlayer)
     };

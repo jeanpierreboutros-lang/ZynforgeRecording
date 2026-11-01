@@ -7,6 +7,8 @@
 
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MixKernel.h"
+#include "../Audio/PlaybackReader.h"
+#include "../Audio/SessionPlayer.h"
 
 #include <atomic>
 #include <functional>
@@ -615,4 +617,319 @@ namespace zynforge
     };
 
     static EngineMixSafetyTests engineMixSafetyTests;
+
+    namespace
+    {
+        // A source whose sample at position n is a value only that n could
+        // hold, so a torn or misplaced block shows up in the audio.
+        float positionValue (juce::int64 n) { return 0.1f + 0.8f * (float) (n % 1021) / 1021.0f; }
+
+        struct CountingSource final : public juce::AudioFormatReader
+        {
+            explicit CountingSource (juce::int64 length, bool fail = false)
+                : juce::AudioFormatReader (nullptr, "test"), failing (fail)
+            {
+                sampleRate = 48000.0; lengthInSamples = length; numChannels = 1;
+                bitsPerSample = 32; usesFloatingPointData = true;
+            }
+
+            bool readSamples (int* const* dest, int numDest, int offset, juce::int64 start, int num) override
+            {
+                while (gate.load()) juce::Thread::sleep (1);
+                for (int ch = 0; ch < numDest; ++ch)
+                    if (auto* out = reinterpret_cast<float*> (dest[ch]))
+                        for (int i = 0; i < num; ++i)
+                            out[offset + i] = positionValue (start + i);
+                return ! failing;
+            }
+
+            std::atomic<bool> gate { false };
+            bool failing;
+        };
+
+        void writeTrack (const juce::File& file, float level, int length)
+        {
+            file.getParentDirectory().createDirectory();
+            juce::AudioBuffer<float> data (1, 32768);
+            for (int i = 0; i < data.getNumSamples(); ++i) data.setSample (0, i, level);
+            juce::WavAudioFormat wav;
+            std::unique_ptr<juce::AudioFormatWriter> writer (
+                wav.createWriterFor (file.createOutputStream().release(), 48000.0, 1, 24, {}, 0));
+            for (int left = length; left > 0; left -= data.getNumSamples())
+                writer->writeFromAudioSampleBuffer (data, 0, juce::jmin (left, data.getNumSamples()));
+        }
+
+        // Plays a session a block at a time, a few times faster than real
+        // time, and holds it to one rule: every sample the playhead moved past
+        // reached every track. Silence is only allowed while it stands still.
+        struct JumpChecker
+        {
+            JumpChecker (juce::UnitTest& t, SessionPlayer& p, int tracks)
+                : test (t), player (p), buffers (tracks, kBlock)
+            {
+                player.prepare (48000.0, kBlock);
+            }
+
+            juce::int64 advanced (juce::int64 before, juce::int64 after) const
+            {
+                if (after >= before) return after - before;
+                return (player.getLoopEnd() - before) + (after - player.getLoopStart());
+            }
+
+            void run (int blocks)
+            {
+                for (int b = 0; b < blocks; ++b)
+                {
+                    const auto before = player.getPositionSamples();
+                    player.processBlock (buffers.getArrayOfWritePointers(), buffers.getNumChannels(), kBlock);
+                    const auto moved = advanced (before, player.getPositionSamples());
+                    for (int ch = 0; ch < buffers.getNumChannels(); ++ch)
+                    {
+                        int heard = 0;
+                        for (int i = 0; i < kBlock; ++i)
+                            heard += buffers.getSample (ch, i) != 0.0f ? 1 : 0;
+                        if (heard != (int) moved) ++faults;
+                    }
+                    if (moved == 0) ++heldBlocks; else playedSamples += moved;
+                    juce::Thread::sleep (2);
+                }
+            }
+
+            static constexpr int kBlock = 512;
+            juce::UnitTest& test;
+            SessionPlayer& player;
+            juce::AudioBuffer<float> buffers;
+            int faults { 0 }, heldBlocks { 0 };
+            juce::int64 playedSamples { 0 };
+        };
+    }
+
+    class PlaybackJumpTests final : public juce::UnitTest
+    {
+    public:
+        PlaybackJumpTests() : juce::UnitTest ("Playback jumps", "zynforge") {}
+
+        void runTest() override
+        {
+            constexpr int kSecond = 48000;
+
+            beginTest ("PlaybackReader: a miss is silence at once and a cue fills beside the read window");
+            {
+                juce::TimeSliceThread thread ("test reader");
+                thread.startThread();
+                auto* source = new CountingSource (kSecond * 60);
+                PlaybackReader reader (source, thread, kSecond * 2);
+                juce::AudioBuffer<float> out (1, 512);
+
+                source->gate = true;
+                out.clear();
+                expect (! reader.read (&out, 0, 512, kSecond * 30, true, true), "a miss reported success");
+                expect (out.getMagnitude (0, 512) == 0.0f, "a miss was not silent");
+                source->gate = false;
+
+                const auto wait = [&] (juce::int64 at)
+                {
+                    for (int i = 0; i < 2000 && ! reader.isBuffered (at, 512); ++i) juce::Thread::sleep (1);
+                    return reader.isBuffered (at, 512);
+                };
+                expect (wait (kSecond * 30), "a read position was not filled");
+                reader.cue (kSecond * 50);
+                expect (wait (kSecond * 50), "a cue was not filled");
+                expect (reader.isBuffered (kSecond * 30, 512), "the cue took the read window's block");
+
+                out.clear();
+                expect (reader.read (&out, 0, 512, kSecond * 50, true, true));
+                bool right = true;
+                for (int i = 0; i < 512; ++i)
+                    right = right && out.getSample (0, i) == positionValue (kSecond * 50 + i);
+                expect (right, "cued audio is not the audio at that position");
+            }
+
+            beginTest ("PlaybackReader: past the end is nothing to wait for, and a failed source says so");
+            {
+                juce::TimeSliceThread thread ("test reader");
+                thread.startThread();
+                PlaybackReader reader (new CountingSource (1000), thread, kSecond);
+                expect (reader.isBuffered (5000, 512));
+
+                PlaybackReader failed (new CountingSource (kSecond, true), thread, kSecond);
+                for (int i = 0; i < 2000 && ! failed.isBuffered (0, 512); ++i) juce::Thread::sleep (1);
+                juce::AudioBuffer<float> out (1, 512);
+                expect (! failed.read (&out, 0, 512, 0, true, true));
+            }
+
+            beginTest ("PlaybackReader: a block is never replaced under a reader");
+            {
+                juce::TimeSliceThread thread ("test reader");
+                thread.startThread();
+                PlaybackReader reader (new CountingSource (kSecond * 120), thread, kSecond);
+                juce::Random random (0x5eed);
+                juce::AudioBuffer<float> out (1, 2048);
+                int torn = 0;
+                const auto until = juce::Time::getMillisecondCounter() + 700;
+                while (juce::Time::getMillisecondCounter() < until)
+                {
+                    // Jump about so the pool churns under every read.
+                    const auto at = (juce::int64) random.nextInt (kSecond * 118);
+                    out.clear();
+                    reader.cue ((juce::int64) random.nextInt (kSecond * 118));
+                    reader.read (&out, 0, 2048, at, true, true);
+                    for (int i = 0; i < 2048; ++i)
+                    {
+                        const float v = out.getSample (0, i);
+                        if (v != 0.0f && v != positionValue (at + i)) ++torn;
+                    }
+                }
+                expectEquals (torn, 0, "a read returned audio from another position");
+            }
+
+            beginTest ("A loop pass loses no sample on any track, and all of them wrap together");
+            {
+                TempFolder f;
+                for (int t = 1; t <= 3; ++t)
+                    writeTrack (f.dir.getChildFile ("Audio Files/Track_0" + juce::String (t) + ".wav"),
+                                0.25f * (float) t, kSecond * 8);
+                SessionPlayer player;
+                JumpChecker check (*this, player, 3);
+                expectEquals (player.loadSession (f.dir), 3);
+                player.setLoopRegion (kSecond / 2, kSecond * 4);
+                player.setLoopEnabled (true);
+                player.setPositionSamples (kSecond * 3);
+                player.start();
+                check.run (500);    // 5.3 s of audio: at least one full pass and two wraps
+                player.stop();
+                expect (check.playedSamples > (juce::int64) kSecond * 4, "the session did not play");
+                expectEquals (check.faults, 0, "a sample passed without audio on some track");
+            }
+
+            beginTest ("A locate brings every track in on the same sample");
+            {
+                TempFolder f;
+                for (int t = 1; t <= 3; ++t)
+                    writeTrack (f.dir.getChildFile ("Audio Files/Track_0" + juce::String (t) + ".wav"),
+                                0.25f * (float) t, kSecond * 30);
+                SessionPlayer player;
+                JumpChecker check (*this, player, 3);
+                expectEquals (player.loadSession (f.dir), 3);
+                player.start();
+                for (const auto target : { kSecond * 20, kSecond * 5, kSecond * 28, kSecond * 12 })
+                {
+                    player.setPositionSamples (target);
+                    check.run (30);
+                    expect (player.getPositionSamples() > target, "the jump never played");
+                }
+                player.stop();
+                expectEquals (check.faults, 0, "a track came in late after a locate");
+            }
+
+            beginTest ("PLAY from a far position brings every track in together");
+            {
+                TempFolder f;
+                for (int t = 1; t <= 3; ++t)
+                    writeTrack (f.dir.getChildFile ("Audio Files/Track_0" + juce::String (t) + ".wav"),
+                                0.25f * (float) t, kSecond * 30);
+                SessionPlayer player;
+                JumpChecker check (*this, player, 3);
+                expectEquals (player.loadSession (f.dir), 3);
+                player.setPositionSamples (kSecond * 25);
+                player.start();
+                check.run (40);
+                player.stop();
+                expect (check.playedSamples > 0);
+                expectEquals (check.faults, 0, "a track came in late on PLAY");
+            }
+
+            beginTest ("The next clip's far part of a file is in RAM before the playhead reaches it");
+            {
+                TempFolder f;
+                writeTrack (f.dir.getChildFile ("Audio Files/Track_01.wav"), 0.5f, kSecond * 20);
+                SessionPlayer player;
+                JumpChecker check (*this, player, 1);
+                expectEquals (player.loadSession (f.dir), 1);
+                std::vector<Clip> clips (2);
+                clips[0].timelineStartSamples = 0;
+                clips[0].fileStartSamples     = 0;
+                clips[0].fileLengthSamples    = kSecond * 3;
+                clips[1].timelineStartSamples = kSecond * 3;
+                clips[1].fileStartSamples     = kSecond * 15;
+                clips[1].fileLengthSamples    = kSecond * 3;
+                player.setTrackClips (0, clips);
+                player.setPositionSamples (kSecond);
+                player.start();
+                check.run (280);    // past the edit at 3 s
+                player.stop();
+                expect (player.getPositionSamples() > kSecond * 3, "the edit was not reached");
+                expectEquals (check.faults, 0, "audio was lost at an edit");
+            }
+
+            beginTest ("Overlapping clips from far-apart parts of one file both sound through the overlap");
+            {
+                TempFolder f;
+                writeTrack (f.dir.getChildFile ("Audio Files/Track_01.wav"), 0.25f, kSecond * 20);
+                SessionPlayer player;
+                player.prepare (48000.0, 512);
+                expectEquals (player.loadSession (f.dir), 1);
+                std::vector<Clip> clips (2);
+                clips[0].timelineStartSamples = 0;
+                clips[0].fileStartSamples     = 0;
+                clips[0].fileLengthSamples    = kSecond * 3;
+                clips[1].timelineStartSamples = kSecond;
+                clips[1].fileStartSamples     = kSecond * 15;
+                clips[1].fileLengthSamples    = kSecond;
+                player.setTrackClips (0, clips);
+                player.setPositionSamples (kSecond / 2);
+                player.start();
+                juce::AudioBuffer<float> out (1, 512);
+                int wrong = 0, inOverlap = 0;
+                while (player.getPositionSamples() < kSecond * 2 - 512 && player.isPlaying())
+                {
+                    const auto before = player.getPositionSamples();
+                    player.processBlock (out.getArrayOfWritePointers(), 1, 512);
+                    if (before >= kSecond && before + 512 <= kSecond * 2 && player.getPositionSamples() > before)
+                    {
+                        ++inOverlap;
+                        if (std::abs (out.getSample (0, 256) - 0.5f) > 0.01f) ++wrong;
+                    }
+                    juce::Thread::sleep (2);
+                }
+                player.stop();
+                expect (inOverlap > 40, "the overlap was not played");
+                expectEquals (wrong, 0, "one clip dropped out of the overlap");
+            }
+
+            beginTest ("A jump gives up waiting for a source that never delivers");
+            {
+                TempFolder f;
+                writeTrack (f.dir.getChildFile ("Audio Files/Track_01.wav"), 0.5f, kSecond * 30);
+                SessionPlayer player;
+                player.prepare (1.0, 512);   // the ceiling is two seconds of device samples
+                expectEquals (player.loadSession (f.dir), 1);
+                player.setPositionSamples (kSecond * 20);
+                player.start();
+                juce::AudioBuffer<float> out (1, 512);
+                for (int b = 0; b < 4; ++b) player.processBlock (out.getArrayOfWritePointers(), 1, 512);
+                player.stop();
+                expect (player.getPositionSamples() > kSecond * 20, "the transport hung on the jump");
+            }
+
+            beginTest ("A punch never holds the playhead: the capture clock is already running");
+            {
+                TempFolder f;
+                writeTrack (f.dir.getChildFile ("Audio Files/Track_01.wav"), 0.5f, kSecond * 30);
+                SessionPlayer player;
+                player.prepare (48000.0, 512);
+                expectEquals (player.loadSession (f.dir), 1);
+                player.setPositionSamples (kSecond * 20);
+                player.setSeekLocked (true);
+                player.start();
+                juce::AudioBuffer<float> out (1, 512);
+                player.processBlock (out.getArrayOfWritePointers(), 1, 512);
+                expectEquals (player.getPositionSamples(), (juce::int64) (kSecond * 20 + 512));
+                player.stop();
+                player.setSeekLocked (false);
+            }
+        }
+    };
+
+    static PlaybackJumpTests playbackJumpTests;
 }

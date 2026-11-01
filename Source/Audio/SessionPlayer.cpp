@@ -11,6 +11,16 @@ namespace zynforge
     // instead wait on a per-block generation counter and only fall back to
     // this ceiling if the device never advances it (e.g. stopped device).
     static constexpr int  kDrainCeilingMs      = 250;
+    // A jump plays once this much of the target is in RAM on every track, so
+    // no track runs out before its reader has caught up.
+    static constexpr juce::int64 kJumpReadySamples = 16384;
+    // A source that cannot deliver must not hold the transport for ever: past
+    // this the jump plays and that track reads silence.
+    static constexpr double kJumpCeilingSeconds = 2.0;
+    // How far ahead a loop wrap or the next clip is cued. Long enough for one
+    // block per track on a slow drive; a cue costs nothing if it comes early.
+    static constexpr double kCueAheadSeconds = 1.5;
+    static constexpr juce::uint32 kCuePassEveryBlocks = 8;
 
     SessionPlayer::SessionPlayer()
     {
@@ -41,7 +51,7 @@ namespace zynforge
     struct SessionPlayer::PreparedLoad
     {
         std::vector<Track> tracks;
-        std::map<juce::String, std::unique_ptr<juce::BufferingAudioReader>> explicitReaders;
+        std::map<juce::String, std::unique_ptr<PlaybackReader>> explicitReaders;
         juce::File directory;
         juce::String name;
         double sampleRate = 48000.0;
@@ -150,7 +160,7 @@ namespace zynforge
         struct Pending
         {
             int  index;   // 0-based strip index (L slot for a stereo file)
-            std::shared_ptr<juce::BufferingAudioReader> reader;
+            std::shared_ptr<PlaybackReader> reader;
             juce::int64 length;
             bool stereo;
         };
@@ -192,7 +202,7 @@ namespace zynforge
             const auto takeLen = reader->lengthInSamples;
 
             const auto bufferSamples = (int) (fileSR * kReaderBufferSeconds);
-            auto buf = std::make_shared<juce::BufferingAudioReader> (reader.release(), readerThread, bufferSamples);
+            auto buf = std::make_shared<PlaybackReader> (reader.release(), readerThread, bufferSamples);
             // Prime every track before making the session playable. Without
             // this handshake, the background thread could fill track 1 first
             // and a later track several callbacks afterwards, producing a
@@ -245,7 +255,7 @@ namespace zynforge
                 continue;
             }
             const auto bufferSamples = (int) (raw->sampleRate * kReaderBufferSeconds);
-            auto buffered = std::make_unique<juce::BufferingAudioReader> (
+            auto buffered = std::make_unique<PlaybackReader> (
                 raw.release(), readerThread, bufferSamples);
             juce::AudioBuffer<float> prime (2, 512);
             buffered->setReadTimeout (1000);
@@ -415,7 +425,7 @@ namespace zynforge
 
         // Build readers for any clip that references a file other than its
         // track's own -- OUTSIDE the lock, since opening a file is slow.
-        std::vector<std::pair<juce::String, std::unique_ptr<juce::BufferingAudioReader>>> built;
+        std::vector<std::pair<juce::String, std::unique_ptr<PlaybackReader>>> built;
         std::set<juce::String> queued;
         for (const auto& c : clips)
         {
@@ -429,7 +439,7 @@ namespace zynforge
             if (auto raw = ConcatReader::create (formatManager, findTakeParts (c.audioFile)))
             {
                 const auto bufSamples = (int) (raw->sampleRate * kReaderBufferSeconds);
-                auto br = std::make_unique<juce::BufferingAudioReader> (raw.release(), readerThread, bufSamples);
+                auto br = std::make_unique<PlaybackReader> (raw.release(), readerThread, bufSamples);
                 // Publish a usable reader, not one whose first callback must
                 // emit silence while the background thread starts filling it.
                 juce::AudioBuffer<float> prime (2, 512);
@@ -442,9 +452,9 @@ namespace zynforge
 
         // Readers whose file no clip references any more (e.g. superseded
         // consolidates) are moved here and destroyed AFTER the lock is
-        // released -- tearing down a BufferingAudioReader unregisters it
+        // released -- tearing down a PlaybackReader unregisters it
         // from the read thread, which is too slow to hold the lock for.
-        std::vector<std::unique_ptr<juce::BufferingAudioReader>> stale;
+        std::vector<std::unique_ptr<PlaybackReader>> stale;
         {
             const juce::ScopedLock tl (tracksLock);
             const juce::ScopedLock sl (clipsLock);
@@ -528,9 +538,11 @@ namespace zynforge
         callbackGeneration.fetch_add (1, std::memory_order_acq_rel);
 
         const juce::ScopedTryLock trackGuard (tracksLock);
-        if (! trackGuard.isLocked()) return;
-
-        if (! playing.load (std::memory_order_acquire)) return;
+        if (! trackGuard.isLocked() || ! playing.load (std::memory_order_acquire))
+        {
+            nextRenderPosition = -1;
+            return;
+        }
 
         const auto numTracks = readerCount.load (std::memory_order_acquire);
         if (numTracks == 0) return;
@@ -575,6 +587,35 @@ namespace zynforge
         // to take a const reference. After release we iterate read-only
         // and the UI may modify the (different) live vector.
         const juce::ScopedTryLock stl (clipsLock);
+
+        // Anything but a straight continuation is a jump. Hold it until every
+        // track has the target, so they all enter on the same sample. The
+        // position stands still meanwhile and the block stays silent. A punch
+        // never waits: its capture clock runs from the first block, and a
+        // playhead that paused would put the take late against the old audio.
+        if (startPos != nextRenderPosition && startPos != heldJump)
+        {
+            heldJump = startPos;
+            heldJumpSamples = 0;
+        }
+        if (heldJump >= 0 && ! isSeekLocked())
+        {
+            const bool ready = stl.isLocked() && prepareJump (startPos, kJumpReadySamples, n);
+            if (! ready && heldJumpSamples < (juce::int64) (deviceSampleRate * kJumpCeilingSeconds))
+            {
+                heldJumpSamples += numSamples;
+                return;
+            }
+        }
+        heldJump = -1;
+
+        if (stl.isLocked() && ++cuePassCounter % kCuePassEveryBlocks == 0)
+        {
+            const auto blockEnd = startPos + playableThisBlock;
+            const auto ahead = (juce::int64) (deviceSampleRate * kCueAheadSeconds);
+            cueUpcoming (blockEnd, blockEnd + ahead,
+                         looping && lEnd - blockEnd <= ahead ? lStart : (juce::int64) -1, n);
+        }
 
         for (int i = 0; i < n; ++i)
         {
@@ -728,6 +769,83 @@ namespace zynforge
         // message thread stored while this block rendered must survive; a
         // plain store here overwrote it with the old position + n.
         juce::int64 expected = startPos;
-        position.compare_exchange_strong (expected, startPos + playableThisBlock, std::memory_order_acq_rel);
+        nextRenderPosition = startPos + playableThisBlock;
+        position.compare_exchange_strong (expected, nextRenderPosition, std::memory_order_acq_rel);
+    }
+
+    PlaybackReader* SessionPlayer::readerForClip (const Clip& c, const Track& t) const noexcept
+    {
+        if (c.audioFile == juce::File()) return t.reader.get();
+        const auto it = extraReaders.find (c.audioFile.getFullPathName());
+        return it != extraReaders.end() ? it->second.get() : nullptr;
+    }
+
+    bool SessionPlayer::prepareJump (juce::int64 pos, juce::int64 span, int numTracks) noexcept
+    {
+        bool ready = true;
+        const auto ask = [&ready] (PlaybackReader* reader, juce::int64 filePos, juce::int64 length)
+        {
+            if (reader == nullptr) return;
+            reader->prepareAt (filePos);
+            ready = reader->isBuffered (filePos, length) && ready;
+        };
+        for (int i = 0; i < numTracks; ++i)
+        {
+            const auto& t = tracks[(size_t) i];
+            if (i < (int) clipsAuthoritative.size() && clipsAuthoritative[(size_t) i]
+                && i < (int) activeClips.size())
+            {
+                for (const auto& c : activeClips[(size_t) i])
+                {
+                    if (c.muted) continue;
+                    const auto from = juce::jmax (pos, c.timelineStartSamples);
+                    const auto to   = juce::jmin (pos + span, c.timelineStartSamples + c.fileLengthSamples);
+                    if (to > from)
+                        ask (readerForClip (c, t), c.fileStartSamples + (from - c.timelineStartSamples), to - from);
+                }
+            }
+            else if (pos < t.length)
+            {
+                ask (t.reader.get(), pos, juce::jmin (span, t.length - pos));
+            }
+        }
+        return ready;
+    }
+
+    void SessionPlayer::cueUpcoming (juce::int64 blockEnd, juce::int64 horizon, juce::int64 wrapTarget,
+                                     int numTracks) noexcept
+    {
+        for (int i = 0; i < numTracks; ++i)
+        {
+            const auto& t = tracks[(size_t) i];
+            if (i >= (int) clipsAuthoritative.size() || ! clipsAuthoritative[(size_t) i]
+                || i >= (int) activeClips.size())
+            {
+                if (wrapTarget >= 0 && t.reader != nullptr) t.reader->cue (wrapTarget);
+                continue;
+            }
+
+            // A wrap beats any clip before it: the playhead never gets there.
+            const Clip* next = nullptr;
+            for (const auto& c : activeClips[(size_t) i])
+            {
+                if (c.muted) continue;
+                if (wrapTarget >= 0)
+                {
+                    if (wrapTarget >= c.timelineStartSamples
+                        && wrapTarget < c.timelineStartSamples + c.fileLengthSamples)
+                        if (auto* reader = readerForClip (c, t))
+                            reader->cue (c.fileStartSamples + (wrapTarget - c.timelineStartSamples));
+                }
+                else if (c.timelineStartSamples > blockEnd && c.timelineStartSamples <= horizon
+                         && (next == nullptr || c.timelineStartSamples < next->timelineStartSamples))
+                {
+                    next = &c;
+                }
+            }
+            if (next != nullptr)
+                if (auto* reader = readerForClip (*next, t))
+                    reader->cue (next->fileStartSamples);
+        }
     }
 }
