@@ -136,6 +136,18 @@ namespace zynforge::projectexport
         return input;
     }
 
+    // A clip reading a file outside the session. A handoff copies the session
+    // folder only, so that clip would be silent on the receiving disk.
+    inline juce::File firstMediaOutsideSession (const interchange::SessionInput& input)
+    {
+        for (const auto& strip : input.strips)
+            if (strip.clips.has_value())
+                for (const auto& clip : *strip.clips)
+                    if (clip.audioFile != juce::File() && ! clip.audioFile.isAChildOf (input.sessionDir))
+                        return clip.audioFile;
+        return {};
+    }
+
     // Both project files at the root of a handoff copy, reading the copy's own
     // Audio Files, so the folder opens as it stands on the mix engineer's disk.
     inline std::vector<juce::File> writeForHandoff (const interchange::SessionInput& input,

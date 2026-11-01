@@ -24,10 +24,14 @@ namespace zynforge
             juce::String name;
         };
 
-        // Each marker to the next, the last to sessionEnd. Markers at the same
-        // spot make one song (the first named one names it), and one at or past
-        // the end starts nothing. No markers, no songs: a session with no cuts
-        // has nothing to divide, and the whole-show bounces already exist.
+        // Each song marker to the next, the last to sessionEnd. A marker that
+        // only marks a place (a split, a range edge) cuts nothing. A scene
+        // recall can happen inside a song, so scenes cut only a session with no
+        // other song markers, where they are all there is to go by. Markers at
+        // the same spot make one song (the first named one names it), and one
+        // at or past the end starts nothing. No markers, no songs: a session
+        // with no cuts has nothing to divide, and the whole-show bounces
+        // already exist.
         std::vector<Range> rangesFromMarkers (std::vector<Marker> markers, juce::int64 sessionEnd);
 
         // Safe as one path component. '.' goes too: withFileExtension would
@@ -64,6 +68,7 @@ namespace zynforge
             std::vector<SongPlan> songs;
             ExportOptions format;
             double renderRate { 48000.0 };
+            bool soloActive { false };
             int totalFiles() const noexcept
             {
                 int n = 0;
@@ -80,6 +85,8 @@ namespace zynforge
         struct Outcome
         {
             int attempted { 0 }, written { 0 };
+            int silentMixes { 0 };     // finished, and nothing in them
+            bool soloActive { false };
             bool cancelled { false };
             juce::String firstError;
             bool complete() const noexcept { return ! cancelled && attempted > 0 && written == attempted; }
@@ -91,6 +98,10 @@ namespace zynforge
         // Worker thread, under the session-job reservation. Reads the engine's
         // clips and lanes, never the message thread's UI. Refuses during a take.
         Outcome run (AudioEngine&, const Plan&, const std::atomic<bool>& cancel, const Progress&);
+
+        // What a finished mix render must add to "done": a silent file is not a
+        // success, and a solo left on shaped what is in it. Empty when neither.
+        juce::String mixRenderWarning (bool silent, bool soloActive);
 
         // The line the status bar shows, in the wording of a track export.
         juce::String statusLine (const Outcome&, const juce::String& destName);

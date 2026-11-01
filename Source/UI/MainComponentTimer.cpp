@@ -46,6 +46,8 @@ void MainComponent::timerCallback()
     }
 
     if (uiLayoutSavePending && ! sessionIoBusy.load()) requestUILayoutSave();
+    // A scan reads every take file; it gives way to a take, not the other way round.
+    if (analysisBusy.load() && engine.isRecording()) analysisJobs.cancel();
 
     if (cueRamp.active) updateCueRamp();
     if (engine.isPunchModeOn() && engine.getPlayer().hasLoopRegion())

@@ -112,7 +112,7 @@ namespace zynforge
 
         // A marker asked for over the network, held to scenefollow::MarkerBudget.
         // What dropMarkerAtCurrentPosition returns, or -1 when refused.
-        int dropRemoteMarker (const juce::String& name = {});
+        int dropRemoteMarker (const juce::String& name = {}, const juce::String& type = "user");
 
         // Both console paths report a scene / snapshot recall here. The rule
         // is scenefollow::decide; this applies it and tells the engineer.

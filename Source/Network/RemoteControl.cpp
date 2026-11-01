@@ -283,11 +283,11 @@ namespace zynforge
         if (host.revealPosition) host.revealPosition (samplePosition);
     }
 
-    int RemoteControl::dropRemoteMarker (const juce::String& name)
+    int RemoteControl::dropRemoteMarker (const juce::String& name, const juce::String& type)
     {
         const auto now = juce::Time::getMillisecondCounter();
         if (markerBudget.take (now))
-            return engine.dropMarkerAtCurrentPosition (name);
+            return engine.dropMarkerAtCurrentPosition (name, type);
 
         ++markersRefused;
         if (now - lastMarkerNoticeMs >= 1000)
@@ -320,7 +320,7 @@ namespace zynforge
         switch (decision.action)
         {
             case Action::DropMarker:
-                if (dropRemoteMarker (label) >= 0)
+                if (dropRemoteMarker (label, "scene") >= 0)
                     tell ("marker dropped");
                 break;
 
