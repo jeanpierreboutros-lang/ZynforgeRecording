@@ -9,7 +9,7 @@
 namespace zynforge
 {
     // The menu bar's dispatch table: exact item ids, plus id RANGES for
-    // generated items (session templates 200+i, MIDI clock outputs 401+i...).
+    // generated items (session templates 200+i...).
     //
     // MainComponent::menuItemSelected used to be one ~500-line if/else chain in
     // which a range branch swallowed every later exact id inside it -- a static

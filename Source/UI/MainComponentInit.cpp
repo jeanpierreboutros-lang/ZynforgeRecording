@@ -8,7 +8,6 @@
 #include "NewSessionDialog.h"
 #include "PatchPage.h"
 #include "EditToolsBar.h"
-#include "../Audio/MidiClockOut.h"
 #include "SessionRecoveryDialog.h"
 #include "MarkerListDialog.h"
 #include "ClickSettingsDialog.h"
@@ -97,11 +96,6 @@ MainComponent::MainComponent()
     // Alarm prefixes must stay in view when a long warning is clipped.
     statusLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (statusLabel);
-
-    midiStatusLabel.setColour (juce::Label::textColourId, brand::featureEngaged);
-    midiStatusLabel.setJustificationType (juce::Justification::centredLeft);
-    midiStatusLabel.setFont (brand::type::caption());
-    addAndMakeVisible (midiStatusLabel);
 
     nextCueLabel.setColour (juce::Label::textColourId, brand::accentVS);
     nextCueLabel.setJustificationType (juce::Justification::centredRight);

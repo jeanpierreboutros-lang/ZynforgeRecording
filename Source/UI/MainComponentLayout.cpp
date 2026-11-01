@@ -180,13 +180,6 @@ void MainComponent::resized()
         ? row1.removeFromLeft (juce::jmin (124, row1.getWidth() / 2)).reduced (0, brand::space::xs)
         : juce::Rectangle<int>());
     if (twinStatusLabel.isVisible()) row1.removeFromLeft (brand::space::sm);
-    const int optionalWidth = juce::jmax (0, row1.getWidth() - 220);
-    int pillWidth = optionalWidth;
-    if (midiStatusLabel.getText().isNotEmpty() && danteLabel.getText().isNotEmpty())
-        pillWidth /= 2;
-    pillWidth = juce::jmin (140, pillWidth);
-    midiStatusLabel.setBounds (midiStatusLabel.getText().isNotEmpty()
-        ? row1.removeFromLeft (pillWidth).reduced (0, 4) : juce::Rectangle<int>());
     danteLabel.setBounds (danteLabel.getText().isNotEmpty()
         ? row1.removeFromLeft (juce::jmin (140, juce::jmax (0, row1.getWidth() - 220))).reduced (0, 4)
         : juce::Rectangle<int>());

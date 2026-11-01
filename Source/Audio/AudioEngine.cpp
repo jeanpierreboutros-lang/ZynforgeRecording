@@ -786,28 +786,6 @@ namespace zynforge
         return recorder.readClockSource (deviceManager.getAudioDeviceSetup().inputDeviceName, timeoutMs);
     }
 
-    int AudioEngine::midiBeatsAt (juce::int64 samplePos) const
-    {
-        const double rate = player.getSampleRate() > 0.0 ? player.getSampleRate()
-                          : deviceSampleRate.load (std::memory_order_relaxed);
-        if (rate <= 0.0 || samplePos <= 0) return 0;
-        // Same segments the click and the clock pulse rate use: the session
-        // tempo until the first change, then each change's bpm.
-        const juce::ScopedLock sl (tempoLock);
-        double quarters = 0.0, bpm = (double) currentTempoBpm.load (std::memory_order_relaxed);
-        juce::int64 from = 0;
-        for (const auto& tc : tempoMap)
-        {
-            if (tc.samplePos >= samplePos) break;
-            const auto at = juce::jmax (from, tc.samplePos);
-            quarters += (double) (at - from) / rate * bpm / 60.0;
-            from = at;
-            bpm  = (double) tc.bpm;
-        }
-        quarters += (double) (samplePos - from) / rate * bpm / 60.0;
-        return (int) (quarters * 4.0 + 1.0e-6);
-    }
-
     juce::String AudioEngine::getChaseTimecodeString() const
     {
         return juce::String::formatted ("%02d:%02d:%02d:%02d",
@@ -2022,13 +2000,6 @@ namespace zynforge
 
         appProps = makeSettingsFile (opts);
 
-        // The MIDI clock sends Stop when playback ends without stopPlayback()
-        // (session end, reorder, session load, device stop). midiClockOut is
-        // declared after player, so its timer is stopped before player dies.
-        midiClockOut.setTransportProbe ([this] { return player.isPlaying(); });
-        midiClockOut.setPositionProbes ([this] { return player.getJumpCount(); },
-                                        [this] { return midiBeatsAt (player.getPositionSamples()); });
-
         // Restore the stereo-mix-recording flag from the prefs file so the
         // engineer's preference survives restart.
         recordStereoMixFlag.store (appProps->getBoolValue ("recordStereoMix", false),
@@ -2362,7 +2333,6 @@ namespace zynforge
         // Hand the new tempo to the real-time click immediately -- atomic
         // store, so the audio thread picks it up at the next block.
         click.setTempoBpm (bpm);
-        midiClockOut.setTempoBpm (bpm);
         if (appProps != nullptr)
         {
             reloadAppPropsBeforeWrite();
@@ -3538,13 +3508,9 @@ namespace zynforge
         // so it follows the engineer's monitor-bus choice instead of
         // pinning to hardware outs 0+1.
         // Per-block tempo-map lookup. If a tempo map exists and the player is
-        // rolling, resolve the BPM at the playhead and feed it to BOTH the
-        // click AND MIDI clock out -- run OUTSIDE the click-enabled gate so
-        // outboard gear (drum machine / synth) follows a tempo-map change even
-        // when the click is muted (previously only the click updated, so the
-        // MIDI clock kept pulsing at the old BPM and drifted). Try-lock the map:
-        // if the message thread is mid-edit, leave both at their last bpm
-        // rather than block or read a mutating vector.
+        // rolling, resolve the BPM at the playhead and feed it to the click.
+        // Try-lock the map: if the message thread is mid-edit, leave the click
+        // at its last bpm rather than block or read a mutating vector.
         {
             const juce::ScopedTryLock tempoStl (tempoLock);
             if (tempoStl.isLocked() && ! tempoMap.empty() && player.isPlaying())
@@ -3557,7 +3523,6 @@ namespace zynforge
                     else break;
                 }
                 click.setTempoBpm (bpm);
-                midiClockOut.setTempoBpm (bpm);   // outboard gear follows the map too
             }
         }
 

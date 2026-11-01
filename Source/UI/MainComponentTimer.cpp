@@ -173,18 +173,6 @@ void MainComponent::rebuildStripsIfLayoutChanged()
 
 void MainComponent::updateStatusPills()
 {
-    // MIDI clock status pill -- visible reassurance that the engineer's
-    // outboard sync is alive. Empty string when disabled hides it.
-    {
-        const auto& clock = engine.getMidiClockOut();
-        const auto label = clock.isEnabled()
-            ? juce::String ("MIDI * ") + clock.getOutputDeviceName()
-            : juce::String();
-        if (midiStatusLabel.getText() != label)
-        { midiStatusLabel.setText (label, juce::dontSendNotification); resized(); }
-        midiStatusLabel.setTooltip (label);
-    }
-
     // DANTE detection -- flag the active audio device when its name
     // contains 'Dante' / 'DVS' (Audinate's Dante Virtual Soundcard).
     {
@@ -748,8 +736,7 @@ void MainComponent::serviceTimecodeChase()
         const juce::int64 target = engine.getChaseTargetSamples();
 
         // Locate BEFORE starting: startPlayback refuses with nothing ahead of
-        // the playhead (STOP parks it at the take end), and the MIDI clock's
-        // Song Position Pointer is taken from where playback starts.
+        // the playhead (STOP parks it at the take end).
         const juce::int64 cur   = engine.getPlayer().getPositionSamples();
         const juce::int64 slack = (juce::int64) (0.08 * sr);   // 80 ms lock window
         if (std::llabs ((long long) (cur - target)) > slack)

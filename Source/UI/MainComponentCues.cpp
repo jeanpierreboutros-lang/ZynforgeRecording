@@ -271,9 +271,8 @@ void MainComponent::jumpToCue (int index)
     // Per-cue tempo curve -- install the cue's tempo map (offsets
     // translated to absolute sample positions starting at cue.samplePos)
     // into the engine's tempo map. The audio thread already walks the
-    // map each block and pushes the resulting BPM to ClickEngine and
-    // MidiClockOut, so accelerandos / ritardandos within the song are
-    // honoured automatically.
+    // map each block and pushes the resulting BPM to ClickEngine, so
+    // accelerandos / ritardandos within the song are honoured automatically.
     if (! cue.tempoCurve.empty())
     {
         std::vector<zynforge::AudioEngine::TempoChange> map;
@@ -285,9 +284,8 @@ void MainComponent::jumpToCue (int index)
     else
     {
         // No curve on this cue -> CLEAR any map left by a previous cue, else a
-        // single-BPM song inherits the last song's accelerando (click + MIDI
-        // clock run the wrong ramp). Same clear-first rule as the automation
-        // lanes below.
+        // single-BPM song inherits the last song's accelerando (the click runs
+        // the wrong ramp). Same clear-first rule as the automation lanes below.
         engine.setTempoMap ({});
     }
 

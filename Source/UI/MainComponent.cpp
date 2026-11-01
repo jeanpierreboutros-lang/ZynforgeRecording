@@ -8,7 +8,6 @@
 #include "NewSessionDialog.h"
 #include "PatchPage.h"
 #include "EditToolsBar.h"
-#include "../Audio/MidiClockOut.h"
 #include "../Audio/PreflightProbes.h"
 #include "BackupMirrorDialog.h"
 #include "SessionRecoveryDialog.h"
@@ -1587,9 +1586,6 @@ void MainComponent::showPreflightChecklist()
 
     body << backupChecklistRow();
     body << "\n\n";
-
-    if (engine.getMidiClockOut().isEnabled())
-        body << "[OK]  MIDI clock master: " << engine.getMidiClockOut().getOutputDeviceName() << "\n";
 
     if (device != nullptr)
     {

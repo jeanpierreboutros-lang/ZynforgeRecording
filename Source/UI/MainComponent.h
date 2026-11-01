@@ -621,7 +621,6 @@ private:
     zynforge::AlarmBanner alarmBanner;
     juce::String recordRefusal;              // shown in the banner, then clears itself
     juce::uint32 recordRefusalShownMs { 0 };
-    juce::Label  midiStatusLabel   { {}, "" };
     juce::Label  nextCueLabel      { {}, "" };
     juce::Label  danteLabel        { {}, "" };
     juce::Label  srWarnLabel       { {}, "" };   // persistent sample-rate mismatch banner

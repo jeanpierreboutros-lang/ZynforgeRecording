@@ -5,7 +5,6 @@
 
 #include "Markers.h"
 #include "ClickEngine.h"
-#include "MidiClockOut.h"
 #include "VcaBus.h"
 #include "../Network/RemoteControl.h"
 
@@ -288,30 +287,12 @@ namespace zynforge
             // network/remote entry points (OSC play, MCU Play) and timecode
             // chase reach here directly, so the guard belongs at the engine.
             if (isRecording() && ! captureWindowEnabled.load (std::memory_order_acquire)) return;
-            const bool wasPlaying = player.isPlaying();
             // Nothing to roll (no session, or parked at/after the end with no
-            // loop to wrap): don't start, and don't tell slaved gear to -- a
-            // chase target past the last take sent Start ten times a second.
-            if (! wasPlaying && ! player.hasAudioAhead()) return;
+            // loop to wrap): don't start.
+            if (! player.isPlaying() && ! player.hasAudioAhead()) return;
             player.start();
-            const auto pos = player.getPositionSamples();
-            if (wasPlaying)    midiClockOut.sendContinue();
-            else if (pos <= 0) midiClockOut.sendStart();
-            else               midiClockOut.sendContinueFrom (midiBeatsAt (pos));
         }
-        void stopPlayback()
-        {
-            player.stop();
-            midiClockOut.sendStop();
-        }
-
-        // 16th notes (MIDI beats, the Song Position Pointer unit) from the
-        // session start to `samplePos`, through the tempo map. Message thread.
-        int midiBeatsAt (juce::int64 samplePos) const;
-
-        // MIDI clock master (24 PPQN) -- drives outboard synths /
-        // drum machines / DAW slaves from the session tempo.
-        MidiClockOut& getMidiClockOut() noexcept { return midiClockOut; }
+        void stopPlayback() { player.stop(); }
 
         // ── VCA buses ─────────────────────────────────────────────
         // 8 group "ghost faders". Strips opt-in via setTrackVcaGroup
@@ -1251,7 +1232,6 @@ namespace zynforge
         bool              punchLoopWasEnabled { false };
 
         ClickEngine        click;
-        MidiClockOut       midiClockOut;
         std::atomic<bool> controlsLocked { false };
         std::array<VcaBus, kNumVcas> vcas;
     public:

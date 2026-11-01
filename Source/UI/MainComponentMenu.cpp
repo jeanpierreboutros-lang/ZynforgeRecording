@@ -254,17 +254,6 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
             // Control Surfaces hub -- OSC + every console/surface protocol.
             m.addItem (720, "Control Surfaces...");
 
-            // MIDI clock master -- drive outboard gear from session tempo.
-            juce::PopupMenu midiMenu;
-            const auto outs    = zynforge::MidiClockOut::listOutputs();
-            const auto active  = engine.getMidiClockOut().getOutputDeviceName();
-            const bool clockOn = engine.getMidiClockOut().isEnabled();
-            midiMenu.addItem (400, "Stop MIDI clock", clockOn, ! clockOn);
-            midiMenu.addSeparator();
-            for (int i = 0; i < outs.size() && i < 30; ++i)
-                midiMenu.addItem (401 + i, outs[i], true, clockOn && outs[i] == active);
-            m.addSubMenu ("MIDI clock out", midiMenu);
-
             m.addSeparator();
             m.addItem (968, "Twin Recorder...", true, twinLink.isEnabled());
             menu.addSubMenu ("Network & Surfaces", m);
@@ -492,23 +481,6 @@ void MainComponent::registerMenuCommands()
     });
     m.add (990, [this] { promptStreamOutputs(); });
     m.add (281, [this] { writeSoundcheckReport(); });
-    m.add (400, [this]
-    {
-        engine.getMidiClockOut().setEnabled (false);
-        showStatus ("MIDI clock stopped");
-    });
-    m.addRange (401, 430, [this] (int offset)
-    {
-        const auto outs = zynforge::MidiClockOut::listOutputs();
-        const int idx = offset;
-        if (idx >= 0 && idx < outs.size())
-        {
-            engine.getMidiClockOut().setOutputDevice (outs[idx]);
-            engine.getMidiClockOut().setTempoBpm (engine.getSessionTempoBpm());
-            engine.getMidiClockOut().setEnabled (true);
-            showStatus ("MIDI clock -> " + outs[idx]);
-        }
-    });
     m.add (600, [this] { zynforge::TimecodeSyncDialog::launch (engine); });
     m.add (720, [this]
     {

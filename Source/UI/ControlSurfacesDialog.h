@@ -2,7 +2,6 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "../Audio/AudioEngine.h"
-#include "../Audio/MidiClockOut.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
@@ -350,7 +349,7 @@ namespace zynforge
                 lab (outKey,  "Surface sends via",  brand::textSecondary);
 
                 fillMidi (inBox,  engine.getMidiInputNames(),       "midiin");
-                fillMidi (outBox, zynforge::MidiClockOut::listOutputs(), "midiout");
+                fillMidi (outBox, midiOutputNames(),                  "midiout");
 
                 note.setText ("Saved with the app. Tick this surface in the Control Surfaces list to open it: "
                               "faders, mute, solo, arm, transport and jog work live.",
@@ -385,6 +384,14 @@ namespace zynforge
             }
 
         private:
+            static juce::StringArray midiOutputNames()
+            {
+                juce::StringArray names;
+                for (const auto& device : juce::MidiOutput::getAvailableDevices())
+                    names.add (device.name);
+                return names;
+            }
+
             void fillMidi (juce::ComboBox& box, const juce::StringArray& names, const char* k)
             {
                 dialog::styleCombo (box);
