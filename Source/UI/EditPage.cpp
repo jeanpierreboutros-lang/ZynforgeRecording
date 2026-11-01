@@ -790,6 +790,116 @@ namespace zynforge
         repaint();
     }
 
+    int EditPage::selectedClipIndexOn (const SelectedClip& s) const
+    {
+        const auto* list = engine.tryClipsFor (s.track);
+        if (list == nullptr || s.id == 0) return -1;
+        int found = -1;
+        for (int i = 0; i < (int) list->size(); ++i)
+            if ((*list)[(size_t) i].selectionId == s.id)
+            {
+                if (found >= 0) return -1;   // split since: neither piece is "the" clip
+                found = i;
+            }
+        return found;
+    }
+
+    void EditPage::followSelectedClips()
+    {
+        if (selection.empty() && selClips.empty()) return;
+
+        std::set<ClipRef> found;
+        std::vector<SelectedClip> kept;
+        for (const auto& s : selection)
+            if (const int i = selectedClipIndexOn (s); i >= 0)
+            {
+                found.insert ({ s.track, i });
+                kept.push_back (s);
+            }
+        selection = std::move (kept);
+
+        const int primary = selectedClipIndexOn (primarySelection);
+        selectedClipTrack = primary >= 0 ? primarySelection.track : -1;
+        selectedClipIndex = primary;
+        if (primary < 0 && ! selection.empty())
+        {
+            primarySelection = selection.front();
+            selectedClipTrack = primarySelection.track;
+            selectedClipIndex = selectedClipIndexOn (primarySelection);
+        }
+        if (found != selClips)
+        {
+            selClips = std::move (found);
+            repaintLanes();
+        }
+    }
+
+    // A fresh id on every selection: a clip that shares an older id with the
+    // other piece of a split still gets one of its own.
+    juce::uint32 EditPage::stampSelectionId (ClipRef ref)
+    {
+        const auto* list = engine.tryClipsFor (ref.first);
+        if (list == nullptr || ref.second < 0 || ref.second >= (int) list->size()) return 0;
+        return engine.clipsFor (ref.first)[(size_t) ref.second].selectionId = ++lastSelectionId;
+    }
+
+    void EditPage::setSelectedClips (const std::vector<ClipRef>& refs, ClipRef primary)
+    {
+        selection.clear();
+        primarySelection = {};
+        for (const auto& ref : refs)
+            if (const auto id = stampSelectionId (ref); id != 0)
+            {
+                selection.push_back ({ ref.first, id });
+                if (ref == primary) primarySelection = selection.back();
+            }
+        if (primarySelection.id == 0)
+            if (const auto id = stampSelectionId (primary); id != 0)
+            {
+                primarySelection = { primary.first, id };
+                selection.push_back (primarySelection);
+            }
+        followSelectedClips();
+        repaintLanes();
+    }
+
+    void EditPage::toggleSelectedClips (const std::vector<ClipRef>& refs, ClipRef clicked)
+    {
+        followSelectedClips();
+        if (selClips.count (clicked) == 0)
+        {
+            for (const auto& ref : refs)
+                if (selClips.count (ref) == 0)
+                    if (const auto id = stampSelectionId (ref); id != 0)
+                    {
+                        selection.push_back ({ ref.first, id });
+                        if (ref == clicked) primarySelection = selection.back();   // the new primary
+                    }
+        }
+        else
+        {
+            const auto isRemoved = [&] (const SelectedClip& s)
+            {
+                const ClipRef at { s.track, selectedClipIndexOn (s) };
+                return std::find (refs.begin(), refs.end(), at) != refs.end();
+            };
+            selection.erase (std::remove_if (selection.begin(), selection.end(), isRemoved),
+                             selection.end());
+        }
+        followSelectedClips();
+        repaintLanes();
+    }
+
+    void EditPage::clearSelectedClip()
+    {
+        if (selection.empty() && selClips.empty()) return;
+        selection.clear();
+        primarySelection = {};
+        selClips.clear();
+        selectedClipTrack = selectedClipIndex = -1;
+        repaintLanes();
+    }
+
     void EditPage::refresh()
     {
         const int n = engine.getRecorder().getNumTracks();
@@ -967,6 +1077,8 @@ namespace zynforge
 
     void EditPage::timerCallback()
     {
+        followSelectedClips();
+
         // Session-change detection + waveform attach run REGARDLESS of EDIT
         // visibility, so the AudioThumbnail background scan (and WaveCache.wfm
         // build) kick off the moment audio is imported / recorded -- not when

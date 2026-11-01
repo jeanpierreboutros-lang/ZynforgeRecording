@@ -2415,6 +2415,7 @@ namespace zynforge
         copy.timelineStartSamples += copy.fileLengthSamples;   // place after the source
         copy.name = copy.name + " (copy)";
         copy.locked = false;
+        copy.selectionId = 0;
         list->insert (list->begin() + clipIndex + 1, std::move (copy));
         player.setTrackClips (track, *list);
         syncActiveTake (track);

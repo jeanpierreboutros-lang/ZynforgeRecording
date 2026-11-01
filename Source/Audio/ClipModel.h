@@ -46,6 +46,11 @@ namespace zynforge
         //            virtual soundcheck so a stray drag can't ruin it.
         bool         muted                { false };
         bool         locked               { false };
+        // Which clip the EDIT selection means, whatever index it moves to.
+        // Runtime only, never saved: a clip restored by undo is a new clip to
+        // the selection, and a split leaves two clips with one id, which
+        // selects neither.
+        juce::uint32 selectionId          { 0 };
     };
 
     // A 'take' is a named clip list. A track can hold many takes

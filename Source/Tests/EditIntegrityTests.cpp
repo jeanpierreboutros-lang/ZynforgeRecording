@@ -62,7 +62,7 @@ namespace zynforge
                 engine.setStripCount (strips);
                 dir.getChildFile ("Audio Files").createDirectory();
                 for (size_t i = 0; i < lengths.size(); ++i)
-                    if (lengths[i] > 0) writeWav (take ((int) i + 1), lengths[i]);
+                    if (lengths[i] > 0) writeWav (take ((int) i + 1), lengths[i], 1, level);
                 engine.setActiveSessionDir (dir);
                 engine.loadSession (dir);
                 engine.setStripCount (strips);
@@ -486,6 +486,66 @@ namespace zynforge
                 }
                 s.engine.clearAutomation (AP::Volume);
                 s.engine.clearAutomation (AP::Pan);
+            }
+
+            beginTest ("A selection stays on its clip when the list shifts");
+            {
+                Show s (1, { 48000 });
+                s.engine.splitTrackAtSample (0, 16000);
+                s.engine.splitTrackAtSample (0, 32000);
+                auto rows = rowsOf (s.page());
+                expect (rows.size() == 1, "setup: one row");
+                s.page().setSelectedClip (0, 2);
+                if (! rows.empty()) rows[0]->applyClipMenuChoice (0, 411);   // right-click Delete, earlier clip
+                expectEquals (s.page().getSelectedClipIndex(), 1, "the selection named another clip");
+                expect (s.page().isClipSelected (0, s.clips (0)[1]), "the highlight must stay on the clip");
+                expect (! s.page().isClipSelected (0, s.clips (0)[0]));
+
+                s.main.editUndo();
+                expect (s.page().getSelectedClips().empty(), "undo replaced the clip, so nothing is selected");
+            }
+
+            beginTest ("Delete after an undone duplicate takes nothing");
+            {
+                Show s (1, { 48000 });
+                s.engine.splitTrackAtSample (0, 24000);
+                s.page().setSelectedClip (0, 0);
+                s.main.editDuplicateSelectedClip();
+                s.main.editUndo();
+                expect (s.page().getSelectedClips().empty());
+                s.main.editDeleteSelectedClip();
+                expectEquals ((int) s.clips (0).size(), 2, "Delete removed the clip after the original");
+            }
+
+            beginTest ("A clip healed away or split leaves the selection, and its pieces can be selected");
+            {
+                Show s (1, { 48000 });
+                s.engine.splitTrackAtSample (0, 24000);
+                s.page().setSelectedClip (0, 1);
+                expect (s.engine.healSeparationAt (0, 24000));
+                expect (s.page().getSelectedClips().empty(), "the healed clip is gone");
+
+                s.page().setSelectedClip (0, 0);
+                expect (s.engine.splitTrackAtSample (0, 12000));
+                expect (s.page().getSelectedClips().empty(), "a split clip is two clips");
+                s.page().setSelectedClip (0, 1);
+                expectEquals ((int) s.page().getSelectedClips().size(), 1, "a piece must select on its own");
+                expectEquals (s.page().getSelectedClipIndex(), 1);
+                expect (! s.page().isClipSelected (0, s.clips (0)[0]));
+            }
+
+            beginTest ("A take switch drops a selection on the take that left");
+            {
+                Show s (1, { 48000 });
+                auto rows = rowsOf (s.page());
+                if (! rows.empty())
+                {
+                    rows[0]->applyTakeMenuChoice (850);
+                    s.engine.splitTrackAtSample (0, 24000);
+                    s.page().setSelectedClip (0, 1);
+                    rows[0]->applyTakeMenuChoice (800);
+                    expect (s.page().getSelectedClips().empty(), "the selection named a clip of the other take");
+                }
             }
 
             MainComponent::s_testConstruct = false;

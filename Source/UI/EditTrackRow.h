@@ -1869,7 +1869,7 @@ namespace zynforge
                         // "runs hot": a warm ember wash + a forge-orange rim, so
                         // the target of Delete / Duplicate / Nudge is
                         // unmistakable and on-brand.
-                        if (selPage != nullptr && selPage->isClipSelected (index, clipIdx_))
+                        if (selPage != nullptr && selPage->isClipSelected (index, c))
                         {
                             const juce::Rectangle<int> sel (xL_, inner2.getY(),
                                                             juce::jmax (1, xR_ - xL_),
