@@ -178,6 +178,59 @@ namespace zynforge
                 row.refreshRoutingSelection();
                 expectEquals (row.getInputRoutingTextForTests(), juce::String ("(unrouted)"));
             }
+
+            // ── EDIT patches as the MIXER and PATCH do ───────────────────────
+            // One setTrackLinkedRouting per side. A combo that moved only its
+            // own side left this row saying what the other two views did not.
+            beginTest ("An EDIT row combo moves input and output together, on both halves of a pair");
+            {
+                Host h (4);
+                const auto patch = [&h] (int track)
+                {
+                    const auto& state = h.engine.getRecorder().getTrack (track);
+                    return juce::String (state.inputRouting.load()) + "/" + juce::String (state.outputRouting.load());
+                };
+
+                EditPage::TrackRow mono (2, false, h.engine, h.formats, h.cache);
+                auto combos = routingCombos (mono);
+                expect (combos.size() == 2, "setup: an input and an output combo");
+                if (combos.size() == 2)
+                {
+                    combos[0]->setSelectedId (7, juce::sendNotificationSync);    // In 6
+                    expectEquals (patch (2), juce::String ("5/5"), "the input combo left the output behind");
+                    combos[1]->setSelectedId (8, juce::sendNotificationSync);    // Out 7
+                    expectEquals (patch (2), juce::String ("6/6"), "the output combo left the input behind");
+                    combos[1]->setSelectedId (1, juce::sendNotificationSync);    // (unrouted)
+                    expectEquals (patch (2), juce::String ("-1/-1"));
+                }
+
+                h.engine.setTrackStereo (0, true);
+                EditPage::TrackRow pair (0, true, h.engine, h.formats, h.cache);
+                combos = routingCombos (pair);
+                expect (combos.size() == 2, "setup: a stereo row has the same two combos");
+                if (combos.size() == 2)
+                {
+                    combos[0]->setSelectedId (6, juce::sendNotificationSync);    // In 5-6
+                    expectEquals (patch (0), juce::String ("4/4"));
+                    expectEquals (patch (1), juce::String ("5/5"), "R missed the input combo");
+                    combos[1]->setSelectedId (8, juce::sendNotificationSync);    // Out 7-8
+                    expectEquals (patch (0), juce::String ("6/6"));
+                    expectEquals (patch (1), juce::String ("7/7"), "R missed the output combo");
+                    combos[0]->setSelectedId (1, juce::sendNotificationSync);    // (unrouted)
+                    expectEquals (patch (0), juce::String ("-1/-1"));
+                    expectEquals (patch (1), juce::String ("-1/-1"));
+                }
+            }
+        }
+
+        // The row's input and output combos, in that order.
+        static std::vector<juce::ComboBox*> routingCombos (juce::Component& row)
+        {
+            std::vector<juce::ComboBox*> combos;
+            for (auto* child : row.getChildren())
+                if (auto* combo = dynamic_cast<juce::ComboBox*> (child))
+                    combos.push_back (combo);
+            return combos;
         }
     };
 

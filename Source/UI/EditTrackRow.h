@@ -370,27 +370,18 @@ namespace zynforge
             styleCombo (inputCombo);
             styleCombo (outputCombo);
 
-            // Input + output route independently -- the previous build
-            // sent both combos through setTrackLinkedRouting which set
-            // both sides to the same device channel, so changing the
-            // output combo silently overwrote the input routing and
-            // vice versa. Each combo now writes only its own side.
-            inputCombo.onChange = [this]
+            // One patch in three views: either combo sets both sides, as the
+            // MIXER strip and PATCH do, and on both halves of a stereo row.
+            const auto patchFrom = [this] (const juce::ComboBox& combo)
             {
-                const int id = inputCombo.getSelectedId();
+                const int id = combo.getSelectedId();
                 const int dev = (id <= 1) ? -1 : id - 2;
-                engine.setTrackInputRouting (index, dev);
+                engine.setTrackLinkedRouting (index, dev);
                 if (stereo)
-                    engine.setTrackInputRouting (index + 1, (dev < 0) ? -1 : dev + 1);
+                    engine.setTrackLinkedRouting (index + 1, (dev < 0) ? -1 : dev + 1);
             };
-            outputCombo.onChange = [this]
-            {
-                const int id = outputCombo.getSelectedId();
-                const int dev = (id <= 1) ? -1 : id - 2;
-                engine.setTrackOutputRouting (index, dev);
-                if (stereo)
-                    engine.setTrackOutputRouting (index + 1, (dev < 0) ? -1 : dev + 1);
-            };
+            inputCombo.onChange  = [this, patchFrom] { patchFrom (inputCombo); };
+            outputCombo.onChange = [this, patchFrom] { patchFrom (outputCombo); };
             addAndMakeVisible (inputCombo);
             addAndMakeVisible (outputCombo);
 
