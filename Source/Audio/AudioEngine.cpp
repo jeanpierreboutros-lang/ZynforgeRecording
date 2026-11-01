@@ -3207,6 +3207,12 @@ namespace zynforge
             const float liveDb = effectiveGainDb (i) - trimFollowDb (i);
             const float livePostGain = stripMuted ? 0.0f : juce::Decibels::decibelsToGain (liveDb, -60.0f);
 
+            const auto isStereoHalf = [this] (int t)
+            {
+                return recorder.getTrack (t).isStereo.load (std::memory_order_relaxed)
+                    || (t > 0 && recorder.getTrack (t - 1).isStereo.load (std::memory_order_relaxed));
+            };
+
             for (int s = 0; s < TrackState::kNumSends; ++s)
             {
                 const auto& snd = src.sends[(size_t) s];
@@ -3216,13 +3222,14 @@ namespace zynforge
 
                 const float sendDb   = snd.levelDb.load (std::memory_order_relaxed);
                 const bool  postFader = snd.postFader.load (std::memory_order_relaxed);
-                const float gain = mix::sendGain (sendDb, postFader, postGain);
+                const float fold = mix::sendFoldGain (isStereoHalf (i), isStereoHalf (bus));
+                const float gain = fold * mix::sendGain (sendDb, postFader, postGain);
                 float* dst = playerScratch.getWritePointer (bus);
                 if (gain >= 0.00001f)
                     juce::FloatVectorOperations::addWithMultiply (dst, srcAudio, gain, numSamples);
                 if (liveAudio != nullptr)
                 {
-                    const float liveGain = mix::sendGain (sendDb, postFader, livePostGain);
+                    const float liveGain = fold * mix::sendGain (sendDb, postFader, livePostGain);
                     if (liveGain >= 0.00001f)
                         juce::FloatVectorOperations::addWithMultiply (dst, liveAudio, liveGain, numSamples);
                 }

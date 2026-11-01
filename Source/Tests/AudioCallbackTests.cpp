@@ -2502,6 +2502,43 @@ namespace zynforge
                 dir.deleteRecursively();
             }
 
+            beginTest ("A stereo strip's send keeps a mono bus at the level the send shows");
+            {
+                const auto dir = recordTestSession (2, 0.5f);
+                {
+                    CallbackFixture f (3, 2, 4);
+                    for (int i = 0; i < 3; ++i)
+                        for (int s = 0; s < TrackState::kNumSends; ++s)
+                            f.engine.setTrackSend (i, s, -1, 0.0f, false);
+
+                    f.engine.getPlayer().loadSession (dir);
+                    f.engine.setTrackIsBus (2, true);
+                    f.engine.setTrackOutputRouting (2, 3);
+                    f.engine.setTrackOutputRouting (0, -1);
+                    f.engine.setTrackOutputRouting (1, -1);
+                    f.engine.setTrackSend (0, 0, 2, 0.0f, false);
+                    f.engine.startPlayback();
+                    expect (fillPlaybackBuffer (f) > 0.20f);
+
+                    const auto busPeak = [&]
+                    {
+                        f.engine.getPlayer().setPositionSamples (0);
+                        f.process (256);
+                        return f.peakOut (3, 256);
+                    };
+                    const float oneChannel = busPeak();
+                    expect (oneChannel > 0.20f);
+
+                    f.engine.setTrackStereo (0, true);
+                    f.engine.setTrackSend (0, 0, 2, 0.0f, false);
+                    expectWithinAbsoluteError (busPeak(), oneChannel, 0.01f);
+
+                    f.engine.stopPlayback();
+                    f.engine.setTrackStereo (0, false);
+                }
+                dir.deleteRecursively();
+            }
+
             beginTest ("Live playback and the offline bounce mix the same session identically");
             {
                 // MixKernel.h is the one definition of the mix rules. Render

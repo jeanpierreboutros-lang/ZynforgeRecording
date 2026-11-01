@@ -127,6 +127,14 @@ namespace zynforge::mix
         return juce::Decibels::decibelsToGain (sendDb, -60.0f) * (postFader ? postFaderGain : 1.0f);
     }
 
+    // A stereo strip is one send. On a mono bus its two halves land together,
+    // so each brings half, and a centred source arrives at the level the send
+    // shows rather than 6 dB over it.
+    constexpr float sendFoldGain (bool sourceIsStereoHalf, bool busIsStereoHalf) noexcept
+    {
+        return sourceIsStereoHalf && ! busIsStereoHalf ? 0.5f : 1.0f;
+    }
+
     // Trim-Follow: the desk's preamp move since the take was captured, added
     // to recorded playback. With no capture reference there is no "move" to
     // follow, only the preamp's absolute value, so the offset is 0 dB. The
