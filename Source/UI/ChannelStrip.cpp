@@ -239,6 +239,10 @@ namespace zynforge
                 lastClips = clips;
             }
 
+            // Let the audio thread publish its next FFT snapshot, so the
+            // soundcheck report reads the strip as it is now.
+            strip.state.fftBlockReady.store (false, std::memory_order_release);
+
             // Heated Steel: while record-armed, repaint just the left spine
             // column (12px) at 10 Hz so the orange spine breathes. Cheap --
             // the rest of the strip stays static, honouring the 24-strip
@@ -264,11 +268,10 @@ namespace zynforge
         // read once the caller destroys it.
         if (stripTimer != nullptr)
             stripTimer->stopTimer();
-        // The strip's meter + spectrum run their OWN timers against the same
-        // TrackState& -- stopping just stripTimer left them reading freed
-        // memory for up to a rebuild interval after the strip was condemned.
+        // The strip's meter runs its OWN timer against the same TrackState& --
+        // stopping just stripTimer left it reading freed memory for up to a
+        // rebuild interval after the strip was condemned.
         meter.detach();
-        spectrum.detach();
     }
 
     void ChannelStrip::setAvailableInputs (int n)
@@ -716,7 +719,6 @@ namespace zynforge
           panRCb   (std::move (panRCallback)),
           inputCb  (std::move (inputCallback)),
           outputCb (std::move (outputCallback)),
-          spectrum (s),
           meter (s)
     {
         // When this strip controls a stereo pair, point the meter at the R
@@ -837,9 +839,6 @@ namespace zynforge
         clipLabel.setJustificationType (juce::Justification::centred);
         addAndMakeVisible (clipLabel);
 
-        // FFT spectrum removed per user request -- keep the component
-        // alive (it feeds off TrackState) but don't show it.
-
         nameLabel  .setTooltip ("Channel name -- double-click to rename, right-click for more.");
         inputCombo .setTooltip ("Hardware input this strip records from.");
         outputCombo.setTooltip ("Hardware output this strip plays VSC audio to.");
@@ -847,7 +846,6 @@ namespace zynforge
         monButton  .setTooltip ("Input monitor -- sum this input into the stereo monitor bus (output pair set in Audio Device dialog).");
         muteButton .setTooltip ("Mute -- silence this channel in monitor + playback. Recording still hits disk.");
         soloButton .setTooltip ("Solo -- when any track is soloed, only soloed tracks are audible.");
-        spectrum   .setTooltip ("Live FFT spectrum of this channel's input signal.");
         meter      .setTooltip ("Peak + RMS LED meter -- click to clear the clip indicator.");
         if (swatch != nullptr)
             swatch->setTooltip ("Click for a colour palette. Right-click the strip for more options.");
@@ -1028,7 +1026,7 @@ namespace zynforge
     {
         // Condemned strip (invalidate() called, TrackState about to be / already
         // freed) -- paint reads state.armed / vcaGroup / colourARGB etc, so don't
-        // touch it. detach() only made the meter/spectrum paint safe; this covers
+        // touch it. detach() only made the meter paint safe; this covers
         // the strip's own paint on an external repaint (hover) in the pre-rebuild
         // window. Just fill the body so it isn't a visual hole.
         if (! stripValid) { g.fillAll (brand::bgPanel); return; }
@@ -1391,7 +1389,6 @@ namespace zynforge
         juce::ignoreUnused (rowsForButtons);
         r.removeFromTop (brand::space::sm);
 
-        spectrum .setBounds ({});  // hidden
         clipLabel.setBounds (r.removeFromTop (12));
 
         // ── 4. Fader area: [ ruler | fader | meter ] ───────────────

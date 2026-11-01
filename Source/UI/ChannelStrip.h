@@ -5,7 +5,6 @@
 #include "../Audio/TrackState.h"
 #include "FineFader.h"
 #include "LedMeter.h"
-#include "MiniSpectrum.h"
 #include "RenameLabel.h"
 
 #include <functional>
@@ -191,7 +190,6 @@ namespace zynforge
         juce::ToggleButton soloButton  { "S" };
         juce::Label   dbLabel;
         juce::Label   clipLabel;
-        MiniSpectrum  spectrum;
         // Mono: panSlider + panLabel ('pan  <  0  >'). Stereo: two
         // knobs panSlider/panSliderR, two compact labels ('<  100  >').
         juce::Slider  panSlider;

@@ -1,7 +1,7 @@
 #include "../Audio/AudioEngine.h"
 #include "../Audio/CaptureCopy.h"
 #include "../Audio/SettingsFile.h"
-#include "../Audio/SpectralClassifier.h"
+#include "../Audio/SpectrumBands.h"
 #include "../Audio/FloatAiffWriter.h"
 #include "../Capture/CaptureDaemon.h"
 #include <thread>
@@ -232,20 +232,20 @@ public:
             expectEquals (track.getNameThreadSafe(), juce::String ("1"));
         }
 
-        beginTest ("Spectral classification reads only a published FFT snapshot");
+        beginTest ("Band measurement reads only a published FFT snapshot");
         {
             TrackState track;
             track.peak.store (0.5f);
             std::fill (track.fftSnapshot.begin(), track.fftSnapshot.end(), 0.5f);
             track.fftBlockReady.store (false);
-            expectEquals (SpectralClassifier::classify (track, 48000).name, juce::String ("other"),
-                          "classifier read a snapshot owned by the producer");
+            expect (spectrumbands::measure (track, 48000).sub == 0.0f,
+                    "the report read a snapshot owned by the producer");
             track.fftBlockReady.store (true, std::memory_order_release);
-            expect (SpectralClassifier::classify (track, 48000).name != "other");
-            expect (track.fftBlockReady.load(), "classification must leave publication available to the spectrum display");
+            expect (spectrumbands::measure (track, 48000).sub > 0.0f);
+            expect (track.fftBlockReady.load(), "measuring must not release the snapshot");
         }
 
-        beginTest ("FFT classification and audio publication remain race-free under repeated consumption");
+        beginTest ("Band measurement and audio publication remain race-free under repeated consumption");
         {
             MultitrackRecorder recorder;
             recorder.prepare (48000, 256, 1);
@@ -261,8 +261,8 @@ public:
             auto& track = recorder.getTrack (0);
             for (int i = 0; i < 2000; ++i)
             {
-                const auto result = SpectralClassifier::classify (track, 48000);
-                expect (std::isfinite (result.bands.sub));
+                const auto bands = spectrumbands::measure (track, 48000);
+                expect (std::isfinite (bands.sub));
                 track.fftBlockReady.store (false, std::memory_order_release);
             }
             stop.store (true, std::memory_order_release);

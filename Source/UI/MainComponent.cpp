@@ -13,7 +13,6 @@
 #include "SessionRecoveryDialog.h"
 #include "MarkerListDialog.h"
 #include "ClickSettingsDialog.h"
-#include "../Audio/SpectralClassifier.h"
 #include "SessionPropertiesDialog.h"
 #include "SessionProjPath.h"
 #include "RecordPosition.h"

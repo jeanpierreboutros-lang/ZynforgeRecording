@@ -341,8 +341,6 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         // ── Analysis & Reports (ids 952/953 outside dispatch ranges) ──────
         {
             juce::PopupMenu m;
-            m.addItem (280, "Spectral auto-name strips",
-                       engine.getRecorder().getNumTracks() > 0);
             m.addItem (281, "Write soundcheck report",
                        engine.hasSessionFolder() && ! engine.isRecording());
             // Each reads every take file in full: never during a take.
@@ -534,7 +532,6 @@ void MainComponent::registerMenuCommands()
                             : "The mix stays off outputs that strips are patched to");
     });
     m.add (990, [this] { promptStreamOutputs(); });
-    m.add (280, [this] { runSpectralAutoName(); });
     m.add (281, [this] { writeSoundcheckReport(); });
     m.add (290, [this] { promptMirrorHost(); });
     m.add (400, [this]

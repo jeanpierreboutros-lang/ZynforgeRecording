@@ -4,7 +4,7 @@
 // Includes: generateOrRefreshClickTrack (renders an offline click WAV
 // matching the live ClickEngine voicing), togglePunchMode + servicePunch
 // (loop-region punch-in/out), writeSoundcheckReport (JSON dump of
-// per-track spectral classification), showSessionProperties (edit the
+// per-track levels and band energies), showSessionProperties (edit the
 // .zfproj metadata).
 
 #include "MainComponent.h"
@@ -13,7 +13,7 @@
 #include "../Audio/CrashReportScan.h"
 #include "../Audio/QcAnalyzer.h"
 #include "../Audio/SongDetector.h"
-#include "../Audio/SpectralClassifier.h"
+#include "../Audio/SpectrumBands.h"
 #include "QcReportDialog.h"
 #include "SessionPropertiesDialog.h"
 #include "SessionProjPath.h"
@@ -1067,20 +1067,19 @@ void MainComponent::writeSoundcheckReport()
     for (int i = 0; i < rec.getNumTracks(); ++i)
     {
         const auto& t = rec.getTrack (i);
-        const auto r  = SpectralClassifier::classify (t, sr);
+        const auto bands = spectrumbands::measure (t, sr);
 
         juce::DynamicObject::Ptr o (new juce::DynamicObject());
         o->setProperty ("track",        i + 1);
         o->setProperty ("name",         t.name);
-        o->setProperty ("guess",        r.name);
         o->setProperty ("peak",         (double) t.peak.load());
         o->setProperty ("rms",          (double) t.rms .load());
         o->setProperty ("clipCount",    t.clipCount.load());
-        o->setProperty ("bandSub",      (double) r.bands.sub);
-        o->setProperty ("bandLow",      (double) r.bands.low);
-        o->setProperty ("bandMid",      (double) r.bands.mid);
-        o->setProperty ("bandHigh",     (double) r.bands.high);
-        o->setProperty ("bandAir",      (double) r.bands.air);
+        o->setProperty ("bandSub",      (double) bands.sub);
+        o->setProperty ("bandLow",      (double) bands.low);
+        o->setProperty ("bandMid",      (double) bands.mid);
+        o->setProperty ("bandHigh",     (double) bands.high);
+        o->setProperty ("bandAir",      (double) bands.air);
         o->setProperty ("stereo",       t.isStereo.load());
         arr.add (juce::var (o.get()));
     }

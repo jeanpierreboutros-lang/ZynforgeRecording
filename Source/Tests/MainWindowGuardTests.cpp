@@ -294,6 +294,7 @@ namespace zynforge
             lockHolds();
             alarmsStandOut();
             sessionLeaving();
+            soundcheckReport();
             analysisStaysOutOfTheTake();
             consoleWaitsForTheTake();
             mainWindowRepairs();
@@ -1017,6 +1018,33 @@ namespace zynforge
                 w.dirs.add (r.location);
                 expect (w.main.createSessionFolderStructure (r).isDirectory());
                 expect (w.main.cues.empty(), "the new session inherited the old cues");
+            }
+        }
+
+        void soundcheckReport()
+        {
+            beginTest ("The soundcheck report keeps its levels and bands, and no longer guesses");
+            {
+                Window w;
+                auto& track = w.recorder().getTrack (0);
+                std::fill (track.fftSnapshot.begin(), track.fftSnapshot.end(), 0.5f);
+                track.fftBlockReady.store (true, std::memory_order_release);
+                w.main.writeSoundcheckReport();
+                const auto report = juce::JSON::parse (w.session.getChildFile ("soundcheck.report.json"));
+                const auto strip = report["strips"][0];
+                expect (strip.hasProperty ("name") && strip.hasProperty ("peak") && strip.hasProperty ("clipCount"));
+                expect ((double) strip["bandSub"] > 0.0, "the bands left the report");
+                expect (! strip.hasProperty ("guess"), "the report still guesses a name");
+            }
+
+            beginTest ("A strip releases the FFT snapshot, so the next report is current");
+            {
+                Window w;
+                w.main.rebuildStrips();
+                auto& track = w.recorder().getTrack (0);
+                track.fftBlockReady.store (true, std::memory_order_release);
+                expect (pumpUntil ([&] { return ! track.fftBlockReady.load (std::memory_order_acquire); }),
+                        "nothing lets the audio thread publish another snapshot");
             }
         }
 

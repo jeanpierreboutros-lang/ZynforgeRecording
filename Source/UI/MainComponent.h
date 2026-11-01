@@ -315,7 +315,6 @@ private:
     // Set the session's intended sample rate (the rate the mismatch guard
     // compares against) and try to bring the hardware along with it.
     void applySessionSampleRate (double sr);
-    void runSpectralAutoName();
     void writeSoundcheckReport();
     bool refuseAnalysisNow();
     void cancelAnalysisForTake();

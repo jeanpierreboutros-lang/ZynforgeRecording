@@ -11,7 +11,6 @@
 #include "MainComponent.h"
 #include "../Audio/AtomicFile.h"
 #include "../Theme/DialogChrome.h"
-#include "../Audio/SpectralClassifier.h"
 #include "SessionProjPath.h"
 
 using namespace zynforge;
@@ -627,31 +626,6 @@ void MainComponent::updateCueRamp()
     }
     if (t >= 1.0)
         cueRamp.active = false;
-}
-
-void MainComponent::runSpectralAutoName()
-{
-    auto& rec = engine.getRecorder();
-    const int n = rec.getNumTracks();
-    if (n <= 0) { showStatus ("No tracks to classify"); return; }
-
-    const double sr = engine.getDeviceManager().getCurrentAudioDevice() != nullptr
-        ? engine.getDeviceManager().getCurrentAudioDevice()->getCurrentSampleRate()
-        : 48000.0;
-
-    int hits = 0;
-    for (int i = 0; i < n; ++i)
-    {
-        const auto r = SpectralClassifier::classify (rec.getTrack (i), sr);
-        if (r.name != "other")
-        {
-            engine.setTrackName (i, r.name + " " + juce::String (i + 1));
-            ++hits;
-        }
-    }
-    lastTrackCount = -1;
-    showStatus ("Spectral auto-name: confident guesses on "
-                + juce::String (hits) + " of " + juce::String (n) + " strip(s)");
 }
 
 void MainComponent::promptMirrorHost()

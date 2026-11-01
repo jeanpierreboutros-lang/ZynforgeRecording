@@ -433,7 +433,7 @@ void MainComponent::updateHeaderFromStatus (const zynforge::EngineStatus& status
     perfDashboard.setDeviceInfo (status.sampleRate,
                                  status.blockSize);
     perfDashboard.setRecording (rec);
-    // Drives per-strip meter/spectrum refresh: full rate while recording or
+    // Drives per-strip meter refresh: full rate while recording or
     // playing, throttled to ~8 Hz when stopped (see TrackState.h).
     gTransportActive.store (rec || playing, std::memory_order_relaxed);
     // Re-lay-out the header once when REC toggles so the dashboard resizes.

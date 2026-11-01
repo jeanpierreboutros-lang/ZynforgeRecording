@@ -2351,7 +2351,7 @@ void MainComponent::applySessionTemplate (const juce::File& templateFile)
     // session-boundary path (open / close / new) already resets it.
     clickTrackIndex = -1;
 
-    // Stop the live strips' meter/spectrum timers before setStripCount frees
+    // Stop the live strips' meter timers before setStripCount frees
     // the TrackStates they reference (a template with fewer strips shrinks the
     // recorder vector); the strips rebuild on the next 10 Hz tick.
     condemnAllStrips();
