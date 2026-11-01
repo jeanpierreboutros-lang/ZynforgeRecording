@@ -941,6 +941,47 @@ public:
         }
     }
 
+    void testOpenMessages()
+    {
+        beginTest ("File > Open keeps the real reason when a session does not open");
+        {
+            Folder f; writeSavedShow (f);
+            const auto journal = f.dir.getChildFile ("Session File Backups/reorder_broken");
+            expect (journal.createDirectory().wasOk());
+            expect (journal.getChildFile ("journal.json").replaceWithText ("not json"));
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            host.completeOpenFolder (f.dir);
+            expect (host.statusLabel.getText().contains ("incomplete file move"), host.statusLabel.getText());
+            host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("File > Open on the open session says so, even when it has no audio");
+        {
+            Folder f; writeSavedShow (f, 1);
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expectEquals (host.openSessionFolder (f.dir), 0);
+            host.completeOpenFolder (f.dir);
+            expect (host.statusLabel.getText().contains ("already open"), host.statusLabel.getText());
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("A new session keeps its capture format when reopened before the first save");
+        {
+            Folder f;
+            expect (f.project().replaceWithText (R"({"zynforgeSession":true,"sampleRate":48000.0,"captureFormat":6})"));
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            host.engine.getRecorder().setCaptureFormat (CaptureFormat::Wav24);
+            expectEquals (host.openSessionFolder (f.dir), 0);
+            expectEquals ((int) host.engine.getRecorder().getCaptureFormat(), 6);
+
+            expect (f.settings().replaceWithText (R"({"captureFormat":3})"));
+            expectEquals (host.openSessionFolder (f.dir, true), 0);
+            expectEquals ((int) host.engine.getRecorder().getCaptureFormat(), 3, "saved settings must win");
+            host.engine.getRecorder().setCaptureFormat (CaptureFormat::Wav24);
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -956,6 +997,7 @@ public:
         testReadOnlySessions();
         testRemoveLastCapture();
         testCloudUpload();
+        testOpenMessages();
     }
 };
 

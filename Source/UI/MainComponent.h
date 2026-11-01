@@ -107,6 +107,7 @@ private:
     void startLocalTake (const RecordStartPlan&);
     void onDeviceClicked();
     void onLoadSessionClicked();
+    void completeOpenFolder (const juce::File& dir);
     void onPlayClicked();
     void onStopClicked();
     // Immediate capture stop shared by the confirmed UI STOP, remote

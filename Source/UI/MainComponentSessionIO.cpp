@@ -253,12 +253,17 @@ void MainComponent::restoreSessionDocuments (const juce::File& dir)
     const auto projectSettings = juce::JSON::parse (findSessionProj (dir));
     if ((double) projectSettings["sampleRate"] > 0.0)
         pendingSampleRate = (double) projectSettings["sampleRate"];
+    const auto restoreFormat = [this] (const juce::var& format)
+    {
+        engine.getRecorder().setCaptureFormat ((CaptureFormat) juce::jlimit (0, (int) CaptureFormat::Flac24, (int) format));
+    };
+    // New Session records its format in the project. The settings file only
+    // exists after the first save, and wins from then on.
+    if (projectSettings.hasProperty ("captureFormat")) restoreFormat (projectSettings["captureFormat"]);
     const auto settings = juce::JSON::parse (dir.getChildFile ("session_settings.json"));
     if (auto* s = settings.getDynamicObject())
     {
-        if (s->hasProperty ("captureFormat"))
-            engine.getRecorder().setCaptureFormat ((CaptureFormat) juce::jlimit (0, (int) CaptureFormat::Flac24,
-                                                                                 (int) s->getProperty ("captureFormat")));
+        if (s->hasProperty ("captureFormat")) restoreFormat (s->getProperty ("captureFormat"));
         if (s->hasProperty ("preRollSeconds"))
             engine.getRecorder().setPreRollSeconds (juce::jlimit (0, 30, (int) s->getProperty ("preRollSeconds")));
         if (s->hasProperty ("loopStart") && s->hasProperty ("loopEnd"))
@@ -2224,26 +2229,32 @@ void MainComponent::onLoadSessionClicked()
     {
         if (self == nullptr) return;
         const auto dir = fc.getResult();
-        if (! dir.isDirectory()) return;
-
-        // Canonical full open (pins the active dir, restores setlist/UI/mixer,
-        // loads audio, sizes the mixer incl. the no-session_mix.json fallback).
-        const int n = openSessionFolder (dir);
-        if (n <= 0)
-        {
-            const auto audioDir = dir.getChildFile ("Audio Files");
-            const auto scanDir = audioDir.isDirectory() ? audioDir : dir;
-            const bool hasMedia = ! scanDir.findChildFiles (
-                juce::File::findFiles, false,
-                "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff").isEmpty();
-            statusLabel.setText (hasMedia
-                ? "Session audio is unreadable. Existing files are protected; Record will append safely."
-                : "No Track_* audio found in folder",
-                juce::dontSendNotification);
-        }
-        playButton.setButtonText ("PLAY");
-        updateTransportLabels();
+        if (dir.isDirectory()) completeOpenFolder (dir);
     });
+}
+
+void MainComponent::completeOpenFolder (const juce::File& dir)
+{
+    // Canonical full open (pins the active dir, restores setlist/UI/mixer,
+    // loads audio, sizes the mixer incl. the no-session_mix.json fallback).
+    // A negative result means it did not open and has said why. The session
+    // that was open is still open, so a line about this folder's audio would
+    // be false. Nor does it apply to reopening the session already open.
+    const bool alreadyOpen = isSessionOpen (dir);
+    if (openSessionFolder (dir) == 0 && ! alreadyOpen)
+    {
+        const auto audioDir = dir.getChildFile ("Audio Files");
+        const auto scanDir = audioDir.isDirectory() ? audioDir : dir;
+        const bool hasMedia = ! scanDir.findChildFiles (
+            juce::File::findFiles, false,
+            "Track_*.wav;Track_*.flac;Track_*.aif;Track_*.aiff").isEmpty();
+        statusLabel.setText (hasMedia
+            ? "Session audio is unreadable. Existing files are protected; Record will append safely."
+            : "No Track_* audio found in folder",
+            juce::dontSendNotification);
+    }
+    playButton.setButtonText ("PLAY");
+    updateTransportLabels();
 }
 
 juce::File MainComponent::getSessionsRoot() const
