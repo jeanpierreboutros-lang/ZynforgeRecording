@@ -35,12 +35,13 @@
 #include "PlaceholderView.h"
 #include "VcaPanel.h"
 #include "TransportBar.h"
+#include "ClipEditTargets.h"
 
 #include <memory>
 #include <set>
 #include <vector>
 
-namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
+namespace zynforge { class ChannelStrip; class MainTransportRegressionTests; class PunchSessionGuardTests; class OctoberRegressionTests; class ReviewPersistenceRepairTests; class ReviewUiFormatRepairTests; class ConsoleVscTests; class TwinLinkHostTests; class SongExportTests; class SessionInterchangeTests; class MainWindowGuardTests; class EditIntegrityTests; struct ConcurrencyAuditAccess; struct NoiseFinding; }
 
 class MainComponent final : public juce::Component,
                             public juce::KeyListener,
@@ -268,6 +269,10 @@ private:
     // Multi-select: indices are LOGICAL strip indices (stereo pairs
     // counted as one). Engineer toggles via shift/cmd-click on a strip.
     std::set<int> selectedLogical;
+    // The layout and session those positions mean; see syncStripSelectionScope.
+    int        selectionLayoutGen { -1 };
+    juce::File selectionSession;
+    void syncStripSelectionScope();
     void showSessionProperties();
     // Move the active session folder (its recorded audio included) to a new
     // location, then re-pin everything from there. Stopped-only; the copy
@@ -341,7 +346,10 @@ private:
     juce::var         clipClipboard;    // JSON of cut/copied audio clip(s)
     juce::File        clipClipboardSession;   // the session those clips belong to
     int               nudgeMs { 100 };  // clip-nudge step; cycled with N, persisted
-    void recordUndoSnapshot (const juce::String& label);
+    void flushMixerUndo();
+    // A bulk mixer action: take `before`, make the change, then commit it.
+    juce::var beginMixerUndo();
+    void commitMixerUndo (const juce::String& label, const juce::var& before);
     // Clip/playlist undo: capture engine.playlistsToJson() before the edit,
     // pass it here after; records an undoable step only if clips changed.
     void pushClipUndo (const juce::String& label, const juce::var& before);
@@ -355,14 +363,22 @@ private:
     void restoreTimeline (TimelineSnapshot target, const TimelineSnapshot& replaced);
     void commitTimelineCut (const juce::String& label, const TimelineSnapshot& before,
                             const zynforge::timelinecut::Cut&, const std::vector<int>& tracks);
+    void finishTimelineEdit (const juce::String& label, const TimelineSnapshot& before);
     int  rippleTimeline (const juce::String& label, const std::vector<int>& tracks,
                          juce::int64 start, juce::int64 end);
+    int  rippleSpans (const juce::String& label, const std::vector<zynforge::clipedit::RippleSpan>&);
     void restoreUndoSnapshot (const juce::var& snapshot);
     void editUndo();
     void editRedo();
     // Confirmation gate for destructive Delete-key edits in EDIT (removing a
     // recorded clip / range). Shows a warning; runs onConfirm only on "Delete".
     void confirmDeleteRecording (bool ripple, std::function<void()> onConfirm);
+    // Normalize clip(s) to the same peak, as a session job.
+    void normalizeClips (std::vector<zynforge::EditPage::ClipRef> targets);
+    // One undo step around a tempo-map edit; a generated click follows it.
+    void runTempoEdit (const juce::String& label, std::function<void()> mutate);
+    // Test seam: receives what either delete prompt would run on "Delete".
+    std::function<void (std::function<void()>)> confirmForTests;
 
     // Confirmation gate for deleting the selected channel(s) from the EDIT
     // view (right-click ▸ Delete Channel, or Delete on a selected channel).
@@ -410,6 +426,8 @@ private:
     void editNudgeSelectedClip (int dir);   // Alt+Left/Right / numpad -- slide
     void editRippleDelete();          // Shift+Delete -- delete + close the gap
     void editCycleNudgeValue();       // N -- cycle the nudge step, persisted
+    // The selected clips grown to their stereo halves and edit-group peers.
+    std::vector<zynforge::EditPage::ClipRef> selectedClipTargets();
     void editClipboardCut (bool cut); // Cmd+X / Cmd+C -- clip or strip settings
     void editClipboardPaste();        // Cmd+V -- clip at playhead or strip settings
     std::vector<int> tracksToEditPhysical();   // selected strips, else all
@@ -548,6 +566,7 @@ private:
     friend class zynforge::SongExportTests;
     friend class zynforge::SessionInterchangeTests;
     friend class zynforge::MainWindowGuardTests;
+    friend class zynforge::EditIntegrityTests;
     friend struct zynforge::ConcurrencyAuditAccess;
 
     // Live SafePointers to dialog windows opened by the header buttons.

@@ -280,21 +280,18 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
 
     // Arrow-key automation-point navigation. Active when EDIT view
     // is showing AND an active row is set (click any row to set it)
-    // AND a volume/pan/mute lane is active. Left/Right walks
-    // between points; Up/Down nudges the focused point's value;
-    // Delete/Backspace removes it. Skips when a text editor has
-    // focus so name dialogs still receive arrow keys.
-    if (editPage != nullptr
-        && editPage->isVisible()
-        && editPage->getActiveRowTrackIndex() >= 0
+    // AND that row SHOWS a volume/pan/mute lane -- its own lane, not the
+    // toolbar's last pick. Left/Right walks between points; Up/Down nudges
+    // the focused point's value; Delete/Backspace removes it. Skips when a
+    // text editor has focus so name dialogs still receive arrow keys.
+    if (const auto shownLane = editPage != nullptr && editPage->isVisible()
+                                  ? editPage->activeRowAutomationParam()
+                                  : std::nullopt;
+        shownLane.has_value()
         && dynamic_cast<juce::TextEditor*> (juce::Component::getCurrentlyFocusedComponent()) == nullptr)
     {
         const int track = editPage->getActiveRowTrackIndex();
-        const auto p = automationToolbar->getParam() == AutomationToolbar::Param::Pan
-                          ? AudioEngine::AutomationParam::Pan
-                          : automationToolbar->getParam() == AutomationToolbar::Param::Mute
-                                ? AudioEngine::AutomationParam::Mute
-                                : AudioEngine::AutomationParam::Volume;
+        const auto p = *shownLane;
         const auto& lane = engine.getAutomation (track, p);
 
         if (key == juce::KeyPress::leftKey || key == juce::KeyPress::rightKey)
@@ -332,10 +329,7 @@ bool MainComponent::keyPressed (const juce::KeyPress& key, juce::Component*)
             const auto samplePos = pt.samplePos;
             runAutomationEdit ("Nudge automation point",
                                [this, track, p, samplePos, v]
-                               {
-                                   engine.removeAutomationPointNear (track, p, samplePos, 1);
-                                   engine.addAutomationPoint        (track, p, samplePos, v);
-                               });
+                               { engine.setAutomationPointValue (track, p, samplePos, v); });
             editPage->repaint();
             return true;
         }

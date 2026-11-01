@@ -12,10 +12,12 @@
 
 #include "MainComponent.h"
 #include "../Theme/DialogChrome.h"
+#include "ClipEditTargets.h"
 #include "MarkerListDialog.h"
 #include "MixerSnapshot.h"
 
 #include <algorithm>
+#include <map>
 #include <vector>
 #include <set>
 
@@ -63,11 +65,17 @@ namespace
                                   juce::var beforeIn, juce::var afterIn)
             : engine (e), before (std::move (beforeIn)), after (std::move (afterIn)) {}
 
-        bool perform() override { engine.loadAutomationFromJson (after);  return true; }
-        bool undo()    override { engine.loadAutomationFromJson (before); return true; }
+        bool perform() override
+        {
+            if (firstRun) { firstRun = false; return true; }   // already applied
+            engine.loadAutomationFromJson (after);
+            return true;
+        }
+        bool undo() override { engine.loadAutomationFromJson (before); return true; }
 
         zynforge::AudioEngine& engine;
         juce::var before, after;
+        bool      firstRun { true };
     };
 
     struct MixerSnapshotAction final : public juce::UndoableAction
@@ -115,6 +123,37 @@ namespace
         juce::var beforeState;
         juce::var afterState;
         bool      afterCaptured { false };
+    };
+
+    // The tempo map before and after a lane edit. `changed` runs after every
+    // undo and redo, so a click track rendered from the map follows it.
+    struct TempoSnapshotAction final : public juce::UndoableAction
+    {
+        using Map = std::vector<zynforge::AudioEngine::TempoChange>;
+
+        TempoSnapshotAction (zynforge::AudioEngine& e, Map beforeIn, Map afterIn,
+                             std::function<void()> onChange)
+            : eng (e), before (std::move (beforeIn)), after (std::move (afterIn)),
+              changed (std::move (onChange)) {}
+
+        bool perform() override
+        {
+            if (firstRun) { firstRun = false; return true; }   // already applied
+            eng.setTempoMap (after);
+            changed();
+            return true;
+        }
+        bool undo() override
+        {
+            eng.setTempoMap (before);
+            changed();
+            return true;
+        }
+
+        zynforge::AudioEngine& eng;
+        Map before, after;
+        std::function<void()> changed;
+        bool firstRun { true };
     };
 
     // Clip / playlist undo. The edit has ALREADY happened by the time we
@@ -259,6 +298,11 @@ void MainComponent::commitTimelineCut (const juce::String& label, const Timeline
                                        const timelinecut::Cut& cut, const std::vector<int>& tracks)
 {
     cues = cuesAfterCut (cues, cut, tracks, engine.namesEveryStrip (tracks));
+    finishTimelineEdit (label, before);
+}
+
+void MainComponent::finishTimelineEdit (const juce::String& label, const TimelineSnapshot& before)
+{
     if (currentCueIndex >= (int) cues.size()) currentCueIndex = -1;
     setlistBar.setCues (cues, currentCueIndex);
 
@@ -285,13 +329,62 @@ int MainComponent::rippleTimeline (const juce::String& label, const std::vector<
     return changed;
 }
 
-void MainComponent::recordUndoSnapshot (const juce::String& label)
+// Every gap in one edit: one undo step and one save. The save starts a metadata
+// job, so an edit per gap would have the first one refuse the rest.
+int MainComponent::rippleSpans (const juce::String& label,
+                                const std::vector<zynforge::clipedit::RippleSpan>& spans)
 {
-    juce::Array<juce::var> arr;
-    for (int i = 0; i < engine.getRecorder().getNumTracks(); ++i)
-        arr.add (snapshotStrip (engine, i));
+    for (const auto& span : spans)
+        if (const auto refusal = engine.timelineCutRefusal ({ span.start, span.end, false }, span.tracks);
+            refusal.isNotEmpty())
+        {
+            showStatus (refusal);
+            return -1;
+        }
+    const auto before = captureTimeline();
+    int changed = 0;
+    for (const auto& span : spans)
+    {
+        const int moved = engine.rippleDeleteTracks (span.tracks, span.start, span.end);
+        if (moved <= 0) continue;
+        changed += moved;
+        cues = cuesAfterCut (cues, { span.start, span.end, false }, span.tracks,
+                             engine.namesEveryStrip (span.tracks));
+    }
+    if (changed > 0) finishTimelineEdit (label, before);
+    return changed;
+}
+
+// Commit a mixer change still settling, so a bulk action starts from a clean
+// baseline and Cmd+Z undoes the latest move.
+void MainComponent::flushMixerUndo()
+{
+    if (! mixerUndoReady) return;
+    const auto fp = zynforge::mixersnapshot::fingerprint (engine);
+    const bool structural = engine.getRecorder().getNumTracks() != committedMixerCount;
+    if (fp == committedMixerFp || structural) return;
+    undoManager.beginNewTransaction ("Mixer change");
+    undoManager.perform (new MixerSnapshotAction (engine, committedMixerState));
+    committedMixerState = captureMixerSnapshot();
+    committedMixerFp = fp;
+    lastSeenMixerFp = fp;
+    mixerChangeStableTicks = 0;
+}
+
+juce::var MainComponent::beginMixerUndo()
+{
+    flushMixerUndo();
+    return captureMixerSnapshot();
+}
+
+// Runs after the change: MixerSnapshotAction reads its "after" state when
+// performed, so pushing it first recorded nothing and left the real change for
+// the settle poll to add as a second step.
+void MainComponent::commitMixerUndo (const juce::String& label, const juce::var& before)
+{
     undoManager.beginNewTransaction (label);
-    undoManager.perform (new MixerSnapshotAction (engine, juce::var (arr)));
+    undoManager.perform (new MixerSnapshotAction (engine, before));
+    rebaselineMixerUndo();
 }
 
 juce::var MainComponent::captureMixerSnapshot()
@@ -343,6 +436,7 @@ void MainComponent::pollMixerUndo()
 
 void MainComponent::confirmDeleteRecording (bool ripple, std::function<void()> onConfirm)
 {
+    if (confirmForTests) { confirmForTests (std::move (onConfirm)); return; }
     juce::Component::SafePointer<MainComponent> self (this);
     juce::AlertWindow::showAsync (
         juce::MessageBoxOptions()
@@ -365,6 +459,7 @@ void MainComponent::confirmDeleteChannels (std::function<void()> onConfirm)
 {
     const int n = (int) selectedLogical.size();
     if (n <= 0 || engine.isRecording()) return;
+    if (confirmForTests) { confirmForTests (std::move (onConfirm)); return; }
 
     juce::Component::SafePointer<MainComponent> self (this);
     juce::AlertWindow::showAsync (
@@ -375,7 +470,8 @@ void MainComponent::confirmDeleteChannels (std::function<void()> onConfirm)
                 ? "Delete the " + juce::String (n) + " selected channels?"
                 : "Delete the selected channel?")
                 + "\n\nRecorded files stay on disk -- this removes the "
-                  "channel(s) from the session.")
+                  "channel(s) from the session. It clears the undo history, "
+                  "so Cmd+Z cannot bring them back.")
             .withButton ("Delete")
             .withButton ("Cancel"),
         // First of two buttons gets commandID 1 -- "Delete" returns 1.
@@ -389,18 +485,7 @@ void MainComponent::editUndo()
     // Commit any in-flight mixer change NOW so Cmd+Z immediately after a fader
     // / rename / colour move undoes that move -- the timer's ~300 ms settle
     // wouldn't have recorded it as an undo step yet.
-    if (mixerUndoReady)
-    {
-        const auto fp = zynforge::mixersnapshot::fingerprint (engine);
-        const bool structural = engine.getRecorder().getNumTracks() != committedMixerCount;
-        if (fp != committedMixerFp && ! structural)
-        {
-            undoManager.beginNewTransaction ("Mixer change");
-            undoManager.perform (new MixerSnapshotAction (engine, committedMixerState));
-            committedMixerState = captureMixerSnapshot(); committedMixerFp = fp;
-            lastSeenMixerFp = fp; mixerChangeStableTicks = 0;
-        }
-    }
+    flushMixerUndo();
 
     if (! undoManager.canUndo()) { showStatus ("Nothing to undo"); return; }
     const auto undone = undoManager.getUndoDescription();   // read before undo() moves the stack
@@ -435,9 +520,14 @@ void MainComponent::editCutSelected (bool cut)
     auto* obj = new juce::DynamicObject();
     obj->setProperty ("strips", juce::var (arr));
     stripClipboard = juce::var (obj);
-    showStatus (juce::String (cut ? "Cut " : "Copied ") + juce::String (arr.size())
-                + " strip setting(s)");
-    if (cut) deleteSelectedStrips();
+    if (! cut)
+    {
+        showStatus ("Copied " + juce::String (arr.size()) + " strip setting(s)");
+        return;
+    }
+    // Removing a channel takes its audio out of the session and clears undo,
+    // so a cut asks first like every other way of deleting one.
+    confirmDeleteChannels ([this] { deleteSelectedStrips(); });
 }
 
 void MainComponent::editPasteSelected()
@@ -449,7 +539,7 @@ void MainComponent::editPasteSelected()
     if (arr == nullptr || arr->isEmpty()) { showStatus ("Clipboard is empty"); return; }
     if (selectedLogical.empty()) { showStatus ("Pick a target strip first"); return; }
 
-    recordUndoSnapshot ("Paste strip settings");
+    const auto before = beginMixerUndo();
 
     // Round-robin: paste clipboard entries onto the selected logical
     // strips. If selection > clipboard, wraps the clipboard.
@@ -460,6 +550,7 @@ void MainComponent::editPasteSelected()
         restoreStrip (engine, phys, (*arr)[i % arr->size()]);
         ++i;
     }
+    commitMixerUndo ("Paste strip settings", before);
     lastTrackCount = -1;
     showStatus ("Pasted strip settings onto " + juce::String ((int) selectedLogical.size())
                 + " strip(s)");
@@ -485,12 +576,13 @@ void MainComponent::editSoloSelection()
                 { allSelectedSoloed = false; break; }
         }
 
-        recordUndoSnapshot (allSelectedSoloed ? "Clear solo" : "Solo selection");
+        const auto before = beginMixerUndo();
         for (int i = 0; i < rec.getNumTracks(); ++i)   // clean slate either way
             rec.getTrack (i).soloed.store (false, std::memory_order_relaxed);
 
         if (allSelectedSoloed)
         {
+            commitMixerUndo ("Clear solo", before);
             showStatus ("Solo cleared");
             return;
         }
@@ -506,6 +598,7 @@ void MainComponent::editSoloSelection()
                     rec.getTrack (phys + 1).soloed.store (true, std::memory_order_relaxed);
             }
         }
+        commitMixerUndo ("Solo selection", before);
         showStatus ("Soloed " + juce::String ((int) selectedLogical.size()) + " strip(s)");
         return;
     }
@@ -516,11 +609,12 @@ void MainComponent::editSoloSelection()
         if (rec.getTrack (i).soloed.load (std::memory_order_relaxed))
             { anySolo = true; break; }
 
-    recordUndoSnapshot (anySolo ? "Clear solos" : "Solo armed");
+    const auto before = beginMixerUndo();
     if (anySolo)
     {
         for (int i = 0; i < rec.getNumTracks(); ++i)
             rec.getTrack (i).soloed.store (false, std::memory_order_relaxed);
+        commitMixerUndo ("Clear solos", before);
         showStatus ("Cleared all solos");
     }
     else
@@ -529,6 +623,7 @@ void MainComponent::editSoloSelection()
         for (int i = 0; i < rec.getNumTracks(); ++i)
             if (rec.getTrack (i).armed.load (std::memory_order_relaxed))
             { rec.getTrack (i).soloed.store (true, std::memory_order_relaxed); ++n; }
+        if (n > 0) commitMixerUndo ("Solo armed", before);
         showStatus ("Soloed " + juce::String (n) + " armed track" + (n == 1 ? "" : "s"));
     }
 }
@@ -564,7 +659,7 @@ void MainComponent::armSelection()
     }
     const bool arm = ! allArmed;
 
-    recordUndoSnapshot (arm ? "Arm selection" : "Disarm selection");
+    const auto before = beginMixerUndo();
     for (int logical : selectedLogical)
     {
         const int phys = physicalFromLogical (engine, logical);
@@ -574,6 +669,7 @@ void MainComponent::armSelection()
             && phys + 1 < rec.getNumTracks())
             rec.getTrack (phys + 1).armed.store (arm, std::memory_order_relaxed);
     }
+    commitMixerUndo (arm ? "Arm selection" : "Disarm selection", before);
 
     showStatus ((arm ? "Armed " : "Disarmed ")
                 + juce::String ((int) selectedLogical.size()) + " selected strip(s)");
@@ -774,6 +870,25 @@ void MainComponent::runAutomationEdit (const juce::String& label,
     if (editPage != nullptr) editPage->repaint();
 }
 
+void MainComponent::runTempoEdit (const juce::String& label, std::function<void()> mutate)
+{
+    if (! canMutateTimeline()) return;
+    const auto before = engine.getTempoMap();
+    mutate();
+    const auto after = engine.getTempoMap();
+    const bool same = before.size() == after.size()
+        && std::equal (before.begin(), before.end(), after.begin(), [] (const auto& a, const auto& b)
+                       { return a.samplePos == b.samplePos && a.bpm == b.bpm; });
+    if (same) return;
+
+    // The timer renders it once nothing owns the session.
+    const auto refreshClick = [this] { if (clickTrackIndex >= 0) clickRefreshPending = true; };
+    refreshClick();
+    undoManager.beginNewTransaction (label);
+    undoManager.perform (new TempoSnapshotAction (engine, before, after, refreshClick));
+    if (editPage != nullptr) editPage->repaint();
+}
+
 void MainComponent::beginAutomationTransaction()
 {
     if (engine.isRecording()) return;
@@ -790,10 +905,15 @@ void MainComponent::endAutomationTransaction (const juce::String& label)
     if (! automationTransactionOpen) return;
     automationTransactionOpen = false;
     const auto after = engine.automationToJson();
-    undoManager.beginNewTransaction (label);
-    undoManager.perform (new AutomationSnapshotAction (engine,
-                                                       pendingAutomationBefore,
-                                                       after));
+    // A click that grabbed a point and moved nothing is not an edit: Cmd+Z
+    // must not spend a press on it.
+    if (juce::JSON::toString (pendingAutomationBefore) != juce::JSON::toString (after))
+    {
+        undoManager.beginNewTransaction (label);
+        undoManager.perform (new AutomationSnapshotAction (engine,
+                                                           pendingAutomationBefore,
+                                                           after));
+    }
     pendingAutomationBefore = juce::var();
     if (editPage != nullptr) editPage->repaint();
 }
@@ -811,15 +931,8 @@ std::vector<int> MainComponent::tracksToEditPhysical()
         {
             const int phys = physicalFromLogical (engine, logical);
             if (phys < 0 || phys >= rec.getNumTracks()) continue;
-            picked.insert (phys);
-            if (phys + 1 < rec.getNumTracks()
-                && rec.getTrack (phys).isStereo.load (std::memory_order_relaxed))
-                picked.insert (phys + 1);   // stereo pair edits together
-            // EDIT-group peers edit together (phase-coherent multitrack).
-            const int g = engine.getTrackEditGroup (phys);
-            if (g >= 0)
-                for (int p : engine.getStripsInEditGroup (g))
-                    if (p >= 0 && p < rec.getNumTracks()) picked.insert (p);
+            for (int peer : zynforge::clipedit::peerTracks (engine, phys))
+                if (peer >= 0 && peer < rec.getNumTracks()) picked.insert (peer);
         }
     }
     else
@@ -931,6 +1044,34 @@ void MainComponent::editZoomToSelection()
     if (! player.hasLoopRegion())
     { showStatus ("Select a range first (Range tool, or , and .), then E to zoom"); return; }
     editPage->zoomToSamples (player.getLoopStart(), player.getLoopEnd());
+}
+
+// A session job, so nothing else can edit the arrangement while it scans and
+// the undo step it pushes is the one it took: rows share a single clip-edit
+// slot, which any edit made during the scan would have overwritten.
+void MainComponent::normalizeClips (std::vector<EditPage::ClipRef> targets)
+{
+    if (! canMutateTimeline ("normalizing audio")) return;
+    if (! sessionJobs.reserve())
+    { showStatus ("Wait for the session operation to finish"); return; }
+    const auto before = engine.playlistsToJson();
+    if (editPage != nullptr) editPage->setEnabled (false);
+    showStatus ("Normalizing in the background...");
+    juce::Component::SafePointer<MainComponent> self (this);
+    engine.normalizeClipGroupAsync (std::move (targets), -0.3f, [self, before] (bool applied)
+    {
+        if (self == nullptr) return;
+        self->sessionJobs.release();
+        if (self->editPage != nullptr)
+        {
+            self->editPage->setReadOnlyWhileRecording (self->engine.isRecording());
+            self->editPage->setEnabled (! self->sessionLocked);
+            self->editPage->repaint();
+        }
+        if (applied) self->pushClipUndo ("Normalize clip", before);
+        self->showStatus (applied ? juce::String ("Normalized clip")
+                                  : "Normalize failed: the clip is silent, unreadable or changed during the scan");
+    });
 }
 
 // Strip Silence: open a Pro Tools-style settings box with draggable SLIDERS
@@ -1104,13 +1245,21 @@ void MainComponent::editClearRange()
 }
 
 // ─── Operations on the clicked (selected) clip(s) ────────────────────
+std::vector<EditPage::ClipRef> MainComponent::selectedClipTargets()
+{
+    return zynforge::clipedit::closure (engine, editPage->getSelectedClips(),
+                                        { editPage->getSelectedClipTrack(),
+                                          editPage->getSelectedClipIndex() });
+}
+
 void MainComponent::editDeleteSelectedClip()
 {
     if (! canMutateTimeline()) return;
     if (editPage == nullptr) return;
-    std::vector<std::pair<int, int>> sel (editPage->getSelectedClips().begin(),
-                                          editPage->getSelectedClips().end());
+    auto sel = selectedClipTargets();
     if (sel.empty()) { showStatus ("No clip selected -- click a clip first"); return; }
+    if (zynforge::clipedit::anyLocked (engine, sel))
+    { showStatus ("Clip is locked -- unlock before deleting"); return; }
     // Delete higher clip indices first so lower ones stay valid (per track,
     // and harmless across tracks since their lists are independent).
     std::sort (sel.begin(), sel.end(),
@@ -1122,36 +1271,61 @@ void MainComponent::editDeleteSelectedClip()
     if (deleted > 0) pushClipUndo ("Delete clip(s)", before);
     editPage->clearSelectedClip();
     editPage->repaint();
-    showStatus (deleted > 0 ? "Deleted " + juce::String (deleted) + " clip(s)"
-                            : juce::String ("Clip is locked -- unlock before deleting"));
+    showStatus ("Deleted " + juce::String (deleted) + " clip(s)");
 }
 
 void MainComponent::editDuplicateSelectedClip()
 {
     if (! canMutateTimeline()) return;
     if (editPage == nullptr) return;
-    const int track = editPage->getSelectedClipTrack();
-    const int idx   = editPage->getSelectedClipIndex();
-    if (track < 0 || idx < 0) { showStatus ("No clip selected -- click a clip first"); return; }
+    const auto sel = selectedClipTargets();
+    if (sel.empty()) { showStatus ("No clip selected -- click a clip first"); return; }
+    if (zynforge::clipedit::anyLocked (engine, sel))
+    { showStatus ("Clip is locked -- unlock it before duplicating"); return; }
+
+    const EditPage::ClipRef source { editPage->getSelectedClipTrack(), editPage->getSelectedClipIndex() };
     const auto before = engine.playlistsToJson();
-    if (engine.duplicateClip (track, idx))
+    // Highest index first per track, so the lower ones stay valid. A copy lands
+    // right after its source, behind one slot for each copy made earlier in
+    // that track's list.
+    bool allCopied = true;
+    for (auto it = sel.rbegin(); it != sel.rend(); ++it)
+        allCopied = engine.duplicateClip (it->first, it->second) && allCopied;
+    pushClipUndo ("Duplicate clip", before);
+    if (! allCopied)
     {
-        pushClipUndo ("Duplicate clip", before);
-        editPage->setSelectedClip (track, idx + 1);   // follow the new copy
-        editPage->repaint();
-        showStatus ("Duplicated clip");
+        editPage->clearSelectedClip();
+        showStatus ("Could not duplicate every selected clip -- check them, Cmd+Z reverts");
+        return;
     }
-    else showStatus ("Clip is locked -- unlock it before duplicating");
+
+    // Follow the new copies, the primary included.
+    std::map<int, int> copiesBelow;
+    std::vector<EditPage::ClipRef> copies;
+    auto primary = source;
+    for (const auto& clip : sel)
+    {
+        copies.emplace_back (clip.first, clip.second + 1 + copiesBelow[clip.first]++);
+        if (clip == source) primary = copies.back();
+    }
+    editPage->setSelectedClips (copies, primary);
+    editPage->repaint();
+    showStatus ("Duplicated " + juce::String ((int) copies.size()) + " clip(s)");
 }
 
 void MainComponent::editNudgeSelectedClip (int dir)
 {
     if (! canMutateTimeline()) return;
     if (editPage == nullptr) return;
-    const auto& sel = editPage->getSelectedClips();
+    const auto sel = selectedClipTargets();
     if (sel.empty()) { showStatus ("No clip selected -- click a clip first"); return; }
     const double sr   = juce::jmax (1.0, engine.getPlayer().getSampleRate());
-    const juce::int64 step = (juce::int64) (sr * (double) nudgeMs / 1000.0) * (dir > 0 ? 1 : -1);
+    juce::int64 step = (juce::int64) (sr * (double) nudgeMs / 1000.0) * (dir > 0 ? 1 : -1);
+    // One delta for the whole selection: a clip stopped at zero or a lock
+    // must hold its peers, or the pair slides apart.
+    for (auto& [track, idx] : sel)
+        step = engine.constrainClipEditDelta (track, idx, AudioEngine::ClipEdit::Move, step);
+    if (step == 0) { showStatus ("Clip cannot move any further (or is locked)"); return; }
     const auto before = engine.playlistsToJson();
     int n = 0;
     // Move doesn't reindex clips, so iterating the selection set is safe.
@@ -1162,7 +1336,7 @@ void MainComponent::editNudgeSelectedClip (int dir)
         pushClipUndo ("Nudge clip(s)", before);
         editPage->repaint();
         showStatus ("Nudged " + juce::String (n) + " clip(s) " + (dir > 0 ? "right" : "left")
-                    + " " + juce::String (nudgeMs) + " ms");
+                    + " " + juce::String ((double) std::abs (step) * 1000.0 / sr, 0) + " ms");
     }
 }
 
@@ -1186,14 +1360,16 @@ void MainComponent::editClipboardCut (bool cut)
     if (currentView == View::Edit && editPage != nullptr
         && editPage->getSelectedClipTrack() >= 0)
     {
+        const auto sel = selectedClipTargets();
+        if (cut && zynforge::clipedit::anyLocked (engine, sel))
+        { showStatus ("Clip is locked -- unlock before cutting"); return; }
         juce::Array<juce::var> entries;
         juce::int64 anchor = std::numeric_limits<juce::int64>::max();
-        for (auto [track, idx] : editPage->getSelectedClips())
+        for (auto [track, idx] : sel)
         {
             const auto* clips = engine.tryClipsFor (track);
             if (clips == nullptr || idx < 0 || idx >= (int) clips->size()) continue;
             const auto& c = (*clips)[(size_t) idx];
-            if (cut && c.locked) continue;
             int channel = c.sourceChannel;
             auto source = c.audioFile;
             if (source == juce::File()) source = engine.getTrackAudioFile (track, &channel);
@@ -1201,6 +1377,7 @@ void MainComponent::editClipboardCut (bool cut)
             { showStatus ("Copy failed: selected clip media is missing"); return; }
             auto* o = new juce::DynamicObject();
             o->setProperty ("track", track);
+            o->setProperty ("stereoHalf", zynforge::clipedit::stereoHalf (engine, track));
             o->setProperty ("position", c.timelineStartSamples);
             o->setProperty ("audioFile", source.getFullPathName());
             o->setProperty ("sourceChannel", channel);
@@ -1232,6 +1409,13 @@ void MainComponent::editClipboardCut (bool cut)
         showStatus (juce::String (cut ? "Cut " : "Copied ") + juce::String (entries.size()) + " clips");
         return;
     }
+    // A Range drag selects the strip it ran along, so the range outranks that
+    // selection here, as it does for Delete: Cmd+X must not take the channel.
+    if (cut && currentView == View::Edit && engine.getPlayer().hasLoopRegion())
+    {
+        confirmDeleteRecording (false, [this] { editClearRange(); });
+        return;
+    }
     editCutSelected (cut);   // strip-settings fallback
 }
 
@@ -1257,6 +1441,10 @@ void MainComponent::editClipboardPaste()
             if (dest < 0 || dest >= tracks || (juce::int64) entry["fileLength"] <= 0
                 || ! juce::File (entry["audioFile"].toString()).existsAsFile())
             { showStatus ("Paste failed: missing media or selection extends beyond available tracks"); return; }
+            // A stereo clip needs a stereo strip and a mono clip a mono one: an
+            // R half landing on the next strip plays in an unrelated channel.
+            if ((int) entry["stereoHalf"] != zynforge::clipedit::stereoHalf (engine, dest))
+            { showStatus ("Paste refused: the clips and this strip differ in stereo layout"); return; }
         }
         const auto pos = currentPlayheadSamples (engine);
         const auto before = engine.playlistsToJson();
@@ -1299,26 +1487,12 @@ void MainComponent::editRippleDelete()
     if (! canMutateTimeline()) return;
     if (editPage != nullptr && editPage->getSelectedClipTrack() >= 0)
     {
-        const int track   = editPage->getSelectedClipTrack();
-        const int idx     = editPage->getSelectedClipIndex();
-        const auto* clips = engine.tryClipsFor (track);
-        if (clips == nullptr || idx < 0 || idx >= (int) clips->size())
-        { showStatus ("No clip selected"); return; }
-        const auto a = (*clips)[(size_t) idx].timelineStartSamples;
-        const auto b = a + (*clips)[(size_t) idx].fileLengthSamples;
-
-        // Both halves of a stereo clip move, or the pair drifts apart.
-        auto& rec = engine.getRecorder();
-        std::set<int> picked { track };
-        for (const auto& [selectedTrack, selectedIndex] : editPage->getSelectedClips())
-            picked.insert (selectedTrack);
-        for (const int t : std::set<int> (picked))
-        {
-            if (t < 0 || t >= rec.getNumTracks()) continue;
-            if (rec.getTrack (t).isStereo.load (std::memory_order_relaxed)) picked.insert (t + 1);
-            if (t > 0 && rec.getTrack (t - 1).isStereo.load (std::memory_order_relaxed)) picked.insert (t - 1);
-        }
-        if (rippleTimeline ("Ripple delete clip", { picked.begin(), picked.end() }, a, b) > 0)
+        const auto sel = selectedClipTargets();
+        if (sel.empty()) { showStatus ("No clip selected"); return; }
+        if (zynforge::clipedit::anyLocked (engine, sel))
+        { showStatus ("Clip is locked -- unlock before ripple deleting"); return; }
+        const auto plan = zynforge::clipedit::ripplePlan (engine, sel, editPage->getSelectedClipTrack());
+        if (rippleSpans ("Ripple delete clip", plan) > 0)
         {
             editPage->clearSelectedClip();
             editPage->repaint();
@@ -1339,6 +1513,7 @@ void MainComponent::editRippleDelete()
 void MainComponent::editStartRange()
 {
     if (! canMutateTimeline()) return;
+    if (editPage != nullptr) editPage->clearSelectedClip();   // the range is the target now
     const auto pos = currentPlayheadSamples (engine);
     auto& player = engine.getPlayer();
     const bool otherEdgeSet = player.hasLoopRegion();
@@ -1357,6 +1532,7 @@ void MainComponent::editStartRange()
 void MainComponent::editFinishRange()
 {
     if (! canMutateTimeline()) return;
+    if (editPage != nullptr) editPage->clearSelectedClip();   // the range is the target now
     const auto pos = currentPlayheadSamples (engine);
     auto& player = engine.getPlayer();
     const bool otherEdgeSet = player.hasLoopRegion();

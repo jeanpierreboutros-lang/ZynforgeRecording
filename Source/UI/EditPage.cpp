@@ -9,7 +9,6 @@
 #include "StripColourPicker.h"
 #include "RenameLabel.h"
 #include "EditTrackRow.h"
-#include "WaveCacheFreshness.h"
 #include "../Audio/TrackOrder.h"
 
 #include <algorithm>
@@ -255,9 +254,16 @@ namespace zynforge
                     continue;
                 }
                 const int trackIdx = r->getTrackIndex();
-                const auto fL = findTrackFile (trackIdx);
-                const auto fR = r->isStereoPair() ? findTrackFile (trackIdx + 1) : juce::File();
-                r->setWaveformFiles (fL, fR);
+                if (r->isStereoPair())
+                {
+                    r->setWaveformFiles (findTrackFile (trackIdx), findTrackFile (trackIdx + 1));
+                    continue;
+                }
+                // Resolved the way playback resolves it: after an unlink, a
+                // mono row can be the right channel of the file on its left.
+                int channel = 0;
+                const auto file = engine.getTrackAudioFile (trackIdx, &channel);
+                r->setWaveformFiles (file.existsAsFile() ? file : findTrackFile (trackIdx), {}, channel);
             }
         }
 
@@ -268,6 +274,24 @@ namespace zynforge
         void forceRefreshWaveforms()
         {
             for (auto& r : rows) r->reloadCurrentWaveformFiles();
+        }
+
+        // The rows a take is writing, by physical track.
+        std::set<int> armedRows() const
+        {
+            std::set<int> armed;
+            for (auto& r : rows)
+                if (rowIsArmed (*r)) armed.insert (r->getTrackIndex());
+            return armed;
+        }
+
+        // After a take only the rows it wrote change on disk. The others keep
+        // their peaks: rescanning them blanks lanes that are already right,
+        // for longer the bigger the session.
+        void refreshWaveformsOf (const std::set<int>& tracks)
+        {
+            for (auto& r : rows)
+                if (tracks.count (r->getTrackIndex()) > 0) r->reloadCurrentWaveformFiles();
         }
 
         // Live capture envelope: arm / disarm every row's live draw, and
@@ -375,6 +399,13 @@ namespace zynforge
         }
 
         int rowCount() const { return (int) rows.size(); }
+
+        const TrackRow* rowForTrack (int physical) const
+        {
+            for (auto& r : rows)
+                if (r->getTrackIndex() == physical) return r.get();
+            return nullptr;
+        }
 
         // True when the rows were built for exactly this logical layout. A
         // count check alone misses a block move that keeps both the track and
@@ -491,7 +522,7 @@ namespace zynforge
         {
             auto cache = std::make_unique<juce::AudioThumbnailCache> (256);
             auto& scanThread = cache->getTimeSliceThread();
-            scanThread.stopThread (2000);
+            scanThread.stopThread (kScanThreadStopMs);
             scanThread.startThread (juce::Thread::Priority::background);
             thumbnailCaches.push_back (std::move (cache));
         }
@@ -615,6 +646,8 @@ namespace zynforge
     EditPage::~EditPage()
     {
         stopTimer();
+        cancelWaveCacheWork();
+        waveCacheThread.removeAllJobs (true, -1);
         // Flush the waveform cache to WaveCache.wfm in whichever session is
         // active. Best-effort: failure here only means the next launch
         // re-scans waveforms, no data loss -- so SKIP it when the timer
@@ -622,92 +655,37 @@ namespace zynforge
         // paying a cache-sized synchronous write on every quit.
         const auto sessionDir = engine.getActiveSessionDir();
         if (! waveCacheSaved && ! engine.isRecording() && sessionDir.isDirectory())
-            saveCacheToSession (sessionDir);
+            wavecache::save (sessionDir, thumbnailCaches, [] { return false; });
     }
 
-    void EditPage::loadCacheFromSession (const juce::File& sessionDir)
+    void EditPage::cancelWaveCacheWork()
     {
-        const auto cacheFile = sessionDir.getChildFile ("WaveCache.wfm");
-        if (! cacheFile.existsAsFile() || cacheFile.getSize() < 16) return;
-
-        // A normal take may reuse Track_NN paths while an earlier waveform
-        // cache still exists. Never load those stale peaks into the new rows.
-        if (waveCachePredatesAudio (cacheFile, sessionDir))
-        {
-            cacheFile.deleteFile();
-            return;
-        }
-
-        // Versioned header: magic + (resolution<<8|rev). A cache baked at a
-        // different thumbnail resolution would re-paint as coarse stair-step
-        // blocks (its min/max points are too sparse for the new draw), so a
-        // mismatch -- including pre-header caches whose first int isn't our
-        // magic -- means delete the stale file and let the thumbnails
-        // re-scan the Track_NN.wav files at the current resolution. The
-        // stream is scoped so its file handle is released before we delete.
-        bool stale = false;
-        {
-            juce::FileInputStream in (cacheFile);
-            if (! in.openedOk()) return;
-
-            const int magic  = in.readInt();
-            const int ver    = in.readInt();
-            const int shards = in.readInt();
-            if (magic != kWaveCacheMagic || ver != kWaveCacheVersion
-                || shards != (int) thumbnailCaches.size())
-                stale = true;
-            else
-                // One length-prefixed section per shard cache. Best-effort:
-                // readFromStream returns false on a corrupt / wrong-JUCE-version
-                // body, in which case those thumbnails just re-scan -- worst
-                // case 'slow first paint', never wrong audio.
-                for (auto& cache : thumbnailCaches)
-                {
-                    const int len = in.readInt();
-                    if (len <= 0) continue;
-                    juce::MemoryBlock mb;
-                    in.readIntoMemoryBlock (mb, len);
-                    juce::MemoryInputStream mis (mb, false);
-                    cache->readFromStream (mis);
-                }
-        }
-        if (stale)
-            cacheFile.deleteFile();
+        ++waveCacheWork;
+        waveCacheLoading = false;
     }
 
-    void EditPage::saveCacheToSession (const juce::File& sessionDir)
+    void EditPage::beginWaveCacheLoad (const juce::File& sessionDir)
     {
-        const auto cacheFile = sessionDir.getChildFile ("WaveCache.wfm");
-        // Overwrite atomically -- write to a temp file then rename so
-        // a crash mid-write leaves the previous cache intact.
-        const auto tmpFile = sessionDir.getChildFile ("WaveCache.wfm.tmp");
-        tmpFile.deleteFile();
+        cancelWaveCacheWork();
+        const auto job = ++waveCacheWork;
+        waveCacheLoading = true;
+        waveCacheThread.addJob ([this, sessionDir, job]
         {
-            juce::FileOutputStream out (tmpFile);
-            if (! out.openedOk()) return;
-            out.writeInt (kWaveCacheMagic);              // header: tag the resolution
-            out.writeInt (kWaveCacheVersion);            // so a later res change drops it
-            out.writeInt ((int) thumbnailCaches.size()); // shard count
-            // One length-prefixed section per shard cache so each loads back
-            // into the same shard on reopen.
-            for (auto& cache : thumbnailCaches)
-            {
-                juce::MemoryOutputStream mos;
-                cache->writeToStream (mos);
-                out.writeInt ((int) mos.getDataSize());
-                out.write (mos.getData(), mos.getDataSize());
-            }
-            out.flush();
-        }
-        if (tmpFile.getSize() > 0)
+            wavecache::load (sessionDir, thumbnailCaches, [this, job] { return waveCacheWork.load() != job; });
+            if (waveCacheWork.load() == job) waveCacheLoaded.store (job);
+        });
+    }
+
+    void EditPage::beginWaveCacheSave (const juce::File& sessionDir)
+    {
+        cancelWaveCacheWork();
+        const auto job = ++waveCacheWork;
+        waveCacheSaving = true;
+        waveCacheThread.addJob ([this, sessionDir, job]
         {
-            cacheFile.deleteFile();
-            tmpFile.moveFileTo (cacheFile);
-        }
-        else
-        {
-            tmpFile.deleteFile();
-        }
+            wavecache::save (sessionDir, thumbnailCaches, [this, job] { return waveCacheWork.load() != job; });
+            waveCacheSaving = false;
+        });
     }
 
     void EditPage::setAutomationEditWrapper (AutoEditWrapper fn)
@@ -716,10 +694,17 @@ namespace zynforge
         if (list != nullptr)
         {
             list->sharedAutomationEditWrapper = automationEditWrapper;
-            list->sharedAutomationDragBegin   = automationDragBegin;
-            list->sharedAutomationDragEnd     = automationDragEnd;
             list->updateRowContext();
         }
+    }
+
+    void EditPage::setAutomationDragHooks (std::function<void()> begin,
+                                           std::function<void (const juce::String&)> end)
+    {
+        if (list == nullptr) return;
+        list->sharedAutomationDragBegin = std::move (begin);
+        list->sharedAutomationDragEnd   = std::move (end);
+        list->updateRowContext();
     }
 
     void EditPage::setAutomationToolbar (AutomationToolbar* t)
@@ -735,9 +720,17 @@ namespace zynforge
         repaint();
     }
 
+    std::optional<AudioEngine::AutomationParam> EditPage::activeRowAutomationParam() const
+    {
+        if (list == nullptr) return {};
+        const auto* row = list->rowForTrack (activeRowTrackIndex);
+        return row != nullptr ? row->shownAutomationParam() : std::nullopt;
+    }
+
     void EditPage::applyToolbarParamToAllRows()
     {
         if (toolbar == nullptr || list == nullptr) return;
+        focusedPointIdx = -1;   // it named a point on the lane being replaced
 
         TrackRow::LaneMode lm = TrackRow::LaneMode::Volume;
         switch (toolbar->getParam())
@@ -761,6 +754,115 @@ namespace zynforge
             list->updateRowContext();
         }
         repaint();
+    }
+
+    int EditPage::selectedClipIndexOn (const SelectedClip& s) const
+    {
+        const auto* list = engine.tryClipsFor (s.track);
+        if (list == nullptr || s.id == 0) return -1;
+        int found = -1;
+        for (int i = 0; i < (int) list->size(); ++i)
+            if ((*list)[(size_t) i].selectionId == s.id)
+            {
+                if (found >= 0) return -1;   // split since: neither piece is "the" clip
+                found = i;
+            }
+        return found;
+    }
+
+    void EditPage::followSelectedClips()
+    {
+        if (selection.empty() && selClips.empty()) return;
+
+        std::set<ClipRef> found;
+        std::vector<SelectedClip> kept;
+        for (const auto& s : selection)
+            if (const int i = selectedClipIndexOn (s); i >= 0)
+            {
+                found.insert ({ s.track, i });
+                kept.push_back (s);
+            }
+        selection = std::move (kept);
+
+        // The primary hands on when it leaves the selection.
+        const bool primaryKept = std::any_of (selection.begin(), selection.end(), [this] (const SelectedClip& s)
+                                              { return s.id == primarySelection.id; });
+        if (! primaryKept)
+            primarySelection = selection.empty() ? SelectedClip {} : selection.front();
+        selectedClipIndex = selectedClipIndexOn (primarySelection);
+        selectedClipTrack = selectedClipIndex >= 0 ? primarySelection.track : -1;
+
+        if (found != selClips)
+        {
+            selClips = std::move (found);
+            repaintLanes();
+        }
+    }
+
+    // A fresh id on every selection: a clip that shares an older id with the
+    // other piece of a split still gets one of its own.
+    juce::uint32 EditPage::stampSelectionId (ClipRef ref)
+    {
+        const auto* list = engine.tryClipsFor (ref.first);
+        if (list == nullptr || ref.second < 0 || ref.second >= (int) list->size()) return 0;
+        return engine.clipsFor (ref.first)[(size_t) ref.second].selectionId = ++lastSelectionId;
+    }
+
+    void EditPage::setSelectedClips (const std::vector<ClipRef>& refs, ClipRef primary)
+    {
+        selection.clear();
+        primarySelection = {};
+        for (const auto& ref : refs)
+            if (const auto id = stampSelectionId (ref); id != 0)
+            {
+                selection.push_back ({ ref.first, id });
+                if (ref == primary) primarySelection = selection.back();
+            }
+        if (primarySelection.id == 0)
+            if (const auto id = stampSelectionId (primary); id != 0)
+            {
+                primarySelection = { primary.first, id };
+                selection.push_back (primarySelection);
+            }
+        followSelectedClips();
+        repaintLanes();
+    }
+
+    void EditPage::toggleSelectedClips (const std::vector<ClipRef>& refs, ClipRef clicked)
+    {
+        followSelectedClips();
+        if (selClips.count (clicked) == 0)
+        {
+            for (const auto& ref : refs)
+                if (selClips.count (ref) == 0)
+                    if (const auto id = stampSelectionId (ref); id != 0)
+                    {
+                        selection.push_back ({ ref.first, id });
+                        if (ref == clicked) primarySelection = selection.back();   // the new primary
+                    }
+        }
+        else
+        {
+            const auto isRemoved = [&] (const SelectedClip& s)
+            {
+                const ClipRef at { s.track, selectedClipIndexOn (s) };
+                return std::find (refs.begin(), refs.end(), at) != refs.end();
+            };
+            selection.erase (std::remove_if (selection.begin(), selection.end(), isRemoved),
+                             selection.end());
+        }
+        followSelectedClips();
+        repaintLanes();
+    }
+
+    void EditPage::clearSelectedClip()
+    {
+        if (selection.empty() && selClips.empty()) return;
+        selection.clear();
+        primarySelection = {};
+        selClips.clear();
+        selectedClipTrack = selectedClipIndex = -1;
+        repaintLanes();
     }
 
     void EditPage::refresh()
@@ -792,6 +894,7 @@ namespace zynforge
         if (gen != selectionTrackGen || sessionDir != selectionSessionDir)
         {
             clearSelectedClip();
+            setActiveRowTrackIndex (-1);   // a position, like the selection
             selectionTrackGen   = gen;
             selectionSessionDir = sessionDir;
         }
@@ -809,8 +912,11 @@ namespace zynforge
         // and also stops the double-load when both branches fire on one tick.
         if (sessionDir.isDirectory() && sessionDir != waveCacheLoadedFor)
         {
-            loadCacheFromSession (sessionDir);
             waveCacheLoadedFor = sessionDir;
+            if (wavecache::fileIn (sessionDir).existsAsFile() && ! engine.isRecording())
+                beginWaveCacheLoad (sessionDir);
+            else
+                cancelWaveCacheWork();
         }
 
         // While recording, only the ARMED rows defer to the live red capture
@@ -835,7 +941,9 @@ namespace zynforge
             list->setWaveformsFromSession (sessionDir, /*skipArmedRows*/ ! isContinue);
         }
         else
-            list->setWaveformsFromSession (sessionDir);
+            // Rows blank until the saved peaks are in: the previous session's
+            // waveforms must not sit under this session's names.
+            list->setWaveformsFromSession (waveCacheLoading ? juce::File() : sessionDir);
 
         updatePlaceholder();
         lastLoaded = engine.getPlayer().isLoaded();
@@ -879,7 +987,8 @@ namespace zynforge
         auto report = [this] (const juce::String& message) { if (onStatus) onStatus (message); };
         // reorderTracks refuses during capture and its finalization; say so
         // rather than report its failure as a disk-permission problem.
-        if (readOnlyWhileRecording || engine.isRecording() || engine.isSessionTransitionActive())
+        if (readOnlyWhileRecording || engine.isRecording() || engine.isSessionTransitionActive()
+            || (canMutateTimeline && ! canMutateTimeline()))
         {
             report ("Strip move refused: wait for the take to finish recording and saving");
             return false;
@@ -922,6 +1031,14 @@ namespace zynforge
         // waveform). forceRefreshWaveforms drops each row's cached hash and
         // re-scans, so the lanes pick up the swapped content.
         if (list != nullptr) list->forceRefreshWaveforms();
+
+        // The saved peaks are keyed by path too, and a rename keeps each file's
+        // modification time, so nothing else would notice them go stale. On the
+        // cache's own thread, so it lands after any save already in flight.
+        cancelWaveCacheWork();
+        waveCacheSaved = false;
+        if (const auto sessionDir = engine.getActiveSessionDir(); sessionDir.isDirectory())
+            waveCacheThread.addJob ([sessionDir] { wavecache::fileIn (sessionDir).deleteFile(); });
     }
 
     void EditPage::updatePlaceholder()
@@ -940,6 +1057,14 @@ namespace zynforge
 
     void EditPage::timerCallback()
     {
+        followSelectedClips();
+
+        if (waveCacheLoading && waveCacheLoaded.load() == waveCacheWork.load())
+        {
+            waveCacheLoading = false;
+            refresh();
+        }
+
         // Session-change detection + waveform attach run REGARDLESS of EDIT
         // visibility, so the AudioThumbnail background scan (and WaveCache.wfm
         // build) kick off the moment audio is imported / recorded -- not when
@@ -973,12 +1098,15 @@ namespace zynforge
         {
             recordingBaseSpanSamples = recordingTimelineSpanSamples (
                 0, player.getTotalLengthSamples(), liveRate);
+            capturedRows = list != nullptr ? list->armedRows() : std::set<int> {};   // arms freeze with the take
             waveCacheSaved = false; // this take will change the cached media
+            cancelWaveCacheWork();  // and nothing writes to the take volume now
             // A deep post-STOP zoom would be multiplied by the growing live
             // timeline width. Return to the capture-safe range for this pass.
             if (zoom > kMaxRecordingTimelineZoom)
             {
                 zoom = kMaxRecordingTimelineZoom;
+                resized();
                 if (onZoomChanged) onZoomChanged (zoom);
             }
         }
@@ -987,6 +1115,9 @@ namespace zynforge
         // cleared. Writing `rec` alone here at 24 Hz fought the host's 10 Hz
         // write, so the lock flickered and mouse edits got through.
         applyReadOnly (hostReadOnly || rec);
+        // The lock is wider than a take (a metadata save holds it too); this
+        // red label says a take is rolling, so it follows the take alone.
+        recordingEditLabel.setVisible (rec || finalizing);
         const bool transportActive = rec || engine.getPlayer().isPlaying();
         const bool wasFollowing = followState.isFollowing();
         const bool wasTransportActive = followState.isTransportActive();
@@ -1034,7 +1165,7 @@ namespace zynforge
         // files an async finalization still had open (the last ~5 s missing,
         // a punch not yet spliced) and nothing rescanned once it completed.
         if (captureJustSettled && list != nullptr)
-            list->forceRefreshWaveforms();
+            list->refreshWaveformsOf (capturedRows);
 
         // Persist WaveCache.wfm as soon as the background scan finishes for the
         // whole session -- even while EDIT is hidden -- so reopening the show
@@ -1043,11 +1174,18 @@ namespace zynforge
         // freshly-imported session that wasn't quit cleanly re-scanned on the
         // next open. Done once per session; skipped while recording (files
         // still growing).
-        if (! waveCacheSaved && ! rec && ! finalizing && list != nullptr && list->rowCount() > 0
+        if (waveCacheSaving.load() && engine.isSessionTransitionActive())
+        {
+            cancelWaveCacheWork();   // a session job owns these files now
+            waveCacheSaved = false;
+        }
+        if (! waveCacheSaved && ! waveCacheSaving.load() && ! waveCacheLoading
+            && ! rec && ! engine.isSessionTransitionActive()
+            && list != nullptr && list->rowCount() > 0
             && engine.getActiveSessionDir().isDirectory()
             && list->allWaveformsLoaded())
         {
-            saveCacheToSession (engine.getActiveSessionDir());
+            beginWaveCacheSave (engine.getActiveSessionDir());
             waveCacheSaved = true;
         }
 
@@ -1269,6 +1407,8 @@ namespace zynforge
         const int    targetX = kHeaderW + 4 + (int) (prop * (double) juce::jmax (1, contentW - kHeaderW - 8));
         const int    viewW   = viewport.getViewWidth();
         const int    centreX = kHeaderW + juce::jmax (0, viewW - kHeaderW) / 2;
+        // A marker jump or desk locate is not the engineer browsing: FOLLOW stays.
+        juce::ScopedValueSetter<bool> scrolling (programmaticViewportChange, true);
         viewport.setViewPosition (juce::jmax (0, targetX - centreX),
                                   viewport.getViewPositionY());
     }
@@ -1334,9 +1474,6 @@ namespace zynforge
     {
         if (readOnlyWhileRecording == readOnly) return;
         readOnlyWhileRecording = readOnly;
-        recordingEditLabel.setText (engine.isRecording() ? "REC  EDIT LOCKED" : "EDIT LOCKED",
-                                    juce::dontSendNotification);
-        recordingEditLabel.setVisible (readOnly);
         // Passing mouse events through the rows keeps the viewport's pan and
         // scroll gestures available. The ruler's marker/range edits stay inert.
         // No component is disabled, so waveform paint and zoom chrome retain

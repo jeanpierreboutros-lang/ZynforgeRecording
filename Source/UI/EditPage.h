@@ -9,8 +9,10 @@
 #include "PlaceholderView.h"
 #include "TimelineMinimap.h"
 
+#include <atomic>
 #include <memory>
 #include <functional>
+#include <optional>
 #include <vector>
 #include <set>
 #include <utility>
@@ -120,6 +122,21 @@ namespace zynforge
             clipUndoBefore = juce::var();
         }
 
+        // The host's timeline guard (capture, session jobs, LOCK), which says
+        // why on the status line. Anything that acts after a menu or dialog
+        // was already open asks here at that moment.
+        std::function<bool()> canMutateTimeline;
+        bool canEditTimeline() const
+        { return (! canMutateTimeline || canMutateTimeline()) && ! readOnlyWhileRecording; }
+
+        // Normalize runs as a session job on the host, so it survives its row
+        // being rebuilt, owns its undo snapshot and reports a failure.
+        std::function<void (std::vector<std::pair<int, int>>)> normalizeClips;
+
+        // Tempo-lane edits go through this so they join Cmd+Z and refresh a
+        // generated click track, as a change on the TempoBar does.
+        std::function<void (const juce::String&, std::function<void()>)> tempoEditWrapper;
+
         // Memory-Location recall hooks. setLogicalRowsVisible takes a
         // list of logical strip indices to show (empty = show all).
         // scrollToSample centres the horizontal viewport on a sample
@@ -153,6 +170,10 @@ namespace zynforge
             }
         }
 
+        // The automation lane the active row shows, if it shows one. Keyboard
+        // point edits act on this lane and no other.
+        std::optional<AudioEngine::AutomationParam> activeRowAutomationParam() const;
+
         // Focused automation point index (within the active row's
         // active lane). -1 = no focus. Set by arrow-key navigation.
         // Paint shows the focused point with a brighter highlight
@@ -160,60 +181,34 @@ namespace zynforge
         int  getFocusedPointIdx() const noexcept { return focusedPointIdx; }
         void setFocusedPointIdx (int idx) noexcept { focusedPointIdx = idx; repaint(); }
 
-        // Selected clip(s) (clicked with the Smart / Move tool). Delete /
-        // Nudge act on the whole set; Duplicate / Copy / Paste act on the
-        // primary (most-recently-clicked). Indices are into each track's
-        // active clip list, so structural edits clear the selection.
+        // Selected clip(s) (clicked with the Smart / Move tool). Every clip
+        // command acts on the whole set, grown to each clip's stereo half and
+        // edit-group peers (clipedit::closure); the primary (most recently
+        // clicked) anchors Copy and picks the track a ripple measures from.
+        // The selection follows the CLIP, not its list index: every read
+        // resolves it again, so an edit that shifts the list keeps it on the
+        // same clip, and one that removes or replaces the clip (undo, heal,
+        // crop, a take switch) drops it rather than naming its neighbour.
         using ClipRef = std::pair<int, int>;   // (track, clipIndex)
-        const std::set<ClipRef>& getSelectedClips() const noexcept { return selClips; }
-        bool isClipSelected (int track, int clipIdx) const noexcept
-        { return selClips.count ({ track, clipIdx }) > 0; }
-        int  getSelectedClipTrack() const noexcept { return selectedClipTrack; }
-        int  getSelectedClipIndex() const noexcept { return selectedClipIndex; }
-        // Replace the selection with this one clip (plain click).
-        void setSelectedClip (int track, int clipIdx) noexcept
+        const std::set<ClipRef>& getSelectedClips() { followSelectedClips(); return selClips; }
+        bool isClipSelected (int track, const Clip& clip) const noexcept
         {
-            selClips.clear();
-            selClips.insert ({ track, clipIdx });
-            selectedClipTrack = track;
-            selectedClipIndex = clipIdx;
-            repaint();
+            for (const auto& s : selection)
+                if (s.track == track && s.id == clip.selectionId) return true;
+            return false;
         }
+        int  getSelectedClipTrack() { followSelectedClips(); return selectedClipTrack; }
+        int  getSelectedClipIndex() { followSelectedClips(); return selectedClipIndex; }
+        // Replace the selection with this one clip (plain click).
+        void setSelectedClip (int track, int clipIdx) { setSelectedClips ({ { track, clipIdx } }, { track, clipIdx }); }
         // Select several clips at once (used by edit-group expansion: one
         // click on a grouped clip selects the matching clip on every group
-        // peer). `primary` is the Copy/Nudge anchor.
-        void setSelectedClips (const std::vector<ClipRef>& refs, ClipRef primary) noexcept
-        {
-            selClips.clear();
-            for (auto& r : refs) selClips.insert (r);
-            selectedClipTrack = primary.first;
-            selectedClipIndex = primary.second;
-            repaint();
-        }
-        // Toggle a clip in/out of the selection (Shift+click).
-        void toggleSelectedClip (int track, int clipIdx) noexcept
-        {
-            const ClipRef r { track, clipIdx };
-            if (selClips.erase (r) == 0)
-            {
-                selClips.insert (r);
-                selectedClipTrack = track;     // becomes the new primary
-                selectedClipIndex = clipIdx;
-            }
-            else if (selClips.empty())
-            {
-                selectedClipTrack = selectedClipIndex = -1;
-            }
-            repaint();
-        }
-        void clearSelectedClip() noexcept
-        {
-            if (selClips.empty() && selectedClipTrack < 0) return;
-            selClips.clear();
-            selectedClipTrack = -1;
-            selectedClipIndex = -1;
-            repaint();
-        }
+        // peer). `primary` is the Copy anchor.
+        void setSelectedClips (const std::vector<ClipRef>& refs, ClipRef primary);
+        // Toggle one clip, with its stereo half and edit-group peers, in or
+        // out of the selection (Shift+click). `refs` includes `clicked`.
+        void toggleSelectedClips (const std::vector<ClipRef>& refs, ClipRef clicked);
+        void clearSelectedClip();
 
         // Optional hook into MainComponent's UndoManager. When set,
         // every automation-point add / remove / drag goes through
@@ -230,9 +225,10 @@ namespace zynforge
         // Begin / end an automation drag transaction. The host
         // (MainComponent) snapshots automation lanes at begin and
         // again at end, pushing a single AutomationSnapshotAction
-        // so the whole drag is one undo step instead of N.
-        std::function<void()>                       automationDragBegin;
-        std::function<void (const juce::String&)>   automationDragEnd;
+        // so the whole drag is one undo step instead of N. Reaches
+        // every row, present and future, when called.
+        void setAutomationDragHooks (std::function<void()> begin,
+                                     std::function<void (const juce::String&)> end);
 
         // Force every row's lane content to follow the toolbar's
         // Param choice. Called whenever the toolbar's onParamChanged
@@ -285,6 +281,10 @@ namespace zynforge
         class TrackList;
 
         void timerCallback() override;
+        struct SelectedClip { int track { -1 }; juce::uint32 id { 0 }; };
+        void followSelectedClips();
+        int  selectedClipIndexOn (const SelectedClip&) const;
+        juce::uint32 stampSelectionId (ClipRef);
         void applyReadOnly (bool readOnly);
         void syncFollowButton();
         void pauseFollowForZoom();
@@ -323,6 +323,7 @@ namespace zynforge
         // (not CPU-derived) keeps the on-disk cache layout portable between
         // machines. WaveCache.wfm stores one length-prefixed section per shard.
         static constexpr int               kNumScanShards = 4;
+        static constexpr int               kScanThreadStopMs = 30000;
         std::vector<std::unique_ptr<juce::AudioThumbnailCache>> thumbnailCaches;
         ScrollViewport                     viewport;
         TimelineFollowState                followState;
@@ -342,6 +343,7 @@ namespace zynforge
         bool       lastFinalizing  { false };   // async STOP still finalizing on the last tick
         juce::int64 recordingBaseSpanSamples { 0 };
         bool       waveCacheSaved  { false };   // WaveCache.wfm written for this session yet?
+        std::set<int> capturedRows;             // tracks the current take writes
         juce::File lastSessionDir;
         // Session whose WaveCache.wfm has already been pulled into the
         // thumbnail caches. Separate from lastSessionDir so the load can't be
@@ -351,9 +353,13 @@ namespace zynforge
         float      vZoom           { 1.0f };
         juce::var  clipUndoBefore;   // playlist snapshot taken at clip-drag start
         int        activeRowTrackIndex { -1 };
-        int        selectedClipTrack   { -1 };   // primary clip (Copy / Nudge anchor)
+        std::vector<SelectedClip> selection;     // what is selected (Clip::selectionId)
+        SelectedClip primarySelection;           // primary clip (Copy anchor)
+        juce::uint32 lastSelectionId   { 0 };
+        // The selection as indices, as of the last followSelectedClips().
+        int        selectedClipTrack   { -1 };
         int        selectedClipIndex   { -1 };
-        std::set<std::pair<int, int>> selClips;  // multi-selection (track, clipIdx)
+        std::set<std::pair<int, int>> selClips;
         int        selectionTrackGen   { -1 };   // track generation the selection was made under
         juce::File selectionSessionDir;          // ...and session; refresh() clears it on a change
         int        focusedPointIdx     { -1 };
@@ -378,10 +384,18 @@ namespace zynforge
         // WaveCache.wfm persistence: writes the AudioThumbnailCache
         // contents to disk so the EDIT view re-renders waveforms
         // instantly on session reopen instead of re-scanning every
-        // Track_NN.wav. Pro Tools-style.
-        void loadCacheFromSession (const juce::File& sessionDir);
-        void saveCacheToSession   (const juce::File& sessionDir);
-        juce::Time lastCacheSaveTime;
+        // Track_NN.wav. Pro Tools-style. Both directions run on
+        // waveCacheThread. A job runs while waveCacheWork still holds its
+        // number; changing it cancels the job at its next chunk.
+        void cancelWaveCacheWork();
+        void beginWaveCacheLoad (const juce::File& sessionDir);
+        void beginWaveCacheSave (const juce::File& sessionDir);
+        juce::ThreadPool  waveCacheThread { 1, juce::Thread::osDefaultStackSize,
+                                            juce::Thread::Priority::low };
+        std::atomic<int>  waveCacheWork   { 0 };
+        std::atomic<int>  waveCacheLoaded { -1 };    // the load job that finished
+        std::atomic<bool> waveCacheSaving { false };
+        bool              waveCacheLoading { false };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (EditPage)
     };
