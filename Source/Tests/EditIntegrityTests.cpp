@@ -1075,6 +1075,24 @@ namespace zynforge
                 expect (ruler.idleSignature() != before, "the idle ruler would keep the old name");
             }
 
+            beginTest ("A marker jump or desk locate leaves FOLLOW on");
+            {
+                Show s (1, { 480000 });
+                s.page().setBounds (0, 0, 1400, 500);
+                s.page().refresh();
+                s.page().setZoom (8.0f);
+                juce::Button* follow = nullptr;
+                for (auto* child : s.page().getChildren())
+                    if (auto* b = dynamic_cast<juce::Button*> (child); b != nullptr && b->getButtonText() == "FOLLOW")
+                        follow = b;
+                expect (follow != nullptr, "setup: FOLLOW button");
+                s.engine.startPlayback();
+                expect (pumpUntil ([&] { return follow != nullptr && follow->isVisible(); }, 2000), "setup: the page saw it roll");
+                s.page().scrollToSample (400000);
+                if (follow != nullptr) expect (follow->getToggleState(), "a programmatic scroll paused FOLLOW");
+                s.engine.stopPlayback();
+            }
+
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);
         }

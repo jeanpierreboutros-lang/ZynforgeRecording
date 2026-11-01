@@ -1385,6 +1385,8 @@ namespace zynforge
         const int    targetX = kHeaderW + 4 + (int) (prop * (double) juce::jmax (1, contentW - kHeaderW - 8));
         const int    viewW   = viewport.getViewWidth();
         const int    centreX = kHeaderW + juce::jmax (0, viewW - kHeaderW) / 2;
+        // A marker jump or desk locate is not the engineer browsing: FOLLOW stays.
+        juce::ScopedValueSetter<bool> scrolling (programmaticViewportChange, true);
         viewport.setViewPosition (juce::jmax (0, targetX - centreX),
                                   viewport.getViewPositionY());
     }
