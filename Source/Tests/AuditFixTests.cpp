@@ -265,6 +265,7 @@ namespace zynforge
                 rec.getTrack (0).armed.store (true);
                 rec.setBackupDirectory (badBackup);
                 expect (rec.startRecording (session), "primary should still start");
+                rec.waitForCopiesOpenForTests();
                 expect (rec.hasBackupFailed(), "backup open failure must be latched");
                 expect (! rec.isBackupActive(), "a failed backup must not be shown as active");
                 std::vector<float> samples (256, 0.2f);

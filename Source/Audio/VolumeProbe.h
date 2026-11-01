@@ -53,6 +53,19 @@ namespace zynforge
             return reading;
         }
 
+        // Whether the volume answers in time. The read runs on a thread of its
+        // own, so a mount that never answers costs the caller timeoutMs at most.
+        static bool answersWithin (const juce::File& root, int timeoutMs, Reader reader = readVolume)
+        {
+            auto answered = std::make_shared<juce::WaitableEvent> (true);
+            std::thread ([answered, root, read = std::move (reader)]
+            {
+                read (root);
+                answered->signal();
+            }).detach();
+            return answered->wait (timeoutMs);
+        }
+
         VolumeProbe (const juce::File& root, Reader reader, int periodMs)
         {
             std::thread ([state = shared, root, read = std::move (reader), periodMs]

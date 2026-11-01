@@ -345,6 +345,19 @@ bool MainComponent::prepareRecordStart (RecordStartPlan& plan)
         }
     }
 
+    // Everything from here on stats the session's drive on this thread. A drive
+    // that is only asleep answers within this; a dead mount must not take the
+    // window with it. Copies are no concern here: they open after go-live.
+    const auto activeSession = engine.getActiveSessionDir();
+    if (! zynforge::VolumeProbe::answersWithin (activeSession != juce::File() ? activeSession : getSessionsRoot(),
+                                                recordDriveWaitMs, recordDriveReaderForTests != nullptr
+                                                                       ? recordDriveReaderForTests
+                                                                       : zynforge::VolumeProbe::readVolume))
+    {
+        showRecordRefusal ("The session's drive is not answering -- check it before recording");
+        return false;
+    }
+
     planRecordPosition (plan);
     plan.dir = plan.continueTake ? engine.getActiveSessionDir() : makeNewSessionDir();
     plan.numTracks = numTracks;

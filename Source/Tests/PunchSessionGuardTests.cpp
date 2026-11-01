@@ -333,6 +333,7 @@ namespace zynforge
                 rec.getTrack (0).armed.store (true);
                 rec.armPunchIn (armedAt);
                 expect (rec.startRecording (dir), rec.getStartError());
+                rec.waitForCopiesOpenForTests();
                 if (feedAudio) feed (rec, 1, -0.3f, 15, block);
                 const auto primary = dir.getChildFile ("Audio Files/Track_01.wav");
                 const auto backups = backupRoot.findChildFiles (juce::File::findFiles, true, "Track_01.wav");

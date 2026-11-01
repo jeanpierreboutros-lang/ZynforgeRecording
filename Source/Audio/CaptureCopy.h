@@ -56,6 +56,11 @@ namespace zynforge
 
         std::vector<Track> tracks;                 // aligned with the recorder's tracks
         std::vector<WriterChannel::StampedPart> stampedParts;
+        std::vector<PendingLeadIn> leadIns;
+
+        // Run first on this copy's thread: whatever joining the take takes. A
+        // non-empty answer says why this copy cannot, and it leaves the take.
+        std::function<juce::String (CaptureCopy&)> openForTake;
 
         std::shared_ptr<std::vector<std::unique_ptr<PreRollBuffer>>> history;
         int historySamples { 0 };
@@ -66,7 +71,7 @@ namespace zynforge
         std::atomic<int>         lastWriteMs { 0 };
         std::atomic<double>      lastProgressMs { 0.0 };
         std::atomic<bool>        overran { false }, finishing { false }, finished { false };
-        std::atomic<bool>        abandoned { false }, flushWanted { false };
+        std::atomic<bool>        abandoned { false }, flushWanted { false }, dropped { false }, opening { false };
 
         std::mutex              ringLock;
         std::condition_variable wake;
@@ -218,12 +223,26 @@ namespace zynforge
                 for (auto& t : tracks)
                     if (t.baseFile != juce::File()) t.failed = true;
                 latchFailure();
+                dropped.store (opening.exchange (false), std::memory_order_release);
                 finished.store (true);
             }
         }
 
         void run()
         {
+            if (openForTake != nullptr)
+            {
+                const auto refusal = openForTake (*this);
+                openForTake = nullptr;
+                opening.store (false, std::memory_order_release);
+                if (refusal.isNotEmpty())
+                {
+                    leaveTake (refusal);
+                    finished.store (true, std::memory_order_release);
+                    wakeWaiters();
+                    return;
+                }
+            }
             writeHistory();
             std::vector<float> left ((size_t) kChunkFrames), right ((size_t) kChunkFrames), zeros ((size_t) kChunkFrames, 0.0f);
             auto lastFlush = juce::Time::getMillisecondCounterHiRes();
@@ -250,6 +269,25 @@ namespace zynforge
             closeFilesNow();
             finished.store (true, std::memory_order_release);
             wakeWaiters();
+        }
+
+        // Out of the take, by name. Everything the rings hold for it goes too.
+        void leaveTake (const juce::String& why)
+        {
+            for (auto& t : tracks) stopTrack (t);
+            dropped.store (true, std::memory_order_release);
+            if (abandoned.load (std::memory_order_acquire)) return;
+            latchFailure();
+            if (copyIndex == 1) latches->backupDropped.store (true, std::memory_order_relaxed);
+            else                latches->mirrorsDropped.fetch_add (1, std::memory_order_relaxed);
+            const std::lock_guard<std::mutex> guard (latches->droppedLock);
+            latches->dropped.add (why);
+        }
+
+        void failTrackAtOpen (Track& t)
+        {
+            failTrack (t);
+            stopTrack (t);
         }
 
         // Under the lock, so a waiter between its test and its sleep is not missed.

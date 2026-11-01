@@ -349,7 +349,11 @@ namespace zynforge
         // Pass an empty File to disable. Only effective for the next session.
         bool setBackupDirectory (const juce::File& dir);   // false, unchanged, while a take owns it
         juce::File getBackupDirectory() const               { return backupDir; }
-        bool       isBackupActive() const noexcept          { return backupActive.load (std::memory_order_relaxed); }
+        bool       isBackupActive() const noexcept
+        {
+            return backupActive.load (std::memory_order_relaxed)
+                && ! latches->backupDropped.load (std::memory_order_relaxed);
+        }
 
         // ── N-way mirror destinations ──────────────────────────────
         // Beyond primary + backup, the engineer can register any
@@ -394,7 +398,8 @@ namespace zynforge
         // banner reports "you have fewer copies than you configured".
         int getMirrorsSkippedAtStart() const noexcept
         {
-            return mirrorsSkippedAtStart.load (std::memory_order_relaxed);
+            return mirrorsSkippedAtStart.load (std::memory_order_relaxed)
+                 + latches->mirrorsDropped.load (std::memory_order_relaxed);
         }
         // Any mirror failed during the active take? Cleared at start.
         bool anyMirrorFailed() const noexcept;
@@ -615,6 +620,12 @@ namespace zynforge
         {
             std::atomic<bool> primaryFailed { false }, backupFailed { false }, mirrorFailed { false };
             std::atomic<juce::int64> primaryLostFrames { 0 };
+            // Copies that could not join after go-live. A copy's thread can
+            // outlive the recorder, so the news it leaves lives here.
+            std::mutex        droppedLock;
+            juce::StringArray dropped;
+            std::atomic<int>  mirrorsDropped { 0 };
+            std::atomic<bool> backupDropped { false };
         };
         std::shared_ptr<CaptureLatches> latches { std::make_shared<CaptureLatches>() };
         // Primary, then the backup if it is in play, then each active mirror.
@@ -644,7 +655,7 @@ namespace zynforge
         void startDiskWatch();
         std::shared_ptr<const DiskWatch> diskWatch;   // std::atomic_load / store only
         const CaptureCopy* copyAt (int copyIndex) const noexcept;
-        bool isCopyAbandoned (int copyIndex) const noexcept;
+        bool isCopyOutOfTake (int copyIndex) const noexcept;
         int  copyRingFrames (int numCopies, int channels) const noexcept;
         juce::StringArray describeCopyProblems() const;
         void finishCopies();
@@ -656,25 +667,54 @@ namespace zynforge
         // from stashPunchBases on, a refusing stage undoes its own media moves.
         struct TakeStart;
         struct TakeFormat { int container { 0 }; int bitDepth { 24 }; const char* ext { ".wav" }; };
+        // What a copy of a track must match to prove it holds the take.
+        struct TakeBase { bool exists { false }, readable { false }; juce::int64 length { 0 }; int channels { 0 }; double rate { 0.0 }; };
+        struct FormatCheck { int track { 0 }; int channels { 1 }; bool rightOfPair { false }; };
+        struct LeadInPlan
+        {
+            bool editPass { false }, continuing { false }, punching { false };
+            juce::int64 timelineStart { 0 };
+            double sampleRate { 48000.0 };
+        };
+        // Roots the copies of a take have settled on, compared by canonical path
+        // outside any lock: a path on a dead drive can block for good.
+        struct CopyRoots
+        {
+            std::mutex lock;
+            std::vector<juce::File> roots;
+            bool claim (const juce::File& canonical)
+            {
+                const std::lock_guard<std::mutex> guard (lock);
+                if (std::find (roots.begin(), roots.end(), canonical) != roots.end()) return false;
+                roots.push_back (canonical);
+                return true;
+            }
+        };
+        std::shared_ptr<CopyRoots> openingRoots;
+        struct CopyOpen;
         static TakeFormat takeFormatFor (CaptureFormat) noexcept;
         bool isArmedCapture (std::size_t track) const noexcept;
+        std::vector<FormatCheck> formatChecks() const;
         bool opensOwnCaptureFile (std::size_t track) const noexcept;
         bool validateTakeStart (const TakeStart&);
         bool createTakeFolders (TakeStart&);
         void resolveTakeMirrors (const TakeStart&);
         enum class CopyClaim { claimed, conflict, unwritable };
-        CopyClaim claimCopy (const TakeStart&, const juce::File& root);
-        void reportCopyConflict (const TakeStart&, const juce::File& root);
-        bool claimTakeCopies (TakeStart&);
-        bool recoverTakeCopies (const TakeStart&);
-        bool adoptExistingTakeFormat (const juce::File& copyAudioDir, TakeFormat& selected);
+        bool claimTakeIdentity (TakeStart&);
+        bool recoverPrimaryPunches (const TakeStart&);
+        static bool adoptExistingTakeFormat (const juce::File& copyAudioDir, TakeFormat& selected,
+                                             const std::vector<FormatCheck>&, double sampleRate,
+                                             juce::String& problem);
         bool resolveTakeFormats (TakeStart&);
-        bool prepareBackupCopy (TakeStart&);
-        bool resolveMirrorFormats (TakeStart&);
+        void prepareBackupCopy (TakeStart&);
+        static bool orphanedContinuation (const juce::File& dir, const juce::String& stem,
+                                          const juce::String& ext);
         bool continuationBasesIntact (const TakeStart&);
         void noteExistingPrimaryBases (TakeStart&);
         void invalidateReportsBeforeMediaMutation (TakeStart&);
         bool stashForPunch (TakeStart&, const juce::File& target);
+        static bool stashPunchParts (const juce::File& target,
+                                     std::vector<std::pair<juce::File, juce::File>>& stashes);
         void restorePunchStashes (TakeStart&);
         bool stashPunchBases (TakeStart&);
         bool measureContinuationBase (TakeStart&);
@@ -727,6 +767,8 @@ namespace zynforge
         // callback synchronously and need a way to flush the ring between
         // blocks so the auto-split path doesn't roll one gigantic write.
         void drainPendingForTests();
+        // Test hook: wait until every copy has joined the take or left it.
+        void waitForCopiesOpenForTests();
 
         // Test hook: rewrite every open writer's header right now (the same
         // thing the periodic in-take flush does), so a test can verify that a
@@ -804,6 +846,7 @@ namespace zynforge
         double copyStallLimitMs { 30000.0 };
         double copyDrainLimitMs { 60000.0 };
         std::function<void (CaptureCopy&)> beforeCopyFinishForTests;
+        std::function<void (CaptureCopy&)> beforeCopyOpenForTests;
         VolumeProbe::Reader volumeReaderForTests;
         int    volumeProbePeriodMs { 2000 };
         double volumeStaleAfterMs { 15000.0 };
@@ -980,6 +1023,10 @@ namespace zynforge
         // of silence. Skips (true) when this pass wrote no audio to the copy.
         static bool writeLeadIn (const PendingLeadIn&, juce::int64 timelineStart);
         static bool finishLeadIn (const PendingLeadIn&, juce::int64 timelineStart);
+        static bool writeLeadInMarker (const PendingLeadIn&);
+        static bool openTrackFile (CaptureCopy&, std::size_t track, const juce::File& dir, const TakeFormat&,
+                                   const juce::String& trackName, int channels, const LeadInPlan&,
+                                   bool primaryHadBase, juce::int64 prior, std::vector<PendingLeadIn>&);
         // Completes every marker left in audioDir by an interrupted take.
         static bool recoverPendingLeadIns (const juce::File& audioDir);
 
