@@ -709,6 +709,14 @@ namespace zynforge
         static std::shared_ptr<std::atomic<juce::int64>> claimReportGeneration (
             const juce::File& sessionDir, juce::int64& outGeneration);
 
+        // Blocks a worker until this session's report hashing has finished, so
+        // a move or copy never races it. False if `cancel` was raised first.
+        // watchReportFile: the hashing may be in the capture daemon's process,
+        // so also wait for the report to stop saying it is pending, for at most
+        // half an hour: a report left pending by a crash would never change.
+        static bool waitForReportHashes (const juce::File& sessionDir, const std::atomic<bool>& cancel,
+                                         bool watchReportFile = false);
+
         // Cancel obsolete report jobs and exclude their publication while a
         // caller removes an idle session. Caller must first guard active capture.
         static bool deleteSessionAfterCancellingReports (const juce::File& sessionDir);
@@ -729,6 +737,7 @@ namespace zynforge
         friend class AsyncStopAuditTests;
         friend class ReviewCaptureRepairTests;
         friend class CaptureCopyTests;
+        friend class CaptureFixTests;
         friend class CaptureDaemonLinkTests;
         friend class PunchSessionGuardTests;   // splice-failure fixtures
         friend class TwinLinkTests;            // report publication ordering

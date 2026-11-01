@@ -29,6 +29,7 @@ namespace zynforge
         {
             std::mutex publication;
             std::atomic<juce::int64> generation { 0 };
+            std::atomic<int> runningScans { 0 };   // hash threads alive for this session
         };
 
         std::shared_ptr<SessionReportState> sessionReportState (const juce::File& directory)
@@ -2969,9 +2970,14 @@ namespace zynforge
         const auto asyncState = reportAsyncState;
         const auto asyncGen = asyncState->generation.load (std::memory_order_acquire);
         const auto testHooks = reportTestHooks;
+        reportState->runningScans.fetch_add (1, std::memory_order_acq_rel);
         juce::Thread::launch (
             [report = std::move (report), myGen, reportState, asyncState, asyncGen, testHooks]
             {
+                const juce::ScopeGuard scanDone { [reportState]
+                {
+                    reportState->runningScans.fetch_sub (1, std::memory_order_acq_rel);
+                } };
                 const auto& sessionDir  = report.sessionDir;
                 const auto& bDir        = report.bDir;
                 const auto& writerSnaps = report.writerSnaps;
@@ -3068,6 +3074,25 @@ namespace zynforge
         if (object == nullptr) return false;
         edit (*object);
         return atomicfile::writeText (file, juce::JSON::toString (report, true));
+    }
+
+    bool MultitrackRecorder::waitForReportHashes (const juce::File& sessionDir, const std::atomic<bool>& cancel,
+                                                  bool watchReportFile)
+    {
+        const auto state = sessionReportState (sessionDir);
+        const auto giveUp = juce::Time::getMillisecondCounterHiRes() + 30.0 * 60.0 * 1000.0;
+        const auto reportPending = [&]
+        {
+            return watchReportFile && juce::Time::getMillisecondCounterHiRes() < giveUp
+                && (bool) juce::JSON::parse (sessionDir.getChildFile ("session.report.json"))
+                              .getProperty ("sha256Pending", false);
+        };
+        while (state->runningScans.load (std::memory_order_acquire) > 0 || reportPending())
+        {
+            if (cancel.load (std::memory_order_relaxed)) return false;
+            juce::Thread::sleep (100);
+        }
+        return true;
     }
 
     bool MultitrackRecorder::deleteSessionAfterCancellingReports (const juce::File& directory)

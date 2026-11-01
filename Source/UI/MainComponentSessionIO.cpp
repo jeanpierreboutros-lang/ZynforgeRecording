@@ -1303,10 +1303,12 @@ void MainComponent::onSaveSessionAs()
         showStatus ("Saving As -> " + dest.getFileName() + " (copying session)...");
 
         juce::Component::SafePointer<MainComponent> self (this);
-        sessionJobs.launch ([self, source, dest, createdDestination] (const std::atomic<bool>& cancel)
+        const bool watchReport = daemonModeActive();
+        sessionJobs.launch ([self, source, dest, createdDestination, watchReport] (const std::atomic<bool>& cancel)
                             -> zynforge::SessionJobRunner::Completion
         {
-            const bool ok = copyDirectoryCancellable (source, dest, cancel);
+            const bool ok = zynforge::MultitrackRecorder::waitForReportHashes (source, cancel, watchReport)
+                         && copyDirectoryCancellable (source, dest, cancel);
             return [self, ok, dest, createdDestination]
             {
                 if (self == nullptr) return;
@@ -1796,11 +1798,14 @@ void MainComponent::exportShowHandoff()
 
         self->engine.setSessionTransitionActive (true);
         self->showStatus ("Creating handoff in background: " + dest.getFileName());
-        self->sessionJobs.launch ([self, source, dest, incomplete, timelineCsv, interchange, version]
+        const bool watchReport = self->daemonModeActive();
+        self->sessionJobs.launch ([self, source, dest, incomplete, timelineCsv, interchange, version, watchReport]
                                   (const std::atomic<bool>& cancel) -> zynforge::SessionJobRunner::Completion
         {
             showhandoff::Result result;
-            if (copyDirectoryCancellable (source, dest, cancel))
+            // The report changing during verification reads as a damaged copy.
+            if (zynforge::MultitrackRecorder::waitForReportHashes (source, cancel, watchReport)
+                && copyDirectoryCancellable (source, dest, cancel))
                 result = showhandoff::verifyAndWrite (source, dest, timelineCsv, cancel,
                     [&] (const juce::File& copy, juce::String& warning)
                     { return projectexport::writeForHandoff (interchange, copy, version, cancel, warning); });
@@ -1896,12 +1901,15 @@ void MainComponent::relocateActiveSession()
             showStatus ("Moving session to " + newParent.getFullPathName() + " ...");
 
             juce::Component::SafePointer<MainComponent> self (this);
-            sessionJobs.launch ([self, oldDir, newDir] (const std::atomic<bool>& cancel)
+            const bool watchReport = daemonModeActive();
+            sessionJobs.launch ([self, oldDir, newDir, watchReport] (const std::atomic<bool>& cancel)
                                 -> zynforge::SessionJobRunner::Completion
             {
-                bool relocated = oldDir.moveFileTo (newDir);   // instant within a volume
+                // The hash thread holds absolute paths into the old folder.
+                const bool hashed = zynforge::MultitrackRecorder::waitForReportHashes (oldDir, cancel, watchReport);
+                bool relocated = hashed && oldDir.moveFileTo (newDir);   // instant within a volume
                 bool oldCopyRemains = false;
-                if (! relocated)                               // cross-volume: copy + delete
+                if (hashed && ! relocated)                     // cross-volume: copy + delete
                 {
                     const bool copied = copyDirectoryCancellable (oldDir, newDir, cancel);
                     if (copied && ! cancel.load (std::memory_order_relaxed))

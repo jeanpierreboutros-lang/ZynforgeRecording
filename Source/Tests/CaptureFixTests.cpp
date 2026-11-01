@@ -112,6 +112,7 @@ namespace zynforge
             punchPastATracksEnd();
             punchAcrossTheRollCeiling();
             flacCrashSurvivor();
+            hashesFinishBeforeAMove();
             continuedTakeSurvivesACrash();
         }
 
@@ -473,6 +474,43 @@ namespace zynforge
                 expect (bytesOf (file) == before);
                 dir.deleteRecursively();
             }
+        }
+
+        void hashesFinishBeforeAMove()
+        {
+            beginTest ("A move waits for the integrity hashes, and can be cancelled");
+            const auto dir = tempDir ("hash-wait");
+            juce::WaitableEvent held;
+            std::atomic<bool> cancel { false }, returned { false };
+            auto hooks = std::make_shared<MultitrackRecorder::ReportTestHooks>();
+            hooks->beforeScan = [&held] { held.wait (20000); };
+            {
+                MultitrackRecorder rec;
+                rec.reportTestHooks = hooks;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                expect (rec.startRecording (dir));
+                feed (rec, 10, 1);
+                rec.stopRecording();
+            }
+
+            cancel.store (true);
+            expect (! MultitrackRecorder::waitForReportHashes (dir, cancel), "a raised cancel did not end the wait");
+            cancel.store (false);
+
+            std::thread mover ([&]
+            {
+                MultitrackRecorder::waitForReportHashes (dir, cancel);
+                returned.store (true);
+            });
+            juce::Thread::sleep (300);
+            expect (! returned.load(), "the wait did not hold for the running scan");
+            held.signal();
+            mover.join();
+            expect (returned.load());
+            const auto report = juce::JSON::parse (dir.getChildFile ("session.report.json"));
+            expect (! (bool) report["sha256Pending"], "the report was still pending after the wait");
+            MultitrackRecorder::deleteSessionAfterCancellingReports (dir);
         }
 
         void aiffCrashSurvival()
