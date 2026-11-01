@@ -678,6 +678,7 @@ namespace zynforge
         TakeFormat   primary, backup;            // selected, then adopted from an existing take
         std::vector<TakeFormat> mirrorFormats;   // aligned with activeMirrors
         bool         backupRequested { false }, backupReady { false };
+        bool         backupUnwritable { false };
         juce::File   backupAudioDir;
         // Claimed on the first media mutation; see invalidateReportsBeforeMediaMutation.
         std::shared_ptr<std::atomic<juce::int64>> reportToken;
@@ -910,7 +911,10 @@ namespace zynforge
         }
     }
 
-    bool MultitrackRecorder::claimCopy (const TakeStart& take, const juce::File& root)
+    // conflict: this folder holds something that is not this session's copy,
+    // and nothing may be written there. unwritable: it is ours, but the drive
+    // will not take the claim (full, read-only), so it cannot carry this take.
+    MultitrackRecorder::CopyClaim MultitrackRecorder::claimCopy (const TakeStart& take, const juce::File& root)
     {
         const auto& sessionDir = take.sessionDir;
         const auto& sessionId  = take.sessionId;
@@ -923,14 +927,15 @@ namespace zynforge
             const auto saved = juce::JSON::parse (owner);
             const auto oldPath = saved.getProperty ("path", {}).toString();
             if (oldPath.isEmpty() || saved.getProperty ("id", {}).toString() != sessionId
-                || (oldPath != identity && juce::File (oldPath).exists())) return false;
+                || (oldPath != identity && juce::File (oldPath).exists())) return CopyClaim::conflict;
         }
         else if (! copy.getChildFile ("Audio Files").findChildFiles (
-                     juce::File::findFiles, false, "Track_*").isEmpty()) return false;
+                     juce::File::findFiles, false, "Track_*").isEmpty()) return CopyClaim::conflict;
         auto* metadata = new juce::DynamicObject();
         metadata->setProperty ("id", sessionId); metadata->setProperty ("path", identity);
         return copy.createDirectory().wasOk()
-            && atomicfile::writeText (owner, juce::JSON::toString (juce::var (metadata)));
+                   && atomicfile::writeText (owner, juce::JSON::toString (juce::var (metadata)))
+                 ? CopyClaim::claimed : CopyClaim::unwritable;
     }
 
     void MultitrackRecorder::reportCopyConflict (const TakeStart& take, const juce::File& root)
@@ -956,12 +961,27 @@ namespace zynforge
             sessionId = juce::Uuid().toString();
             if (! atomicfile::writeText (idFile, sessionId)) return false;
         }
-        if (backupDir != juce::File() && ! isStillLeftBehind (backupDir)
-            && backupDir.isDirectory() && ! claimCopy (take, backupDir))
-        { backupFailed.store (true); reportCopyConflict (take, backupDir); return false; }
-        for (const auto& mirror : activeMirrors)
-            if (! claimCopy (take, mirror.root))
-            { mirrorFailed.store (true); reportCopyConflict (take, mirror.root); return false; }
+        if (backupDir != juce::File() && ! isStillLeftBehind (backupDir) && backupDir.isDirectory())
+        {
+            const auto claim = claimCopy (take, backupDir);
+            if (claim == CopyClaim::conflict)
+            { backupFailed.store (true); reportCopyConflict (take, backupDir); return false; }
+            take.backupUnwritable = claim == CopyClaim::unwritable;
+        }
+        // A copy that cannot be written does not stop the show: the primary
+        // starts, and the banner names what was left out. Only a folder that
+        // holds someone else's audio refuses the take.
+        for (auto mirror = activeMirrors.begin(); mirror != activeMirrors.end();)
+        {
+            const auto claim = claimCopy (take, mirror->root);
+            if (claim == CopyClaim::conflict)
+            { mirrorFailed.store (true); reportCopyConflict (take, mirror->root); return false; }
+            if (claim == CopyClaim::claimed) { ++mirror; continue; }
+            droppedCopies.add ("Mirror " + mirror->root.getFullPathName()
+                               + " could not be written (full or read-only); it is not in this take");
+            mirrorsSkippedAtStart.fetch_add (1, std::memory_order_relaxed);
+            mirror = activeMirrors.erase (mirror);
+        }
         return true;
     }
 
@@ -1090,6 +1110,13 @@ namespace zynforge
             droppedCopies.add ("Backup " + backupDir.getFullPathName() + " is still not responding; it is not in this take");
             return true;
         }
+        if (take.backupUnwritable)
+        {
+            backupFailed.store (true, std::memory_order_relaxed);
+            droppedCopies.add ("Backup " + backupDir.getFullPathName()
+                               + " could not be written (full or read-only); it is not in this take");
+            return true;
+        }
         if (backupRequested)
         {
             if (! backupDir.isDirectory() && ! backupDir.createDirectory().wasOk())
@@ -1103,8 +1130,19 @@ namespace zynforge
                 backupFailed.store (true, std::memory_order_relaxed);
         }
 
-        if (backupReady && ! claimCopy (take, backupDir))
-        { backupFailed.store (true); reportCopyConflict (take, backupDir); return false; }
+        if (backupReady)
+        {
+            const auto claim = claimCopy (take, backupDir);
+            if (claim == CopyClaim::conflict)
+            { backupFailed.store (true); reportCopyConflict (take, backupDir); return false; }
+            if (claim == CopyClaim::unwritable)
+            {
+                backupReady = false;
+                backupFailed.store (true, std::memory_order_relaxed);
+                droppedCopies.add ("Backup " + backupDir.getFullPathName()
+                                   + " could not be written (full or read-only); it is not in this take");
+            }
+        }
 
         if ((continueAsPart || punchInActive) && backupReady
             && ! adoptExistingTakeFormat (backupAudioDir, backup))

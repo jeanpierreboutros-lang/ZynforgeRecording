@@ -716,11 +716,14 @@ namespace zynforge
 
         struct Dirs
         {
-            juce::File root = juce::File::getSpecialLocation (juce::File::tempDirectory)
-                .getChildFile ("zf-copies-" + juce::Uuid().toString());
-            juce::File session = root.getChildFile ("primary").getChildFile ("take");
-            juce::File backup  = root.getChildFile ("backup"), mirror = root.getChildFile ("mirror");
-            Dirs() { session.createDirectory(); backup.createDirectory(); mirror.createDirectory(); }
+            juce::File root, session, backup, mirror;
+            explicit Dirs (const juce::File& base = juce::File::getSpecialLocation (juce::File::tempDirectory))
+                : root (base.getChildFile ("zf-copies-" + juce::Uuid().toString())),
+                  session (root.getChildFile ("primary").getChildFile ("take")),
+                  backup (root.getChildFile ("backup")), mirror (root.getChildFile ("mirror"))
+            {
+                session.createDirectory(); backup.createDirectory(); mirror.createDirectory();
+            }
             ~Dirs()
             {
                 MultitrackRecorder::deleteSessionAfterCancellingReports (session);
@@ -801,6 +804,7 @@ namespace zynforge
         {
             stalledCopies();
             leftBehindAtStop();
+            unwritableCopies();
             everyCopyMatches();
             ringMemory();
             stuckDriveReadings();
@@ -943,6 +947,59 @@ namespace zynforge
                 stall->released.signal();
                 stopper.join();
                 expectIntact (dirs.primaryTake(), kBlock, "the primary");
+            }
+        }
+
+        void unwritableCopies()
+        {
+            for (const bool useBackup : { false, true })
+            {
+                beginTest (juce::String ("A read-only ") + (useBackup ? "backup" : "mirror")
+                           + " does not refuse the take, and is named");
+                Dirs dirs (juce::File ("/private/tmp"));   // the test home may have no permissions to take away
+                const auto record = [&] (bool continuing)
+                {
+                    MultitrackRecorder rec;
+                    rec.prepare (kRate, kBlock, 1);
+                    rec.getTrack (0).armed.store (true);
+                    if (useBackup) rec.setBackupDirectory (dirs.backup);
+                    else           expect (rec.setMirrors ({ { dirs.mirror, CaptureFormat::Wav24 } }));
+                    if (continuing) rec.armContinue (10 * kBlock);
+                    expect (rec.startRecording (dirs.session), rec.getStartError());
+                    Feeder feeder { rec, 1 };
+                    feeder.blocks (10, { 0 });
+                    const auto problems = rec.getCopyProblems();
+                    rec.stopRecording();
+                    return problems;
+                };
+                expect (record (false).isEmpty(), "a healthy copy was reported");
+
+                const auto copy = (useBackup ? dirs.backup : dirs.mirror).getChildFile ("take");
+                expect (copy.setReadOnly (true, false));
+                const auto problems = record (true);
+                copy.setReadOnly (false, false);
+
+                expectEquals (problems.size(), 1, "the dropped copy is not named");
+                expect (problems.joinIntoString (" ").contains ((useBackup ? dirs.backup : dirs.mirror).getFullPathName()));
+                expect (dirs.session.getChildFile ("Audio Files").getChildFile ("Track_01_part02.wav").existsAsFile(),
+                        "the primary did not record");
+                expect (! copy.getChildFile ("Audio Files").getChildFile ("Track_01_part02.wav").existsAsFile(),
+                        "the dropped copy was written");
+            }
+
+            beginTest ("A folder that holds another session's audio still refuses the take");
+            {
+                Dirs dirs;
+                const auto foreign = dirs.mirror.getChildFile ("take").getChildFile ("Audio Files");
+                foreign.createDirectory();
+                foreign.getChildFile ("Track_01.wav").replaceWithText ("someone else's take");
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                expect (rec.setMirrors ({ { dirs.mirror, CaptureFormat::Wav24 } }));
+                expect (! rec.startRecording (dirs.session), "a foreign copy was adopted");
+                expect (rec.getStartError().contains ("ownership"), rec.getStartError());
+                expectEquals (foreign.getChildFile ("Track_01.wav").loadFileAsString(), juce::String ("someone else's take"));
             }
         }
 
