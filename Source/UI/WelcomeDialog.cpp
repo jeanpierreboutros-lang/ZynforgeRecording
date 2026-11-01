@@ -161,11 +161,9 @@ namespace zynforge
                     [sp = juce::Component::SafePointer<juce::TextEditor> (&nameEditor)]
                     { if (sp != nullptr) sp->grabKeyboardFocus(); });
 
-                addAndMakeVisible (localRadio);
-                localRadio.setButtonText ("Local Storage:");
-                localRadio.setToggleState (true, juce::dontSendNotification);
-                localRadio.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-                localRadio.setColour (juce::ToggleButton::tickColourId, brand::accentStatus);
+                addAndMakeVisible (storageLabel);
+                storageLabel.setText ("Local Storage:", juce::dontSendNotification);
+                styleFieldLabel (storageLabel);
 
                 addAndMakeVisible (pathButton);
                 pathButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
@@ -271,7 +269,7 @@ namespace zynforge
                 b.removeFromTop (brand::space::btnH);
 
                 auto local = b.removeFromTop (28);
-                localRadio.setBounds (local.removeFromLeft (150));
+                storageLabel.setBounds (local.removeFromLeft (150));
                 local.removeFromLeft (brand::space::sm);
                 pathButton.setBounds (local.removeFromLeft (juce::jmin (local.getWidth(), 360)));
                 b.removeFromTop (28);
@@ -348,7 +346,7 @@ namespace zynforge
             juce::File         storageDir;
             juce::Label        nameLabel;
             juce::TextEditor   nameEditor;
-            juce::ToggleButton localRadio;
+            juce::Label        storageLabel;
             juce::TextButton   pathButton;
             juce::Label        sectionHeader;
             juce::Label        fileTypeLabel;

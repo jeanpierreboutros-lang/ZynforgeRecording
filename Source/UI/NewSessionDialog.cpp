@@ -37,14 +37,10 @@ namespace zynforge
                 nameEditor.grabKeyboardFocus();
                 nameEditor.onReturnKey = [this] { dismiss (true); };   // Enter = Create
 
-                // ─── Storage radios ───
-                addAndMakeVisible (localRadio);
-                localRadio.setButtonText ("Local Storage:");
-                localRadio.setRadioGroupId (1);
-                localRadio.setToggleState (true, juce::dontSendNotification);
-                localRadio.setColour (juce::ToggleButton::textColourId,      brand::textPrimary);
-                localRadio.setColour (juce::ToggleButton::tickColourId,      brand::accentStatus);
-                localRadio.setColour (juce::ToggleButton::tickDisabledColourId, brand::textMuted);
+                // ─── Storage ───
+                addAndMakeVisible (storageLabel);
+                storageLabel.setText ("Local Storage:", juce::dontSendNotification);
+                styleFieldLabel (storageLabel);
 
                 addAndMakeVisible (pathButton);
                 pathButton.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
@@ -52,20 +48,6 @@ namespace zynforge
                 pathButton.setButtonText (compactPath (storageDir));
                 pathButton.setTooltip ("Choose the folder to create the session in.");
                 pathButton.onClick = [this] { pickFolder(); };
-
-                addAndMakeVisible (cloudRadio);
-                cloudRadio.setButtonText ("Cloud Project");
-                cloudRadio.setRadioGroupId (1);
-                cloudRadio.setEnabled (false);
-                cloudRadio.setColour (juce::ToggleButton::textColourId,      brand::textMuted);
-                cloudRadio.setColour (juce::ToggleButton::tickColourId,      brand::accentStatus);
-                cloudRadio.setColour (juce::ToggleButton::tickDisabledColourId, brand::textMuted);
-
-                addAndMakeVisible (cloudHelp);
-                cloudHelp.setButtonText ("?");
-                cloudHelp.setColour (juce::TextButton::buttonColourId, brand::bgElevated);
-                cloudHelp.setColour (juce::TextButton::textColourOffId, brand::textMuted);
-                cloudHelp.setTooltip ("Cloud project storage is not available in this build.");
 
                 // ─── Section header ───
                 addAndMakeVisible (sectionHeader);
@@ -131,7 +113,7 @@ namespace zynforge
                 // (which formatFrom maps to Flac24: UI says 32f, records 24).
                 syncBitDepthForFormat();
 
-                setSize (520, 460);
+                setSize (520, 390);
             }
 
             void paint (juce::Graphics& g) override
@@ -154,17 +136,11 @@ namespace zynforge
                 nameEditor.setBounds (b.removeFromTop (32));
                 b.removeFromTop (brand::space::xl);
 
-                // Local Storage row: [○] Local Storage:  [path]
+                // Local Storage row: Local Storage:  [path]
                 auto local = b.removeFromTop (brand::space::btnH);
-                localRadio.setBounds (local.removeFromLeft (130));
+                storageLabel.setBounds (local.removeFromLeft (130));
                 local.removeFromLeft (brand::space::xs);
                 pathButton.setBounds (local.removeFromLeft (juce::jmin (local.getWidth(), 280)));
-                b.removeFromTop (brand::space::sm);
-
-                // Cloud row
-                auto cloud = b.removeFromTop (brand::space::btnH);
-                cloudRadio.setBounds (cloud.removeFromLeft (130));
-                cloudHelp .setBounds (cloud.removeFromLeft (22));
                 b.removeFromTop (18);
 
                 // Section header
@@ -341,8 +317,8 @@ namespace zynforge
 
             juce::Label        nameLabel;
             juce::TextEditor   nameEditor;
-            juce::ToggleButton localRadio, cloudRadio;
-            juce::TextButton   pathButton, cloudHelp;
+            juce::Label        storageLabel;
+            juce::TextButton   pathButton;
             juce::Label        sectionHeader;
             juce::Label        fileTypeLabel, sampleRateLabel, bitDepthLabel;
             juce::ComboBox     fileTypeCombo, sampleRateCombo, bitDepthCombo;
