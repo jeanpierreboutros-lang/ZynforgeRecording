@@ -176,9 +176,22 @@ namespace zynforge
         // path still goes through setMasterGainDb.
         void  setMasterGainDbFast (float dB) noexcept { masterState.gainDb.store (dB, std::memory_order_relaxed); }
         void  setMasterMuted  (bool m);
+        // setMasterOutputs (-1, -1) gives the master bus no output: it still
+        // meters and feeds the companion stream and NDI, and nothing lands on
+        // an interface channel.
         int   getMasterOutputL() const noexcept { return masterOutL.load(); }
         int   getMasterOutputR() const noexcept { return masterOutR.load(); }
         void  setMasterOutputs (int l, int r);
+        // True while the audio callback keeps the master bus off its outputs
+        // because a strip is patched to one (mix::busHeldOffOutputs).
+        bool  isMasterHeldOff() const noexcept { return masterHeldOff.load (std::memory_order_relaxed); }
+        bool  isStreamHeldOff() const noexcept { return streamHeldOff.load (std::memory_order_relaxed); }
+        // The engineer's override: this rig's first outputs really are
+        // monitors, so the mix may sit on top of strips patched there.
+        void  setMixMayShareStripOutputs (bool allowed);
+        bool  getMixMayShareStripOutputs() const noexcept { return mixMaySharePatchedOutputs.load (std::memory_order_relaxed); }
+        // Empty, or a line saying which bus is held off its outputs and why.
+        juce::String getBusRoutingNotice() const;
 
         // Mono / stereo mode. In mono, L+R are summed and sent only to
         // masterOutL; the meter collapses to a single bar. In stereo, L
@@ -1211,6 +1224,9 @@ namespace zynforge
         // hot channels can't overshoot float headroom on the way to the
         // stereo master bus.
         juce::AudioBuffer<double>                               monitorAccum;
+        // The monitor mix as float, for the companion and NDI feeds while the
+        // master bus has no device output to read them from.
+        juce::AudioBuffer<float>                                monitorFeed;
 
         // 64-bit-float output accumulator. Per-strip / stream-bus
         // summing flows here in double precision; only the final
@@ -1225,6 +1241,9 @@ namespace zynforge
         TrackState        masterState;
         TrackState        masterStateR;
         LoudnessMeter     loudness;   // BS.1770 master loudness + true-peak
+        std::atomic<bool> masterHeldOff { false };
+        std::atomic<bool> streamHeldOff { false };
+        std::atomic<bool> mixMaySharePatchedOutputs { false };
         std::atomic<int>  masterOutL    { 0 };
         std::atomic<int>  masterOutR    { 1 };
         std::atomic<bool> masterStereo  { true };

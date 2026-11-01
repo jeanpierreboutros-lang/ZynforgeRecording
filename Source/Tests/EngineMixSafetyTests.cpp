@@ -268,6 +268,137 @@ namespace zynforge
                 }
             }
 
+            beginTest ("1:1 strips keep the mix off console channels 1-2");
+            {
+                Rig r (4, 4, 8);
+                auto& e = r.engine; auto& rec = e.getRecorder();
+                for (int i = 0; i < 4; ++i)
+                {
+                    e.setTrackOutputRouting (i, i);    // the virtual soundcheck patch
+                    rec.getTrack (i).monitor.store (true);
+                    r.input (i, 0.1f);
+                }
+                r.process();
+                expect (e.isMasterHeldOff(), "nothing says the mix was held off");
+                expect (r.peak (0) < 0.02f, "the whole mix landed on the first console channel");
+                expect (e.getBusRoutingNotice().contains ("Out 1-2"));
+
+                e.setMixMayShareStripOutputs (true);
+                r.process();
+                expect (! e.isMasterHeldOff());
+                expect (r.peak (0) > 0.05f, "the engineer's override did nothing");
+                e.setMixMayShareStripOutputs (false);
+            }
+
+            beginTest ("A strip muted for a moment does not let the mix onto its channel");
+            {
+                Rig r (2, 2, 8);
+                auto& e = r.engine; auto& rec = e.getRecorder();
+                e.setTrackOutputRouting (0, 0);
+                rec.getTrack (1).monitor.store (true);
+                r.input (1, 0.25f);
+                e.setTrackMuted (0, true);
+                r.process();
+                expect (r.peak (0) < 0.001f, "the mix reached a patched output behind a mute");
+                rec.getTrack (0).outputMuted.store (true);
+                r.process();
+                expect (r.peak (0) < 0.001f);
+                rec.getTrack (0).outputMuted.store (false);
+                e.setTrackMuted (0, false);
+            }
+
+            beginTest ("With the mix held off, the click stays off and the master still meters");
+            {
+                Rig r (2, 2, 8);
+                auto& e = r.engine; auto& rec = e.getRecorder();
+                e.setTrackOutputRouting (0, 0);
+                rec.getTrack (1).monitor.store (true);
+                r.input (1, 0.25f);
+                e.getMasterState().peak.store (0.0f);
+                e.getClickEngine().prepare (48000.0);
+                e.getClickEngine().setEnabled (true);
+                float loudest = 0.0f;
+                for (int b = 0; b < 200; ++b)
+                {
+                    r.process();
+                    loudest = juce::jmax (loudest, r.peak (1));
+                }
+                e.getClickEngine().setEnabled (false);
+                expectEquals (loudest, 0.0f, "the click stayed on a held pair");
+                expect (e.getMasterState().peak.load() > 0.01f, "the held mix stopped metering");
+            }
+
+            beginTest ("Master output Off takes nothing to any output");
+            {
+                Rig r (2, 2, 4);
+                auto& e = r.engine; auto& rec = e.getRecorder();
+                rec.getTrack (0).monitor.store (true);
+                r.input (0, 0.5f);
+                e.setMasterOutputs (-1, -1);
+                r.process();
+                for (int ch = 0; ch < 4; ++ch) expectEquals (r.peak (ch), 0.0f);
+                expect (! e.isMasterHeldOff(), "an off master is a choice, not a conflict");
+                expect (e.getMasterState().peak.load() > 0.1f);
+                e.setMasterOutputs (0, 1);
+            }
+
+            beginTest ("A two-output device keeps its mix with strips patched there");
+            {
+                Rig r (3, 3, 2);
+                auto& e = r.engine; auto& rec = e.getRecorder();
+                e.setTrackOutputRouting (0, 0);
+                e.setTrackOutputRouting (1, 1);
+                rec.getTrack (2).monitor.store (true);
+                r.input (2, 0.5f);
+                r.process();
+                expect (! e.isMasterHeldOff());
+                expect (r.peak (0) > 0.1f && r.peak (1) > 0.1f, "laptop monitoring lost the mix");
+            }
+
+            beginTest ("A stream pair on a patched output is held off the same way");
+            {
+                Rig r (2, 2, 8);
+                auto& e = r.engine; auto& rec = e.getRecorder();
+                e.setStreamOutputs (2, 3);
+                e.setTrackOutputRouting (0, 2);
+                e.setTrackStream (1, true);
+                rec.getTrack (1).monitor.store (true);
+                r.input (1, 0.5f);
+                r.process();
+                expect (e.isStreamHeldOff());
+                expect (r.peak (3) < 0.001f, "the stream bus landed beside a patched strip");
+                expect (e.getBusRoutingNotice().contains ("Stream"));
+                e.setStreamOutputs (-1, -1);
+            }
+
+            beginTest ("A saved pair past a smaller device keeps both channels");
+            {
+                Rig r (2, 2, 2);
+                auto& e = r.engine; auto& rec = e.getRecorder();
+                e.setMasterOutputs (8, 9);
+                rec.getTrack (0).pan.store (-1.0f);
+                rec.getTrack (1).pan.store ( 1.0f);
+                rec.getTrack (0).monitor.store (true);
+                rec.getTrack (1).monitor.store (true);
+                r.input (0, 0.5f); r.input (1, 0.25f);
+                r.process();
+                expectWithinAbsoluteError (r.peak (0), 0.5f, 0.01f);
+                expectWithinAbsoluteError (r.peak (1), 0.25f, 0.01f, "the right channel was dropped");
+                e.setMasterOutputs (0, 1);
+            }
+
+            beginTest ("A one-output device gets both sides of the mix");
+            {
+                Rig r (2, 2, 1);
+                auto& e = r.engine; auto& rec = e.getRecorder();
+                rec.getTrack (0).pan.store (-1.0f);
+                rec.getTrack (1).pan.store ( 1.0f);
+                rec.getTrack (1).monitor.store (true);
+                r.input (1, 0.5f);
+                r.process();
+                expect (r.peak (0) > 0.2f, "hard-right strips vanished on a single output");
+            }
+
             beginTest ("Trim-Follow with no capture reference holds the channel at 0 dB");
             {
                 Rig r (1, 1, 2);

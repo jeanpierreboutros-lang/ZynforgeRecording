@@ -157,6 +157,28 @@ namespace zynforge::mix
                  gain * std::sin (p * juce::MathConstants<double>::halfPi) };
     }
 
+    struct OutputPair { int left { -1 }, right { -1 }; };
+
+    // The device outputs the master bus uses. A negative left means no master
+    // output was chosen. A device smaller than the saved pair gets its last
+    // pair, two channels still: clamping each side on its own put both on the
+    // last output, and the right half of the mix was dropped.
+    constexpr OutputPair masterOutputs (int left, int right, int numOutputs) noexcept
+    {
+        if (left < 0 || numOutputs <= 0) return {};
+        if (left < numOutputs && right >= 0 && right < numOutputs) return { left, right };
+        return numOutputs >= 2 ? OutputPair { numOutputs - 2, numOutputs - 1 } : OutputPair { 0, 0 };
+    }
+
+    // A mix bus stays off an output a strip is patched to. 1:1 strips on a rig
+    // whose outputs are all console returns would otherwise put the whole mix
+    // on the console channels of the first pair, on top of their own tracks.
+    // A two-output device has nowhere else, and there it is the monitor pair.
+    constexpr bool busHeldOffOutputs (bool sharesStripOutput, int numOutputs, bool sharingAllowed) noexcept
+    {
+        return sharesStripOutput && numOutputs > 2 && ! sharingAllowed;
+    }
+
     // Master fader + mute on the summed bus.
     inline double masterGain (bool muted, float gainDb) noexcept
     {

@@ -74,6 +74,17 @@ namespace zynforge
     // it) so the fader value box never overlaps the mark.
     static constexpr int kMarkBandH = 15;
 
+    // No interface has this many output channels.
+    static constexpr int kOutputOffId = 100000;
+    static const char* const kOutputTooltip = "Master output device channel(s) -- pair like 'Out 1-2' "
+                                              "in stereo mode, single 'Out N' in mono. Off sends the mix "
+                                              "to no output, for a rig whose outputs are all console returns.";
+
+    static int outputComboId (int masterLeft) noexcept
+    {
+        return masterLeft < 0 ? kOutputOffId : masterLeft + 1;
+    }
+
     MasterStrip::MasterStrip (AudioEngine& eng)
         : engine (eng), meter (eng.getMasterState())
     {
@@ -91,12 +102,12 @@ namespace zynforge
         outputCombo.setColour (juce::ComboBox::outlineColourId,    brand::edge);
         outputCombo.setColour (juce::ComboBox::textColourId,       brand::textPrimary);
         outputCombo.setColour (juce::ComboBox::arrowColourId,      brand::textMuted);
-        outputCombo.setTooltip ("Master output device channel(s) -- pair like 'Out 1-2' "
-                                "in stereo mode, single 'Out N' in mono.");
+        outputCombo.setTooltip (kOutputTooltip);
         outputCombo.onChange = [this]
         {
             const int id = outputCombo.getSelectedId();
             if (id < 1) return;
+            if (id == kOutputOffId) { engine.setMasterOutputs (-1, -1); return; }
             const int devL = id - 1;
             if (engine.getMasterStereo())
                 engine.setMasterOutputs (devL, devL + 1);
@@ -104,6 +115,13 @@ namespace zynforge
                 engine.setMasterOutputs (devL, devL);   // R unused in mono
         };
         addAndMakeVisible (outputCombo);
+
+        heldLabel.setText ("MIX OFF: STRIP ON PAIR", juce::dontSendNotification);
+        heldLabel.setFont (brand::type::micro());
+        heldLabel.setColour (juce::Label::textColourId, brand::accentRecord);
+        heldLabel.setJustificationType (juce::Justification::centred);
+        heldLabel.setMinimumHorizontalScale (0.6f);
+        addChildComponent (heldLabel);
 
         // Mono / stereo mode toggle. Reuses the toggle-button pill style;
         // text flips between 'MONO' and 'ST', tick colour goes brand-orange
@@ -208,7 +226,8 @@ namespace zynforge
                 : juce::String ("Out ") + juce::String (i + 1);
             outputCombo.addItem (live ? label : (label + " (off)"), i + 1);
         }
-        outputCombo.setSelectedId (engine.getMasterOutputL() + 1, juce::dontSendNotification);
+        outputCombo.addItem ("Off (no output)", kOutputOffId);
+        outputCombo.setSelectedId (outputComboId (engine.getMasterOutputL()), juce::dontSendNotification);
         lastNumOutputs = dev;
     }
 
@@ -223,9 +242,20 @@ namespace zynforge
         gainLabel.setText (juce::String (dB, 1) + " dB", juce::dontSendNotification);
         if (muteButton.getToggleState() != engine.getMasterMuted())
             muteButton.setToggleState (engine.getMasterMuted(), juce::dontSendNotification);
-        const int devL = engine.getMasterOutputL();
-        if (outputCombo.getSelectedId() != devL + 1)
-            outputCombo.setSelectedId (devL + 1, juce::dontSendNotification);
+        const int outputId = outputComboId (engine.getMasterOutputL());
+        if (outputCombo.getSelectedId() != outputId)
+            outputCombo.setSelectedId (outputId, juce::dontSendNotification);
+
+        const bool held = engine.isMasterHeldOff();
+        if (held != cachedHeldOff)
+        {
+            cachedHeldOff = held;
+            heldLabel.setVisible (held);
+            outputCombo.setColour (juce::ComboBox::outlineColourId, held ? brand::accentRecord : brand::edge);
+            outputCombo.setTooltip (held ? juce::String ("The mix is off this pair: a strip is patched to one of "
+                                                         "its outputs. Pick a spare pair or Off.")
+                                         : juce::String (kOutputTooltip));
+        }
 
         const bool stereo = engine.getMasterStereo();
         if (stereo != cachedStereo)
@@ -287,7 +317,7 @@ namespace zynforge
         modeButton.setBounds (r.removeFromTop (brand::space::ctrlH));
         r.removeFromTop (brand::space::xs);
         outputCombo.setBounds (r.removeFromTop (brand::space::ctrlH));
-        r.removeFromTop (brand::space::sm);
+        heldLabel.setBounds (r.removeFromTop (brand::space::sm + brand::space::xs));
         muteButton.setBounds (r.removeFromTop (brand::space::btnH));
         r.removeFromTop (brand::space::sm);
         gainLabel.setBounds (r.removeFromTop (brand::space::xl));

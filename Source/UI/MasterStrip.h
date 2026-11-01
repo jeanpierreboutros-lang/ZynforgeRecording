@@ -32,12 +32,14 @@ namespace zynforge
         juce::Label      title { {}, "MASTER" };
         juce::Label      gainLabel;
         juce::ComboBox   outputCombo;
+        juce::Label      heldLabel;       // shown while the mix is held off its pair
         juce::ToggleButton modeButton { "ST" };   // toggles between MONO and STEREO
         juce::ToggleButton muteButton { "MUTE" };
         FineFader        fader { juce::Slider::LinearVertical, juce::Slider::TextBoxBelow };
         LedMeter         meter;
         int lastNumOutputs { -1 };
         bool             cachedStereo { true };
+        bool             cachedHeldOff { false };
         // Stereo mode the output combo was last BUILT for -- refreshOutputs()
         // skips its 10 Hz rebuild while (device count, mode) are unchanged.
         bool             lastComboStereo { true };

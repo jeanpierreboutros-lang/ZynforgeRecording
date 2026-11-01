@@ -564,6 +564,34 @@ namespace zynforge
             appProps->saveIfNeeded();
         }
     }
+    void AudioEngine::setMixMayShareStripOutputs (bool allowed)
+    {
+        mixMaySharePatchedOutputs.store (allowed, std::memory_order_relaxed);
+        if (appProps != nullptr)
+        {
+            reloadAppPropsBeforeWrite();
+            appProps->setValue ("mixMaySharePatchedOutputs", allowed);
+            appProps->saveIfNeeded();
+        }
+    }
+
+    juce::String AudioEngine::getBusRoutingNotice() const
+    {
+        const auto outs = [] (int l, int r)
+        {
+            return "Out " + juce::String (l + 1) + (r != l ? "-" + juce::String (r + 1) : juce::String());
+        };
+        juce::String notice;
+        if (isMasterHeldOff())
+            notice << "Master mix is off " << outs (getMasterOutputL(), getMasterOutputR())
+                   << ": a strip is patched there. Pick a spare pair on the master strip";
+        if (isStreamHeldOff())
+            notice << (notice.isEmpty() ? "" : "; ")
+                   << "Stream bus is off " << outs (getStreamOutputL(), getStreamOutputR())
+                   << ": a strip is patched there";
+        return notice;
+    }
+
     void AudioEngine::setMasterStereo (bool s)
     {
         masterStereo.store (s, std::memory_order_release);
@@ -2176,6 +2204,7 @@ namespace zynforge
         masterStateR.name = "MASTER R";
         masterState.gainDb.store ((float) appProps->getDoubleValue ("masterGainDb", 0.0));
         masterState.muted .store (appProps->getBoolValue ("masterMuted", false));
+        mixMaySharePatchedOutputs.store (appProps->getBoolValue ("mixMaySharePatchedOutputs", false));
         masterOutL  .store (appProps->getIntValue  ("masterOutL", 0));
         masterOutR  .store (appProps->getIntValue  ("masterOutR", 1));
         masterStereo.store (appProps->getBoolValue ("masterStereo", true),
@@ -2267,6 +2296,7 @@ namespace zynforge
         // size so the audio thread never allocates when mix capture is on.
         stereoMixScratch.setSize (2, blockSize, false, true, true);
         monitorAccum    .setSize (2, blockSize, false, true, true);
+        monitorFeed     .setSize (2, blockSize, false, true, true);
         // 64-bit output accumulator -- sized to the max supported channel
         // count (kMaxStrips) so a wide device (>64 outs) never forces an
         // allocation inside the callback.
@@ -3262,7 +3292,16 @@ namespace zynforge
             stereoMixScratch.clear();
         }
 
-        const bool haveStreamOutputs = sL >= 0 && sR >= 0 && sL < numOutputs && sR < numOutputs;
+        const bool mayShare = mixMaySharePatchedOutputs.load (std::memory_order_relaxed);
+        bool stripOnStreamOutput = false;
+        for (int i = 0; i < trackCount; ++i)
+        {
+            const int out = recorder.getTrack (i).outputRouting.load (std::memory_order_relaxed);
+            stripOnStreamOutput = stripOnStreamOutput || (out >= 0 && (out == sL || out == sR));
+        }
+        const bool streamHeld = mix::busHeldOffOutputs (stripOnStreamOutput, numOutputs, mayShare);
+        streamHeldOff.store (streamHeld, std::memory_order_relaxed);
+        const bool haveStreamOutputs = sL >= 0 && sR >= 0 && sL < numOutputs && sR < numOutputs && ! streamHeld;
         // File capture must not depend on physical stream outputs being
         // configured. A recording-only rig often has no spare output pair but
         // still expects StereoMix.wav to contain the selected live inputs.
@@ -3450,8 +3489,13 @@ namespace zynforge
         const double mGain = mix::masterGain (mMute, masterState.gainDb.load (std::memory_order_relaxed));
 
         // If mono, collapse L+R into accL (and zero accR) so a single
-        // output gets the sum and the meter reads as one bar.
-        const bool stereo = masterStereo.load (std::memory_order_relaxed);
+        // output gets the sum and the meter reads as one bar. A one-output
+        // device is mono whatever the mode says.
+        const auto masterPair = mix::masterOutputs (masterOutL.load (std::memory_order_relaxed),
+                                                    masterOutR.load (std::memory_order_relaxed),
+                                                    numOutputs);
+        const bool stereo = masterStereo.load (std::memory_order_relaxed)
+                         && masterPair.left != masterPair.right;
         if (! stereo)
         {
             for (int i = 0; i < blk; ++i)
@@ -3498,13 +3542,24 @@ namespace zynforge
         // fixed-size filter / histogram state.
         loudness.processMasterDouble (accL, accR, mGain, blk);
 
-        // Guard against a device with zero outputs (e.g. an input-only
-        // interface selected as the output device): numOutputs - 1 == -1
-        // would make jlimit return -1 and getWritePointer(-1) segfault.
-        const int outL = numOutputs > 0
-                       ? juce::jlimit (0, numOutputs - 1, masterOutL.load (std::memory_order_relaxed))
-                       : -1;
-        if (outL >= 0 && outL < numOutputs)
+        const int outL = masterPair.left;
+        const int outR = stereo ? masterPair.right : -1;
+
+        // Whether the mix reaches its pair, decided from the patch and not
+        // from what is audible, so a strip muted for a moment cannot let the
+        // whole mix drop onto its console channel.
+        bool stripOnMasterOutput = false;
+        for (int i = 0; i < trackCount; ++i)
+        {
+            const int out = recorder.getTrack (i).outputRouting.load (std::memory_order_relaxed);
+            stripOnMasterOutput = stripOnMasterOutput || (out >= 0 && (out == outL || out == outR));
+        }
+        const bool masterHeld = mix::busHeldOffOutputs (stripOnMasterOutput, numOutputs,
+                                                        mixMaySharePatchedOutputs.load (std::memory_order_relaxed));
+        masterHeldOff.store (masterHeld, std::memory_order_relaxed);
+        const bool masterAudible = outL >= 0 && ! masterHeld;
+
+        if (masterAudible)
         {
             // Monitor sum lands in the 64-bit accumulator so the master
             // bus stays double-precision until the final downcast below.
@@ -3513,11 +3568,7 @@ namespace zynforge
                 dstL[i] += accL[i] * mGain;
         }
 
-        const int outR = stereo && numOutputs > 0
-                       ? juce::jlimit (0, numOutputs - 1,
-                                       masterOutR.load (std::memory_order_relaxed))
-                       : -1;
-        if (outR >= 0 && outR != outL)
+        if (masterAudible && outR >= 0)
         {
             double* dstR = outputAccum.getWritePointer (outR);
             for (int i = 0; i < blk; ++i)
@@ -3585,42 +3636,53 @@ namespace zynforge
         // the monitor sum, so muting the master used to leave the metronome
         // audible on the monitor bus it rides -- surprising, and loud, in a
         // "kill the monitors" moment.
+        // It stays off a held pair with the mix, or it would be the one thing
+        // on those console channels. It still counts, so the beat holds.
         if (click.isEnabled() && ! masterState.muted.load (std::memory_order_relaxed))
         {
-            const int cOutL = juce::jlimit (0, numOutputs - 1,
-                                            masterOutL.load (std::memory_order_relaxed));
-            const int cOutR = juce::jlimit (0, numOutputs - 1,
-                                            masterOutR.load (std::memory_order_relaxed));
-            float* L = (cOutL >= 0 && cOutL < numOutputs) ? outputs[cOutL] : nullptr;
-            float* R = (cOutR >= 0 && cOutR < numOutputs && cOutR != cOutL) ? outputs[cOutR] : nullptr;
+            float* L = masterAudible ? outputs[outL] : nullptr;
+            float* R = masterAudible && masterPair.right != outL ? outputs[masterPair.right] : nullptr;
             click.processBlock (L, R, numSamples);
         }
 
-        if (remotes.isCompanionServerRunning())
+        // What the companion stream and NDI hear. With no device pair to read,
+        // they take the monitor mix itself.
+        const float* feedL = nullptr;
+        const float* feedR = nullptr;
+        int feedSamples = numSamples;
+        const bool companionFeed = remotes.isCompanionServerRunning();
+        if (companionFeed || ndi.isEnabled())
         {
-            const int sOutL = juce::jlimit (0, numOutputs - 1,
-                                            masterOutL.load (std::memory_order_relaxed));
-            const int sOutR = juce::jlimit (0, numOutputs - 1,
-                                            masterOutR.load (std::memory_order_relaxed));
-            const float* L = (sOutL >= 0 && sOutL < numOutputs) ? outputs[sOutL] : nullptr;
-            const float* R = (sOutR >= 0 && sOutR < numOutputs) ? outputs[sOutR] : nullptr;
-            remotes.feedCompanionStream (L, R, numSamples);
+            if (masterAudible)
+            {
+                feedL = outputs[outL];
+                feedR = outputs[masterPair.right];
+            }
+            else
+            {
+                auto* floatL = monitorFeed.getWritePointer (0);
+                auto* floatR = monitorFeed.getWritePointer (1);
+                for (int i = 0; i < blk; ++i)
+                {
+                    floatL[i] = (float) (accL[i] * mGain);
+                    floatR[i] = (float) (accR[i] * mGain);
+                }
+                feedL = floatL;
+                feedR = stereo ? floatR : floatL;
+                feedSamples = blk;
+            }
         }
+
+        if (companionFeed)
+            remotes.feedCompanionStream (feedL, feedR, feedSamples);
 
         // NDI Audio transmit -- push the master mix onto the LAN as an
         // NDI source. Reads from the monitor-bus output channels so the
         // network feed matches what the engineer hears at the console.
         // Cheap: pushStereo is a memcpy + one libndi call; a no-op when
         // the runtime isn't installed.
-        if (ndi.isEnabled() && numOutputs >= 2)
-        {
-            const int nOutL = juce::jlimit (0, numOutputs - 1,
-                                            masterOutL.load (std::memory_order_relaxed));
-            const int nOutR = juce::jlimit (0, numOutputs - 1,
-                                            masterOutR.load (std::memory_order_relaxed));
-            if (outputs[nOutL] != nullptr && outputs[nOutR] != nullptr)
-                ndi.pushStereo (outputs[nOutL], outputs[nOutR], numSamples);
-        }
+        if (ndi.isEnabled() && feedL != nullptr && feedR != nullptr)
+            ndi.pushStereo (feedL, feedR, feedSamples);
 
         // CPU-load: (callback wall time) / (block period). EMA-smoothed
         // with a fast attack and slower release so the engineer sees

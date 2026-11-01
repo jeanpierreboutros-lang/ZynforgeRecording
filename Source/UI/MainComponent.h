@@ -429,7 +429,9 @@ private:
     bool   chaseWasLive      { false };   // external-timecode chase: did we start playback?
     void   serviceTimecodeChase();
     void   serviceTrimFollowNotice();
+    void   serviceBusRoutingNotice();
     juce::String lastTrimFollowNotice;
+    juce::String lastBusRoutingNotice;
     void onFormatClicked();
     void onPreRollClicked();
     void refreshFormatButton();

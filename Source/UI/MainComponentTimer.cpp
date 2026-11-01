@@ -73,6 +73,7 @@ void MainComponent::timerCallback()
     // External timecode chase: drive the transport from incoming LTC / MTC.
     serviceTimecodeChase();
     serviceTrimFollowNotice();
+    serviceBusRoutingNotice();
 
     // Auto-arm on input detect -- only meaningful while NOT recording. Arms a
     // strip after 12 ticks (1.2 s at 10 Hz) of input above -40 dBFS. Cheap;
@@ -576,6 +577,16 @@ void MainComponent::serviceTrimFollowNotice()
     const auto notice = engine.isTrimFollowEnabled() ? engine.getTrimFollowNotice() : juce::String();
     if (notice == lastTrimFollowNotice) return;
     lastTrimFollowNotice = notice;
+    if (notice.isNotEmpty()) showStatus (notice);
+}
+
+// A bus held off its outputs is a routing change the engineer did not ask for,
+// so say so as it happens. The master strip keeps showing it.
+void MainComponent::serviceBusRoutingNotice()
+{
+    const auto notice = engine.getBusRoutingNotice();
+    if (notice == lastBusRoutingNotice) return;
+    lastBusRoutingNotice = notice;
     if (notice.isNotEmpty()) showStatus (notice);
 }
 
