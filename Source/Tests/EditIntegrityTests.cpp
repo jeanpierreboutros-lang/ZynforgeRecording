@@ -1241,6 +1241,42 @@ namespace zynforge
                 s.engine.setTrackArmed (0, false);
             }
 
+            beginTest ("A group fade drag leaves each peer's other fade alone");
+            {
+                Show s (2, { 48000, 48000 });
+                s.engine.setTrackEditGroup (0, 0);
+                s.engine.setTrackEditGroup (1, 0);
+                expect (s.engine.setClipFades (0, 0, 4800, 0) && s.engine.setClipFades (1, 0, 4800, 3000));
+                EditPage::TrackRow row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                const juce::Point<int> handle (laneX (row, 0.1), brand::space::sm + 2);
+                drag (row, handle, handle + juce::Point<int> (40, 0));
+                expect (s.clips (0)[0].fadeInSamples > 4800, "setup: the fade moved");
+                expectEquals (s.clips (1)[0].fadeInSamples, s.clips (0)[0].fadeInSamples, "the peer follows the dragged edge");
+                expectEquals (s.clips (1)[0].fadeOutSamples, (juce::int64) 3000, "the peer lost its own fade-out");
+            }
+
+            beginTest ("A group crossfade drag leaves each peer's outer fades alone");
+            {
+                Show s (2, { 48000, 48000 });
+                s.engine.setTrackEditGroup (0, 0);
+                s.engine.setTrackEditGroup (1, 0);
+                s.splitBoth (0, 1, 24000);
+                expect (s.engine.editClip (0, 1, AudioEngine::ClipEdit::Move, -4800));
+                expect (s.engine.editClip (1, 1, AudioEngine::ClipEdit::Move, -4800));
+                expect (s.engine.setClipFades (1, 0, 500, 0) && s.engine.setClipFades (1, 1, 0, 700));
+                EditPage::TrackRow row (0, false, s.engine, s.formats, s.cache);
+                sizeRow (row);
+                const auto total = s.engine.getPlayer().getTotalLengthSamples();
+                auto floorX = [&] (juce::int64 sample)
+                { return row.getHeaderWidth() + 4 + (int) ((double) sample / (double) total * kLaneW); };
+                const juce::Point<int> handle ((floorX (19200) + floorX (24000)) / 2, 50);
+                drag (row, handle, handle + juce::Point<int> (10, 0));
+                expect (s.clips (0)[0].fadeOutSamples > 0, "setup: the crossfade moved");
+                expectEquals (s.clips (1)[0].fadeInSamples, (juce::int64) 500, "the peer lost its fade-in");
+                expectEquals (s.clips (1)[1].fadeOutSamples, (juce::int64) 700, "the peer lost its fade-out");
+            }
+
             MainComponent::s_testConstruct = false;
             AudioEngine::setTestModeSkipAudioInit (false);
         }

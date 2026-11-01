@@ -2990,6 +2990,12 @@ namespace zynforge
             }
         }
 
+        const Clip* clipOn (int track, int clip) const
+        {
+            const auto* list = engine.tryClipsFor (track);
+            return list != nullptr && clip >= 0 && clip < (int) list->size() ? &(*list)[(size_t) clip] : nullptr;
+        }
+
         void mouseDrag (const juce::MouseEvent& e) override
         {
             // Capture (or its finalization) locked the timeline mid-gesture --
@@ -3048,8 +3054,10 @@ namespace zynforge
                             const int pa = peerClipIndex (peer, draggingXfadeAIdx);
                             const int pb = peerClipIndex (peer, draggingXfadeBIdx);
                             if (pa < 0 || pb < 0) continue;
-                            engine.setClipFades (peer, pa, a.fadeInSamples, aFadeOut);
-                            engine.setClipFades (peer, pb, bFadeIn, b.fadeOutSamples);
+                            if (const auto* out = clipOn (peer, pa))
+                                engine.setClipFades (peer, pa, out->fadeInSamples, aFadeOut);
+                            if (const auto* in = clipOn (peer, pb))
+                                engine.setClipFades (peer, pb, bFadeIn, in->fadeOutSamples);
                         }
                         repaint();
                     }
@@ -3192,8 +3200,12 @@ namespace zynforge
                             const juce::int64 newIn = juce::jlimit<juce::int64> (
                                 0, c.fileLengthSamples - dragStartFadeOut,
                                 dragStartFadeIn + wantSamples);
+                            // Each peer keeps its own fade on the other edge.
                             for (auto [peer, pi] : dragPeers)
-                                engine.setClipFades (peer, pi, newIn, dragStartFadeOut);
+                                if (const auto* pc = clipOn (peer, pi))
+                                    engine.setClipFades (peer, pi,
+                                                         juce::jmin (newIn, pc->fileLengthSamples - pc->fadeOutSamples),
+                                                         pc->fadeOutSamples);
                         }
                         else
                         {
@@ -3202,7 +3214,9 @@ namespace zynforge
                                 0, c.fileLengthSamples - dragStartFadeIn,
                                 dragStartFadeOut - wantSamples);
                             for (auto [peer, pi] : dragPeers)
-                                engine.setClipFades (peer, pi, dragStartFadeIn, newOut);
+                                if (const auto* pc = clipOn (peer, pi))
+                                    engine.setClipFades (peer, pi, pc->fadeInSamples,
+                                                         juce::jmin (newOut, pc->fileLengthSamples - pc->fadeInSamples));
                         }
                         repaint();
                         return;
