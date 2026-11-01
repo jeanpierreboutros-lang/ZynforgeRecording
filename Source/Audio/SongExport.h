@@ -64,6 +64,7 @@ namespace zynforge
             std::vector<SongPlan> songs;
             ExportOptions format;
             double renderRate { 48000.0 };
+            bool soloActive { false };
             int totalFiles() const noexcept
             {
                 int n = 0;
@@ -80,6 +81,8 @@ namespace zynforge
         struct Outcome
         {
             int attempted { 0 }, written { 0 };
+            int silentMixes { 0 };     // finished, and nothing in them
+            bool soloActive { false };
             bool cancelled { false };
             juce::String firstError;
             bool complete() const noexcept { return ! cancelled && attempted > 0 && written == attempted; }
@@ -91,6 +94,10 @@ namespace zynforge
         // Worker thread, under the session-job reservation. Reads the engine's
         // clips and lanes, never the message thread's UI. Refuses during a take.
         Outcome run (AudioEngine&, const Plan&, const std::atomic<bool>& cancel, const Progress&);
+
+        // What a finished mix render must add to "done": a silent file is not a
+        // success, and a solo left on shaped what is in it. Empty when neither.
+        juce::String mixRenderWarning (bool silent, bool soloActive);
 
         // The line the status bar shows, in the wording of a track export.
         juce::String statusLine (const Outcome&, const juce::String& destName);

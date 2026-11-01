@@ -1234,8 +1234,9 @@ namespace zynforge
 
         const int step = 512;   // re-evaluate automation every ~10 ms
 
-        const double mGain = mix::masterGain (masterState.muted.load (std::memory_order_relaxed),
-                                              masterState.gainDb.load (std::memory_order_relaxed));
+        // Master MUTE keeps playback out of the PA. It is a monitoring switch,
+        // not part of the mix, so a render follows the master fader alone.
+        const double mGain = mix::masterGain (false, masterState.gainDb.load (std::memory_order_relaxed));
 
         juce::AudioBuffer<float> stereo (2, kRenderWindowSamples), raw (juce::jmax (1, nTracks), kRenderWindowSamples), tmp (1, 0);
         // Windows stay on the absolute grid wherever a range starts: automation
@@ -1339,19 +1340,22 @@ namespace zynforge
 
     bool AudioEngine::bounceStereoMixToWav (const juce::File& dest,
                                             juce::int64 totalSamples, double sampleRate,
-                                            const std::atomic<bool>* cancel)
+                                            const std::atomic<bool>* cancel, float* peak)
     {
         const auto temporary = bounceTemporary (dest);
-        auto writer = createWav24Writer (temporary, sampleRate, 2);
+        const auto closeFailed = CheckedFileStream::makeFailedFlag();
+        auto writer = createWav24Writer (temporary, sampleRate, 2, closeFailed);
         if (writer == nullptr) { temporary.deleteFile(); return false; }
+        if (peak != nullptr) *peak = 0.0f;
         const bool ok = forEachStereoMixWindow (totalSamples,
             [&] (const juce::AudioBuffer<float>& w, juce::int64, int winLen)
             {
                 if (cancel != nullptr && cancel->load (std::memory_order_relaxed)) return false;
+                if (peak != nullptr) *peak = juce::jmax (*peak, w.getMagnitude (0, winLen));
                 return writer->writeFromAudioSampleBuffer (w, 0, winLen);
             });
         writer.reset();
-        if (! ok) { temporary.deleteFile(); return false; }
+        if (! ok || closeFailed->load()) { temporary.deleteFile(); return false; }
         return installBounce (temporary, dest);
     }
 
@@ -1401,8 +1405,41 @@ namespace zynforge
                 return writer->writeFromAudioSampleBuffer (stereo, 0, winLen);
             });
         writer.reset();
-        if (! ok) { temporary.deleteFile(); return false; }
+        if (! ok || closeFailed->load()) { temporary.deleteFile(); return false; }
         return installBounce (temporary, dest);
+    }
+
+    std::vector<songs::Voice> AudioEngine::songScanVoices()
+    {
+        std::vector<songs::Voice> voices;
+        const juce::ScopedLock structure (recorder.getStructureLock());
+        for (int t = 0; t < recorder.getNumTracks(); ++t)
+        {
+            if (t > 0 && recorder.getTrack (t - 1).isStereo.load (std::memory_order_relaxed)) continue;
+            if (recorder.getTrack (t).referenceMedia.load (std::memory_order_relaxed)) continue;
+            if (isTrackArrangementEmpty (t)) continue;
+
+            songs::Voice voice;
+            voice.ownFile = getTrackAudioFile (t);
+            if (const auto* clips = tryClipsFor (t)) voice.clips = *clips;
+            else
+            {
+                Clip whole;
+                whole.fileLengthSamples = player.getTrackLengthSamples (t);
+                voice.clips.push_back (whole);
+            }
+            voices.push_back (std::move (voice));
+        }
+        return voices;
+    }
+
+    bool AudioEngine::isAnySoloActive()
+    {
+        const juce::ScopedLock structure (recorder.getStructureLock());
+        for (int t = 0; t < recorder.getNumTracks(); ++t)
+            if (recorder.getTrack (t).soloed.load (std::memory_order_relaxed)) return true;
+        return std::any_of (vcas.begin(), vcas.end(), [] (const auto& vca)
+                            { return vca.soloed.load (std::memory_order_relaxed); });
     }
 
     juce::String AudioEngine::exportRefusal() const
@@ -1429,6 +1466,7 @@ namespace zynforge
         }
         input.masterDb    = getMasterGainDb();
         input.masterMuted = getMasterMuted();
+        input.anySolo     = isAnySoloActive();
 
         for (const auto& marker : markers.getAll())
             input.markers.push_back ({ marker.sampleOffset, marker.name });
@@ -1446,7 +1484,6 @@ namespace zynforge
                 strip.faderDb    = ts.gainDb.load (std::memory_order_relaxed);
                 strip.pan        = ts.pan.load (std::memory_order_relaxed);
                 strip.muted      = ts.muted.load (std::memory_order_relaxed);
-                input.anySolo = input.anySolo || ts.soloed.load (std::memory_order_relaxed);
 
                 const int group = ts.vcaGroup.load (std::memory_order_relaxed);
                 if (group >= 0 && group < kNumVcas)

@@ -958,27 +958,31 @@ void MainComponent::completeBounceStereoMix (juce::File dest)
     if (editPage != nullptr) editPage->setEnabled (false);
 
     showStatus ("Bouncing stereo mix...");
+    const bool soloActive = engine.isAnySoloActive();
     // No structure lock here: the mix renderer snapshots every strip under a
     // brief lock of its own and then renders lock-free. Holding the lock for
     // the whole render froze the UI timer (captureStatus) until it finished.
     juce::Component::SafePointer<MainComponent> self (this);
-    sessionJobs.launch ([self, &eng = engine, dest, arrLen, sr] (const std::atomic<bool>& cancel)
+    sessionJobs.launch ([self, &eng = engine, dest, arrLen, sr, soloActive] (const std::atomic<bool>& cancel)
                         -> zynforge::SessionJobRunner::Completion
     {
         // Streams the summed mix window-by-window straight to disk.
+        float peak = 0.0f;
         const bool ok = ! cancel.load (std::memory_order_relaxed)
-                     && eng.bounceStereoMixToWav (dest, arrLen, sr, &cancel);
+                     && eng.bounceStereoMixToWav (dest, arrLen, sr, &cancel, &peak);
         // A quit cancels us; that returns false but is NOT a failure -- don't
         // post a spurious "bounce failed".
         const bool cancelled = cancel.load (std::memory_order_relaxed);
-        return [self, ok, cancelled, dest]
+        return [self, ok, cancelled, dest, peak, soloActive]
         {
             if (self == nullptr) return;
             self->engine.setSessionTransitionActive (false);
             if (self->editPage != nullptr) self->editPage->setEnabled (! self->sessionLocked);
-            if (! cancelled)
-                self->showStatus (ok ? "Bounced stereo mix -> " + dest.getFileName()
-                                     : juce::String ("Stereo mix bounce failed"));
+            if (cancelled) return;
+            if (! ok) { self->showStatus ("Stereo mix bounce failed"); return; }
+            const auto warning = zynforge::songexport::mixRenderWarning (peak <= 0.0f, soloActive);
+            self->showStatus ("Bounced stereo mix -> " + dest.getFileName()
+                              + (warning.isNotEmpty() ? " -- " + warning : juce::String()));
         };
     });
 }

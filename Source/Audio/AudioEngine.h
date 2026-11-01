@@ -854,9 +854,11 @@ namespace zynforge
         bool bounceTrackArrangementToWav (int track, const juce::File& dest,
                                           juce::int64 totalSamples, double sampleRate,
                                           const std::atomic<bool>* cancel = nullptr);
+        // `peak`, when given, receives the render's sample peak.
         bool bounceStereoMixToWav (const juce::File& dest,
                                    juce::int64 totalSamples, double sampleRate,
-                                   const std::atomic<bool>* cancel = nullptr);
+                                   const std::atomic<bool>* cancel = nullptr,
+                                   float* peak = nullptr);
 
         // Bounce a stereo-pair track (L = trackL, R = trackL+1) to ONE
         // interleaved 24-bit stereo WAV -- each side's edited clip
@@ -872,6 +874,13 @@ namespace zynforge
         // takes, daemon takes and a finalizing STOP all refuse: their files
         // are not finished. Asked before a job starts and by the job itself.
         juce::String exportRefusal() const;
+        // What Detect Songs listens to: one voice per logical strip, as the
+        // arrangement plays it. A generated click is on all the time, so it
+        // would hold the quorum open across every gap between songs.
+        std::vector<songs::Voice> songScanVoices();
+        // Any strip or VCA soloed. A mix render follows solo, so its file
+        // holds only what is soloed, and the engineer must be told.
+        bool isAnySoloActive();
         // Plain copies of everything a DAW project carries. Message thread:
         // it reads the clip lists, which only that thread edits.
         interchange::SessionInput captureInterchange();
