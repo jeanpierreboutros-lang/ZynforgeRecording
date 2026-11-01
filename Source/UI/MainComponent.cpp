@@ -85,7 +85,58 @@ void MainComponent::onRecordClicked()
     if (handleRecordPressDuringTake()) return;
     RecordStartPlan plan;
     if (! prepareRecordStart (plan)) return;
+    if (cursorPunchNeedsAnswer (plan)) { askBeforeCursorPunch (plan); return; }
     runRecordPlan (plan);
+}
+
+// A cursor takes one click to place and can be left anywhere, so on a stopped
+// transport it is not yet a decision to replace audio. A rolling punch and a
+// selected range are deliberate, and a remote press is refused further on.
+bool MainComponent::cursorPunchNeedsAnswer (const RecordStartPlan& plan)
+{
+    return plan.punchAt >= 0
+        && ! cursorPunchAnswered
+        && ! engine.getPlayer().isPlaying()
+        && ! recordPlanHasSelection (plan)
+        && ! remoteStartInFlight && ! twinStartInFlight;
+}
+
+void MainComponent::askBeforeCursorPunch (const RecordStartPlan& plan)
+{
+    if (cursorPunchQuestion != nullptr) return;
+    const auto& player = engine.getPlayer();
+    const double sr = player.getSampleRate() > 0.0 ? player.getSampleRate() : 48000.0;
+    auto* aw = new juce::AlertWindow (
+        "Replace audio?",
+        "The EDIT cursor is at " + juce::String (plan.punchAt / sr, 1) + " s, inside the take.\n\n"
+        "Replacing starts there on " + juce::String (plan.armed) + " armed track(s) and runs until you "
+        "stop. It can't be undone.\n\nRecording after the take leaves everything as it is.",
+        juce::MessageBoxIconType::NoIcon, this);
+    // Return is the safe answer: a hurried press must never replace audio.
+    aw->addButton ("Record After Take", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Replace From Cursor", 2);
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    aw->setLookAndFeel (&laf);   // grey ZynForge chrome, not JUCE default
+    cursorPunchQuestion = aw;
+    juce::Component::SafePointer<MainComponent> self (this);
+    aw->enterModalState (true, juce::ModalCallbackFunction::create ([self, aw] (int answer)
+    {
+        std::unique_ptr<juce::AlertWindow> dispose (aw);
+        if (self != nullptr) self->answerCursorPunch (answer);
+    }));
+}
+
+void MainComponent::answerCursorPunch (int answer)
+{
+    if (answer == 0) return;
+    // This is a fresh press through every refusal, because anything can have
+    // moved while the question was open. A take or playback started since
+    // would give the press another meaning, so it stops here.
+    if (engine.isRecording() || engine.getPlayer().isPlaying())
+    { showRecordRefusal ("The transport moved while RECORD was asking -- press RECORD again"); return; }
+    if (answer == 1) engine.clearEditCursor();
+    const juce::ScopedValueSetter<bool> answered (cursorPunchAnswered, answer == 2);
+    onRecordClicked();
 }
 
 bool MainComponent::recordPlanHasSelection (const RecordStartPlan& plan)
