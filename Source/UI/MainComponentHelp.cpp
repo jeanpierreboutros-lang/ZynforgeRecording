@@ -383,8 +383,6 @@ void MainComponent::createSessionFromWelcome (const zynforge::WelcomeDialog::New
     n.location      = r.location;
     n.captureFormat = r.captureFormat;
     n.sampleRate    = r.sampleRate;
-    n.interleaved   = r.interleaved;
-    n.ioSettings    = r.ioSettings;
     const auto sessionFolder = createSessionFolderStructure (n);
     if (! sessionFolder.isDirectory())
     {
@@ -566,12 +564,7 @@ void MainComponent::launchNewSessionDialog (juce::File templateFile)
         // every future file dialog) and remember the chosen format
         // so the dB readout / capture matches.
         zynforge::updateSettings (self->engine.getAppProps(), [&r] (juce::PropertiesFile& props)
-        {
-            props.setValue ("sessionsRoot",      r.location.getFullPathName());
-            props.setValue ("sessionName",       r.name);
-            props.setValue ("interleavedFlag",   r.interleaved);
-            props.setValue ("ioPreset",          r.ioSettings);
-        });
+                                  { props.setValue ("sessionsRoot", r.location.getFullPathName()); });
 
         // Pin this folder as the active session so Save / Save As light
         // up immediately (engine.getActiveSessionDir() now reports it

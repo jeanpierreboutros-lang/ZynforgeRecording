@@ -2551,8 +2551,6 @@ juce::File MainComponent::createSessionFolderStructure (const zynforge::NewSessi
         m->setProperty ("createdAt",       juce::Time::getCurrentTime().toISO8601 (true));
         m->setProperty ("sampleRate",      r.sampleRate);
         m->setProperty ("captureFormat",   (int) r.captureFormat);
-        m->setProperty ("interleaved",     r.interleaved);
-        m->setProperty ("ioPreset",        r.ioSettings);
         if (! zynforge::atomicfile::writeText (
                 sessionFolder.getChildFile (safeName + ".zfproj"),
                 juce::JSON::toString (juce::var (m.get()))))

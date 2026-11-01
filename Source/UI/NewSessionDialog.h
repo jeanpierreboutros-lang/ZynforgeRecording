@@ -7,8 +7,7 @@
 namespace zynforge
 {
     // Pro Tools-style "New Session" dialog. Configures the session name,
-    // local-storage location, file type, sample rate, bit depth, and
-    // interleaved flag -- without the Templates section.
+    // local-storage location, file type, sample rate and bit depth.
     //
     // The callback fires only on Create; Cancel returns silently.
     class NewSessionDialog
@@ -20,8 +19,6 @@ namespace zynforge
             juce::File    location;        // parent folder for the new session
             CaptureFormat captureFormat { CaptureFormat::Wav24 };   // derived from file type + bit depth
             double        sampleRate { 48000.0 };
-            bool          interleaved { false };
-            juce::String  ioSettings;      // "Last Used", "Stereo Mix"
         };
 
         using ResultCallback = std::function<void (const Result&)>;

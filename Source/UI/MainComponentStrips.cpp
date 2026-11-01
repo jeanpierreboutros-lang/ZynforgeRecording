@@ -577,8 +577,6 @@ void MainComponent::createSessionFromCsv()
             r.location      = self->getSessionsRoot();
             r.captureFormat = self->engine.getRecorder().getCaptureFormat();
             r.sampleRate    = self->pendingSampleRate;
-            r.interleaved   = true;
-            r.ioSettings    = "Last Used";
             const auto dir  = self->createSessionFolderStructure (r);
             if (! dir.isDirectory())
             {
@@ -703,8 +701,6 @@ void MainComponent::buildSessionFromConsole (const std::map<int, juce::String>& 
     r.location      = getSessionsRoot();
     r.captureFormat = engine.getRecorder().getCaptureFormat();
     r.sampleRate    = pendingSampleRate;
-    r.interleaved   = true;
-    r.ioSettings    = "Last Used";
     const auto dir  = createSessionFolderStructure (r);
     if (! dir.isDirectory())
     {

@@ -112,22 +112,6 @@ namespace zynforge
                 bitDepthCombo.addItem ("32-bit float",  3);
                 bitDepthCombo.setSelectedId (bitDepthIdFromFormat (lastCaptureFormat), juce::dontSendNotification);
 
-                // ─── I/O Settings ───
-                ioLabel.setText ("I/O Settings", juce::dontSendNotification);
-                styleFieldLabel (ioLabel);
-
-                styleCombo (ioCombo);
-                ioCombo.addItem ("Last Used",  1);
-                ioCombo.addItem ("Stereo Mix", 2);
-                ioCombo.setSelectedId (1, juce::dontSendNotification);
-
-                // ─── Interleaved ───
-                interleavedToggle.setButtonText ("Interleaved");
-                interleavedToggle.setToggleState (true, juce::dontSendNotification);
-                interleavedToggle.setColour (juce::ToggleButton::textColourId, brand::textPrimary);
-                interleavedToggle.setColour (juce::ToggleButton::tickColourId, brand::accentStatus);
-                interleavedToggle.setColour (juce::ToggleButton::tickDisabledColourId, brand::textMuted);
-
                 // ─── Buttons ───
                 addAndMakeVisible (cancelButton);
                 cancelButton.setButtonText ("Cancel");
@@ -205,24 +189,11 @@ namespace zynforge
                 }
                 b.removeFromTop (brand::space::xl);
 
-                // Row: Bit Depth / I/O Settings
-                auto row2 = b.removeFromTop (54);
-                {
-                    auto left  = row2.removeFromLeft (colW);
-                    bitDepthLabel.setBounds (left.removeFromTop (18));
-                    left.removeFromTop (brand::space::xs);
-                    bitDepthCombo.setBounds (left.removeFromTop (28));
-                }
-                row2.removeFromLeft (brand::space::xl);
-                {
-                    auto right = row2;
-                    ioLabel.setBounds (right.removeFromTop (18));
-                    right.removeFromTop (brand::space::xs);
-                    ioCombo.setBounds (right.removeFromTop (28));
-                }
-                b.removeFromTop (14);
-
-                interleavedToggle.setBounds (b.removeFromTop (brand::space::btnH).removeFromLeft (160));
+                // Row: Bit Depth
+                auto row2 = b.removeFromTop (54).removeFromLeft (colW);
+                bitDepthLabel.setBounds (row2.removeFromTop (18));
+                row2.removeFromTop (brand::space::xs);
+                bitDepthCombo.setBounds (row2.removeFromTop (28));
 
                 // Footer
                 auto footer = getLocalBounds().removeFromBottom (52).reduced (20, 10);
@@ -357,8 +328,6 @@ namespace zynforge
                     r.captureFormat = formatFrom (fileTypeCombo.getSelectedId(),
                                                   bitDepthCombo.getSelectedId());
                     r.sampleRate    = hzFromId (sampleRateCombo.getSelectedId());
-                    r.interleaved   = interleavedToggle.getToggleState();
-                    r.ioSettings    = ioCombo.getText();
                     callback (r);
                 }
 
@@ -375,9 +344,8 @@ namespace zynforge
             juce::ToggleButton localRadio, cloudRadio;
             juce::TextButton   pathButton, cloudHelp;
             juce::Label        sectionHeader;
-            juce::Label        fileTypeLabel, sampleRateLabel, bitDepthLabel, ioLabel;
-            juce::ComboBox     fileTypeCombo, sampleRateCombo, bitDepthCombo, ioCombo;
-            juce::ToggleButton interleavedToggle;
+            juce::Label        fileTypeLabel, sampleRateLabel, bitDepthLabel;
+            juce::ComboBox     fileTypeCombo, sampleRateCombo, bitDepthCombo;
             juce::TextButton   createButton, cancelButton;
 
             JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (Content)

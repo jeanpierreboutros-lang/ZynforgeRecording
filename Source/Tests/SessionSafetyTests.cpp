@@ -1108,6 +1108,45 @@ public:
         }
     }
 
+    // Earlier builds saved all of these. Nothing reads them now, and none of
+    // them may get in the way of what still loads.
+    void testKeysFromEarlierBuilds()
+    {
+        beginTest ("A session saved with the keys of removed features opens and loads the rest");
+        {
+            Folder f; writeSavedShow (f);
+            auto project = juce::JSON::parse (f.project());
+            auto* saved = project.getDynamicObject();
+            saved->setProperty ("interleaved", true);
+            saved->setProperty ("ioPreset", "Last Used");
+            expect (f.project().replaceWithText (juce::JSON::toString (project)));
+
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            expect (host.openSessionFolder (f.dir) == 0);
+            expect (host.engine.mixerBelongsTo (f.dir));
+            expectEquals (host.engine.getRecorder().getNumTracks(), 3);
+            expectEquals (stripName (host, 2), juce::String ("Saved 3"));
+            expectEquals ((int) host.cues.size(), 1, "the session's cues were not loaded");
+            expect (host.saveSessionStateTo (f.dir));
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+
+        beginTest ("A new session's document holds no I/O preset or interleaved flag");
+        {
+            Folder f;
+            MainComponent host; host.stopTimer(); host.engine.prepareForTests (48000, 256);
+            NewSessionDialog::Result r;
+            r.name = "Fresh";
+            r.location = f.dir;
+            const auto session = host.createSessionFolderStructure (r);
+            expect (session.isDirectory());
+            const auto document = juce::JSON::parse (session.getChildFile ("Fresh.zfproj"));
+            expect (document["zynforgeSession"], "the document was not written");
+            expect (! document.hasProperty ("interleaved") && ! document.hasProperty ("ioPreset"));
+            host.engine.clearSessionState(); host.engine.clearAllStripOverrides();
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -1127,6 +1166,7 @@ public:
         testHeldRecordPress();
         testShortWrites();
         testUnchangedBackups();
+        testKeysFromEarlierBuilds();
     }
 };
 

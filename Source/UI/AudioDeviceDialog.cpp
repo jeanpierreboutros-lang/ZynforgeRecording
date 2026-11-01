@@ -156,14 +156,12 @@ namespace zynforge
                 styleCombo (rateBox);
                 styleCombo (bufferBox);
                 styleCombo (monitorOutLBox);
-                styleCombo (monitorOutRBox);
 
                 outputBox.onChange     = [this] { onDeviceChanged (false); };
                 inputBox .onChange     = [this] { onDeviceChanged (true);  };
                 rateBox  .onChange     = [this] { onSampleRateChanged();   };
                 bufferBox.onChange     = [this] { onBufferSizeChanged();   };
                 monitorOutLBox.onChange = [this] { onMonitorOutChanged(); };
-                monitorOutRBox.onChange = [this] { onMonitorOutChanged(); };
 
                 addAndMakeVisible (outputCard);
                 addAndMakeVisible (inputCard);
@@ -174,10 +172,8 @@ namespace zynforge
                 addAndMakeVisible (inputBox);
                 addAndMakeVisible (rateBox);
                 addAndMakeVisible (bufferBox);
-                // One stereo-pair picker for the monitor bus (e.g. "Out 1-2")
-                // instead of separate L / R combos -- the monitor is always a
-                // stereo pair, so picking the pair is clearer. monitorOutRBox /
-                // monitorRLabel are left unused (not shown).
+                // One stereo-pair picker for the monitor bus (e.g. "Out 1-2"):
+                // the monitor is always a stereo pair.
                 addAndMakeVisible (monitorOutLBox);
 
                 monitorLLabel.setText ("Monitor Output (stereo pair)", juce::dontSendNotification);
@@ -484,7 +480,6 @@ namespace zynforge
                     outChanValue.setText ("--", juce::dontSendNotification);
                     inChanValue .setText ("--", juce::dontSendNotification);
                     monitorOutLBox.clear (juce::dontSendNotification);
-                    monitorOutRBox.clear (juce::dontSendNotification);
                 }
             }
 
@@ -632,9 +627,9 @@ namespace zynforge
             Card outputCard, inputCard, rateCard, bufferCard, monitorCard;
             juce::ComboBox outputBox, inputBox, rateBox, bufferBox;
             static constexpr int kMonitorOffId = 100000;   // past any device's channel count
-            juce::ComboBox monitorOutLBox, monitorOutRBox;
+            juce::ComboBox monitorOutLBox;
             juce::Label    outChanLabel, outChanValue, inChanLabel, inChanValue;
-            juce::Label    monitorLLabel, monitorRLabel;
+            juce::Label    monitorLLabel;
             InputMeter     inputMeter;
             juce::TextButton testButton   { "Test" };
             juce::TextButton applyButton  { "Apply" };
