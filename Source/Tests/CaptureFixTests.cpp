@@ -988,6 +988,38 @@ namespace zynforge
                 expect (pumpUntil ([&] { return done; }, 8000), "STOP waited on the dead drive");
             }
 
+            beginTest ("A hole in the primary reaches the window from the daemon");
+            {
+                Rig rig;
+                if (! bringUp (rig)) return;
+                auto& main = *rig.main;
+                auto& recorder = rig.daemon.getRecorder();
+                recorder.copyRingFramesForTests = MultitrackRecorder::CaptureCopy::kChunkFrames;
+                juce::WaitableEvent released { true };
+                const juce::ScopeGuard letGo { [&released] { released.signal(); } };
+                recorder.beforeCopyWriteForTests = [&released] (MultitrackRecorder::CaptureCopy& copy)
+                {
+                    if (copy.copyIndex == 0) released.wait (-1);
+                };
+                if (! startTake (rig, rig.session)) return;
+
+                std::vector<float> samples ((size_t) kBlock, 0.25f);
+                const float* inputs[] { samples.data() };
+                expect (pumpUntil ([&]
+                {
+                    for (int b = 0; b < 200; ++b) rig.daemon.processTestBlock (inputs, 1, kBlock);
+                    main.serviceCaptureDaemonLink();
+                    const auto status = main.engine.captureStatus();
+                    return status.source == "daemon" && status.missedSamples > 0;
+                }, 8000), "the daemon called a primary with a hole clean");
+                const auto problems = main.engine.captureStatus().copyProblems.joinIntoString ("|");
+                expect (problems.contains ("no other copy has it"), problems);
+                released.signal();
+                bool done = false;
+                main.stopActiveCaptureAsync (false, [&] (bool) { done = true; });
+                expect (pumpUntil ([&] { return done; }, 8000));
+            }
+
             beginTest ("A window that reattaches can mark the take it found");
             {
                 Rig rig;
@@ -1408,6 +1440,77 @@ namespace zynforge
             refusedStartLeavesNothing();
             punchesWithHoles();
             boundedFinishing();
+            primaryHolesAreCounted();
+        }
+
+        void primaryHolesAreCounted()
+        {
+            beginTest ("A hole in the primary reads as missed samples");
+            {
+                Dirs dirs;
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                rec.setBackupDirectory (dirs.backup);
+                auto stall = std::make_shared<Stall> (0);
+                rec.copyRingFramesForTests = Copy::kChunkFrames;
+                hold (rec, stall);
+                expect (rec.startRecording (dirs.session));
+                Feeder feeder { rec, 1 };
+                feeder.blocks ((Copy::kChunkFrames * 3) / kBlock, { 1 });
+                const auto missed = rec.getMissedSamples();
+                expectGreaterThan (missed, (juce::int64) 0, "a live hole showed no missed samples");
+                expect (rec.getCopyProblems().joinIntoString ("|").contains ("the other copies have it"),
+                        "the backup is healthy and has it");
+                stall->holding.store (false);
+                stall->released.signal();
+                rec.stopRecording();
+
+                expectGreaterThan (rec.getMissedSamples(), (juce::int64) 0);
+                const auto report = juce::JSON::parse (dirs.session.getChildFile ("session.report.json"));
+                expectGreaterThan ((juce::int64) report.getProperty ("missedSamples", 0), (juce::int64) 0,
+                                   "the report called the take clean");
+            }
+
+            beginTest ("With no healthy copy nothing claims the audio is safe elsewhere");
+            {
+                Dirs dirs;
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                auto stall = std::make_shared<Stall> (0);
+                rec.copyRingFramesForTests = Copy::kChunkFrames;
+                hold (rec, stall);
+                expect (rec.startRecording (dirs.session));
+                Feeder feeder { rec, 1 };
+                feeder.blocks ((Copy::kChunkFrames * 3) / kBlock, {});
+                const auto problems = rec.getCopyProblems().joinIntoString ("|");
+                expect (problems.contains ("no other copy has it"), problems);
+                expect (! problems.contains ("the other copies have it"), problems);
+                stall->holding.store (false);
+                stall->released.signal();
+                rec.stopRecording();
+            }
+
+            beginTest ("A copy's own hole is not a hole in the take");
+            {
+                Dirs dirs;
+                MultitrackRecorder rec;
+                rec.prepare (kRate, kBlock, 1);
+                rec.getTrack (0).armed.store (true);
+                rec.setBackupDirectory (dirs.backup);
+                auto stall = std::make_shared<Stall> (1);
+                rec.copyRingFramesForTests = Copy::kChunkFrames;
+                hold (rec, stall);
+                expect (rec.startRecording (dirs.session));
+                Feeder feeder { rec, 1 };
+                feeder.blocks ((Copy::kChunkFrames * 3) / kBlock, { 0 });
+                expectEquals (rec.getMissedSamples(), (juce::int64) 0, "the primary has every frame");
+                expect (rec.getCopyProblems().joinIntoString ("|").contains ("the other copies have it"));
+                stall->holding.store (false);
+                stall->released.signal();
+                rec.stopRecording();
+            }
         }
 
         void boundedFinishing()
@@ -1923,7 +2026,7 @@ namespace zynforge
                                  : held == 1 ? std::vector<int> { 0, 2 } : std::vector<int> { 0, 1 });
                 const juce::int64 total = 80 * kBlock;
 
-                expectEquals (rec->getMissedSamples(), (juce::int64) 0, "the audio FIFO dropped: every copy lost it");
+                expectEquals (rec->missedSamples.load(), (juce::int64) 0, "the audio FIFO dropped: every copy lost it");
                 expect (held == 0 ? rec->hasPrimaryFailed() : ! rec->hasPrimaryFailed(), "primary failure latch");
                 expect (held == 1 ? rec->hasBackupFailed()  : ! rec->hasBackupFailed(),  "backup failure latch");
                 expect (held == 2 ? rec->anyMirrorFailed()  : ! rec->anyMirrorFailed(),  "mirror failure latch");

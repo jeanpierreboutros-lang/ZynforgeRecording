@@ -39,7 +39,7 @@ namespace zynforge
             bool         failed { false };
 
             juce::HeapBlock<float> ring;           // ringFrames per channel, planar
-            juce::int64  head { 0 }, tail { 0 }, lostFrames { 0 };
+            juce::int64  head { 0 }, tail { 0 }, lostFrames { 0 }, countedLost { 0 };
             bool         accepting { false };
         };
 
@@ -182,8 +182,15 @@ namespace zynforge
                 // Latched here, not when the thread comes back: it may never.
                 overran.store (true, std::memory_order_relaxed);
                 latchFailure();
-                if (t.lostFrames + over > droppedFrames.load (std::memory_order_relaxed))
-                    droppedFrames.store (t.lostFrames + over, std::memory_order_relaxed);
+                const auto lost = t.lostFrames + over;
+                if (lost > droppedFrames.load (std::memory_order_relaxed))
+                    droppedFrames.store (lost, std::memory_order_relaxed);
+                // A hole in the primary is a hole in the take, so it counts
+                // where every reading of missed samples looks. Per track, like
+                // the capture FIFOs count theirs.
+                if (copyIndex == 0 && lost > t.countedLost)
+                    latches->primaryLostFrames.fetch_add (lost - t.countedLost, std::memory_order_relaxed);
+                t.countedLost = juce::jmax (t.countedLost, lost);
             }
         }
 

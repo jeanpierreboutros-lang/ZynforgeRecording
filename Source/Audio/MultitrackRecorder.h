@@ -254,7 +254,11 @@ namespace zynforge
 
         // Health + position counters -- all RT-safe to read.
         juce::int64 getSamplesSinceStart() const noexcept { return samplesSinceStart.load(std::memory_order_relaxed); }
-        juce::int64 getMissedSamples()     const noexcept { return missedSamples    .load(std::memory_order_relaxed); }
+        juce::int64 getMissedSamples()     const noexcept
+        {
+            return missedSamples.load (std::memory_order_relaxed)
+                 + latches->primaryLostFrames.load (std::memory_order_relaxed);
+        }
         bool hasCaptureDeviceLost() const noexcept { return captureDeviceLost.load(); }
         void setMeterUnarmedInputs (bool on) noexcept { meterUnarmedInputs.store (on); }
         void markCaptureDeviceLost() noexcept { captureDeviceLost.store (true, std::memory_order_relaxed); }
@@ -610,6 +614,7 @@ namespace zynforge
         struct CaptureLatches
         {
             std::atomic<bool> primaryFailed { false }, backupFailed { false }, mirrorFailed { false };
+            std::atomic<juce::int64> primaryLostFrames { 0 };
         };
         std::shared_ptr<CaptureLatches> latches { std::make_shared<CaptureLatches>() };
         // Primary, then the backup if it is in play, then each active mirror.

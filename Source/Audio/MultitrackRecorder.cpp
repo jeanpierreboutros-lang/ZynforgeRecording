@@ -1915,6 +1915,7 @@ namespace zynforge
 
         samplesSinceStart.store (0, std::memory_order_relaxed);
         missedSamples    .store (0, std::memory_order_relaxed);
+        latches->primaryLostFrames.store (0, std::memory_order_relaxed);
         captureDeviceLost.store (false, std::memory_order_relaxed);
         for (auto& f : fifos) f->resetCaptureTimeline();
         alarmFrames.store (0, std::memory_order_relaxed);
@@ -2417,7 +2418,7 @@ namespace zynforge
         TakeStop stop;
         stop.stoppedAt        = juce::Time::getCurrentTime();
         stop.totalSamples     = samplesSinceStart.load (std::memory_order_relaxed);
-        stop.totalMissed      = missedSamples    .load (std::memory_order_relaxed);
+        stop.totalMissed      = getMissedSamples();
         stop.deviceLostAtStop = captureDeviceLost.load (std::memory_order_relaxed);
         stop.totalSeconds     = sampleRate > 0.0 ? (double) stop.totalSamples / sampleRate : 0.0;
         stop.backupWasRunning = backupActive.load (std::memory_order_relaxed);
@@ -3388,6 +3389,19 @@ namespace zynforge
 
     juce::StringArray MultitrackRecorder::describeCopyProblems() const
     {
+        // Only a copy that is writing and has lost nothing can be said to hold
+        // what this one lost. Saying it of a take with no such copy would turn a
+        // hole in the only recording into a reassurance.
+        const auto healthyCopyBesides = [this] (const CaptureCopy& lossy)
+        {
+            return std::any_of (copies.begin(), copies.end(), [&lossy] (const auto& copy)
+            {
+                return copy.get() != &lossy
+                    && copy->liveChannels.load (std::memory_order_relaxed) > 0
+                    && ! copy->overran.load (std::memory_order_relaxed)
+                    && ! copy->abandoned.load (std::memory_order_acquire);
+            });
+        };
         auto problems = droppedCopies;
         for (const auto& copy : copies)
         {
@@ -3396,7 +3410,9 @@ namespace zynforge
             else if (copy->overran.load (std::memory_order_relaxed) && sampleRate > 0.0)
                 problems.add (copy->label + " lost "
                               + juce::String ((double) copy->droppedFrames.load (std::memory_order_relaxed) / sampleRate, 1)
-                              + " s of audio; the other copies have it");
+                              + " s of audio; "
+                              + (healthyCopyBesides (*copy) ? "the other copies have it"
+                                                            : "no other copy has it"));
         }
         return problems;
     }
