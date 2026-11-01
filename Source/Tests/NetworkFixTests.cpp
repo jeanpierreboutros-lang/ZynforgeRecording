@@ -243,6 +243,7 @@ namespace zynforge
             testStream();
             testMcu();
             testTwinComparison();
+            testReportLock();
         }
 
     private:
@@ -1074,6 +1075,50 @@ namespace zynforge
             }
         }
 
+        void testReportLock()
+        {
+            beginTest ("Report edits wait for the other process's hold on the report");
+            {
+                const auto dir = freshDir();
+                dir.getChildFile ("session.report.json").replaceWithText ("{\"take\":1}");
+
+                // flock excludes separate opens of the file, so this stands in
+                // for the daemon without a second process.
+                const int held = capture::identity::Endpoint::openSharedFile (MultitrackRecorder::kReportLockName);
+                expect (held >= 0);
+                expectEquals (::flock (held, LOCK_EX), 0);
+
+                std::atomic<bool> edited { false };
+                std::thread editor ([&]
+                {
+                    MultitrackRecorder::editSessionReport (dir, [] (juce::DynamicObject& report)
+                    { report.setProperty ("twin", true); });
+                    edited.store (true);
+                });
+                juce::Thread::sleep (150);
+                expect (! edited.load(), "the edit did not wait for the other process");
+                ::close (held);
+                expect (waitFor ([&] { return edited.load(); }));
+                editor.join();
+                expect ((bool) juce::JSON::parse (dir.getChildFile ("session.report.json")).getProperty ("twin", false));
+                dir.deleteRecursively();
+            }
+
+            beginTest ("A stuck holder delays a report edit but never loses it");
+            {
+                const auto dir = freshDir();
+                dir.getChildFile ("session.report.json").replaceWithText ("{\"take\":1}");
+                const int held = capture::identity::Endpoint::openSharedFile (MultitrackRecorder::kReportLockName);
+                expectEquals (::flock (held, LOCK_EX), 0);
+                const auto started = juce::Time::getMillisecondCounterHiRes();
+                expect (MultitrackRecorder::editSessionReport (dir, [] (juce::DynamicObject& report)
+                { report.setProperty ("twin", true); }));
+                expectLessThan (juce::Time::getMillisecondCounterHiRes() - started, 8000.0);
+                ::close (held);
+                expect ((bool) juce::JSON::parse (dir.getChildFile ("session.report.json")).getProperty ("twin", false));
+                dir.deleteRecursively();
+            }
+        }
     };
 
     static NetworkFixTests networkFixTests;
