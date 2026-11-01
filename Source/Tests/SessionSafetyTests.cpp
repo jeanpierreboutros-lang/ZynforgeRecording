@@ -9,6 +9,8 @@
 #include "../Audio/AtomicFile.h"
 #include "../Audio/SettingsFile.h"
 #include "../Network/CloudUpload.h"
+#include <csignal>
+#include <sys/resource.h>
 #if JUCE_MAC
  #include <CoreFoundation/CoreFoundation.h>
 #endif
@@ -1029,6 +1031,83 @@ public:
         }
     }
 
+    void testShortWrites()
+    {
+        beginTest ("A short write never replaces a good file");
+        {
+            Folder f;
+            const auto target = f.dir.getChildFile ("metadata.json");
+            expect (atomicfile::writeText (target, "the good copy"));
+
+            // A real short write: the kernel stops the file at the limit and
+            // write() returns less than it was given.
+            rlimit before {};
+            expect (getrlimit (RLIMIT_FSIZE, &before) == 0);
+            const auto previous = signal (SIGXFSZ, SIG_IGN);
+            rlimit small = before; small.rlim_cur = 4096;
+            expect (setrlimit (RLIMIT_FSIZE, &small) == 0);
+            const bool ok = atomicfile::writeText (target, juce::String::repeatedString ("x", 10000));
+            setrlimit (RLIMIT_FSIZE, &before);
+            signal (SIGXFSZ, previous);
+
+            expect (! ok, "a truncated save reported success");
+            expectEquals (target.loadFileAsString(), juce::String ("the good copy"));
+            expect (atomicfile::writeText (target, "a full save still works"));
+        }
+    }
+
+    void testUnchangedBackups()
+    {
+        beginTest ("An unchanged autosave takes no place in the backups");
+        {
+            Folder f; writeSavedShow (f, 2);
+            const auto backups = f.dir.getChildFile ("Session File Backups");
+            const auto count = [&] { return backups.getNumberOfChildFiles (juce::File::findDirectories); };
+            const auto first = sessionbackup::writeSnapshot (f.dir);
+            expect (first.isDirectory());
+            for (int i = 0; i < 12; ++i)
+            {
+                // A save rewrites the project's time; that alone is not a change.
+                auto project = juce::JSON::parse (f.project());
+                project.getDynamicObject()->setProperty ("updatedAt", "2026-11-01T12:00:" + juce::String (i));
+                expect (f.project().replaceWithText (juce::JSON::toString (project)));
+                expect (sessionbackup::writeSnapshot (f.dir) == first, "an unchanged save took a place");
+            }
+            expectEquals (count(), 1);
+
+            for (const auto& changed : { f.mix(), f.settings() })
+            {
+                expect (changed.replaceWithText (changed.loadFileAsString() + " "));
+                expect (sessionbackup::writeSnapshot (f.dir) != first);
+            }
+            expectEquals (count(), 3);
+            expect (f.dir.getChildFile ("markers.json").replaceWithText ("{\"markers\":[]}"));
+            sessionbackup::writeSnapshot (f.dir);
+            expectEquals (count(), 4, "a new markers file is a change");
+            expect (f.project().replaceWithText ("{\"setlist\":[{\"name\":\"Changed\"}]}"));
+            sessionbackup::writeSnapshot (f.dir);
+            expectEquals (count(), 5, "a project edit is a change");
+        }
+
+        beginTest ("Ten real changes keep ten states, however many idle saves fell between them");
+        {
+            Folder f;
+            for (int change = 0; change < 12; ++change)
+            {
+                f.mix().replaceWithText (mixJson (change + 1));
+                for (int idle = 0; idle < 3; ++idle) expect (sessionbackup::writeSnapshot (f.dir).isDirectory());
+            }
+            juce::Array<int> strips;
+            for (const auto& snapshot : f.dir.getChildFile ("Session File Backups")
+                                             .findChildFiles (juce::File::findDirectories, false))
+                strips.add (sessionmix::stripCountIn (snapshot));
+            strips.sort();
+            expectEquals (strips.size(), 10);
+            expectEquals (strips.getFirst(), 3);
+            expectEquals (strips.getLast(), 12);
+        }
+    }
+
     void runTest() override
     {
         AudioEngine::setTestModeSkipAudioInit (true);
@@ -1046,6 +1125,8 @@ public:
         testCloudUpload();
         testOpenMessages();
         testHeldRecordPress();
+        testShortWrites();
+        testUnchangedBackups();
     }
 };
 
