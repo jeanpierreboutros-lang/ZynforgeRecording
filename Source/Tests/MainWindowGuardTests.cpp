@@ -283,6 +283,7 @@ namespace zynforge
             useSilentDevice (main.engine);
             main.setSize (1320, 820);
             Window::shared = &main;
+            dismissModals();   // an earlier suite may have left a dialog up
 
             loopNeverArmsAPunch();
             savedRegions();
