@@ -166,8 +166,7 @@ report "offline renders read automation under a blocking lock" \
 # ── 8. Device reconfiguration is guarded against a live take ───────────────
 # setAudioDeviceSetup()/initialise() RESTART the device, and
 # AudioEngine::audioDeviceStopped -> recorder.release() -> stopRecording(). So
-# ANY caller that reconfigures the device mid-take silently ENDS it. The guard
-# existed in MainComponent::applySessionSettings and nowhere else -- the DEVICE
+# ANY caller that reconfigures the device mid-take silently ENDS it. The DEVICE
 # panel let you stop a show by nudging the buffer-size combo.
 # AudioEngine's own ctor/init calls are exempt (there's no take at boot).
 HITS=""

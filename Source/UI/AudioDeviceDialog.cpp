@@ -280,8 +280,7 @@ namespace zynforge
             // silently ENDED the take. The panel is a non-modal floating window
             // and can already be open when RECORD is pressed, so guarding the
             // launch alone isn't enough -- the guard has to be here, on the
-            // mutation. MainComponent::applySessionSettings guards the same
-            // operation at its own entry point; this was the one that didn't.
+            // mutation.
             void timerCallback() override
             {
                 const bool rec = engine.isRecording();

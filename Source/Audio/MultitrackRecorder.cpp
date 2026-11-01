@@ -345,7 +345,7 @@ namespace zynforge
         // stop / restart (device swap, sample-rate or buffer-size change).
         // Detach the device- and thread-bound writer shards, but PRESERVE
         // the per-track state (tracks / fifos / preRoll). Every
-        // ChannelStrip / LedMeter / MiniSpectrum / EditPage row caches a
+        // ChannelStrip / LedMeter / EditPage row caches a
         // TrackState& grabbed at construction, and the CoreAudio IO
         // callback reads getTrack(i) every block -- destroying TrackState
         // here left all of them dangling and crashed the audio thread
