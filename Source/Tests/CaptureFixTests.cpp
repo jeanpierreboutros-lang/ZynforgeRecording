@@ -572,6 +572,53 @@ namespace zynforge
                 expect (! main.engine.isRecording(), "walking away must release this window");
             }
 
+            beginTest ("Markers during a daemon take land in that take, whatever was open before");
+            {
+                Rig rig;
+                if (! bringUp (rig)) return;
+                auto& main = *rig.main;
+                const auto previous = rig.root.getChildFile ("previous");
+                previous.createDirectory();
+                auto& markers = main.engine.getMarkers();
+                markers.setContext (previous, kRate);
+                markers.drop (100, "Old song");
+                const auto before = previous.getChildFile ("markers.json").loadFileAsString();
+
+                if (! startTake (rig, rig.session)) return;
+                expect (pumpUntil ([&]
+                {
+                    main.serviceCaptureDaemonLink();
+                    return main.engine.captureStatus().source == "daemon";
+                }, 5000), "no fresh daemon status");
+                expect (main.engine.dropMarkerAtCurrentPosition ("Scene 1") > 0, "the marker was refused");
+
+                expectEquals (previous.getChildFile ("markers.json").loadFileAsString(), before,
+                              "the marker went into the previous session");
+                expect (rig.session.getChildFile ("markers.json").loadFileAsString().contains ("Scene 1"),
+                        "the take has no marker file");
+
+                bool done = false;
+                main.stopActiveCaptureAsync (false, [&] (bool) { done = true; });
+                expect (pumpUntil ([&] { return done; }, 8000));
+                expect (main.engine.getMarkers().getCount() >= 1, "the marker did not survive STOP");
+            }
+
+            beginTest ("A window that reattaches can mark the take it found");
+            {
+                Rig rig;
+                if (! bringUp (rig) || ! startTake (rig, rig.session)) return;
+                auto& main = *rig.main;
+                rig.daemon.dropLinkForTests();
+                expect (pumpUntil ([&]
+                {
+                    main.serviceCaptureDaemonLink();
+                    return main.statusLabel.getText().contains ("REATTACHED")
+                        && main.engine.captureStatus().source == "daemon";
+                }, 8000));
+                expect (main.engine.dropMarkerAtCurrentPosition ("After the crash") > 0, "the marker was refused");
+                expect (rig.session.getChildFile ("markers.json").loadFileAsString().contains ("After the crash"));
+            }
+
             beginTest ("A take the daemon ended by itself comes back to the window");
             {
                 Rig rig;

@@ -198,6 +198,10 @@ namespace zynforge
         bool isRecording() const noexcept override { return recorder.isRecording() || externalRecording.load(); }
         void setExternalRecording (bool active) noexcept;
         bool isExternalRecording() const noexcept { return externalRecording.load (std::memory_order_acquire); }
+        // A daemon take is rolling into sessionDir: from here on it is this
+        // engine's session, for markers above all, exactly as if it had
+        // started here. Only the daemon's own folder may take a marker.
+        void beginExternalTake (const juce::File& sessionDir, double sampleRate);
         void setControlsLocked (bool locked) noexcept { controlsLocked.store (locked); }
         bool areControlsLocked() const noexcept { return controlsLocked.load(); }
         void setExternalCaptureStatus (const EngineStatus& status, juce::int64 receivedAtMs = 0);

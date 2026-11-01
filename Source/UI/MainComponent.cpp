@@ -405,9 +405,9 @@ void MainComponent::startDaemonTake (const RecordStartPlan& plan)
         engine.setExternalCaptureStatus (captureSupervisor.lastStatus(),
                                          captureSupervisor.lastStatusAtMs());
         lastCaptureFinalizationError.clear();
-        engine.setExternalRecording (true);
+        engine.beginExternalTake (plan.dir, captureSupervisor.lastStatus().sampleRate > 0.0
+                                                ? captureSupervisor.lastStatus().sampleRate : pendingSampleRate);
         daemonTakeAdopted = true;
-        engine.setActiveSessionDir (plan.dir);
         statusLabel.setText ("DAEMON recording " + juce::String (plan.armed) + "/"
                              + juce::String (plan.numTracks) + " tracks -> " + plan.dir.getFileName()
                              + "  (take survives a GUI crash)",

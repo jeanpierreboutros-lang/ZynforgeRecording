@@ -794,9 +794,11 @@ void MainComponent::connectCaptureDaemon (bool announceReattach)
 void MainComponent::adoptDaemonTake (const zynforge::EngineStatus& status, bool announce)
 {
     engine.setExternalCaptureStatus (status, captureSupervisor.lastStatusAtMs());
-    engine.setExternalRecording (true);
     daemonTakeAdopted = true;
-    if (status.sessionPath.isNotEmpty()) engine.setActiveSessionDir (juce::File (status.sessionPath));
+    if (status.sessionPath.isNotEmpty())
+        engine.beginExternalTake (juce::File (status.sessionPath), status.sampleRate);
+    else
+        engine.setExternalRecording (true);
     recordButton.setButtonText ("STOP");
     if (announce)
         showStatus ("REATTACHED to a rolling capture-daemon take -- STOP closes it normally.");

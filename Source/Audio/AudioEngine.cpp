@@ -820,6 +820,17 @@ namespace zynforge
         externalRecording.store (active, std::memory_order_release);
     }
 
+    void AudioEngine::beginExternalTake (const juce::File& sessionDir, double sampleRate)
+    {
+        setExternalRecording (true);
+        setActiveSessionDir (sessionDir);
+        if (sessionDir.isDirectory())
+        {
+            markers.setContext (sessionDir, sampleRate);
+            clearEditCursor();
+        }
+    }
+
     void AudioEngine::setExternalCaptureStatus (const EngineStatus& status, juce::int64 receivedAtMs)
     {
         std::lock_guard<std::mutex> lock (externalStatusLock);
