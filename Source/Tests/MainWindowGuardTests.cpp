@@ -1310,6 +1310,21 @@ namespace zynforge
                 delete w.main.metersDialog.getComponent();
             }
 
+            beginTest ("Pre-flight names the backup's format");
+            {
+                Window w;
+                const auto folder = tempDir ("backup-format");
+                w.dirs.add (folder);
+                const auto saved = w.recorder().getBackupDirectory();
+                expect (folder.createDirectory().wasOk());
+                expect (w.engine().setBackupDirectory (folder));
+                expect (w.engine().setBackupFormat (CaptureFormat::Flac24));
+                expect (w.main.backupChecklistRow().contains ("FLAC/24"), w.main.backupChecklistRow());
+                expect (w.engine().setBackupDirectory (saved));
+                expect (w.engine().setBackupFormat (CaptureFormat::Wav24));
+                updateSettings (w.engine().getAppProps(), [] (juce::PropertiesFile& p) { p.removeValue ("backupFormat"); });
+            }
+
             beginTest ("A refused backup folder is neither claimed nor saved");
             {
                 Window w;

@@ -2253,6 +2253,11 @@ namespace zynforge
             const auto savedBackup = appProps->getValue ("backupDirectory", {});
             if (savedBackup.isNotEmpty())
                 recorder.setBackupDirectory (juce::File (savedBackup));
+            // WAV 24 unless the engineer chose otherwise; a value this build
+            // does not know leaves it there.
+            const int savedFormat = appProps->getIntValue ("backupFormat", (int) CaptureFormat::Wav24);
+            if (savedFormat >= 0 && savedFormat <= (int) CaptureFormat::Flac24)
+                recorder.setBackupCaptureFormat ((CaptureFormat) savedFormat);
         }
 
         // Retain configured mirrors while removable volumes are offline;
@@ -2634,6 +2639,19 @@ namespace zynforge
         {
             reloadAppPropsBeforeWrite();
             appProps->setValue ("backupDirectory", dir.getFullPathName());
+            appProps->saveIfNeeded();
+        }
+        return true;
+    }
+
+    bool AudioEngine::setBackupFormat (CaptureFormat format)
+    {
+        recorder.setBackupCaptureFormat (format);
+        if (recorder.getBackupCaptureFormat() != format) return false;
+        if (appProps != nullptr)
+        {
+            reloadAppPropsBeforeWrite();
+            appProps->setValue ("backupFormat", (int) format);
             appProps->saveIfNeeded();
         }
         return true;

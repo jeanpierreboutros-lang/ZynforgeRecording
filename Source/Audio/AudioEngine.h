@@ -1166,6 +1166,7 @@ namespace zynforge
 
         // Forwards to MultitrackRecorder.
         bool setBackupDirectory (const juce::File& dir);   // persists only what the recorder took
+        bool setBackupFormat (CaptureFormat format);       // likewise
 
         // N-way mirror destinations. Wraps recorder.setMirrors and
         // persists via appProps so the engineer's mirror setup

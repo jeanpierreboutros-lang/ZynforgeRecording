@@ -1147,6 +1147,21 @@ namespace zynforge
                               "the window lost the session the daemon is writing");
             }
 
+            beginTest ("The chosen backup format reaches the daemon");
+            {
+                Rig rig;
+                if (! bringUp (rig)) return;
+                auto& main = *rig.main;
+                expect (main.engine.setBackupFormat (CaptureFormat::Flac24));
+                auto config = main.captureDaemonSettings();
+                config.getDynamicObject()->setProperty ("sampleRate", kRate);
+                expect (main.captureSupervisor.configureCapture (config));
+                expect (rig.daemon.getRecorder().getBackupCaptureFormat() == CaptureFormat::Flac24,
+                        "the daemon took a backup format the window did not choose");
+                expect (main.engine.setBackupFormat (CaptureFormat::Wav24));
+                updateSettings (main.engine.getAppProps(), [] (juce::PropertiesFile& p) { p.removeValue ("backupFormat"); });
+            }
+
             beginTest ("A daemon refusal keeps its reason");
             {
                 Rig rig;

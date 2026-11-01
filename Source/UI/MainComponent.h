@@ -148,7 +148,7 @@ private:
     void onImportAudioFiles();
     void onLockToggled();
     void onBackupClicked();
-    void applyBackupFolder (const juce::File&);
+    bool applyBackupFolder (const juce::File&);
     void onVscClicked();
     void openPatchWindow();
     void openMetersWindow();
@@ -317,6 +317,7 @@ private:
     void scanForCrashReports();
     void showCrashReportNotice (const juce::Array<juce::File>& reports);
     bool configureCaptureDaemon();
+    juce::var captureDaemonSettings();   // what the daemon takes from this window, the device aside
     bool daemonModeActive() const { return useCaptureDaemon && captureSupervisor.isAttached(); }
     void toggleCaptureDaemon();
     void connectCaptureDaemon (bool announceReattach);
@@ -561,6 +562,7 @@ private:
     // Show pre-flight checklist -- one-screen view of every show-critical
     // setting (device, SR, inputs, armed, backup, disk, cues, recording state).
     void  showPreflightChecklist();
+    juce::String backupChecklistRow();
 
     zynforge::ZynForgeLookAndFeel laf;
     zynforge::AudioEngine         engine;

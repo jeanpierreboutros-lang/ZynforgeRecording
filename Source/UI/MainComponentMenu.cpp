@@ -14,7 +14,6 @@
 #include "Meterbridge.h"
 #include "MarkerListDialog.h"
 #include "ClickSettingsDialog.h"
-#include "MirrorDrivesDialog.h"
 #include "TimecodeSyncDialog.h"
 #include "ControlSurfacesDialog.h"
 #include "DeskMacroDialog.h"
@@ -133,8 +132,7 @@ juce::PopupMenu MainComponent::getMenuForIndex (int topLevelIndex, const juce::S
         menu.addItem (7, "New Session from CSV (channel names)...", ! engine.isRecording());
 
         menu.addSeparator();
-        menu.addItem (60, "Choose Backup Folder...", ! engine.isRecording());
-        menu.addItem (61, "Mirror Drives...",        ! engine.isRecording());
+        menu.addItem (61, "Backup & Mirror Drives...", ! engine.isRecording());
         menu.addSeparator();
         menu.addItem (99, "Quit Zynforge Recording...");
     }
@@ -463,8 +461,7 @@ void MainComponent::registerMenuCommands()
         const auto list = listSessionTemplates();
         if (offset < list.size()) setDefaultTemplate (list[offset]);
     });
-    m.add (60,  [this] { onBackupClicked(); });
-    m.add (61,  [this] { MirrorDrivesDialog::launch (engine); });
+    m.add (61,  [this] { onBackupClicked(); });
     m.add (99,  [this] { confirmAndQuit(); });
 
     // Session

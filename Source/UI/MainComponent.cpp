@@ -10,6 +10,7 @@
 #include "EditToolsBar.h"
 #include "../Audio/MidiClockOut.h"
 #include "../Audio/PreflightProbes.h"
+#include "BackupMirrorDialog.h"
 #include "SessionRecoveryDialog.h"
 #include "MarkerListDialog.h"
 #include "ClickSettingsDialog.h"
@@ -1167,50 +1168,28 @@ void MainComponent::onBackupClicked()
         return;
     }
 
-    chooser = std::make_unique<juce::FileChooser> (
-        "Pick a backup folder (recordings are mirrored here)",
-        engine.getBackupDirectory().exists() ? engine.getBackupDirectory()
-                                              : getSessionsRoot(),
-        "");
-
-    const auto flags = juce::FileBrowserComponent::openMode
-                     | juce::FileBrowserComponent::canSelectDirectories;
-
     juce::Component::SafePointer<MainComponent> self (this);
-    chooser->launchAsync (flags, [self] (const juce::FileChooser& fc)
-    {
-        if (self == nullptr) return;
-        auto dir = fc.getResult();
-        if (dir.getFullPathName().isEmpty()) return;
-        if ((! dir.isDirectory() && ! dir.createDirectory().wasOk())
-            || ! zynforge::preflight::volumeWritable (dir))
+    zynforge::BackupMirrorDialog::launch (engine, {
+        [self] (const juce::String& refusal)
         {
+            if (self == nullptr) return;
             self->backupButton.setButtonText ("BACKUP !");
-            self->showStatus ("Backup folder is not writable");
-            return;
-        }
-        const auto rejection = MultitrackRecorder::mirrorRootRejection (
-            dir, self->engine.getActiveSessionDir(), {}, {});
-        if (rejection.isNotEmpty())
-        {
-            self->backupButton.setButtonText ("BACKUP !");
-            self->showStatus ("Backup folder rejected: " + rejection);
-            return;
-        }
-        self->applyBackupFolder (dir);
-    });
+            self->showStatus (refusal);
+        },
+        [self] (const juce::File& dir) { return self != nullptr && self->applyBackupFolder (dir); } });
 }
 
-void MainComponent::applyBackupFolder (const juce::File& dir)
+bool MainComponent::applyBackupFolder (const juce::File& dir)
 {
-    // The chooser can close after a take started behind it.
+    // The dialog can close after a take started behind it.
     if (! engine.setBackupDirectory (dir))
     {
         showStatus ("Backup folder not changed -- a take is rolling or finalizing");
-        return;
+        return false;
     }
     backupButton.setButtonText ("BACKUP OK");
     showStatus ("Backup folder -> " + dir.getFileName());
+    return true;
 }
 
 void MainComponent::showStatus (const juce::String& msg)
@@ -1494,6 +1473,47 @@ void MainComponent::confirmAndQuit()
         false);
 }
 
+static juce::String checklistFormatName (zynforge::CaptureFormat format)
+{
+    using F = zynforge::CaptureFormat;
+    return format == F::Wav24       ? "WAV/24"
+         : format == F::Wav16       ? "WAV/16"
+         : format == F::Wav32Float  ? "WAV/32f"
+         : format == F::Aiff24      ? "AIFF/24"
+         : format == F::Aiff16      ? "AIFF/16"
+         : format == F::Aiff32Float ? "AIFF/32f"
+         : format == F::Flac24      ? "FLAC/24"
+         : format == F::Flac16      ? "FLAC/16"
+                                    : "?";
+}
+
+juce::String MainComponent::backupChecklistRow()
+{
+    const auto backupDir = engine.getRecorder().getBackupDirectory();
+    const bool backupConfigured = backupDir.getFullPathName().isNotEmpty();
+    const bool backupWriterActive = captureSupervisor.isDaemonRecording()
+                                      ? captureSupervisor.lastStatus().backupActive
+                                      : engine.getRecorder().isBackupActive();
+    const bool backupWritable = ! engine.isRecording() && backupConfigured
+                                  && zynforge::preflight::volumeWritable (backupDir);
+    using BackupState = zynforge::preflight::RedundancyReadiness;
+    const auto backupState = zynforge::preflight::redundancyReadiness (
+        engine.isRecording(), backupConfigured, backupWritable, backupWriterActive);
+    const auto format = checklistFormatName (engine.getRecorder().getBackupCaptureFormat());
+    juce::String row;
+    row << (backupState == BackupState::Active
+              || backupState == BackupState::ConfiguredWritable ? "[OK]  " : "[X]  ")
+        << "Backup:      ";
+    if (backupState == BackupState::NotConfigured) row << "not configured";
+    else if (backupState == BackupState::ConfiguredWritable)
+        row << backupDir.getFullPathName() << " (configured + writable, " << format << ")";
+    else if (backupState == BackupState::ConfiguredUnavailable)
+        row << backupDir.getFullPathName() << " (NOT writable / missing, " << format << ")";
+    else if (backupState == BackupState::Active) row << "writer active (" << format << ")";
+    else row << "configured but NOT WRITING (" << format << ")";
+    return row;
+}
+
 void MainComponent::showPreflightChecklist()
 {
     // Every check below goes to the drives, from this thread.
@@ -1523,16 +1543,7 @@ void MainComponent::showPreflightChecklist()
     const auto root   = zynforge::preflight::storageRoot (sess, getSessionsRoot());
     const double freeGB = (root.exists() ? root.getBytesFreeOnVolume() : 0) / 1.0e9;
     const auto fmt    = engine.getRecorder().getCaptureFormat();
-    const juce::String fmtStr =
-          fmt == zynforge::CaptureFormat::Wav24      ? "WAV/24"
-        : fmt == zynforge::CaptureFormat::Wav16      ? "WAV/16"
-        : fmt == zynforge::CaptureFormat::Wav32Float ? "WAV/32f"
-        : fmt == zynforge::CaptureFormat::Aiff24     ? "AIFF/24"
-        : fmt == zynforge::CaptureFormat::Aiff16     ? "AIFF/16"
-        : fmt == zynforge::CaptureFormat::Aiff32Float? "AIFF/32f"
-        : fmt == zynforge::CaptureFormat::Flac24     ? "FLAC/24"
-        : fmt == zynforge::CaptureFormat::Flac16     ? "FLAC/16"
-                                                      : "?";
+    const auto fmtStr = checklistFormatName (fmt);
 
     // Headroom at the active configuration, by the rule RECORD refuses on, so
     // this list can never call a disk fine that RECORD then turns away.
@@ -1574,26 +1585,7 @@ void MainComponent::showPreflightChecklist()
                                                            : juce::String ("Idle"))
          << "\n";
 
-    const auto backupDir = engine.getRecorder().getBackupDirectory();
-    const bool backupConfigured = backupDir.getFullPathName().isNotEmpty();
-    const bool backupWriterActive = captureSupervisor.isDaemonRecording()
-                                      ? captureSupervisor.lastStatus().backupActive
-                                      : engine.getRecorder().isBackupActive();
-    const bool backupWritable = ! engine.isRecording() && backupConfigured
-                                  && zynforge::preflight::volumeWritable (backupDir);
-    using BackupState = zynforge::preflight::RedundancyReadiness;
-    const auto backupState = zynforge::preflight::redundancyReadiness (
-        engine.isRecording(), backupConfigured, backupWritable, backupWriterActive);
-    body << (backupState == BackupState::Active
-              || backupState == BackupState::ConfiguredWritable ? "[OK]  " : "[X]  ")
-         << "Backup:      ";
-    if (backupState == BackupState::NotConfigured) body << "not configured";
-    else if (backupState == BackupState::ConfiguredWritable)
-        body << backupDir.getFullPathName() << " (configured + writable)";
-    else if (backupState == BackupState::ConfiguredUnavailable)
-        body << backupDir.getFullPathName() << " (NOT writable / missing)";
-    else if (backupState == BackupState::Active) body << "writer active";
-    else body << "configured but NOT WRITING";
+    body << backupChecklistRow();
     body << "\n\n";
 
     if (engine.getMidiClockOut().isEnabled())

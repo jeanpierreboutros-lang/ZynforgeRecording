@@ -362,7 +362,7 @@ MainComponent::MainComponent()
     // Tooltips on header controls.
     deviceButton .setTooltip ("Choose the audio device, sample rate and buffer size.");
     lockButton   .setTooltip ("System Lock: disables every other control so a stray click can't kill a take.");
-    backupButton .setTooltip ("Pick a second drive -- every track is mirrored there as you record.");
+    backupButton .setTooltip ("Backup & Mirror Drives -- pick the drives every track is copied to as you record, and their formats.");
     patchButton  .setTooltip ("Open the patch matrix: route hardware inputs / outputs to channel strips.");
     titleLabel   .setTooltip ("Zynforge Recording -- JUCE 8 multitrack recorder + virtual soundcheck.");
 

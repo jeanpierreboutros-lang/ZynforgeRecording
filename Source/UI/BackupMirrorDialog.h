@@ -4,20 +4,20 @@
 
 #include "../Audio/AudioEngine.h"
 #include "../Audio/MultitrackRecorder.h"
+#include "../Audio/PreflightProbes.h"
 #include "../Theme/BrandColors.h"
 #include "../Theme/BrandTokens.h"
 #include "../Theme/DialogChrome.h"
 
 namespace zynforge
 {
-    // Show-day mirror-drives picker. Lets the engineer add / remove
-    // extra mirror destinations on top of the existing primary +
-    // backup pair. Each mirror writes a full parallel copy of every
-    // armed track in its own format to its own drive root.
+    // Show-day drive picker: the backup folder, then any extra mirror
+    // destinations. The backup and each mirror write a full parallel copy of
+    // every armed track in their own format to their own drive root.
     //
-    // Persistence + audio-thread wiring already lives in AudioEngine::
-    // setMirrors. This dialog is a thin editor over the engine's
-    // getMirrors() / setMirrors() pair, plus two things it must own:
+    // Persistence + audio-thread wiring already lives in AudioEngine. This
+    // dialog is a thin editor over setBackupFormat, the host's backup folder
+    // path and getMirrors() / setMirrors(), plus two things it must own:
     //
     //   1. ROOT VALIDATION. A mirror writes to root/<sessionName>/Audio
     //      Files/ -- the same shape the primary and backup use. A root that
@@ -32,37 +32,59 @@ namespace zynforge
     //
     //   2. A RECORDING GUARD. The recorder refuses a mirror change mid-take;
     //      this dialog is where the engineer finds that out, at the desk.
-    class MirrorDrivesDialog
+    class BackupMirrorDialog
     {
     public:
-        // Open the modal. Reads engine.getMirrors(), shows them as
-        // editable rows, writes back via engine.setMirrors() on
-        // Apply. Cancel discards changes.
-        static juce::DialogWindow* launch (AudioEngine& engine);
+        // What the header knows about the backup folder. Message thread.
+        struct Host
+        {
+            std::function<void (const juce::String&)> backupRefused;      // a picked folder can't be used
+            std::function<bool (const juce::File&)>   applyBackupFolder;  // false when a take owns the recorder
+        };
+
+        // Open the modal. Shows the backup and the mirrors as editable rows
+        // and writes them back on Apply. Cancel discards changes.
+        static juce::DialogWindow* launch (AudioEngine& engine, Host host);
+
+        // Why this folder cannot be the backup; empty when it can. Creates a
+        // folder that does not exist yet, as the chooser's New Folder would.
+        static juce::String backupFolderRefusal (const juce::File& folder, const juce::File& activeSession)
+        {
+            if ((! folder.isDirectory() && ! folder.createDirectory().wasOk())
+                || ! preflight::volumeWritable (folder))
+                return "Backup folder is not writable";
+            const auto rejection = MultitrackRecorder::mirrorRootRejection (folder, activeSession, {}, {});
+            return rejection.isNotEmpty() ? "Backup folder rejected: " + rejection : juce::String();
+        }
 
     private:
-        MirrorDrivesDialog() = delete;
+        BackupMirrorDialog() = delete;
     };
 
-    namespace mirrordlg
+    class DialogAuditTests;
+
+    namespace backupdlg
     {
         // Persistence keeps 16 slots (AudioEngine::setMirrors); refuse to add
         // past that rather than silently dropping the tail on save.
         inline constexpr int kMaxMirrors = 16;
 
-        // One row per mirror destination: path label + format combo
-        // + remove button. The owning Content rebuilds these on every
-        // mutation so the row list always reflects the working state.
-        class MirrorRow final : public juce::Component
+        // One row per destination: path label + format combo + remove button.
+        // The backup row has no remove button, and may refuse a picked folder
+        // through acceptPick. The owning Content rebuilds the mirror rows on
+        // every mutation so the list always reflects the working state.
+        class DriveRow final : public juce::Component
         {
         public:
-            MirrorRow (int idx,
-                       MultitrackRecorder::MirrorConfig& config,
-                       std::function<void(int)> onRemove,
-                       std::function<void()>    onChanged,
-                       std::function<juce::String (const juce::File&, int)> validateRoot)
+            DriveRow (int idx,
+                      MultitrackRecorder::MirrorConfig& config,
+                      std::function<void(int)> onRemove,
+                      std::function<void()>    onChanged,
+                      std::function<juce::String (const juce::File&, int)> validateRoot,
+                      std::function<bool (const juce::File&)> acceptPick = {})
                 : index (idx), cfg (config), removeCb (std::move (onRemove)),
-                  changedCb (std::move (onChanged)), validateCb (std::move (validateRoot))
+                  changedCb (std::move (onChanged)), validateCb (std::move (validateRoot)),
+                  acceptCb (std::move (acceptPick))
             {
                 pathLabel.setColour (juce::Label::textColourId, brand::textPrimary);
                 pathLabel.setColour (juce::Label::backgroundColourId, brand::bgDeep);
@@ -96,7 +118,8 @@ namespace zynforge
                 removeBtn.setColour (juce::TextButton::buttonColourId,
                                      brand::accentRecord.withAlpha (zynforge::brand::alpha::dimmed));
                 removeBtn.onClick = [this] { if (removeCb) removeCb (index); };
-                addAndMakeVisible (removeBtn);
+                addChildComponent (removeBtn);
+                removeBtn.setVisible ((bool) removeCb);
 
                 refreshPathDisplay();
             }
@@ -144,7 +167,7 @@ namespace zynforge
             void pickFolder()
             {
                 chooser = std::make_unique<juce::FileChooser> (
-                    "Pick a mirror drive root",
+                    acceptCb ? "Pick a backup folder (recordings are copied here)" : "Pick a mirror drive root",
                     cfg.root.isDirectory()
                         ? cfg.root
                         : juce::File::getSpecialLocation (juce::File::userMusicDirectory),
@@ -153,12 +176,13 @@ namespace zynforge
                                  | juce::FileBrowserComponent::canSelectDirectories;
                 // SafePointer: the picker outlives this click, and the row list
                 // is rebuilt (destroying rows) on every mutation.
-                juce::Component::SafePointer<MirrorRow> safeSelf (this);
+                juce::Component::SafePointer<DriveRow> safeSelf (this);
                 chooser->launchAsync (flags, [safeSelf] (const juce::FileChooser& fc)
                 {
                     if (safeSelf == nullptr) return;
                     const auto picked = fc.getResult();
                     if (picked.getFullPathName().isEmpty()) return;
+                    if (safeSelf->acceptCb && ! safeSelf->acceptCb (picked)) return;
                     safeSelf->cfg.root = picked;
                     safeSelf->refreshPathDisplay();
                     if (safeSelf->changedCb) safeSelf->changedCb();
@@ -170,6 +194,7 @@ namespace zynforge
             std::function<void(int)>             removeCb;
             std::function<void()>                changedCb;
             std::function<juce::String (const juce::File&, int)> validateCb;
+            std::function<bool (const juce::File&)> acceptCb;
             juce::Label                          pathLabel;
             juce::TextButton                     chooseBtn;
             juce::ComboBox                       formatBox;
@@ -180,19 +205,38 @@ namespace zynforge
         class Content final : public juce::Component, private juce::Timer
         {
         public:
-            explicit Content (AudioEngine& eng)
-                : engine (eng)
+            Content (AudioEngine& eng, BackupMirrorDialog::Host hostHooks)
+                : engine (eng), host (std::move (hostHooks))
             {
                 working = engine.getMirrors();
+                backup.root   = engine.getBackupDirectory();
+                backup.format = engine.getRecorder().getBackupCaptureFormat();
 
-                titleHint.setText ("Each mirror writes a full parallel copy of every armed track to "
-                                   "its own drive. Primary + backup keep running independently.",
+                titleHint.setText ("The backup and each mirror write a full parallel copy of every armed "
+                                   "track to their own drive, in their own format.",
                                    juce::dontSendNotification);
                 titleHint.setColour (juce::Label::textColourId, brand::textTertiary);
                 titleHint.setFont   (brand::type::caption());
                 titleHint.setJustificationType (juce::Justification::topLeft);
                 titleHint.setMinimumHorizontalScale (1.0f);
                 addAndMakeVisible (titleHint);
+
+                backupRow = std::make_unique<DriveRow> (
+                    -1, backup, std::function<void(int)>(),
+                    [this] { refreshAllRows(); },
+                    [this] (const juce::File& f, int)
+                    { return MultitrackRecorder::mirrorRootRejection (f, engine.getActiveSessionDir(), {}, {}); },
+                    [this] (const juce::File& f) { return acceptBackup (f); });
+                addAndMakeVisible (*backupRow);
+
+                for (auto* caption : { &backupCaption, &mirrorCaption })
+                {
+                    caption->setFont (brand::type::captionBold());
+                    caption->setColour (juce::Label::textColourId, brand::textMuted);
+                    addAndMakeVisible (*caption);
+                }
+                backupCaption.setText ("Backup", juce::dontSendNotification);
+                mirrorCaption.setText ("Mirror drives", juce::dontSendNotification);
 
                 // The row list scrolls. It used to lay rows out straight down a
                 // fixed 460px window, so past ~6 mirrors the rows, the Add button
@@ -225,9 +269,9 @@ namespace zynforge
                 addAndMakeVisible (cancelBtn);
 
                 rebuildRows();
-                setSize (760, 460);
+                setSize (760, 540);
 
-                // The recorder refuses a mirror change mid-take. This dialog can
+                // The recorder refuses a backup or mirror change mid-take. This dialog can
                 // already be open when RECORD is pressed, so enablement has to be
                 // re-derived from live state rather than computed once here.
                 lastRecording = engine.isRecording();
@@ -239,7 +283,7 @@ namespace zynforge
 
             void paint (juce::Graphics& g) override
             {
-                dialog::paintChrome (g, *this, "MIRROR DRIVES");
+                dialog::paintChrome (g, *this, "BACKUP & MIRROR DRIVES");
             }
 
             void resized() override
@@ -248,6 +292,10 @@ namespace zynforge
                                                                  brand::space::sm);
                 titleHint.setBounds (body.removeFromTop (40));
                 body.removeFromTop (brand::space::sm);
+                backupCaption.setBounds (body.removeFromTop (18));
+                backupRow->setBounds (body.removeFromTop (kRowH).withTrimmedRight (12));   // the mirror rows' scrollbar
+                body.removeFromTop (brand::space::md);
+                mirrorCaption.setBounds (body.removeFromTop (18));
 
                 addBtn.setBounds (body.removeFromBottom (brand::space::btnH)
                                       .withSizeKeepingCentre (220, brand::space::btnH));
@@ -266,6 +314,7 @@ namespace zynforge
             }
 
         private:
+            friend class zynforge::DialogAuditTests;
             static constexpr int kRowH = 36;
 
             void timerCallback() override
@@ -281,9 +330,10 @@ namespace zynforge
                 const bool rec = lastRecording;
                 addBtn  .setEnabled (! rec);
                 applyBtn.setEnabled (! rec);
+                backupRow->setRowEnabled (! rec);
                 for (auto& r : rows) r->setRowEnabled (! rec);
                 if (rec)
-                    status.setText ("Recording -- mirror drives are locked until the take ends.",
+                    status.setText ("Recording -- these drives are locked until the take ends.",
                                     juce::dontSendNotification);
                 else if (status.getText().startsWith ("Recording"))
                     status.setText ({}, juce::dontSendNotification);
@@ -299,8 +349,18 @@ namespace zynforge
                     if (i != selfIdx && working[(size_t) i].root != juce::File())
                         others.push_back (working[(size_t) i].root);
                 return MultitrackRecorder::mirrorRootRejection (
-                           root, engine.getActiveSessionDir(),
-                           engine.getBackupDirectory(), others);
+                           root, engine.getActiveSessionDir(), backup.root, others);
+            }
+
+            // The refusals a backup folder has always had, at the moment of
+            // picking it. An offline drive already saved here is left alone.
+            bool acceptBackup (const juce::File& folder)
+            {
+                const auto refusal = BackupMirrorDialog::backupFolderRefusal (folder, engine.getActiveSessionDir());
+                if (refusal.isEmpty()) return true;
+                status.setText (refusal, juce::dontSendNotification);
+                if (host.backupRefused) host.backupRefused (refusal);
+                return false;
             }
 
             void layoutRows()
@@ -320,7 +380,7 @@ namespace zynforge
                 rows.clear();
                 for (size_t i = 0; i < working.size(); ++i)
                 {
-                    auto row = std::make_unique<MirrorRow> (
+                    auto row = std::make_unique<DriveRow> (
                         (int) i, working[i],
                         [this] (int idx) { removeRow (idx); },
                         [this] { refreshAllRows(); },
@@ -336,6 +396,7 @@ namespace zynforge
             // so re-run every row's display, not just the one that moved.
             void refreshAllRows()
             {
+                backupRow->refreshPathDisplay();
                 for (auto& r : rows) r->refreshPathDisplay();
             }
 
@@ -373,7 +434,7 @@ namespace zynforge
             {
                 if (engine.isRecording())
                 {
-                    status.setText ("Recording -- stop the take before changing mirror drives.",
+                    status.setText ("Recording -- stop the take before changing these drives.",
                                     juce::dontSendNotification);
                     return;
                 }
@@ -405,10 +466,17 @@ namespace zynforge
                     cleaned.push_back (m);                     // keep even if not mounted now
                 }
 
-                if (! engine.setMirrors (cleaned))
+                // Each of these lost a race with RECORD if it says no.
+                if (backup.root != engine.getBackupDirectory()
+                    && (! host.applyBackupFolder || ! host.applyBackupFolder (backup.root)))
                 {
-                    // Lost a race with RECORD between the check above and here.
-                    status.setText ("Recording started -- mirror drives were not changed.",
+                    status.setText ("Recording started -- the backup folder was not changed.",
+                                    juce::dontSendNotification);
+                    return;
+                }
+                if (! engine.setBackupFormat (backup.format) || ! engine.setMirrors (cleaned))
+                {
+                    status.setText ("Recording started -- the drives were not all changed.",
                                     juce::dontSendNotification);
                     return;
                 }
@@ -422,11 +490,14 @@ namespace zynforge
             }
 
             AudioEngine&                                     engine;
+            BackupMirrorDialog::Host                         host;
+            MultitrackRecorder::MirrorConfig                 backup;
+            std::unique_ptr<DriveRow>                        backupRow;
             std::vector<MultitrackRecorder::MirrorConfig>    working;
-            std::vector<std::unique_ptr<MirrorRow>>          rows;
+            std::vector<std::unique_ptr<DriveRow>>           rows;
             juce::Viewport                                   rowView;
             juce::Component                                  rowHolder;
-            juce::Label                                      titleHint;
+            juce::Label                                      titleHint, backupCaption, mirrorCaption;
             juce::Label                                      status;
             juce::TextButton                                 addBtn;
             juce::TextButton                                 applyBtn;
@@ -435,11 +506,11 @@ namespace zynforge
         };
     }
 
-    inline juce::DialogWindow* MirrorDrivesDialog::launch (AudioEngine& engine)
+    inline juce::DialogWindow* BackupMirrorDialog::launch (AudioEngine& engine, Host host)
     {
-        auto content = std::make_unique<mirrordlg::Content> (engine);
+        auto content = std::make_unique<backupdlg::Content> (engine, std::move (host));
         juce::DialogWindow::LaunchOptions opts;
-        opts.dialogTitle             = "Mirror drives";
+        opts.dialogTitle             = "Backup & Mirror Drives";
         opts.dialogBackgroundColour  = brand::bgPanel;
         opts.escapeKeyTriggersCloseButton = true;
         opts.useNativeTitleBar       = false;

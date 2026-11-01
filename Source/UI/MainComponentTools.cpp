@@ -911,10 +911,17 @@ bool MainComponent::configureCaptureDaemon()
     auto* device = engine.getDeviceManager().getCurrentAudioDevice();
     auto xml = engine.getDeviceManager().createStateXml();
     if (device == nullptr || xml == nullptr) return false;
-    auto* o = new juce::DynamicObject();
-    juce::var config (o);
+    auto config = captureDaemonSettings();
+    auto* o = config.getDynamicObject();
     o->setProperty ("deviceState", xml->toString());
     o->setProperty ("sampleRate", device->getCurrentSampleRate());
+    return captureSupervisor.configureCapture (config);
+}
+
+juce::var MainComponent::captureDaemonSettings()
+{
+    auto* o = new juce::DynamicObject();
+    juce::var config (o);
     auto& rec = engine.getRecorder();
     o->setProperty ("preRoll", rec.getPreRollSeconds());
     o->setProperty ("backup", rec.getBackupDirectory().getFullPathName());
@@ -934,7 +941,7 @@ bool MainComponent::configureCaptureDaemon()
         s->setProperty ("format", (int) m.format); mirrors.add (juce::var (s));
     }
     o->setProperty ("tracks", tracks); o->setProperty ("mirrors", mirrors);
-    return captureSupervisor.configureCapture (config);
+    return config;
 }
 
 void MainComponent::scanForCrashReports()
