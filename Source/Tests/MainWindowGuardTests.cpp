@@ -6,7 +6,11 @@
 
 #include "../UI/MainComponent.h"
 #include "../UI/RecordPosition.h"
+#include "../Audio/ChannelAlarm.h"
 #include "../Audio/MultiPartReader.h"
+#include "../Audio/NoiseAnalyzer.h"
+#include "../Audio/QcAnalyzer.h"
+#include "../Audio/SongDetector.h"
 
 #include <functional>
 #include <CoreFoundation/CoreFoundation.h>
@@ -173,23 +177,40 @@ namespace zynforge
     public:
         MainWindowGuardTests() : juce::UnitTest ("Main window guards", "zynforge") {}
 
-        // A main window on the silent device, with one session open.
+        // One session open on the suite's main window. The window itself is
+        // shared: its waveform threads run at background priority, and tearing
+        // dozens of them down on a loaded machine is what could fail here.
         struct Window
         {
-            MainComponent main;
+            static inline MainComponent* shared = nullptr;
+
+            MainComponent& main;
             juce::File session;
             juce::Array<juce::File> dirs;
 
-            explicit Window (int tracks = 2, int blocks = 200, double rate = kRate)
+            explicit Window (int tracks = 2, int blocks = 200) : main (*shared)
             {
-                useSilentDevice (main.engine, rate);
                 session = newSession (tracks, blocks);
                 open (session);
             }
 
             ~Window()
             {
-                main.engine.clearAllStripOverrides();
+                if (main.sessionLocked) main.onLockToggled();
+                if (engine().isRecording()) main.stopActiveCaptureAsync (false);
+                stopped();
+                main.punchSessionActive = false;
+                main.manualPunchActive = false;
+                main.punchWindowTakeActive = false;    // the timer's job, and it isn't running
+                main.stopArmedAtMs = 0;
+                engine().stopPlayback();
+                engine().clearSessionState();
+                main.forgetSessionUiState();
+                main.condemnAllStrips();
+                engine().setStripCount (0);
+                engine().clearAllStripOverrides();
+                main.updateCaptureWarnings (EngineStatus());
+                main.lastTrackCount = -1;
                 for (const auto& d : dirs) d.deleteRecursively();
             }
 
@@ -253,6 +274,10 @@ namespace zynforge
                 MainComponent::s_testConstruct = false;
                 AudioEngine::setTestModeSkipAudioInit (false);
             } };
+            MainComponent main;
+            useSilentDevice (main.engine);
+            main.setSize (1320, 820);
+            Window::shared = &main;
 
             loopNeverArmsAPunch();
             savedRegions();
@@ -261,9 +286,34 @@ namespace zynforge
             punchModeUsesLiveArms();
             punchModeLeavesWithTheSession();
             remoteNeverPunches();
+            lockHolds();
+            alarmsStandOut();
+            sessionLeaving();
+            analysisStaysOutOfTheTake();
+            consoleWaitsForTheTake();
         }
 
     private:
+        static juce::MouseEvent rightClick (juce::Component& target)
+        {
+            const juce::Point<float> at (8.0f, 8.0f);
+            const juce::ModifierKeys mods (juce::ModifierKeys::rightButtonModifier
+                                           | juce::ModifierKeys::popupMenuClickModifier);
+            return juce::MouseEvent (juce::Desktop::getInstance().getMainMouseSource(), at, mods,
+                                     1, 0, 0, 0, 0, &target, &target, juce::Time::getCurrentTime(), at,
+                                     juce::Time::getCurrentTime(), 1, false);
+        }
+
+        // True when a right-click on `target` opened a menu.
+        static bool rightClickOpensMenu (juce::Component& target)
+        {
+            juce::PopupMenu::dismissAllActiveMenus();
+            target.mouseDown (rightClick (target));
+            const bool opened = juce::PopupMenu::dismissAllActiveMenus();
+            pumpUntil ([] { return false; }, 30);
+            return opened;
+        }
+
         void loopNeverArmsAPunch()
         {
             beginTest ("Loop with nothing selected makes no region");
@@ -701,6 +751,336 @@ namespace zynforge
                 w.open (w.session);
                 w.main.updatePunchPill();
                 expect (! w.main.punchPill.isVisible(), "the pill outlived the session");
+            }
+        }
+
+        void lockHolds()
+        {
+            beginTest ("LOCK survives a strip rebuild");
+            {
+                Window w;
+                w.main.rebuildStrips();
+                expect (! w.main.strips.empty());
+                w.main.onLockToggled();
+                w.main.rebuildStrips();
+                for (auto& s : w.main.strips) expect (! s->isEnabled(), "a rebuilt strip came back live under LOCK");
+                w.main.gridButton.onClick();
+                w.main.rebuildStrips();
+                for (auto& s : w.main.strips) expect (! s->isEnabled());
+                w.main.gridButton.onClick();
+                w.main.onLockToggled();
+                for (auto& s : w.main.strips) expect (s->isEnabled(), "UNLOCK left a strip dead");
+                w.main.rebuildStrips();
+                for (auto& s : w.main.strips) expect (s->isEnabled());
+            }
+
+            beginTest ("LOCK stops the right-click menus on strips, setlist and VCAs");
+            {
+                Window w;
+                w.main.rebuildStrips();
+                auto& strip = *w.main.strips.front();
+                expect (rightClickOpensMenu (strip), "the fixture never opened a strip menu");
+                expect (rightClickOpensMenu (w.main.setlistBar), "the fixture never opened a setlist menu");
+                w.main.onLockToggled();
+                expect (! rightClickOpensMenu (strip), "a strip menu opened under LOCK");
+                expect (! rightClickOpensMenu (w.main.setlistBar), "a setlist menu opened under LOCK");
+                if (w.main.vcaPanel != nullptr)
+                    for (auto* child : w.main.vcaPanel->getChildren())
+                        expect (! rightClickOpensMenu (*child), "a VCA menu opened under LOCK");
+                w.main.onLockToggled();
+            }
+
+            beginTest ("LOCK refuses a cue action from a menu that was already open");
+            {
+                Window w;
+                w.main.cues.push_back ({});
+                w.main.cues.back().name = "Keep";
+                w.main.currentCueIndex = 0;
+                w.main.onLockToggled();
+                w.main.setlistBar.onDeleteCue();
+                expectEquals ((int) w.main.cues.size(), 1, "a cue was deleted under LOCK");
+                w.main.onLockToggled();
+            }
+
+            beginTest ("LOCK makes EDIT rows click-through, as a take does");
+            {
+                Window w;
+                w.main.switchView (MainComponent::View::Edit);
+                expect (pumpUntil ([&] { return w.main.pendingMetadataSaves == 0; }), "the layout save never ended");
+                expect (w.main.editPage != nullptr);
+                expect (! w.main.editPage->isTimelineReadOnly(), "the fixture starts read-only");
+                w.main.onLockToggled();
+                expect (w.main.editPage->isTimelineReadOnly(), "EDIT rows took clicks under LOCK");
+                w.main.onLockToggled();
+                expect (! w.main.editPage->isTimelineReadOnly());
+                w.main.switchView (MainComponent::View::Mix);
+            }
+        }
+
+        void alarmsStandOut()
+        {
+            beginTest ("A failing take shows in the danger banner until it clears, and never blocks STOP");
+            {
+                Window w;
+                EngineStatus status;
+                status.recording = true;
+                status.backupFailed = true;
+                w.main.updateCaptureWarnings (status);
+                expect (w.main.alarmBanner.isVisible(), "a failed backup write stayed in the header text");
+                expect (w.main.alarmBanner.getText().contains ("BACKUP WRITE FAILED"), w.main.alarmBanner.getText());
+                expect (w.main.alarmBanner.getLevel() == AlarmBanner::Level::Danger);
+                expect (w.main.alarmBanner.getHeight() >= 48, "the banner is too small to read from a distance");
+                expect (w.main.alarmBanner.getBottom() <= w.main.bigClock.getY(), "the banner covers the clock");
+                bool childClicks = true, selfClicks = true;
+                w.main.alarmBanner.getInterceptsMouseClicks (selfClicks, childClicks);
+                expect (! selfClicks && ! childClicks, "the banner can take a click meant for STOP");
+                expect (w.main.transportBar->getBottom() <= w.main.alarmBanner.getY(), "the banner covers the transport");
+
+                status.primaryFailed = true;
+                status.channelAlarms.push_back ({});
+                status.channelAlarms.back().kind = channelalarm::kStream;
+                status.channelAlarms.back().channels = 8;
+                status.channelAlarms.back().name = "Dante";
+                w.main.updateCaptureWarnings (status);
+                expect (w.main.alarmBanner.getText().contains ("INPUT STREAM LOST"));
+                expect (w.main.alarmBanner.getText().contains ("PRIMARY WRITE FAILED"));
+
+                w.main.updateCaptureWarnings (EngineStatus());
+                expect (! w.main.alarmBanner.isVisible(), "the banner outlived the condition");
+                expectEquals (w.main.alarmBanner.getHeight(), 0);
+            }
+
+            beginTest ("Device loss, a dead channel and a struggling disk all reach the banner");
+            {
+                Window w;
+                const auto raises = [&] (std::function<void (EngineStatus&)> condition)
+                {
+                    EngineStatus status;
+                    status.recording = true;
+                    condition (status);
+                    w.main.updateCaptureWarnings (status);
+                    const bool shown = w.main.alarmBanner.isVisible();
+                    w.main.updateCaptureWarnings (EngineStatus());
+                    return shown;
+                };
+                expect (raises ([] (EngineStatus& s) { s.captureDeviceLost = true; }));
+                expect (raises ([] (EngineStatus& s) { s.diskStruggling = true; }));
+                expect (raises ([] (EngineStatus& s) { s.mirrorFailed = true; }));
+                expect (raises ([] (EngineStatus& s) { s.mirrorsSkipped = 1; }));
+                expect (raises ([] (EngineStatus& s) { s.recoveryMarkerFailed = true; }));
+                expect (raises ([] (EngineStatus& s) { s.source = "daemon-unavailable"; }));
+                expect (raises ([] (EngineStatus& s)
+                {
+                    s.channelAlarms.push_back ({});
+                    s.channelAlarms.back().kind = channelalarm::kChannel;
+                    s.channelAlarms.back().name = "Vox";
+                }));
+            }
+
+            beginTest ("A channel with no signal yet is a notice, not a danger");
+            {
+                Window w;
+                EngineStatus status;
+                status.recording = true;
+                status.channelAlarms.push_back ({});
+                status.channelAlarms.back().kind = channelalarm::kNoSignal;
+                status.channelAlarms.back().name = "Vox";
+                w.main.updateCaptureWarnings (status);
+                expect (w.main.alarmBanner.isVisible());
+                expect (w.main.alarmBanner.getLevel() == AlarmBanner::Level::Notice);
+                w.main.updateCaptureWarnings (EngineStatus());
+            }
+
+            beginTest ("A failed finalization stands after STOP until the next take or session");
+            {
+                Window w;
+                w.main.lastCaptureFinalizationError = "Recording stopped, but finalization failed: backup audio write failed";
+                w.main.refreshAlarmBanner();
+                expect (w.main.alarmBanner.getText().contains ("finalization failed"));
+                w.open (w.session);
+                w.main.refreshAlarmBanner();
+                expect (! w.main.alarmBanner.isVisible(), "a failed take followed the engineer into the next session");
+            }
+
+            beginTest ("A refused RECORD shows in the banner, and the banner then clears");
+            {
+                Window w;
+                w.arm ({});
+                w.main.onRecordClicked();
+                expect (! w.engine().isRecording());
+                expect (w.main.alarmBanner.isVisible(), "a refused RECORD stayed in the header text");
+                expect (w.main.alarmBanner.getText().containsIgnoreCase ("arm"), w.main.alarmBanner.getText());
+                w.main.refreshAlarmBanner();
+                expect (w.main.alarmBanner.isVisible(), "the refusal vanished at once");
+                w.main.recordRefusalShownMs -= 60000;
+                w.main.refreshAlarmBanner();
+                expect (! w.main.alarmBanner.isVisible(), "the refusal never cleared");
+
+                w.main.onRecordClicked();
+                expect (w.main.alarmBanner.isVisible());
+                w.arm ({ 0 });
+                w.main.onRecordClicked();
+                expect (w.engine().isRecording(), w.main.statusLabel.getText());
+                w.main.refreshAlarmBanner();
+                expect (! w.main.alarmBanner.isVisible(), "the refusal stayed up over a running take");
+                feedAll (w.recorder(), 0.1f, 4);
+                w.main.stopActiveCaptureAsync (false);
+                expect (w.stopped());
+            }
+
+            beginTest ("A refusal further down pre-flight reaches the banner too");
+            {
+                Window w;
+                w.arm ({ 0 });
+                auto& manager = w.engine().getDeviceManager();
+                manager.closeAudioDevice();
+                w.main.onRecordClicked();
+                expect (w.main.alarmBanner.getText().containsIgnoreCase ("device"), w.main.alarmBanner.getText());
+                manager.restartLastAudioDevice();
+                expect (manager.getCurrentAudioDevice() != nullptr, "the fixture lost its device");
+            }
+        }
+
+        void sessionLeaving()
+        {
+            using Action = AudioEngine::RemoteTransportAction;
+
+            beginTest ("A failed take never stops a remote STOP from stopping playback");
+            {
+                Window w;
+                w.main.lastCaptureFinalizationError = "Recording stopped, but finalization failed: mirror audio write failed";
+                w.player().setPositionSamples (20000);
+                w.engine().startPlayback();
+                expect (w.player().isPlaying());
+                juce::String error;
+                expect (! w.engine().performRemoteTransport (Action::StopAll, error), "the failure was not reported");
+                expect (error.containsIgnoreCase ("finalization"), error);
+                expect (! w.player().isPlaying(), "playback kept rolling");
+            }
+
+            beginTest ("An idle local STOP no longer repeats an old failure");
+            {
+                Window w;
+                w.main.lastCaptureFinalizationError = "Recording stopped, but finalization failed: mirror audio write failed";
+                w.main.statusLabel.setText ({}, juce::dontSendNotification);
+                w.main.onStopClicked();
+                expect (! w.main.statusLabel.getText().containsIgnoreCase ("finalization"), w.main.statusLabel.getText());
+            }
+
+            beginTest ("The setlist bar and a running cue fade end with the session");
+            {
+                Window w;
+                w.main.cues.push_back ({});
+                w.main.cues.back().name = "Old";
+                w.main.currentCueIndex = 0;
+                w.main.setlistBar.setCues (w.main.cues, 0);
+                w.main.cueRamp.active = true;
+                w.main.engine.clearSessionState();
+                w.main.forgetSessionUiState();
+                expect (w.main.cues.empty());
+                expect (! w.main.cueRamp.active, "a fade ran on into the next session");
+                for (auto* child : w.main.setlistBar.getChildren())
+                    if (auto* combo = dynamic_cast<juce::ComboBox*> (child))
+                        expectEquals (combo->getNumItems(), 0, "the setlist bar kept the closed session's cues");
+            }
+
+            beginTest ("A new session from any path starts without the old cues");
+            {
+                Window w;
+                w.main.cues.push_back ({});
+                w.main.cues.back().name = "Old";
+                w.main.currentCueIndex = 0;
+                NewSessionDialog::Result r;
+                r.name = "Fresh";
+                r.location = tempDir ("fresh-root");
+                w.dirs.add (r.location);
+                expect (w.main.createSessionFolderStructure (r).isDirectory());
+                expect (w.main.cues.empty(), "the new session inherited the old cues");
+            }
+        }
+
+        void analysisStaysOutOfTheTake()
+        {
+            beginTest ("A cancelled scan stops and writes no report");
+            {
+                Window w;
+                const std::atomic<bool> cancelled { true };
+                auto findings = NoiseAnalyzer::analyseSession (w.session, {}, &cancelled);
+                expect (findings.empty());
+                expect (! w.session.getChildFile ("noise_report.json").existsAsFile(),
+                        "a cancelled scan wrote its report");
+                expectEquals (qc::analyzeFile (trackFile (w.session, 0), &cancelled).clipEventCount, 0);
+                double rate = 0.0;
+                expect (songs::envelopeFlags (trackFile (w.session, 0), -40.0f, 1.0, rate, &cancelled).empty());
+            }
+
+            beginTest ("A second scan refuses, and RECORD never waits for one");
+            {
+                Window w;
+                w.arm ({ 0 });
+                w.main.analysisBusy.store (true);
+                w.main.runNoiseAnalysis();
+                expect (w.main.statusLabel.getText().containsIgnoreCase ("already"), w.main.statusLabel.getText());
+                w.main.onRecordClicked();
+                expect (w.engine().isRecording(), w.main.statusLabel.getText());
+                w.main.analysisBusy.store (false);
+                feedAll (w.recorder(), 0.1f, 4);
+                w.main.stopActiveCaptureAsync (false);
+                expect (w.stopped());
+            }
+
+            beginTest ("A take cancels a running scan, and no report opens over it");
+            {
+                Window w;
+                w.arm ({ 0 });
+                w.main.runNoiseAnalysis();
+                expect (w.main.analysisBusy.load());
+                w.engine().armContinue (w.engine().getCaptureLengthSamples());
+                expect (w.engine().startRecording (w.session), w.recorder().getStartError());
+                w.main.cancelAnalysisForTake();
+                expect (pumpUntil ([&] { return ! w.main.analysisBusy.load(); }), "the scan never ended");
+                expectEquals (juce::ModalComponentManager::getInstance()->getNumModalComponents(), 0,
+                              "a report dialog opened over the take");
+                expect (w.main.statusLabel.getText().containsIgnoreCase ("analysis stopped"), w.main.statusLabel.getText());
+                feedAll (w.recorder(), 0.1f, 4);
+                w.main.stopActiveCaptureAsync (false);
+                expect (w.stopped());
+            }
+
+            beginTest ("A scan's result is held back from a take and from another session");
+            {
+                Window w;
+                expect (w.main.analysisResultWanted (w.session, false));
+                expect (! w.main.analysisResultWanted (w.session, true), "a cancelled scan reported");
+                expect (! w.main.analysisResultWanted (juce::File ("/tmp/zf-other-session"), false),
+                        "a report opened for the wrong session");
+                w.main.captureMetadataPending = true;
+                expect (! w.main.analysisResultWanted (w.session, false), "a report opened over finalization");
+                w.main.captureMetadataPending = false;
+            }
+        }
+
+        void consoleWaitsForTheTake()
+        {
+            beginTest ("Console repatch and head-amp restore wait for the take to end");
+            {
+                Window w;
+                std::vector<juce::OSCMessage> sent;
+                w.main.consoleLink.setSendHook ([&] (const auto& m) { sent.push_back (m); });
+                w.arm ({ 0 });
+                w.engine().armContinue (w.engine().getCaptureLengthSamples());
+                expect (w.engine().startRecording (w.session), w.recorder().getStartError());
+                w.main.consoleToggleSoundcheck();
+                expect (sent.empty(), "the desk was repatched under a live take");
+                w.main.consoleRestoreGains();
+                expect (sent.empty(), "the head-amps were rewritten under a live take");
+                expect (w.main.statusLabel.getText().containsIgnoreCase ("take"), w.main.statusLabel.getText());
+                feedAll (w.recorder(), 0.1f, 4);
+                w.main.stopActiveCaptureAsync (false);
+                expect (w.stopped());
+                w.main.consoleToggleSoundcheck();
+                expect (! sent.empty(), "the repatch stayed refused after the take");
+                w.main.consoleLink.setSendHook (nullptr);
             }
         }
 
