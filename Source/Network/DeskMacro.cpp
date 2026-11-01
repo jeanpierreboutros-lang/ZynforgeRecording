@@ -158,10 +158,10 @@ namespace zynforge
 
             case Command::Marker:
                 if (refuseWhileBusy ("marker")) break;
-                if (engine.dropMarkerAtCurrentPosition() >= 0)
+                if (engine.getRemotes().dropRemoteMarker() >= 0)
                     report ("marker dropped");
                 else
-                    report ("marker refused -- no session is open");
+                    report ("marker refused -- no session is open, or too many too fast");
                 break;
 
             case Command::MarkerNext:

@@ -188,18 +188,27 @@ namespace zynforge
         }
     }
 
+    void MidiControlSurface::send (const juce::MidiMessage& message)
+    {
+        if (sendHookForTests != nullptr) sendHookForTests (message);
+        else if (output != nullptr)      output->sendMessageNow (message);
+    }
+
     void MidiControlSurface::timerCallback()
     {
-        if (output == nullptr) return;
+        if (output == nullptr && sendHookForTests == nullptr) return;
         auto& rec = engine.getRecorder();
         const int n    = rec.getNumTracks();
         const int bank = bankOffset.load (std::memory_order_relaxed);
 
-        if (forceRefresh.exchange (false, std::memory_order_relaxed))
+        // After a bank move the surface still shows the old strips, whatever
+        // was last sent, so a button or name that is now off or empty has to go
+        // out too. There is no "last" value that compares unequal to both.
+        const bool force = forceRefresh.exchange (false, std::memory_order_relaxed);
+        if (force)
         {
             for (int i = 0; i < kStrips; ++i)
-            { lastFaderDb[i] = -999.0f; lastMute[i] = lastSolo[i] = lastArm[i] = false;
-              lastMeter[i] = -1; lastPan[i] = -2.0f; lastName[i] = {}; }
+            { lastFaderDb[i] = -999.0f; lastMeter[i] = -1; lastPan[i] = -2.0f; }
             lastMasterDb = -999.0f; lastTimecode = {};
         }
 
@@ -216,27 +225,27 @@ namespace zynforge
             const auto  name = present ? rec.getTrack (ch).name : juce::String();
 
             if (std::abs (dB - lastFaderDb[i]) > 0.05f)
-            { output->sendMessageNow (mcu::fader (i, dB)); lastFaderDb[i] = dB; }
-            if (mute != lastMute[i]) { output->sendMessageNow (mcu::led (mcu::Action::Mute, i, mute)); lastMute[i] = mute; }
-            if (solo != lastSolo[i]) { output->sendMessageNow (mcu::led (mcu::Action::Solo, i, solo)); lastSolo[i] = solo; }
-            if (arm  != lastArm[i])  { output->sendMessageNow (mcu::led (mcu::Action::Arm,  i, arm));  lastArm[i]  = arm; }
-            if (std::abs (pan - lastPan[i]) > 0.01f) { output->sendMessageNow (mcu::vpotRing (i, pan)); lastPan[i] = pan; }
-            if (met != lastMeter[i]) { output->sendMessageNow (mcu::meter (i, met)); lastMeter[i] = met; }
-            if (name != lastName[i]) { output->sendMessageNow (mcu::scribble (i, name)); lastName[i] = name; }
+            { send (mcu::fader (i, dB)); lastFaderDb[i] = dB; }
+            if (force || mute != lastMute[i]) { send (mcu::led (mcu::Action::Mute, i, mute)); lastMute[i] = mute; }
+            if (force || solo != lastSolo[i]) { send (mcu::led (mcu::Action::Solo, i, solo)); lastSolo[i] = solo; }
+            if (force || arm  != lastArm[i])  { send (mcu::led (mcu::Action::Arm,  i, arm));  lastArm[i]  = arm; }
+            if (std::abs (pan - lastPan[i]) > 0.01f) { send (mcu::vpotRing (i, pan)); lastPan[i] = pan; }
+            if (met != lastMeter[i]) { send (mcu::meter (i, met)); lastMeter[i] = met; }
+            if (force || name != lastName[i]) { send (mcu::scribble (i, name)); lastName[i] = name; }
         }
 
         const bool playing = engine.isPlaying();
         if (playing != lastPlaying)
         {
-            output->sendMessageNow (mcu::led (mcu::Action::Play, 0, playing));
-            output->sendMessageNow (mcu::led (mcu::Action::Stop, 0, ! playing));
+            send (mcu::led (mcu::Action::Play, 0, playing));
+            send (mcu::led (mcu::Action::Stop, 0, ! playing));
             lastPlaying = playing;
         }
 
         // Master / monitor motor fader (9th fader).
         const float masterDb = engine.getMasterGainDb();
         if (std::abs (masterDb - lastMasterDb) > 0.05f)
-        { output->sendMessageNow (mcu::masterFader (masterDb)); lastMasterDb = masterDb; }
+        { send (mcu::masterFader (masterDb)); lastMasterDb = masterDb; }
 
         // Time display: transport position as HH:MM:SS:FF (30 fps). Only the
         // 8 changed digits are resent (timeString gives a stable 8-char key).
@@ -248,7 +257,7 @@ namespace zynforge
         {
             std::vector<juce::MidiMessage> digits;
             mcu::timeDisplayMessages (posSeconds, 30, digits);
-            for (const auto& d : digits) output->sendMessageNow (d);
+            for (const auto& d : digits) send (d);
             lastTimecode = tc;
         }
     }

@@ -24,6 +24,8 @@ void MainComponent::timerCallback()
     serviceCaptureDaemonLink();
     twinLink.tick();
     updateTwinStatusLabel();
+    // Every way a session can change passes here within a tick.
+    consoleLink.setSessionDir (engine.getActiveSessionDir());
     // Keep the macOS menu's greyed/enabled states in sync with reality
     // (Undo/Redo, Edit, Track, Export) -- they're cached until we ask for a
     // refresh, so without this they freeze in the empty launch state.

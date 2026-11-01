@@ -607,7 +607,9 @@ void MainComponent::promptConsoleConnect()
 
             if (! self->consoleLink.connect (host))
             {
-                self->showStatus ("Console link failed -- check the IP and the network");
+                self->showStatus (zynforge::oscwire::normaliseSourceIp (host).isEmpty()
+                    ? "Enter the console's IP address as numbers, like 192.168.1.50"
+                    : "Console link failed -- check the IP and the network");
                 return;
             }
             if (auto* p = self->engine.getAppProps())
@@ -633,6 +635,7 @@ void MainComponent::promptConsoleConnect()
             // Show-night state saved with the session (stage patch +
             // gains) comes back automatically on VSC day.
             const auto sess = self->engine.getActiveSessionDir();
+            self->consoleLink.setSessionDir (sess);
             if (sess.isDirectory() && self->consoleLink.loadFrom (sess))
                 self->showStatus ("Console link up: " + host
                             + " -- loaded saved patch + gains from session");
@@ -681,9 +684,13 @@ void MainComponent::consoleToggleSoundcheck()
 {
     if (refuseConsoleWriteDuringTake()) return;
     if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
+    const auto sess = engine.getActiveSessionDir();
+    consoleLink.setSessionDir (sess);
     if (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Soundcheck
         || (consoleLink.getPatch() == zynforge::ConsoleLink::Patch::Unknown && consoleLink.hasStagePatch()))
         consoleLink.exitSoundcheck();
+    else if (! sess.isDirectory())
+        showStatus ("Open a session first -- the show patch is saved with it before the console moves");
     else
         consoleLink.enterSoundcheck();
 }
@@ -691,6 +698,7 @@ void MainComponent::consoleToggleSoundcheck()
 void MainComponent::consoleCaptureGains()
 {
     if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
+    consoleLink.setSessionDir (engine.getActiveSessionDir());
     // jlimit(1, ...) turned an empty session into a 1-channel poll, which then
     // "captured" a single head-amp and saved it as the show's gains.
     const int tracks = engine.getRecorder().getNumTracks();
@@ -737,14 +745,11 @@ void MainComponent::consoleRestoreGains()
 {
     if (refuseConsoleWriteDuringTake()) return;
     if (! consoleLink.isConnected()) { showStatus ("Connect to the console first"); return; }
+    consoleLink.setSessionDir (engine.getActiveSessionDir());
     if (consoleLink.getCapturedGains().empty())
     {
-        const auto sess = engine.getActiveSessionDir();
-        if (! (sess.isDirectory() && consoleLink.loadFrom (sess)))
-        {
-            showStatus ("No captured gains -- capture them on show night first");
-            return;
-        }
+        showStatus ("No captured gains in this session -- capture them on show night first");
+        return;
     }
     consoleLink.restoreGains();
 }

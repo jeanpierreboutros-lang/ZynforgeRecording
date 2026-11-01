@@ -261,6 +261,7 @@ target_sources(ZynforgeRecordingTests PRIVATE
     Source/Tests/MenuDispatchTests.cpp
     Source/Tests/MultiPartPlaybackTests.cpp
     Source/Tests/NetworkAuditTests.cpp
+    Source/Tests/NetworkFixTests.cpp
     Source/Tests/OctoberRegressionTests.cpp
     Source/Tests/OscRemoteTests.cpp
     Source/Tests/PlaceholderViewTests.cpp

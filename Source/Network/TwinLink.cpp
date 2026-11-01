@@ -207,9 +207,13 @@ namespace zynforge::twin
     {
         TakeSummary s;
         s.reportAvailable = report.isObject();
-        s.frames          = countOf (report, "totalSamples");
-        s.seconds         = (double) report.getProperty ("totalSeconds", 0.0);
-        s.missedSamples   = countOf (report, "missedSamples");
+        // One pass against one pass: the totals also hold earlier passes,
+        // which the other Mac may never have recorded. A report written
+        // before the pass fields existed has only the totals.
+        const bool hasPass = report.hasProperty ("passSeconds");
+        s.frames          = countOf (report, hasPass ? "passSamples" : "totalSamples");
+        s.seconds         = (double) report.getProperty (hasPass ? "passSeconds" : "totalSeconds", 0.0);
+        s.missedSamples   = countOf (report, hasPass ? "passMissedSamples" : "missedSamples");
         for (const auto* flag : { "primaryFailed", "backupFailed", "mirrorFailed", "punchSpliceFailed",
                                   "captureDeviceLost", "sha256Failed" })
             if ((bool) report.getProperty (flag, false)) ++s.failures;
@@ -485,8 +489,7 @@ namespace zynforge::twin
             {
                 const auto line = connection.lines.front();
                 connection.lines.pop_front();
-                if (! linesocket::jsonDepthWithin (line, linesocket::kMaxJsonDepth)) return false;
-                message = juce::JSON::parse (line);
+                message = linesocket::parseJson (line);
                 return message.isObject();
             }
             if (! connection.pump (kPollMs)) return false;
@@ -612,8 +615,7 @@ namespace zynforge::twin
         // and a recorded frame cannot be played back.
         const auto openFrame = [&keys] (const juce::String& line, juce::var& body)
         {
-            if (! linesocket::jsonDepthWithin (line, linesocket::kMaxJsonDepth)) return false;
-            const auto frame = juce::JSON::parse (line);
+            const auto frame = linesocket::parseJson (line);
             if (frame.getProperty ("type", "").toString() != "twin.frame") return false;
             const auto sequence = (juce::int64) frame.getProperty ("seq", 0);
             const auto text = frame.getProperty ("body", "").toString();
@@ -623,8 +625,7 @@ namespace zynforge::twin
                                                + juce::String (sequence) + ":" + text)))
                 return false;
             keys.received = sequence;
-            if (! linesocket::jsonDepthWithin (text, linesocket::kMaxJsonDepth)) return false;
-            body = juce::JSON::parse (text);
+            body = linesocket::parseJson (text);
             return body.isObject();
         };
 

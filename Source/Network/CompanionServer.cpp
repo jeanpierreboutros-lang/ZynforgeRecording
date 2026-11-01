@@ -5,6 +5,7 @@
 #include "../Theme/BrandColors.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstring>
 #include <thread>
@@ -116,6 +117,32 @@ namespace zynforge
             if (ready == 0) return false;
             char scratch[256];
             return s.read (scratch, (int) sizeof (scratch), false) <= 0;
+        }
+
+        // Sends one chunk whole. readRequest left the socket non-blocking, so
+        // after a stall the buffer takes part of a chunk at a time; a poll can
+        // report writable with only a couple of KB free. The rest has to follow
+        // before anything else or the stream comes apart mid-frame. Polling
+        // keeps stop() able to unwind a client that has gone quiet. False ends
+        // the stream.
+        bool sendWhole (juce::StreamingSocket& s, const void* data, int bytes, const std::atomic<bool>& running)
+        {
+            int sent = 0;
+            while (sent < bytes)
+            {
+                if (! running.load()) return false;
+                const int ready = s.waitUntilReady (false, 200);
+                if (ready < 0) return false;
+                if (ready == 0)
+                {
+                    if (peerHungUp (s)) return false;
+                    continue;
+                }
+                const int n = s.write (static_cast<const char*> (data) + sent, bytes - sent);
+                if (n > 0) sent += n;
+                else if (n == 0 || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) return false;
+            }
+            return true;
         }
 
         const char* kHtmlPage = R"HTML(<!doctype html>
@@ -731,9 +758,7 @@ poll();
 
     void CompanionServer::handleCommand (juce::StreamingSocket& s, const juce::String& body)
     {
-        if (! linesocket::jsonDepthWithin (body, linesocket::kMaxJsonDepth))
-        { writeRaw (s, "400 Bad Request", "text/plain", "json expected"); return; }
-        const auto parsed = juce::JSON::parse (body);
+        const auto parsed = linesocket::parseJson (body);
         if (! parsed.isObject()) { writeRaw (s, "400 Bad Request", "text/plain", "json expected"); return; }
         const auto action = parsed.getProperty ("action", "").toString();
         const int channel = (int) parsed.getProperty ("channel", 0);
@@ -953,16 +978,9 @@ poll();
                 readIdx = streamRing.writeIdx.load (std::memory_order_acquire);
                 continue;
             }
-            const auto bytes = (int) (outChunk.size() * sizeof (juce::int16));
-            // Don't block indefinitely inside write() when the peer has gone
-            // away and the TCP send buffer is full (iPad out of Wi-Fi / asleep).
-            // Poll writability with a short timeout so the loop re-checks
-            // `running` and unwinds promptly on stop()/quit -- otherwise stop()
-            // joined a wedged worker and beachballed the app mid-show.
-            const int ready = s.waitUntilReady (false, 200);
-            if (ready < 0) break;                       // socket error / closed
-            if (ready == 0) continue;                   // buffer full -> re-check running
-            if (s.write (outChunk.data(), bytes) != bytes) break;
+            // A stalled listener sits here while the ring laps it, then the
+            // lapped check above jumps it forward: audio drops, the stream stays.
+            if (! sendWhole (s, outChunk.data(), (int) (outChunk.size() * sizeof (juce::int16)), running)) break;
             readIdx += take;
         }
 

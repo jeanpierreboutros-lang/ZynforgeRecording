@@ -55,7 +55,11 @@ namespace zynforge
             // invalidates the handle, so a reused one can never re-bind.
             socket = std::make_unique<juce::DatagramSocket> (false);
             if (! socket->bindToPort (0))              { socket.reset(); return false; }
-            if (! receiver.connectToSocket (*socket))  { socket.reset(); return false; }
+            // A desk answers from the address we talk to. Anything else landing
+            // on this port is not a reply, and a forged patch or gain value
+            // would later be written back to the desk.
+            if (! receiver.connectToSocket (*socket, oscwire::normaliseSourceIp (host)))
+            { socket.reset(); return false; }
             if (! sender.connectToSocket (*socket, host, port))
             {
                 // The receiver's reader thread references `socket` -- detach it
@@ -91,6 +95,7 @@ namespace zynforge
 
         // Exposed so ConsoleLink's test seam can play the console's side.
         void injectForTests (const juce::OSCMessage& m) { oscMessageReceived (m); }
+        int  localPortForTests() const { return socket != nullptr ? socket->getBoundPort() : -1; }
 
     private:
         void oscMessageReceived (const juce::OSCMessage& m) override

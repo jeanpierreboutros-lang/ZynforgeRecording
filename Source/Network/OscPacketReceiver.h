@@ -20,8 +20,10 @@
 
 #include <atomic>
 #include <cstring>
+#include <deque>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 
 namespace zynforge
@@ -223,6 +225,26 @@ namespace zynforge
             }
             return out;
         }
+
+        // A strict dotted quad, normalised so it compares equal to what the
+        // socket reports. Empty for anything that couldn't be one device: no
+        // hostnames, and no wildcard or broadcast that would widen a pin.
+        inline juce::String normaliseSourceIp (const juce::String& text)
+        {
+            const auto parts = juce::StringArray::fromTokens (text.trim(), ".", "");
+            if (parts.size() != 4) return {};
+            int octets[4] {};
+            for (int i = 0; i < 4; ++i)
+            {
+                if (parts[i].isEmpty() || parts[i].length() > 3 || ! parts[i].containsOnly ("0123456789"))
+                    return {};
+                octets[i] = parts[i].getIntValue();
+                if (octets[i] > 255) return {};
+            }
+            if (octets[0] == 0 || octets[0] >= 224) return {};
+            return juce::String (octets[0]) + "." + juce::String (octets[1]) + "."
+                 + juce::String (octets[2]) + "." + juce::String (octets[3]);
+        }
     }
 
     // Stands in for the part of juce::OSCReceiver this app uses: bind a port or
@@ -257,18 +279,23 @@ namespace zynforge
             owned = std::move (s);
             socket = owned.get();
             allowedSource = onlyFrom;
+            reportForeignSources = false;
             droppedSources.store (0, std::memory_order_relaxed);
             startThread();
             return true;
         }
 
         // Reads a socket the caller owns and also sends from (a desk replies to
-        // the request's source port). It must outlive disconnect().
-        bool connectToSocket (juce::DatagramSocket& shared)
+        // the request's source port). It must outlive disconnect(). With
+        // `onlyFrom`, datagrams from anywhere else are dropped as in connect(),
+        // and each burst of them is reported through onRefusedPacket.
+        bool connectToSocket (juce::DatagramSocket& shared, const juce::String& onlyFrom = {})
         {
             disconnect();
             socket = &shared;
-            allowedSource.clear();
+            allowedSource = onlyFrom;
+            reportForeignSources = onlyFrom.isNotEmpty();
+            droppedSources.store (0, std::memory_order_relaxed);
             startThread();
             return true;
         }
@@ -284,6 +311,9 @@ namespace zynforge
             waitForThreadToExit (-1);
             socket = nullptr;
             owned.reset();
+            const std::lock_guard<std::mutex> lock (backlogLock);
+            backlog.clear();
+            backlogBytes = 0;
             return true;
         }
 
@@ -303,6 +333,9 @@ namespace zynforge
             return lastDroppedSource;
         }
 
+        // Datagrams dropped because the message thread was this far behind.
+        juce::int64 getOverflowCount() const noexcept { return overflowed.load (std::memory_order_relaxed); }
+
         // Message thread: a datagram no listener will hear about. Bursts are
         // thinned to kRefusedReportMs apart so junk can't flood the message
         // thread.
@@ -315,13 +348,26 @@ namespace zynforge
     private:
         static constexpr double kRefusedReportMs = 100.0;
 
-        struct Packet final : juce::Message
+        // Valid packets used to go straight into the message queue, one message
+        // each, with nothing to say how many: a sender faster than the message
+        // thread put timers, meters and STOP behind an ever longer line. They
+        // wait here instead. The limits are well past a desk's name dump
+        // (hundreds of short packets), and the byte limit is for packets near
+        // the 64 KB maximum.
+        static constexpr size_t kMaxBacklogPackets = 2048;
+        static constexpr size_t kMaxBacklogBytes   = 4 * 1024 * 1024;
+        // One turn on the message thread, then the rest goes behind whatever
+        // else is waiting there.
+        static constexpr double kDrainTurnMs = 4.0;
+
+        struct Queued
         {
-            Packet (const juce::OSCBundle::Element& e, Source from)
-                : content (e), source (std::move (from)) {}
             juce::OSCBundle::Element content;
             Source source;
+            size_t bytes;
         };
+
+        struct Drain final : juce::Message {};
 
         struct RefusedPacket final : juce::Message
         {
@@ -330,6 +376,33 @@ namespace zynforge
             juce::String description;
             Source source;
         };
+
+        // Reader thread.
+        void reportRefused (double& nextReportMs, juce::String description, Source from)
+        {
+            const auto now = juce::Time::getMillisecondCounterHiRes();
+            if (now < nextReportMs) return;
+            nextReportMs = now + kRefusedReportMs;
+            postMessage (new RefusedPacket (std::move (description), std::move (from)));
+        }
+
+        // Reader thread. False when the backlog is full.
+        bool enqueue (const juce::OSCBundle::Element& element, const Source& from, size_t bytes)
+        {
+            bool postDrain = false;
+            {
+                const std::lock_guard<std::mutex> lock (backlogLock);
+                if (backlog.size() >= kMaxBacklogPackets || backlogBytes + bytes > kMaxBacklogBytes)
+                    return false;
+                backlog.push_back (std::make_unique<Queued> (Queued { element, from, bytes }));
+                backlogBytes += bytes;
+                postDrain = ! drainPosted;
+                drainPosted = true;
+            }
+            // MessageListener: a posted message is dropped if we're gone.
+            if (postDrain) postMessage (new Drain());
+            return true;
+        }
 
         void run() override
         {
@@ -347,20 +420,29 @@ namespace zynforge
                 if (allowedSource.isNotEmpty() && from.ip != allowedSource)
                 {
                     droppedSources.fetch_add (1, std::memory_order_relaxed);
-                    const juce::SpinLock::ScopedLockType sl (droppedSourceLock);
-                    lastDroppedSource = from.ip;
+                    {
+                        const juce::SpinLock::ScopedLockType sl (droppedSourceLock);
+                        lastDroppedSource = from.ip;
+                    }
+                    if (reportForeignSources)
+                        reportRefused (nextRefusedReportMs, "ignored: not from the address this link is pinned to",
+                                       std::move (from));
                     continue;
                 }
-                // MessageListener: a posted packet is dropped if we're gone.
                 const auto element = got >= 4 ? oscwire::parsePacket (buffer.getData(), (size_t) got)
                                               : std::nullopt;
-                if (element.has_value())
-                    postMessage (new Packet (*element, std::move (from)));
-                else if (const auto now = juce::Time::getMillisecondCounterHiRes(); now >= nextRefusedReportMs)
+                if (! element.has_value())
                 {
-                    nextRefusedReportMs = now + kRefusedReportMs;
-                    postMessage (new RefusedPacket (oscwire::describeRefused (buffer.getData(), (size_t) got),
-                                                    std::move (from)));
+                    reportRefused (nextRefusedReportMs, oscwire::describeRefused (buffer.getData(), (size_t) got),
+                                   std::move (from));
+                }
+                else if (! enqueue (*element, from, (size_t) got))
+                {
+                    const auto dropped = overflowed.fetch_add (1, std::memory_order_relaxed) + 1;
+                    reportRefused (nextRefusedReportMs,
+                                   "dropped: arriving faster than they can be handled ("
+                                       + juce::String (dropped) + " so far)",
+                                   std::move (from));
                 }
             }
         }
@@ -374,10 +456,29 @@ namespace zynforge
                 listeners.call ([&] (Listener& l) { l.oscBundleReceived (content.getBundle()); });
         }
 
+        void drain()
+        {
+            const auto turnEnds = juce::Time::getMillisecondCounterHiRes() + kDrainTurnMs;
+            do
+            {
+                std::unique_ptr<Queued> next;
+                {
+                    const std::lock_guard<std::mutex> lock (backlogLock);
+                    if (backlog.empty()) { drainPosted = false; return; }
+                    next = std::move (backlog.front());
+                    backlog.pop_front();
+                    backlogBytes -= next->bytes;
+                }
+                deliver (next->content, next->source);
+            }
+            while (juce::Time::getMillisecondCounterHiRes() < turnEnds);
+            postMessage (new Drain());
+        }
+
         void handleMessage (const juce::Message& message) override
         {
-            if (const auto* packet = dynamic_cast<const Packet*> (&message))
-                deliver (packet->content, packet->source);
+            if (dynamic_cast<const Drain*> (&message) != nullptr)
+                drain();
             else if (const auto* refused = dynamic_cast<const RefusedPacket*> (&message))
                 if (onRefusedPacket) onRefusedPacket (refused->source, refused->description);
         }
@@ -386,7 +487,13 @@ namespace zynforge
         std::unique_ptr<juce::DatagramSocket> owned;
         juce::ListenerList<Listener>          listeners;
         juce::String                          allowedSource;   // written only while the reader is stopped
+        bool                                  reportForeignSources { false };   // likewise
         Source                                currentSource;   // message thread
+        std::mutex                            backlogLock;
+        std::deque<std::unique_ptr<Queued>>   backlog;         // guarded by backlogLock
+        size_t                                backlogBytes { 0 };      // guarded by backlogLock
+        bool                                  drainPosted { false };   // guarded by backlogLock
+        std::atomic<juce::int64>              overflowed { 0 };
         std::atomic<juce::int64>              droppedSources { 0 };
         juce::SpinLock                        droppedSourceLock;
         juce::String                          lastDroppedSource;
